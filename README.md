@@ -125,7 +125,8 @@ Scripts:
 pnpm fmt         # Format the repository.
 pnpm fmt:check   # Report unformatted files.
 pnpm lint        # Lint the repository.
-pnpm test        # Run the Node test runner.
+pnpm test        # Run the Vitest suite once.
+pnpm test:watch  # Run Vitest in watch mode.
 ```
 
 Hook behavior:

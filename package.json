@@ -17,8 +17,9 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "oxlint",
-    "test": "node --test",
-    "prepare": "husky"
+    "test": "vitest run",
+    "prepare": "husky",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "execa": "^10.0.1"
@@ -27,7 +28,8 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.5.1",
     "oxfmt": "^0.67.0",
-    "oxlint": "^1.82.0"
+    "oxlint": "^1.82.0",
+    "vitest": "^5.0.0"
   },
   "lint-staged": {
     "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}": "oxfmt"
