@@ -164,15 +164,21 @@ agent-loop \
 Current options:
 
 ```text
---reviewer <agent>       Agent that reviews the repository. Required.
---worker <agent>         Agent that implements the task. Required.
---cwd <directory>        Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
---task <text>            Worker task. Required.
---max-reviews <count>    Maximum review passes. Defaults to 10.
--h, --help               Show help.
+--reviewer <agent>        Agent that reviews the repository. Required.
+--worker <agent>          Agent that implements the task. Required.
+--reviewer-model <model>  Model passed to the reviewer CLI. Optional.
+--reviewer-effort <level> Thinking effort passed to the reviewer CLI. Optional.
+--worker-model <model>    Model passed to the worker CLI. Optional.
+--worker-effort <level>   Thinking effort passed to the worker CLI. Optional.
+--cwd <directory>         Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
+--task <text>             Worker task. Required.
+--max-reviews <count>     Maximum review passes. Defaults to 10.
+-h, --help                Show help.
 ```
 
 Agent names: `claude`, `codex`, `agy` (alias `antigravity`), `opencode`, `copilot`.
+
+Model and effort values pass through as strings on every invocation, including resumes. Flags omitted leave the CLI defaults untouched. For OpenCode roles, effort requires the matching model, a model with a `#variant` cannot combine with effort, and a model without `#variant` plus effort becomes `model#effort`.
 
 ### Environment and working directory
 
