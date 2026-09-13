@@ -77,11 +77,16 @@ Usage:
 
 Options:
 
-  --reviewer <agent>
-  --worker <agent>
-  --cwd <directory>
-  --task <review task>
-  --max-reviews <count>
+  --reviewer <agent>       Agent that reviews the repository. Required.
+  --worker <agent>         Agent that implements the review findings. Required.
+  --cwd <directory>        Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
+  --task <review task>     Review task for the first pass. Defaults to "Review the current worktree changes.".
+  --max-reviews <count>    Maximum review passes. Defaults to 10.
+  -h, --help               Show help.
+
+Environment:
+
+  The loop spawns each agent CLI directly, without a shell. Agents inherit the environment of the process that launched the loop. Start the loop from a shell where direnv or a similar tool already exported the required variables. No default shell and no automatic environment loader are provided by design.
 
 Agents:
 
