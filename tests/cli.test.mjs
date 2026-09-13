@@ -303,7 +303,7 @@ test("findings followed by REVIEW_COMPLETE do not stop the loop", async () => {
     );
 
     expect(execa).toHaveBeenCalledTimes(2);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("IMPLEMENTATION 0"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("IMPLEMENTATION 1"));
     expect(process.exitCode).toBe(2);
   } finally {
     process.argv = originalArgv;

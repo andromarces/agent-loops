@@ -86,11 +86,16 @@ When the reviewer returns REVIEW_COMPLETE, the worker returns a final summary.
 
 Options:
 
-  --reviewer <agent>
-  --worker <agent>
-  --cwd <directory>
-  --task <worker task> (required)
-  --max-reviews <count>
+  --reviewer <agent>       Agent that reviews the repository. Required.
+  --worker <agent>         Agent that implements the review findings. Required.
+  --cwd <directory>        Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
+  --task <text>            Worker task. Required.
+  --max-reviews <count>    Maximum review passes. Defaults to 10.
+  -h, --help               Show help.
+
+Environment:
+
+  The loop spawns each agent CLI directly, without a shell. Agents inherit the environment of the process that launched the loop. Start the loop from a shell where direnv or a similar tool already exported the required variables. No default shell and no automatic environment loader are provided by design.
 
 Agents:
 
@@ -405,7 +410,7 @@ async function main() {
   };
 
   let workerResult = await runAgent(worker, initialWorkerPrompt(options.task), options.cwd);
-  console.log("\n===== IMPLEMENTATION 0 =====\n");
+  console.log("\n===== IMPLEMENTATION 1 =====\n");
   console.log(workerResult);
 
   for (let reviewNumber = 1; ; reviewNumber++) {
@@ -432,7 +437,7 @@ async function main() {
 
     workerResult = await runAgent(worker, workerFollowUpPrompt(review), options.cwd);
 
-    console.log(`\n===== IMPLEMENTATION ${reviewNumber} =====\n`);
+    console.log(`\n===== IMPLEMENTATION ${reviewNumber + 1} =====\n`);
     console.log(workerResult);
   }
 }
