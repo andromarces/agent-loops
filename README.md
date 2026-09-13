@@ -137,19 +137,19 @@ Hook behavior:
 
 ## Usage
 
-The current CLI runs a fixed two-role loop: a reviewer and a worker. Run it from the repository that the loop works on:
+The current CLI runs a fixed worker-first loop: a worker implements, then a reviewer verifies. Run it from the repository that the loop works on:
 
 ```bash
 node /path/to/agent-loops/src/cli.mjs \
   --reviewer codex \
   --worker claude \
-  --task "Review all current branch changes against main."
+  --task "Implement the change."
 ```
 
 PowerShell:
 
 ```powershell
-node C:\path\to\agent-loops\src\cli.mjs --reviewer codex --worker claude --task "Review all current branch changes against main."
+node C:\path\to\agent-loops\src\cli.mjs --reviewer codex --worker claude --task "Implement the change."
 ```
 
 From inside this repository, `pnpm agent-loop` runs the same script. After installation, the package binary runs it too:
@@ -158,20 +158,20 @@ From inside this repository, `pnpm agent-loop` runs the same script. After insta
 agent-loop \
   --reviewer codex \
   --worker claude \
-  --task "Review all current branch changes against main."
+  --task "Implement the change."
 ```
 
 Current options:
 
 ```text
 --reviewer <agent>        Agent that reviews the repository. Required.
---worker <agent>          Agent that implements the review findings. Required.
+--worker <agent>          Agent that implements the task. Required.
 --reviewer-model <model>  Model passed to the reviewer CLI. Optional.
 --reviewer-effort <level> Thinking effort passed to the reviewer CLI. Optional.
 --worker-model <model>    Model passed to the worker CLI. Optional.
 --worker-effort <level>   Thinking effort passed to the worker CLI. Optional.
 --cwd <directory>         Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
---task <text>             Review task for the first pass. Defaults to "Review the current worktree changes.".
+--task <text>             Worker task. Required.
 --max-reviews <count>     Maximum review passes. Defaults to 10.
 -h, --help                Show help.
 ```
@@ -184,7 +184,7 @@ Model and effort values pass through as strings on every invocation, including r
 
 The loop spawns each agent CLI directly, without a shell. Agents inherit the environment of the process that launched the loop. Start the loop from a shell where direnv or a similar tool already exported the required variables. `--cwd` defaults to the directory where the command ran. `--cwd` changes the working directory of the agents; it does not activate that directory's environment. No default shell and no automatic environment loader are provided by design.
 
-The reviewer stops the loop when its response ends with the line `REVIEW_COMPLETE`. The loop exits with code 2 when the review limit is reached with findings remaining.
+The worker acts first from `--task`. The reviewer verifies each worker result. The reviewer stops the loop only when its whole response is exactly `REVIEW_COMPLETE`. That completion message goes to the same worker session, which returns a final summary report with Changed, Verified, Deferred, Not done, and Open sections. The CLI prints the report and exits 0 without another reviewer turn. The loop exits with code 2 when the review limit is reached with findings remaining.
 
 The sections from Examples onward describe the planned multi-role controller. Those flags do not exist in the current CLI.
 

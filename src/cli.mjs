@@ -17,7 +17,7 @@ function parseArgs(argv) {
     workerModel: null,
     workerEffort: null,
     cwd: process.cwd(),
-    task: "Review the current worktree changes.",
+    task: null,
     maxReviews: 10,
   };
 
@@ -95,6 +95,12 @@ function parseArgs(argv) {
   );
   assertOpenCodeOptions("worker", options.worker, options.workerModel, options.workerEffort);
 
+  if (options.task === null || options.task === undefined || String(options.task).trim() === "") {
+    throw new Error(
+      'Missing required --task. Provide the worker task, for example --task "Implement the change."',
+    );
+  }
+
   if (!Number.isInteger(options.maxReviews) || options.maxReviews < 1) {
     throw new Error("--max-reviews must be a positive integer.");
   }
@@ -125,18 +131,21 @@ Usage:
   agent-loop \\
     --reviewer codex \\
     --worker claude \\
-    --task "Review the current branch against main."
+    --task "Implement the change."
+
+The worker acts first from --task. The reviewer verifies each worker result.
+When the reviewer returns REVIEW_COMPLETE, the worker returns a final summary.
 
 Options:
 
   --reviewer <agent>        Agent that reviews the repository. Required.
-  --worker <agent>          Agent that implements the review findings. Required.
+  --worker <agent>          Agent that implements the task. Required.
   --reviewer-model <model>  Model passed to the reviewer CLI. Optional.
   --reviewer-effort <level> Thinking effort passed to the reviewer CLI. Optional.
   --worker-model <model>    Model passed to the worker CLI. Optional.
   --worker-effort <level>   Thinking effort passed to the worker CLI. Optional.
   --cwd <directory>         Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
-  --task <review task>      Review task for the first pass. Defaults to "Review the current worktree changes.".
+  --task <text>             Worker task. Required.
   --max-reviews <count>     Maximum review passes. Defaults to 10.
   -h, --help                Show help.
 
@@ -351,8 +360,6 @@ async function runOpenCode(state, prompt, cwd, command) {
     args.push("--session", state.sessionId);
   }
 
-  assertOpenCodeOptions(state.role ?? "reviewer", "opencode", state.model, state.effort);
-
   const model =
     state.model && state.effort ? `${state.model}#${state.effort}` : (state.model ?? null);
 
@@ -440,84 +447,61 @@ async function runAgent(state, prompt, cwd) {
 }
 
 function reviewComplete(text) {
-  const lines = text
-    .trim()
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  return lines.at(-1) === COMPLETE_MARKER;
+  return text.trim() === COMPLETE_MARKER;
 }
 
-function initialReviewPrompt(task) {
-  return `
-You are the reviewer in an automated review loop.
-
-Task:
-${task}
-
-Inspect the actual repository state.
-
-Do not modify files.
-
-Report every actionable issue that the implementation agent must address.
-
-For each finding, give enough detail to locate and fix the issue.
-
-If any actionable finding remains, do not output ${COMPLETE_MARKER}.
-
-If no actionable finding remains, end your response with this exact line:
-
-${COMPLETE_MARKER}
-`.trim();
-}
-
-function workerPrompt(findings) {
+function initialWorkerPrompt(task) {
   return `
 You are the implementation agent in an automated review loop.
 
-Address every actionable review finding below.
+Complete the task below. Inspect the actual repository state before you make changes. Run relevant tests, checks, or validation. Do not merely explain what must change.
 
-Inspect the actual repository state before you make changes.
+After this turn, a reviewer will inspect your work. Each later message you receive starts with the line "From the Reviewer:" followed by either actionable findings or the single line REVIEW_COMPLETE.
 
-Modify the implementation as needed.
+When you receive findings, address every actionable finding, then report what you changed, what you verified, and any finding you did not address and why.
 
-Run relevant tests, checks, or validation.
+When you receive exactly this two-line message:
+From the Reviewer:
+REVIEW_COMPLETE
 
-Do not merely explain what must change.
+Do not change any files. Return a final summary report that covers the entire task, not only the last turn, with these sections:
+- Changed: what changed across the whole loop
+- Verified: what verification ran and its results
+- Deferred: items intentionally postponed, with the reason
+- Not done: items not completed, with the reason
+- Open: unresolved questions or risks for the user
+If a section has no items, state that explicitly.
 
-When complete, summarize:
-- what you changed
-- what you verified
-- any finding that you intentionally did not address and why
+Task:
+${task}
+`.trim();
+}
 
-Review findings:
-
+function workerFollowUpPrompt(findings) {
+  return `
+From the Reviewer:
 ${findings}
+`.trim();
+}
+
+function initialReviewPrompt(task, workerResponse) {
+  return `
+Do not implement, fix, edit, or change anything yet. Review, assess, and verify only. Live probes and queries if needed are authorized. If there are any actionable blocking and non-blocking findings, only return with all the actionable blocking and non-blocking findings. If there are no actionable blocking and non-blocking findings, return REVIEW_COMPLETE.
+
+Instruction for the Worker:
+${task}
+
+From the Worker:
+${workerResponse}
 `.trim();
 }
 
 function followUpReviewPrompt(workerResult) {
   return `
-The implementation agent reports the following work:
+Do not implement, fix, edit, or change anything yet. Review, assess, and verify only. Live probes and queries if needed are authorized.
 
+From the Worker:
 ${workerResult}
-
-Reinspect the actual repository state.
-
-Do not trust the implementation report as proof that the findings are resolved.
-
-Verify the previous findings against the current files.
-
-Also check for regressions or new actionable issues caused by the fixes.
-
-Do not modify files.
-
-If any actionable finding remains, report it and do not output ${COMPLETE_MARKER}.
-
-If no actionable finding remains, end your response with this exact line:
-
-${COMPLETE_MARKER}
 `.trim();
 }
 
@@ -540,14 +524,23 @@ async function main() {
     effort: options.workerEffort,
   };
 
-  let review = await runAgent(reviewer, initialReviewPrompt(options.task), options.cwd);
+  let workerResult = await runAgent(worker, initialWorkerPrompt(options.task), options.cwd);
+  console.log("\n===== IMPLEMENTATION 1 =====\n");
+  console.log(workerResult);
 
   for (let reviewNumber = 1; ; reviewNumber++) {
+    const review =
+      reviewNumber === 1
+        ? await runAgent(reviewer, initialReviewPrompt(options.task, workerResult), options.cwd)
+        : await runAgent(reviewer, followUpReviewPrompt(workerResult), options.cwd);
+
     console.log(`\n===== REVIEW ${reviewNumber} =====\n`);
     console.log(review);
 
     if (reviewComplete(review)) {
-      console.log("\nReview loop complete.");
+      const summary = await runAgent(worker, workerFollowUpPrompt(review), options.cwd);
+      console.log("\n===== SUMMARY =====\n");
+      console.log(summary);
       return;
     }
 
@@ -557,12 +550,10 @@ async function main() {
       return;
     }
 
-    const workerResult = await runAgent(worker, workerPrompt(review), options.cwd);
+    workerResult = await runAgent(worker, workerFollowUpPrompt(review), options.cwd);
 
-    console.log(`\n===== IMPLEMENTATION ${reviewNumber} =====\n`);
+    console.log(`\n===== IMPLEMENTATION ${reviewNumber + 1} =====\n`);
     console.log(workerResult);
-
-    review = await runAgent(reviewer, followUpReviewPrompt(workerResult), options.cwd);
   }
 }
 
