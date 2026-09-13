@@ -230,6 +230,7 @@ async function runCodex(state, prompt, cwd) {
 }
 
 async function runAgy(state, prompt, cwd) {
+  // --input-format text reads the prompt from stdin; -p is omitted because it consumes the next arg as the prompt value.
   const args = ["--input-format", "text", "--output-format", "json"];
 
   if (state.sessionId) {
