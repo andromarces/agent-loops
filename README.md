@@ -170,7 +170,7 @@ Current options:
 --reviewer-effort <level> Thinking effort passed to the reviewer CLI. Optional.
 --worker-model <model>   Model passed to the worker CLI. Optional.
 --worker-effort <level>  Thinking effort passed to the worker CLI. Optional.
---cwd <directory>        Working directory. Defaults to the current directory.
+--cwd <directory>        Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
 --task <text>            Review task for the first pass. Defaults to "Review the current worktree changes.".
 --max-reviews <count>    Maximum review passes. Defaults to 10.
 -h, --help               Show help.
@@ -179,6 +179,10 @@ Current options:
 Agent names: `claude`, `codex`, `agy` (alias `antigravity`), `opencode`, `copilot`.
 
 Model and effort values pass through as strings on every invocation, including resumes. Flags omitted leave the CLI defaults untouched. For OpenCode roles, effort requires the matching model, a model with a `#variant` cannot combine with effort, and a model without `#variant` plus effort becomes `model#effort`.
+
+### Environment and working directory
+
+The loop spawns each agent CLI directly, without a shell. Agents inherit the environment of the process that launched the loop. Start the loop from a shell where direnv or a similar tool already exported the required variables. `--cwd` defaults to the directory where the command ran. `--cwd` changes the working directory of the agents; it does not activate that directory's environment. No default shell and no automatic environment loader are provided by design.
 
 The reviewer stops the loop when its response ends with the line `REVIEW_COMPLETE`. The loop exits with code 2 when the review limit is reached with findings remaining.
 
