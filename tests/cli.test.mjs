@@ -612,6 +612,19 @@ test.each([
     argv: ["--reviewer", "claude", "--worker", "claude", "--task", "Do the thing.", "--cwd"],
     message: "Missing value for --cwd",
   },
+  {
+    name: "rejects an adjacent option as a model value",
+    argv: [
+      "--reviewer",
+      "claude",
+      "--worker",
+      "claude",
+      "--worker-model",
+      "--task",
+      "Do the thing.",
+    ],
+    message: "Missing value for --worker-model",
+  },
 ])("validation $name", async ({ argv, message }) => {
   const originalArgv = process.argv;
   const originalExitCode = process.exitCode;
