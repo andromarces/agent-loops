@@ -191,3 +191,202 @@ test.each(["codex", "opencode", "copilot"])(
   },
   15000,
 );
+
+// Usefulness: verifies the issue-#4 requirement that per-role model and effort flags reach each CLI on first and resumed calls. No other test exercises the model argument boundary, so coverage is nonredundant.
+test.each([
+  {
+    kind: "claude",
+    reviewerModel: "reviewer-claude-model",
+    reviewerEffort: "high",
+    workerModel: "worker-claude-model",
+    workerEffort: "low",
+    check: (args, role) => {
+      const model = role === "reviewer" ? "reviewer-claude-model" : "worker-claude-model";
+      const effort = role === "reviewer" ? "high" : "low";
+      expect(args).toContain("--model");
+      expect(args).toContain(model);
+      expect(args).toContain("--effort");
+      expect(args).toContain(effort);
+    },
+  },
+  {
+    kind: "codex",
+    reviewerModel: "reviewer-codex-model",
+    reviewerEffort: "xhigh",
+    workerModel: "worker-codex-model",
+    workerEffort: "low",
+    check: (args, role) => {
+      const model = role === "reviewer" ? "reviewer-codex-model" : "worker-codex-model";
+      const effort = role === "reviewer" ? "xhigh" : "low";
+      expect(args).toContain("-m");
+      expect(args).toContain(model);
+      expect(args).toContain("-c");
+      expect(args).toContain(`model_reasoning_effort=${effort}`);
+    },
+  },
+  {
+    kind: "agy",
+    reviewerModel: "reviewer-agy-model",
+    reviewerEffort: "high",
+    workerModel: "worker-agy-model",
+    workerEffort: "low",
+    check: (args, role) => {
+      const model = role === "reviewer" ? "reviewer-agy-model" : "worker-agy-model";
+      const effort = role === "reviewer" ? "high" : "low";
+      expect(args).toContain("--model");
+      expect(args).toContain(model);
+      expect(args).toContain("--effort");
+      expect(args).toContain(effort);
+    },
+  },
+  {
+    kind: "opencode",
+    reviewerModel: "provider/reviewer-model",
+    reviewerEffort: "high",
+    workerModel: "provider/worker-model",
+    workerEffort: "low",
+    check: (args, role) => {
+      const expected =
+        role === "reviewer" ? "provider/reviewer-model#high" : "provider/worker-model#low";
+      expect(args).toContain("--model");
+      expect(args).toContain(expected);
+    },
+  },
+  {
+    kind: "copilot",
+    reviewerModel: "reviewer-copilot-model",
+    reviewerEffort: "xhigh",
+    workerModel: "worker-copilot-model",
+    workerEffort: "low",
+    check: (args, role) => {
+      const model = role === "reviewer" ? "reviewer-copilot-model" : "worker-copilot-model";
+      const effort = role === "reviewer" ? "xhigh" : "low";
+      expect(args).toContain("--model");
+      expect(args).toContain(model);
+      expect(args).toContain("--reasoning-effort");
+      expect(args).toContain(effort);
+    },
+  },
+])(
+  "$kind forwards per-role model and effort on first and resumed calls",
+  async ({ kind, reviewerModel, reviewerEffort, workerModel, workerEffort, check }) => {
+    const originalArgv = process.argv;
+    const originalExitCode = process.exitCode;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const replies = ["Finding.", "Fix.", "Finding again.", "Fix again.", "Done.\nREVIEW_COMPLETE"];
+    let callNumber = 0;
+
+    vi.mocked(execa)
+      .mockReset()
+      .mockImplementation(async (command, args) => {
+        const index = callNumber++;
+        expect(command).toBe(kind);
+        const role = index % 2 === 0 ? "reviewer" : "worker";
+        check(args, role);
+
+        const sessionId = role === "reviewer" ? "review-session" : "worker-session";
+        let stdout = replies[index];
+        if (kind === "claude") {
+          stdout = JSON.stringify({ session_id: sessionId, result: stdout });
+        } else if (kind === "codex") {
+          stdout = [
+            { type: "thread.started", thread_id: sessionId },
+            { type: "item.completed", item: { type: "agent_message", text: stdout } },
+          ]
+            .map((event) => JSON.stringify(event))
+            .join("\n");
+        } else if (kind === "agy") {
+          stdout = JSON.stringify({ conversation_id: sessionId, response: stdout });
+        } else if (kind === "opencode") {
+          stdout = JSON.stringify({ type: "text", sessionID: sessionId, part: { text: stdout } });
+        }
+        return { exitCode: 0, stdout, stderr: "" };
+      });
+
+    try {
+      process.argv = [
+        process.execPath,
+        "src/cli.mjs",
+        "--reviewer",
+        kind,
+        "--worker",
+        kind,
+        "--reviewer-model",
+        reviewerModel,
+        "--reviewer-effort",
+        reviewerEffort,
+        "--worker-model",
+        workerModel,
+        "--worker-effort",
+        workerEffort,
+        "--max-reviews",
+        "3",
+      ];
+      vi.resetModules();
+      await import("../src/cli.mjs");
+      await vi.waitFor(
+        () => {
+          expect(error).not.toHaveBeenCalled();
+          expect(log).toHaveBeenCalledWith("\nReview loop complete.");
+        },
+        { timeout: 10000 },
+      );
+
+      expect(execa).toHaveBeenCalledTimes(5);
+      expect(process.exitCode).toBe(originalExitCode);
+    } finally {
+      process.argv = originalArgv;
+      process.exitCode = originalExitCode;
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+// Usefulness: verifies the issue-#4 OpenCode rule that effort appends as a model variant suffix. No other test exercises the variant merge, so coverage is nonredundant.
+test.each([
+  {
+    name: "rejects effort without a model",
+    argv: ["--reviewer", "opencode", "--worker", "claude", "--reviewer-effort", "high"],
+    message: "--reviewer-effort requires --reviewer-model",
+  },
+  {
+    name: "rejects a model variant plus effort",
+    argv: [
+      "--reviewer",
+      "opencode",
+      "--worker",
+      "claude",
+      "--reviewer-model",
+      "provider/model#high",
+      "--reviewer-effort",
+      "low",
+    ],
+    message: "already contains a variant",
+  },
+])("opencode $name", async ({ argv, message }) => {
+  const originalArgv = process.argv;
+  const originalExitCode = process.exitCode;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.mocked(execa).mockReset();
+
+  try {
+    process.argv = [process.execPath, "src/cli.mjs", ...argv];
+    process.exitCode = undefined;
+    vi.resetModules();
+    await import("../src/cli.mjs");
+    await vi.waitFor(
+      () => {
+        expect(error).toHaveBeenCalled();
+      },
+      { timeout: 10000 },
+    );
+    expect(vi.mocked(execa)).not.toHaveBeenCalled();
+    expect(error.mock.calls.flat().join("\n")).toContain(message);
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.argv = originalArgv;
+    process.exitCode = originalExitCode;
+    vi.restoreAllMocks();
+  }
+});

@@ -12,9 +12,21 @@ function parseArgs(argv) {
   const options = {
     reviewer: null,
     worker: null,
+    reviewerModel: null,
+    reviewerEffort: null,
+    workerModel: null,
+    workerEffort: null,
     cwd: process.cwd(),
     task: "Review the current worktree changes.",
     maxReviews: 10,
+  };
+
+  const readValue = (flag, index) => {
+    const value = argv[index];
+    if (value === undefined) {
+      throw new Error(`Missing value for ${flag}.`);
+    }
+    return value;
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -27,6 +39,22 @@ function parseArgs(argv) {
 
       case "--worker":
         options.worker = argv[++i];
+        break;
+
+      case "--reviewer-model":
+        options.reviewerModel = readValue(arg, ++i);
+        break;
+
+      case "--reviewer-effort":
+        options.reviewerEffort = readValue(arg, ++i);
+        break;
+
+      case "--worker-model":
+        options.workerModel = readValue(arg, ++i);
+        break;
+
+      case "--worker-effort":
+        options.workerEffort = readValue(arg, ++i);
         break;
 
       case "--cwd":
@@ -59,11 +87,55 @@ function parseArgs(argv) {
     throw new Error(`Unsupported worker: ${options.worker}`);
   }
 
+  assertOpenCodeOptions(
+    "reviewer",
+    options.reviewer,
+    options.reviewerModel,
+    options.reviewerEffort,
+  );
+  assertOpenCodeOptions("worker", options.worker, options.workerModel, options.workerEffort);
+
   if (!Number.isInteger(options.maxReviews) || options.maxReviews < 1) {
     throw new Error("--max-reviews must be a positive integer.");
   }
 
   return options;
+}
+
+function assertOpenCodeOptions(role, kind, model, effort) {
+  if (normalizeAgent(kind) !== "opencode") {
+    return;
+  }
+
+  if (effort && !model) {
+    throw new Error(`--${role}-effort requires --${role}-model for OpenCode.`);
+  }
+
+  if (effort && model.includes("#")) {
+    throw new Error(
+      `--${role}-model "${model}" already contains a variant and cannot be combined with --${role}-effort.`,
+    );
+  }
+}
+
+function resolveOpenCodeModel(model, effort, role) {
+  if (!model) {
+    if (effort) {
+      throw new Error(`--${role}-effort requires --${role}-model for OpenCode.`);
+    }
+    return null;
+  }
+
+  if (effort) {
+    if (model.includes("#")) {
+      throw new Error(
+        `--${role}-model "${model}" already contains a variant and cannot be combined with --${role}-effort.`,
+      );
+    }
+    return `${model}#${effort}`;
+  }
+
+  return model;
 }
 
 function printHelp() {
@@ -79,6 +151,10 @@ Options:
 
   --reviewer <agent>
   --worker <agent>
+  --reviewer-model <model>
+  --reviewer-effort <level>
+  --worker-model <model>
+  --worker-effort <level>
   --cwd <directory>
   --task <review task>
   --max-reviews <count>
@@ -91,6 +167,14 @@ Agents:
   antigravity
   opencode
   copilot
+
+Model and effort flags are passed through as strings on every invocation,
+including resumes. Flags omitted leave the CLI defaults untouched.
+
+OpenCode has no separate effort flag. For OpenCode roles:
+--reviewer-effort or --worker-effort requires the matching --*-model,
+a model that already contains a #variant cannot be combined with effort,
+and a model without #variant plus effort becomes model#effort.
 `);
 }
 
@@ -159,6 +243,14 @@ async function runClaude(state, prompt, cwd) {
     args.push("--resume", state.sessionId);
   }
 
+  if (state.model) {
+    args.push("--model", state.model);
+  }
+
+  if (state.effort) {
+    args.push("--effort", state.effort);
+  }
+
   args.push(prompt, "--output-format", "json");
 
   const { stdout } = await exec("claude", args, cwd);
@@ -185,9 +277,31 @@ async function runClaude(state, prompt, cwd) {
 }
 
 async function runCodex(state, prompt, cwd) {
-  const args = state.sessionId
-    ? ["exec", "resume", state.sessionId, "--json", "-"]
-    : ["exec", "--json"];
+  let args;
+
+  if (state.sessionId) {
+    args = ["exec", "resume", state.sessionId, "--json"];
+
+    if (state.model) {
+      args.push("-m", state.model);
+    }
+
+    if (state.effort) {
+      args.push("-c", `model_reasoning_effort=${state.effort}`);
+    }
+
+    args.push("-");
+  } else {
+    args = ["exec", "--json"];
+
+    if (state.model) {
+      args.push("-m", state.model);
+    }
+
+    if (state.effort) {
+      args.push("-c", `model_reasoning_effort=${state.effort}`);
+    }
+  }
 
   const { stdout } = await exec("codex", args, cwd, prompt);
   const events = parseJsonLines(stdout);
@@ -227,6 +341,14 @@ async function runCodex(state, prompt, cwd) {
 async function runAgy(state, prompt, cwd) {
   const args = ["-p", prompt];
 
+  if (state.model) {
+    args.push("--model", state.model);
+  }
+
+  if (state.effort) {
+    args.push("--effort", state.effort);
+  }
+
   if (state.sessionId) {
     args.push("--conversation", state.sessionId);
   }
@@ -250,6 +372,12 @@ async function runOpenCode(state, prompt, cwd, command) {
 
   if (state.sessionId) {
     args.push("--session", state.sessionId);
+  }
+
+  const model = resolveOpenCodeModel(state.model, state.effort, state.role ?? "role");
+
+  if (model) {
+    args.push("--model", model);
   }
 
   const { stdout } = await exec(command, args, cwd, prompt);
@@ -291,6 +419,14 @@ async function runCopilot(state, prompt, cwd) {
   }
 
   const args = ["--session-id", state.sessionId, "-s", "--no-ask-user"];
+
+  if (state.model) {
+    args.push("--model", state.model);
+  }
+
+  if (state.effort) {
+    args.push("--reasoning-effort", state.effort);
+  }
 
   const { stdout } = await exec("copilot", args, cwd, prompt);
 
@@ -409,13 +545,19 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
 
   const reviewer = {
+    role: "reviewer",
     kind: normalizeAgent(options.reviewer),
     sessionId: null,
+    model: options.reviewerModel,
+    effort: options.reviewerEffort,
   };
 
   const worker = {
+    role: "worker",
     kind: normalizeAgent(options.worker),
     sessionId: null,
+    model: options.workerModel,
+    effort: options.workerEffort,
   };
 
   let review = await runAgent(reviewer, initialReviewPrompt(options.task), options.cwd);
