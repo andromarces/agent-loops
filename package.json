@@ -1,0 +1,39 @@
+{
+  "name": "agent-loops",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Run a task loop across several CLI coding agents.",
+  "license": "MIT",
+  "bin": {
+    "agent-loop": "./src/cli.mjs"
+  },
+  "files": [
+    "src",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "agent-loop": "node ./src/cli.mjs",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "lint": "oxlint",
+    "test": "node --test",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "execa": "^10.0.1"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^17.5.1",
+    "oxfmt": "^0.67.0",
+    "oxlint": "^1.82.0"
+  },
+  "lint-staged": {
+    "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}": "oxfmt"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@12.4.1"
+}

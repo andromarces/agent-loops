@@ -1,0 +1,15 @@
+# Tool-local artifacts
+.husky/_/
+.ruff_cache/
+
+# Local environment and secrets
+.env
+.envrc
+
+# Dependency and test output
+node_modules/
+coverage/
+
+# OS-generated files
+.DS_Store
+Thumbs.db

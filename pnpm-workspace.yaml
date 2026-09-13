@@ -1,0 +1,2 @@
+# Share one virtual store across projects on this machine.
+virtualStoreType: global
