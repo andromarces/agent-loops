@@ -137,19 +137,19 @@ Hook behavior:
 
 ## Usage
 
-The current CLI runs a fixed two-role loop: a reviewer and a worker. Run it from the repository that the loop works on:
+The current CLI runs a fixed worker-first loop: a worker implements, then a reviewer verifies. Run it from the repository that the loop works on:
 
 ```bash
 node /path/to/agent-loops/src/cli.mjs \
   --reviewer codex \
   --worker claude \
-  --task "Review all current branch changes against main."
+  --task "Implement the change."
 ```
 
 PowerShell:
 
 ```powershell
-node C:\path\to\agent-loops\src\cli.mjs --reviewer codex --worker claude --task "Review all current branch changes against main."
+node C:\path\to\agent-loops\src\cli.mjs --reviewer codex --worker claude --task "Implement the change."
 ```
 
 From inside this repository, `pnpm agent-loop` runs the same script. After installation, the package binary runs it too:
@@ -158,23 +158,23 @@ From inside this repository, `pnpm agent-loop` runs the same script. After insta
 agent-loop \
   --reviewer codex \
   --worker claude \
-  --task "Review all current branch changes against main."
+  --task "Implement the change."
 ```
 
 Current options:
 
 ```text
 --reviewer <agent>       Agent that reviews the repository. Required.
---worker <agent>         Agent that implements the review findings. Required.
+--worker <agent>         Agent that implements the task. Required.
 --cwd <directory>        Working directory. Defaults to the current directory.
---task <text>            Review task for the first pass. Defaults to "Review the current worktree changes.".
+--task <text>            Worker task for the first pass. Required.
 --max-reviews <count>    Maximum review passes. Defaults to 10.
 -h, --help               Show help.
 ```
 
 Agent names: `claude`, `codex`, `agy` (alias `antigravity`), `opencode`, `copilot`.
 
-The reviewer stops the loop when its response ends with the line `REVIEW_COMPLETE`. The loop exits with code 2 when the review limit is reached with findings remaining.
+The worker acts first from `--task`. The reviewer verifies each worker result. The reviewer stops the loop only when its whole response is exactly `REVIEW_COMPLETE`. That completion message goes to the same worker session, which returns a final summary report with Changed, Verified, Deferred, Not done, and Open sections. The CLI prints the report and exits 0 without another reviewer turn. The loop exits with code 2 when the review limit is reached with findings remaining.
 
 The sections from Examples onward describe the planned multi-role controller. Those flags do not exist in the current CLI.
 
