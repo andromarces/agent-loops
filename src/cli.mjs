@@ -508,7 +508,6 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
 
   const reviewer = {
-    role: "reviewer",
     kind: normalizeAgent(options.reviewer),
     sessionId: null,
     model: options.reviewerModel,
@@ -516,7 +515,6 @@ async function main() {
   };
 
   const worker = {
-    role: "worker",
     kind: normalizeAgent(options.worker),
     sessionId: null,
     model: options.workerModel,
