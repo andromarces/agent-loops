@@ -137,32 +137,50 @@ Hook behavior:
 
 ## Usage
 
-Run from the repository that the loop works on:
+The current CLI runs a fixed two-role loop: a reviewer and a worker. Run it from the repository that the loop works on:
 
 ```bash
 node /path/to/agent-loops/src/cli.mjs \
-  --role reviewer=codex \
-  --role worker=claude \
-  --gate reviewer \
+  --reviewer codex \
+  --worker claude \
   --task "Review all current branch changes against main."
 ```
 
 PowerShell:
 
 ```powershell
-node C:\path\to\agent-loops\src\cli.mjs --role reviewer=codex --role worker=claude --gate reviewer --task "Review all current branch changes against main."
+node C:\path\to\agent-loops\src\cli.mjs --reviewer codex --worker claude --task "Review all current branch changes against main."
 ```
 
-The package binary runs the same loop:
+From inside this repository, `pnpm agent-loop` runs the same script. After installation, the package binary runs it too:
 
 ```bash
 agent-loop \
-  --role reviewer=codex \
-  --role worker=claude \
+  --reviewer codex \
+  --worker claude \
   --task "Review all current branch changes against main."
 ```
 
+Current options:
+
+```text
+--reviewer <agent>       Agent that reviews the repository. Required.
+--worker <agent>         Agent that implements the review findings. Required.
+--cwd <directory>        Working directory. Defaults to the current directory.
+--task <text>            Review task for the first pass. Defaults to "Review the current worktree changes.".
+--max-reviews <count>    Maximum review passes. Defaults to 10.
+-h, --help               Show help.
+```
+
+Agent names: `claude`, `codex`, `agy` (alias `antigravity`), `opencode`, `copilot`.
+
+The reviewer stops the loop when its response ends with the line `REVIEW_COMPLETE`. The loop exits with code 2 when the review limit is reached with findings remaining.
+
+The sections from Examples onward describe the planned multi-role controller. Those flags do not exist in the current CLI.
+
 ## Examples
+
+These examples use the planned multi-role interface.
 
 Two roles, Codex reviews Claude Code:
 
@@ -214,6 +232,8 @@ The controller keeps one session ID per role, even when several roles use the sa
 
 ## Options
 
+Planned options for the multi-role controller:
+
 ```text
 --role <name>=<agent>      Add a role. Repeat to build the loop. Order sets execution order.
 --gate <name>              Role that can stop the loop. Defaults to the first role.
@@ -226,6 +246,8 @@ The controller keeps one session ID per role, even when several roles use the sa
 ```
 
 ## Completion contract
+
+The current CLI uses the marker `REVIEW_COMPLETE`. The planned controller uses `LOOP_COMPLETE` as described below.
 
 Every role prompt states the completion rule.
 
@@ -487,7 +509,7 @@ Do not put loop behavior inside adapters.
 After installation, the package exposes:
 
 ```bash
-agent-loop --role reviewer=codex --role worker=claude
+agent-loop --reviewer codex --worker claude
 ```
 
 ## Testing strategy

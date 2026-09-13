@@ -70,7 +70,7 @@ function printHelp() {
   console.log(`
 Usage:
 
-  node review-loop.mjs \\
+  agent-loop \\
     --reviewer codex \\
     --worker claude \\
     --task "Review the current branch against main."
