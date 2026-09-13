@@ -165,7 +165,7 @@ Current options:
 
 ```text
 --reviewer <agent>       Agent that reviews the repository. Required.
---worker <agent>         Agent that implements the review findings. Required.
+--worker <agent>         Agent that implements the task. Required.
 --cwd <directory>        Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
 --task <text>            Worker task. Required.
 --max-reviews <count>    Maximum review passes. Defaults to 10.
