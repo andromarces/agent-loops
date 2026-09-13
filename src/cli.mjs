@@ -245,9 +245,9 @@ async function runClaude(state, prompt, cwd) {
     args.push("--effort", state.effort);
   }
 
-  args.push(prompt, "--output-format", "json");
+  args.push("--output-format", "json");
 
-  const { stdout } = await exec("claude", args, cwd);
+  const { stdout } = await exec("claude", args, cwd, prompt);
   const parsed = parseJson(stdout, "Claude Code");
 
   let sessionId;
@@ -325,7 +325,8 @@ async function runCodex(state, prompt, cwd) {
 }
 
 async function runAgy(state, prompt, cwd) {
-  const args = ["-p", prompt];
+  // --input-format text reads the prompt from stdin; -p is omitted because it consumes the next arg as the prompt value.
+  const args = ["--input-format", "text", "--output-format", "json"];
 
   if (state.model) {
     args.push("--model", state.model);
@@ -339,9 +340,7 @@ async function runAgy(state, prompt, cwd) {
     args.push("--conversation", state.sessionId);
   }
 
-  args.push("--output-format", "json");
-
-  const { stdout } = await exec("agy", args, cwd);
+  const { stdout } = await exec("agy", args, cwd, prompt);
   const result = parseJson(stdout, "Antigravity CLI");
 
   if (!result.conversation_id) {
