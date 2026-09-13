@@ -23,7 +23,7 @@ function parseArgs(argv) {
 
   const readValue = (flag, index) => {
     const value = argv[index];
-    if (value === undefined) {
+    if (!value) {
       throw new Error(`Missing value for ${flag}.`);
     }
     return value;
@@ -58,7 +58,7 @@ function parseArgs(argv) {
         break;
 
       case "--cwd":
-        options.cwd = resolve(argv[++i]);
+        options.cwd = resolve(readValue(arg, ++i));
         break;
 
       case "--task":
@@ -116,26 +116,6 @@ function assertOpenCodeOptions(role, kind, model, effort) {
       `--${role}-model "${model}" already contains a variant and cannot be combined with --${role}-effort.`,
     );
   }
-}
-
-function resolveOpenCodeModel(model, effort, role) {
-  if (!model) {
-    if (effort) {
-      throw new Error(`--${role}-effort requires --${role}-model for OpenCode.`);
-    }
-    return null;
-  }
-
-  if (effort) {
-    if (model.includes("#")) {
-      throw new Error(
-        `--${role}-model "${model}" already contains a variant and cannot be combined with --${role}-effort.`,
-      );
-    }
-    return `${model}#${effort}`;
-  }
-
-  return model;
 }
 
 function printHelp() {
@@ -282,30 +262,22 @@ async function runClaude(state, prompt, cwd) {
 }
 
 async function runCodex(state, prompt, cwd) {
+  const modelArgs = [];
+
+  if (state.model) {
+    modelArgs.push("-m", state.model);
+  }
+
+  if (state.effort) {
+    modelArgs.push("-c", `model_reasoning_effort=${state.effort}`);
+  }
+
   let args;
 
   if (state.sessionId) {
-    args = ["exec", "resume", state.sessionId, "--json"];
-
-    if (state.model) {
-      args.push("-m", state.model);
-    }
-
-    if (state.effort) {
-      args.push("-c", `model_reasoning_effort=${state.effort}`);
-    }
-
-    args.push("-");
+    args = ["exec", "resume", state.sessionId, "--json", ...modelArgs, "-"];
   } else {
-    args = ["exec", "--json"];
-
-    if (state.model) {
-      args.push("-m", state.model);
-    }
-
-    if (state.effort) {
-      args.push("-c", `model_reasoning_effort=${state.effort}`);
-    }
+    args = ["exec", "--json", ...modelArgs];
   }
 
   const { stdout } = await exec("codex", args, cwd, prompt);
@@ -379,7 +351,10 @@ async function runOpenCode(state, prompt, cwd, command) {
     args.push("--session", state.sessionId);
   }
 
-  const model = resolveOpenCodeModel(state.model, state.effort, state.role ?? "role");
+  assertOpenCodeOptions(state.role ?? "reviewer", "opencode", state.model, state.effort);
+
+  const model =
+    state.model && state.effort ? `${state.model}#${state.effort}` : (state.model ?? null);
 
   if (model) {
     args.push("--model", model);

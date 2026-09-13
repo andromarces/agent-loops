@@ -164,16 +164,16 @@ agent-loop \
 Current options:
 
 ```text
---reviewer <agent>       Agent that reviews the repository. Required.
---worker <agent>         Agent that implements the review findings. Required.
---reviewer-model <model> Model passed to the reviewer CLI. Optional.
+--reviewer <agent>        Agent that reviews the repository. Required.
+--worker <agent>          Agent that implements the review findings. Required.
+--reviewer-model <model>  Model passed to the reviewer CLI. Optional.
 --reviewer-effort <level> Thinking effort passed to the reviewer CLI. Optional.
---worker-model <model>   Model passed to the worker CLI. Optional.
---worker-effort <level>  Thinking effort passed to the worker CLI. Optional.
---cwd <directory>        Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
---task <text>            Review task for the first pass. Defaults to "Review the current worktree changes.".
---max-reviews <count>    Maximum review passes. Defaults to 10.
--h, --help               Show help.
+--worker-model <model>    Model passed to the worker CLI. Optional.
+--worker-effort <level>   Thinking effort passed to the worker CLI. Optional.
+--cwd <directory>         Working directory for the agents. Defaults to the directory where the command ran. Changes the working directory only; does not activate that directory's environment.
+--task <text>             Review task for the first pass. Defaults to "Review the current worktree changes.".
+--max-reviews <count>     Maximum review passes. Defaults to 10.
+-h, --help                Show help.
 ```
 
 Agent names: `claude`, `codex`, `agy` (alias `antigravity`), `opencode`, `copilot`.

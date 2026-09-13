@@ -203,10 +203,8 @@ test.each([
     check: (args, role) => {
       const model = role === "reviewer" ? "reviewer-claude-model" : "worker-claude-model";
       const effort = role === "reviewer" ? "high" : "low";
-      expect(args).toContain("--model");
-      expect(args).toContain(model);
-      expect(args).toContain("--effort");
-      expect(args).toContain(effort);
+      expect(args[args.indexOf("--model") + 1]).toBe(model);
+      expect(args[args.indexOf("--effort") + 1]).toBe(effort);
     },
   },
   {
@@ -218,10 +216,8 @@ test.each([
     check: (args, role) => {
       const model = role === "reviewer" ? "reviewer-codex-model" : "worker-codex-model";
       const effort = role === "reviewer" ? "xhigh" : "low";
-      expect(args).toContain("-m");
-      expect(args).toContain(model);
-      expect(args).toContain("-c");
-      expect(args).toContain(`model_reasoning_effort=${effort}`);
+      expect(args[args.indexOf("-m") + 1]).toBe(model);
+      expect(args[args.indexOf("-c") + 1]).toBe(`model_reasoning_effort=${effort}`);
     },
   },
   {
@@ -233,10 +229,8 @@ test.each([
     check: (args, role) => {
       const model = role === "reviewer" ? "reviewer-agy-model" : "worker-agy-model";
       const effort = role === "reviewer" ? "high" : "low";
-      expect(args).toContain("--model");
-      expect(args).toContain(model);
-      expect(args).toContain("--effort");
-      expect(args).toContain(effort);
+      expect(args[args.indexOf("--model") + 1]).toBe(model);
+      expect(args[args.indexOf("--effort") + 1]).toBe(effort);
     },
   },
   {
@@ -248,8 +242,7 @@ test.each([
     check: (args, role) => {
       const expected =
         role === "reviewer" ? "provider/reviewer-model#high" : "provider/worker-model#low";
-      expect(args).toContain("--model");
-      expect(args).toContain(expected);
+      expect(args[args.indexOf("--model") + 1]).toBe(expected);
     },
   },
   {
@@ -261,10 +254,8 @@ test.each([
     check: (args, role) => {
       const model = role === "reviewer" ? "reviewer-copilot-model" : "worker-copilot-model";
       const effort = role === "reviewer" ? "xhigh" : "low";
-      expect(args).toContain("--model");
-      expect(args).toContain(model);
-      expect(args).toContain("--reasoning-effort");
-      expect(args).toContain(effort);
+      expect(args[args.indexOf("--model") + 1]).toBe(model);
+      expect(args[args.indexOf("--reasoning-effort") + 1]).toBe(effort);
     },
   },
 ])(
@@ -334,6 +325,81 @@ test.each([
       );
 
       expect(execa).toHaveBeenCalledTimes(5);
+      expect(process.exitCode).toBe(originalExitCode);
+    } finally {
+      process.argv = originalArgv;
+      process.exitCode = originalExitCode;
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+// Usefulness: verifies the issue-#4 requirement that omitted model and effort flags leave each CLI default untouched. No other test asserts the absence of these flags, so coverage is nonredundant.
+test.each(["claude", "codex", "agy", "opencode", "copilot"])(
+  "%s omits model and effort flags when the options are not passed",
+  async (kind) => {
+    const originalArgv = process.argv;
+    const originalExitCode = process.exitCode;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const replies = ["Finding.", "Fix.", "Done.\nREVIEW_COMPLETE"];
+    let callNumber = 0;
+
+    vi.mocked(execa)
+      .mockReset()
+      .mockImplementation(async (command, args) => {
+        const index = callNumber++;
+        expect(command).toBe(kind);
+        expect(args).not.toContain("--model");
+        expect(args).not.toContain("-m");
+        expect(args).not.toContain("--effort");
+        expect(args).not.toContain("-c");
+        expect(args).not.toContain("--reasoning-effort");
+        expect(
+          args.some((arg) => typeof arg === "string" && arg.includes("reasoning_effort")),
+        ).toBe(false);
+
+        const sessionId = index % 2 === 0 ? "review-session" : "worker-session";
+        let stdout = replies[index];
+        if (kind === "claude") {
+          stdout = JSON.stringify({ session_id: sessionId, result: stdout });
+        } else if (kind === "codex") {
+          stdout = [
+            { type: "thread.started", thread_id: sessionId },
+            { type: "item.completed", item: { type: "agent_message", text: stdout } },
+          ]
+            .map((event) => JSON.stringify(event))
+            .join("\n");
+        } else if (kind === "agy") {
+          stdout = JSON.stringify({ conversation_id: sessionId, response: stdout });
+        } else if (kind === "opencode") {
+          stdout = JSON.stringify({ type: "text", sessionID: sessionId, part: { text: stdout } });
+        }
+        return { exitCode: 0, stdout, stderr: "" };
+      });
+
+    try {
+      process.argv = [
+        process.execPath,
+        "src/cli.mjs",
+        "--reviewer",
+        kind,
+        "--worker",
+        kind,
+        "--max-reviews",
+        "2",
+      ];
+      vi.resetModules();
+      await import("../src/cli.mjs");
+      await vi.waitFor(
+        () => {
+          expect(error).not.toHaveBeenCalled();
+          expect(log).toHaveBeenCalledWith("\nReview loop complete.");
+        },
+        { timeout: 10000 },
+      );
+
+      expect(execa).toHaveBeenCalledTimes(3);
       expect(process.exitCode).toBe(originalExitCode);
     } finally {
       process.argv = originalArgv;
