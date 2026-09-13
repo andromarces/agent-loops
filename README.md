@@ -67,7 +67,6 @@ The controller supports these CLI names:
 - Codex CLI: `codex`
 - Antigravity CLI: `agy`
 - OpenCode: `opencode`
-- OpenCode2: `opencode2`
 - GitHub Copilot CLI: `copilot`
 
 Each adapter starts or resumes the persistent session of its CLI.
@@ -191,7 +190,7 @@ agent-loop \
   --role security=codex \
   --role performance=copilot \
   --role worker=claude \
-  --role verifier=opencode2 \
+  --role verifier=opencode \
   --gate verifier
 ```
 
@@ -330,7 +329,6 @@ agent-loops/
 │  │  ├─ codex.mjs
 │  │  ├─ agy.mjs
 │  │  ├─ opencode.mjs
-│  │  ├─ opencode2.mjs
 │  │  └─ copilot.mjs
 │  └─ lib/
 │     ├─ exec.mjs
@@ -423,7 +421,6 @@ export const agents = {
   agy,
   antigravity: agy,
   opencode,
-  opencode2,
   copilot,
 };
 ```

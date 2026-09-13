@@ -4,15 +4,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { execa } from "execa";
 
-const SUPPORTED = new Set([
-  "claude",
-  "codex",
-  "agy",
-  "antigravity",
-  "opencode",
-  "opencode2",
-  "copilot",
-]);
+const SUPPORTED = new Set(["claude", "codex", "agy", "antigravity", "opencode", "copilot"]);
 
 const COMPLETE_MARKER = "REVIEW_COMPLETE";
 
@@ -98,7 +90,6 @@ Agents:
   agy
   antigravity
   opencode
-  opencode2
   copilot
 `);
 }
@@ -313,9 +304,6 @@ async function runAgent(state, prompt, cwd) {
 
     case "opencode":
       return runOpenCode(state, prompt, cwd, "opencode");
-
-    case "opencode2":
-      return runOpenCode(state, prompt, cwd, "opencode2");
 
     case "copilot":
       return runCopilot(state, prompt, cwd);
