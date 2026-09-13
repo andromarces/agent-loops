@@ -115,7 +115,7 @@ test("claude handles array and object envelopes and resumes worker-first session
   }
 });
 
-// Usefulness: verifies the issue-#3 requirement that the worker acts first, reviewer verifies, and REVIEW_COMPLETE triggers a final worker summary, and the issue-#2 requirement that multi-line prompts travel on stdin with newline-free argv. No other test exercises the execa spawn boundary in a worker-first loop, so coverage is nonredundant.
+// Usefulness: verifies the issue-#3 requirement that the worker acts first with the exact first-worker and first-reviewer templates and REVIEW_COMPLETE triggers a final worker summary, and the issue-#2 requirement that multi-line prompts travel on stdin with newline-free argv. No other test exercises the execa spawn boundary in a worker-first loop, so coverage is nonredundant.
 test.each(["codex", "opencode", "copilot"])(
   "%s runs worker first and returns a final summary on REVIEW_COMPLETE",
   async (kind) => {
@@ -167,11 +167,36 @@ test.each(["codex", "opencode", "copilot"])(
 
       expect(error).not.toHaveBeenCalled();
       expect(execa).toHaveBeenCalledTimes(3);
-      expect(inputs[0]).toContain(task);
-      expect(inputs[0]).toContain("You are the implementation agent");
-      expect(inputs[1]).toContain(task);
-      expect(inputs[1]).toContain(workerResult);
-      expect(inputs[1]).toContain("From the Worker:");
+      expect(inputs[0]).toBe(`You are the implementation agent in an automated review loop.
+
+Complete the task below. Inspect the actual repository state before you make changes. Run relevant tests, checks, or validation. Do not merely explain what must change.
+
+After this turn, a reviewer will inspect your work. Each later message you receive starts with the line "From the Reviewer:" followed by either actionable findings or the single line REVIEW_COMPLETE.
+
+When you receive findings, address every actionable finding, then report what you changed, what you verified, and any finding you did not address and why.
+
+When you receive exactly this two-line message:
+From the Reviewer:
+REVIEW_COMPLETE
+
+Do not change any files. Return a final summary report that covers the entire task, not only the last turn, with these sections:
+- Changed: what changed across the whole loop
+- Verified: what verification ran and its results
+- Deferred: items intentionally postponed, with the reason
+- Not done: items not completed, with the reason
+- Open: unresolved questions or risks for the user
+If a section has no items, state that explicitly.
+
+Task:
+${task}`);
+      expect(inputs[1])
+        .toBe(`Do not implement, fix, edit, or change anything yet. Review, assess, and verify only. Live probes and queries if needed are authorized. If there are any actionable blocking and non-blocking findings, only return with all the actionable blocking and non-blocking findings. If there are no actionable blocking and non-blocking findings, return REVIEW_COMPLETE.
+
+Instruction for the Worker:
+${task}
+
+From the Worker:
+${workerResult}`);
       expect(inputs[2]).toBe("From the Reviewer:\nREVIEW_COMPLETE");
       const calls = vi.mocked(execa).mock.calls;
       const sessions =
@@ -207,7 +232,7 @@ test.each(["codex", "opencode", "copilot"])(
   15000,
 );
 
-// Usefulness: verifies the issue-#3 requirement that later turns reuse the exact From the Reviewer and From the Worker templates. No other test covers multi-iteration prompts, so coverage is nonredundant.
+// Usefulness: verifies the issue-#3 requirement that every turn uses the exact prompt template, asserting all four templates with whole-string equality. No other test covers the full prompt contract, so coverage is nonredundant.
 test("later worker and reviewer turns use the exact follow-up templates", async () => {
   const originalArgv = process.argv;
   const originalExitCode = process.exitCode;
@@ -255,9 +280,42 @@ test("later worker and reviewer turns use the exact follow-up templates", async 
 
     expect(error).not.toHaveBeenCalled();
     expect(execa).toHaveBeenCalledTimes(5);
+    expect(inputs[0]).toBe(`You are the implementation agent in an automated review loop.
+
+Complete the task below. Inspect the actual repository state before you make changes. Run relevant tests, checks, or validation. Do not merely explain what must change.
+
+After this turn, a reviewer will inspect your work. Each later message you receive starts with the line "From the Reviewer:" followed by either actionable findings or the single line REVIEW_COMPLETE.
+
+When you receive findings, address every actionable finding, then report what you changed, what you verified, and any finding you did not address and why.
+
+When you receive exactly this two-line message:
+From the Reviewer:
+REVIEW_COMPLETE
+
+Do not change any files. Return a final summary report that covers the entire task, not only the last turn, with these sections:
+- Changed: what changed across the whole loop
+- Verified: what verification ran and its results
+- Deferred: items intentionally postponed, with the reason
+- Not done: items not completed, with the reason
+- Open: unresolved questions or risks for the user
+If a section has no items, state that explicitly.
+
+Task:
+${task}`);
+    expect(inputs[1])
+      .toBe(`Do not implement, fix, edit, or change anything yet. Review, assess, and verify only. Live probes and queries if needed are authorized. If there are any actionable blocking and non-blocking findings, only return with all the actionable blocking and non-blocking findings. If there are no actionable blocking and non-blocking findings, return REVIEW_COMPLETE.
+
+Instruction for the Worker:
+${task}
+
+From the Worker:
+Initial work.`);
     expect(inputs[2]).toBe(`From the Reviewer:\n${findings}`);
-    expect(inputs[3]).toContain("Do not implement, fix, edit, or change anything yet.");
-    expect(inputs[3]).toContain(`From the Worker:\n${fix}`);
+    expect(inputs[3])
+      .toBe(`Do not implement, fix, edit, or change anything yet. Review, assess, and verify only. Live probes and queries if needed are authorized.
+
+From the Worker:
+${fix}`);
     expect(inputs[4]).toBe("From the Reviewer:\nREVIEW_COMPLETE");
     expect(process.exitCode).toBe(originalExitCode);
   } finally {
