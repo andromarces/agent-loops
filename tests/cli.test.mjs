@@ -5,11 +5,22 @@ vi.mock("execa", () => ({ execa: vi.fn() }));
 
 function mockKind(kind, replies, onInput) {
   return async (command, args, options) => {
+    const actual = await vi.importActual("execa");
     const index = onInput.calls++;
     expect(command).toBe(kind);
+    expect(options.cwd).toBe(process.cwd());
     expect(options.stdin).toBeUndefined();
     expect(args).not.toContain(options.input);
     onInput.handler(index, options.input, args);
+
+    const echoed = await actual.execa(
+      process.execPath,
+      ["-e", "process.stdin.pipe(process.stdout)"],
+      { ...options, stripFinalNewline: false },
+    );
+    expect(echoed.exitCode).toBe(0);
+    expect(echoed.stdout).toBe(options.input);
+
     const sessionId = index % 2 === 0 ? "worker-session" : "review-session";
     let stdout = replies[index];
     if (kind === "codex") {
@@ -26,7 +37,85 @@ function mockKind(kind, replies, onInput) {
   };
 }
 
-// Usefulness: verifies the issue-#3 requirement that the worker acts first, reviewer verifies, and REVIEW_COMPLETE triggers a final worker summary. No other test covers the worker-first order, so coverage is nonredundant.
+// Usefulness: verifies the issue-#6 requirement that claude accepts the array envelope and the legacy object shape across initial and resume turns in a worker-first loop. No other test exercises the Claude parse boundary, so coverage is nonredundant.
+test("claude handles array and object envelopes and resumes worker-first sessions", async () => {
+  const originalArgv = process.argv;
+  const originalExitCode = process.exitCode;
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const task = 'Inspect both lines.\nKeep "quotes" and Unicode: café.';
+  const workerResult = "First implementation.\nDid the work.";
+  const findings = "Blocking: fix null check.";
+  const fix = "Fixed null check and ran tests.";
+  const summary = "Changed: all.\nVerified: tests.\nDeferred: none.\nNot done: none.\nOpen: none.";
+  const replies = [workerResult, findings, fix, "REVIEW_COMPLETE", summary];
+  let callNumber = 0;
+
+  vi.mocked(execa)
+    .mockReset()
+    .mockImplementation(async (command, args) => {
+      const index = callNumber++;
+      expect(command).toBe("claude");
+      expect(args[0]).toBe("-p");
+      expect(args).toContain("--output-format");
+      expect(args).toContain("json");
+      const prompt = args.find(
+        (arg) => typeof arg === "string" && arg.includes(index === 0 ? task : replies[index - 1]),
+      );
+      expect(prompt).toBeDefined();
+
+      const sessionId = index % 2 === 0 ? "worker-session" : "review-session";
+      if (index >= 2) {
+        expect(args).toContain("--resume");
+        expect(args).toContain(sessionId);
+      }
+      const stdout =
+        index % 2 === 0
+          ? JSON.stringify([
+              { type: "system", subtype: "init", session_id: sessionId },
+              { type: "result", subtype: "success", session_id: sessionId, result: replies[index] },
+            ])
+          : JSON.stringify({ session_id: sessionId, result: replies[index] });
+      return { exitCode: 0, stdout, stderr: "" };
+    });
+
+  try {
+    process.argv = [
+      process.execPath,
+      "src/cli.mjs",
+      "--reviewer",
+      "claude",
+      "--worker",
+      "claude",
+      "--task",
+      task,
+      "--max-reviews",
+      "3",
+    ];
+    vi.resetModules();
+    await import("../src/cli.mjs");
+    await vi.waitFor(
+      () => {
+        expect(error).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(expect.stringContaining(summary));
+      },
+      { timeout: 10000 },
+    );
+
+    expect(execa).toHaveBeenCalledTimes(5);
+    const calls = vi.mocked(execa).mock.calls;
+    expect(calls[2][1]).toContain("worker-session");
+    expect(calls[3][1]).toContain("review-session");
+    expect(calls[4][1]).toContain("worker-session");
+    expect(process.exitCode).toBe(originalExitCode);
+  } finally {
+    process.argv = originalArgv;
+    process.exitCode = originalExitCode;
+    vi.restoreAllMocks();
+  }
+});
+
+// Usefulness: verifies the issue-#3 requirement that the worker acts first, reviewer verifies, and REVIEW_COMPLETE triggers a final worker summary, and the issue-#2 requirement that multi-line prompts travel on stdin with newline-free argv. No other test exercises the execa spawn boundary in a worker-first loop, so coverage is nonredundant.
 test.each(["codex", "opencode", "copilot"])(
   "%s runs worker first and returns a final summary on REVIEW_COMPLETE",
   async (kind) => {
