@@ -625,6 +625,11 @@ test.each([
     ],
     message: "Missing value for --worker-model",
   },
+  {
+    name: "rejects a short option as a model value",
+    argv: ["--reviewer", "claude", "--worker", "claude", "--worker-model", "-h"],
+    message: "Missing value for --worker-model",
+  },
 ])("validation $name", async ({ argv, message }) => {
   const originalArgv = process.argv;
   const originalExitCode = process.exitCode;

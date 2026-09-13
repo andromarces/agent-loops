@@ -23,7 +23,7 @@ function parseArgs(argv) {
 
   const readValue = (flag, index) => {
     const value = argv[index];
-    if (!value || value.startsWith("--")) {
+    if (!value || value.startsWith("-")) {
       throw new Error(`Missing value for ${flag}.`);
     }
     return value;
