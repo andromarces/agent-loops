@@ -126,11 +126,12 @@ function parseJsonLines(text) {
   return events;
 }
 
-async function exec(command, args, cwd) {
+async function exec(command, args, cwd, input) {
   const result = await execa(command, args, {
     cwd,
     reject: false,
-    stdin: "ignore",
+    input,
+    stdin: input === undefined ? "ignore" : undefined,
   });
 
   if (result.exitCode !== 0) {
@@ -174,10 +175,10 @@ async function runClaude(state, prompt, cwd) {
 
 async function runCodex(state, prompt, cwd) {
   const args = state.sessionId
-    ? ["exec", "resume", state.sessionId, "--json", prompt]
-    : ["exec", "--json", prompt];
+    ? ["exec", "resume", state.sessionId, "--json", "-"]
+    : ["exec", "--json"];
 
-  const { stdout } = await exec("codex", args, cwd);
+  const { stdout } = await exec("codex", args, cwd, prompt);
   const events = parseJsonLines(stdout);
 
   const started = events.find((event) => event.type === "thread.started");
@@ -240,9 +241,7 @@ async function runOpenCode(state, prompt, cwd, command) {
     args.push("--session", state.sessionId);
   }
 
-  args.push(prompt);
-
-  const { stdout } = await exec(command, args, cwd);
+  const { stdout } = await exec(command, args, cwd, prompt);
   const events = parseJsonLines(stdout);
 
   const sessionId = events.map((event) => event.sessionID).find(Boolean);
@@ -280,9 +279,9 @@ async function runCopilot(state, prompt, cwd) {
     state.sessionId = randomUUID();
   }
 
-  const args = ["--session-id", state.sessionId, "-p", prompt, "-s", "--no-ask-user"];
+  const args = ["--session-id", state.sessionId, "-s", "--no-ask-user"];
 
-  const { stdout } = await exec("copilot", args, cwd);
+  const { stdout } = await exec("copilot", args, cwd, prompt);
 
   if (!stdout.trim()) {
     throw new Error("Copilot did not return response text.");
