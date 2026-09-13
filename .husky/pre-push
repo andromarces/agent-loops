@@ -16,16 +16,12 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
   fi
 
   if [ -n "$base" ]; then
-    files=$(git diff -z --name-only --diff-filter=ACMR "$base" "$local_sha" -- \
-      '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx')
+    git diff -z --name-only --diff-filter=ACMR "$base" "$local_sha" -- \
+      '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx' \
+      | xargs -0 -r pnpm exec oxlint || exit 1
   else
-    files=$(git ls-files -z -- \
-      '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx')
+    git ls-files -z -- \
+      '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx' \
+      | xargs -0 -r pnpm exec oxlint || exit 1
   fi
-
-  if [ -z "$files" ]; then
-    continue
-  fi
-
-  printf '%s' "$files" | xargs -0 pnpm exec oxlint || exit 1
 done
