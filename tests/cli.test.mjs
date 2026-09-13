@@ -3,6 +3,7 @@ import { execa } from "execa";
 
 vi.mock("execa", () => ({ execa: vi.fn() }));
 
+// Usefulness: verifies the issue-#2 requirement that multi-line prompts travel on stdin with newline-free argv for codex/opencode/copilot across initial and resume turns; nonredundant because no other test exercises the execa spawn boundary.
 test.each(["codex", "opencode", "copilot"])(
   "%s preserves multiline stdin and resumes reviewer and worker sessions",
   async (kind) => {
