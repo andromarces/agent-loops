@@ -162,15 +162,26 @@ async function runClaude(state, prompt, cwd) {
   args.push(prompt, "--output-format", "json");
 
   const { stdout } = await exec("claude", args, cwd);
-  const result = parseJson(stdout, "Claude Code");
+  const parsed = parseJson(stdout, "Claude Code");
 
-  if (!result.session_id) {
+  let sessionId;
+  let response;
+
+  if (Array.isArray(parsed)) {
+    sessionId = parsed.map((event) => event?.session_id).find(Boolean);
+    response = parsed.find((event) => event?.type === "result")?.result;
+  } else {
+    sessionId = parsed.session_id;
+    response = parsed.result;
+  }
+
+  if (!sessionId) {
     throw new Error("Claude Code did not return a session_id.");
   }
 
-  state.sessionId = result.session_id;
+  state.sessionId = sessionId;
 
-  return String(result.result ?? "").trim();
+  return String(response ?? "").trim();
 }
 
 async function runCodex(state, prompt, cwd) {
