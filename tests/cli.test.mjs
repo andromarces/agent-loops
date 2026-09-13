@@ -69,7 +69,7 @@ test.each(["codex", "opencode", "copilot"])(
         "3",
       ];
       vi.resetModules();
-      await import("./cli.mjs");
+      await import("../src/cli.mjs");
       await vi.waitFor(
         () => {
           expect(error).not.toHaveBeenCalled();
