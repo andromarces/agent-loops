@@ -16,6 +16,8 @@ export const defaultAgents = {
   copilot: { run: runCopilot },
 };
 
+export const supportedAgents = new Set([...Object.keys(defaultAgents), "antigravity"]);
+
 export async function runAgent(state, prompt, options = {}, agents = defaultAgents) {
   const kind = normalizeAgent(state.kind);
   const adapter = agents[kind];
