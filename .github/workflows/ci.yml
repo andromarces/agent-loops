@@ -25,7 +25,17 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # pnpm#14407: on Windows, Defender/indexer transiently locks store paths
+      # during install; retry instead of failing the job on the first lock hit.
+      - name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            pnpm install --frozen-lockfile && exit 0
+            echo "::warning::pnpm install failed (attempt $attempt/3) - retrying in 15s"
+            sleep 15
+          done
+          exit 1
       - run: pnpm fmt:check
       - run: pnpm lint
       - run: pnpm test
