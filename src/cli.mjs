@@ -2,29 +2,25 @@
 
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { defaultAgents, normalizeAgent } from "./agents/index.mjs";
+import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runLoop } from "./runtime.mjs";
 
-const SUPPORTED = new Set(["claude", "codex", "agy", "antigravity", "opencode", "copilot"]);
+const ROLES = ["orchestrator", "worker", "reviewer"];
 
 export function parseArgs(argv) {
   const options = {
-    orchestrator: null,
-    worker: null,
-    reviewer: null,
-    orchestratorModel: null,
-    orchestratorEffort: null,
-    workerModel: null,
-    workerEffort: null,
-    reviewerModel: null,
-    reviewerEffort: null,
     cwd: process.cwd(),
     task: null,
     maxSteps: 20,
     timeout: null,
     transcript: null,
   };
+  for (const role of ROLES) {
+    options[role] = null;
+    options[`${role}Model`] = null;
+    options[`${role}Effort`] = null;
+  }
 
   const readValue = (flag, index) => {
     const value = argv[index];
@@ -34,46 +30,34 @@ export function parseArgs(argv) {
     return value;
   };
 
+  const readPositiveInt = (flag, index) => {
+    const val = Number(readValue(flag, index));
+    if (!Number.isInteger(val) || val < 1) {
+      throw new Error(`${flag} must be a positive integer.`);
+    }
+    return val;
+  };
+
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
 
+    let matched = false;
+    for (const role of ROLES) {
+      if (arg === `--${role}`) {
+        options[role] = readValue(arg, ++i);
+        matched = true;
+      } else if (arg === `--${role}-model`) {
+        options[`${role}Model`] = readValue(arg, ++i);
+        matched = true;
+      } else if (arg === `--${role}-effort`) {
+        options[`${role}Effort`] = readValue(arg, ++i);
+        matched = true;
+      }
+      if (matched) break;
+    }
+    if (matched) continue;
+
     switch (arg) {
-      case "--orchestrator":
-        options.orchestrator = readValue(arg, ++i);
-        break;
-
-      case "--worker":
-        options.worker = readValue(arg, ++i);
-        break;
-
-      case "--reviewer":
-        options.reviewer = readValue(arg, ++i);
-        break;
-
-      case "--orchestrator-model":
-        options.orchestratorModel = readValue(arg, ++i);
-        break;
-
-      case "--orchestrator-effort":
-        options.orchestratorEffort = readValue(arg, ++i);
-        break;
-
-      case "--worker-model":
-        options.workerModel = readValue(arg, ++i);
-        break;
-
-      case "--worker-effort":
-        options.workerEffort = readValue(arg, ++i);
-        break;
-
-      case "--reviewer-model":
-        options.reviewerModel = readValue(arg, ++i);
-        break;
-
-      case "--reviewer-effort":
-        options.reviewerEffort = readValue(arg, ++i);
-        break;
-
       case "--cwd":
         options.cwd = resolve(readValue(arg, ++i));
         break;
@@ -82,25 +66,13 @@ export function parseArgs(argv) {
         options.task = readValue(arg, ++i);
         break;
 
-      case "--max-steps": {
-        const raw = readValue(arg, ++i);
-        const val = Number(raw);
-        if (!Number.isInteger(val) || val < 1) {
-          throw new Error("--max-steps must be a positive integer.");
-        }
-        options.maxSteps = val;
+      case "--max-steps":
+        options.maxSteps = readPositiveInt("--max-steps", ++i);
         break;
-      }
 
-      case "--timeout": {
-        const raw = readValue(arg, ++i);
-        const val = Number(raw);
-        if (!Number.isInteger(val) || val < 1) {
-          throw new Error("--timeout must be a positive integer.");
-        }
-        options.timeout = val;
+      case "--timeout":
+        options.timeout = readPositiveInt("--timeout", ++i);
         break;
-      }
 
       case "--transcript":
         options.transcript = resolve(readValue(arg, ++i));
@@ -117,40 +89,18 @@ export function parseArgs(argv) {
     }
   }
 
-  if (!options.orchestrator) {
-    throw new Error("Missing required --orchestrator.");
-  }
-  if (!SUPPORTED.has(options.orchestrator)) {
-    throw new Error(`Unsupported orchestrator: ${options.orchestrator}`);
-  }
-
-  if (!options.worker) {
-    throw new Error("Missing required --worker.");
-  }
-  if (!SUPPORTED.has(options.worker)) {
-    throw new Error(`Unsupported worker: ${options.worker}`);
+  for (const role of ROLES) {
+    if (!options[role]) {
+      throw new Error(`Missing required --${role}.`);
+    }
+    if (!supportedAgents.has(options[role])) {
+      throw new Error(`Unsupported ${role}: ${options[role]}`);
+    }
   }
 
-  if (!options.reviewer) {
-    throw new Error("Missing required --reviewer.");
+  for (const role of ROLES) {
+    assertOpenCodeOptions(role, options[role], options[`${role}Model`], options[`${role}Effort`]);
   }
-  if (!SUPPORTED.has(options.reviewer)) {
-    throw new Error(`Unsupported reviewer: ${options.reviewer}`);
-  }
-
-  assertOpenCodeOptions(
-    "orchestrator",
-    options.orchestrator,
-    options.orchestratorModel,
-    options.orchestratorEffort,
-  );
-  assertOpenCodeOptions("worker", options.worker, options.workerModel, options.workerEffort);
-  assertOpenCodeOptions(
-    "reviewer",
-    options.reviewer,
-    options.reviewerModel,
-    options.reviewerEffort,
-  );
 
   if (options.task === null || options.task === undefined || String(options.task).trim() === "") {
     throw new Error(
@@ -246,6 +196,15 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
   }
 
   const events = [];
+  const roles = {};
+  for (const role of ROLES) {
+    roles[role] = {
+      kind: normalizeAgent(options[role]),
+      model: options[`${role}Model`],
+      effort: options[`${role}Effort`],
+      sessionId: null,
+    };
+  }
   const transcriptData = {
     task: options.task,
     cwd: options.cwd,
@@ -253,26 +212,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       maxSteps: options.maxSteps,
       timeout: options.timeout,
     },
-    roles: {
-      orchestrator: {
-        kind: normalizeAgent(options.orchestrator),
-        model: options.orchestratorModel,
-        effort: options.orchestratorEffort,
-        sessionId: null,
-      },
-      worker: {
-        kind: normalizeAgent(options.worker),
-        model: options.workerModel,
-        effort: options.workerEffort,
-        sessionId: null,
-      },
-      reviewer: {
-        kind: normalizeAgent(options.reviewer),
-        model: options.reviewerModel,
-        effort: options.reviewerEffort,
-        sessionId: null,
-      },
-    },
+    roles,
     events,
     exitCode: 1,
     error: null,
@@ -304,66 +244,64 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
   process.once("SIGINT", onSigInt);
 
   try {
-    await assertGitWorkTree(options.cwd);
-  } catch (err) {
-    process.removeListener("SIGINT", onSigInt);
-    await finish({ exitCode: 1, error: err });
-    return;
-  }
-
-  const onEvent = (event) => {
-    if (options.transcript) {
-      events.push({
-        ...event,
-        at: new Date().toISOString(),
-      });
+    try {
+      await assertGitWorkTree(options.cwd);
+    } catch (err) {
+      await finish({ exitCode: 1, error: err });
+      return;
     }
 
-    if (event.type === "action") {
-      console.log("\n===== ORCHESTRATOR =====\n");
-      console.log(JSON.stringify(event.action, null, 2));
-    } else if (event.type === "result") {
-      const banner =
-        event.role === "worker" ? `WORKER ${event.stepsUsed}` : `REVIEWER ${event.stepsUsed}`;
-      console.log(`\n===== ${banner} =====\n`);
-      if (event.result.status === "ok") {
-        console.log(event.result.response);
+    const onEvent = (event) => {
+      if (options.transcript) {
+        events.push({
+          ...event,
+          at: new Date().toISOString(),
+        });
+      }
+
+      if (event.type === "action") {
+        console.log("\n===== ORCHESTRATOR =====\n");
+        console.log(JSON.stringify(event.action, null, 2));
+      } else if (event.type === "result") {
+        const banner =
+          event.role === "worker" ? `WORKER ${event.stepsUsed}` : `REVIEWER ${event.stepsUsed}`;
+        console.log(`\n===== ${banner} =====\n`);
+        if (event.result.status === "ok") {
+          console.log(event.result.response);
+        } else {
+          console.log(`Error: ${event.result.error}`);
+        }
+      }
+    };
+
+    try {
+      const result = await runLoop({
+        task: options.task,
+        cwd: options.cwd,
+        maxSteps: options.maxSteps,
+        timeout: options.timeout,
+        signal: controller.signal,
+        roles: transcriptData.roles,
+        agents,
+        onEvent,
+      });
+
+      if (result.exitCode === 0) {
+        console.log("\n===== SUMMARY =====\n");
+        console.log(formatSummary(result.summary));
+        await finish({ exitCode: 0, error: null });
       } else {
-        console.log(`Error: ${event.result.error}`);
+        await finish({ exitCode: result.exitCode, error: new Error(result.reason) });
+      }
+    } catch (err) {
+      if (err?.isCanceled) {
+        await finish({ exitCode: 130, error: new Error("Interrupted by SIGINT") });
+      } else {
+        await finish({ exitCode: 1, error: err });
       }
     }
-  };
-
-  try {
-    const result = await runLoop({
-      task: options.task,
-      cwd: options.cwd,
-      maxSteps: options.maxSteps,
-      timeout: options.timeout,
-      signal: controller.signal,
-      roles: transcriptData.roles,
-      agents,
-      onEvent,
-    });
-
+  } finally {
     process.removeListener("SIGINT", onSigInt);
-
-    if (result.exitCode === 0) {
-      console.log("\n===== SUMMARY =====\n");
-      console.log(formatSummary(result.summary));
-      await finish({ exitCode: 0, error: null });
-    } else if (result.exitCode === 1) {
-      await finish({ exitCode: 1, error: new Error(result.reason) });
-    } else if (result.exitCode === 2) {
-      await finish({ exitCode: 2, error: new Error(result.reason) });
-    }
-  } catch (err) {
-    process.removeListener("SIGINT", onSigInt);
-    if (err?.isCanceled) {
-      await finish({ exitCode: 130, error: new Error("Interrupted by SIGINT") });
-    } else {
-      await finish({ exitCode: 1, error: err });
-    }
   }
 }
 
