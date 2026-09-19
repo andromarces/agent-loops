@@ -1,6 +1,11 @@
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { ExecError, exec } from "../../src/lib/exec.mjs";
 import { setVerbose } from "../../src/lib/log.mjs";
+
+afterEach(() => {
+  setVerbose(false);
+  vi.restoreAllMocks();
+});
 
 // Usefulness: verifies successful execution returns stdout and stderr.
 test("exec returns stdout on successful command", async () => {
