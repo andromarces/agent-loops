@@ -23,7 +23,7 @@ export async function assertGitWorkTree(cwd) {
   }
 }
 
-async function sha256(data) {
+function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
 }
 
@@ -55,14 +55,12 @@ export async function snapshot(cwd) {
     const token = statusTokens[i];
     if (!token) continue;
     const status = token.slice(0, 2);
-    let filePath = token.slice(3);
+    const filePath = token.slice(3);
 
-    // If rename/copy (status 'R' or 'C'), -z outputs old path then new path
+    // If rename/copy (status 'R' or 'C'), -z outputs <new-path>\0<old-path>\0.
+    // filePath is already <new-path>; consume <old-path> in nextToken so it is not processed as a file.
     if (status.includes("R") || status.includes("C")) {
-      const nextToken = statusTokens[++i];
-      if (nextToken) {
-        filePath = nextToken;
-      }
+      i++;
     }
 
     const fullPath = join(cwd, filePath);
@@ -74,7 +72,7 @@ export async function snapshot(cwd) {
 
   // 2. Index hash
   const lsResult = await execa("git", ["ls-files", "--stage", "-z"], { cwd, reject: false });
-  const indexHash = await sha256(lsResult.stdout);
+  const indexHash = sha256(lsResult.stdout);
 
   // 3. HEAD
   const headResult = await execa("git", ["rev-parse", "--verify", "-q", "HEAD"], {

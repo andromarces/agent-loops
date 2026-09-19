@@ -300,7 +300,6 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
   const controller = new AbortController();
   const onSigInt = () => {
     controller.abort();
-    finish({ exitCode: 130, error: new Error("Interrupted by SIGINT") }).catch(() => {});
   };
   process.once("SIGINT", onSigInt);
 
@@ -354,7 +353,6 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
     } else if (result.exitCode === 1) {
       await finish({ exitCode: 1, error: new Error(result.reason) });
     } else if (result.exitCode === 2) {
-      console.error(`\nStopped after ${options.maxSteps} steps with work remaining.`);
       await finish({ exitCode: 2, error: new Error(result.reason) });
     }
   } catch (err) {

@@ -192,3 +192,14 @@ agent-loop \
   --transcript ./run.json \
   --task "Add a README line that names the project."
 ```
+
+## Future additions
+
+Features considered for future development once the hybrid loop stabilizes:
+
+- Orchestrator-addressable roles (allowing dynamic registration of additional named specialist roles)
+- Per-role extra CLI arguments and flags
+- GitHub pull request mode
+- Configurable validation commands and automated gates
+- Persistent controller state and session resume across process restarts
+- Streaming transcript logs and usage metadata

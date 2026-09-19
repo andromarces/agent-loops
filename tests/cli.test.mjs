@@ -406,3 +406,62 @@ test("orchestrator failure writes transcript with exitCode 1", async () => {
     await rm(repo, { recursive: true, force: true });
   }
 });
+
+// Usefulness: verifies SIGINT cancel through cli.mjs sets exitCode 130 and writes transcript.
+test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  const fakeAgents = {
+    codex: {
+      async run() {
+        process.emit("SIGINT");
+        // Simulate execa cancel behavior on signal
+        const err = new Error("canceled");
+        err.isCanceled = true;
+        throw err;
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "task",
+        "--cwd",
+        repo,
+        "--transcript",
+        transcriptPath,
+      ],
+      fakeAgents,
+    );
+
+    expect(process.exitCode).toBe(130);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(transcript.exitCode).toBe(130);
+    expect(transcript.error).toContain("Interrupted by SIGINT");
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await rm(repo, { recursive: true, force: true });
+  }
+});

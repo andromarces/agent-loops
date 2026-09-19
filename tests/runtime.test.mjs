@@ -553,7 +553,7 @@ test("cancel signal stops loop", async () => {
   }
 });
 
-// 16. Usefulness: verifies reviewer mutation is detected and fatal.
+// 16. Usefulness: verifies reviewer mutation is detected, fatal, and does not revert changes.
 test("reviewer mutation is detected and fatal", async () => {
   const repo = await createTempRepo();
   try {
@@ -578,6 +578,10 @@ test("reviewer mutation is detected and fatal", async () => {
         agents: { orch: scripted(orchReplies), work: scripted([]), rev: reviewerAdapter },
       }),
     ).rejects.toThrow(MutationError);
+
+    // No-revert rule: mutated file still exists on disk
+    const s = await execa("git", ["status", "--porcelain"], { cwd: repo });
+    expect(s.stdout).toContain("leak.txt");
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

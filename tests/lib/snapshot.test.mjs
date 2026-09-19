@@ -60,6 +60,34 @@ test("diffSnapshots detects modified tracked file", async () => {
   }
 });
 
+// Usefulness: verifies diffSnapshots detects when an already-dirty file is modified again.
+test("diffSnapshots detects when already-dirty file is modified again", async () => {
+  const repo = await createTempRepo();
+  try {
+    await writeFile(join(repo, "initial.txt"), "first dirty modification\n");
+    const s1 = await snapshot(repo);
+    await writeFile(join(repo, "initial.txt"), "second dirty modification\n");
+    const s2 = await snapshot(repo);
+    expect(diffSnapshots(s1, s2)).toEqual(["initial.txt"]);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+// Usefulness: verifies diffSnapshots detects when a renamed dirty file is modified.
+test("diffSnapshots detects when renamed dirty file is modified", async () => {
+  const repo = await createTempRepo();
+  try {
+    await execa("git", ["mv", "initial.txt", "renamed.txt"], { cwd: repo });
+    const s1 = await snapshot(repo);
+    await writeFile(join(repo, "renamed.txt"), "modified renamed file content\n");
+    const s2 = await snapshot(repo);
+    expect(diffSnapshots(s1, s2)).toEqual(["renamed.txt"]);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 // Usefulness: verifies diffSnapshots detects untracked file addition.
 test("diffSnapshots detects untracked file addition", async () => {
   const repo = await createTempRepo();
