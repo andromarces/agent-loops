@@ -35,7 +35,7 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
   - Spawns agents, manages persistent sessions, and captures process signals (`Ctrl+C` exits 130).
   - Enforces non-mutating safety on reviewer and orchestrator turns using CLI flags and pre/post Git work-tree mutation detection.
   - Recovers from malformed JSON via a single repair turn.
-  - Records validated orchestrator actions, child results, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses and repair turns are not recorded.
+  - Records validated orchestrator actions, child results, one `invocation` event per CLI call with usage when the adapter exposes it, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses are not recorded.
 
 See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md)).
 
@@ -136,7 +136,15 @@ Known limits:
 
 When `--transcript <file>` is specified, a JSON transcript is written upon process exit (except when argv parsing fails).
 
-The transcript records each validated orchestrator action and each child result with timestamps, plus the final exit code and error. It does not record raw orchestrator responses or repair turns.
+The transcript records each validated orchestrator action, each child result, and one `invocation` event per CLI call, all with timestamps, plus the final exit code and error. It does not record raw orchestrator responses.
+
+An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude adapter maps it from the CLI result:
+
+- `models`: the `modelUsage` map, keyed by model id. Includes subagent requests. Use it for model routing and cost attribution.
+- `mainLoop`: the top-level `usage` field. Excludes subagents.
+- `totalCostUsd`: `total_cost_usd`. Includes subagents.
+
+Other adapters emit `invocation` events without `usage` until their CLI output is mapped. Per-model usage shows which models ran inside a turn. It cannot separate parent tokens from subagent tokens on the same model.
 
 ```json
 {
@@ -149,7 +157,9 @@ The transcript records each validated orchestrator action and each child result 
     "reviewer": { "kind": "agy", "model": null, "effort": null, "sessionId": "..." }
   },
   "events": [
+    { "type": "invocation", "at": "...", "stepsUsed": 0, "role": "orchestrator", "status": "ok", "usage": { ... } },
     { "type": "action", "at": "...", "stepsUsed": 0, "action": { ... } },
+    { "type": "invocation", "at": "...", "stepsUsed": 1, "role": "worker", "status": "ok", "usage": { ... } },
     { "type": "result", "at": "...", "stepsUsed": 1, "role": "worker", "result": { ... } }
   ],
   "exitCode": 0,

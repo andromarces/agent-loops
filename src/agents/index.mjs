@@ -12,6 +12,8 @@ export function normalizeAgent(kind) {
  * Adapter registry. Each adapter implements `run(state, prompt, options) -> string`:
  * it runs one turn of the CLI and returns the response text, and it mutates
  * `state.sessionId` to hold the persistent session id used for resume.
+ * An adapter may set `state.usage` for the turn it just completed; the runtime
+ * consumes and removes it after every call. Adapters that expose no usage leave it unset.
  */
 export const defaultAgents = {
   claude: { run: runClaude },

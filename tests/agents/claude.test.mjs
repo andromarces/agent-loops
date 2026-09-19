@@ -48,3 +48,40 @@ test("claude resumes session with effort and readOnly false", async () => {
     { cwd: "/path", input: "follow up", timeout: undefined, signal: undefined, role: undefined },
   );
 });
+
+// Usefulness: verifies the adapter exposes per-model usage, main-loop usage, and total cost from the
+// result event as `state.usage`, so the transcript can attribute cost per invocation (issue #47).
+test("claude exposes result usage on state", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({
+      session_id: "s1",
+      result: "ok",
+      usage: { input_tokens: 10, output_tokens: 5 },
+      modelUsage: { "claude-opus-5": { inputTokens: 12, outputTokens: 6, costUSD: 0.01 } },
+      total_cost_usd: 0.01,
+    }),
+    stderr: "",
+  });
+
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await runClaude(state, "p", { cwd: "/path", readOnly: false });
+
+  expect(state.usage).toEqual({
+    models: { "claude-opus-5": { inputTokens: 12, outputTokens: 6, costUSD: 0.01 } },
+    mainLoop: { input_tokens: 10, output_tokens: 5 },
+    totalCostUsd: 0.01,
+  });
+});
+
+// Usefulness: verifies a result without usage fields leaves no stale usage on state.
+test("claude clears state.usage when the result carries no usage", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify([{ session_id: "s1", type: "result", result: "done" }]),
+    stderr: "",
+  });
+
+  const state = { kind: "claude", sessionId: "s1", model: null, effort: null, usage: { stale: 1 } };
+  await runClaude(state, "p", { cwd: "/path", readOnly: false });
+
+  expect(state.usage).toBeUndefined();
+});

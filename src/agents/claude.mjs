@@ -27,14 +27,14 @@ export async function runClaude(state, prompt, options = {}) {
   const parsed = parseJson(stdout, "Claude Code");
 
   let sessionId;
-  let response;
+  let resultEvent;
 
   if (Array.isArray(parsed)) {
     sessionId = parsed.map((event) => event?.session_id).find(Boolean);
-    response = parsed.find((event) => event?.type === "result")?.result;
+    resultEvent = parsed.find((event) => event?.type === "result");
   } else {
     sessionId = parsed.session_id;
-    response = parsed.result;
+    resultEvent = parsed;
   }
 
   if (!sessionId) {
@@ -42,6 +42,20 @@ export async function runClaude(state, prompt, options = {}) {
   }
 
   state.sessionId = sessionId;
+  const response = resultEvent?.result;
+
+  // `usage` covers the top-level loop only; `modelUsage` and `total_cost_usd` include subagents.
+  const usage = {};
+  if (resultEvent?.modelUsage) usage.models = resultEvent.modelUsage;
+  if (resultEvent?.usage) usage.mainLoop = resultEvent.usage;
+  if (typeof resultEvent?.total_cost_usd === "number") {
+    usage.totalCostUsd = resultEvent.total_cost_usd;
+  }
+  if (Object.keys(usage).length > 0) {
+    state.usage = usage;
+  } else {
+    delete state.usage;
+  }
 
   return String(response ?? "").trim();
 }
