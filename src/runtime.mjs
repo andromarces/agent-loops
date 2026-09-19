@@ -1,4 +1,5 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
+import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
 import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
@@ -19,6 +20,13 @@ export async function runLoop(options) {
 
   const { orchestrator, worker, reviewer } = roles;
 
+  logInfo(`agent loop started (cwd: ${cwd}, maxSteps: ${maxSteps})`);
+
+  function stopLoop(exitCode, detail) {
+    logInfo(`agent loop stopped (exit ${exitCode})`);
+    return { exitCode, ...detail };
+  }
+
   async function runRole(role, roleName, prompt, readOnly) {
     const runFn = async () => {
       return runAgent(
@@ -29,6 +37,7 @@ export async function runLoop(options) {
           readOnly,
           timeout,
           signal,
+          role: roleName,
         },
         agents,
       );
@@ -52,19 +61,25 @@ export async function runLoop(options) {
       return { role: roleName, status: "ok", response };
     } catch (err) {
       if (err?.name === "MutationError" || err?.name === "SnapshotError" || err?.isCanceled) {
+        if (err?.isCanceled) {
+          logError(`${roleName} canceled by signal`);
+        }
         throw err;
       }
       let errorMessage = err?.message ?? String(err);
       if (err?.timedOut) {
         errorMessage = `${roleName} timed out after ${timeout} seconds`;
       }
+      logWarn(err?.timedOut ? errorMessage : `${roleName}: ${errorMessage.split("\n")[0]}`);
       return { role: roleName, status: "error", error: errorMessage };
     }
   }
 
   const orchAdapter = {
     async run(state, p, opts) {
-      return withMutationCheck(cwd, "orchestrator", () => runAgent(state, p, opts, agents));
+      return withMutationCheck(cwd, "orchestrator", () =>
+        runAgent(state, p, { ...opts, role: "orchestrator" }, agents),
+      );
     },
   };
 
@@ -72,25 +87,31 @@ export async function runLoop(options) {
   let prompt = initialPrompt({ task, maxSteps });
 
   while (true) {
-    const action = await decide({
-      agent: orchAdapter,
-      state: orchestrator,
-      prompt,
-      options: { cwd, timeout, signal },
-    });
+    let action;
+    try {
+      action = await decide({
+        agent: orchAdapter,
+        state: orchestrator,
+        prompt,
+        options: { cwd, timeout, signal },
+      });
+    } catch (err) {
+      logError(`orchestrator turn failed: ${String(err?.message ?? err).split("\n")[0]}`);
+      throw err;
+    }
 
     onEvent({ type: "action", action, stepsUsed });
 
     if (action.action === "finish") {
-      return { exitCode: 0, summary: action.summary };
+      return stopLoop(0, { summary: action.summary });
     }
 
     if (action.action === "abort") {
-      return { exitCode: 1, reason: action.reason };
+      return stopLoop(1, { reason: action.reason });
     }
 
     if (stepsUsed >= maxSteps) {
-      return { exitCode: 2, reason: "Step limit reached with work remaining." };
+      return stopLoop(2, { reason: "Step limit reached with work remaining." });
     }
 
     stepsUsed += 1;

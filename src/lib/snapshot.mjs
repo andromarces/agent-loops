@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
+import { logDebug, logError } from "./log.mjs";
 
 export class MutationError extends Error {
   constructor(role, paths) {
@@ -174,6 +175,7 @@ export function diffSnapshots(before, after) {
 
 export async function withMutationCheck(cwd, role, fn) {
   const before = await snapshot(cwd);
+  logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
   let actionError = null;
   let result;
 
@@ -195,10 +197,13 @@ export async function withMutationCheck(cwd, role, fn) {
     }
     throw snapErr;
   }
+  logDebug(`snapshot after ${role} turn taken (${after.workTree.length} work tree entries)`);
 
   const diff = diffSnapshots(before, after);
   if (diff.length > 0) {
-    throw new MutationError(role, diff);
+    const mutationError = new MutationError(role, diff);
+    logError(mutationError.message);
+    throw mutationError;
   }
 
   if (actionError) {

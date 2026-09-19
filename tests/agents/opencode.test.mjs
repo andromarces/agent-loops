@@ -29,7 +29,7 @@ test("opencode sends --agent plan when readOnly is true", async () => {
   expect(exec).toHaveBeenCalledWith(
     "opencode",
     ["run", "--format", "json", "--agent", "plan", "--model", "claude-3-5#high"],
-    { cwd: "/dir", input: "oc prompt", timeout: undefined, signal: undefined },
+    { cwd: "/dir", input: "oc prompt", timeout: undefined, signal: undefined, role: undefined },
   );
 });
 
@@ -55,6 +55,6 @@ test("opencode resumes session", async () => {
   expect(exec).toHaveBeenCalledWith(
     "opencode",
     ["run", "--format", "json", "--session", "sess-oc"],
-    { cwd: "/dir", input: "resume oc", timeout: undefined, signal: undefined },
+    { cwd: "/dir", input: "resume oc", timeout: undefined, signal: undefined, role: undefined },
   );
 });

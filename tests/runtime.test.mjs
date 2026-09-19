@@ -1,11 +1,12 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { execa } from "execa";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
+import { setVerbose } from "../src/lib/log.mjs";
 
 function scripted(replies) {
   let callIndex = 0;
@@ -769,6 +770,88 @@ test("reviewer snapshot failure is fatal when agent also fails", async () => {
       cause: agentError,
     });
   } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+// 23. Usefulness: verifies issue #26 acceptance — a timed-out child produces a log line naming the role and "timed out".
+test("timed-out child logs a line naming the role and timed out", async () => {
+  const repo = await createTempRepo();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "hang please" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ];
+    const reviewerAdapter = scripted([
+      () => {
+        throw new ExecError("timeout", { timedOut: true });
+      },
+    ]);
+
+    const result = await runLoop({
+      task: "Task 23",
+      cwd: repo,
+      maxSteps: 5,
+      timeout: 10,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: reviewerAdapter },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const lines = errorSpy.mock.calls.map((call) => call.map(String).join(" "));
+    expect(lines.some((line) => line.includes("reviewer") && line.includes("timed out"))).toBe(
+      true,
+    );
+  } finally {
+    errorSpy.mockRestore();
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+// 24. Usefulness: verifies issue #26 acceptance — with the debug gate on, snapshot debug lines appear
+// around each reviewer and orchestrator turn (reviewer/orchestrator turns are mutation-checked).
+test("verbose mode logs snapshot debug lines around reviewer and orchestrator turns", async () => {
+  const repo = await createTempRepo();
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  setVerbose(true);
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "review please" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ];
+
+    const result = await runLoop({
+      task: "Task 24",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: scripted(["reviewed"]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const lines = logSpy.mock.calls.map((call) => call.join(" "));
+    expect(lines.some((line) => line.includes("snapshot") && line.includes("reviewer"))).toBe(true);
+    expect(lines.some((line) => line.includes("snapshot") && line.includes("orchestrator"))).toBe(
+      true,
+    );
+  } finally {
+    setVerbose(false);
+    logSpy.mockRestore();
     await rm(repo, { recursive: true, force: true });
   }
 });

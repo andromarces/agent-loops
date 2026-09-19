@@ -2,7 +2,7 @@ import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 
 export async function runOpenCode(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal } = options;
+  const { cwd, readOnly, timeout, signal, role } = options;
   const args = ["run", "--format", "json"];
 
   if (state.sessionId) {
@@ -20,7 +20,7 @@ export async function runOpenCode(state, prompt, options = {}) {
     args.push("--model", model);
   }
 
-  const { stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal });
+  const { stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal, role });
   const events = parseJsonLines(stdout);
 
   const sessionId = events.map((event) => event.sessionID).find(Boolean);

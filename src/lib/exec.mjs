@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { logInfo } from "./log.mjs";
 
 export class ExecError extends Error {
   constructor(
@@ -18,7 +19,11 @@ export class ExecError extends Error {
 }
 
 export async function exec(command, args = [], options = {}) {
-  const { cwd, input, timeout, signal } = options;
+  const { cwd, input, timeout, signal, role } = options;
+
+  const label = role ? `${role}: ${command}` : command;
+  const startedAt = Date.now();
+  logInfo(`${label} started`);
 
   const execaOptions = {
     cwd,
@@ -75,8 +80,11 @@ export async function exec(command, args = [], options = {}) {
     });
   }
 
+  logInfo(`${label} finished in ${Date.now() - startedAt}ms (exit 0)`);
+
   return {
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
+    durationMs: Date.now() - startedAt,
   };
 }

@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { ExecError, exec } from "../../src/lib/exec.mjs";
 
 // Usefulness: verifies successful execution returns stdout and stderr.
@@ -169,4 +169,21 @@ test("exec terminates descendants when canceled", async () => {
     }
     expect(isAlive).toBe(false);
   }
+});
+
+// Usefulness: verifies issue #26 — each agent invocation logs start and successful stop with
+// the command name, duration, and exit code at info level.
+test("exec logs start and stop with command name, duration, and exit code", async () => {
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+  const result = await exec(process.execPath, ["-e", 'console.log("hello")'], {
+    role: "reviewer",
+  });
+
+  expect(result.stdout.trim()).toBe("hello");
+  const lines = logSpy.mock.calls.map((call) => call.join(" "));
+  const startLine = lines.find((line) => line.includes("reviewer") && line.includes("node"));
+  const stopLine = lines.find((line) => line.includes("reviewer") && line.includes("exit 0"));
+  expect(startLine).toBeTruthy();
+  expect(stopLine).toMatch(/ms/);
 });

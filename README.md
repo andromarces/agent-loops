@@ -101,6 +101,7 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --max-steps <count>           Maximum child steps. Defaults to 20.
 --timeout <seconds>           Timeout in seconds per invocation. Optional.
 --transcript <file>           Record execution transcript to a JSON file.
+--verbose                     Enable debug-level lifecycle logging, including snapshot activity.
 -h, --help                    Show help.
 ```
 

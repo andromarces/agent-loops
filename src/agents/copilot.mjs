@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { exec } from "../lib/exec.mjs";
 
 export async function runCopilot(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal } = options;
+  const { cwd, readOnly, timeout, signal, role } = options;
 
   if (!state.sessionId) {
     state.sessionId = randomUUID();
@@ -22,7 +22,7 @@ export async function runCopilot(state, prompt, options = {}) {
     args.push("--reasoning-effort", state.effort);
   }
 
-  const { stdout } = await exec("copilot", args, { cwd, input: prompt, timeout, signal });
+  const { stdout } = await exec("copilot", args, { cwd, input: prompt, timeout, signal, role });
 
   if (!stdout.trim()) {
     throw new Error("Copilot did not return response text.");
