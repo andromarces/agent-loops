@@ -113,11 +113,17 @@ Reviewer and orchestrator turns run in read-only mode to prevent unintended repo
 
 | CLI        | Read-only invocation flag     | Note                                                                         |
 | ---------- | ----------------------------- | ---------------------------------------------------------------------------- |
-| `claude`   | `--permission-mode plan`      | Plan mode blocks file edits.                                                 |
+| `claude`   | `--permission-mode plan`      | Plan mode blocks file edits. See the note on research subagents below.       |
 | `codex`    | `-c sandbox_mode="read-only"` | Passes read-only sandbox mode on new and resumed sessions.                   |
 | `agy`      | `--mode plan`                 | Plan mode disables file edits.                                               |
 | `opencode` | `--agent plan`                | Plan agent rejects edit tools.                                               |
 | `copilot`  | `--deny-tool write`           | Denies write/edit tools. External permissions may still permit shell writes. |
+
+#### Claude plan-mode research subagents
+
+Plan mode delegates research to the built-in Explore and Plan subagents. They inherit the role model (Explore is capped at Opus on the Claude API), so a read-only Claude turn spawns hidden subagents at the cost of `--orchestrator-model` or `--reviewer-model`.
+
+The Claude adapter sets `CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS=1` on read-only turns only. Plan mode then reads files directly. Worker turns are unchanged. The variable disables only the built-in Explore and Plan subagents; the general-purpose subagent and custom subagents stay available. Requires Claude Code v2.1.198 or later; older versions ignore the variable.
 
 ### Mutation detection
 
