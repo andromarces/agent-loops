@@ -8,6 +8,11 @@ export function normalizeAgent(kind) {
   return kind === "antigravity" ? "agy" : kind;
 }
 
+/**
+ * Adapter registry. Each adapter implements `run(state, prompt, options) -> string`:
+ * it runs one turn of the CLI and returns the response text, and it mutates
+ * `state.sessionId` to hold the persistent session id used for resume.
+ */
 export const defaultAgents = {
   claude: { run: runClaude },
   codex: { run: runCodex },

@@ -35,7 +35,7 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
   - Spawns agents, manages persistent sessions, and captures process signals (`Ctrl+C` exits 130).
   - Enforces non-mutating safety on reviewer and orchestrator turns using CLI flags and pre/post Git work-tree mutation detection.
   - Recovers from malformed JSON via a single repair turn.
-  - Outputs full execution history when `--transcript` is provided.
+  - Records validated orchestrator actions, child results, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses and repair turns are not recorded.
 
 See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md)).
 
@@ -96,7 +96,7 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --worker-effort <level>       Thinking effort passed to the worker CLI. Optional.
 --reviewer-model <model>      Model passed to the reviewer CLI. Optional.
 --reviewer-effort <level>     Thinking effort passed to the reviewer CLI. Optional.
---cwd <directory>             Working directory. Must be inside a Git work tree. Defaults to current directory.
+--cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
 --task <text>                 Task description. Required.
 --max-steps <count>           Maximum child steps. Defaults to 20.
 --timeout <seconds>           Timeout in seconds per invocation. Optional.
@@ -135,15 +135,17 @@ Known limits:
 
 When `--transcript <file>` is specified, a JSON transcript is written upon process exit (except when argv parsing fails):
 
+The transcript records each validated orchestrator action and each child result with timestamps, plus the final exit code and error. It does not record raw orchestrator responses or repair turns.
+
 ```json
 {
   "task": "...",
   "cwd": "...",
   "options": { "maxSteps": 20, "timeout": null },
   "roles": {
-    "orchestrator": { "kind": "codex", "sessionId": "..." },
-    "worker": {},
-    "reviewer": {}
+    "orchestrator": { "kind": "codex", "model": null, "effort": null, "sessionId": "..." },
+    "worker": { "kind": "claude", "model": "...", "effort": "...", "sessionId": "..." },
+    "reviewer": { "kind": "agy", "model": null, "effort": null, "sessionId": "..." }
   },
   "events": [
     { "type": "action", "at": "...", "stepsUsed": 0, "action": { ... } },
@@ -156,12 +158,12 @@ When `--transcript <file>` is specified, a JSON transcript is written upon proce
 
 ## Exit codes
 
-| Code | Meaning                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------- |
-| 0    | Orchestrator returned `finish` with valid 5-part summary.                                    |
-| 1    | Orchestrator returned `abort`, CLI failure, mutation detected, timeout, or controller error. |
-| 2    | Step limit reached (`--max-steps`) with work remaining.                                      |
-| 130  | Interrupted by `Ctrl+C` (active children killed).                                            |
+| Code | Meaning                                                                                                                                                                                                    |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Orchestrator returned `finish` with valid 5-part summary.                                                                                                                                                  |
+| 1    | Orchestrator returned `abort`, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover. |
+| 2    | Step limit reached (`--max-steps`) with work remaining.                                                                                                                                                    |
+| 130  | Interrupted by `Ctrl+C` (active children killed).                                                                                                                                                          |
 
 ## Development
 
