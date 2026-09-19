@@ -96,6 +96,10 @@ export async function runLoop(options) {
         options: { cwd, timeout, signal },
       });
     } catch (err) {
+      if (err?.name === "MutationError") {
+        // Already logged at the detection site in withMutationCheck.
+        throw err;
+      }
       logError(`orchestrator turn failed: ${String(err?.message ?? err).split("\n")[0]}`);
       throw err;
     }

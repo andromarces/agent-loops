@@ -855,3 +855,58 @@ test("verbose mode logs snapshot debug lines around reviewer and orchestrator tu
     await rm(repo, { recursive: true, force: true });
   }
 });
+
+// 25. Usefulness: verifies issue #26 review fix — a mutation event is logged exactly once (at the
+// detection site), not duplicated by the orchestrator failure log.
+test("mutation is logged exactly once", async () => {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const runCase = async (action) => {
+    errorSpy.mockClear();
+    const repo = await createTempRepo();
+    try {
+      const mutate = async () => {
+        await writeFile(join(repo, "mutated.txt"), "mutated\n");
+        return "done";
+      };
+      const orchReply =
+        action === "run_reviewer"
+          ? [JSON.stringify({ action: "run_reviewer", prompt: "review" })]
+          : [null];
+      const reviewerReply = action === "run_reviewer" ? [mutate] : [];
+
+      await expect(
+        runLoop({
+          task: "Task 25",
+          cwd: repo,
+          maxSteps: 5,
+          roles: {
+            orchestrator: { kind: "orch", sessionId: null },
+            worker: { kind: "work", sessionId: null },
+            reviewer: { kind: "rev", sessionId: null },
+          },
+          agents: {
+            // Orchestrator mutation case: orchestrator itself writes a file then dispatches.
+            orch:
+              action === "run_reviewer"
+                ? scripted(orchReply)
+                : scripted([
+                    async () => {
+                      await writeFile(join(repo, "mutated.txt"), "mutated\n");
+                      return JSON.stringify({ action: "run_worker", prompt: "go" });
+                    },
+                  ]),
+            work: scripted([]),
+            rev: scripted(reviewerReply),
+          },
+        }),
+      ).rejects.toThrow(MutationError);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+    const lines = errorSpy.mock.calls.map((call) => call.join(" "));
+    expect(lines.filter((line) => line.includes("Mutation detected during"))).toHaveLength(1);
+  };
+
+  await runCase("run_reviewer");
+  await runCase("run_worker");
+});
