@@ -5,9 +5,11 @@ disable-model-invocation: true
 argument-hint: <task and role settings>
 ---
 
-@docs/orchestrator-instructions.md
+@${CLAUDE_PROJECT_DIR}/docs/orchestrator-instructions.md
 
-Follow the included instructions for this invocation. The task and role
+Follow the attached instructions for this invocation. If the file is not
+attached, read `docs/orchestrator-instructions.md` from the repository root
+before acting. The task and role
 settings from the invocation are:
 
 $ARGUMENTS

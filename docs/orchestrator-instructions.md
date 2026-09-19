@@ -29,8 +29,8 @@ The first dispatch carries the init flags, including `--parent-session` when
 the harness provides a session id:
 
 ```bash
-printf '%s' "<worker prompt>" | agent-loop role dispatch \
-  --role worker \
+printf '%s' "<first child prompt>" | agent-loop role dispatch \
+  --role <first role> \
   --cwd "<work tree>" \
   --task "<task>" \
   --mode "<mode>" \
@@ -40,13 +40,19 @@ printf '%s' "<worker prompt>" | agent-loop role dispatch \
   --max-steps <count>
 ```
 
+- The first role matches the mode: `worker` in `work-first` and `review-first`,
+  `reviewer` in `review-only`.
+- Always pass `--cwd`. It defaults to the current directory, which for an
+  interactive parent is normally not the target work tree.
 - Pass the child prompt on stdin. No prompt files.
 - A second task in the same session starts a new run with a new init call, and
   only after the previous run is terminal. The subcommand archives the previous
   state file and rejects init over a non-terminal run.
-- Later dispatches read the configuration from the state file. Repeating an
-  init flag with its current value is accepted; changing one is rejected, so
-  omit changed flags and never invent new values.
+- Later dispatches read the configuration from the state file. Do not repeat
+  `--task` on a later dispatch: `--task` keys init detection, so a dispatch
+  that carries it while a run is active fails instead of continuing the run.
+  Repeating any other init flag with its current value is accepted; changing
+  one is rejected, so omit changed flags and never invent new values.
 
 ## Dispatch
 
@@ -107,20 +113,27 @@ printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...",
 ## Blockers and terminal states
 
 - Blocker, `interrupted` lifecycle, or step limit with work remaining: call
-  `agent-loop role abort --reason "<explanation>"` and report the unresolved
-  condition. Never repeat an uncertain turn without a maintainer decision.
+  `agent-loop role abort --cwd "<work tree>" --reason "<explanation>"` and
+  report the unresolved condition. Never repeat an uncertain turn without a
+  maintainer decision.
 - `halted` lifecycle (reviewer mutation or snapshot error): the run is already
   terminal and the subcommand rejects further operations, including `abort`.
   Report the failure and the modified paths from the envelope, then stop.
 - Every run ends in exactly one terminal lifecycle: `finished`, `aborted`, or
-  `halted`. Each releases the parent-edit guard (#57).
+  `halted`. The planned parent-edit guard (#57) will release on any of them;
+  until that hook ships, and for any run without `--parent-session`, the parent
+  stays unguarded.
 
 ## Recovery after compaction or restart
 
 Read the state file at
-`<os tmpdir>/agent-loops/runs/<sha256 of the --cwd, shortened>/state.json`.
+`<runs root>/<sha256 of the --cwd, shortened>/state.json`, where the runs root
+is `<os tmpdir>/agent-loops/runs` by default and the `AGENT_LOOP_RUNS_ROOT`
+environment variable overrides it. The directory name is the first 12 hex
+characters of the sha256 of the resolved `--cwd`, with the Windows drive letter
+lowercased before hashing, so `c:\repo` and `C:\repo` share one directory.
 This state-file read is the one exception to the stdout-envelope rule. Honor
-its `mode` and `lifecycle`, and continue from `stepsUsed` and `lastResult`. A
-resumed review-only task keeps its prohibition on worker dispatch. From
-`interrupted`, the parent aborts; only a maintainer may decide to resume with
-`dispatch --resume-interrupted`.
+the state file's `mode` and `lifecycle`, and continue from `stepsUsed` and
+`lastResult`. A resumed review-only task keeps its prohibition on worker
+dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
+to resume with `dispatch --resume-interrupted`.

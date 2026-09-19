@@ -176,8 +176,9 @@ happens only through explicit invocation.
   `docs/orchestrator-instructions.md` in the first prompt and follow it. A
   native entry point is added only after that harness documents a custom-prompt
   mechanism.
-- The parent-edit guard (#57) reads `--parent-session` from the state index;
-  a run without it is unguarded.
+- The planned parent-edit guard (#57) will read `--parent-session` from the
+  state index. Until that hook ships, and for any run without
+  `--parent-session`, the parent stays unguarded.
 
 ## Reviewer safety
 
