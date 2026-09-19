@@ -2,13 +2,14 @@
 
 ## Status
 
-| Field       | Value                                                                                                                |
-| ----------- | -------------------------------------------------------------------------------------------------------------------- |
-| Issue       | [#14](https://github.com/andromarces/agent-loops/issues/14)                                                          |
-| Baseline    | `main` at `1b7e404`, `pnpm test` passes 25 tests in `tests/cli.test.mjs` (2026-09-19)                                |
-| Branch      | Planned: `feat/issue-14-hybrid-orchestrator` in a dedicated worktree. Not created.                                   |
-| State       | Awaiting owner review. Design questions resolved on 2026-09-19. No code written.                                     |
-| Next action | Owner approves the plan. Then Phase 1: create the worktree and the `lib/` and `contracts/` modules with their tests. |
+| Field        | Value                                                                                                          |
+| ------------ | -------------------------------------------------------------------------------------------------------------- |
+| Issue        | [#14](https://github.com/andromarces/agent-loops/issues/14)                                                    |
+| Baseline     | `main` at `2dc0ce2`, 110 tests pass in suite (2026-09-19)                                                      |
+| Branch       | `feat/issue-14-hybrid-orchestrator` pushed to `origin`.                                                        |
+| State        | Implementation complete (Phases 1-7). Verified live smoke test with codex, claude, agy. All 110 tests passing. |
+| Pull request | [#18](https://github.com/andromarces/agent-loops/pull/18)                                                      |
+| Next action  | Merge pull request #18 and close issue #14.                                                                    |
 
 ## Decisions that resolve the issue ambiguities
 
