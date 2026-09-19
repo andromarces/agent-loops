@@ -4,6 +4,7 @@ import { exec } from "../lib/exec.mjs";
 export async function runClaude(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
   const args = ["-p"];
+  const execOptions = { cwd, input: prompt, timeout, signal, role };
 
   if (state.sessionId) {
     args.push("--resume", state.sessionId);
@@ -11,6 +12,10 @@ export async function runClaude(state, prompt, options = {}) {
 
   if (readOnly) {
     args.push("--permission-mode", "plan");
+    // Plan mode is a write guard here, not a planning workflow. Without this variable it
+    // delegates research to the built-in Explore and Plan subagents, which inherit the role
+    // model (Explore capped at Opus on the Claude API). Requires Claude Code v2.1.198+.
+    execOptions.env = { CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS: "1" };
   }
 
   if (state.model) {
@@ -25,7 +30,7 @@ export async function runClaude(state, prompt, options = {}) {
 
   let stdout;
   try {
-    ({ stdout } = await exec("claude", args, { cwd, input: prompt, timeout, signal, role }));
+    ({ stdout } = await exec("claude", args, execOptions));
   } catch (err) {
     // A non-zero exit can still carry a result event with usage. Expose it, then rethrow.
     let failed;

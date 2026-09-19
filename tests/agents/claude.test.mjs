@@ -6,7 +6,9 @@ vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
 }));
 
-// Usefulness: verifies claude adapter sends -p, --output-format json, and adds --permission-mode plan when readOnly is true.
+// Usefulness: verifies claude adapter sends -p, --output-format json, adds --permission-mode plan when
+// readOnly is true, and disables the built-in Explore and Plan research subagents so a read-only turn
+// does not spawn hidden subagents on the role model (issue #46).
 test("claude sends correct argv for initial turn with readOnly", async () => {
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
@@ -24,11 +26,19 @@ test("claude sends correct argv for initial turn with readOnly", async () => {
   expect(exec).toHaveBeenCalledWith(
     "claude",
     ["-p", "--permission-mode", "plan", "--model", "claude-3-5", "--output-format", "json"],
-    { cwd: "/path", input: "test prompt", timeout: undefined, signal: undefined, role: undefined },
+    {
+      cwd: "/path",
+      input: "test prompt",
+      timeout: undefined,
+      signal: undefined,
+      role: undefined,
+      env: { CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS: "1" },
+    },
   );
 });
 
-// Usefulness: verifies claude adapter passes --resume and effort on resume turn.
+// Usefulness: verifies claude adapter passes --resume and effort on resume turn, and leaves the worker
+// environment untouched so the worker keeps its research subagents.
 test("claude resumes session with effort and readOnly false", async () => {
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: JSON.stringify([{ session_id: "s1", type: "result", result: "done" }]),

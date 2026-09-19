@@ -134,22 +134,25 @@ test("invalid --max-steps is rejected", () => {
   ).toThrow("--max-steps must be a positive integer.");
 });
 
-// Usefulness: verifies invalid --timeout values are rejected.
+const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];
+
+// Usefulness: verifies an unattended run is bounded by default (issue #48).
+test("--timeout defaults to 3600 seconds when unset", () => {
+  expect(parseArgs(BASE).timeout).toBe(3600);
+});
+
+// Usefulness: verifies --timeout 0 is the documented way to remove the bound.
+test("--timeout 0 disables the per-invocation bound", () => {
+  expect(parseArgs([...BASE, "--timeout", "0"]).timeout).toBeNull();
+});
+
+// Usefulness: verifies negative and non-integer --timeout values are rejected.
 test("invalid --timeout is rejected", () => {
-  expect(() =>
-    parseArgs([
-      "--orchestrator",
-      "codex",
-      "--worker",
-      "claude",
-      "--reviewer",
-      "agy",
-      "--task",
-      "t",
-      "--timeout",
-      "0",
-    ]),
-  ).toThrow("--timeout must be a positive integer.");
+  for (const bad of ["abc", "1.5"]) {
+    expect(() => parseArgs([...BASE, "--timeout", bad])).toThrow(
+      "--timeout must be a non-negative integer.",
+    );
+  }
 });
 
 // Usefulness: verifies readValue guards against missing value or value starting with -.
