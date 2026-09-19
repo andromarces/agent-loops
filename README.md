@@ -99,7 +99,7 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
 --task <text>                 Task description. Required.
 --max-steps <count>           Maximum child steps. Defaults to 20.
---timeout <seconds>           Timeout per agent invocation. Optional.
+--timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
 --transcript <file>           Record execution transcript to a JSON file.
 --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
 -h, --help                    Show help.
@@ -142,7 +142,7 @@ The transcript records each validated orchestrator action and each child result 
 {
   "task": "...",
   "cwd": "...",
-  "options": { "maxSteps": 20, "timeout": null },
+  "options": { "maxSteps": 20, "timeout": 3600 },
   "roles": {
     "orchestrator": { "kind": "codex", "model": null, "effort": null, "sessionId": "..." },
     "worker": { "kind": "claude", "model": "...", "effort": "...", "sessionId": "..." },
