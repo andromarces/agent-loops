@@ -897,6 +897,79 @@ test("finish and abort reject changed init flags", async () => {
   expect(state.mode).toBe("work-first");
 });
 
+// Usefulness: verifies only the role kind is normalized in the change
+// comparison — model and effort are opaque pass-through strings, so repeating
+// an identical `--worker-model antigravity` passes and a changed one is
+// rejected (regression: normalizeAgent mangled the model string).
+test("identical model and effort flags pass comparison verbatim", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  await executeRoleCommand(
+    withRepo(
+      dispatchArgv([
+        ...INIT_OVERRIDES,
+        "--worker-model",
+        "antigravity",
+        "--worker-effort",
+        "high",
+        "--reviewer-model",
+        "gemini-2.5-pro",
+      ]),
+      repo,
+    ),
+    basicDeps(),
+  );
+  const state = await readRepoState(repo);
+  expect(state.roles.worker.model).toBe("antigravity");
+
+  const identical = await executeRoleCommand(
+    withRepo(dispatchArgv(["--worker-model", "antigravity", "--worker-effort", "high"]), repo),
+    basicDeps(),
+  );
+  expect(identical.exitCode).toBe(0);
+
+  const changed = await executeRoleCommand(
+    withRepo(dispatchArgv(["--worker-model", "antigravity", "--worker-effort", "low"]), repo),
+    basicDeps(),
+  );
+  expect(changed.exitCode).toBe(1);
+  expect(changed.payload.error).toContain("--worker-effort cannot be changed after init");
+});
+
+// Usefulness: verifies the `antigravity` kind alias passes the change
+// comparison through normalization while model strings stay verbatim.
+test("antigravity kind alias passes comparison, model strings do not normalize", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  await executeRoleCommand(
+    withRepo(
+      dispatchArgv([...INIT_OVERRIDES, "--worker", "antigravity", "--worker-model", "antigravity"]),
+      repo,
+    ),
+    { agents: { agy: recordingAdapter([]), fake2: recordingAdapter([]) }, stdin: stdinPrompt },
+  );
+  const state = await readRepoState(repo);
+  expect(state.roles.worker.kind).toBe("agy");
+  expect(state.roles.worker.model).toBe("antigravity");
+
+  const identical = await executeRoleCommand(
+    withRepo(dispatchArgv(["--worker", "antigravity", "--worker-model", "antigravity"]), repo),
+    { agents: { agy: recordingAdapter([]), fake2: recordingAdapter([]) }, stdin: stdinPrompt },
+  );
+  expect(identical.exitCode).toBe(0);
+
+  const changedModel = await executeRoleCommand(
+    withRepo(dispatchArgv(["--worker", "antigravity", "--worker-model", "gemini"]), repo),
+    { agents: { agy: recordingAdapter([]), fake2: recordingAdapter([]) }, stdin: stdinPrompt },
+  );
+  expect(changedModel.exitCode).toBe(1);
+  expect(changedModel.payload.error).toContain("--worker-model cannot be changed after init");
+});
+
 // Usefulness: verifies acceptance — stdout holds exactly one JSON object on
 // every path, including errors (verified through the main entry point).
 test("main prints exactly one JSON object on stdout on success and error paths", async () => {

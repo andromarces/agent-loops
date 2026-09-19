@@ -284,7 +284,10 @@ function rejectInitFlagChanges(args, state) {
     ]) {
       const value = args[flag];
       if (value !== null) {
-        provided.push([flag, normalizeAgent(value), state.roles[roleName][path]]);
+        // Only the role kind is normalized (`antigravity` -> `agy`); model and
+        // effort are opaque pass-through strings compared verbatim.
+        const comparable = flag === roleName ? normalizeAgent(value) : value;
+        provided.push([flag, comparable, state.roles[roleName][path]]);
       }
     }
   }
