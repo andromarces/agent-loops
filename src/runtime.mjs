@@ -51,7 +51,7 @@ export async function runLoop(options) {
       const response = await runRole(role, roleName, finalPrompt, readOnly);
       return { role: roleName, status: "ok", response };
     } catch (err) {
-      if (err?.name === "MutationError" || err?.isCanceled) {
+      if (err?.name === "MutationError" || err?.name === "SnapshotError" || err?.isCanceled) {
         throw err;
       }
       let errorMessage = err?.message ?? String(err);
