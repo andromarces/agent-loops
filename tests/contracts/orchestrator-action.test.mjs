@@ -76,6 +76,16 @@ describe("validateAction rejections", () => {
     expect(result.error).toBe("Unsupported action: unknown_act");
   });
 
+  // Usefulness: pins the repair-path contract from #32 — any unhandled action
+  // value must yield a defined ok:false result so decide() runs the repair turn
+  // instead of throwing a TypeError on an undefined result.
+  test("returns a defined rejection for an unhandled action value", () => {
+    const result = validateAction({ action: "teleport" });
+    expect(result).toBeDefined();
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("Unsupported action: teleport");
+  });
+
   // Usefulness: verifies run_worker requires non-empty prompt.
   test.each(["", "   ", null, undefined, 123])(
     "rejects run_worker with invalid prompt: %j",
