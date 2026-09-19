@@ -87,6 +87,27 @@ test("exec cancel message contains canceled", async () => {
   }
 });
 
+// Usefulness: verifies a signal-killed command names the signal instead of
+// "exited with code undefined" (issue #20 POSIX case). execa cannot detect
+// signal termination on Windows, so this only runs on POSIX.
+test.skipIf(process.platform === "win32")(
+  "exec terminated message contains signal on POSIX",
+  async () => {
+    try {
+      await exec(process.execPath, [
+        "-e",
+        "setTimeout(() => process.kill(process.pid, 'SIGKILL'), 100)",
+      ]);
+      expect.unreachable("should have thrown ExecError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExecError);
+      expect(err.isTerminated).toBe(true);
+      expect(err.message).toContain("killed");
+      expect(err.message).not.toContain("undefined");
+    }
+  },
+);
+
 // Usefulness: verifies best-effort descendant kill when canceling a process tree.
 test("exec terminates descendants when canceled", async () => {
   const controller = new AbortController();
