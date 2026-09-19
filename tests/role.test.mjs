@@ -575,7 +575,138 @@ test("dispatch reads the prompt from --prompt-file", async () => {
   expect(worker.recorded[0].prompt).toContain("work from the file");
 });
 
-// Usefulness: verifies acceptance — stdout holds exactly one JSON object on
+// Usefulness: verifies the init `--timeout` persists in the state file and
+// reaches the adapter on every dispatch (regression: the flag was silently
+// dropped, so turns ran unbounded). `--timeout 0` stores null, the documented
+// way to remove the bound.
+test("init --timeout persists in state and reaches the adapter", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const seen = [];
+  const timeoutWorker = {
+    recorded: [],
+    async run(state, prompt, options) {
+      seen.push(options.timeout);
+      state.sessionId = "sess-t";
+      return WORKER_REPLY;
+    },
+  };
+  const args = withRepo(dispatchArgv([...INIT_OVERRIDES, "--timeout", "7"]), repo);
+  const result = await executeRoleCommand(args, {
+    agents: { fake1: timeoutWorker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(seen).toEqual([7]);
+  expect((await readRepoState(repo)).timeout).toBe(7);
+
+  await executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", "--reason", "probe"], repo));
+  const disabled = withRepo(
+    dispatchArgv(["--task", "Task.", "--worker", "fake1", "--reviewer", "fake2", "--timeout", "0"]),
+    repo,
+  );
+  const resultZero = await executeRoleCommand(disabled, {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(resultZero.exitCode).toBe(0);
+  expect((await readRepoState(repo)).timeout).toBeNull();
+});
+
+// Usefulness: verifies later calls read configuration from the state file —
+// an identical repeated flag passes through, a changed one is rejected with
+// the change message.
+test("later dispatch rejects changed init flags and accepts identical ones", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "5"]), repo),
+    basicDeps(),
+  );
+
+  const identical = await executeRoleCommand(
+    withRepo(dispatchArgv(["--max-steps", "5"]), repo),
+    basicDeps(),
+  );
+  expect(identical.exitCode).toBe(0);
+
+  const changed = await executeRoleCommand(
+    withRepo(dispatchArgv(["--max-steps", "9"]), repo),
+    basicDeps(),
+  );
+  expect(changed.exitCode).toBe(1);
+  expect(changed.payload.error).toContain("--max-steps cannot be changed after init");
+
+  const changedTimeout = await executeRoleCommand(
+    withRepo(dispatchArgv(["--timeout", "5"]), repo),
+    basicDeps(),
+  );
+  expect(changedTimeout.exitCode).toBe(1);
+  expect(changedTimeout.payload.error).toContain("--timeout cannot be changed after init");
+});
+
+// Usefulness: verifies an empty stdin prompt exits non-zero, charges no step,
+// and spawns no CLI (regression: the empty check only covered --prompt-file).
+test("empty stdin prompt is rejected without charging a step", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const before = await readRepoState(repo);
+
+  const worker = recordingAdapter([]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: async () => "   ",
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.status).toBe("error");
+  expect(result.payload.error).toContain("Prompt on stdin is empty");
+  expect(worker.recorded.length).toBe(0);
+  const after = await readRepoState(repo);
+  expect(after.stepsUsed).toBe(before.stepsUsed);
+  expect(after.lifecycle).toBe("active");
+});
+
+// Usefulness: verifies the verdict parse is case-insensitive so `Accept` from
+// a real model does not collapse to `unknown`.
+test("reviewer Verdict line parses case-insensitively", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state) => {
+    state.sessionId = "rev-caps";
+    return `Verdict: Accept\n${REPORT}`;
+  };
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.verdict).toBe("accept");
+});
+
+// Usefulness: verifies `--cwd` variants that differ only in the Windows drive
+// letter resolve to one state directory.
+test("drive-letter case does not split the state directory", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const lower = statePaths({ cwd: repo.replace(/^[A-Za-z]:/, (d) => d.toLowerCase()) });
+  const upper = statePaths({ cwd: repo.replace(/^[A-Za-z]:/, (d) => d.toUpperCase()) });
+  expect(lower.stateDir).toBe(upper.stateDir);
+});
+
+// Usefulness: verifies the stdout envelope is exactly one JSON object on
 // every path, including errors (verified through the main entry point).
 test("main prints exactly one JSON object on stdout on success and error paths", async () => {
   await setup();

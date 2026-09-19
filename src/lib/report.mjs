@@ -35,8 +35,11 @@ export function parseReportBlock(response) {
  */
 export function parseVerdict(response) {
   const line = lastLabeledLine(response, "Verdict");
-  if (line === "accept" || line === "reject") {
-    return line;
+  if (line) {
+    const value = line.toLowerCase();
+    if (value === "accept" || value === "reject") {
+      return value;
+    }
   }
   return "unknown";
 }

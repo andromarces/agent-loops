@@ -23,7 +23,7 @@ export function statePaths({ cwd, parentSession } = {}) {
   const paths = { root };
 
   if (cwd !== undefined) {
-    const stateDir = join(root, cwdHash(resolve(cwd)));
+    const stateDir = join(root, cwdHash(cwd));
     paths.stateDir = stateDir;
     paths.stateFile = join(stateDir, "state.json");
     paths.lockFile = join(stateDir, "state.lock");
@@ -43,7 +43,15 @@ function stateRoot() {
 }
 
 function cwdHash(cwd) {
-  return createHash("sha256").update(cwd).digest("hex").slice(0, 12);
+  return createHash("sha256").update(canonicalCwd(cwd)).digest("hex").slice(0, 12);
+}
+
+function canonicalCwd(cwd) {
+  const resolved = resolve(cwd);
+  // Windows drive letters compare case-insensitively in the filesystem but
+  // not in the hash; normalize the letter so `c:\repo` and `C:\repo` share one
+  // state directory.
+  return resolved.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase());
 }
 
 function assertSessionId(sessionId) {

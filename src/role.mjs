@@ -29,6 +29,7 @@ const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
 const MODES = new Set(["work-first", "review-first", "review-only"]);
 const ROLE_NAMES = new Set(["worker", "reviewer"]);
 const DEFAULT_MAX_STEPS = 20;
+const DEFAULT_TIMEOUT = 3600;
 // Bound for `raw` in the envelope when the closing block could not be parsed.
 const RAW_TAIL_LIMIT = 2000;
 
@@ -63,6 +64,7 @@ export function parseRoleArgs(argv) {
     resumeInterrupted: false,
     reason: null,
     verbose: false,
+    timeoutProvided: false,
   };
 
   let index = 0;
@@ -132,6 +134,7 @@ export function parseRoleArgs(argv) {
       case "--timeout": {
         const seconds = readNonNegativeInt(arg, readValue(arg, ++index));
         args.timeout = seconds === 0 ? null : seconds;
+        args.timeoutProvided = true;
         break;
       }
 
@@ -163,20 +166,13 @@ export function parseRoleArgs(argv) {
   return args;
 }
 
+/**
+ * Init detection is keyed on `--task` alone: the first call carries the task;
+ * later calls read the configuration from the state file, so a provided flag
+ * that matches the state passes through and a changed one is rejected.
+ */
 function isInitCall(args) {
-  return (
-    args.task !== null ||
-    args.mode !== null ||
-    args.parentSession !== null ||
-    args.worker !== null ||
-    args.workerModel !== null ||
-    args.workerEffort !== null ||
-    args.reviewer !== null ||
-    args.reviewerModel !== null ||
-    args.reviewerEffort !== null ||
-    args.maxSteps !== null ||
-    args.timeout !== null
-  );
+  return args.task !== null;
 }
 
 /** Loads state for a non-init call, rejecting a missing state file. */
@@ -213,6 +209,7 @@ function initialState(args) {
     cwd: args.cwd,
     parentSession: args.parentSession,
     maxSteps: args.maxSteps ?? DEFAULT_MAX_STEPS,
+    timeout: args.timeoutProvided ? args.timeout : DEFAULT_TIMEOUT,
     stepsUsed: 0,
     lifecycle: "active",
     roles: {
@@ -274,7 +271,8 @@ const INIT_COMPARATORS = {
 function rejectInitFlagChanges(args, state) {
   const provided = [];
   for (const flag of INIT_FIELDS) {
-    if (args[flag] !== null) {
+    const isGiven = flag === "timeout" ? args.timeoutProvided : args[flag] !== null;
+    if (isGiven) {
       provided.push([flag, args[flag], INIT_COMPARATORS[flag](state)]);
     }
   }
@@ -303,15 +301,16 @@ function kebab(name) {
   return name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 }
 
-async function readPrompt(args) {
-  if (args.promptFile) {
-    const text = await readFile(args.promptFile, "utf8");
-    if (text.trim() === "") {
-      throw new RoleError(`Prompt file is empty: ${args.promptFile}`);
-    }
-    return text;
+async function readPrompt(args, stdin) {
+  const text = args.promptFile ? await readFile(args.promptFile, "utf8") : await stdin(args);
+  if (text.trim() === "") {
+    throw new RoleError(
+      args.promptFile
+        ? `Prompt file is empty: ${args.promptFile}`
+        : "Prompt on stdin is empty. Pipe a prompt or use --prompt-file.",
+    );
   }
-  return readStdin();
+  return text;
 }
 
 function readStdin() {
@@ -334,7 +333,8 @@ function createEventSink(transcriptFile) {
   const events = [];
   const onEvent = (event) => {
     if (transcriptFile) {
-      events.push(event);
+      // Stamped at emit time, like the headless transcript.
+      events.push({ ...event, at: new Date().toISOString() });
     }
   };
   // Appends once per invocation so a process exit cannot lose the events.
@@ -342,10 +342,7 @@ function createEventSink(transcriptFile) {
     if (!transcriptFile || events.length === 0) {
       return;
     }
-    const text =
-      events
-        .map((event) => `${JSON.stringify({ ...event, at: new Date().toISOString() })}\n`)
-        .join("") + "";
+    const text = events.map((event) => `${JSON.stringify(event)}\n`).join("");
     try {
       await appendFile(transcriptFile, text, "utf8");
     } catch (err) {
@@ -429,7 +426,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     throw new RoleError(`Step budget exhausted (${state.stepsUsed}/${state.maxSteps}).`);
   }
 
-  const prompt = args.promptFile ? await readPrompt(args) : await stdin(args);
+  const prompt = await readPrompt(args, stdin);
 
   // Charge the step before execution, matching the headless runtime.
   state.stepsUsed += 1;
@@ -506,10 +503,10 @@ function dispatchPayload(roleName, result) {
   return payload;
 }
 
-/** `finish`: accepts the five-key summary as JSON on stdin, from active only. */ async function finish(
-  args,
-  { stdin = readStdin },
-) {
+/**
+ * `finish`: accepts the five-key summary as JSON on stdin, from active only.
+ */
+async function finish(args, { stdin = readStdin }) {
   if (args.role !== null) {
     throw new RoleError("--role is only valid for dispatch.");
   }
