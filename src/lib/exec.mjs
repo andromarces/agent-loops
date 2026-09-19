@@ -1,7 +1,10 @@
 import { execa } from "execa";
 
 export class ExecError extends Error {
-  constructor(message, { command, exitCode, stdout, stderr, timedOut, isCanceled } = {}) {
+  constructor(
+    message,
+    { command, exitCode, stdout, stderr, timedOut, isCanceled, isTerminated } = {},
+  ) {
     super(message);
     this.name = "ExecError";
     this.command = command;
@@ -10,6 +13,7 @@ export class ExecError extends Error {
     this.stderr = stderr ?? "";
     this.timedOut = Boolean(timedOut);
     this.isCanceled = Boolean(isCanceled);
+    this.isTerminated = Boolean(isTerminated);
   }
 }
 
@@ -36,13 +40,23 @@ export async function exec(command, args = [], options = {}) {
 
   const timedOut = Boolean(result.timedOut);
   const isCanceled = Boolean(result.isCanceled);
+  const isTerminated = Boolean(result.isTerminated);
 
-  if (result.exitCode !== 0 || timedOut || isCanceled) {
-    const message = [
-      `${command} exited with code ${result.exitCode}.`,
-      result.stderr?.trim(),
-      result.stdout?.trim(),
-    ]
+  if (result.exitCode !== 0 || timedOut || isCanceled || isTerminated) {
+    let cause;
+    if (timedOut) {
+      cause = `${command} timed out after ${timeout} seconds.`;
+    } else if (isCanceled) {
+      cause = `${command} was canceled.`;
+    } else if (isTerminated) {
+      // POSIX-only: execa cannot detect signal termination on Windows.
+      const description = result.signalDescription ?? result.signal ?? "a signal";
+      cause = `${command} was killed by ${description}.`;
+    } else {
+      cause = `${command} exited with code ${result.exitCode}.`;
+    }
+
+    const message = [cause, result.stderr?.trim(), result.stdout?.trim()]
       .filter(Boolean)
       .join("\n\n");
 
@@ -53,6 +67,7 @@ export async function exec(command, args = [], options = {}) {
       stderr: result.stderr,
       timedOut,
       isCanceled,
+      isTerminated,
     });
   }
 
