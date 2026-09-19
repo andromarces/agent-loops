@@ -138,6 +138,13 @@ export async function snapshot(cwd) {
   };
 }
 
+/**
+ * Diff two snapshots. Returns the sorted changed work-tree paths, plus the
+ * sentinel entries `<index>` and `<HEAD>` when the index or HEAD changed.
+ * @param {ReturnType<typeof snapshot>} before
+ * @param {ReturnType<typeof snapshot>} after
+ * @returns {string[]}
+ */
 export function diffSnapshots(before, after) {
   const changed = new Set();
 
@@ -173,6 +180,16 @@ export function diffSnapshots(before, after) {
   return result;
 }
 
+/**
+ * Run `fn()` and compare Git snapshots taken before and after.
+ * Throws `MutationError` when the diff is non-empty, even when `fn()` already
+ * failed: the mutation error wins over the wrapped error, which is discarded.
+ * @template T
+ * @param {string} cwd
+ * @param {string} role
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
 export async function withMutationCheck(cwd, role, fn) {
   const before = await snapshot(cwd);
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);

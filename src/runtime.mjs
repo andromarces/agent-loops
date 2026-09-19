@@ -6,6 +6,14 @@ import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
 
+/**
+ * Run the orchestrator loop. Returns `{ exitCode: 0, summary }` when the
+ * orchestrator returns `finish`, or `{ exitCode: 1 | 2, reason }` on `abort`
+ * or a step limit reached with work remaining. Throws on fatal controller
+ * errors: orchestrator failure, detected mutation, or cancel.
+ * @param {object} options
+ * @returns {Promise<{ exitCode: 0, summary: object } | { exitCode: 1 | 2, reason: string }>}
+ */
 export async function runLoop(options) {
   const {
     task,
