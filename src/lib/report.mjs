@@ -1,5 +1,7 @@
 // Parses the closing block that reportBlock (src/prompts/report.mjs) requires
-// from every child turn, plus the reviewer Verdict line.
+// from every child turn, plus the reviewer Verdict line. Both parse only the
+// final block, which starts at the last `Conclusion:` line, so labels or
+// verdicts in earlier prose can never produce a verdict.
 
 const REPORT_LABELS = [
   ["conclusion", "Conclusion"],
@@ -8,16 +10,38 @@ const REPORT_LABELS = [
 ];
 
 /**
+ * The closing block: the lines from the last `Conclusion:` line to the end of
+ * the response, or null when the response has no `Conclusion:` line at all.
+ * @param {string} response
+ * @returns {string[] | null}
+ */
+function closingBlock(response) {
+  const lines = response.split(/\r?\n/);
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^Conclusion:\s*/i.test(lines[i])) {
+      start = i;
+    }
+  }
+  return start === -1 ? null : lines.slice(start);
+}
+
+/**
  * Extracts the closing block as `{ conclusion, why, blockers }`. Each label is
- * matched case-insensitively at line start; the last occurrence wins. Returns
- * null when any of the three labels is missing.
+ * matched case-insensitively at line start inside the closing block only; the
+ * last occurrence in that range wins. Returns null when the block or any of
+ * the three labels is missing.
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string } | null}
  */
 export function parseReportBlock(response) {
+  const block = closingBlock(response);
+  if (!block) {
+    return null;
+  }
   const report = {};
   for (const [key, label] of REPORT_LABELS) {
-    const match = lastLabeledLine(response, label);
+    const match = lastLabeledLine(block, label);
     if (!match) {
       return null;
     }
@@ -27,14 +51,16 @@ export function parseReportBlock(response) {
 }
 
 /**
- * Extracts the reviewer verdict from a `Verdict:` line. Values other than
- * `accept` or `reject` (including a missing or malformed line) map to
- * `unknown`; process success never implies acceptance.
+ * Extracts the reviewer verdict from a `Verdict:` line inside the closing
+ * block. A verdict outside the block, or a value other than `accept` or
+ * `reject` (including a missing or malformed line), maps to `unknown`;
+ * process success never implies acceptance.
  * @param {string} response
  * @returns {"accept" | "reject" | "unknown"}
  */
 export function parseVerdict(response) {
-  const line = lastLabeledLine(response, "Verdict");
+  const block = closingBlock(response);
+  const line = block ? lastLabeledLine(block, "Verdict") : null;
   if (line) {
     const value = line.toLowerCase();
     if (value === "accept" || value === "reject") {
@@ -44,9 +70,8 @@ export function parseVerdict(response) {
   return "unknown";
 }
 
-function lastLabeledLine(text, label) {
-  const pattern = new RegExp(`^${label}:\\s*(.*)$`, "im");
-  const lines = text.split(/\r?\n/);
+function lastLabeledLine(lines, label) {
+  const pattern = new RegExp(`^${label}:\\s*(.*)$`, "i");
   let last = null;
   for (const line of lines) {
     const match = line.match(pattern);

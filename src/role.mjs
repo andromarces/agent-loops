@@ -411,15 +411,14 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     state.resumeDecision = { at: new Date().toISOString() };
   } else if (state.lifecycle === "dispatched") {
     // A live lock owner would have thrown in withStateLock, so the previous
-    // turn ended uncertainly. It is never repeated on its own.
-    if (!args.resumeInterrupted) {
-      state.lifecycle = "interrupted";
-      await writeState(paths.stateFile, state);
-      throw new RoleError(
-        "Previous turn ended uncertainly; state marked interrupted. Use abort, or dispatch --resume-interrupted to continue.",
-      );
-    }
-    state.resumeDecision = { at: new Date().toISOString() };
+    // turn ended uncertainly. The first call after the crash always marks
+    // `interrupted`, exits non-zero, and spawns no child; a maintainer can
+    // resume from `interrupted` on a later call.
+    state.lifecycle = "interrupted";
+    await writeState(paths.stateFile, state);
+    throw new RoleError(
+      "Previous turn ended uncertainly; state marked interrupted. Use abort, or dispatch --resume-interrupted to continue.",
+    );
   }
 
   if (state.stepsUsed >= state.maxSteps) {
@@ -514,6 +513,7 @@ async function finish(args, { stdin = readStdin }) {
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
     const state = await loadExistingState(paths, args.cwd);
+    rejectInitFlagChanges(args, state);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
     }
@@ -553,6 +553,7 @@ async function abort(args) {
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
     const state = await loadExistingState(paths, args.cwd);
+    rejectInitFlagChanges(args, state);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
     }

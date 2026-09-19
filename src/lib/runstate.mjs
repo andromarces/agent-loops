@@ -3,7 +3,7 @@
 // resolved work tree cwd, never passed as a flag; tests override the runs
 // root with AGENT_LOOP_RUNS_ROOT.
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { logWarn } from "./log.mjs";
@@ -106,6 +106,9 @@ async function acquireLock(lockFile, retry = true) {
     } finally {
       await handle.close();
     }
+    // The O_EXCL create above is the lock; the content write closes the
+    // reader-visible window. Contenders finding an unparseable lock fail
+    // closed below and never remove it while it is fresh.
     return;
   } catch (err) {
     if (err.code !== "EEXIST") {
@@ -118,6 +121,12 @@ async function acquireLock(lockFile, retry = true) {
     throw new Error(
       `State is locked by a live process (pid ${owner.pid}, started ${owner.startedAt ?? "unknown"}).`,
     );
+  }
+
+  if (!owner && (await lockAgeMs(lockFile)) < STALE_LOCK_GRACE_MS) {
+    // Unparseable and fresh: the creator may still be between create and
+    // content write, so it is never treated as stale here.
+    throw new Error("State is locked (the lock file is not readable yet; retry shortly).");
   }
 
   if (!retry) {
@@ -140,9 +149,26 @@ export function pidAlive(pid) {
 
 async function readLockOwner(lockFile) {
   try {
-    return JSON.parse(await readFile(lockFile, "utf8"));
+    const value = JSON.parse(await readFile(lockFile, "utf8"));
+    if (value === null || typeof value !== "object" || !Number.isInteger(value.pid)) {
+      return null;
+    }
+    return value;
   } catch {
     return null;
+  }
+}
+
+// An unparseable lock younger than this is assumed to be a contender still
+// between create and content write; only an older one is stale.
+export const STALE_LOCK_GRACE_MS = 60_000;
+
+async function lockAgeMs(lockFile) {
+  try {
+    const stats = await stat(lockFile);
+    return Date.now() - stats.mtimeMs;
+  } catch {
+    return 0;
   }
 }
 

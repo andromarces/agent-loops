@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execa } from "execa";
 import { afterEach, expect, test, vi } from "vitest";
-import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
+import { STALE_LOCK_GRACE_MS, readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, main as runRoleMain, parseRoleArgs } from "../src/role.mjs";
 import { createTempRepo } from "./runtime-helpers.mjs";
 
@@ -81,8 +81,14 @@ async function readRepoState(repo) {
 }
 
 async function deadPid() {
-  const proc = await execa(process.execPath, ["-e", ""]);
-  return proc.pid;
+  // child_process exposes the pid; execa's result does not. The pid is
+  // guaranteed dead once the one-shot process has exited.
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    const pid = child.pid;
+    child.on("exit", () => resolve(pid));
+    child.on("error", reject);
+  });
 }
 
 // Usefulness: verifies acceptance — two consecutive worker dispatches resume
@@ -493,7 +499,7 @@ test("reviewer dispatch with a Verdict line parses accept", async () => {
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
     state.sessionId = "rev-9";
-    return `Verdict: accept\n${REPORT}`;
+    return `${REPORT}\nVerdict: accept`;
   };
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   const args = withRepo(dispatchArgv([], "reviewer"), repo);
@@ -683,7 +689,7 @@ test("reviewer Verdict line parses case-insensitively", async () => {
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
     state.sessionId = "rev-caps";
-    return `Verdict: Accept\n${REPORT}`;
+    return `${REPORT}\nVerdict: Accept`;
   };
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
@@ -706,7 +712,192 @@ test("drive-letter case does not split the state directory", async () => {
   expect(lower.stateDir).toBe(upper.stateDir);
 });
 
-// Usefulness: verifies the stdout envelope is exactly one JSON object on
+// Usefulness: verifies the lock is exclusive under concurrent contenders:
+// exactly one call runs a child and the others exit non-zero without a child.
+test("concurrent contenders hold exactly one lock", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const first = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  expect(first.exitCode).toBe(0);
+
+  let childRuns = 0;
+  const slowWorker = {
+    async run(state) {
+      childRuns += 1;
+      state.sessionId = "sess-slow";
+      // Long enough that every contender reaches the lock while it is held.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return WORKER_REPLY;
+    },
+  };
+  const agents = { fake1: slowWorker, fake2: recordingAdapter([]) };
+  const args = withRepo(dispatchArgv(), repo);
+
+  const contenders = await Promise.all(
+    Array.from({ length: 6 }, () =>
+      executeRoleCommand(args, { agents, stdin: stdinPrompt }).catch((err) => ({
+        exitCode: 1,
+        payload: { status: "error", error: err.message ?? String(err) },
+      })),
+    ),
+  );
+
+  expect(childRuns).toBe(1);
+  const winners = contenders.filter((c) => c.exitCode === 0);
+  expect(winners.length).toBe(1);
+  const losers = contenders.filter((c) => c.exitCode === 1);
+  expect(losers.length).toBe(5);
+  for (const loser of losers) {
+    expect(loser.payload.status).toBe("error");
+    expect(loser.payload.error).toMatch(/locked by a live process|not readable yet/);
+  }
+  expect((await readRepoState(repo)).stepsUsed).toBe(2);
+});
+
+// Usefulness: verifies a fresh unparseable lock is never stolen — the contender
+// exits non-zero and removes nothing (regression: an empty lock admitted a
+// second owner).
+test("a fresh unreadable lock is never stolen", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  await writeFile(paths.lockFile, "", "utf8");
+
+  const worker = recordingAdapter([]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("locked");
+  expect(worker.recorded.length).toBe(0);
+  // The contender left the fresh lock in place.
+  expect(await readFile(paths.lockFile, "utf8")).toBe("");
+});
+
+// Usefulness: verifies an unreadable lock older than the grace window is
+// treated as stale, removed, and the call proceeds.
+test("an old unreadable lock is removed as stale", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  await writeFile(paths.lockFile, "", "utf8");
+  const past = new Date(Date.now() - 5 * STALE_LOCK_GRACE_MS);
+  await utimes(paths.lockFile, past, past);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(), repo), basicDeps());
+  expect(result.exitCode).toBe(0);
+  // The stale lock was removed and the call completed, releasing its own lock.
+  await expect(readFile(paths.lockFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+// Usefulness: verifies a verdict outside the closing block never counts — only
+// a `Verdict:` line after the last `Conclusion:` line can produce a verdict.
+test("a Verdict line outside the closing block yields unknown", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state) => {
+    state.sessionId = "rev-early";
+    return `Verdict: accept\n${REPORT}\nfinal note after the block`;
+  };
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  // The closing block itself parses; the early verdict does not count.
+  expect(result.payload.status).toBe("ok");
+  expect(result.payload.report).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+  });
+  expect(result.payload.verdict).toBe("unknown");
+});
+
+// Usefulness: verifies a reviewer response whose closing block holds the
+// verdict after the report parses accept (covered with the casing test above).
+
+// Usefulness: verifies acceptance — the first call after a crash marks
+// `interrupted`, exits non-zero, and spawns no child, even with an explicit
+// `--resume-interrupted`; a maintainer can resume on a later call.
+test("resume-interrupted from dispatched marks interrupted first and runs no child", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const state = await readState(paths.stateFile);
+  state.lifecycle = "dispatched";
+  await writeState(paths.stateFile, state);
+
+  const worker = recordingAdapter([]);
+  const direct = await executeRoleCommand(withRepo(dispatchArgv(["--resume-interrupted"]), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(direct.exitCode).toBe(1);
+  expect(direct.payload.status).toBe("error");
+  expect(direct.payload.error).toContain("interrupted");
+  expect(worker.recorded.length).toBe(0);
+  expect((await readState(paths.stateFile)).lifecycle).toBe("interrupted");
+
+  const resumed = await executeRoleCommand(withRepo(dispatchArgv(["--resume-interrupted"]), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(resumed.exitCode).toBe(0);
+  expect(worker.recorded.length).toBe(1);
+  const resumedState = await readState(paths.stateFile);
+  expect(resumedState.lifecycle).toBe("active");
+  expect(resumedState.resumeDecision).toBeTruthy();
+});
+
+// Usefulness: verifies finish and abort read configuration from the state file
+// too — a changed init flag exits non-zero and leaves the state unchanged.
+test("finish and abort reject changed init flags", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+
+  const badFinish = await executeRoleCommand(
+    withRepo(["finish", "--cwd", "<repo>", "--max-steps", "99"], repo),
+    {
+      stdin: async () =>
+        JSON.stringify({ changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" }),
+    },
+  );
+  expect(badFinish.exitCode).toBe(1);
+  expect(badFinish.payload.error).toContain("--max-steps cannot be changed after init");
+
+  const badAbort = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "r", "--mode", "review-only"], repo),
+  );
+  expect(badAbort.exitCode).toBe(1);
+  expect(badAbort.payload.error).toContain("--mode cannot be changed after init");
+
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("active");
+  expect(state.maxSteps).toBe(20);
+  expect(state.mode).toBe("work-first");
+});
+
+// Usefulness: verifies acceptance — stdout holds exactly one JSON object on
 // every path, including errors (verified through the main entry point).
 test("main prints exactly one JSON object on stdout on success and error paths", async () => {
   await setup();
