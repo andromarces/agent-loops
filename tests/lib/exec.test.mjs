@@ -22,6 +22,16 @@ test("exec passes input on stdin", async () => {
   expect(result.stdout).toBe("stdin data");
 });
 
+// Usefulness: verifies an env option reaches the child while the parent environment stays inherited.
+test("exec merges env into the inherited child environment", async () => {
+  const result = await exec(
+    process.execPath,
+    ["-e", "console.log(process.env.AGENT_LOOP_TEST_ENV, typeof process.env.PATH)"],
+    { env: { AGENT_LOOP_TEST_ENV: "set" } },
+  );
+  expect(result.stdout.trim()).toBe("set string");
+});
+
 // Usefulness: verifies non-zero exit code throws ExecError with fields.
 test("exec throws ExecError on failure", async () => {
   await expect(

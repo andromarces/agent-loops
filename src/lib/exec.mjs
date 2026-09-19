@@ -19,7 +19,7 @@ export class ExecError extends Error {
 }
 
 export async function exec(command, args = [], options = {}) {
-  const { cwd, input, timeout, signal, role } = options;
+  const { cwd, input, timeout, signal, role, env } = options;
 
   const label = role ? `${role}: ${command}` : command;
   const startedAt = Date.now();
@@ -32,6 +32,11 @@ export async function exec(command, args = [], options = {}) {
     stdin: input === undefined ? "ignore" : undefined,
     killDescendants: true,
   };
+
+  // execa merges env with process.env; the child still inherits the launcher environment.
+  if (env) {
+    execaOptions.env = env;
+  }
 
   if (typeof timeout === "number" && timeout > 0) {
     execaOptions.timeout = timeout * 1000;
