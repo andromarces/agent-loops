@@ -105,6 +105,51 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 -h, --help                    Show help.
 ```
 
+## Interactive child dispatch: `agent-loop role`
+
+An interactive parent session (Claude Code, Codex, or any harness with shell access) can dispatch one child turn without spawning a headless orchestrator:
+
+```bash
+# First call initializes the run state and dispatches the worker.
+agent-loop role dispatch \
+  --role worker \
+  --cwd /path/to/work-tree \
+  --task "Implement the change." \
+  --mode work-first \
+  --parent-session "$CLAUDE_SESSION_ID" \
+  --worker claude --reviewer agy \
+  --prompt-file ./prompt.txt
+
+# Later calls read the configuration from the state file.
+agent-loop role dispatch --role reviewer --cwd /path/to/work-tree --prompt-file ./review.txt
+```
+
+Operations: `dispatch` (default), `finish`, `abort`.
+
+- The run state lives at a fixed path derived from the resolved `--cwd` (`<os tmpdir>/agent-loops/runs/<sha256 of cwd, shortened>/state.json`, with `state.lock` beside it). There is no `--state` flag; `AGENT_LOOP_RUNS_ROOT` overrides the root for tests only.
+- The init call writes a session index entry at `<root>/sessions/<parent-session>` pointing at the state file, so a parent guard hook (#57) can look the run up by session id even when `--cwd` is a different work tree. A later init call from the same session overwrites the entry.
+- Prompts come from stdin by default, or `--prompt-file`. `finish` reads the five-key summary as JSON on stdin; `abort` takes `--reason`.
+- The state file records `task`, `mode`, `cwd`, `parentSession`, `maxSteps`, `timeout`, `stepsUsed`, `lifecycle`, `roles.{worker,reviewer}.{kind,model,effort,sessionId}`, `lastDispatch`, and `lastResult`, plus `summary` or `reason` when terminal and `resumeDecision` when a maintainer resumed an interrupted run. Updates are atomic (temp file plus rename); exclusive access uses `state.lock` with a stale-lock check on the owner pid.
+- Lifecycle values: `active`, `dispatched`, `interrupted`, `halted`, `finished`, `aborted` (terminal: `halted`, `finished`, `aborted`). A turn interrupted between the CLI start and the state write leaves `dispatched` with a dead lock owner; the first call after the crash marks it `interrupted`, exits non-zero, and never repeats the turn, even with `--resume-interrupted`. From `interrupted`, only `abort` or an explicit `dispatch --resume-interrupted` is accepted.
+- The lock is fail-closed on ambiguity: a contender that finds a lock it cannot read (created moments ago, content not yet written) exits non-zero and never removes it; only an unparseable lock older than a grace window, or one whose recorded pid is dead, is treated as stale.
+- The reviewer turn runs under the same `withMutationCheck` as the headless loop: a detected mutation or snapshot error is fatal, keeps the charged step, and sets `halted`. No further dispatch is possible; the next run needs a new init call, which archives the halted file as `state.<timestamp>.json`.
+- `mode: review-only` rejects `--role worker` as a hard guard. `finish` is completion of the requested work, not code acceptance: it is accepted from `active` in any mode, and the five-key summary carries the reviewer verdict and unresolved findings.
+- The reviewer is required to end with one explicit `Verdict:` line (`accept` or `reject`, parsed case-insensitively) inside its closing block. A missing or malformed line yields `verdict: unknown`; process success never implies acceptance.
+- `--transcript <file>` appends one JSON line per `invocation` and `result` event, in the same shape as the headless mode, accumulating across calls.
+
+Stdout carries exactly one JSON envelope; all logs go to stderr:
+
+```json
+{
+  "role": "reviewer",
+  "status": "ok",
+  "report": { "conclusion": "...", "why": "...", "blockers": "..." },
+  "verdict": "accept"
+}
+```
+
+`report` is parsed from the closing block every child turn must end with. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
+
 ## Reviewer safety
 
 Reviewer and orchestrator turns run in read-only mode to prevent unintended repository mutations.

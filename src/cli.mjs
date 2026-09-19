@@ -3,9 +3,16 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
+import {
+  assertOpenCodeOptions,
+  readArgValue,
+  readNonNegativeInt,
+  readPositiveInt,
+} from "./lib/args.mjs";
 import { setVerbose } from "./lib/log.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runLoop } from "./runtime.mjs";
+import { main as runRoleMain } from "./role.mjs";
 
 const ROLES = ["orchestrator", "worker", "reviewer"];
 
@@ -24,29 +31,7 @@ export function parseArgs(argv) {
     options[`${role}Effort`] = null;
   }
 
-  const readValue = (flag, index) => {
-    const value = argv[index];
-    if (!value || value.startsWith("-")) {
-      throw new Error(`Missing value for ${flag}.`);
-    }
-    return value;
-  };
-
-  const readPositiveInt = (flag, index) => {
-    const val = Number(readValue(flag, index));
-    if (!Number.isInteger(val) || val < 1) {
-      throw new Error(`${flag} must be a positive integer.`);
-    }
-    return val;
-  };
-
-  const readNonNegativeInt = (flag, index) => {
-    const val = Number(readValue(flag, index));
-    if (!Number.isInteger(val) || val < 0) {
-      throw new Error(`${flag} must be a non-negative integer.`);
-    }
-    return val;
-  };
+  const readValue = (flag, index) => readArgValue(argv, flag, index);
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -77,11 +62,11 @@ export function parseArgs(argv) {
         break;
 
       case "--max-steps":
-        options.maxSteps = readPositiveInt("--max-steps", ++i);
+        options.maxSteps = readPositiveInt("--max-steps", readValue("--max-steps", ++i));
         break;
 
       case "--timeout": {
-        const seconds = readNonNegativeInt("--timeout", ++i);
+        const seconds = readNonNegativeInt("--timeout", readValue("--timeout", ++i));
         options.timeout = seconds === 0 ? null : seconds;
         break;
       }
@@ -117,7 +102,6 @@ export function parseArgs(argv) {
   for (const role of ROLES) {
     assertOpenCodeOptions(role, options[role], options[`${role}Model`], options[`${role}Effort`]);
   }
-
   if (options.task === null || options.task === undefined || String(options.task).trim() === "") {
     throw new Error(
       'Missing required --task. Provide the task, for example --task "Implement the change."',
@@ -125,22 +109,6 @@ export function parseArgs(argv) {
   }
 
   return options;
-}
-
-function assertOpenCodeOptions(role, kind, model, effort) {
-  if (normalizeAgent(kind) !== "opencode") {
-    return;
-  }
-
-  if (effort && !model) {
-    throw new Error(`--${role}-effort requires --${role}-model for OpenCode.`);
-  }
-
-  if (effort && model.includes("#")) {
-    throw new Error(
-      `--${role}-model "${model}" already contains a variant and cannot be combined with --${role}-effort.`,
-    );
-  }
 }
 
 function printHelp() {
@@ -154,8 +122,33 @@ Usage:
     --reviewer agy \\
     --task "Implement the change."
 
+  agent-loop role dispatch --role worker --prompt-file prompt.txt
+
 The orchestrator selects actions (run_worker, run_reviewer, finish, abort).
 The runtime enforces step limits and mutation boundaries.
+
+Subcommands:
+
+  agent-loop role               Run a single worker or reviewer turn, or finish/abort
+                                a run, from a lifecycle state file (see below). One JSON
+                                object on stdout; logs on stderr.
+
+Role operations:
+
+  dispatch (default)            Run one --role turn for the run state at --cwd.
+  finish                        End the run; the five-key summary arrives as JSON on stdin.
+  abort                         End the run with --reason.
+
+Role flags:
+
+  --role worker|reviewer        Role to dispatch. Required for dispatch.
+  --cwd <directory>             Target work tree. Defaults to the current directory.
+  --task / --mode / --parent-session / --worker* / --reviewer* / --max-steps / --timeout
+                                First (init) call only. Later calls read these from the
+                                state file and reject any attempt to change them.
+  --prompt-file <path>          Prompt source. Default is stdin.
+  --transcript <file>           Append invocation and result events (JSON lines).
+  --resume-interrupted           Explicitly continue after an uncertain previous turn.
 
 Options:
 
@@ -203,6 +196,11 @@ function formatSummary(summary) {
 }
 
 export async function main(argv = process.argv.slice(2), agents = defaultAgents) {
+  if (argv[0] === "role") {
+    await runRoleMain(argv.slice(1), { agents });
+    return;
+  }
+
   let options;
   try {
     options = parseArgs(argv);

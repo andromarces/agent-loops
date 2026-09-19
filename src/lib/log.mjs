@@ -6,9 +6,19 @@
 const MAX_LENGTH = 300;
 
 let verbose = false;
+let stderrOnly = false;
 
 export function setVerbose(value) {
   verbose = Boolean(value);
+}
+
+/**
+ * Routes info and debug lines to stderr as well. The role subcommand must keep
+ * stdout reserved for its single JSON envelope, so it turns this on for its
+ * whole lifetime.
+ */
+export function setLogsToStderr(value) {
+  stderrOnly = Boolean(value);
 }
 
 function truncate(message) {
@@ -17,12 +27,12 @@ function truncate(message) {
 
 export function logDebug(message) {
   if (verbose) {
-    console.log(`[agent-loop] debug: ${truncate(message)}`);
+    (stderrOnly ? console.error : console.log)(`[agent-loop] debug: ${truncate(message)}`);
   }
 }
 
 export function logInfo(message) {
-  console.log(`[agent-loop] info: ${truncate(message)}`);
+  (stderrOnly ? console.error : console.log)(`[agent-loop] info: ${truncate(message)}`);
 }
 
 export function logWarn(message) {
