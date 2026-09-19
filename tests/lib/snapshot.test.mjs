@@ -261,6 +261,25 @@ test.skipIf(!canSimulateReadFailure)("sha256File rethrows non-ENOENT read errors
   }
 });
 
+// Usefulness: verifies snapshot() wraps file-hash read failures in SnapshotError so runChild treats them as fatal.
+test.skipIf(!canSimulateReadFailure)(
+  "snapshot rejects with SnapshotError when a tracked file is unreadable",
+  async () => {
+    const repo = await createTempRepo();
+    try {
+      const file = join(repo, "initial.txt");
+      await chmod(file, 0o000);
+      try {
+        await expect(snapshot(repo)).rejects.toMatchObject({ name: "SnapshotError" });
+      } finally {
+        await chmod(file, 0o644);
+      }
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  },
+);
+
 // Usefulness: verifies a failed post-turn snapshot wins over the agent error and attaches the agent error as cause.
 test("withMutationCheck throws SnapshotError with agent error as cause when post-turn snapshot fails", async () => {
   const repo = await createTempRepo();
