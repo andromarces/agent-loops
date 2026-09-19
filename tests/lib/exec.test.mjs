@@ -108,6 +108,24 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
+// Usefulness: verifies a command that cannot be spawned names the cause
+// instead of "exited with code undefined" (issue #40 POSIX case). Windows
+// reports exit code 1 for spawn failures, so this only runs on POSIX.
+test.skipIf(process.platform === "win32")(
+  "exec spawn failure message contains failed to start on POSIX",
+  async () => {
+    try {
+      await exec("definitely-not-a-command-xyz", []);
+      expect.unreachable("should have thrown ExecError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExecError);
+      expect(err.isTerminated).toBe(false);
+      expect(err.message).toContain("failed to start");
+      expect(err.message).not.toContain("undefined");
+    }
+  },
+);
+
 // Usefulness: verifies best-effort descendant kill when canceling a process tree.
 test("exec terminates descendants when canceled", async () => {
   const controller = new AbortController();

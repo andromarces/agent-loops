@@ -52,6 +52,10 @@ export async function exec(command, args = [], options = {}) {
       // POSIX-only: execa cannot detect signal termination on Windows.
       const description = result.signalDescription ?? result.signal ?? "a signal";
       cause = `${command} was killed by ${description}.`;
+    } else if (result.exitCode === undefined) {
+      // POSIX-only: execa leaves exitCode undefined when the subprocess
+      // could not be spawned (Windows reports exit code 1 instead).
+      cause = `${command} failed to start.`;
     } else {
       cause = `${command} exited with code ${result.exitCode}.`;
     }
