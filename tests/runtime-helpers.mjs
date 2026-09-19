@@ -18,6 +18,11 @@ export async function createTempRepo() {
   return dir;
 }
 
+/**
+ * Runs an ordered list of fake replies and records each call in `recorded`.
+ * A reply may be a value or a `(state, prompt, options)` function; values are
+ * returned as-is, functions are called instead.
+ */
 export function scripted(replies) {
   let callIndex = 0;
   const recorded = [];
