@@ -288,7 +288,8 @@ test("successful finish run writes transcript with exitCode 0", async () => {
     const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
     expect(transcript.exitCode).toBe(0);
     expect(transcript.error).toBeNull();
-    expect(transcript.events.length).toBe(1);
+    // One orchestrator CLI call, then its validated finish action.
+    expect(transcript.events.map((event) => event.type)).toEqual(["invocation", "action"]);
   } finally {
     process.exitCode = origExitCode;
     await rm(repo, { recursive: true, force: true });

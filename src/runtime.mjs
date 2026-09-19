@@ -35,20 +35,34 @@ export async function runLoop(options) {
     return { exitCode, ...detail };
   }
 
+  /**
+   * Every CLI call goes through here. Emits one `invocation` event per call, carrying the
+   * usage the adapter exposed on `state.usage`, and clears that field so it never lingers.
+   */
+  async function invoke(state, roleName, prompt, opts) {
+    delete state.usage;
+    const emit = (status) => {
+      const event = { type: "invocation", role: roleName, status, stepsUsed };
+      if (state.usage) {
+        event.usage = state.usage;
+        delete state.usage;
+      }
+      onEvent(event);
+    };
+    let response;
+    try {
+      response = await runAgent(state, prompt, { ...opts, role: roleName }, agents);
+    } catch (err) {
+      emit("error");
+      throw err;
+    }
+    emit("ok");
+    return response;
+  }
+
   async function runRole(role, roleName, prompt, readOnly) {
     const runFn = async () => {
-      return runAgent(
-        role,
-        prompt,
-        {
-          cwd,
-          readOnly,
-          timeout,
-          signal,
-          role: roleName,
-        },
-        agents,
-      );
+      return invoke(role, roleName, prompt, { cwd, readOnly, timeout, signal });
     };
 
     if (readOnly) {
@@ -85,9 +99,7 @@ export async function runLoop(options) {
 
   const orchAdapter = {
     async run(state, p, opts) {
-      return withMutationCheck(cwd, "orchestrator", () =>
-        runAgent(state, p, { ...opts, role: "orchestrator" }, agents),
-      );
+      return withMutationCheck(cwd, "orchestrator", () => invoke(state, "orchestrator", p, opts));
     },
   };
 

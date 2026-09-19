@@ -28,25 +28,58 @@ export async function runClaude(state, prompt, options = {}) {
 
   args.push("--output-format", "json");
 
-  const { stdout } = await exec("claude", args, execOptions);
+  let stdout;
+  try {
+    ({ stdout } = await exec("claude", args, execOptions));
+  } catch (err) {
+    // A non-zero exit can still carry a result event with usage. Expose it, then rethrow.
+    let failed;
+    try {
+      failed = JSON.parse(err?.stdout ?? "");
+    } catch {
+      failed = undefined;
+    }
+    setUsage(state, findResultEvent(failed));
+    throw err;
+  }
   const parsed = parseJson(stdout, "Claude Code");
 
-  let sessionId;
-  let response;
-
-  if (Array.isArray(parsed)) {
-    sessionId = parsed.map((event) => event?.session_id).find(Boolean);
-    response = parsed.find((event) => event?.type === "result")?.result;
-  } else {
-    sessionId = parsed.session_id;
-    response = parsed.result;
-  }
+  const sessionId = Array.isArray(parsed)
+    ? parsed.map((event) => event?.session_id).find(Boolean)
+    : parsed.session_id;
 
   if (!sessionId) {
     throw new Error("Claude Code did not return a session_id.");
   }
 
   state.sessionId = sessionId;
+  const resultEvent = findResultEvent(parsed);
+  setUsage(state, resultEvent);
 
-  return String(response ?? "").trim();
+  return String(resultEvent?.result ?? "").trim();
+}
+
+function findResultEvent(parsed) {
+  if (Array.isArray(parsed)) {
+    return parsed.find((event) => event?.type === "result");
+  }
+  return parsed && typeof parsed === "object" ? parsed : undefined;
+}
+
+/**
+ * Sets `state.usage` from a result event, or removes it when the event carries no usage.
+ * `usage` covers the top-level loop only; `modelUsage` and `total_cost_usd` include subagents.
+ */
+function setUsage(state, resultEvent) {
+  const usage = {};
+  if (resultEvent?.modelUsage) usage.models = resultEvent.modelUsage;
+  if (resultEvent?.usage) usage.mainLoop = resultEvent.usage;
+  if (typeof resultEvent?.total_cost_usd === "number") {
+    usage.totalCostUsd = resultEvent.total_cost_usd;
+  }
+  if (Object.keys(usage).length > 0) {
+    state.usage = usage;
+  } else {
+    delete state.usage;
+  }
 }
