@@ -252,10 +252,12 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
     }
 
     const onEvent = (event) => {
-      events.push({
-        ...event,
-        at: new Date().toISOString(),
-      });
+      if (options.transcript) {
+        events.push({
+          ...event,
+          at: new Date().toISOString(),
+        });
+      }
 
       if (event.type === "action") {
         console.log("\n===== ORCHESTRATOR =====\n");
