@@ -1,6 +1,5 @@
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 import { extractJsonObject } from "./lib/json.mjs";
-import { withMutationCheck } from "./lib/snapshot.mjs";
 import { repairPrompt } from "./prompts/orchestrator.mjs";
 
 export class OrchestratorError extends Error {
@@ -14,13 +13,11 @@ export async function decide({ agent, state, prompt, options = {} }) {
   const { cwd, timeout, signal } = options;
 
   async function executeTurn(turnPrompt) {
-    return withMutationCheck(cwd, "orchestrator", async () => {
-      return agent.run(state, turnPrompt, {
-        cwd,
-        readOnly: true,
-        timeout,
-        signal,
-      });
+    return agent.run(state, turnPrompt, {
+      cwd,
+      readOnly: true,
+      timeout,
+      signal,
     });
   }
 
