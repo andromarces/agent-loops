@@ -1,3 +1,5 @@
+import { reportBlock } from "./report.mjs";
+
 export function workerPrompt(prompt, firstTurn = false) {
   if (!firstTurn) {
     return prompt;
@@ -10,6 +12,8 @@ Your role:
 - Run tests, checks, and verifications to confirm correctness.
 - Report what changed, what was verified, and state any disagreements with evidence.
 - You do NOT decide when the loop ends.
+
+${reportBlock}
 
 Instructions:
 ${prompt}
