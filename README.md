@@ -99,7 +99,7 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
 --task <text>                 Task description. Required.
 --max-steps <count>           Maximum child steps. Defaults to 20.
---timeout <seconds>           Timeout in seconds per invocation. Optional.
+--timeout <seconds>           Timeout per agent invocation. Optional.
 --transcript <file>           Record execution transcript to a JSON file.
 -h, --help                    Show help.
 ```
@@ -133,7 +133,7 @@ Known limits:
 
 ## Transcript
 
-When `--transcript <file>` is specified, a JSON transcript is written upon process exit (except when argv parsing fails):
+When `--transcript <file>` is specified, a JSON transcript is written upon process exit (except when argv parsing fails).
 
 The transcript records each validated orchestrator action and each child result with timestamps, plus the final exit code and error. It does not record raw orchestrator responses or repair turns.
 

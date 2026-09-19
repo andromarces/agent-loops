@@ -6,7 +6,7 @@
 | Result | Delivered. Merged as [PR #18](https://github.com/andromarces/agent-loops/pull/18) (`0072d41`) on 2026-09-19. |
 | ADR    | [adr/0001-hybrid-orchestrator-runtime.md](../adr/0001-hybrid-orchestrator-runtime.md) holds the decision.    |
 
-The full implementation plan (443 lines) is superseded by the ADR, the merged PR description, and this stub. It is archived in the PR #18 branch history (`feat/issue-14-hybrid-orchestrator`).
+The full implementation plan (443 lines) is superseded by the ADR, the merged PR description, and this stub. Its full text remains readable from `main` history: `git show 0bd9d88:docs/issue-14-hybrid-orchestrator-plan.md`.
 
 ## Acceptance evidence
 
