@@ -2,13 +2,14 @@
 
 ## Status
 
-| Field       | Value                                                                                                          |
-| ----------- | -------------------------------------------------------------------------------------------------------------- |
-| Issue       | [#14](https://github.com/andromarces/agent-loops/issues/14)                                                    |
-| Baseline    | `main` at `2dc0ce2`, 107 tests pass in suite (2026-09-19)                                                      |
-| Branch      | `feat/issue-14-hybrid-orchestrator` in a dedicated worktree.                                                   |
-| State       | Implementation complete (Phases 1-7). Verified live smoke test with codex, claude, agy. All 109 tests passing. |
-| Next action | Create pull request to close issue #14.                                                                        |
+| Field        | Value                                                                                                          |
+| ------------ | -------------------------------------------------------------------------------------------------------------- |
+| Issue        | [#14](https://github.com/andromarces/agent-loops/issues/14)                                                    |
+| Baseline     | `main` at `2dc0ce2`, 110 tests pass in suite (2026-09-19)                                                      |
+| Branch       | `feat/issue-14-hybrid-orchestrator` pushed to `origin`.                                                        |
+| State        | Implementation complete (Phases 1-7). Verified live smoke test with codex, claude, agy. All 110 tests passing. |
+| Pull request | [#18](https://github.com/andromarces/agent-loops/pull/18)                                                      |
+| Next action  | Merge pull request #18 and close issue #14.                                                                    |
 
 ## Decisions that resolve the issue ambiguities
 

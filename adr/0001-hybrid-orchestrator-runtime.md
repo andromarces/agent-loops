@@ -49,4 +49,5 @@ Andro Marces
 ## Links
 
 - [Issue #14: Hybrid orchestrator and deterministic runtime](https://github.com/andromarces/agent-loops/issues/14)
+- [Pull Request #18: feat: hybrid orchestrator with deterministic runtime](https://github.com/andromarces/agent-loops/pull/18)
 - [ADR Index](README.md)
