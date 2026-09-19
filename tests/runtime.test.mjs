@@ -677,3 +677,34 @@ test("reviewer mutation by commit is fatal MutationError", async () => {
     await rm(repo, { recursive: true, force: true });
   }
 });
+
+// 20. Usefulness: verifies mutation during the orchestrator repair turn (first response malformed,
+// repair turn writes a file) is fatal, so every orchestrator turn stays mutation-checked.
+test("orchestrator mutation on repair turn is fatal MutationError", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchAdapter = scripted([
+      "malformed response with no JSON",
+      async () => {
+        await writeFile(join(repo, "repair-leak.txt"), "leak\n");
+        return JSON.stringify({ action: "run_worker", prompt: "go" });
+      },
+    ]);
+
+    await expect(
+      runLoop({
+        task: "Task 20",
+        cwd: repo,
+        maxSteps: 5,
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: { orch: orchAdapter, work: scripted([]), rev: scripted([]) },
+      }),
+    ).rejects.toThrow(MutationError);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});

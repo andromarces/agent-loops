@@ -65,6 +65,4 @@ export function validateAction(value) {
       },
     };
   }
-
-  return { ok: false, error: `Unsupported action: ${action}` };
 }

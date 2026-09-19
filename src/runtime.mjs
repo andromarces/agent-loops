@@ -64,7 +64,7 @@ export async function runLoop(options) {
 
   const orchAdapter = {
     async run(state, p, opts) {
-      return runAgent(state, p, opts, agents);
+      return withMutationCheck(cwd, "orchestrator", () => runAgent(state, p, opts, agents));
     },
   };
 

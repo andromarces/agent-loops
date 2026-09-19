@@ -1,7 +1,7 @@
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 
-export async function runOpenCode(state, prompt, options = {}, command = "opencode") {
+export async function runOpenCode(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal } = options;
   const args = ["run", "--format", "json"];
 
@@ -20,19 +20,19 @@ export async function runOpenCode(state, prompt, options = {}, command = "openco
     args.push("--model", model);
   }
 
-  const { stdout } = await exec(command, args, { cwd, input: prompt, timeout, signal });
+  const { stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal });
   const events = parseJsonLines(stdout);
 
   const sessionId = events.map((event) => event.sessionID).find(Boolean);
 
   if (!sessionId) {
-    throw new Error(`${command} did not return a session ID.`);
+    throw new Error("opencode did not return a session ID.");
   }
 
   if (state.sessionId && state.sessionId !== sessionId) {
     throw new Error(
       [
-        `${command} did not resume the expected session.`,
+        `opencode did not resume the expected session.`,
         `Expected: ${state.sessionId}`,
         `Received: ${sessionId}`,
       ].join("\n"),
@@ -47,7 +47,7 @@ export async function runOpenCode(state, prompt, options = {}, command = "openco
     .join("");
 
   if (!text.trim()) {
-    throw new Error(`${command} did not return response text.`);
+    throw new Error("opencode did not return response text.");
   }
 
   return text.trim();
