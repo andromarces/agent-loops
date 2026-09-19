@@ -150,6 +150,31 @@ Stdout carries exactly one JSON envelope; all logs go to stderr:
 
 `report` is parsed from the closing block every child turn must end with. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
 
+## Parent guard: hard read-only for the parent session
+
+The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. On Claude Code, a `PreToolUse` hook in `.claude/settings.json` adds a hard guard for the file-edit tools:
+
+- Matcher: `Edit|Write|MultiEdit|NotebookEdit`. `Bash` stays allowed because the parent needs it to run `agent-loop role`; a Bash-based edit bypasses the guard. Full enforcement needs a harness that exposes only orchestration tools.
+- The hook (`src/hook/parent-guard.mjs`) reads the hook input on stdin and uses only `session_id`. It resolves the state file through the session index written by the init call, never through the hook `cwd`, so a parent whose run targets a different `--cwd` stays guarded wherever it edits. No environment variable is required at parent start-up; the harness entry points (#56) pass their session id as `--parent-session` on init.
+- Deny only when the hook `session_id` equals `parentSession` in the registered state and the lifecycle is non-terminal (`active`, `dispatched`, `interrupted`). During `interrupted` the guard stays engaged until `abort` or an explicit `dispatch --resume-interrupted`. `finished`, `aborted`, and `halted` release it.
+- Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt index entry or state file. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
+- Without a state file the hook does one absent-file read, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
+- The hook is registered as an exec-form command (`node` + script `args`), which spawns `node` directly on every platform Claude Code supports, with no shell.
+
+### Pre-tool hook availability by harness
+
+Surveyed 2026-09-20 against current vendor docs. A session-keyed guard needs both a pre-tool hook and a documented way for the parent to learn its own session id at init time; the guard ships only where both exist.
+
+| Harness            | Pre-tool hook                                                                                                                                                | Guard                   |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
+| Claude Code        | `PreToolUse`, deny supported, `session_id` in input                                                                                                          | Implemented (this repo) |
+| Codex CLI          | `PreToolUse` since v0.117.0, deny supported, `session_id` in input                                                                                           | Not implemented         |
+| Antigravity CLI    | `PreToolUse` hooks (workspace or global `hooks.json`), `conversationId` in input                                                                             | Not implemented         |
+| GitHub Copilot CLI | `preToolUse` since v0.0.396, deny supported, `session_id` in input; repo-level `.github/hooks/` loading reported broken in the CLI (github/copilot-cli#1730) | Not implemented         |
+| OpenCode           | `tool.execute.before` plugin hook can block tool calls                                                                                                       | Not implemented         |
+
+For Codex, Antigravity, Copilot, and OpenCode the hook surface exists, but no documented channel passes the parent's own session id to the `agent-loop role` init call, so a session-keyed guard cannot be wired yet. Add one only when a session-id channel is documented for that harness.
+
 ## Reviewer safety
 
 Reviewer and orchestrator turns run in read-only mode to prevent unintended repository mutations.
