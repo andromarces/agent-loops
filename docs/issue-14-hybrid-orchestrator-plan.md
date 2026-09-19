@@ -2,30 +2,30 @@
 
 ## Status
 
-| Field | Value |
-| --- | --- |
-| Issue | [#14](https://github.com/andromarces/agent-loops/issues/14) |
-| Baseline | `main` at `1b7e404`, `pnpm test` passes 25 tests in `tests/cli.test.mjs` (2026-09-19) |
-| Branch | Planned: `feat/issue-14-hybrid-orchestrator` in a dedicated worktree. Not created. |
-| State | Awaiting owner review. Design questions resolved on 2026-09-19. No code written. |
+| Field       | Value                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| Issue       | [#14](https://github.com/andromarces/agent-loops/issues/14)                                                          |
+| Baseline    | `main` at `1b7e404`, `pnpm test` passes 25 tests in `tests/cli.test.mjs` (2026-09-19)                                |
+| Branch      | Planned: `feat/issue-14-hybrid-orchestrator` in a dedicated worktree. Not created.                                   |
+| State       | Awaiting owner review. Design questions resolved on 2026-09-19. No code written.                                     |
 | Next action | Owner approves the plan. Then Phase 1: create the worktree and the `lib/` and `contracts/` modules with their tests. |
 
 ## Decisions that resolve the issue ambiguities
 
 Decided with the repository owner on 2026-09-19.
 
-| Topic | Decision |
-| --- | --- |
-| Legacy loop | Remove the fixed worker/reviewer loop, `REVIEW_COMPLETE`, and `--max-reviews`. The orchestrator model is the only mode. |
-| `--orchestrator` | Required, like `--worker` and `--reviewer`. |
-| Structured output | Uniform for every CLI: the prompt asks for one JSON object, Node validates. Accept a bare object or one inside a ```` ```json ```` fence. No native schema flags. |
-| `finish.summary` | Object with five non-empty string keys: `changed`, `verified`, `deferred`, `notDone`, `open`. |
-| Child CLI failure | Surfaced to the orchestrator as `{ status: "error" }`. Orchestrator CLI failure is fatal, exit 1. |
-| Timeout | One `--timeout <seconds>`, no default. Child timeout kills the child and surfaces an error result. Orchestrator timeout is fatal, exit 1. |
-| Mutation check | Runs on reviewer turns and orchestrator turns. Non-Git `--cwd` fails at startup. Detected mutation is fatal, exit 1, no revert. |
-| Transcript | Opt-in `--transcript <file>` writes one JSON file on every exit after argv parsing succeeds. An argv parse failure writes no transcript. |
-| `--max-steps` default | 20. |
-| Plan location | This file, written in the main checkout by owner instruction. |
+| Topic                 | Decision                                                                                                                                                    |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Legacy loop           | Remove the fixed worker/reviewer loop, `REVIEW_COMPLETE`, and `--max-reviews`. The orchestrator model is the only mode.                                     |
+| `--orchestrator`      | Required, like `--worker` and `--reviewer`.                                                                                                                 |
+| Structured output     | Uniform for every CLI: the prompt asks for one JSON object, Node validates. Accept a bare object or one inside a ` ```json ` fence. No native schema flags. |
+| `finish.summary`      | Object with five non-empty string keys: `changed`, `verified`, `deferred`, `notDone`, `open`.                                                               |
+| Child CLI failure     | Surfaced to the orchestrator as `{ status: "error" }`. Orchestrator CLI failure is fatal, exit 1.                                                           |
+| Timeout               | One `--timeout <seconds>`, no default. Child timeout kills the child and surfaces an error result. Orchestrator timeout is fatal, exit 1.                   |
+| Mutation check        | Runs on reviewer turns and orchestrator turns. Non-Git `--cwd` fails at startup. Detected mutation is fatal, exit 1, no revert.                             |
+| Transcript            | Opt-in `--transcript <file>` writes one JSON file on every exit after argv parsing succeeds. An argv parse failure writes no transcript.                    |
+| `--max-steps` default | 20.                                                                                                                                                         |
+| Plan location         | This file, written in the main checkout by owner instruction.                                                                                               |
 
 Routine defaults chosen without a question:
 
@@ -89,19 +89,19 @@ agent-loop \
   --task "Implement the change."
 ```
 
-| Flag | Rule |
-| --- | --- |
-| `--orchestrator <agent>` | Required. Supported names: `claude`, `codex`, `agy`, `antigravity`, `opencode`, `copilot`. |
-| `--worker <agent>` | Required. |
-| `--reviewer <agent>` | Required. |
-| `--orchestrator-model`, `--worker-model`, `--reviewer-model` | Optional string. Passed on every invocation. |
-| `--orchestrator-effort`, `--worker-effort`, `--reviewer-effort` | Optional string. OpenCode rules from `assertOpenCodeOptions` apply to all three roles. |
-| `--cwd <directory>` | Optional. Resolved with `path.resolve`. Must be inside a Git work tree. |
-| `--task <text>` | Required, non-empty after trim. |
-| `--max-steps <count>` | Optional positive integer. Default 20. |
-| `--timeout <seconds>` | Optional positive integer. Omitted means no timeout. |
-| `--transcript <file>` | Optional path. Resolved with `path.resolve` against the launch directory, not `--cwd`. |
-| `-h`, `--help` | Print help, exit 0. |
+| Flag                                                            | Rule                                                                                       |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `--orchestrator <agent>`                                        | Required. Supported names: `claude`, `codex`, `agy`, `antigravity`, `opencode`, `copilot`. |
+| `--worker <agent>`                                              | Required.                                                                                  |
+| `--reviewer <agent>`                                            | Required.                                                                                  |
+| `--orchestrator-model`, `--worker-model`, `--reviewer-model`    | Optional string. Passed on every invocation.                                               |
+| `--orchestrator-effort`, `--worker-effort`, `--reviewer-effort` | Optional string. OpenCode rules from `assertOpenCodeOptions` apply to all three roles.     |
+| `--cwd <directory>`                                             | Optional. Resolved with `path.resolve`. Must be inside a Git work tree.                    |
+| `--task <text>`                                                 | Required, non-empty after trim.                                                            |
+| `--max-steps <count>`                                           | Optional positive integer. Default 20.                                                     |
+| `--timeout <seconds>`                                           | Optional positive integer. Omitted means no timeout.                                       |
+| `--transcript <file>`                                           | Optional path. Resolved with `path.resolve` against the launch directory, not `--cwd`.     |
+| `-h`, `--help`                                                  | Print help, exit 0.                                                                        |
 
 Removed: `--max-reviews`. It now fails as `Unknown argument: --max-reviews`.
 
@@ -115,12 +115,12 @@ Startup validation order in `cli.mjs`:
 
 Exit codes:
 
-| Code | Meaning |
-| --- | --- |
-| 0 | Orchestrator returned `finish`. Report printed. |
-| 1 | Orchestrator returned `abort`, or a controller error: orchestrator CLI failure, failed repair, unsupported action, mutation detected, orchestrator timeout, argv error, non-Git cwd. |
-| 2 | Orchestrator requested a child turn after `--max-steps` was consumed. |
-| 130 | `Ctrl+C` received. Active child killed. |
+| Code | Meaning                                                                                                                                                                              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0    | Orchestrator returned `finish`. Report printed.                                                                                                                                      |
+| 1    | Orchestrator returned `abort`, or a controller error: orchestrator CLI failure, failed repair, unsupported action, mutation detected, orchestrator timeout, argv error, non-Git cwd. |
+| 2    | Orchestrator requested a child turn after `--max-steps` was consumed.                                                                                                                |
+| 130  | `Ctrl+C` received. Active child killed.                                                                                                                                              |
 
 ## Orchestrator action contract
 
@@ -173,11 +173,15 @@ The mutation check wraps both the first attempt and the repair.
 
 ```js
 runLoop({
-  task, cwd, maxSteps, timeout, signal,
+  task,
+  cwd,
+  maxSteps,
+  timeout,
+  signal,
   roles: { orchestrator, worker, reviewer }, // each { kind, sessionId: null, model, effort }
-  agents,                                    // name -> adapter, injectable for tests
-  onEvent,                                   // (event) => void, used for console output and transcript
-})
+  agents, // name -> adapter, injectable for tests
+  onEvent, // (event) => void, used for console output and transcript
+});
 ```
 
 Algorithm:
@@ -212,7 +216,7 @@ Step semantics: the last allowed step still returns its result to the orchestrat
 
 `src/prompts/orchestrator.mjs`:
 
-- `initialPrompt({ task, maxSteps })` states: the orchestrator role, that it must not edit files or run agent CLIs, the two child roles and their capabilities, that the reviewer is read-only, the step budget and the step definition, the exact four action shapes, the five summary keys, and the rule "Respond with one JSON object and nothing else. A ```` ```json ```` fence is accepted." It ends with the task text.
+- `initialPrompt({ task, maxSteps })` states: the orchestrator role, that it must not edit files or run agent CLIs, the two child roles and their capabilities, that the reviewer is read-only, the step budget and the step definition, the exact four action shapes, the five summary keys, and the rule "Respond with one JSON object and nothing else. A ` ```json ` fence is accepted." It ends with the task text.
 - `resultPrompt({ result, stepsUsed, maxSteps })` embeds one JSON block: `{ "role", "status", "response" | "error", "stepsUsed", "stepsRemaining" }`, then repeats the one-object rule.
 - `repairPrompt(error)` states the validation error and repeats the four shapes and the one-object rule.
 
@@ -227,28 +231,28 @@ Tests assert the whole prompt strings with equality, as the current suite does.
 Each adapter exports `run(state, prompt, options)` and returns the response text.
 
 ```js
-options = { cwd, readOnly, timeout, signal }
-state   = { kind, sessionId, model, effort }
+options = { cwd, readOnly, timeout, signal };
+state = { kind, sessionId, model, effort };
 ```
 
 Shared behavior stays as today: prompt on stdin, newline-free argv, session resume, model and effort pass-through, session mismatch errors.
 
 Read-only flags. Each is added on every invocation, new and resumed, when `readOnly` is true. Verified against the locally installed versions on 2026-09-19.
 
-| CLI | Version checked | Read-only argv addition | Evidence | Gap the mutation check covers |
-| --- | --- | --- | --- | --- |
-| `claude` | 2.1.277 | `--permission-mode plan` | `claude --help`, docs cli-reference | Plan mode denies edits. Prompts in `-p` without a host are denied. |
-| `codex` | 0.156.0-alpha.4 | `-c sandbox_mode="read-only"` | `codex exec --help` lists `-s read-only`. `codex exec resume --help` lacks `-s`, so the shared `-c` override is used on both paths. | Verify once by hand that `exec resume` accepts the `-c` key. |
-| `agy` | 1.2.6 | `--mode plan` | `agy --help`: `--mode (accept-edits, plan)` | Workspace writes are auto-allowed by default. Plan mode is the only invocation lever. |
-| `opencode` | dev-19794 | `--agent plan` | `opencode run --help`, README: plan denies edits, asks for bash. `run` auto-rejects asks. | A user config that widens the `plan` agent removes the guard. |
-| `copilot` | current | `--deny-tool write` | `copilot --help` example `--allow-tool='write'` = all file editing | Shell commands can still write. |
+| CLI        | Version checked | Read-only argv addition       | Evidence                                                                                                                            | Gap the mutation check covers                                                         |
+| ---------- | --------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `claude`   | 2.1.277         | `--permission-mode plan`      | `claude --help`, docs cli-reference                                                                                                 | Plan mode denies edits. Prompts in `-p` without a host are denied.                    |
+| `codex`    | 0.156.0-alpha.4 | `-c sandbox_mode="read-only"` | `codex exec --help` lists `-s read-only`. `codex exec resume --help` lacks `-s`, so the shared `-c` override is used on both paths. | Verify once by hand that `exec resume` accepts the `-c` key.                          |
+| `agy`      | 1.2.6           | `--mode plan`                 | `agy --help`: `--mode (accept-edits, plan)`                                                                                         | Workspace writes are auto-allowed by default. Plan mode is the only invocation lever. |
+| `opencode` | dev-19794       | `--agent plan`                | `opencode run --help`, README: plan denies edits, asks for bash. `run` auto-rejects asks.                                           | A user config that widens the `plan` agent removes the guard.                         |
+| `copilot`  | current         | `--deny-tool write`           | `copilot --help` example `--allow-tool='write'` = all file editing                                                                  | Shell commands can still write.                                                       |
 
 Never add `--yolo`, `--allow-all-tools`, `--dangerously-skip-permissions`, `--auto`, or `--dangerously-bypass-approvals-and-sandbox` for any role.
 
 `src/lib/exec.mjs`:
 
 ```js
-exec(command, args, { cwd, input, timeout, signal })
+exec(command, args, { cwd, input, timeout, signal });
 ```
 
 - Calls `execa` with `reject: false`, `input`, `stdin: "ignore"` when no input, `killDescendants: true`, `timeout: timeout * 1000` when set, `cancelSignal: signal` when set.
@@ -283,8 +287,21 @@ Known limits, documented in the README:
   "task": "…",
   "cwd": "…",
   "options": { "maxSteps": 20, "timeout": null },
-  "roles": { "orchestrator": { "kind": "codex", "sessionId": "…" }, "worker": { }, "reviewer": { } },
-  "events": [ { "type": "action", "at": "<ISO>", "stepsUsed": 0, "action": { } }, { "type": "result", "at": "<ISO>", "stepsUsed": 1, "role": "worker", "result": { } } ],
+  "roles": {
+    "orchestrator": { "kind": "codex", "sessionId": "…" },
+    "worker": {},
+    "reviewer": {}
+  },
+  "events": [
+    { "type": "action", "at": "<ISO>", "stepsUsed": 0, "action": {} },
+    {
+      "type": "result",
+      "at": "<ISO>",
+      "stepsUsed": 1,
+      "role": "worker",
+      "result": {}
+    }
+  ],
   "exitCode": 0,
   "error": null
 }
@@ -374,15 +391,15 @@ Integration tests against real CLIs stay out of `pnpm test`. Add a manual smoke 
 
 Work in TDD order inside the worktree. Each phase ends with `pnpm test`, `pnpm lint`, `pnpm fmt:check` green.
 
-| Phase | Files | Acceptance |
-| --- | --- | --- |
-| 1. Foundations | `lib/json.mjs`, `lib/exec.mjs`, `lib/snapshot.mjs`, `contracts/orchestrator-action.mjs`, their tests | All contract and lib tests pass. `snapshot` tests run against a real temp Git repository. `exec` tests run real subprocesses. |
-| 2. Adapters | `agents/*.mjs`, `agents/index.mjs`, `tests/agents/*.test.mjs` | Existing adapter behavior preserved. Read-only argv asserted per CLI. `.cmd` shim test moved and green. |
-| 3. Prompts and orchestrator | `prompts/*.mjs`, `orchestrator.mjs`, their tests | Repair path and unsupported action tests pass. |
-| 4. Runtime | `runtime.mjs`, `tests/runtime.test.mjs` | All 19 runtime cases pass with fake adapters. |
-| 5. CLI | `cli.mjs`, `tests/cli.test.mjs` | Old loop code deleted. Exit codes 0, 1, 2, 130 covered. Transcript written. |
-| 6. Docs | `README.md`, `adr/README.md`, `adr/0001-hybrid-orchestrator-runtime.md`, `package.json` | README matches the CLI help text. ADR index linked. |
-| 7. Manual smoke | none | One real run with three installed CLIs completes with exit 0. One run with a reviewer forced to write a file exits 1 with `MutationError`. Record the shortest decisive output in the pull request. |
+| Phase                       | Files                                                                                                | Acceptance                                                                                                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Foundations              | `lib/json.mjs`, `lib/exec.mjs`, `lib/snapshot.mjs`, `contracts/orchestrator-action.mjs`, their tests | All contract and lib tests pass. `snapshot` tests run against a real temp Git repository. `exec` tests run real subprocesses.                                                                       |
+| 2. Adapters                 | `agents/*.mjs`, `agents/index.mjs`, `tests/agents/*.test.mjs`                                        | Existing adapter behavior preserved. Read-only argv asserted per CLI. `.cmd` shim test moved and green.                                                                                             |
+| 3. Prompts and orchestrator | `prompts/*.mjs`, `orchestrator.mjs`, their tests                                                     | Repair path and unsupported action tests pass.                                                                                                                                                      |
+| 4. Runtime                  | `runtime.mjs`, `tests/runtime.test.mjs`                                                              | All 19 runtime cases pass with fake adapters.                                                                                                                                                       |
+| 5. CLI                      | `cli.mjs`, `tests/cli.test.mjs`                                                                      | Old loop code deleted. Exit codes 0, 1, 2, 130 covered. Transcript written.                                                                                                                         |
+| 6. Docs                     | `README.md`, `adr/README.md`, `adr/0001-hybrid-orchestrator-runtime.md`, `package.json`              | README matches the CLI help text. ADR index linked.                                                                                                                                                 |
+| 7. Manual smoke             | none                                                                                                 | One real run with three installed CLIs completes with exit 0. One run with a reviewer forced to write a file exits 1 with `MutationError`. Record the shortest decisive output in the pull request. |
 
 Manual smoke commands, run from a scratch Git repository:
 
@@ -415,11 +432,11 @@ codex exec resume <id> -c sandbox_mode="read-only" --json -   # verifies the res
 
 ## Risks
 
-| Risk | Handling |
-| --- | --- |
-| Codex `exec resume` rejects `-c sandbox_mode` | Phase 7 smoke check. Fallback: pass `-s read-only` on the first turn only and document the resume gap. |
-| Copilot non-interactive runs need `--allow-all-tools` per its help text | Pre-existing adapter behavior. Out of scope. Document the required external `--allow-tool` configuration in the README. |
-| Orchestrator writes prose around JSON on every turn | The repair turn recovers once per decision. The `initialPrompt` states the one-object rule twice. |
-| `git status` on a large work tree slows every read-only turn | Acceptable for the first implementation. Note the cost in the README. |
-| Windows `SIGINT` delivery to Node differs from POSIX | `process.once("SIGINT")` fires on `Ctrl+C` in a Windows console. The test drives the `AbortController` directly. |
-| Descendant termination is best-effort in Execa | `killDescendants: true` is the only cross-platform lever available. The README states that a tool an agent detached from its process tree can survive a cancel. |
+| Risk                                                                    | Handling                                                                                                                                                        |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex `exec resume` rejects `-c sandbox_mode`                           | Phase 7 smoke check. Fallback: pass `-s read-only` on the first turn only and document the resume gap.                                                          |
+| Copilot non-interactive runs need `--allow-all-tools` per its help text | Pre-existing adapter behavior. Out of scope. Document the required external `--allow-tool` configuration in the README.                                         |
+| Orchestrator writes prose around JSON on every turn                     | The repair turn recovers once per decision. The `initialPrompt` states the one-object rule twice.                                                               |
+| `git status` on a large work tree slows every read-only turn            | Acceptable for the first implementation. Note the cost in the README.                                                                                           |
+| Windows `SIGINT` delivery to Node differs from POSIX                    | `process.once("SIGINT")` fires on `Ctrl+C` in a Windows console. The test drives the `AbortController` directly.                                                |
+| Descendant termination is best-effort in Execa                          | `killDescendants: true` is the only cross-platform lever available. The README states that a tool an agent detached from its process tree can survive a cancel. |
