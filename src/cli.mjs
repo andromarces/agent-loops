@@ -3,6 +3,7 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
+import { setVerbose } from "./lib/log.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runLoop } from "./runtime.mjs";
 
@@ -15,6 +16,7 @@ export function parseArgs(argv) {
     maxSteps: 20,
     timeout: null,
     transcript: null,
+    verbose: false,
   };
   for (const role of ROLES) {
     options[role] = null;
@@ -76,6 +78,10 @@ export function parseArgs(argv) {
 
       case "--transcript":
         options.transcript = resolve(readValue(arg, ++i));
+        break;
+
+      case "--verbose":
+        options.verbose = true;
         break;
 
       case "--help":
@@ -157,6 +163,7 @@ Options:
   --max-steps <count>           Maximum child steps. Defaults to 20.
   --timeout <seconds>           Timeout per agent invocation. Optional.
   --transcript <file>           Record execution transcript to a JSON file.
+  --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   -h, --help                    Show help.
 
 Environment:
@@ -194,6 +201,8 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
     process.exitCode = 1;
     return;
   }
+
+  setVerbose(options.verbose);
 
   const events = [];
   const roles = {};

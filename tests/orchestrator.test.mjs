@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { decide, OrchestratorError } from "../src/orchestrator.mjs";
 
 // Helper to create a fake agent
@@ -100,4 +100,25 @@ test("decide throws OrchestratorError when action remains unsupported after repa
       options: { cwd: process.cwd() },
     }),
   ).rejects.toThrow(/Orchestrator returned a malformed action after one repair turn/);
+});
+
+// Usefulness: verifies issue #26 — a repair turn is unexpected state the code handled, logged at warn.
+test("decide logs a warn line when taking a repair turn", async () => {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const agent = fakeAgent([
+    "Some prose here: {bad json}",
+    '{"action": "run_worker", "prompt": "recovered prompt"}',
+  ]);
+  const state = { kind: "fake", sessionId: "sess-1" };
+
+  const action = await decide({
+    agent,
+    state,
+    prompt: "initial",
+    options: { cwd: process.cwd() },
+  });
+
+  expect(action).toEqual({ action: "run_worker", prompt: "recovered prompt" });
+  const lines = errorSpy.mock.calls.map((call) => call.join(" "));
+  expect(lines.some((line) => line.includes("repair turn"))).toBe(true);
 });

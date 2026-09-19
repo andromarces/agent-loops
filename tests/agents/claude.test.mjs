@@ -24,7 +24,7 @@ test("claude sends correct argv for initial turn with readOnly", async () => {
   expect(exec).toHaveBeenCalledWith(
     "claude",
     ["-p", "--permission-mode", "plan", "--model", "claude-3-5", "--output-format", "json"],
-    { cwd: "/path", input: "test prompt", timeout: undefined, signal: undefined },
+    { cwd: "/path", input: "test prompt", timeout: undefined, signal: undefined, role: undefined },
   );
 });
 
@@ -45,6 +45,6 @@ test("claude resumes session with effort and readOnly false", async () => {
   expect(exec).toHaveBeenCalledWith(
     "claude",
     ["-p", "--resume", "s1", "--effort", "high", "--output-format", "json"],
-    { cwd: "/path", input: "follow up", timeout: undefined, signal: undefined },
+    { cwd: "/path", input: "follow up", timeout: undefined, signal: undefined, role: undefined },
   );
 });

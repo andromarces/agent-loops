@@ -1,5 +1,11 @@
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { ExecError, exec } from "../../src/lib/exec.mjs";
+import { setVerbose } from "../../src/lib/log.mjs";
+
+afterEach(() => {
+  setVerbose(false);
+  vi.restoreAllMocks();
+});
 
 // Usefulness: verifies successful execution returns stdout and stderr.
 test("exec returns stdout on successful command", async () => {
@@ -169,4 +175,53 @@ test("exec terminates descendants when canceled", async () => {
     }
     expect(isAlive).toBe(false);
   }
+});
+
+// Usefulness: verifies issue #26 — each agent invocation logs start and successful stop with
+// the command name, duration, and exit code at info level.
+test("exec logs start and stop with command name, duration, and exit code", async () => {
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+  const result = await exec(process.execPath, ["-e", 'console.log("hello")'], {
+    role: "reviewer",
+  });
+
+  expect(result.stdout.trim()).toBe("hello");
+  const lines = logSpy.mock.calls.map((call) => call.join(" "));
+  const startLine = lines.find((line) => line.includes("reviewer") && line.includes("node"));
+  const stopLine = lines.find((line) => line.includes("reviewer") && line.includes("exit 0"));
+  expect(startLine).toBeTruthy();
+  expect(stopLine).toMatch(/ms/);
+});
+
+// Usefulness: verifies issue #26 — a failing command still produces a terminating invocation
+// line at the exec boundary, so no exec caller is left with a start line and no end. The caller
+// owns the error level, so this diagnostic detail rides at debug (visible with --verbose).
+test("exec logs a debug failure line with duration and cause when the command throws", async () => {
+  setVerbose(true);
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+  await expect(
+    exec(process.execPath, ["-e", "process.exit(42)"], { role: "reviewer" }),
+  ).rejects.toThrow(ExecError);
+
+  const lines = logSpy.mock.calls.map((call) => call.join(" "));
+  expect(
+    lines.some(
+      (line) =>
+        line.includes("debug: reviewer:") && line.includes("failed in") && line.includes("code 42"),
+    ),
+  ).toBe(true);
+
+  setVerbose(false);
+  logSpy.mockClear();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  await expect(
+    exec(process.execPath, ["-e", "process.exit(42)"], { role: "reviewer" }),
+  ).rejects.toThrow(ExecError);
+  const outLines = logSpy.mock.calls.map((call) => call.join(" "));
+  const errLines = errorSpy.mock.calls.map((call) => call.join(" "));
+  expect(outLines.some((line) => line.includes("debug:"))).toBe(false);
+  expect(errLines.some((line) => line.includes("debug:"))).toBe(false);
 });

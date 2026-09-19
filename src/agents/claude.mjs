@@ -2,7 +2,7 @@ import { parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 
 export async function runClaude(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal } = options;
+  const { cwd, readOnly, timeout, signal, role } = options;
   const args = ["-p"];
 
   if (state.sessionId) {
@@ -23,7 +23,7 @@ export async function runClaude(state, prompt, options = {}) {
 
   args.push("--output-format", "json");
 
-  const { stdout } = await exec("claude", args, { cwd, input: prompt, timeout, signal });
+  const { stdout } = await exec("claude", args, { cwd, input: prompt, timeout, signal, role });
   const parsed = parseJson(stdout, "Claude Code");
 
   let sessionId;

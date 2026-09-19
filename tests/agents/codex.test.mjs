@@ -40,7 +40,7 @@ test("codex sends correct argv for initial turn with readOnly", async () => {
       "-c",
       "model_reasoning_effort=low",
     ],
-    { cwd: "/dir", input: "prompt text", timeout: undefined, signal: undefined },
+    { cwd: "/dir", input: "prompt text", timeout: undefined, signal: undefined, role: undefined },
   );
 });
 
@@ -68,6 +68,6 @@ test("codex resumes session with readOnly", async () => {
   expect(exec).toHaveBeenCalledWith(
     "codex",
     ["exec", "resume", "th-1", "-c", 'sandbox_mode="read-only"', "--json", "-"],
-    { cwd: "/dir", input: "resume prompt", timeout: undefined, signal: undefined },
+    { cwd: "/dir", input: "resume prompt", timeout: undefined, signal: undefined, role: undefined },
   );
 });

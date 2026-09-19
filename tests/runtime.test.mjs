@@ -1,7 +1,10 @@
-import { rm } from "node:fs/promises";
-import { expect, test } from "vitest";
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { expect, test, vi } from "vitest";
 import { ExecError } from "../src/lib/exec.mjs";
+import { MutationError } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
+import { setVerbose } from "../src/lib/log.mjs";
 import { createTempRepo, scripted } from "./runtime-helpers.mjs";
 
 // 1. Usefulness: verifies orchestrator dispatches worker first.
@@ -520,4 +523,141 @@ test("cancel signal stops loop", async () => {
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
+});
+
+// 23. Usefulness: verifies issue #26 acceptance — a timed-out child produces a log line naming the role and "timed out".
+test("timed-out child logs a line naming the role and timed out", async () => {
+  const repo = await createTempRepo();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "hang please" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ];
+    const reviewerAdapter = scripted([
+      () => {
+        throw new ExecError("timeout", { timedOut: true });
+      },
+    ]);
+
+    const result = await runLoop({
+      task: "Task 23",
+      cwd: repo,
+      maxSteps: 5,
+      timeout: 10,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: reviewerAdapter },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const lines = errorSpy.mock.calls.map((call) => call.map(String).join(" "));
+    expect(lines.some((line) => line.includes("reviewer") && line.includes("timed out"))).toBe(
+      true,
+    );
+  } finally {
+    errorSpy.mockRestore();
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+// 24. Usefulness: verifies issue #26 acceptance — with the debug gate on, snapshot debug lines appear
+// around each reviewer and orchestrator turn (reviewer/orchestrator turns are mutation-checked).
+test("verbose mode logs snapshot debug lines around reviewer and orchestrator turns", async () => {
+  const repo = await createTempRepo();
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  setVerbose(true);
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "review please" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ];
+
+    const result = await runLoop({
+      task: "Task 24",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: scripted(["reviewed"]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const lines = logSpy.mock.calls.map((call) => call.join(" "));
+    expect(lines.some((line) => line.includes("snapshot") && line.includes("reviewer"))).toBe(true);
+    expect(lines.some((line) => line.includes("snapshot") && line.includes("orchestrator"))).toBe(
+      true,
+    );
+  } finally {
+    setVerbose(false);
+    logSpy.mockRestore();
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+// 25. Usefulness: verifies issue #26 review fix — a mutation event is logged exactly once (at the
+// detection site), not duplicated by the orchestrator failure log.
+test("mutation is logged exactly once", async () => {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const runCase = async (action) => {
+    errorSpy.mockClear();
+    const repo = await createTempRepo();
+    try {
+      const mutate = async () => {
+        await writeFile(join(repo, "mutated.txt"), "mutated\n");
+        return "done";
+      };
+      const orchReply =
+        action === "run_reviewer"
+          ? [JSON.stringify({ action: "run_reviewer", prompt: "review" })]
+          : [null];
+      const reviewerReply = action === "run_reviewer" ? [mutate] : [];
+
+      await expect(
+        runLoop({
+          task: "Task 25",
+          cwd: repo,
+          maxSteps: 5,
+          roles: {
+            orchestrator: { kind: "orch", sessionId: null },
+            worker: { kind: "work", sessionId: null },
+            reviewer: { kind: "rev", sessionId: null },
+          },
+          agents: {
+            // Orchestrator mutation case: orchestrator itself writes a file then dispatches.
+            orch:
+              action === "run_reviewer"
+                ? scripted(orchReply)
+                : scripted([
+                    async () => {
+                      await writeFile(join(repo, "mutated.txt"), "mutated\n");
+                      return JSON.stringify({ action: "run_worker", prompt: "go" });
+                    },
+                  ]),
+            work: scripted([]),
+            rev: scripted(reviewerReply),
+          },
+        }),
+      ).rejects.toThrow(MutationError);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+    const lines = errorSpy.mock.calls.map((call) => call.join(" "));
+    expect(lines.filter((line) => line.includes("Mutation detected during"))).toHaveLength(1);
+  };
+
+  await runCase("run_reviewer");
+  await runCase("run_worker");
 });

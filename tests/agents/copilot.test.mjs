@@ -39,7 +39,13 @@ test("copilot sends --deny-tool write when readOnly is true", async () => {
       "--reasoning-effort",
       "high",
     ],
-    { cwd: "/dir", input: "copilot prompt", timeout: undefined, signal: undefined },
+    {
+      cwd: "/dir",
+      input: "copilot prompt",
+      timeout: undefined,
+      signal: undefined,
+      role: undefined,
+    },
   );
 });
 
@@ -61,6 +67,12 @@ test("copilot initializes session and runs with readOnly false", async () => {
   expect(exec).toHaveBeenCalledWith(
     "copilot",
     ["--session-id", state.sessionId, "-s", "--no-ask-user"],
-    { cwd: "/dir", input: "copilot prompt 2", timeout: undefined, signal: undefined },
+    {
+      cwd: "/dir",
+      input: "copilot prompt 2",
+      timeout: undefined,
+      signal: undefined,
+      role: undefined,
+    },
   );
 });

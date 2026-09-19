@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { logDebug, logInfo } from "./log.mjs";
 
 export class ExecError extends Error {
   constructor(
@@ -18,7 +19,11 @@ export class ExecError extends Error {
 }
 
 export async function exec(command, args = [], options = {}) {
-  const { cwd, input, timeout, signal } = options;
+  const { cwd, input, timeout, signal, role } = options;
+
+  const label = role ? `${role}: ${command}` : command;
+  const startedAt = Date.now();
+  logInfo(`${label} started`);
 
   const execaOptions = {
     cwd,
@@ -64,6 +69,10 @@ export async function exec(command, args = [], options = {}) {
       .filter(Boolean)
       .join("\n\n");
 
+    // The caller owns the failure level (it knows whether the runtime recovers); this
+    // debug line terminates the invocation trace when the caller does not log one.
+    logDebug(`${label} failed in ${Date.now() - startedAt}ms: ${cause}`);
+
     throw new ExecError(message, {
       command,
       exitCode: result.exitCode,
@@ -75,8 +84,12 @@ export async function exec(command, args = [], options = {}) {
     });
   }
 
+  const durationMs = Date.now() - startedAt;
+  logInfo(`${label} finished in ${durationMs}ms (exit 0)`);
+
   return {
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
+    durationMs,
   };
 }

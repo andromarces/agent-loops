@@ -24,7 +24,7 @@ test("agy sends --mode plan when readOnly is true", async () => {
   expect(exec).toHaveBeenCalledWith(
     "agy",
     ["--input-format", "text", "--output-format", "json", "--mode", "plan"],
-    { cwd: "/dir", input: "agy prompt", timeout: undefined, signal: undefined },
+    { cwd: "/dir", input: "agy prompt", timeout: undefined, signal: undefined, role: undefined },
   );
 });
 
@@ -56,6 +56,6 @@ test("agy resumes conversation with model and effort", async () => {
       "--conversation",
       "conv-1",
     ],
-    { cwd: "/dir", input: "follow up", timeout: undefined, signal: undefined },
+    { cwd: "/dir", input: "follow up", timeout: undefined, signal: undefined, role: undefined },
   );
 });

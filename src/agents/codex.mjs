@@ -2,7 +2,7 @@ import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 
 export async function runCodex(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal } = options;
+  const { cwd, readOnly, timeout, signal, role } = options;
   const configArgs = [];
 
   if (readOnly) {
@@ -25,7 +25,7 @@ export async function runCodex(state, prompt, options = {}) {
     args = ["exec", ...configArgs, "--json", ...modelArgs];
   }
 
-  const { stdout } = await exec("codex", args, { cwd, input: prompt, timeout, signal });
+  const { stdout } = await exec("codex", args, { cwd, input: prompt, timeout, signal, role });
   const events = parseJsonLines(stdout);
 
   const started = events.find((event) => event.type === "thread.started");

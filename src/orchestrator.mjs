@@ -1,4 +1,5 @@
 import { validateAction } from "./contracts/orchestrator-action.mjs";
+import { logWarn } from "./lib/log.mjs";
 import { extractJsonObject } from "./lib/json.mjs";
 import { repairPrompt } from "./prompts/orchestrator.mjs";
 
@@ -38,6 +39,7 @@ export async function decide({ agent, state, prompt, options = {} }) {
   }
 
   // Repair turn
+  logWarn(`orchestrator action invalid; taking repair turn: ${firstValidation.error}`);
   const repair = repairPrompt(firstValidation.error);
   const repairResponse = await executeTurn(repair);
   const repairValidation = parseAndValidate(repairResponse);
