@@ -14,7 +14,7 @@ export function parseArgs(argv) {
     cwd: process.cwd(),
     task: null,
     maxSteps: 20,
-    timeout: null,
+    timeout: 3600,
     transcript: null,
     verbose: false,
   };
@@ -36,6 +36,14 @@ export function parseArgs(argv) {
     const val = Number(readValue(flag, index));
     if (!Number.isInteger(val) || val < 1) {
       throw new Error(`${flag} must be a positive integer.`);
+    }
+    return val;
+  };
+
+  const readNonNegativeInt = (flag, index) => {
+    const val = Number(readValue(flag, index));
+    if (!Number.isInteger(val) || val < 0) {
+      throw new Error(`${flag} must be a non-negative integer.`);
     }
     return val;
   };
@@ -72,9 +80,11 @@ export function parseArgs(argv) {
         options.maxSteps = readPositiveInt("--max-steps", ++i);
         break;
 
-      case "--timeout":
-        options.timeout = readPositiveInt("--timeout", ++i);
+      case "--timeout": {
+        const seconds = readNonNegativeInt("--timeout", ++i);
+        options.timeout = seconds === 0 ? null : seconds;
         break;
+      }
 
       case "--transcript":
         options.transcript = resolve(readValue(arg, ++i));
@@ -161,7 +171,7 @@ Options:
   --cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
   --task <text>                 Task description. Required.
   --max-steps <count>           Maximum child steps. Defaults to 20.
-  --timeout <seconds>           Timeout per agent invocation. Optional.
+  --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
   --transcript <file>           Record execution transcript to a JSON file.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   -h, --help                    Show help.
