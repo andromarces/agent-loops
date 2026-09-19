@@ -82,7 +82,8 @@ test("deny decision names the orchestrator mode", async () => {
 // Usefulness: verifies acceptance — a #55 init call for a different `--cwd`
 // registers the state under the parent session, so the guard denies the parent
 // even though the lookup never consults the hook cwd; a second session in the
-// same cwd finds no index entry and is allowed.
+// same cwd finds no index entry and is allowed. Exercises the real
+// `readStateForSession` on both sides, not a stub.
 test("index lookup finds the init state file written for a different --cwd", async () => {
   await setup();
   const repo = await createTempRepo();
@@ -101,6 +102,8 @@ test("index lookup finds the init state file written for a different --cwd", asy
   expect(state.cwd).toBe(repo);
 
   expect((await decideParentGuard("parent-sess-1")).decision).toBe("deny");
+  // A session with no index entry takes the fail-open path through the real
+  // lookup, which returns null on absence.
   expect((await decideParentGuard("unrelated-session")).decision).toBe("allow");
 });
 
@@ -149,4 +152,17 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
   const unparseable = await runHookScript("not json");
   expect(unparseable.code).toBe(0);
   expect(unparseable.stdout).toBe("");
+
+  // A malformed session id throws inside the real lookup (runstate rejects
+  // path separators); the hook must still exit 0 with no output, not leak the
+  // error into the session.
+  const malformed = await runHookScript(
+    JSON.stringify({ session_id: "../../etc/passwd", tool_name: "Edit" }),
+  );
+  expect(malformed.code).toBe(0);
+  expect(malformed.stdout).toBe("");
+
+  const nullSession = await runHookScript(JSON.stringify({ session_id: null, tool_name: "Write" }));
+  expect(nullSession.code).toBe(0);
+  expect(nullSession.stdout).toBe("");
 });
