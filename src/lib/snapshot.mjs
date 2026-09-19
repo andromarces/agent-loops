@@ -13,6 +13,8 @@ export class MutationError extends Error {
 }
 
 // Snapshot failure: a turn's mutation state could not be determined, so no verdict exists.
+// Precedence note: if the agent turn was canceled (SIGINT) and the post-turn snapshot also fails,
+// SnapshotError wins and the cancellation is not preserved; the caller exits 1, not 130.
 export class SnapshotError extends Error {
   constructor(message, options) {
     super(message, options);
@@ -106,7 +108,12 @@ export async function snapshot(cwd) {
     }
 
     const fullPath = join(root, filePath);
-    const hash = await sha256File(fullPath);
+    let hash;
+    try {
+      hash = await sha256File(fullPath);
+    } catch (err) {
+      throw new SnapshotError(`failed to hash ${filePath}: ${err.message}`, { cause: err });
+    }
     entries.push({ path: filePath, status, hash });
   }
 
