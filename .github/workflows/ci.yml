@@ -21,10 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
+      # No setup-node cache: pnpm. The store's virtual links directory restores
+      # with broken ACLs on Windows, making the next install fail with
+      # "Access is denied (os error 5)" deterministically (#38). Retry cannot
+      # recover from it because the restored store stays corrupt.
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: pnpm
       # pnpm#14407: on Windows, Defender/indexer transiently locks store paths
       # during install; retry instead of failing the job on the first lock hit.
       - name: Install dependencies
