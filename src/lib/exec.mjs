@@ -38,11 +38,16 @@ export async function exec(command, args = [], options = {}) {
   const isCanceled = Boolean(result.isCanceled);
 
   if (result.exitCode !== 0 || timedOut || isCanceled) {
-    const message = [
-      `${command} exited with code ${result.exitCode}.`,
-      result.stderr?.trim(),
-      result.stdout?.trim(),
-    ]
+    let cause;
+    if (timedOut) {
+      cause = `${command} timed out after ${timeout} seconds.`;
+    } else if (isCanceled) {
+      cause = `${command} was canceled.`;
+    } else {
+      cause = `${command} exited with code ${result.exitCode}.`;
+    }
+
+    const message = [cause, result.stderr?.trim(), result.stdout?.trim()]
       .filter(Boolean)
       .join("\n\n");
 
