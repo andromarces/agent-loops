@@ -23,28 +23,49 @@ export async function runClaude(state, prompt, options = {}) {
 
   args.push("--output-format", "json");
 
-  const { stdout } = await exec("claude", args, { cwd, input: prompt, timeout, signal, role });
+  let stdout;
+  try {
+    ({ stdout } = await exec("claude", args, { cwd, input: prompt, timeout, signal, role }));
+  } catch (err) {
+    // A non-zero exit can still carry a result event with usage. Expose it, then rethrow.
+    let failed;
+    try {
+      failed = JSON.parse(err?.stdout ?? "");
+    } catch {
+      failed = undefined;
+    }
+    setUsage(state, findResultEvent(failed));
+    throw err;
+  }
   const parsed = parseJson(stdout, "Claude Code");
 
-  let sessionId;
-  let resultEvent;
-
-  if (Array.isArray(parsed)) {
-    sessionId = parsed.map((event) => event?.session_id).find(Boolean);
-    resultEvent = parsed.find((event) => event?.type === "result");
-  } else {
-    sessionId = parsed.session_id;
-    resultEvent = parsed;
-  }
+  const sessionId = Array.isArray(parsed)
+    ? parsed.map((event) => event?.session_id).find(Boolean)
+    : parsed.session_id;
 
   if (!sessionId) {
     throw new Error("Claude Code did not return a session_id.");
   }
 
   state.sessionId = sessionId;
-  const response = resultEvent?.result;
+  const resultEvent = findResultEvent(parsed);
+  setUsage(state, resultEvent);
 
-  // `usage` covers the top-level loop only; `modelUsage` and `total_cost_usd` include subagents.
+  return String(resultEvent?.result ?? "").trim();
+}
+
+function findResultEvent(parsed) {
+  if (Array.isArray(parsed)) {
+    return parsed.find((event) => event?.type === "result");
+  }
+  return parsed && typeof parsed === "object" ? parsed : undefined;
+}
+
+/**
+ * Sets `state.usage` from a result event, or removes it when the event carries no usage.
+ * `usage` covers the top-level loop only; `modelUsage` and `total_cost_usd` include subagents.
+ */
+function setUsage(state, resultEvent) {
   const usage = {};
   if (resultEvent?.modelUsage) usage.models = resultEvent.modelUsage;
   if (resultEvent?.usage) usage.mainLoop = resultEvent.usage;
@@ -56,6 +77,4 @@ export async function runClaude(state, prompt, options = {}) {
   } else {
     delete state.usage;
   }
-
-  return String(response ?? "").trim();
 }

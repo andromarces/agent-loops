@@ -768,3 +768,53 @@ test("runtime emits an error invocation event when the CLI call throws", async (
     await rm(repo, { recursive: true, force: true });
   }
 });
+
+// 28. Usefulness: verifies usage an adapter exposed before throwing reaches the error invocation
+// event and is cleared from the role state (issue #47).
+test("runtime keeps adapter usage on an error invocation event and clears it from state", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "fail" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const workerAdapter = scripted([
+      (state) => {
+        state.usage = { totalCostUsd: 0.05 };
+        throw new Error("worker crashed after spending");
+      },
+    ]);
+    const roles = {
+      orchestrator: { kind: "orch", sessionId: null },
+      worker: { kind: "work", sessionId: null },
+      reviewer: { kind: "rev", sessionId: null },
+    };
+    const events = [];
+
+    await runLoop({
+      task: "Task 28",
+      cwd: repo,
+      maxSteps: 5,
+      roles,
+      agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+      onEvent: (event) => events.push(event),
+    });
+
+    const workerInvocations = events.filter((e) => e.type === "invocation" && e.role === "worker");
+    expect(workerInvocations).toEqual([
+      {
+        type: "invocation",
+        role: "worker",
+        status: "error",
+        stepsUsed: 1,
+        usage: { totalCostUsd: 0.05 },
+      },
+    ]);
+    expect(roles.worker.usage).toBeUndefined();
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});

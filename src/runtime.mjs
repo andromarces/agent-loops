@@ -41,19 +41,22 @@ export async function runLoop(options) {
    */
   async function invoke(state, roleName, prompt, opts) {
     delete state.usage;
+    const emit = (status) => {
+      const event = { type: "invocation", role: roleName, status, stepsUsed };
+      if (state.usage) {
+        event.usage = state.usage;
+        delete state.usage;
+      }
+      onEvent(event);
+    };
     let response;
     try {
       response = await runAgent(state, prompt, { ...opts, role: roleName }, agents);
     } catch (err) {
-      onEvent({ type: "invocation", role: roleName, status: "error", stepsUsed });
+      emit("error");
       throw err;
     }
-    const event = { type: "invocation", role: roleName, status: "ok", stepsUsed };
-    if (state.usage) {
-      event.usage = state.usage;
-      delete state.usage;
-    }
-    onEvent(event);
+    emit("ok");
     return response;
   }
 

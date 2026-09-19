@@ -85,3 +85,37 @@ test("claude clears state.usage when the result carries no usage", async () => {
 
   expect(state.usage).toBeUndefined();
 });
+
+// Usefulness: verifies a failed CLI call that still printed a result event exposes its usage before
+// the error propagates, so a failed invocation is not free in the transcript (issue #47).
+test("claude exposes usage from stdout when the CLI exits non-zero", async () => {
+  const stdout = JSON.stringify({
+    session_id: "s1",
+    type: "result",
+    is_error: true,
+    result: "boom",
+    total_cost_usd: 0.02,
+  });
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude exited with code 1."), { stdout, stderr: "" }),
+  );
+
+  const state = { kind: "claude", sessionId: null, model: null, effort: null, usage: { stale: 1 } };
+  await expect(runClaude(state, "p", { cwd: "/path", readOnly: false })).rejects.toThrow(
+    "claude exited with code 1.",
+  );
+  expect(state.usage).toEqual({ totalCostUsd: 0.02 });
+});
+
+// Usefulness: verifies a failure with unparseable stdout clears stale usage and rethrows.
+test("claude clears stale usage when a failed call has no parseable stdout", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude timed out after 5 seconds."), { stdout: "", stderr: "" }),
+  );
+
+  const state = { kind: "claude", sessionId: null, model: null, effort: null, usage: { stale: 1 } };
+  await expect(runClaude(state, "p", { cwd: "/path", readOnly: false })).rejects.toThrow(
+    "timed out",
+  );
+  expect(state.usage).toBeUndefined();
+});
