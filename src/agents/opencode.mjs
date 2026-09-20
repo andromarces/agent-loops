@@ -3,7 +3,7 @@ import { exec } from "../lib/exec.mjs";
 
 export async function runOpenCode(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
-  const args = ["run", "--format", "json"];
+  const args = ["run", "--standalone", "--format", "json"];
 
   if (state.sessionId) {
     args.push("--session", state.sessionId);
