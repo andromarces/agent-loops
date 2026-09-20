@@ -41,6 +41,14 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   state.sessionId = sessionId;
 
+  // Defense-in-depth: if the CLI ever exits 0 with an error event, surface its detail instead of
+  // falling through to the missing-text error. The session is recorded first, as it is on any turn.
+  const errorEvent = events.find((event) => event.type === "error");
+
+  if (errorEvent) {
+    throw new Error(`opencode returned an error event: ${describeError(errorEvent.error)}`);
+  }
+
   const text = events
     .filter((event) => event.type === "text" && typeof event.part?.text === "string")
     .map((event) => event.part.text)
@@ -51,4 +59,17 @@ export async function runOpenCode(state, prompt, options = {}) {
   }
 
   return text.trim();
+}
+
+/**
+ * Formats an OpenCode error event payload for the thrown message.
+ * The payload carries `{ type, message, status }`; any field can be absent.
+ */
+function describeError(error) {
+  if (!error || typeof error !== "object") {
+    return "unknown error";
+  }
+
+  const detail = [error.type, error.message].filter(Boolean).join(": ") || "unknown error";
+  return error.status == null ? detail : `${detail} (status ${error.status})`;
 }

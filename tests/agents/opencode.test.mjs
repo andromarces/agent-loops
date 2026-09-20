@@ -58,3 +58,37 @@ test("opencode resumes session with --standalone", async () => {
     { cwd: "/dir", input: "resume oc", timeout: undefined, signal: undefined, role: undefined },
   );
 });
+
+// Usefulness: verifies a failed opencode turn names the provider error event instead of the
+// generic missing-text error, and still records the session id for a retry.
+test("opencode surfaces a provider error event", async () => {
+  const stdout = JSON.stringify({
+    type: "error",
+    sessionID: "sess-oc",
+    error: { type: "provider.internal", message: "Internal server error", status: 500 },
+  });
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+
+  await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow(
+    "opencode returned an error event: provider.internal: Internal server error (status 500)",
+  );
+  expect(state.sessionId).toBe("sess-oc");
+});
+
+// Usefulness: verifies an error event wins over partial text in the same turn, so a turn that
+// streamed text before failing is not reported as a successful response.
+test("opencode treats an error event as fatal even with partial text", async () => {
+  const stdout = [
+    JSON.stringify({ type: "text", sessionID: "sess-oc", part: { text: "partial" } }),
+    JSON.stringify({ type: "error", sessionID: "sess-oc", error: { type: "provider.internal" } }),
+  ].join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+
+  await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow(
+    "opencode returned an error event: provider.internal",
+  );
+});
