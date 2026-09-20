@@ -7,10 +7,15 @@
 // shared decision logic (`src/hook/decision.mjs`), so the OpenCode guard matches
 // `decideParentGuard` exactly. Fail-open by design: every other session, every
 // terminal lifecycle, and every absent or corrupt record allows the call.
+//
+// The guard resolves the runs root from this server process's environment, so
+// an out-of-process `AGENT_LOOP_RUNS_ROOT` override (test-only) would desync
+// it from the `agent-loop` CLI that wrote the index.
 import { decideParentGuard } from "../../src/hook/decision.mjs";
 
-// A permission action, not a tool name. OpenCode maps `edit`, `write`, and
-// `patch` to the single `edit` action.
+// A permission action, not a tool name. A live probe showed OpenCode maps the
+// `edit` and `write` tools to the `edit` action; whether `patch` maps to `edit`
+// as well is unverified, so a `patch`-only edit is a known gap.
 const EDIT_ACTION = "edit";
 const COMMAND_NAME = "agent-loop";
 

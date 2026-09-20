@@ -296,6 +296,14 @@ test("opencode guard fails open on an absent or corrupt record", async () => {
   expect(corrupt.effect).toBe("allow");
 });
 
+// Usefulness: pins the guard's registration to the documented `evaluate` hook
+// name. `permission.hook()` accepts any name silently, so a typo in the name
+// would remove the guard while every behavioral test still passed.
+test("opencode guard registers the documented evaluate permission hook", async () => {
+  const { hooks } = await loadPlugin();
+  expect(Object.keys(hooks)).toEqual(["evaluate"]);
+});
+
 // Usefulness: verifies the OpenCode session-id channel — the plugin command
 // reads CommandInvocation.sessionID and carries it into the orchestrator prompt
 // so the init dispatch call can register the run under that session.
