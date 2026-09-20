@@ -6,8 +6,8 @@ vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
 }));
 
-// Usefulness: verifies opencode adapter adds --agent plan when readOnly is true and handles model#effort.
-test("opencode sends --agent plan when readOnly is true", async () => {
+// Usefulness: verifies opencode adapter runs standalone by default, adds --agent plan when readOnly is true, and handles model#effort.
+test("opencode sends --standalone and --agent plan when readOnly is true", async () => {
   const stdout = JSON.stringify({
     type: "text",
     sessionID: "sess-oc",
@@ -28,13 +28,13 @@ test("opencode sends --agent plan when readOnly is true", async () => {
   expect(state.sessionId).toBe("sess-oc");
   expect(exec).toHaveBeenCalledWith(
     "opencode",
-    ["run", "--format", "json", "--agent", "plan", "--model", "claude-3-5#high"],
+    ["run", "--standalone", "--format", "json", "--agent", "plan", "--model", "claude-3-5#high"],
     { cwd: "/dir", input: "oc prompt", timeout: undefined, signal: undefined, role: undefined },
   );
 });
 
-// Usefulness: verifies opencode resumes session without --agent plan when readOnly is false.
-test("opencode resumes session", async () => {
+// Usefulness: verifies opencode keeps --standalone and resumes a session without --agent plan when readOnly is false.
+test("opencode resumes session with --standalone", async () => {
   const stdout = JSON.stringify({
     type: "text",
     sessionID: "sess-oc",
@@ -54,7 +54,7 @@ test("opencode resumes session", async () => {
   expect(response).toBe("resumed oc");
   expect(exec).toHaveBeenCalledWith(
     "opencode",
-    ["run", "--format", "json", "--session", "sess-oc"],
+    ["run", "--standalone", "--format", "json", "--session", "sess-oc"],
     { cwd: "/dir", input: "resume oc", timeout: undefined, signal: undefined, role: undefined },
   );
 });
