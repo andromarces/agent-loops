@@ -1,5 +1,11 @@
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import { logInfo } from "../lib/log.mjs";
+
+// Pinned default for a turn that names neither a model nor an effort. The model lives on the
+// OpenCode Go provider, so it needs an OpenCode Go subscription; see the README.
+const DEFAULT_MODEL = "opencode-go/deepseek-v4.1-flash";
+const DEFAULT_EFFORT = "high";
 
 export async function runOpenCode(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
@@ -13,14 +19,30 @@ export async function runOpenCode(state, prompt, options = {}) {
     args.push("--agent", "plan");
   }
 
-  const model =
-    state.model && state.effort ? `${state.model}#${state.effort}` : (state.model ?? null);
+  // state holds the requested model and effort, so null means the caller named nothing.
+  const defaulted = !state.model;
+  const model = state.model ?? DEFAULT_MODEL;
+  const effort = state.effort ?? (state.model ? null : DEFAULT_EFFORT);
+  const resolved = effort ? `${model}#${effort}` : model;
 
-  if (model) {
-    args.push("--model", model);
+  logInfo(`opencode effective model: ${resolved}`);
+  args.push("--model", resolved);
+
+  let stdout;
+  try {
+    ({ stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal, role }));
+  } catch (err) {
+    // Only a defaulted turn points at the default; an explicit model failure stays as recorded.
+    if (defaulted && err instanceof Error) {
+      const roleFlag = role ? `--${role}-model` : "--<role>-model";
+      err.message = [
+        err.message,
+        `The opencode default model ${DEFAULT_MODEL} needs an OpenCode Go subscription. Override it with ${roleFlag}.`,
+      ].join("\n\n");
+    }
+    throw err;
   }
 
-  const { stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal, role });
   const events = parseJsonLines(stdout);
 
   const sessionId = events.map((event) => event.sessionID).find(Boolean);
