@@ -120,9 +120,8 @@ printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...",
   terminal and the subcommand rejects further operations, including `abort`.
   Report the failure and the modified paths from the envelope, then stop.
 - Every run ends in exactly one terminal lifecycle: `finished`, `aborted`, or
-  `halted`. The planned parent-edit guard (#57) will release on any of them;
-  until that hook ships, and for any run without `--parent-session`, the parent
-  stays unguarded.
+  `halted`. The parent-edit guard (#57, Claude Code only) releases on any of
+  them; any run without `--parent-session` keeps its parent unguarded.
 
 ## Recovery after compaction or restart
 
