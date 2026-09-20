@@ -1,5 +1,11 @@
 # Lint the JS/TS files changed in the commit range that is being pushed.
 
+# Check formatting repo-wide. oxfmt covers Markdown, which lint-staged
+# (JS/TS-only on pre-commit) never sees, so CI is otherwise the first place
+# a formatting failure surfaces. This runs the same check CI runs; it is a
+# check, not a formatter, so it processes no files.
+pnpm exec oxfmt --check || exit 1
+
 zero='0000000000000000000000000000000000000000'
 
 while read -r _local_ref local_sha _remote_ref remote_sha; do
