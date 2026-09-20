@@ -60,7 +60,7 @@ test("opencode resumes session with --standalone", async () => {
 });
 
 // Usefulness: verifies a failed opencode turn names the provider error event instead of the
-// generic missing-text error, which is what left the cause of issue #74 unknown.
+// generic missing-text error, and still records the session id for a retry.
 test("opencode surfaces a provider error event", async () => {
   const stdout = JSON.stringify({
     type: "error",
@@ -74,6 +74,7 @@ test("opencode surfaces a provider error event", async () => {
   await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow(
     "opencode returned an error event: provider.internal: Internal server error (status 500)",
   );
+  expect(state.sessionId).toBe("sess-oc");
 });
 
 // Usefulness: verifies an error event wins over partial text in the same turn, so a turn that

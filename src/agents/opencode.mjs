@@ -23,14 +23,6 @@ export async function runOpenCode(state, prompt, options = {}) {
   const { stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal, role });
   const events = parseJsonLines(stdout);
 
-  // A failed turn can still exit 0 and carry a session id. Surface the error event before
-  // any other check so the failure names its cause instead of a missing-text or session error.
-  const errorEvent = events.find((event) => event.type === "error");
-
-  if (errorEvent) {
-    throw new Error(`opencode returned an error event: ${describeError(errorEvent.error)}`);
-  }
-
   const sessionId = events.map((event) => event.sessionID).find(Boolean);
 
   if (!sessionId) {
@@ -48,6 +40,14 @@ export async function runOpenCode(state, prompt, options = {}) {
   }
 
   state.sessionId = sessionId;
+
+  // Defense-in-depth: if the CLI ever exits 0 with an error event, surface its detail instead of
+  // falling through to the missing-text error. The session is recorded first, as it is on any turn.
+  const errorEvent = events.find((event) => event.type === "error");
+
+  if (errorEvent) {
+    throw new Error(`opencode returned an error event: ${describeError(errorEvent.error)}`);
+  }
 
   const text = events
     .filter((event) => event.type === "text" && typeof event.part?.text === "string")
