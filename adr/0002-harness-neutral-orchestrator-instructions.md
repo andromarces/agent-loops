@@ -44,5 +44,6 @@ Andro Marces
 - [ADR 0001: Hybrid orchestrator with deterministic runtime](0001-hybrid-orchestrator-runtime.md)
 - [Issue #56: Harness-neutral orchestrator instructions](https://github.com/andromarces/agent-loops/issues/56)
 - [Issue #75: Wire the parent-edit guard for OpenCode through a plugin session-id channel](https://github.com/andromarces/agent-loops/issues/75)
+- [Pull Request #80: feat: guard OpenCode parent edits through a plugin session-id channel](https://github.com/andromarces/agent-loops/pull/80)
 - [Pull Request #59: feat: harness-neutral orchestrator instruction file with Claude Code skill and OpenCode command](https://github.com/andromarces/agent-loops/pull/59)
 - [ADR Index](README.md)
