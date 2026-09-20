@@ -68,6 +68,20 @@ cd agent-loops
 pnpm install
 ```
 
+Then make `agent-loop` resolvable. Add the pnpm global bin directory to PATH, then register the `bin` field globally from the repository root:
+
+```bash
+pnpm setup   # restart the shell afterwards
+pnpm add -g .
+```
+
+pnpm v11 removed `pnpm link --global` and keeps global bins under `PNPM_HOME`; `pnpm add -g .` fails with `ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH` until `pnpm setup` puts that directory on PATH. Without a global install, call the CLI entry directly and quote the repository path so a path with spaces works, or use the package script from the repository root:
+
+```bash
+node "<repo>/src/cli.mjs" role ...
+pnpm agent-loop role ...
+```
+
 ## Usage
 
 ```bash
