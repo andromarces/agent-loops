@@ -1,4 +1,5 @@
-# Lint the JS/TS files changed in the commit range that is being pushed.
+# Push gate: repo-wide formatting check, then lint the JS/TS files changed
+# in the commit range that is being pushed.
 
 # Check formatting repo-wide. oxfmt covers Markdown, which lint-staged
 # (JS/TS-only on pre-commit) never sees, so CI is otherwise the first place
