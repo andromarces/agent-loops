@@ -190,10 +190,19 @@ function validateInitFlags(args, agents = {}) {
   if (args.task === null || String(args.task).trim() === "") {
     throw new RoleError('Init requires --task, for example --task "Implement the change."');
   }
+  // review-only never dispatches the worker, so --worker is optional there.
+  const requiredRoles =
+    (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : ["worker", "reviewer"];
+  for (const roleName of requiredRoles) {
+    if (args[roleName] === null) {
+      throw new RoleError(`Missing required --${roleName}.`);
+    }
+  }
+  // Every supplied role is still validated; review-only may omit the worker.
   for (const roleName of ["worker", "reviewer"]) {
     const kind = args[roleName];
     if (kind === null) {
-      throw new RoleError(`Missing required --${roleName}.`);
+      continue;
     }
     if (!supportedAgents.has(kind) && !agents[normalizeAgent(kind)]) {
       throw new RoleError(`Unsupported ${roleName}: ${kind}`);
@@ -221,9 +230,14 @@ function initialState(args) {
   };
 }
 
+/** Role state, or null when the role was not configured at init. */
 function roleState(source, roleName) {
+  const kind = source[roleName];
+  if (kind === null) {
+    return null;
+  }
   return {
-    kind: normalizeAgent(source[roleName]),
+    kind: normalizeAgent(kind),
     model: source[`${roleName}Model`] ?? null,
     effort: source[`${roleName}Effort`] ?? null,
     sessionId: null,
@@ -285,9 +299,11 @@ function rejectInitFlagChanges(args, state) {
       const value = args[flag];
       if (value !== null) {
         // Only the role kind is normalized (`antigravity` -> `agy`); model and
-        // effort are opaque pass-through strings compared verbatim.
+        // effort are opaque pass-through strings compared verbatim. A role the
+        // init left unset (null) compares as null, so any supplied value is a
+        // change.
         const comparable = flag === roleName ? normalizeAgent(value) : value;
-        provided.push([flag, comparable, state.roles[roleName][path]]);
+        provided.push([flag, comparable, state.roles[roleName]?.[path] ?? null]);
       }
     }
   }

@@ -357,6 +357,62 @@ test("review-only mode rejects a worker dispatch without spawning a CLI", async 
   expect((await readRepoState(repo)).stepsUsed).toBe(state.stepsUsed);
 });
 
+// Usefulness: verifies acceptance — a review-only init succeeds without
+// --worker and stores a null worker role, because the mode never dispatches it.
+test("review-only init succeeds without --worker and stores a null worker", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const init = withRepo(
+    dispatchArgv(
+      ["--task", "Review only.", "--mode", "review-only", "--reviewer", "fake2"],
+      "reviewer",
+    ),
+    repo,
+  );
+  const result = await executeRoleCommand(init, {
+    agents: { fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  const state = await readRepoState(repo);
+  expect(state.mode).toBe("review-only");
+  expect(state.roles.worker).toBeNull();
+  expect(state.roles.reviewer.kind).toBe("fake2");
+});
+
+// Usefulness: verifies acceptance — a later call that supplies --worker against
+// the null worker of a review-only run is rejected as a change after init
+// instead of throwing on the missing role.
+test("a later --worker against a null review-only worker is rejected", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const init = withRepo(
+    dispatchArgv(
+      ["--task", "Review only.", "--mode", "review-only", "--reviewer", "fake2"],
+      "reviewer",
+    ),
+    repo,
+  );
+  await executeRoleCommand(init, {
+    agents: { fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  const result = await executeRoleCommand(
+    withRepo(dispatchArgv(["--worker", "fake1"], "reviewer"), repo),
+    {
+      agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+      stdin: stdinPrompt,
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("--worker cannot be changed after init");
+});
+
 // Usefulness: verifies acceptance — a dispatch past the step budget or in any
 // terminal lifecycle exits non-zero and spawns no CLI.
 test("dispatch past the step budget or in a terminal lifecycle is rejected", async () => {

@@ -42,6 +42,9 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
 
 - The first role matches the mode: `worker` in `work-first` and `review-first`,
   `reviewer` in `review-only`.
+- `--worker`, `--worker-model`, and `--worker-effort` are required in
+  `work-first` and `review-first`, and optional in `review-only`, which never
+  dispatches the worker.
 - Always pass `--cwd`. It defaults to the current directory, which for an
   interactive parent is normally not the target work tree.
 - Pass the child prompt on stdin. No prompt files.
