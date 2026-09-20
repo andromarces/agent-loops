@@ -150,6 +150,36 @@ Stdout carries exactly one JSON envelope; all logs go to stderr:
 
 `report` is parsed from the closing block every child turn must end with. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
 
+## Interactive orchestrator: harness entry points
+
+An interactive parent session runs the same role rules through the subcommand,
+driven by `docs/orchestrator-instructions.md`. One harness-neutral instruction
+file defines the role; each supported harness gets a thin entry point that
+includes it rather than copying it. Role activation never goes into `AGENTS.md`
+or `CLAUDE.md`, because dispatched children read those files; activation
+happens only through explicit invocation.
+
+| Harness                         | Entry point                          | Invocation                             |
+| ------------------------------- | ------------------------------------ | -------------------------------------- |
+| Claude Code                     | `.claude/skills/agent-loop/SKILL.md` | `/agent-loop <task and role settings>` |
+| OpenCode                        | `.opencode/commands/agent-loop.md`   | `/agent-loop <task and role settings>` |
+| Codex, Copilot CLI, Antigravity | universal fallback (below)           | first prompt references the file       |
+
+- The Claude Code skill sets `disable-model-invocation: true`, so only the
+  maintainer activates it with `/agent-loop`, and it omits `context: fork`, so
+  the skill runs in the current session. Its body passes `${CLAUDE_SESSION_ID}`
+  as `--parent-session` on the init dispatch call.
+- The OpenCode command file follows the `.opencode` convention (`opencode.jsonc`
+  sits beside it). OpenCode command templates expose no session id, so its init
+  call omits `--parent-session`.
+- Universal fallback (Codex, Copilot CLI, Antigravity): reference
+  `docs/orchestrator-instructions.md` in the first prompt and follow it. A
+  native entry point is added only after that harness documents a custom-prompt
+  mechanism.
+- The parent-edit guard (#57) reads `--parent-session` from the state index
+  (see Parent guard below). For any run without `--parent-session`, the parent
+  stays unguarded.
+
 ## Parent guard: hard read-only for the parent session
 
 The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. On Claude Code, a `PreToolUse` hook in `.claude/settings.json` adds a hard guard for the file-edit tools:

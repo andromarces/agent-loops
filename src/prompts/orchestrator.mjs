@@ -1,3 +1,6 @@
+// Shared rule source: docs/orchestrator-instructions.md states the role rules
+// for interactive parents (#56); this headless prompt states the same rules in
+// JSON-action form. Keep the two consistent when either changes.
 export function initialPrompt({ task, maxSteps }) {
   return `
 You are the orchestrator in an automated multi-agent coding loop.
