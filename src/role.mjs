@@ -199,9 +199,15 @@ function validateInitFlags(args, agents = {}) {
     }
   }
   // Every supplied role is still validated; review-only may omit the worker.
+  // A model or effort without its role kind is an orphan option, not a silent drop.
   for (const roleName of ["worker", "reviewer"]) {
     const kind = args[roleName];
     if (kind === null) {
+      for (const flag of [`${roleName}Model`, `${roleName}Effort`]) {
+        if (args[flag] !== null) {
+          throw new RoleError(`--${kebab(flag)} requires --${roleName}.`);
+        }
+      }
       continue;
     }
     if (!supportedAgents.has(kind) && !agents[normalizeAgent(kind)]) {

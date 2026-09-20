@@ -413,6 +413,38 @@ test("a later --worker against a null review-only worker is rejected", async () 
   expect(result.payload.error).toContain("--worker cannot be changed after init");
 });
 
+// Usefulness: verifies acceptance — a worker model or effort without --worker
+// is rejected at init instead of being silently dropped, because review-only
+// never dispatches the worker and the value would have no home.
+test("review-only init rejects a worker model or effort without --worker", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const init = withRepo(
+    dispatchArgv(
+      [
+        "--task",
+        "Review only.",
+        "--mode",
+        "review-only",
+        "--reviewer",
+        "fake2",
+        "--worker-model",
+        "gpt-x",
+      ],
+      "reviewer",
+    ),
+    repo,
+  );
+  const result = await executeRoleCommand(init, {
+    agents: { fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("--worker-model requires --worker");
+});
+
 // Usefulness: verifies acceptance — a dispatch past the step budget or in any
 // terminal lifecycle exits non-zero and spawns no CLI.
 test("dispatch past the step budget or in a terminal lifecycle is rejected", async () => {
