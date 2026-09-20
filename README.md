@@ -37,7 +37,7 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
   - Recovers from malformed JSON via a single repair turn.
   - Records validated orchestrator actions, child results, one `invocation` event per CLI call with usage when the adapter exposes it, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses are not recorded.
 
-See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md)).
+See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md), [ADR 0002](adr/0002-harness-neutral-orchestrator-instructions.md)).
 
 ## Supported agents
 
