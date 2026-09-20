@@ -53,6 +53,14 @@ Each adapter manages its own persistent session across turns. Model and effort a
 
 The OpenCode adapter passes `--standalone` on every turn. The turn runs against a private server instead of the shared background service, so the run does not depend on a background `opencode` service. Provider variables set on the shared service with `opencode service set env` do not apply to a standalone turn; provide them in the process environment. See [Background service](https://opencode.ai/v2/docs/cli#background-service) in the OpenCode CLI docs.
 
+### OpenCode model default
+
+With `opencode` and neither `--<role>-model` nor `--<role>-effort`, the adapter runs model `opencode-go/deepseek-v4.1-flash` at effort `high`. An explicit `--<role>-model` passes through unchanged, with no variant appended; `--<role>-effort` alone applies that effort to the default model and reaches the CLI as `opencode-go/deepseek-v4.1-flash#<effort>`.
+
+That model is on the paid OpenCode Go provider, so the default needs an OpenCode Go subscription. A caller without it must pass `--<role>-model`.
+
+`--<role>-model` and `--<role>-effort` record what the caller requested, not the effective model. The adapter resolves the default per turn and logs the effective `model#effort` it passes. When the defaulted turn fails, the error names the default model and points at `--<role>-model`. An effort the default model rejects makes opencode fail loudly rather than fall back.
+
 ## Requirements
 
 - Node.js 22 or later
