@@ -1,13 +1,85 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vitest";
-import { readStateForSession } from "../../src/lib/runstate.mjs";
+import { readStateForSession, statePaths } from "../../src/lib/runstate.mjs";
 import { decideParentGuard } from "../../src/hook/decision.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
+import parentGuardPlugin from "../../.opencode/plugins/parent-guard.ts";
 import { createTempRepo } from "../runtime-helpers.mjs";
+
+const noopAdapter = {
+  async run() {
+    return "";
+  },
+};
+
+const INIT_OVERRIDES = [
+  "--task",
+  "Fix the flaky test.",
+  "--parent-session",
+  "parent-sess-1",
+  "--worker",
+  "fake1",
+  "--reviewer",
+  "fake2",
+];
+
+const INIT_AGENTS = { fake1: noopAdapter, fake2: noopAdapter };
+const FINISH_SUMMARY = JSON.stringify({
+  changed: "x",
+  verified: "y",
+  deferred: "z",
+  notDone: "n",
+  open: "o",
+});
+
+/**
+ * Loads the OpenCode plugin against a fake context and captures the hooks and
+ * the command it registers, mirroring the shapes OpenCode passes at runtime.
+ */
+async function loadPlugin() {
+  const hooks = {};
+  const commands = [];
+  const prompts = [];
+  await parentGuardPlugin.setup({
+    command: {
+      transform: async (register) => {
+        register({ add: (command) => commands.push(command) });
+      },
+    },
+    session: {
+      prompt: async (input) => {
+        prompts.push(input);
+      },
+    },
+    permission: {
+      hook: async (name, handler) => {
+        hooks[name] = handler;
+      },
+    },
+  });
+  return { hooks, commands, prompts };
+}
+
+/** Registers a run under "parent-sess-1" against a fresh temp repo. */
+async function initRunForParent() {
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initRunAt(repo);
+  return repo;
+}
+
+/** Runs the init dispatch for "parent-sess-1" against an existing repo. */
+async function initRunAt(repo) {
+  const init = await executeRoleCommand(
+    parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo, ...INIT_OVERRIDES]),
+    { agents: INIT_AGENTS, stdin: async () => "work" },
+  );
+  expect(init.exitCode).toBe(0);
+}
 
 let runsRoot;
 const repos = [];
@@ -29,23 +101,6 @@ afterEach(async () => {
   await rm(runsRoot, { recursive: true, force: true });
   runsRoot = undefined;
 });
-
-const noopAdapter = {
-  async run() {
-    return "";
-  },
-};
-
-const INIT_OVERRIDES = [
-  "--task",
-  "Fix the flaky test.",
-  "--parent-session",
-  "parent-sess-1",
-  "--worker",
-  "fake1",
-  "--reviewer",
-  "fake2",
-];
 
 // Usefulness: verifies the acceptance matrix — the matching parent session is
 // denied in every non-terminal lifecycle (active, dispatched, interrupted),
@@ -165,4 +220,100 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
   const nullSession = await runHookScript(JSON.stringify({ session_id: null, tool_name: "Write" }));
   expect(nullSession.code).toBe(0);
   expect(nullSession.stdout).toBe("");
+});
+
+// Usefulness: verifies the OpenCode guard's acceptance — an edit from the
+// registered parent is denied while the run is non-terminal, a different
+// session is never blocked, and a non-edit action is left alone.
+test("opencode guard denies the registered parent's edit and allows every other call", async () => {
+  await setup();
+  await initRunForParent();
+  const { hooks } = await loadPlugin();
+
+  const denied = { action: "edit", sessionID: "parent-sess-1", effect: "allow", resources: [] };
+  await hooks.evaluate(denied);
+  expect(denied.effect).toBe("deny");
+  expect(denied.message).toMatch(/orchestrator/);
+
+  const other = { action: "edit", sessionID: "unrelated-session", effect: "allow", resources: [] };
+  await hooks.evaluate(other);
+  expect(other.effect).toBe("allow");
+
+  const shell = { action: "shell", sessionID: "parent-sess-1", effect: "allow", resources: [] };
+  await hooks.evaluate(shell);
+  expect(shell.effect).toBe("allow");
+});
+
+// Usefulness: verifies the release half of the acceptance — the same parent
+// session edits without a block once the run is finished or aborted, because
+// both lifecycles are terminal.
+test("opencode guard releases the parent after finish and after abort", async () => {
+  await setup();
+  const repo = await initRunForParent();
+  const { hooks } = await loadPlugin();
+
+  const finish = await executeRoleCommand(parseRoleArgs(["finish", "--cwd", repo]), {
+    agents: INIT_AGENTS,
+    stdin: async () => FINISH_SUMMARY,
+  });
+  expect(finish.exitCode).toBe(0);
+  const afterFinish = {
+    action: "edit",
+    sessionID: "parent-sess-1",
+    effect: "allow",
+    resources: [],
+  };
+  await hooks.evaluate(afterFinish);
+  expect(afterFinish.effect).toBe("allow");
+
+  // A second run registers the same session again; abort is the other terminal
+  // lifecycle and must release the guard as well.
+  await initRunAt(repo);
+  const abort = await executeRoleCommand(
+    parseRoleArgs(["abort", "--cwd", repo, "--reason", "test"]),
+    { agents: INIT_AGENTS },
+  );
+  expect(abort.exitCode).toBe(0);
+  const afterAbort = { action: "edit", sessionID: "parent-sess-1", effect: "allow", resources: [] };
+  await hooks.evaluate(afterAbort);
+  expect(afterAbort.effect).toBe("allow");
+});
+
+// Usefulness: verifies the fail-open half of the acceptance — a session with no
+// record and a corrupt record both leave the normal permission flow intact.
+test("opencode guard fails open on an absent or corrupt record", async () => {
+  await setup();
+  const { hooks } = await loadPlugin();
+
+  const absent = { action: "edit", sessionID: "never-registered", effect: "allow", resources: [] };
+  await hooks.evaluate(absent);
+  expect(absent.effect).toBe("allow");
+
+  const repo = await initRunForParent();
+  await writeFile(statePaths({ cwd: repo }).stateFile, "{ not json", "utf8");
+  const corrupt = { action: "edit", sessionID: "parent-sess-1", effect: "allow", resources: [] };
+  await hooks.evaluate(corrupt);
+  expect(corrupt.effect).toBe("allow");
+});
+
+// Usefulness: verifies the OpenCode session-id channel — the plugin command
+// reads CommandInvocation.sessionID and carries it into the orchestrator prompt
+// so the init dispatch call can register the run under that session.
+test("opencode plugin command injects the parent session id into the prompt", async () => {
+  const { commands, prompts } = await loadPlugin();
+  const command = commands.find((candidate) => candidate.name === "agent-loop");
+  expect(command).toBeTruthy();
+
+  await command.execute({
+    sessionID: "ses_opencode_parent",
+    prompt: { text: "Implement the change." },
+    delivery: "steer",
+  });
+
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0].sessionID).toBe("ses_opencode_parent");
+  expect(prompts[0].text).toContain("docs/orchestrator-instructions.md");
+  expect(prompts[0].text).toContain("ses_opencode_parent");
+  expect(prompts[0].text).toContain("--parent-session");
+  expect(prompts[0].text).toContain("Implement the change.");
 });

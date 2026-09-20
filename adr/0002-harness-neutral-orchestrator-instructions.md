@@ -12,7 +12,7 @@ accepted
 
 An interactive parent session can run the orchestrator role directly in a harness (Claude Code, OpenCode, Codex CLI, GitHub Copilot CLI, Antigravity CLI) instead of spawning the headless orchestrator. Duplicating the role rules per harness would let the copies drift, and placing role activation in `AGENTS.md` or `CLAUDE.md` is unsafe because dispatched children read those files and would activate the orchestrator role themselves.
 
-Each harness documents its own custom-prompt mechanisms (Claude Code skills, OpenCode commands), with no shared format across vendors.
+Each harness documents its own custom-prompt and extension mechanisms (Claude Code skills, OpenCode commands and plugins), with no shared format across vendors.
 
 ## Decision
 
@@ -20,12 +20,12 @@ One harness-neutral instruction file (`docs/orchestrator-instructions.md`) defin
 
 1. Role activation happens only through explicit invocation (for example `/agent-loop`). It never goes into `AGENTS.md` or `CLAUDE.md`.
 2. A native entry point is added for a harness only after that harness documents a custom-prompt mechanism; otherwise the universal fallback applies: the first prompt references the instruction file and the parent follows it.
-3. Entry points that can pass the parent's own session id to the `agent-loop role` init call do so as `--parent-session`; harnesses that expose no session id omit the flag (see ADR 0001 consequences for the parent guard that consumes it).
+3. An entry point passes the parent's own session id to the `agent-loop role` init call as `--parent-session`. Claude Code exposes it in the skill template (`${CLAUDE_SESSION_ID}`). OpenCode exposes no session id in a stored command template, so its entry point is a plugin command that reads `CommandInvocation.sessionID` and carries the id into the orchestrator prompt. A harness that exposes no session id at all omits the flag (see ADR 0001 consequences for the parent guard that consumes it).
 
 ## Consequences
 
 - Claude Code ships a skill (`.claude/skills/agent-loop/SKILL.md`) with `disable-model-invocation: true`, so only the maintainer activates it; it passes `${CLAUDE_SESSION_ID}` as `--parent-session`.
-- OpenCode ships a command file (`.opencode/commands/agent-loop.md`); its templates expose no session id, so its init call omits `--parent-session` and its parent stays unguarded by the parent guard hook.
+- OpenCode ships a local plugin (`.opencode/plugins/parent-guard.ts`) that registers the `/agent-loop` command. The executor reads `CommandInvocation.sessionID`, so the init call passes `--parent-session` and the plugin's `permission` `evaluate` hook guards the parent. The stored command template is superseded; the plugin route needs no session placeholder.
 - Codex CLI, Copilot CLI, and Antigravity use the universal fallback until each documents a custom-prompt mechanism.
 - Role rules have exactly one source of truth; harness entry points never restate them, so a rule change is a one-file edit.
 
@@ -43,5 +43,6 @@ Andro Marces
 
 - [ADR 0001: Hybrid orchestrator with deterministic runtime](0001-hybrid-orchestrator-runtime.md)
 - [Issue #56: Harness-neutral orchestrator instructions](https://github.com/andromarces/agent-loops/issues/56)
+- [Issue #75: Wire the parent-edit guard for OpenCode through a plugin session-id channel](https://github.com/andromarces/agent-loops/issues/75)
 - [Pull Request #59: feat: harness-neutral orchestrator instruction file with Claude Code skill and OpenCode command](https://github.com/andromarces/agent-loops/pull/59)
 - [ADR Index](README.md)
