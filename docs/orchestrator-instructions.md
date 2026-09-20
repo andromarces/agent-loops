@@ -23,6 +23,20 @@ Collect these before the first dispatch:
 - mode: `work-first`, `review-first`, or `review-only` (`--mode`)
 - maximum steps (`--max-steps`)
 
+## Resolving the CLI
+
+The command blocks below call `agent-loop` directly. Register it on PATH from
+the repository root:
+
+```bash
+pnpm add -g .
+```
+
+pnpm v11 removed `pnpm link --global`; use `pnpm add -g .`. Without a global
+install, replace `agent-loop` with `node "<repo>/src/cli.mjs"` and quote the
+repository path so a path with spaces works, or run `pnpm agent-loop` from the
+repository root.
+
 ## Starting a run
 
 The first dispatch carries the init flags, including `--parent-session` when
