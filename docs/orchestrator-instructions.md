@@ -23,6 +23,23 @@ Collect these before the first dispatch:
 - mode: `work-first`, `review-first`, or `review-only` (`--mode`)
 - maximum steps (`--max-steps`)
 
+## Resolving the CLI
+
+The command blocks below call `agent-loop` directly. Add the pnpm global bin
+directory to PATH, then register the `bin` field globally from the repository
+root:
+
+```bash
+pnpm setup   # restart the shell afterwards
+pnpm add -g .
+```
+
+pnpm v11 removed `pnpm link --global` and keeps global bins under `PNPM_HOME`;
+`pnpm add -g .` fails with `ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH` until
+`pnpm setup` puts that directory on PATH. Without a global install, replace
+`agent-loop` with `node "<repo>/src/cli.mjs"` and quote the repository path so
+a path with spaces works, or run `pnpm agent-loop` from the repository root.
+
 ## Starting a run
 
 The first dispatch carries the init flags, including `--parent-session` when
