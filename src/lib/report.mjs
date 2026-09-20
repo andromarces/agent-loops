@@ -52,22 +52,28 @@ export function parseReportBlock(response) {
 
 /**
  * Extracts the reviewer verdict from a `Verdict:` line inside the closing
- * block. A verdict outside the block, or a value other than `accept` or
- * `reject` (including a missing or malformed line), maps to `unknown`;
- * process success never implies acceptance.
+ * block. The verdict word alone, the word closed by an optional sentence
+ * period, or the word followed by a punctuation separator, whitespace, and a
+ * clause, maps to that word. A clause that names either verdict as a whole word
+ * (for example `accept, reject`) maps to `unknown`, because it does not state
+ * one verdict. A verdict outside the block, or any other value (including a
+ * missing or malformed line), also maps to `unknown`; process success never
+ * implies acceptance.
  * @param {string} response
  * @returns {"accept" | "reject" | "unknown"}
  */
 export function parseVerdict(response) {
   const block = closingBlock(response);
   const line = block ? lastLabeledLine(block, "Verdict") : null;
-  if (line) {
-    const value = line.toLowerCase();
-    if (value === "accept" || value === "reject") {
-      return value;
-    }
+  const value = line ? line.replace(/\.$/, "") : null;
+  const match = value ? value.match(/^(accept|reject)(?:\s*[—–:,.-]\s+(.*))?$/i) : null;
+  if (!match) {
+    return "unknown";
   }
-  return "unknown";
+  if (match[2] && /\b(accept|reject)\b/i.test(match[2])) {
+    return "unknown";
+  }
+  return match[1].toLowerCase();
 }
 
 function lastLabeledLine(lines, label) {
