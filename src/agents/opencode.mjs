@@ -23,6 +23,14 @@ export async function runOpenCode(state, prompt, options = {}) {
   const { stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal, role });
   const events = parseJsonLines(stdout);
 
+  // A failed turn can still exit 0 and carry a session id. Surface the error event before
+  // any other check so the failure names its cause instead of a missing-text or session error.
+  const errorEvent = events.find((event) => event.type === "error");
+
+  if (errorEvent) {
+    throw new Error(`opencode returned an error event: ${describeError(errorEvent.error)}`);
+  }
+
   const sessionId = events.map((event) => event.sessionID).find(Boolean);
 
   if (!sessionId) {
@@ -51,4 +59,17 @@ export async function runOpenCode(state, prompt, options = {}) {
   }
 
   return text.trim();
+}
+
+/**
+ * Formats an OpenCode error event payload for the thrown message.
+ * The payload carries `{ type, message, status }`; any field can be absent.
+ */
+function describeError(error) {
+  if (!error || typeof error !== "object") {
+    return "unknown error";
+  }
+
+  const detail = [error.type, error.message].filter(Boolean).join(": ") || "unknown error";
+  return error.status == null ? detail : `${detail} (status ${error.status})`;
 }
