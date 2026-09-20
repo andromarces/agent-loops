@@ -46,10 +46,12 @@ The controller supports these CLI names:
 - Claude Code: `claude`
 - Codex CLI: `codex`
 - Antigravity CLI: `agy` (alias: `antigravity`)
-- OpenCode: `opencode`
+- OpenCode: `opencode` (OpenCode v2, npm `@opencode/cli`)
 - GitHub Copilot CLI: `copilot`
 
 Each adapter manages its own persistent session across turns. Model and effort arguments pass through to the CLI on every turn.
+
+The OpenCode adapter passes `--standalone` on every turn. The turn runs against a private server instead of the shared background service, so the run does not depend on a background `opencode` service. Provider variables set on the shared service with `opencode service set env` do not apply to a standalone turn; provide them in the process environment. See [Background service](https://opencode.ai/v2/docs/cli#background-service) in the OpenCode CLI docs.
 
 ### OpenCode model default
 
