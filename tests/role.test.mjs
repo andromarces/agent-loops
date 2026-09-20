@@ -700,6 +700,78 @@ test("reviewer Verdict line parses case-insensitively", async () => {
   expect(result.payload.verdict).toBe("accept");
 });
 
+// Usefulness: verifies acceptance — a reviewer that appends a separated clause
+// after the verdict word (the live-model shape that parsed as unknown) still
+// yields that word.
+test("a trailing clause after a separated verdict word parses to the verdict word", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state) => {
+    state.sessionId = "rev-clause";
+    return `${REPORT}\nVerdict: reject — the reviewed state does not pass.`;
+  };
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.verdict).toBe("reject");
+});
+
+// Usefulness: verifies acceptance — a verdict word closed by the sentence
+// period the prompt's own example invites (`Verdict: reject.`) still parses to
+// that word instead of collapsing to unknown.
+test("a sentence period after the verdict word parses to the verdict word", async () => {
+  await setup();
+  for (const [line, expected] of [
+    ["accept.", "accept"],
+    ["reject.", "reject"],
+  ]) {
+    const repo = await createTempRepo();
+    repos.push(repo);
+
+    const reviewer = recordingAdapter([]);
+    reviewer.run = async (state) => {
+      state.sessionId = "rev-period";
+      return `${REPORT}\nVerdict: ${line}`;
+    };
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+    const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: reviewer },
+      stdin: stdinPrompt,
+    });
+    expect(result.exitCode, line).toBe(0);
+    expect(result.payload.verdict, line).toBe(expected);
+  }
+});
+
+// Usefulness: verifies rejection — a verdict line that names both verdicts does
+// not collapse to the first word, with or without the punctuation separator.
+test("a verdict line that names both verdicts yields unknown", async () => {
+  await setup();
+  for (const line of ["accept or reject", "accept, reject", "accept — or reject"]) {
+    const repo = await createTempRepo();
+    repos.push(repo);
+
+    const reviewer = recordingAdapter([]);
+    reviewer.run = async (state) => {
+      state.sessionId = "rev-both";
+      return `${REPORT}\nVerdict: ${line}`;
+    };
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+    const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: reviewer },
+      stdin: stdinPrompt,
+    });
+    expect(result.exitCode, line).toBe(0);
+    expect(result.payload.verdict, line).toBe("unknown");
+  }
+});
+
 // Usefulness: verifies `--cwd` variants that differ only in the Windows drive
 // letter resolve to one state directory.
 test("drive-letter case does not split the state directory", async () => {
