@@ -37,7 +37,7 @@ export async function runOpenCode(state, prompt, options = {}) {
       const roleFlag = role ? `--${role}-model` : "--<role>-model";
       err.message = [
         err.message,
-        `The opencode default model ${DEFAULT_MODEL} needs an OpenCode Go subscription. Override it with ${roleFlag}.`,
+        `If this turn failed for lack of access, the default model ${DEFAULT_MODEL} requires an OpenCode Go subscription. Override it with ${roleFlag}.`,
       ].join("\n\n");
     }
     throw err;
