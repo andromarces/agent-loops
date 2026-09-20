@@ -46,7 +46,7 @@ The controller supports these CLI names:
 - Claude Code: `claude`
 - Codex CLI: `codex`
 - Antigravity CLI: `agy` (alias: `antigravity`)
-- OpenCode: `opencode`
+- OpenCode: `opencode` (v2 or later)
 - GitHub Copilot CLI: `copilot`
 
 Each adapter manages its own persistent session across turns. Model and effort arguments pass through to the CLI on every turn.
