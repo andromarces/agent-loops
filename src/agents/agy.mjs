@@ -30,6 +30,17 @@ export async function runAgy(state, prompt, options = {}) {
   }
 
   state.sessionId = result.conversation_id;
+  setUsage(state, result);
 
   return String(result.response ?? "").trim();
+}
+
+function setUsage(state, result) {
+  const usage = {};
+  if (result?.usage) usage.mainLoop = result.usage;
+  if (Object.keys(usage).length > 0) {
+    state.usage = usage;
+  } else {
+    delete state.usage;
+  }
 }
