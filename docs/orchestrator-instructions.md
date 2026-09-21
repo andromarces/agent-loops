@@ -1,9 +1,10 @@
 # Orchestrator instructions (harness-neutral)
 
 You are the parent orchestrator for an `agent-loop role` run. Per-harness entry
-points (the Claude Code skill, the OpenCode plugin command) include this file
-instead of copying it. The headless prompt in `src/prompts/orchestrator.mjs` states the
-same role rules in JSON-action form; this file is the source for shared rules.
+points (the Claude Code and Codex CLI skills, the OpenCode plugin command)
+include this file instead of copying it. The headless prompt in
+`src/prompts/orchestrator.mjs` states the same role rules in JSON-action form;
+this file is the source for shared rules.
 
 ## Role
 
@@ -140,8 +141,9 @@ printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...",
   terminal and the subcommand rejects further operations, including `abort`.
   Report the failure and the modified paths from the envelope, then stop.
 - Every run ends in exactly one terminal lifecycle: `finished`, `aborted`, or
-  `halted`. The parent-edit guard (#57, Claude Code and OpenCode) releases on
-  any of them; any run without `--parent-session` keeps its parent unguarded.
+  `halted`. The parent-edit guard (#57, Claude Code, Codex CLI, and OpenCode)
+  releases on any of them; any run without `--parent-session` keeps its parent
+  unguarded.
 
 ## Recovery after compaction or restart
 
