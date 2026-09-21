@@ -70,6 +70,14 @@ function withRepo(args, repo) {
 
 const stdinPrompt = async () => "continue working";
 
+// Usefulness: verifies an empty shell expansion cannot start an unguarded run.
+test("empty parent session is rejected before dispatch", async () => {
+  await setup();
+  expect(() => parseRoleArgs(["dispatch", "--role", "worker", "--parent-session", ""])).toThrow(
+    "Missing value for --parent-session.",
+  );
+});
+
 /** Deps for calls whose child turn is not under assertion. */
 const basicDeps = () => ({
   agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
