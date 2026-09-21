@@ -222,7 +222,7 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
 
 ### Pre-tool hook availability by harness
 
-Surveyed 2026-09-20 against current vendor docs. A session-keyed guard needs both a pre-tool hook and a documented way for the parent to learn its own session id at init time; the guard ships only where both exist.
+Surveyed 2026-09-21 against current vendor docs and binaries. A session-keyed guard needs both a pre-tool hook and a documented way for the parent to learn its own session id at init time; the guard ships only where both exist.
 
 | Harness            | Pre-tool hook                                                                                                                                                | Guard                   |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
@@ -232,7 +232,12 @@ Surveyed 2026-09-20 against current vendor docs. A session-keyed guard needs bot
 | GitHub Copilot CLI | `preToolUse` since v0.0.396, deny supported, `session_id` in input; repo-level `.github/hooks/` loading reported broken in the CLI (github/copilot-cli#1730) | Not implemented         |
 | OpenCode           | `permission` `evaluate` plugin hook can set `deny`; event carries `PermissionEvaluation.sessionID`                                                           | Implemented (this repo) |
 
-For Codex, Antigravity, and Copilot the hook surface exists, but no documented channel passes the parent's own session id to the `agent-loop role` init call, so a session-keyed guard cannot be wired yet on a documented basis. OpenCode now has both: a command reads `CommandInvocation.sessionID`, and the permission hook reads `PermissionEvaluation.sessionID`. One undocumented channel exists: Codex injects `CODEX_THREAD_ID` into its shell tool environment (verified in openai/codex source, insertion point `codex-rs/protocol/src/shell_environment.rs:152`, hook payload carries the same thread id via `codex-rs/hooks/src/events/pre_tool_use.rs:178`), so a Codex guard is wireable today against that variable. Deferred until the variable is documented; add a guard only when a session-id channel is documented for that harness.
+For Codex, Antigravity, and Copilot the hook surface exists, but no documented channel passes the parent's own session id to the `agent-loop role` init call, so a session-keyed guard cannot be wired yet on a documented basis. OpenCode now has both: a command reads `CommandInvocation.sessionID`, and the permission hook reads `PermissionEvaluation.sessionID`. Two undocumented channels exist:
+
+- Codex injects `CODEX_THREAD_ID` into its shell tool environment (verified in openai/codex source, insertion point `codex-rs/protocol/src/shell_environment.rs:152`, hook payload carries the same thread id via `codex-rs/hooks/src/events/pre_tool_use.rs:178`).
+- Antigravity CLI injects `ANTIGRAVITY_CONVERSATION_ID` into spawned process environments (verified in `agy.exe` 1.2.7; hook payload carries `conversationId`, and `PreToolUse` requires stdout JSON `{ decision: "deny", reason: "..." }`). However, hook execution sets working directory to the folder containing `hooks.json` (running via `sh -c` on Unix and `cmd /c` on Windows without exec-form args), and workspace skills document only `name` and `description` with semantic discovery and no model-invocation disable switch.
+
+Both guards remain deferred until their harness documents a stable session-id channel and safe orchestrator entry point.
 
 ## Reviewer safety
 
