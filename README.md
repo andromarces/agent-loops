@@ -230,12 +230,12 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
 - Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt index entry or state file. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
 - Without a state file the hook does one absent-file read, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
 - The hook is registered as an exec-form command (`node` + script `args`), which spawns `node` directly on every platform Claude Code supports, with no shell.
-- On OpenCode, `.opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session index, and sets `effect: "deny"` with the same reason under the same rule. A live probe showed the `edit` action covers the `edit` and `write` tools; whether `patch` maps to `edit` is unverified, so a `patch`-only edit is a known gap. `shell` stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
+- On OpenCode, `.opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session index, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
 - The plugin runs inside the OpenCode server process, so it resolves `AGENT_LOOP_RUNS_ROOT` from that process's environment; the Claude Code hook inherits the parent shell's environment instead. The override is test-only, but using it outside tests would point the plugin and the `agent-loop` CLI at different roots and disable the guard silently.
 
 ### Pre-tool hook availability by harness
 
-Surveyed 2026-09-20 against current vendor docs. A session-keyed guard needs both a pre-tool hook and a documented way for the parent to learn its own session id at init time; the guard ships only where both exist.
+Surveyed 2026-09-21 against current vendor docs and binaries. A session-keyed guard needs both a pre-tool hook and a documented way for the parent to learn its own session id at init time; the guard ships only where both exist.
 
 | Harness            | Pre-tool hook                                                                                                                                                | Guard                     |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
@@ -298,11 +298,13 @@ When `--transcript <file>` is specified, a JSON transcript is written upon proce
 
 The transcript records each validated orchestrator action, each child result, and one `invocation` event per CLI call, all with timestamps, plus the final exit code and error. It does not record raw orchestrator responses.
 
-An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude adapter maps it from the CLI result:
+An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude and Copilot adapters map it from the CLI result:
 
-- `models`: the `modelUsage` map, keyed by model id. Includes subagent requests. Use it for model routing and cost attribution.
-- `mainLoop`: the top-level `usage` field. Excludes subagents.
-- `totalCostUsd`: `total_cost_usd`. Includes subagents.
+- `models`: the per-model usage map keyed by model id. The Claude CLI exposes it; the Copilot CLI does not.
+- `mainLoop`: the top-level `usage` field. Copilot exposes a session-cumulative `result.usage` object here, with no token counts and possible `codeChanges.filesModified` paths. Claude exposes its main-loop usage here.
+- `totalCostUsd`: `total_cost_usd`. The CLI must expose it for this key to exist; Copilot does not.
+
+Do not sum Copilot `mainLoop` values across invocation events. Its usage is cumulative for the session, not per turn.
 
 The OpenCode adapter maps usage from the `opencode run --standalone --format json` stream. A step that ends with tool calls emits a `step_finish` part carrying `tokens` (`input`, `output`, `reasoning`, `cache.read`, `cache.write`) and `cost`; the adapter sums both across steps:
 
