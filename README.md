@@ -183,12 +183,12 @@ includes it rather than copying it. Role activation never goes into `AGENTS.md`
 or `CLAUDE.md`, because dispatched children read those files; activation
 happens only through explicit invocation.
 
-| Harness                  | Entry point                          | Invocation                                     |
-| ------------------------ | ------------------------------------ | ---------------------------------------------- |
-| Claude Code              | `.claude/skills/agent-loop/SKILL.md` | `/agent-loop <task and role settings>`         |
-| OpenCode                 | `.opencode/plugins/parent-guard.ts`  | `/agent-loop <task and role settings>`         |
-| Codex CLI                | `.codex/prompts/agent-loop.md`       | `/prompts:agent-loop <task and role settings>` |
-| Copilot CLI, Antigravity | universal fallback (below)           | first prompt references the file               |
+| Harness                  | Entry point                          | Invocation                             |
+| ------------------------ | ------------------------------------ | -------------------------------------- |
+| Claude Code              | `.claude/skills/agent-loop/SKILL.md` | `/agent-loop <task and role settings>` |
+| OpenCode                 | `.opencode/plugins/parent-guard.ts`  | `/agent-loop <task and role settings>` |
+| Codex CLI                | `.agents/skills/agent-loop/SKILL.md` | `$agent-loop <task and role settings>` |
+| Copilot CLI, Antigravity | universal fallback (below)           | first prompt references the file       |
 
 - The Claude Code skill sets `disable-model-invocation: true`, so only the
   maintainer activates it with `/agent-loop`, and it omits `context: fork`, so
@@ -200,15 +200,16 @@ happens only through explicit invocation.
   executor reads `CommandInvocation.sessionID` and carries that id into the
   orchestrator prompt, and the init dispatch call passes it as
   `--parent-session`.
-- The Codex CLI prompt (`.codex/prompts/agent-loop.md`) passes the active shell's
-  `CODEX_THREAD_ID` value as `--parent-session`. This environment variable is an
-  undocumented dependency and can change on upgrade. It fails open: when it is
-  absent, do not start a guarded run. Run `/hooks` once to review and trust the
-  repository hook. Do not use `--dangerously-bypass-hook-trust` for normal use.
+- The Codex CLI skill (`.agents/skills/agent-loop/SKILL.md`) activates only through
+  `$agent-loop`. It passes the active shell's `CODEX_THREAD_ID` value as
+  `--parent-session`. This environment variable is an undocumented dependency and
+  can change on upgrade. When it is absent, do not start a guarded run. Run
+  `/hooks` once to review and trust the repository hook. Do not use
+  `--dangerously-bypass-hook-trust` for normal use.
 - Universal fallback (Copilot CLI, Antigravity): reference
   `docs/orchestrator-instructions.md` in the first prompt and follow it. A
-  native entry point is added only after that harness documents a custom-prompt
-  mechanism.
+  native entry point is added only after that harness documents an explicit
+  extension mechanism.
 - The parent-edit guard (#57) reads `--parent-session` from the state index
   (see Parent guard below). For any run without `--parent-session`, the parent
   stays unguarded.
