@@ -13,10 +13,13 @@
 // it from the `agent-loop` CLI that wrote the index.
 import { decideParentGuard } from "../../src/hook/decision.mjs";
 
-// A permission action, not a tool name. A live probe showed OpenCode maps the
-// `edit` and `write` tools to the `edit` action; whether `patch` maps to `edit`
-// as well is unverified, so a `patch`-only edit is a known gap.
-const EDIT_ACTION = "edit";
+// The permission actions that carry a file edit. A set, not a single constant,
+// so a further edit tool is one entry. A live probe against OpenCode
+// v0.0.0-dev-19933 showed the built-in `edit`, `write`, and `apply_patch` tools
+// all raise the `edit` action, so the set covers every built-in file-edit tool.
+// `shell` is a different action and stays allowed. A tool served by an MCP
+// server raises its own action name and passes the guard.
+export const EDIT_ACTIONS = new Set(["edit"]);
 const COMMAND_NAME = "agent-loop";
 
 const INSTRUCTIONS = (sessionID, task) =>
@@ -52,7 +55,7 @@ export default {
     // Denies a file edit from the registered parent while the run is
     // non-terminal. A failed lookup denies nothing.
     await ctx.permission.hook("evaluate", async (event) => {
-      if (event.action !== EDIT_ACTION || typeof event.sessionID !== "string") {
+      if (!EDIT_ACTIONS.has(event.action) || typeof event.sessionID !== "string") {
         return;
       }
       let verdict;

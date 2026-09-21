@@ -217,12 +217,12 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
 - Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt index entry or state file. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
 - Without a state file the hook does one absent-file read, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
 - The hook is registered as an exec-form command (`node` + script `args`), which spawns `node` directly on every platform Claude Code supports, with no shell.
-- On OpenCode, `.opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session index, and sets `effect: "deny"` with the same reason under the same rule. A live probe showed the `edit` action covers the `edit` and `write` tools; whether `patch` maps to `edit` is unverified, so a `patch`-only edit is a known gap. `shell` stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
+- On OpenCode, `.opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session index, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
 - The plugin runs inside the OpenCode server process, so it resolves `AGENT_LOOP_RUNS_ROOT` from that process's environment; the Claude Code hook inherits the parent shell's environment instead. The override is test-only, but using it outside tests would point the plugin and the `agent-loop` CLI at different roots and disable the guard silently.
 
 ### Pre-tool hook availability by harness
 
-Surveyed 2026-09-20 against current vendor docs. A session-keyed guard needs both a pre-tool hook and a documented way for the parent to learn its own session id at init time; the guard ships only where both exist.
+Surveyed 2026-09-21 against current vendor docs and binaries. A session-keyed guard needs both a pre-tool hook and a documented way for the parent to learn its own session id at init time; the guard ships only where both exist.
 
 | Harness            | Pre-tool hook                                                                                                                                                | Guard                   |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
@@ -232,7 +232,10 @@ Surveyed 2026-09-20 against current vendor docs. A session-keyed guard needs bot
 | GitHub Copilot CLI | `preToolUse` since v0.0.396, deny supported, `session_id` in input; repo-level `.github/hooks/` loading reported broken in the CLI (github/copilot-cli#1730) | Not implemented         |
 | OpenCode           | `permission` `evaluate` plugin hook can set `deny`; event carries `PermissionEvaluation.sessionID`                                                           | Implemented (this repo) |
 
-For Codex, Antigravity, and Copilot the hook surface exists, but no documented channel passes the parent's own session id to the `agent-loop role` init call, so a session-keyed guard cannot be wired yet on a documented basis. OpenCode now has both: a command reads `CommandInvocation.sessionID`, and the permission hook reads `PermissionEvaluation.sessionID`. One undocumented channel exists: Codex injects `CODEX_THREAD_ID` into its shell tool environment (verified in openai/codex source, insertion point `codex-rs/protocol/src/shell_environment.rs:152`, hook payload carries the same thread id via `codex-rs/hooks/src/events/pre_tool_use.rs:178`), so a Codex guard is wireable today against that variable. Deferred until the variable is documented; add a guard only when a session-id channel is documented for that harness.
+For Codex, Antigravity, and Copilot the hook surface exists, but no documented channel passes the parent's own session id to the `agent-loop role` init call, so a session-keyed guard cannot be wired yet on a documented basis. OpenCode now has both: a command reads `CommandInvocation.sessionID`, and the permission hook reads `PermissionEvaluation.sessionID`. Two undocumented channels exist:
+
+- Codex injects `CODEX_THREAD_ID` into its shell tool environment (verified in openai/codex source, insertion point `codex-rs/protocol/src/shell_environment.rs:152`, hook payload carries the same thread id via `codex-rs/hooks/src/events/pre_tool_use.rs:178`), so a Codex guard is wireable today against that variable. Deferred until the variable is documented; add a guard only when a session-id channel is documented for that harness.
+- Antigravity CLI injects `ANTIGRAVITY_CONVERSATION_ID` into spawned process environments (verified in `agy.exe` 1.2.7; hook payload carries `conversationId`, and `PreToolUse` expects stdout JSON with required `decision` from `allow|deny|ask|force_ask|deny_unless_prior_grant` and optional `reason`). The file-edit tool names are `write_to_file`, `edit_file`, `replace_file_content`, `multi_replace_file_content`, and `notebook_edit`. However, hook execution sets the working directory to the folder containing `hooks.json` (running via `sh -c` on Unix and `cmd /c` on Windows without exec-form args). Furthermore, workspace skills document only `name` and `description` with semantic discovery and no model-invocation disable switch (a self-activation hazard under ADR 0002). Workspace skills also document no argument or environment variable substitution mechanism (unverified by live probe), so `$ANTIGRAVITY_CONVERSATION_ID` reaches the model as literal text; downstream, `cmd /c` does not expand environment variables using Unix `$VAR` syntax on Windows. Deferred until the harness documents a stable session-id channel and safe orchestrator entry point.
 
 ## Reviewer safety
 
@@ -280,6 +283,17 @@ An `invocation` event exists for every CLI call: orchestrator attempts, orchestr
 - `totalCostUsd`: `total_cost_usd`. The CLI must expose it for this key to exist; Copilot does not.
 
 Do not sum Copilot `mainLoop` values across invocation events. Its usage is cumulative for the session, not per turn.
+
+The OpenCode adapter maps usage from the `opencode run --standalone --format json` stream. A step that ends with tool calls emits a `step_finish` part carrying `tokens` (`input`, `output`, `reasoning`, `cache.read`, `cache.write`) and `cost`; the adapter sums both across steps:
+
+- `mainLoop`: the summed `tokens` object.
+- `totalCostUsd`: the summed `cost`.
+
+A failed turn keeps the usage its completed steps reported, the same as the Claude adapter. No event names the model, so `models` is omitted. Usage was inspected against OpenCode `v0.0.0-dev-19933`; in that version only steps that end with tool calls emit a `step_finish`, so a text-only turn, and the closing text step of a tool-using turn, contribute no usage.
+
+The Antigravity adapter maps `mainLoop` from the CLI `usage` field. Antigravity reports no cost and no per-model breakdown.
+
+The Codex adapter maps `turn.completed.usage` to `mainLoop`. The map contains input, cached input, cache-write input, output, and reasoning-output token counts. The token counts are cumulative for the thread, not per turn. Codex reports no cost or per-model usage.
 
 Other adapters emit `invocation` events without `usage` until their CLI output is mapped. Per-model usage shows which models ran inside a turn. It cannot separate parent tokens from subagent tokens on the same model.
 

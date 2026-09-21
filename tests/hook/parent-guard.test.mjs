@@ -7,7 +7,7 @@ import { afterEach, expect, test } from "vitest";
 import { readStateForSession, statePaths } from "../../src/lib/runstate.mjs";
 import { decideParentGuard } from "../../src/hook/decision.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
-import parentGuardPlugin from "../../.opencode/plugins/parent-guard.ts";
+import parentGuardPlugin, { EDIT_ACTIONS } from "../../.opencode/plugins/parent-guard.ts";
 import { createTempRepo } from "../runtime-helpers.mjs";
 
 const noopAdapter = {
@@ -222,22 +222,25 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
   expect(nullSession.stdout).toBe("");
 });
 
-// Usefulness: verifies the OpenCode guard's acceptance — an edit from the
-// registered parent is denied while the run is non-terminal, a different
-// session is never blocked, and a non-edit action is left alone.
-test("opencode guard denies the registered parent's edit and allows every other call", async () => {
+// Usefulness: verifies the OpenCode guard's acceptance over the full action set
+// it denies — every edit action from the registered parent is denied while the
+// run is non-terminal, the same actions from a different session are never
+// blocked, and `shell` stays allowed.
+test("opencode guard denies the registered parent's edit action set and allows every other call", async () => {
   await setup();
   await initRunForParent();
   const { hooks } = await loadPlugin();
 
-  const denied = { action: "edit", sessionID: "parent-sess-1", effect: "allow", resources: [] };
-  await hooks.evaluate(denied);
-  expect(denied.effect).toBe("deny");
-  expect(denied.message).toMatch(/orchestrator/);
+  for (const action of EDIT_ACTIONS) {
+    const denied = { action, sessionID: "parent-sess-1", effect: "allow", resources: [] };
+    await hooks.evaluate(denied);
+    expect(denied.effect, action).toBe("deny");
+    expect(denied.message).toMatch(/orchestrator/);
 
-  const other = { action: "edit", sessionID: "unrelated-session", effect: "allow", resources: [] };
-  await hooks.evaluate(other);
-  expect(other.effect).toBe("allow");
+    const other = { action, sessionID: "unrelated-session", effect: "allow", resources: [] };
+    await hooks.evaluate(other);
+    expect(other.effect, action).toBe("allow");
+  }
 
   const shell = { action: "shell", sessionID: "parent-sess-1", effect: "allow", resources: [] };
   await hooks.evaluate(shell);

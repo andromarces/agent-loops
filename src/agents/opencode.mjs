@@ -32,6 +32,9 @@ export async function runOpenCode(state, prompt, options = {}) {
   try {
     ({ stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal, role }));
   } catch (err) {
+    // A non-zero exit can still carry completed-step usage. Expose it, then rethrow.
+    setUsage(state, parseJsonLines(err?.stdout ?? ""));
+
     // Only a defaulted turn points at the default; an explicit model failure stays as recorded.
     if (defaulted && err instanceof Error) {
       const roleFlag = role ? `--${role}-model` : "--<role>-model";
@@ -63,6 +66,10 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   state.sessionId = sessionId;
 
+  // Record usage before the error check so a turn that failed after completing steps still reports
+  // what it spent, matching the Claude adapter and the runtime's error invocation event.
+  setUsage(state, events);
+
   // Defense-in-depth: if the CLI ever exits 0 with an error event, surface its detail instead of
   // falling through to the missing-text error. The session is recorded first, as it is on any turn.
   const errorEvent = events.find((event) => event.type === "error");
@@ -81,6 +88,50 @@ export async function runOpenCode(state, prompt, options = {}) {
   }
 
   return text.trim();
+}
+
+/**
+ * Sets `state.usage` from the `step_finish` parts of the stream, or removes it when the stream
+ * carries none. Each completed step emits one `step_finish` part with `tokens` and `cost`, so
+ * both fields sum across steps. No event names the model, so `models` is omitted.
+ */
+function setUsage(state, events) {
+  const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+  let cost = 0;
+  let hasTokens = false;
+  let hasCost = false;
+
+  for (const event of events) {
+    if (event.type !== "step_finish") {
+      continue;
+    }
+
+    const part = event.part ?? {};
+
+    if (part.tokens && typeof part.tokens === "object") {
+      hasTokens = true;
+      tokens.input += part.tokens.input ?? 0;
+      tokens.output += part.tokens.output ?? 0;
+      tokens.reasoning += part.tokens.reasoning ?? 0;
+      tokens.cache.read += part.tokens.cache?.read ?? 0;
+      tokens.cache.write += part.tokens.cache?.write ?? 0;
+    }
+
+    if (typeof part.cost === "number") {
+      hasCost = true;
+      cost += part.cost;
+    }
+  }
+
+  const usage = {};
+  if (hasTokens) usage.mainLoop = tokens;
+  if (hasCost) usage.totalCostUsd = cost;
+
+  if (Object.keys(usage).length > 0) {
+    state.usage = usage;
+  } else {
+    delete state.usage;
+  }
 }
 
 /**
