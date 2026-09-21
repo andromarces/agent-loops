@@ -21,6 +21,19 @@ function textEvent(text) {
   });
 }
 
+function stepFinishEvent({ input, output, reasoning, cacheRead = 0, cacheWrite = 0, cost }) {
+  return JSON.stringify({
+    type: "step_finish",
+    sessionID: "sess-oc",
+    part: {
+      type: "step-finish",
+      reason: "tool-calls",
+      cost,
+      tokens: { input, output, reasoning, cache: { read: cacheRead, write: cacheWrite } },
+    },
+  });
+}
+
 // Usefulness: verifies an explicit model with effort passes through as model#effort, and readOnly maps to --agent plan.
 test("opencode sends an explicit model#effort and --agent plan when readOnly is true", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("opencode reply"), stderr: "" });
@@ -196,4 +209,100 @@ test("opencode treats an error event as fatal even with partial text", async () 
   await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow(
     "opencode returned an error event: provider.internal",
   );
+});
+
+// Usefulness: verifies one step_finish part per completed step is summed into mainLoop tokens and
+// totalCostUsd, so a multi-step opencode turn reports full usage on its invocation event (issue #83).
+test("opencode sums step_finish token and cost usage across steps", async () => {
+  const stdout = [
+    JSON.stringify({ type: "step_start", sessionID: "sess-oc", part: { type: "step-start" } }),
+    stepFinishEvent({
+      input: 100,
+      output: 10,
+      reasoning: 5,
+      cacheRead: 20,
+      cacheWrite: 2,
+      cost: 0.01,
+    }),
+    JSON.stringify({ type: "step_start", sessionID: "sess-oc", part: { type: "step-start" } }),
+    stepFinishEvent({ input: 200, output: 20, reasoning: 0, cacheRead: 30, cost: 0.02 }),
+    textEvent("final reply"),
+  ].join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const response = await runOpenCode(state, "oc prompt", { cwd: "/dir" });
+
+  expect(response).toBe("final reply");
+  expect(state.usage).toEqual({
+    mainLoop: {
+      input: 300,
+      output: 30,
+      reasoning: 5,
+      cache: { read: 50, write: 2 },
+    },
+    totalCostUsd: 0.03,
+  });
+});
+
+// Usefulness: verifies a turn whose stream has no usage-carrying event still completes and leaves
+// no usage key, so the invocation event stays clean (issue #83).
+test("opencode leaves usage unset when the stream carries no step_finish usage", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("plain reply"), stderr: "" });
+
+  const state = {
+    kind: "opencode",
+    sessionId: null,
+    model: null,
+    effort: null,
+    usage: { stale: 1 },
+  };
+  const response = await runOpenCode(state, "oc prompt", { cwd: "/dir" });
+
+  expect(response).toBe("plain reply");
+  expect(state.usage).toBeUndefined();
+});
+
+// Usefulness: verifies a turn that completed steps then failed still reports their usage, matching
+// the Claude adapter and the runtime's error invocation event (issue #83).
+test("opencode keeps step_finish usage when an error event follows", async () => {
+  const stdout = [
+    stepFinishEvent({ input: 50, output: 5, reasoning: 1, cost: 0.004 }),
+    JSON.stringify({ type: "error", sessionID: "sess-oc", error: { type: "provider.internal" } }),
+  ].join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+
+  await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow(
+    "opencode returned an error event: provider.internal",
+  );
+  expect(state.usage).toEqual({
+    mainLoop: { input: 50, output: 5, reasoning: 1, cache: { read: 0, write: 0 } },
+    totalCostUsd: 0.004,
+  });
+});
+
+// Usefulness: verifies a failed CLI call that still printed step_finish parts exposes their usage
+// before the error propagates, so a failed invocation is not free in the transcript (issue #83).
+test("opencode exposes usage from stdout when the CLI exits non-zero", async () => {
+  const stdout = stepFinishEvent({ input: 10, output: 2, reasoning: 0, cost: 0.001 });
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("opencode exited with code 1."), { stdout, stderr: "" }),
+  );
+
+  const state = {
+    kind: "opencode",
+    sessionId: null,
+    model: null,
+    effort: null,
+    usage: { stale: 1 },
+  };
+  await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow(
+    "opencode exited with code 1.",
+  );
+  expect(state.usage).toEqual({
+    mainLoop: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+    totalCostUsd: 0.001,
+  });
 });
