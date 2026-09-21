@@ -32,6 +32,9 @@ export async function runOpenCode(state, prompt, options = {}) {
   try {
     ({ stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal, role }));
   } catch (err) {
+    // A non-zero exit can still carry completed-step usage. Expose it, then rethrow.
+    setUsage(state, parseJsonLines(err?.stdout ?? ""));
+
     // Only a defaulted turn points at the default; an explicit model failure stays as recorded.
     if (defaulted && err instanceof Error) {
       const roleFlag = role ? `--${role}-model` : "--<role>-model";
@@ -63,6 +66,10 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   state.sessionId = sessionId;
 
+  // Record usage before the error check so a turn that failed after completing steps still reports
+  // what it spent, matching the Claude adapter and the runtime's error invocation event.
+  setUsage(state, events);
+
   // Defense-in-depth: if the CLI ever exits 0 with an error event, surface its detail instead of
   // falling through to the missing-text error. The session is recorded first, as it is on any turn.
   const errorEvent = events.find((event) => event.type === "error");
@@ -70,8 +77,6 @@ export async function runOpenCode(state, prompt, options = {}) {
   if (errorEvent) {
     throw new Error(`opencode returned an error event: ${describeError(errorEvent.error)}`);
   }
-
-  setUsage(state, events);
 
   const text = events
     .filter((event) => event.type === "text" && typeof event.part?.text === "string")

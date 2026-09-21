@@ -262,3 +262,47 @@ test("opencode leaves usage unset when the stream carries no step_finish usage",
   expect(response).toBe("plain reply");
   expect(state.usage).toBeUndefined();
 });
+
+// Usefulness: verifies a turn that completed steps then failed still reports their usage, matching
+// the Claude adapter and the runtime's error invocation event (issue #83).
+test("opencode keeps step_finish usage when an error event follows", async () => {
+  const stdout = [
+    stepFinishEvent({ input: 50, output: 5, reasoning: 1, cost: 0.004 }),
+    JSON.stringify({ type: "error", sessionID: "sess-oc", error: { type: "provider.internal" } }),
+  ].join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+
+  await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow(
+    "opencode returned an error event: provider.internal",
+  );
+  expect(state.usage).toEqual({
+    mainLoop: { input: 50, output: 5, reasoning: 1, cache: { read: 0, write: 0 } },
+    totalCostUsd: 0.004,
+  });
+});
+
+// Usefulness: verifies a failed CLI call that still printed step_finish parts exposes their usage
+// before the error propagates, so a failed invocation is not free in the transcript (issue #83).
+test("opencode exposes usage from stdout when the CLI exits non-zero", async () => {
+  const stdout = stepFinishEvent({ input: 10, output: 2, reasoning: 0, cost: 0.001 });
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("opencode exited with code 1."), { stdout, stderr: "" }),
+  );
+
+  const state = {
+    kind: "opencode",
+    sessionId: null,
+    model: null,
+    effort: null,
+    usage: { stale: 1 },
+  };
+  await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow(
+    "opencode exited with code 1.",
+  );
+  expect(state.usage).toEqual({
+    mainLoop: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+    totalCostUsd: 0.001,
+  });
+});
