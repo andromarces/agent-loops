@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vitest";
 import { readStateForSession, statePaths } from "../../src/lib/runstate.mjs";
-import { decideParentGuard } from "../../src/hook/decision.mjs";
+import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
 import parentGuardPlugin, { EDIT_ACTIONS } from "../../.opencode/plugins/parent-guard.ts";
 import { createTempRepo } from "../runtime-helpers.mjs";
@@ -193,9 +193,10 @@ function runCopilotHookScript(inputJson) {
     child.stdin.end(inputJson);
   });
 }
-// Usefulness: verifies the hook contract end to end — deny prints exactly one
-// PreToolUse JSON decision on stdout, an unguarded session prints nothing and
-// exits 0, and unparseable input fails open.
+// Usefulness: verifies the Claude and Codex hook contracts end to end — deny prints
+// one PreToolUse JSON decision on stdout, an unguarded session prints nothing,
+// and unparseable input fails open.
+
 test("hook script denies with PreToolUse JSON and stays silent otherwise", async () => {
   await setup();
   const repo = await createTempRepo();
@@ -205,16 +206,18 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
     { agents: { fake1: noopAdapter, fake2: noopAdapter }, stdin: async () => "work" },
   );
 
-  const denied = await runHookScript(
-    JSON.stringify({ session_id: "parent-sess-1", tool_name: "Edit" }),
-  );
-  expect(denied.code).toBe(0);
-  const decision = JSON.parse(denied.stdout);
-  expect(decision.hookSpecificOutput).toMatchObject({
-    hookEventName: "PreToolUse",
-    permissionDecision: "deny",
-  });
-  expect(decision.hookSpecificOutput.permissionDecisionReason).toMatch(/orchestrator/);
+  for (const toolName of ["Edit", "apply_patch"]) {
+    const denied = await runHookScript(
+      JSON.stringify({ session_id: "parent-sess-1", tool_name: toolName }),
+    );
+    expect(denied.code, toolName).toBe(0);
+    const decision = JSON.parse(denied.stdout);
+    expect(decision.hookSpecificOutput).toMatchObject({
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: GUARD_DENY_REASON,
+    });
+  }
 
   const allowed = await runHookScript(JSON.stringify({ session_id: "other", tool_name: "Write" }));
   expect(allowed.code).toBe(0);
