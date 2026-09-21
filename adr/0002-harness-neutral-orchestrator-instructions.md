@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0003](0003-copilot-session-entrypoint-and-parent-guard.md).
 
 ## Date
 
@@ -26,7 +28,7 @@ One harness-neutral instruction file (`docs/orchestrator-instructions.md`) defin
 
 - Claude Code ships a skill (`.claude/skills/agent-loop/SKILL.md`) with `disable-model-invocation: true`, so only the maintainer activates it; it passes `${CLAUDE_SESSION_ID}` as `--parent-session`.
 - OpenCode ships a local plugin (`.opencode/plugins/parent-guard.ts`) that registers the `/agent-loop` command. The executor reads `CommandInvocation.sessionID`, so the init call passes `--parent-session` and the plugin's `permission` `evaluate` hook guards the parent. The stored command template is superseded; the plugin route needs no session placeholder.
-- Codex CLI, Copilot CLI, and Antigravity use the universal fallback until each documents a custom-prompt mechanism.
+- Codex CLI and Antigravity use the universal fallback until each documents a custom-prompt mechanism. GitHub Copilot CLI uses the session-keyed launcher and repository hook defined by ADR 0003.
 - Role rules have exactly one source of truth; harness entry points never restate them, so a rule change is a one-file edit.
 
 ## Alternatives
@@ -45,5 +47,6 @@ Andro Marces
 - [Issue #56: Harness-neutral orchestrator instructions](https://github.com/andromarces/agent-loops/issues/56)
 - [Issue #75: Wire the parent-edit guard for OpenCode through a plugin session-id channel](https://github.com/andromarces/agent-loops/issues/75)
 - [Pull Request #80: feat: guard OpenCode parent edits through a plugin session-id channel](https://github.com/andromarces/agent-loops/pull/80)
+- [ADR 0003: GitHub Copilot CLI session entry point and parent guard](0003-copilot-session-entrypoint-and-parent-guard.md)
 - [Pull Request #59: feat: harness-neutral orchestrator instruction file with Claude Code skill and OpenCode command](https://github.com/andromarces/agent-loops/pull/59)
 - [ADR Index](README.md)
