@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "matcher": "Edit|Write",
+        "exec": "node",
+        "args": ["src/hook/copilot-parent-guard.mjs"],
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

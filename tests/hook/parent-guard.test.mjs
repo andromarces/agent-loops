@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -177,9 +177,44 @@ function runHookScript(inputJson) {
   });
 }
 
-// Usefulness: verifies the hook contract end to end — both Claude Code's Edit
-// input and Codex's apply_patch input return the shared deny reason. Unguarded
-// sessions print nothing, and unparseable input fails open.
+function runCopilotHookScript(inputJson) {
+  return new Promise((resolveProcess) => {
+    const script = fileURLToPath(
+      new URL("../../src/hook/copilot-parent-guard.mjs", import.meta.url),
+    );
+    const child = spawn(process.execPath, [script], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.on("close", (code) => {
+      resolveProcess({ code, stdout });
+    });
+    child.stdin.end(inputJson);
+  });
+}
+
+// Runs a registered hook `command` string through the platform shell, the way
+// both Claude Code and Copilot execute a shell-form command hook. `env` adds to
+// the inherited environment.
+function runShellHookCommand(command, env, inputJson) {
+  const childEnv = { ...process.env, ...env };
+  return new Promise((resolveProcess) => {
+    const child = spawn(command, { shell: true, env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.on("close", (code) => {
+      resolveProcess({ code, stdout });
+    });
+    child.stdin.end(inputJson);
+  });
+}
+// Usefulness: verifies the Claude and Codex hook contracts end to end — deny prints
+// one PreToolUse JSON decision on stdout, an unguarded session prints nothing,
+// and unparseable input fails open.
+
 test("hook script denies with PreToolUse JSON and stays silent otherwise", async () => {
   await setup();
   const repo = await createTempRepo();
@@ -222,6 +257,120 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
   const nullSession = await runHookScript(JSON.stringify({ session_id: null, tool_name: "Write" }));
   expect(nullSession.code).toBe(0);
   expect(nullSession.stdout).toBe("");
+});
+
+// Usefulness: covers the exact `command` string registered in
+// `.claude/settings.json`, which the direct-script tests never exercise.
+// Copilot's Claude-compatible loader sets CLAUDE_PROJECT_DIR to the repository
+// root and runs this string, so it must import the guard there: deny the
+// registered parent, and stay silent for every other session, because Copilot
+// fail-closes a command hook on a non-zero exit.
+test("registered Claude settings command runs the guard through a shell", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await executeRoleCommand(
+    parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo, ...INIT_OVERRIDES]),
+    { agents: INIT_AGENTS, stdin: async () => "work" },
+  );
+
+  const settings = JSON.parse(
+    await readFile(new URL("../../.claude/settings.json", import.meta.url), "utf8"),
+  );
+  const command = settings.hooks.PreToolUse[0].hooks[0].command;
+  const env = { CLAUDE_PROJECT_DIR: fileURLToPath(new URL("../../", import.meta.url)) };
+
+  const denied = await runShellHookCommand(
+    command,
+    env,
+    JSON.stringify({ session_id: "parent-sess-1", tool_name: "Write" }),
+  );
+  expect(denied.code).toBe(0);
+  expect(JSON.parse(denied.stdout).hookSpecificOutput).toMatchObject({
+    hookEventName: "PreToolUse",
+    permissionDecision: "deny",
+    permissionDecisionReason: GUARD_DENY_REASON,
+  });
+
+  const allowed = await runShellHookCommand(
+    command,
+    env,
+    JSON.stringify({ session_id: "other", tool_name: "Write" }),
+  );
+  expect(allowed.code).toBe(0);
+  expect(allowed.stdout).toBe("");
+});
+
+// Usefulness: verifies the Copilot command-hook contract — the PascalCase
+// PreToolUse payload uses session_id and the deny output is the flat
+// permissionDecision object that Copilot CLI consumes.
+test("Copilot hook denies the matching session with its PreToolUse JSON shape", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await executeRoleCommand(
+    parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo, ...INIT_OVERRIDES]),
+    { agents: { fake1: noopAdapter, fake2: noopAdapter }, stdin: async () => "work" },
+  );
+
+  const denied = await runCopilotHookScript(
+    JSON.stringify({
+      hook_event_name: "PreToolUse",
+      session_id: "parent-sess-1",
+      tool_name: "Write",
+      tool_input: { path: "README.md" },
+    }),
+  );
+  expect(denied.code).toBe(0);
+  expect(JSON.parse(denied.stdout)).toEqual({
+    permissionDecision: "deny",
+    permissionDecisionReason: expect.stringMatching(/orchestrator/),
+  });
+
+  const allowed = await runCopilotHookScript(
+    JSON.stringify({
+      hook_event_name: "PreToolUse",
+      session_id: "unrelated-session",
+      tool_name: "Write",
+    }),
+  );
+  expect(allowed.code).toBe(0);
+  expect(allowed.stdout).toBe("");
+
+  const malformed = await runCopilotHookScript("not json");
+  expect(malformed.code).toBe(0);
+  expect(malformed.stdout).toBe("");
+
+  const finish = await executeRoleCommand(parseRoleArgs(["finish", "--cwd", repo]), {
+    agents: INIT_AGENTS,
+    stdin: async () => FINISH_SUMMARY,
+  });
+  expect(finish.exitCode).toBe(0);
+  const afterFinish = await runCopilotHookScript(
+    JSON.stringify({
+      hook_event_name: "PreToolUse",
+      session_id: "parent-sess-1",
+      tool_name: "Edit",
+    }),
+  );
+  expect(afterFinish.code).toBe(0);
+  expect(afterFinish.stdout).toBe("");
+
+  await initRunAt(repo);
+  const abort = await executeRoleCommand(
+    parseRoleArgs(["abort", "--cwd", repo, "--reason", "test"]),
+    { agents: INIT_AGENTS },
+  );
+  expect(abort.exitCode).toBe(0);
+  const afterAbort = await runCopilotHookScript(
+    JSON.stringify({
+      hook_event_name: "PreToolUse",
+      session_id: "parent-sess-1",
+      tool_name: "Edit",
+    }),
+  );
+  expect(afterAbort.code).toBe(0);
+  expect(afterAbort.stdout).toBe("");
 });
 
 // Usefulness: verifies the OpenCode guard's acceptance over the full action set
