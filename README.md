@@ -276,8 +276,10 @@ The transcript records each validated orchestrator action, each child result, an
 An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude and Copilot adapters map it from the CLI result:
 
 - `models`: the per-model usage map keyed by model id. The Claude CLI exposes it; the Copilot CLI does not.
-- `mainLoop`: the top-level `usage` field. Copilot exposes a `result.usage` object here, and Claude exposes its main-loop usage here.
+- `mainLoop`: the top-level `usage` field. Copilot exposes a session-cumulative `result.usage` object here, with no token counts and possible `codeChanges.filesModified` paths. Claude exposes its main-loop usage here.
 - `totalCostUsd`: `total_cost_usd`. The CLI must expose it for this key to exist; Copilot does not.
+
+Do not sum Copilot `mainLoop` values across invocation events. Its usage is cumulative for the session, not per turn.
 
 Other adapters emit `invocation` events without `usage` until their CLI output is mapped. Per-model usage shows which models ran inside a turn. It cannot separate parent tokens from subagent tokens on the same model.
 

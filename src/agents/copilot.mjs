@@ -35,9 +35,14 @@ export async function runCopilot(state, prompt, options = {}) {
 
   const events = parseJsonLines(stdout);
   const resultEvent = findResultEvent(events);
-  const returnedId = resultEvent?.sessionId ?? resultEvent?.session_id;
+  setUsage(state, resultEvent);
 
-  if (requestedSessionId && returnedId && requestedSessionId !== returnedId) {
+  const returnedId = resultEvent?.sessionId ?? resultEvent?.session_id;
+  if (!returnedId) {
+    throw new Error("Copilot did not return a session ID.");
+  }
+
+  if (requestedSessionId && requestedSessionId !== returnedId) {
     throw new Error(
       [
         "Copilot did not resume the expected session.",
@@ -47,11 +52,7 @@ export async function runCopilot(state, prompt, options = {}) {
     );
   }
 
-  if (returnedId) {
-    state.sessionId = returnedId;
-  }
-
-  setUsage(state, resultEvent);
+  state.sessionId = returnedId;
 
   const message = events
     .filter((event) => event.type === "assistant.message")
@@ -71,39 +72,8 @@ function findResultEvent(events) {
 }
 
 function readAssistantMessage(event) {
-  const payload = event?.data ?? event;
-  const content = payload?.content;
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (typeof part === "string") {
-          return part;
-        }
-        if (part && typeof part.text === "string") {
-          return part.text;
-        }
-        return "";
-      })
-      .join("");
-  }
-
-  if (content && typeof content === "object") {
-    if (typeof content.text === "string") {
-      return content.text;
-    }
-    if (Array.isArray(content.parts)) {
-      return content.parts
-        .map((part) => (part && typeof part.text === "string" ? part.text : ""))
-        .join("");
-    }
-  }
-
-  return "";
+  const content = event?.data?.content;
+  return typeof content === "string" ? content : "";
 }
 
 function setUsage(state, resultEvent) {
