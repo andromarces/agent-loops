@@ -196,13 +196,9 @@ function runCopilotHookScript(inputJson) {
 
 // Runs a registered hook `command` string through the platform shell, the way
 // both Claude Code and Copilot execute a shell-form command hook. `env` adds to
-// the inherited environment; `unset` removes keys, which models the Copilot
-// loader that does not set Claude's project-root variable.
-function runShellHookCommand(command, { env = {}, unset = [] }, inputJson) {
+// the inherited environment.
+function runShellHookCommand(command, env, inputJson) {
   const childEnv = { ...process.env, ...env };
-  for (const key of unset) {
-    delete childEnv[key];
-  }
   return new Promise((resolveProcess) => {
     const child = spawn(command, { shell: true, env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -264,11 +260,12 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
 });
 
 // Usefulness: covers the exact `command` string registered in
-// `.claude/settings.json`, which the direct-script tests never exercise. The
-// shell form must import the guard when CLAUDE_PROJECT_DIR points at this
-// project (deny JSON), and must exit 0 with no output when it is absent, because
-// Copilot's fail-closed command hook denies the edit on any non-zero exit.
-test("registered Claude settings command runs the guard and no-ops without the project dir", async () => {
+// `.claude/settings.json`, which the direct-script tests never exercise.
+// Copilot's Claude-compatible loader sets CLAUDE_PROJECT_DIR to the repository
+// root and runs this string, so it must import the guard there: deny the
+// registered parent, and stay silent for every other session, because Copilot
+// fail-closes a command hook on a non-zero exit.
+test("registered Claude settings command runs the guard through a shell", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
@@ -281,13 +278,12 @@ test("registered Claude settings command runs the guard and no-ops without the p
     await readFile(new URL("../../.claude/settings.json", import.meta.url), "utf8"),
   );
   const command = settings.hooks.PreToolUse[0].hooks[0].command;
-  const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
-  const payload = JSON.stringify({ session_id: "parent-sess-1", tool_name: "Write" });
+  const env = { CLAUDE_PROJECT_DIR: fileURLToPath(new URL("../../", import.meta.url)) };
 
   const denied = await runShellHookCommand(
     command,
-    { env: { CLAUDE_PROJECT_DIR: projectRoot } },
-    payload,
+    env,
+    JSON.stringify({ session_id: "parent-sess-1", tool_name: "Write" }),
   );
   expect(denied.code).toBe(0);
   expect(JSON.parse(denied.stdout).hookSpecificOutput).toMatchObject({
@@ -296,13 +292,13 @@ test("registered Claude settings command runs the guard and no-ops without the p
     permissionDecisionReason: GUARD_DENY_REASON,
   });
 
-  const noProjectDir = await runShellHookCommand(
+  const allowed = await runShellHookCommand(
     command,
-    { unset: ["CLAUDE_PROJECT_DIR"] },
-    payload,
+    env,
+    JSON.stringify({ session_id: "other", tool_name: "Write" }),
   );
-  expect(noProjectDir.code).toBe(0);
-  expect(noProjectDir.stdout).toBe("");
+  expect(allowed.code).toBe(0);
+  expect(allowed.stdout).toBe("");
 });
 
 // Usefulness: verifies the Copilot command-hook contract — the PascalCase
