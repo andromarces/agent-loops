@@ -203,6 +203,8 @@ happens only through explicit invocation.
 - The Codex CLI skill (`.agents/skills/agent-loop/SKILL.md`) activates only through
   `$agent-loop`. It passes `CODEX_THREAD_ID` as `--parent-session`. Use
   `$env:CODEX_THREAD_ID` in PowerShell and `$CODEX_THREAD_ID` in POSIX shells.
+  In PowerShell, pass `--cwd $worktree` after setting
+  `$worktree = (Get-Location).Path`.
   The CLI rejects an empty `--parent-session` before it initializes a run.
   This environment variable is an undocumented dependency and can change on
   upgrade. When it is absent, do not start a guarded run. Run `/hooks` once to
