@@ -210,7 +210,7 @@ happens only through explicit invocation.
   `docs/orchestrator-instructions.md` in the first prompt and follow it. A
   native entry point is added only after that harness documents a custom-prompt
   mechanism.
-- On Copilot CLI, `.github/hooks/parent-guard.json` registers PascalCase `PreToolUse`, so the payload carries `session_id` and `tool_name`; the hook prints the flat `permissionDecision` object that Copilot CLI consumes. Repository hooks require a trusted folder. GitHub documents the `.github/hooks/*.json` path for Windows and macOS, and a live probe on Windows with Copilot CLI 1.0.87-0 confirmed the hook loaded and reported `tool_name: Write`; no macOS runtime was available for this change.
+- On Copilot CLI, `.github/hooks/parent-guard.json` registers PascalCase `PreToolUse`, so the payload carries `session_id` and `tool_name`; the hook prints the flat `permissionDecision` object that Copilot CLI consumes. Repository hooks require a trusted folder. GitHub documents the `.github/hooks/*.json` path for Windows, macOS, and Linux, and a live probe on Windows with Copilot CLI 1.0.87-0 confirmed the hook loaded and reported `tool_name: Write`; no macOS runtime was available for this change. Copilot also loads `.claude/settings.json` as repository settings, so the Claude hook command exits without action when Claude's project-root variable is absent; the Copilot hook remains the authoritative handler.
 - The parent-edit guard (#57) reads `--parent-session` from the state index
   (see Parent guard below). For any run without `--parent-session`, the parent
   stays unguarded.

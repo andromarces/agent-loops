@@ -12,6 +12,8 @@ accepted
 
 The interactive orchestrator needs the parent session id at init time so the shared parent-edit guard can distinguish the parent from workers and other sessions. GitHub Copilot CLI exposes `--session-id` for a new session and exposes `session_id` to PascalCase `PreToolUse` command hooks, but its documented project customization surfaces do not provide a custom command template with a session-id placeholder.
 
+This decision extends [ADR 0002](0002-harness-neutral-orchestrator-instructions.md) with the Copilot-specific session channel and entry point.
+
 ## Decision
 
 Use a cross-platform Node entry point, exposed as `agent-loop-copilot`, to mint one UUID, start `copilot --session-id <uuid> --interactive <prompt>`, and include the instruction file, task, and the same id for `--parent-session` in the first prompt. Register a repository-level `.github/hooks/parent-guard.json` using PascalCase `PreToolUse` with the `Edit|Write` matcher. The hook reads `session_id`, reuses `decideParentGuard`, and returns Copilot's flat `permissionDecision` response.

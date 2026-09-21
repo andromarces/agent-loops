@@ -2,9 +2,7 @@
 
 ## Status
 
-superseded
-
-Superseded by [ADR 0003](0003-copilot-session-entrypoint-and-parent-guard.md).
+accepted
 
 ## Date
 
