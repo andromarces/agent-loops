@@ -226,8 +226,9 @@ happens only through explicit invocation.
   Repository hooks require a trusted folder. GitHub documents the `.github/hooks/*.json` path for Windows, macOS, and
   Linux, and a live probe on Windows with Copilot CLI 1.0.87-0 confirmed the hook loaded and reported `tool_name:
 Write`; no macOS runtime was available for this change. Copilot also loads `.claude/settings.json` as repository
-  settings, so the Claude hook command exits without action when Claude's project-root variable is absent; the Copilot
-  hook remains the authoritative handler.
+  settings, so the Claude hook command must run cleanly under Copilot too. The command is a shell-form string with no
+  `args`; it imports the guard only when `CLAUDE_PROJECT_DIR` is set, and exits 0 with no output otherwise. Copilot's
+  fail-closed command hook then lets the edit through. The Copilot hook remains the authoritative handler.
 - The parent-edit guard (#57) reads `--parent-session` from the state index
   (see Parent guard below). For any run without `--parent-session`, the parent
   stays unguarded.
@@ -247,7 +248,7 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
 - Deny only when the hook `session_id` equals `parentSession` in the registered state and the lifecycle is non-terminal (`active`, `dispatched`, `interrupted`). The guard releases only on `finish`, `abort`, or a `halted` state; during `interrupted` it stays engaged, and `dispatch --resume-interrupted` keeps it engaged because the resumed run is non-terminal again.
 - Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt index entry or state file. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
 - Without a state file the hook does one absent-file read, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
-- The hook is registered as an exec-form command (`node` + script `args`), which spawns `node` directly on every platform Claude Code supports, with no shell.
+- The Claude hook is registered as a shell-form `command` with no `args`, the form both Claude Code and Copilot's Claude-compatible settings loader execute through a shell. An exec-form `command` (`node` + script `args`) fails under Copilot, which ignores the Claude `args` field and runs `node` with the hook payload on stdin; `node` then exits 1 and Copilot fail-closes the tool call.
 - On OpenCode, `.opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session index, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
 - The plugin runs inside the OpenCode server process, so it resolves `AGENT_LOOP_RUNS_ROOT` from that process's environment; the Claude Code hook inherits the parent shell's environment instead. The override is test-only, but using it outside tests would point the plugin and the `agent-loop` CLI at different roots and disable the guard silently.
 

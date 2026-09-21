@@ -6,12 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": [
-              "--input-type=module",
-              "--eval",
-              "import { join } from 'node:path'; import { pathToFileURL } from 'node:url'; const root = process.env.CLAUDE_PROJECT_DIR; if (root) await import(pathToFileURL(join(root, 'src/hook/parent-guard.mjs')).href);"
-            ],
+            "command": "node --input-type=module --eval \"import { join } from 'node:path'; import { pathToFileURL } from 'node:url'; const root = process.env.CLAUDE_PROJECT_DIR; if (root) await import(pathToFileURL(join(root, 'src/hook/parent-guard.mjs')).href);\"",
             "timeout": 10
           }
         ]
