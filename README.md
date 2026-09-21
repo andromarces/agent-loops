@@ -279,6 +279,8 @@ An `invocation` event exists for every CLI call: orchestrator attempts, orchestr
 - `mainLoop`: the top-level `usage` field. Excludes subagents.
 - `totalCostUsd`: `total_cost_usd`. Includes subagents.
 
+The Antigravity adapter maps `mainLoop` from the CLI `usage` field. Antigravity reports no cost and no per-model breakdown.
+
 Other adapters emit `invocation` events without `usage` until their CLI output is mapped. Per-model usage shows which models ran inside a turn. It cannot separate parent tokens from subagent tokens on the same model.
 
 ```json
