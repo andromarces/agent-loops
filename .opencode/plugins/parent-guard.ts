@@ -15,9 +15,10 @@ import { decideParentGuard } from "../../src/hook/decision.mjs";
 
 // The permission actions that carry a file edit. A set, not a single constant,
 // so a further edit tool is one entry. A live probe against OpenCode
-// v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all
-// raise the `edit` action, so the set covers every file-edit tool OpenCode
-// exposes. `shell` is a different action and stays allowed.
+// v0.0.0-dev-19933 showed the built-in `edit`, `write`, and `apply_patch` tools
+// all raise the `edit` action, so the set covers every built-in file-edit tool.
+// `shell` is a different action and stays allowed. A tool served by an MCP
+// server raises its own action name and passes the guard.
 export const EDIT_ACTIONS = new Set(["edit"]);
 const COMMAND_NAME = "agent-loop";
 

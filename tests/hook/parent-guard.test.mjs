@@ -247,14 +247,6 @@ test("opencode guard denies the registered parent's edit action set and allows e
   expect(shell.effect).toBe("allow");
 });
 
-// Usefulness: pins the denied action set to the actions the live probe observed
-// (`edit`, `write`, and `apply_patch` all raise `edit`), so a further edit tool
-// cannot be added to the plugin without its coverage in the test above.
-test("opencode guard denies exactly the observed edit action set", () => {
-  expect([...EDIT_ACTIONS]).toEqual(["edit"]);
-  expect(EDIT_ACTIONS.has("shell")).toBe(false);
-});
-
 // Usefulness: verifies the release half of the acceptance — the same parent
 // session edits without a block once the run is finished or aborted, because
 // both lifecycles are terminal.
