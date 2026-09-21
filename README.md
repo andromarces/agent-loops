@@ -201,10 +201,11 @@ happens only through explicit invocation.
   orchestrator prompt, and the init dispatch call passes it as
   `--parent-session`.
 - The Codex CLI skill (`.agents/skills/agent-loop/SKILL.md`) activates only through
-  `$agent-loop`. It passes the active shell's `CODEX_THREAD_ID` value as
-  `--parent-session`. This environment variable is an undocumented dependency and
-  can change on upgrade. When it is absent, do not start a guarded run. Run
-  `/hooks` once to review and trust the repository hook. Do not use
+  `$agent-loop`. It passes `CODEX_THREAD_ID` as `--parent-session`. Use
+  `$env:CODEX_THREAD_ID` in PowerShell and `$CODEX_THREAD_ID` in POSIX shells.
+  This environment variable is an undocumented dependency and can change on
+  upgrade. When it is absent, do not start a guarded run. Run `/hooks` once to
+  review and trust the repository hook. Do not use
   `--dangerously-bypass-hook-trust` for normal use.
 - Universal fallback (Copilot CLI, Antigravity): reference
   `docs/orchestrator-instructions.md` in the first prompt and follow it. A
@@ -249,6 +250,13 @@ documented and can break on upgrade. The guard fails open when the variable is
 absent or unusable. Antigravity and Copilot still lack a documented parent-session
 channel. OpenCode has both: a command reads `CommandInvocation.sessionID`, and
 the permission hook reads `PermissionEvaluation.sessionID`.
+
+The guard path blocked `apply_patch` on Codex CLI 0.156.0-alpha.14 for this
+Windows check. This is a known-good runtime, not a stable minimum version.
+Codex hook denial was not enforced in CLI 0.133.0 or Desktop 0.138.0-alpha.7.
+See [openai/codex#27833](https://github.com/openai/codex/issues/27833). Verify
+that the installed Codex version blocks `apply_patch` before relying on this
+guard. The hook is a best-effort guardrail, not a complete enforcement boundary.
 
 ## Reviewer safety
 
