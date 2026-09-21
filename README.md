@@ -279,7 +279,14 @@ An `invocation` event exists for every CLI call: orchestrator attempts, orchestr
 - `mainLoop`: the top-level `usage` field. Excludes subagents.
 - `totalCostUsd`: `total_cost_usd`. Includes subagents.
 
-Other adapters emit `invocation` events without `usage` until their CLI output is mapped. Per-model usage shows which models ran inside a turn. It cannot separate parent tokens from subagent tokens on the same model.
+The OpenCode adapter maps usage from the `opencode run --standalone --format json` stream. Each completed step emits a `step_finish` part carrying `tokens` (`input`, `output`, `reasoning`, `cache.read`, `cache.write`) and `cost`. The adapter sums both across steps:
+
+- `mainLoop`: the summed `tokens` object.
+- `totalCostUsd`: the summed `cost`.
+
+No event names the model, so `models` is omitted. Usage was inspected against OpenCode `v0.0.0-dev-19933`; in that version only steps that end with tool calls emit a `step_finish`, so a text-only turn, and the closing text step of a tool-using turn, contribute no usage.
+
+The Codex, Antigravity, and Copilot adapters emit `invocation` events without `usage` until their CLI output is mapped. Per-model usage shows which models ran inside a turn. It cannot separate parent tokens from subagent tokens on the same model.
 
 ```json
 {

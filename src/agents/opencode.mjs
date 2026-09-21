@@ -71,6 +71,8 @@ export async function runOpenCode(state, prompt, options = {}) {
     throw new Error(`opencode returned an error event: ${describeError(errorEvent.error)}`);
   }
 
+  setUsage(state, events);
+
   const text = events
     .filter((event) => event.type === "text" && typeof event.part?.text === "string")
     .map((event) => event.part.text)
@@ -81,6 +83,50 @@ export async function runOpenCode(state, prompt, options = {}) {
   }
 
   return text.trim();
+}
+
+/**
+ * Sets `state.usage` from the `step_finish` parts of the stream, or removes it when the stream
+ * carries none. Each completed step emits one `step_finish` part with `tokens` and `cost`, so
+ * both fields sum across steps. No event names the model, so `models` is omitted.
+ */
+function setUsage(state, events) {
+  const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+  let cost = 0;
+  let hasTokens = false;
+  let hasCost = false;
+
+  for (const event of events) {
+    if (event.type !== "step_finish") {
+      continue;
+    }
+
+    const part = event.part ?? {};
+
+    if (part.tokens && typeof part.tokens === "object") {
+      hasTokens = true;
+      tokens.input += part.tokens.input ?? 0;
+      tokens.output += part.tokens.output ?? 0;
+      tokens.reasoning += part.tokens.reasoning ?? 0;
+      tokens.cache.read += part.tokens.cache?.read ?? 0;
+      tokens.cache.write += part.tokens.cache?.write ?? 0;
+    }
+
+    if (typeof part.cost === "number") {
+      hasCost = true;
+      cost += part.cost;
+    }
+  }
+
+  const usage = {};
+  if (hasTokens) usage.mainLoop = tokens;
+  if (hasCost) usage.totalCostUsd = cost;
+
+  if (Object.keys(usage).length > 0) {
+    state.usage = usage;
+  } else {
+    delete state.usage;
+  }
 }
 
 /**
