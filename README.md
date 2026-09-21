@@ -279,9 +279,17 @@ Codex hook denial was not enforced in CLI 0.133.0 or Desktop 0.138.0-alpha.7.
 See [openai/codex#27833](https://github.com/openai/codex/issues/27833). Verify
 that the installed Codex version blocks `apply_patch` before relying on this
 guard. The hook is a best-effort guardrail, not a complete enforcement boundary.
-A Windows `workspace-write` skill probe failed before run initialization because
-Node could not spawn `git` (`EPERM`). The full skill-to-edit check remains open
-for that sandbox.
+
+The full skill-to-edit check passed on Codex CLI 0.157.0-alpha.1 on Windows: the
+`$agent-loop` skill registered the Codex thread as the parent, `apply_patch`
+returned `GUARD_DENY_REASON`, `role abort` set the lifecycle to `aborted`, and
+`apply_patch` then succeeded. The probe ran with
+`sandbox_mode = "danger-full-access"`; the `role finish` release path is covered
+by `tests/hook/parent-guard.test.mjs`. The `workspace-write` leg stays
+unverified on Windows: Codex's unelevated Windows sandbox blocks the child
+`git` spawn (`EPERM`) before run initialization
+([openai/codex#37415](https://github.com/openai/codex/issues/37415)). Run that
+leg on macOS or Linux, or under the elevated Windows sandbox.
 
 ## Reviewer safety
 
