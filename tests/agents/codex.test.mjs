@@ -71,3 +71,63 @@ test("codex resumes session with readOnly", async () => {
     { cwd: "/dir", input: "resume prompt", timeout: undefined, signal: undefined, role: undefined },
   );
 });
+
+// Usefulness: verifies Codex turn-completed token counts reach transcript invocation events through state.usage.
+test("codex maps turn-completed usage to the main loop", async () => {
+  const events = [
+    { type: "thread.started", thread_id: "th-2" },
+    {
+      type: "turn.completed",
+      usage: {
+        input_tokens: 120,
+        cached_input_tokens: 40,
+        cache_write_input_tokens: 10,
+        output_tokens: 30,
+        reasoning_output_tokens: 20,
+      },
+    },
+    { type: "item.completed", item: { type: "agent_message", text: "done" } },
+  ]
+    .map((event) => JSON.stringify(event))
+    .join("\n");
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events, stderr: "" });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+
+  await runCodex(state, "prompt", { cwd: "/dir" });
+
+  expect(state.usage).toEqual({
+    mainLoop: {
+      input_tokens: 120,
+      cached_input_tokens: 40,
+      cache_write_input_tokens: 10,
+      output_tokens: 30,
+      reasoning_output_tokens: 20,
+    },
+  });
+});
+
+// Usefulness: verifies Codex turns without token events do not retain usage from a prior turn.
+test("codex removes usage when no turn-completed usage exists", async () => {
+  const events = [
+    { type: "thread.started", thread_id: "th-3" },
+    { type: "item.completed", item: { type: "agent_message", text: "done" } },
+  ]
+    .map((event) => JSON.stringify(event))
+    .join("\n");
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events, stderr: "" });
+
+  const state = {
+    kind: "codex",
+    sessionId: null,
+    model: null,
+    effort: null,
+    usage: { mainLoop: { input_tokens: 1 } },
+  };
+
+  await runCodex(state, "prompt", { cwd: "/dir" });
+
+  expect(state).not.toHaveProperty("usage");
+});

@@ -46,6 +46,10 @@ export async function runCodex(state, prompt, options = {}) {
   }
 
   state.sessionId = returnedId;
+  setUsage(
+    state,
+    events.find((event) => event.type === "turn.completed"),
+  );
 
   const messages = events
     .filter((event) => event.type === "item.completed" && event.item?.type === "agent_message")
@@ -57,4 +61,13 @@ export async function runCodex(state, prompt, options = {}) {
   }
 
   return String(messages.at(-1)).trim();
+}
+
+/** Sets top-level turn usage, or removes stale usage when Codex omits it. */
+function setUsage(state, completedTurn) {
+  if (completedTurn?.usage) {
+    state.usage = { mainLoop: completedTurn.usage };
+  } else {
+    delete state.usage;
+  }
 }
