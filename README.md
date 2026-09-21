@@ -276,11 +276,13 @@ When `--transcript <file>` is specified, a JSON transcript is written upon proce
 
 The transcript records each validated orchestrator action, each child result, and one `invocation` event per CLI call, all with timestamps, plus the final exit code and error. It does not record raw orchestrator responses.
 
-An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude adapter maps it from the CLI result:
+An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude and Copilot adapters map it from the CLI result:
 
-- `models`: the `modelUsage` map, keyed by model id. Includes subagent requests. Use it for model routing and cost attribution.
-- `mainLoop`: the top-level `usage` field. Excludes subagents.
-- `totalCostUsd`: `total_cost_usd`. Includes subagents.
+- `models`: the per-model usage map keyed by model id. The Claude CLI exposes it; the Copilot CLI does not.
+- `mainLoop`: the top-level `usage` field. Copilot exposes a session-cumulative `result.usage` object here, with no token counts and possible `codeChanges.filesModified` paths. Claude exposes its main-loop usage here.
+- `totalCostUsd`: `total_cost_usd`. The CLI must expose it for this key to exist; Copilot does not.
+
+Do not sum Copilot `mainLoop` values across invocation events. Its usage is cumulative for the session, not per turn.
 
 The OpenCode adapter maps usage from the `opencode run --standalone --format json` stream. A step that ends with tool calls emits a `step_finish` part carrying `tokens` (`input`, `output`, `reasoning`, `cache.read`, `cache.write`) and `cost`; the adapter sums both across steps:
 
