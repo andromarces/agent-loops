@@ -190,7 +190,7 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
   );
 
   const denied = await runHookScript(
-    JSON.stringify({ session_id: "parent-sess-1", tool_name: "Edit" }),
+    JSON.stringify({ session_id: "parent-sess-1", tool_name: "apply_patch" }),
   );
   expect(denied.code).toBe(0);
   const decision = JSON.parse(denied.stdout);
