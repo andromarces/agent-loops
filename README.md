@@ -260,6 +260,9 @@ Codex hook denial was not enforced in CLI 0.133.0 or Desktop 0.138.0-alpha.7.
 See [openai/codex#27833](https://github.com/openai/codex/issues/27833). Verify
 that the installed Codex version blocks `apply_patch` before relying on this
 guard. The hook is a best-effort guardrail, not a complete enforcement boundary.
+A Windows `workspace-write` skill probe failed before run initialization because
+Node could not spawn `git` (`EPERM`). The full skill-to-edit check remains open
+for that sandbox.
 
 ## Reviewer safety
 
