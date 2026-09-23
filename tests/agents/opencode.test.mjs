@@ -32,21 +32,43 @@ function stepFinishEvent({ input, output, reasoning, cacheRead = 0, cacheWrite =
   });
 }
 
-// Usefulness: verifies a read-only turn maps to the plan agent and denies the subagent action through OPENCODE_CONFIG_CONTENT, so no session-model subagent can launch (issue #90).
-test("opencode sends an explicit model#effort and --agent plan when readOnly is true", async () => {
+// Usefulness: verifies an explicit model with effort reaches the CLI as model#effort on a worker turn.
+test("opencode sends an explicit model#effort", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("opencode reply"), stderr: "" });
 
   const state = { kind: "opencode", sessionId: null, model: "claude-3-5", effort: "high" };
-  const response = await runOpenCode(state, "oc prompt", {
-    cwd: "/dir",
-    readOnly: true,
-  });
+  const response = await runOpenCode(state, "oc prompt", { cwd: "/dir" });
 
   expect(response).toBe("opencode reply");
   expect(state.sessionId).toBe("sess-oc");
   expect(exec).toHaveBeenCalledWith(
     "opencode",
-    ["run", "--standalone", "--format", "json", "--agent", "plan", "--model", "claude-3-5#high"],
+    ["run", "--standalone", "--format", "json", "--model", "claude-3-5#high"],
+    {
+      cwd: "/dir",
+      input: "oc prompt",
+      timeout: undefined,
+      signal: undefined,
+      role: undefined,
+    },
+  );
+  expect(state.model).toBe("claude-3-5");
+  expect(state.effort).toBe("high");
+  expect(logInfo).toHaveBeenCalledWith(expect.stringContaining("claude-3-5#high"));
+});
+
+// Usefulness: verifies a read-only turn maps to --agent plan and denies the opencode subagent action
+// through OPENCODE_CONFIG_CONTENT, so the plan agent cannot launch session-model subagents (issue #90).
+test("opencode maps a read-only turn to the plan agent and denies subagents", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("opencode reply"), stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const response = await runOpenCode(state, "oc prompt", { cwd: "/dir", readOnly: true });
+
+  expect(response).toBe("opencode reply");
+  expect(exec).toHaveBeenCalledWith(
+    "opencode",
+    ["run", "--standalone", "--format", "json", "--agent", "plan"],
     {
       cwd: "/dir",
       input: "oc prompt",
@@ -59,9 +81,6 @@ test("opencode sends an explicit model#effort and --agent plan when readOnly is 
       },
     },
   );
-  expect(state.model).toBe("claude-3-5");
-  expect(state.effort).toBe("high");
-  expect(logInfo).toHaveBeenCalledWith(expect.stringContaining("claude-3-5#high"));
 });
 
 // Usefulness: verifies a turn with neither model nor effort passes no --model, so OpenCode
