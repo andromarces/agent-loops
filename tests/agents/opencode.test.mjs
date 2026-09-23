@@ -57,9 +57,15 @@ test("opencode sends an explicit model#effort", async () => {
   expect(logInfo).toHaveBeenCalledWith(expect.stringContaining("claude-3-5#high"));
 });
 
-// Usefulness: verifies a read-only turn maps to --agent plan and denies the opencode subagent action
-// through OPENCODE_CONFIG_CONTENT, so the plan agent cannot launch session-model subagents (issue #90).
-test("opencode maps a read-only turn to the plan agent and denies subagents", async () => {
+/** Returns the permission rules from the read-only per-turn config on the last opencode call. */
+function readOnlyPermissions() {
+  const call = vi.mocked(exec).mock.calls.at(-1);
+  return JSON.parse(call[2].env.OPENCODE_CONFIG_CONTENT).permissions;
+}
+
+// Usefulness: verifies a read-only turn maps to --agent plan, so the plan agent supplies the base
+// read-only guard (issue #90).
+test("opencode maps a read-only turn to the plan agent", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("opencode reply"), stderr: "" });
 
   const state = { kind: "opencode", sessionId: null, model: null, effort: null };
@@ -75,12 +81,40 @@ test("opencode maps a read-only turn to the plan agent and denies subagents", as
       timeout: undefined,
       signal: undefined,
       role: undefined,
-      env: {
-        OPENCODE_CONFIG_CONTENT:
-          '{"permissions":[{"action":"subagent","resource":"*","effect":"deny"}]}',
-      },
+      env: expect.any(Object),
     },
   );
+});
+
+// Usefulness: verifies the read-only turn denies the subagent action through OPENCODE_CONFIG_CONTENT,
+// so the plan agent cannot launch session-model subagents (issue #90).
+test("opencode denies the subagent action on a read-only turn", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("opencode reply"), stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  await runOpenCode(state, "oc prompt", { cwd: "/dir", readOnly: true });
+
+  expect(readOnlyPermissions()).toContainEqual({
+    action: "subagent",
+    resource: "*",
+    effect: "deny",
+  });
+});
+
+// Usefulness: verifies the read-only turn denies the edit action through OPENCODE_CONFIG_CONTENT, so
+// a global permissions allow that resolves after the plan agent's edit deny cannot restore the edit
+// and write tools (issue #107).
+test("opencode denies the edit action on a read-only turn", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("opencode reply"), stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  await runOpenCode(state, "oc prompt", { cwd: "/dir", readOnly: true });
+
+  expect(readOnlyPermissions()).toContainEqual({
+    action: "edit",
+    resource: "*",
+    effect: "deny",
+  });
 });
 
 // Usefulness: verifies a turn with neither model nor effort passes no --model, so OpenCode
