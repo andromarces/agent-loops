@@ -34,9 +34,7 @@ function stepFinishEvent({ input, output, reasoning, cacheRead = 0, cacheWrite =
   });
 }
 
-// Usefulness: verifies an explicit model with effort passes through as model#effort, readOnly maps to
-// --agent plan, and the read-only turn denies the subagent action through OPENCODE_CONFIG_CONTENT so the
-// plan agent does not launch session-model subagents (issue #90).
+// Usefulness: verifies a read-only turn maps to the plan agent and denies the subagent action through OPENCODE_CONFIG_CONTENT, so no session-model subagent can launch (issue #90).
 test("opencode sends an explicit model#effort and --agent plan when readOnly is true", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("opencode reply"), stderr: "" });
 
