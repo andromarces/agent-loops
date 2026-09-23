@@ -31,6 +31,10 @@ export function assertOpenCodeOptions(role, kind, model, effort) {
     return;
   }
 
+  if (effort && !model) {
+    throw new Error(`--${role}-effort requires --${role}-model for opencode.`);
+  }
+
   if (effort && model?.includes("#")) {
     throw new Error(
       `--${role}-model "${model}" already contains a variant and cannot be combined with --${role}-effort.`,

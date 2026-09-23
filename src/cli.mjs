@@ -162,10 +162,11 @@ Options:
   --reviewer-model <model>      Model passed to the reviewer CLI. Optional.
   --reviewer-effort <level>     Thinking effort passed to the reviewer CLI. Optional.
 
-  Model and effort flags record what the caller requested. With opencode and neither
-  flag, the adapter runs model opencode-go/deepseek-v4.1-flash at effort high; that
-  model needs an OpenCode Go subscription. An effort the default model rejects makes
-  opencode fail loudly.
+  Model and effort flags record what the caller requested. With opencode and no
+  --<role>-model, the adapter passes no --model and OpenCode selects its own
+  default, which varies by machine. An explicit --<role>-model passes through,
+  and --<role>-effort applies to it as <model>#<effort>. An effort without a
+  model is rejected.
 
   --cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
   --task <text>                 Task description. Required.

@@ -2,11 +2,6 @@ import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logInfo } from "../lib/log.mjs";
 
-// Pinned default for a turn that names neither a model nor an effort. The model lives on the
-// OpenCode Go provider, so it needs an OpenCode Go subscription; see the README.
-const DEFAULT_MODEL = "opencode-go/deepseek-v4.1-flash";
-const DEFAULT_EFFORT = "high";
-
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
 // invisibly. Deny the action for the read-only turn only; see the README.
@@ -26,14 +21,22 @@ export async function runOpenCode(state, prompt, options = {}) {
     execOptions.env = { OPENCODE_CONFIG_CONTENT: READONLY_CONFIG };
   }
 
-  // state holds the requested model and effort, so null means the caller named nothing.
-  const defaulted = !state.model;
-  const model = state.model ?? DEFAULT_MODEL;
-  const effort = state.effort ?? (state.model ? null : DEFAULT_EFFORT);
-  const resolved = effort ? `${model}#${effort}` : model;
+  // Argument validation rejects an effort without a model; this guards a direct adapter call.
+  if (state.effort && !state.model) {
+    throw new Error(`opencode effort requires ${role ? `--${role}-model` : "an explicit model"}.`);
+  }
 
-  logInfo(`opencode effective model: ${resolved}`);
-  args.push("--model", resolved);
+  // state holds the requested model and effort, so null means the caller named nothing.
+  if (state.model) {
+    const resolved = state.effort ? `${state.model}#${state.effort}` : state.model;
+    logInfo(`opencode effective model: ${resolved}`);
+    args.push("--model", resolved);
+  } else {
+    // No --model: OpenCode selects its own default, which the JSON stream does not name.
+    logInfo(
+      "opencode model: OpenCode selects its CLI default; the OpenCode session metadata records the model that ran.",
+    );
+  }
 
   let stdout;
   try {
@@ -41,15 +44,6 @@ export async function runOpenCode(state, prompt, options = {}) {
   } catch (err) {
     // A non-zero exit can still carry completed-step usage. Expose it, then rethrow.
     setUsage(state, parseJsonLines(err?.stdout ?? ""));
-
-    // Only a defaulted turn points at the default; an explicit model failure stays as recorded.
-    if (defaulted && err instanceof Error) {
-      const roleFlag = role ? `--${role}-model` : "--<role>-model";
-      err.message = [
-        err.message,
-        `If this turn failed for lack of access, the default model ${DEFAULT_MODEL} requires an OpenCode Go subscription. Override it with ${roleFlag}.`,
-      ].join("\n\n");
-    }
     throw err;
   }
 
