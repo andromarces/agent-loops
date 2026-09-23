@@ -34,7 +34,9 @@ function stepFinishEvent({ input, output, reasoning, cacheRead = 0, cacheWrite =
   });
 }
 
-// Usefulness: verifies an explicit model with effort passes through as model#effort, and readOnly maps to --agent plan.
+// Usefulness: verifies an explicit model with effort passes through as model#effort, readOnly maps to
+// --agent plan, and the read-only turn denies the subagent action through OPENCODE_CONFIG_CONTENT so the
+// plan agent does not launch session-model subagents (issue #90).
 test("opencode sends an explicit model#effort and --agent plan when readOnly is true", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("opencode reply"), stderr: "" });
 
@@ -49,7 +51,17 @@ test("opencode sends an explicit model#effort and --agent plan when readOnly is 
   expect(exec).toHaveBeenCalledWith(
     "opencode",
     ["run", "--standalone", "--format", "json", "--agent", "plan", "--model", "claude-3-5#high"],
-    { cwd: "/dir", input: "oc prompt", timeout: undefined, signal: undefined, role: undefined },
+    {
+      cwd: "/dir",
+      input: "oc prompt",
+      timeout: undefined,
+      signal: undefined,
+      role: undefined,
+      env: {
+        OPENCODE_CONFIG_CONTENT:
+          '{"permissions":[{"action":"subagent","resource":"*","effect":"deny"}]}',
+      },
+    },
   );
   expect(state.model).toBe("claude-3-5");
   expect(state.effort).toBe("high");
@@ -89,7 +101,9 @@ test("opencode with no model or effort uses the pinned default and logs it", asy
   expect(logInfo).toHaveBeenCalledWith(expect.stringContaining(`${DEFAULT_MODEL}#high`));
 });
 
-// Usefulness: verifies an explicit model without effort passes as given, with no appended default variant.
+// Usefulness: verifies a worker turn (readOnly false) passes an explicit model without effort as given,
+// with no appended default variant and no subagent-denying environment, so the read-only switch does not
+// reach worker turns (issue #90).
 test("opencode with a model and no effort passes the model unchanged", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("explicit reply"), stderr: "" });
 
@@ -108,6 +122,7 @@ test("opencode with a model and no effort passes the model unchanged", async () 
       role: undefined,
     },
   );
+  expect(exec.mock.calls[0][2].env).toBeUndefined();
 });
 
 // Usefulness: verifies effort without a model reaches the CLI as the default model plus that variant.
