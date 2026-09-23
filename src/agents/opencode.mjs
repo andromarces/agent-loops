@@ -2,9 +2,15 @@ import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logInfo } from "../lib/log.mjs";
 
+// The built-in plan agent can launch explore and general subagents through the `subagent`
+// action. They inherit the session model, so a read-only turn spends the role model budget
+// invisibly. Deny the action for the read-only turn only; see the README.
+const READONLY_CONFIG = '{"permissions":[{"action":"subagent","resource":"*","effect":"deny"}]}';
+
 export async function runOpenCode(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
   const args = ["run", "--standalone", "--format", "json"];
+  const execOptions = { cwd, input: prompt, timeout, signal, role };
 
   if (state.sessionId) {
     args.push("--session", state.sessionId);
@@ -12,6 +18,7 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   if (readOnly) {
     args.push("--agent", "plan");
+    execOptions.env = { OPENCODE_CONFIG_CONTENT: READONLY_CONFIG };
   }
 
   // Argument validation rejects an effort without a model; this guards a direct adapter call.
@@ -33,7 +40,7 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   let stdout;
   try {
-    ({ stdout } = await exec("opencode", args, { cwd, input: prompt, timeout, signal, role }));
+    ({ stdout } = await exec("opencode", args, execOptions));
   } catch (err) {
     // A non-zero exit can still carry completed-step usage. Expose it, then rethrow.
     setUsage(state, parseJsonLines(err?.stdout ?? ""));
