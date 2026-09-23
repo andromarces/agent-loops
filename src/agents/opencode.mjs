@@ -5,7 +5,10 @@ import { logInfo } from "../lib/log.mjs";
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
 // invisibly. Deny the action for the read-only turn only; see the README.
-const READONLY_CONFIG = '{"permissions":[{"action":"subagent","resource":"*","effect":"deny"}]}';
+// A global permissions allow can resolve after the plan agent's `edit` deny and cancel it, so
+// deny `edit` here too. Shell stays available for read-only commands such as `git diff`.
+const READONLY_CONFIG =
+  '{"permissions":[{"action":"subagent","resource":"*","effect":"deny"},{"action":"edit","resource":"*","effect":"deny"}]}';
 
 export async function runOpenCode(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
