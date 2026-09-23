@@ -16,7 +16,7 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   // Argument validation rejects an effort without a model; this guards a direct adapter call.
   if (state.effort && !state.model) {
-    throw new Error("opencode effort requires an explicit model.");
+    throw new Error(`opencode effort requires ${role ? `--${role}-model` : "an explicit model"}.`);
   }
 
   // state holds the requested model and effort, so null means the caller named nothing.

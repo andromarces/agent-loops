@@ -103,13 +103,17 @@ test("opencode with a model and no effort passes the model unchanged", async () 
 });
 
 // Usefulness: verifies effort without a model is rejected instead of silently dropping the effort;
-// argument validation rejects it at both entry points, and this guards a direct adapter call.
-test("opencode rejects an effort without a model", async () => {
+// argument validation rejects it at both entry points, and this guards a direct adapter call. The
+// message names the role model flag when the role is known, so a pre-upgrade run learns the flag.
+test("opencode rejects an effort without a model and names the model flag", async () => {
   const state = { kind: "opencode", sessionId: null, model: null, effort: "low" };
 
   await expect(runOpenCode(state, "effort prompt", { cwd: "/dir" })).rejects.toThrow(
     "requires an explicit model",
   );
+  await expect(
+    runOpenCode(state, "effort prompt", { cwd: "/dir", role: "worker" }),
+  ).rejects.toThrow("requires --worker-model");
   expect(exec).not.toHaveBeenCalled();
 });
 

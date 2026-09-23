@@ -55,7 +55,7 @@ The OpenCode adapter passes `--standalone` on every turn. The turn runs against 
 
 ### OpenCode model default
 
-With `opencode` and no `--<role>-model`, the adapter passes no `--model` argument. OpenCode selects its own default: constrained by which providers are available, it prefers the configured model, then a valid recently used model, then the first available model under its internal priority. Every step is machine-dependent, so the resolved model varies by configuration, authentication, and session history. `opencode session export <id>` names the model that ran.
+With `opencode` and no `--<role>-model`, the adapter passes no `--model` argument. OpenCode uses the configured `model` when it is enabled and its provider is available in the project; otherwise it falls back to the newest available supported model. A model already selected for a session takes precedence over the configured default. The resolved model is machine- and project-dependent, so it varies by configuration, authentication, and session history. `opencode session export <id>` names the model that ran.
 
 An explicit `--<role>-model` passes through unchanged, with no variant appended. `--<role>-effort` applies to an explicit model and reaches the CLI as `<model>#<effort>`. An effort without a model is rejected, because the installed CLI accepts a variant only inside `--model provider/model#variant`.
 
