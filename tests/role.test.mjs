@@ -453,6 +453,37 @@ test("review-only init rejects a worker model or effort without --worker", async
   expect(result.payload.error).toContain("--worker-model requires --worker");
 });
 
+// Usefulness: verifies acceptance — an OpenCode effort without a model is rejected at init through
+// executeRoleCommand; parsing performs no OpenCode validation, so the check runs during init.
+test("review-only init rejects an OpenCode effort without a model", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const init = withRepo(
+    dispatchArgv(
+      [
+        "--task",
+        "Review only.",
+        "--mode",
+        "review-only",
+        "--reviewer",
+        "opencode",
+        "--reviewer-effort",
+        "high",
+      ],
+      "reviewer",
+    ),
+    repo,
+  );
+  const result = await executeRoleCommand(init, {
+    agents: { opencode: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("--reviewer-effort requires --reviewer-model");
+});
+
 // Usefulness: verifies acceptance — a dispatch past the step budget or in any
 // terminal lifecycle exits non-zero and spawns no CLI.
 test("dispatch past the step budget or in a terminal lifecycle is rejected", async () => {

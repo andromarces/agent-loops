@@ -165,24 +165,23 @@ test("readValue guards against missing or flag-like values", () => {
   );
 });
 
-// Usefulness: verifies an effort-only OpenCode role parses, since the adapter supplies the default
-// model; the caller sees the default at that effort rather than a missing-model rejection.
-test("OpenCode effort without a model parses", () => {
-  const options = parseArgs([
-    "--orchestrator",
-    "opencode",
-    "--orchestrator-effort",
-    "high",
-    "--worker",
-    "claude",
-    "--reviewer",
-    "agy",
-    "--task",
-    "t",
-  ]);
-
-  expect(options.orchestratorEffort).toBe("high");
-  expect(options.orchestratorModel).toBeNull();
+// Usefulness: verifies an effort-only OpenCode role is rejected, because the installed CLI accepts
+// a variant only inside --model provider/model#variant.
+test("OpenCode effort without a model is rejected", () => {
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "opencode",
+      "--orchestrator-effort",
+      "high",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--task",
+      "t",
+    ]),
+  ).toThrow("--orchestrator-effort requires --orchestrator-model");
 });
 
 // Usefulness: verifies a model that already carries a variant still conflicts with a separate effort.
