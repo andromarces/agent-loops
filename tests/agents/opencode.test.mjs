@@ -11,8 +11,6 @@ vi.mock("../../src/lib/log.mjs", () => ({
   logInfo: vi.fn(),
 }));
 
-const DEFAULT_MODEL = "opencode-go/deepseek-v4.1-flash";
-
 function textEvent(text) {
   return JSON.stringify({
     type: "text",
@@ -53,11 +51,12 @@ test("opencode sends an explicit model#effort and --agent plan when readOnly is 
   );
   expect(state.model).toBe("claude-3-5");
   expect(state.effort).toBe("high");
+  expect(logInfo).toHaveBeenCalledWith(expect.stringContaining("claude-3-5#high"));
 });
 
-// Usefulness: verifies a turn with neither model nor effort uses the pinned default at high effort,
-// and logs the effective model so the run log records what actually ran.
-test("opencode with no model or effort uses the pinned default and logs it", async () => {
+// Usefulness: verifies a turn with neither model nor effort passes no --model, so OpenCode
+// selects its own default, and the log says so without naming a model.
+test("opencode with no model or effort passes no --model and logs the CLI default", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("defaulted reply"), stderr: "" });
 
   const state = { kind: "opencode", sessionId: "sess-oc", model: null, effort: null };
@@ -66,16 +65,7 @@ test("opencode with no model or effort uses the pinned default and logs it", asy
   expect(response).toBe("defaulted reply");
   expect(exec).toHaveBeenCalledWith(
     "opencode",
-    [
-      "run",
-      "--standalone",
-      "--format",
-      "json",
-      "--session",
-      "sess-oc",
-      "--model",
-      `${DEFAULT_MODEL}#high`,
-    ],
+    ["run", "--standalone", "--format", "json", "--session", "sess-oc"],
     {
       cwd: "/dir",
       input: "defaulted prompt",
@@ -86,7 +76,8 @@ test("opencode with no model or effort uses the pinned default and logs it", asy
   );
   expect(state.model).toBeNull();
   expect(state.effort).toBeNull();
-  expect(logInfo).toHaveBeenCalledWith(expect.stringContaining(`${DEFAULT_MODEL}#high`));
+  expect(logInfo).toHaveBeenCalledWith(expect.stringContaining("OpenCode selects its CLI default"));
+  expect(logInfo).not.toHaveBeenCalledWith(expect.stringContaining("effective model"));
 });
 
 // Usefulness: verifies an explicit model without effort passes as given, with no appended default variant.
@@ -108,26 +99,27 @@ test("opencode with a model and no effort passes the model unchanged", async () 
       role: undefined,
     },
   );
+  expect(logInfo).toHaveBeenCalledWith(expect.stringContaining("claude-3-5"));
 });
 
-// Usefulness: verifies effort without a model reaches the CLI as the default model plus that variant.
-test("opencode with effort only uses the default model with that effort", async () => {
-  vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("effort reply"), stderr: "" });
-
+// Usefulness: verifies effort without a model is rejected instead of silently dropping the effort;
+// argument validation rejects it at both entry points, and this guards a direct adapter call. The
+// message names the role model flag when the role is known, so a pre-upgrade run learns the flag.
+test("opencode rejects an effort without a model and names the model flag", async () => {
   const state = { kind: "opencode", sessionId: null, model: null, effort: "low" };
-  const response = await runOpenCode(state, "effort prompt", { cwd: "/dir" });
 
-  expect(response).toBe("effort reply");
-  expect(exec).toHaveBeenCalledWith(
-    "opencode",
-    ["run", "--standalone", "--format", "json", "--model", `${DEFAULT_MODEL}#low`],
-    { cwd: "/dir", input: "effort prompt", timeout: undefined, signal: undefined, role: undefined },
+  await expect(runOpenCode(state, "effort prompt", { cwd: "/dir" })).rejects.toThrow(
+    "requires an explicit model",
   );
+  await expect(
+    runOpenCode(state, "effort prompt", { cwd: "/dir", role: "worker" }),
+  ).rejects.toThrow("requires --worker-model");
+  expect(exec).not.toHaveBeenCalled();
 });
 
-// Usefulness: verifies a failed defaulted turn names the default model, points at the role override flag,
-// keeps the provider detail, and rethrows the same error instance with its operational fields intact.
-test("opencode names the default model and override flag on a defaulted turn failure", async () => {
+// Usefulness: verifies a failed turn rethrows the same error instance with its operational fields
+// intact, so the caller keeps timeout, cancel, and exit-code detail.
+test("opencode rethrows a failed turn unchanged", async () => {
   const { ExecError } = await vi.importActual("../../src/lib/exec.mjs");
   const failure = new ExecError(
     "opencode exited with code 1.\n\nprovider.internal: Internal server error (status 500)",
@@ -149,8 +141,6 @@ test("opencode names the default model and override flag on a defaulted turn fai
   );
 
   expect(error).toBe(failure);
-  expect(error.message).toContain(DEFAULT_MODEL);
-  expect(error.message).toContain("--worker-model");
   expect(error.message).toContain("provider.internal: Internal server error (status 500)");
   expect(error.name).toBe("ExecError");
   expect(error.timedOut).toBe(true);
@@ -158,23 +148,6 @@ test("opencode names the default model and override flag on a defaulted turn fai
   expect(error.isTerminated).toBe(true);
   expect(error.command).toBe("opencode");
   expect(error.exitCode).toBe(1);
-});
-
-// Usefulness: verifies an explicit-model failure is not blamed on the default, so guidance stays accurate.
-test("opencode does not mention the default on an explicit-model failure", async () => {
-  const { ExecError } = await vi.importActual("../../src/lib/exec.mjs");
-  const failure = new ExecError("opencode exited with code 1.", {
-    command: "opencode",
-    exitCode: 1,
-  });
-  vi.mocked(exec).mockRejectedValueOnce(failure);
-
-  const state = { kind: "opencode", sessionId: null, model: "claude-3-5", effort: null };
-  const error = await runOpenCode(state, "oc prompt", { cwd: "/dir", role: "worker" }).catch(
-    (err) => err,
-  );
-
-  expect(error.message).not.toContain(DEFAULT_MODEL);
 });
 
 // Usefulness: verifies a failed opencode turn names the provider error event instead of the

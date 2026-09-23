@@ -55,11 +55,11 @@ The OpenCode adapter passes `--standalone` on every turn. The turn runs against 
 
 ### OpenCode model default
 
-With `opencode` and neither `--<role>-model` nor `--<role>-effort`, the adapter runs model `opencode-go/deepseek-v4.1-flash` at effort `high`. An explicit `--<role>-model` passes through unchanged, with no variant appended; `--<role>-effort` alone applies that effort to the default model and reaches the CLI as `opencode-go/deepseek-v4.1-flash#<effort>`.
+With `opencode` and no `--<role>-model`, the adapter passes no `--model` argument. OpenCode uses the configured `model` when it is enabled and its provider is available in the project; otherwise it falls back to the newest available supported model. A model already selected for a session takes precedence over the configured default. The resolved model is machine- and project-dependent, so it varies by configuration, authentication, and session history. `opencode session export <id>` names the model that ran.
 
-That model is on the paid OpenCode Go provider, so the default needs an OpenCode Go subscription. A caller without it must pass `--<role>-model`.
+An explicit `--<role>-model` passes through unchanged, with no variant appended. `--<role>-effort` applies to an explicit model and reaches the CLI as `<model>#<effort>`. An effort without a model is rejected, because the installed CLI accepts a variant only inside `--model provider/model#variant`.
 
-`--<role>-model` and `--<role>-effort` record what the caller requested, not the effective model. The adapter resolves the default per turn and logs the effective `model#effort` it passes. When the defaulted turn fails, the error names the default model and points at `--<role>-model`. An effort the default model rejects makes opencode fail loudly rather than fall back.
+`--<role>-model` and `--<role>-effort` record what the caller requested, not the effective model. For an explicit model, the adapter logs the effective `model#effort` it passes. For an implicit default, the adapter logs that OpenCode selects the model and names none; the OpenCode session metadata records the model that ran.
 
 ## Requirements
 
