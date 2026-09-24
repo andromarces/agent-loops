@@ -449,6 +449,8 @@ npm stage view <stage-id>
 npm stage approve <stage-id>
 ```
 
+A manual dispatch must run on the release tag, for example `gh workflow run release.yml --ref v<version>`. A dispatch on a branch is rejected, because npm records provenance from the run ref, not the checked-out commit.
+
 The version goes live only after approval. Staged publishing needs npm 11.15.0 or later and 2FA on the account.
 
 ## Manual smoke test
