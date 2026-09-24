@@ -1,4 +1,5 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -38,4 +39,17 @@ export function scripted(replies) {
       return reply;
     },
   };
+}
+
+/**
+ * Resolves to the pid of an exited one-shot process, so callers can build a
+ * lock file that points at a dead owner. child_process exposes the pid; execa's
+ * result does not.
+ */
+export async function deadPid() {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    child.on("exit", () => resolve(child.pid));
+    child.on("error", reject);
+  });
 }
