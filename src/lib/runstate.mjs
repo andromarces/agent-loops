@@ -10,6 +10,10 @@ import { logWarn } from "./log.mjs";
 
 export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
 
+// An unparseable lock younger than this is assumed to be a contender still
+// between create and content write; only an older one is stale.
+export const STALE_LOCK_GRACE_MS = 60_000;
+
 /**
  * Resolve the state paths for one run. `cwd` derives the per-work-tree state
  * directory; `parentSession` derives the session index entry that the #57 hook
@@ -159,10 +163,6 @@ async function readLockOwner(lockFile) {
   }
 }
 
-// An unparseable lock younger than this is assumed to be a contender still
-// between create and content write; only an older one is stale.
-export const STALE_LOCK_GRACE_MS = 60_000;
-
 async function lockAgeMs(lockFile) {
   try {
     const stats = await stat(lockFile);
@@ -200,7 +200,7 @@ export async function writeState(stateFile, state) {
   await rename(temp, stateFile);
 }
 
-export async function appendSessionIndex(sessionIndexFile, stateFile) {
+export async function writeSessionIndex(sessionIndexFile, stateFile) {
   // The index entry is overwritten by the next init call from the same session.
   await mkdir(dirname(sessionIndexFile), { recursive: true });
   return writeFile(sessionIndexFile, `${stateFile}\n`, "utf8");
