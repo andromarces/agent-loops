@@ -59,8 +59,8 @@ export async function runChild(options) {
     ? workerPrompt(prompt, role.sessionId === null)
     : reviewerPrompt(prompt);
 
-  const runFn = async () => {
-    return invoke(
+  const runFn = () =>
+    invoke(
       agents,
       role,
       roleName,
@@ -69,7 +69,6 @@ export async function runChild(options) {
       onEvent,
       stepsUsed,
     );
-  };
 
   try {
     const response = readOnly ? await withMutationCheck(cwd, roleName, runFn) : await runFn();
@@ -119,6 +118,8 @@ export async function runLoop(options) {
     return { exitCode, ...detail };
   }
 
+  let stepsUsed = 0;
+
   const orchAdapter = {
     async run(state, p, opts) {
       return withMutationCheck(cwd, "orchestrator", () =>
@@ -127,7 +128,6 @@ export async function runLoop(options) {
     },
   };
 
-  let stepsUsed = 0;
   let prompt = initialPrompt({ task, maxSteps });
 
   while (true) {
@@ -140,11 +140,10 @@ export async function runLoop(options) {
         options: { cwd, timeout, signal },
       });
     } catch (err) {
-      if (err?.name === "MutationError") {
-        // Already logged at the detection site in withMutationCheck.
-        throw err;
+      if (err?.name !== "MutationError") {
+        // A MutationError is already logged at the detection site in withMutationCheck.
+        logError(`orchestrator turn failed: ${String(err?.message ?? err).split("\n")[0]}`);
       }
-      logError(`orchestrator turn failed: ${String(err?.message ?? err).split("\n")[0]}`);
       throw err;
     }
 

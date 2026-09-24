@@ -141,8 +141,8 @@ export async function snapshot(cwd) {
 /**
  * Diff two snapshots. Returns the sorted changed work-tree paths, plus the
  * sentinel entries `<index>` and `<HEAD>` when the index or HEAD changed.
- * @param {ReturnType<typeof snapshot>} before
- * @param {ReturnType<typeof snapshot>} after
+ * @param {Awaited<ReturnType<typeof snapshot>>} before
+ * @param {Awaited<ReturnType<typeof snapshot>>} after
  * @returns {string[]}
  */
 export function diffSnapshots(before, after) {
