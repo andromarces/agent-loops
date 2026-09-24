@@ -30,6 +30,8 @@ jobs:
       # runner context is unavailable in a job-level env, so publish it here.
       - name: Put the pnpm global bin directory on PATH
         run: node -e "const fs=require('fs'),p=require('path');const h=p.join(process.env.RUNNER_TEMP,'pnpm-global');const b=p.join(h,'bin');fs.mkdirSync(b,{recursive:true});fs.appendFileSync(process.env.GITHUB_ENV,'PNPM_HOME='+h+'\n');fs.appendFileSync(process.env.GITHUB_PATH,b+'\n')"
+      # Run the no-install checks before any install. npx and pnpm dlx reuse an
+      # installed package, so an install step would hide a broken download.
       # bash runs with -e and pipefail on every runner, so a command that fails
       # in the middle of a step fails the step. pwsh only fails on the last
       # command, which is why these steps pin the shell to bash.
@@ -47,8 +49,8 @@ jobs:
           agent-loop --help
           agent-loops --help
       # bash resolves the extensionless sh shim on Windows, so check the
-      # PowerShell shim explicitly. Each command carries its own exit check,
-      # because pwsh does not fail a step on a middle command.
+      # PowerShell and cmd shims explicitly. Each command carries its own exit
+      # check, because pwsh does not fail a step on a middle command.
       - name: Run the npm-installed bin from PowerShell on Windows
         if: runner.os == 'Windows'
         shell: pwsh
@@ -74,3 +76,17 @@ jobs:
           pnpm bin -g
           agent-loop --help
           agent-loops --help
+      - name: Run the pnpm-installed bin from PowerShell on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          agent-loop --help
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          agent-loops --help
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Run the pnpm-installed bin from cmd on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: ${{ runner.temp }}
+        run: agent-loop --help
