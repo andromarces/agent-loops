@@ -360,7 +360,7 @@ Known limits:
 
 - Ignored files (matching `.gitignore`) are not tracked.
 - Mutations reverted within the same turn are not detected.
-- Only paths within `--cwd` are monitored.
+- Scope is the repository that contains `--cwd`: the whole work tree, the index, and `HEAD`, not only paths under `--cwd`.
 
 ## Transcript
 
@@ -482,5 +482,5 @@ Features considered for future development once the hybrid loop stabilizes:
 - Per-role extra CLI arguments and flags
 - GitHub pull request mode
 - Configurable validation commands and automated gates
-- Persistent controller state and session resume across process restarts
-- Streaming transcript logs and usage metadata
+- Persistent headless-loop state and session resume across process restarts
+- A streamed headless transcript
