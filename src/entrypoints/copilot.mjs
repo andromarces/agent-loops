@@ -13,13 +13,18 @@ import { isEntryPoint } from "../lib/entrypoint.mjs";
 const INSTRUCTIONS_DIR = fileURLToPath(new URL("../../docs", import.meta.url));
 const INSTRUCTIONS_PATH = join(INSTRUCTIONS_DIR, "orchestrator-instructions.md");
 
+// The prompt is one line. execa rejects CR or LF in an argument on Windows when
+// it spawns a batch shim through cmd.exe, and npm installs the copilot CLI as a
+// .cmd shim on Windows.
 const INSTRUCTIONS = (sessionId, task) =>
   [
     `Read \`${INSTRUCTIONS_PATH}\` and follow it for this request.`,
     "The task and role settings are:",
     task,
     `This Copilot CLI session id is \`${sessionId}\`. Pass it as \`--parent-session\` on the init dispatch call.`,
-  ].join("\n\n");
+  ]
+    .join(" ")
+    .replace(/[\r\n]+/g, " ");
 
 export function buildCopilotInvocation(task, sessionId) {
   const normalizedTask = String(task ?? "").trim();

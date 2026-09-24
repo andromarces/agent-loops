@@ -29,3 +29,15 @@ test("Copilot launcher seeds the interactive parent prompt with its session id",
   expect(isAbsolute(instructionPath)).toBe(true);
   expect(instructionPath.startsWith(instructionsDir)).toBe(true);
 });
+
+// Usefulness: verifies the launcher passes no line breaks, because execa
+// rejects CR or LF in an argument on Windows when it spawns the copilot .cmd
+// shim through cmd.exe. The task itself may carry a newline.
+test("Copilot launcher passes no line breaks in its arguments", () => {
+  const invocation = buildCopilotInvocation("Line one.\nLine two.\r\nLine three.", "session-1");
+
+  for (const arg of invocation.args) {
+    expect(arg).not.toMatch(/[\r\n]/);
+  }
+  expect(invocation.args.at(-1)).toContain("Line one. Line two. Line three.");
+});
