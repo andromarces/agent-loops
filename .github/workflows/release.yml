@@ -10,7 +10,7 @@ permissions:
 
 # AGENTS.md's cancel-in-progress rule targets CI validation runs. A publish is
 # not validation, so this workflow keeps the concurrency group but never cancels
-# a running publish. A manual dispatch publishes the checked-out ref.
+# a running publish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -25,6 +25,9 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Tags are needed to build from the release tag, not the dispatched ref.
+          fetch-depth: 0
       # Trusted publishing needs npm 11.5.1 or later. node-version 24 resolves
       # to a 24.x release that bundles it. The package still supports Node 22.
       - uses: actions/setup-node@v7
@@ -32,14 +35,25 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Verify the release tag matches package.json
-        if: github.event_name == 'release'
+      # Build from the tag that matches package.json, for a release event and a
+      # manual dispatch alike, so a dispatch cannot stage an untagged version.
+      - name: Check out the tag that matches package.json
         shell: bash
         run: |
           version="$(node -p "JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version")"
-          tag="$GITHUB_REF_NAME"
-          if [ "$tag" != "v$version" ] && [ "$tag" != "$version" ]; then
-            echo "::error::Release tag $tag does not match package.json version $version."
+          tag="v$version"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME does not match package.json version $version."
+            exit 1
+          fi
+          if ! git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+            echo "::error::No tag $tag matches package.json version $version. Create the tag before staging."
+            exit 1
+          fi
+          git checkout --force "$tag"
+          checked="$(node -p "JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version")"
+          if [ "$checked" != "$version" ]; then
+            echo "::error::Tag $tag holds package.json version $checked, expected $version."
             exit 1
           fi
       # No install step: the command packs the `files` list and runs `prepare`,
