@@ -4,10 +4,12 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
+  ROLE_KINDS as ROLES,
   assertOpenCodeOptions,
   readArgValue,
   readNonNegativeInt,
   readPositiveInt,
+  roleFlags,
 } from "./lib/args.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { setVerbose } from "./lib/log.mjs";
@@ -15,7 +17,7 @@ import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runLoop } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
-const ROLES = ["orchestrator", "worker", "reviewer"];
+const ROLE_FLAGS = roleFlags(ROLES);
 
 export function parseArgs(argv) {
   const options = {
@@ -37,21 +39,10 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
 
-    let matched = false;
-    for (const role of ROLES) {
-      if (arg === `--${role}`) {
-        options[role] = readValue(arg, ++i);
-        matched = true;
-      } else if (arg === `--${role}-model`) {
-        options[`${role}Model`] = readValue(arg, ++i);
-        matched = true;
-      } else if (arg === `--${role}-effort`) {
-        options[`${role}Effort`] = readValue(arg, ++i);
-        matched = true;
-      }
-      if (matched) break;
+    if (Object.hasOwn(ROLE_FLAGS, arg)) {
+      options[ROLE_FLAGS[arg]] = readValue(arg, ++i);
+      continue;
     }
-    if (matched) continue;
 
     switch (arg) {
       case "--cwd":
