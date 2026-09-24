@@ -719,9 +719,9 @@ test("reviewer dispatch exposes the parsed verdict in the payload", async () => 
 });
 
 // Usefulness: verifies the dispatch seam when the closing block does not parse
-// — the payload carries a null report and the raw response tail, so a caller
-// can still inspect what the child returned instead of guessing.
-test("reviewer dispatch exposes a null report and the raw tail when the block does not parse", async () => {
+// — the payload carries a null report and the raw response, so a caller can
+// still inspect what the child returned instead of guessing.
+test("reviewer dispatch exposes a null report and the raw response when the block does not parse", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
