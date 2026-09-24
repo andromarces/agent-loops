@@ -20,7 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # npm provenance needs a GitHub OIDC token.
+      # Trusted publishing exchanges this OIDC token for a short-lived publish
+      # token and supplies the provenance attestation. No npm token is stored.
       id-token: write
     steps:
       - uses: actions/checkout@v7
@@ -42,7 +43,6 @@ jobs:
             exit 1
           fi
       # No install step: publish packs the `files` list and runs `prepare`,
-      # whose guard exits 0 without devDependencies.
+      # whose guard exits 0 without devDependencies. Authentication is OIDC
+      # trusted publishing, so the workflow reads no npm token secret.
       - run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
