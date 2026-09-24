@@ -12,18 +12,24 @@ concurrency:
 
 jobs:
   probe:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       # Verify the published package on the minimum supported Node version.
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # Run this before any global install: npx reuses a globally installed
+      # package, so the global step below would hide a broken download.
+      - name: Run without installing (fresh registry download)
+        working-directory: ${{ runner.temp }}
+        run: npx --yes @andromarces/agent-loops --help
       - name: Install globally and run from a clean directory
         working-directory: ${{ runner.temp }}
         run: |
           npm install -g @andromarces/agent-loops
           agent-loop --help
           agent-loops --help
-      - name: Run without installing
-        working-directory: ${{ runner.temp }}
-        run: npx --yes @andromarces/agent-loops --help
