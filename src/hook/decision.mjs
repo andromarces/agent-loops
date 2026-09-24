@@ -25,3 +25,38 @@ export async function decideParentGuard(sessionId, { lookup = readStateForSessio
   }
   return { decision: "deny", reason: GUARD_DENY_REASON };
 }
+
+async function readHookInput() {
+  const chunks = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs the shared command-hook flow: read the hook JSON from stdin, extract
+ * `session_id`, evaluate the guard, and print one deny payload from `formatDeny`.
+ * Fails open: a missing session id, unparseable input, and a lookup error all
+ * exit without output, so the normal permission flow stays intact.
+ * @param {(reason: string) => object} formatDeny builds the harness's deny payload
+ */
+export async function runParentGuard(formatDeny) {
+  const input = await readHookInput();
+  const sessionId = typeof input?.session_id === "string" ? input.session_id : null;
+  if (!sessionId) {
+    return;
+  }
+  try {
+    const verdict = await decideParentGuard(sessionId);
+    if (verdict.decision === "deny") {
+      console.log(JSON.stringify(formatDeny(verdict.reason)));
+    }
+  } catch {
+    // A failed lookup denies nothing: the guard never blocks on its own error.
+  }
+}
