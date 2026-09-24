@@ -1,9 +1,9 @@
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { STALE_LOCK_GRACE_MS, statePaths, withStateLock } from "../../src/lib/runstate.mjs";
+import { deadPid } from "../runtime-helpers.mjs";
 
 let dirs = [];
 
@@ -19,16 +19,6 @@ afterEach(async () => {
   }
   dirs = [];
 });
-
-async function deadPid() {
-  // child_process exposes the pid; the pid is guaranteed dead once the one-shot
-  // process has exited.
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
-    child.on("exit", () => resolve(child.pid));
-    child.on("error", reject);
-  });
-}
 
 // Usefulness: verifies the lock is exclusive under concurrent contenders:
 // exactly one call runs its critical section and the others reject.

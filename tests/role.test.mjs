@@ -1,11 +1,10 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, main as runRoleMain, parseRoleArgs } from "../src/role.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo, deadPid } from "./runtime-helpers.mjs";
 
 // Each test gets its own runs root (env override) and its own temp repo, so
 // state files never collide between tests.
@@ -96,17 +95,6 @@ const basicDeps = () => ({
 
 async function readRepoState(repo) {
   return JSON.parse(await readFile(statePaths({ cwd: repo }).stateFile, "utf8"));
-}
-
-async function deadPid() {
-  // child_process exposes the pid; execa's result does not. The pid is
-  // guaranteed dead once the one-shot process has exited.
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
-    const pid = child.pid;
-    child.on("exit", () => resolve(pid));
-    child.on("error", reject);
-  });
 }
 
 // Usefulness: verifies acceptance — two consecutive worker dispatches resume
@@ -728,6 +716,30 @@ test("reviewer dispatch exposes the parsed verdict in the payload", async () => 
   const state = await readRepoState(repo);
   expect(state.roles.reviewer.sessionId).toBe("rev-9");
   expect(state.lastResult.status).toBe("ok");
+});
+
+// Usefulness: verifies the dispatch seam when the closing block does not parse
+// — the payload carries a null report and the raw response tail, so a caller
+// can still inspect what the child returned instead of guessing.
+test("reviewer dispatch exposes a null report and the raw tail when the block does not parse", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state) => {
+    state.sessionId = "rev-raw";
+    return "looks fine, but no verdict line here";
+  };
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.verdict).toBe("unknown");
+  expect(result.payload.raw).toContain("looks fine");
 });
 
 // Usefulness: verifies --transcript appends one invocation and one result
