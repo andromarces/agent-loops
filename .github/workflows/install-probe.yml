@@ -22,14 +22,30 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      # Run this before any global install: npx reuses a globally installed
-      # package, so the global step below would hide a broken download.
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      # pnpm refuses a global install until its bin directory is on PATH. Node
+      # builds the native path, so this works on Windows and POSIX alike. The
+      # runner context is unavailable in a job-level env, so publish it here.
+      - name: Put the pnpm global bin directory on PATH
+        run: node -e "const fs=require('fs'),p=require('path');const h=p.join(process.env.RUNNER_TEMP,'pnpm-global');const b=p.join(h,'bin');fs.mkdirSync(b,{recursive:true});fs.appendFileSync(process.env.GITHUB_ENV,'PNPM_HOME='+h+'\n');fs.appendFileSync(process.env.GITHUB_PATH,b+'\n')"
+      # Run these before any install: npx and pnpm dlx reuse an installed
+      # package, so an install step would hide a broken download.
       - name: Run without installing (fresh registry download)
         working-directory: ${{ runner.temp }}
-        run: npx --yes @andromarces/agent-loops --help
-      - name: Install globally and run from a clean directory
+        run: |
+          npx --yes @andromarces/agent-loops --help
+          pnpm dlx @andromarces/agent-loops --help
+      - name: Install globally with npm and run from a clean directory
         working-directory: ${{ runner.temp }}
         run: |
           npm install -g @andromarces/agent-loops
+          agent-loop --help
+          agent-loops --help
+      - name: Install globally with pnpm and run from a clean directory
+        working-directory: ${{ runner.temp }}
+        run: |
+          pnpm add -g @andromarces/agent-loops
           agent-loop --help
           agent-loops --help
