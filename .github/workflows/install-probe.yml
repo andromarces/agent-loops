@@ -43,6 +43,12 @@ jobs:
           npm install -g @andromarces/agent-loops
           agent-loop --help
           agent-loops --help
+      # The other Windows steps run in PowerShell. Issue #1 also names cmd.
+      - name: Run the npm-installed bin from cmd on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: ${{ runner.temp }}
+        run: agent-loop --help
       - name: Install globally with pnpm and run from a clean directory
         working-directory: ${{ runner.temp }}
         run: |
