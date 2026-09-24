@@ -6,10 +6,12 @@ import { readFile, appendFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
+  ROLE_FLAG_BY_OPTION,
   assertOpenCodeOptions,
   readArgValue,
   readNonNegativeInt,
   readPositiveInt,
+  roleFlags,
 } from "./lib/args.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
@@ -28,6 +30,7 @@ import { validateAction } from "./contracts/orchestrator-action.mjs";
 const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
 const MODES = new Set(["work-first", "review-first", "review-only"]);
 const ROLE_NAMES = new Set(["worker", "reviewer"]);
+const ROLE_FLAGS = roleFlags(["worker", "reviewer"]);
 const DEFAULT_MAX_STEPS = 20;
 const DEFAULT_TIMEOUT = 3600;
 // Bound for `raw` in the envelope when the closing block could not be parsed.
@@ -107,26 +110,6 @@ export function parseRoleArgs(argv) {
         args.parentSession = readValue(arg, ++index);
         break;
 
-      case "--worker":
-        args.worker = readValue(arg, ++index);
-        break;
-      case "--worker-model":
-        args.workerModel = readValue(arg, ++index);
-        break;
-      case "--worker-effort":
-        args.workerEffort = readValue(arg, ++index);
-        break;
-
-      case "--reviewer":
-        args.reviewer = readValue(arg, ++index);
-        break;
-      case "--reviewer-model":
-        args.reviewerModel = readValue(arg, ++index);
-        break;
-      case "--reviewer-effort":
-        args.reviewerEffort = readValue(arg, ++index);
-        break;
-
       case "--max-steps":
         args.maxSteps = readPositiveInt(arg, readValue(arg, ++index));
         break;
@@ -159,7 +142,11 @@ export function parseRoleArgs(argv) {
         break;
 
       default:
-        throw new RoleError(`Unknown argument: ${arg}`);
+        if (ROLE_FLAGS[arg] === undefined) {
+          throw new RoleError(`Unknown argument: ${arg}`);
+        }
+        args[ROLE_FLAGS[arg]] = readValue(arg, ++index);
+        break;
     }
   }
 
@@ -205,7 +192,7 @@ function validateInitFlags(args, agents = {}) {
     if (kind === null) {
       for (const flag of [`${roleName}Model`, `${roleName}Effort`]) {
         if (args[flag] !== null) {
-          throw new RoleError(`--${kebab(flag)} requires --${roleName}.`);
+          throw new RoleError(`${ROLE_FLAG_BY_OPTION[flag]} requires --${roleName}.`);
         }
       }
       continue;
@@ -316,7 +303,7 @@ function rejectInitFlagChanges(args, state) {
   for (const [flag, value, existing] of provided) {
     if (value !== existing) {
       throw new RoleError(
-        `--${kebab(flag)} cannot be changed after init (state holds: ${JSON.stringify(existing ?? null)}).`,
+        `${ROLE_FLAG_BY_OPTION[flag] ?? `--${kebab(flag)}`} cannot be changed after init (state holds: ${JSON.stringify(existing ?? null)}).`,
       );
     }
   }
