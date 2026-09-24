@@ -46,9 +46,12 @@ Andro Marces
 ## Links
 
 - [Issue #1: Make agent-loop installable globally and runnable from any directory](https://github.com/andromarces/agent-loops/issues/1)
+- [Pull Request #109: feat: publish the CLI as a scoped npm package](https://github.com/andromarces/agent-loops/pull/109)
+- [Pull Request #110: feat: authenticate the release workflow with OIDC trusted publishing](https://github.com/andromarces/agent-loops/pull/110)
 - [Implementation: package manifest](../package.json)
 - [Implementation: prepare guard](../.husky/install.mjs)
 - [Implementation: entry-point detection](../src/lib/entrypoint.mjs)
 - [Implementation: release workflow](../.github/workflows/release.yml)
-- [npm trusted publishing and provenance](https://docs.npmjs.com/generating-provenance-statements)
+- [npm trusted publishing with OIDC](https://docs.npmjs.com/trusted-publishers)
+- [npm provenance statements](https://docs.npmjs.com/generating-provenance-statements)
 - [ADR Index](README.md)
