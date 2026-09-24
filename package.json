@@ -1,6 +1,6 @@
 {
   "name": "@andromarces/agent-loops",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": false,
   "description": "Run a task loop across several CLI coding agents.",
   "homepage": "https://github.com/andromarces/agent-loops#readme",

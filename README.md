@@ -245,7 +245,7 @@ happens only through explicit invocation.
   `--dangerously-bypass-hook-trust` for normal use.
 - The Copilot CLI entry point is `src/entrypoints/copilot.mjs`, exposed as
   `agent-loop-copilot`. It mints a UUID, starts
-  `copilot --session-id <uuid> --interactive <prompt>`, and includes the
+  `copilot --session-id <uuid> --add-dir <docs dir> --interactive <prompt>`, and includes the
   instruction file, task, and same id for `--parent-session` in the first
   prompt. The current CLI documentation exposes no custom command-template
   session-id placeholder, so the launcher is the native entry point.
