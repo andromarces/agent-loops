@@ -365,6 +365,78 @@ test("review-only mode rejects a worker dispatch without spawning a CLI", async 
   expect((await readRepoState(repo)).stepsUsed).toBe(state.stepsUsed);
 });
 
+// Usefulness: verifies a review-only init that rejects --role worker writes no
+// state file, so the corrected reviewer init succeeds without an abort (#123).
+test("a rejected worker init leaves no run for the corrected init", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  const rejected = await executeRoleCommand(
+    withRepo(
+      dispatchArgv(
+        [
+          "--task",
+          "Review only.",
+          "--mode",
+          "review-only",
+          "--worker",
+          "fake1",
+          "--reviewer",
+          "fake2",
+        ],
+        "worker",
+      ),
+      repo,
+    ),
+    {
+      agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+      stdin: stdinPrompt,
+    },
+  );
+  expect(rejected.exitCode).toBe(1);
+  expect(rejected.payload.error).toContain("mode review-only rejects --role worker");
+  expect(await readState(paths.stateFile)).toBeNull();
+
+  const corrected = withRepo(
+    dispatchArgv(
+      ["--task", "Review only.", "--mode", "review-only", "--reviewer", "fake2"],
+      "reviewer",
+    ),
+    repo,
+  );
+  const result = await executeRoleCommand(corrected, {
+    agents: { fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies an init whose prompt read fails writes no state file, so
+// the corrected init succeeds without an abort (#123).
+test("an init with an empty prompt leaves no run for the corrected init", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  const rejected = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    ...basicDeps(),
+    stdin: async () => "   ",
+  });
+  expect(rejected.exitCode).toBe(1);
+  expect(rejected.payload.error).toContain("Prompt on stdin is empty");
+  expect(await readState(paths.stateFile)).toBeNull();
+
+  const corrected = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    ...basicDeps(),
+  });
+  expect(corrected.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
 // Usefulness: verifies acceptance — a review-only init succeeds without
 // --worker and stores a null worker role, because the mode never dispatches it.
 test("review-only init succeeds without --worker and stores a null worker", async () => {

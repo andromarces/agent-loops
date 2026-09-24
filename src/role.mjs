@@ -175,9 +175,8 @@ function isInitCall(args) {
   return args.task !== null;
 }
 
-/** Loads state for a non-init call, rejecting a missing state file. */
-async function loadExistingState(paths, cwd) {
-  const state = await readState(paths.stateFile);
+/** Rejects a non-init call when no state file exists for the work tree. */
+function loadExistingState(state, cwd) {
   if (!state) {
     throw new RoleError(
       `No run state for ${cwd}. Start one with: agent-loop role --task "..." --worker ... --reviewer ...`,
@@ -251,32 +250,18 @@ function roleState(source, roleName) {
 }
 
 /**
- * New-run rule: init over a terminal or absent state file archives any
- * existing file as `state.<timestamp>.json` and creates a new state; init over
- * a non-terminal lifecycle is rejected and the parent must abort it first.
+ * Archives a terminal state file as `state.<timestamp>.json` so a new run can
+ * take its place. Absence is a no-op. Called only after every init check and
+ * the prompt read pass, so a rejected init archives nothing (#123).
  */
-async function initRun(args, paths, existing, agents) {
-  validateInitFlags(args, agents);
-
-  if (existing) {
-    if (!TERMINAL_LIFECYCLES.has(existing.lifecycle)) {
-      throw new RoleError(
-        `Existing run is ${existing.lifecycle}; abort it before starting a new run.`,
-      );
-    }
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const archived = join(dirname(paths.stateFile), `state.${stamp}.json`);
-    await rename(paths.stateFile, archived);
-    logInfo(`archived terminal state file to ${archived}`);
+async function archiveState(paths, existing) {
+  if (!existing) {
+    return;
   }
-
-  const state = initialState(args);
-  await writeState(paths.stateFile, state);
-  if (args.parentSession) {
-    await appendSessionIndex(paths.sessionIndexFile, paths.stateFile);
-  }
-  logInfo(`initialized run state (mode: ${state.mode}, maxSteps: ${state.maxSteps})`);
-  return state;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const archived = join(dirname(paths.stateFile), `state.${stamp}.json`);
+  await rename(paths.stateFile, archived);
+  logInfo(`archived terminal state file to ${archived}`);
 }
 
 const INIT_COMPARATORS = {
@@ -407,12 +392,24 @@ async function dispatch(args, { agents, stdin = readStdin, signal }) {
 }
 
 async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
-  let state = await readState(paths.stateFile);
+  const existing = await readState(paths.stateFile);
   const init = isInitCall(args);
+  let state;
+
   if (init) {
-    state = await initRun(args, paths, state, agents);
+    // New-run rule: init over a terminal or absent state file is allowed; init
+    // over a non-terminal lifecycle is rejected and the parent must abort it
+    // first. Nothing is archived or written until every init check and the
+    // prompt read pass, so a rejected init leaves the previous state untouched.
+    validateInitFlags(args, agents);
+    if (existing && !TERMINAL_LIFECYCLES.has(existing.lifecycle)) {
+      throw new RoleError(
+        `Existing run is ${existing.lifecycle}; abort it before starting a new run.`,
+      );
+    }
+    state = initialState(args);
   } else {
-    state = await loadExistingState(paths, args.cwd);
+    state = loadExistingState(existing, args.cwd);
     rejectInitFlagChanges(args, state);
   }
 
@@ -451,6 +448,17 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
   }
 
   const prompt = await readPrompt(args, stdin);
+
+  if (init) {
+    // Every check and the prompt read passed; now archive the old terminal
+    // state file, if any, and write the new one.
+    await archiveState(paths, existing);
+    await writeState(paths.stateFile, state);
+    if (args.parentSession) {
+      await appendSessionIndex(paths.sessionIndexFile, paths.stateFile);
+    }
+    logInfo(`initialized run state (mode: ${state.mode}, maxSteps: ${state.maxSteps})`);
+  }
 
   // Charge the step before execution, matching the headless runtime.
   state.stepsUsed += 1;
@@ -537,7 +545,7 @@ async function finish(args, { stdin = readStdin }) {
 
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
-    const state = await loadExistingState(paths, args.cwd);
+    const state = loadExistingState(await readState(paths.stateFile), args.cwd);
     rejectInitFlagChanges(args, state);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
@@ -577,7 +585,7 @@ async function abort(args) {
 
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
-    const state = await loadExistingState(paths, args.cwd);
+    const state = loadExistingState(await readState(paths.stateFile), args.cwd);
     rejectInitFlagChanges(args, state);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
