@@ -17,10 +17,10 @@ import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
-  appendSessionIndex,
   readState,
   statePaths,
   withStateLock,
+  writeSessionIndex,
   writeState,
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
@@ -260,19 +260,11 @@ async function initRun(args, paths, existing, agents) {
   const state = initialState(args);
   await writeState(paths.stateFile, state);
   if (args.parentSession) {
-    await appendSessionIndex(paths.sessionIndexFile, paths.stateFile);
+    await writeSessionIndex(paths.sessionIndexFile, paths.stateFile);
   }
   logInfo(`initialized run state (mode: ${state.mode}, maxSteps: ${state.maxSteps})`);
   return state;
 }
-
-const INIT_COMPARATORS = {
-  task: (state) => state.task,
-  mode: (state) => state.mode,
-  parentSession: (state) => state.parentSession,
-  maxSteps: (state) => state.maxSteps,
-  timeout: (state) => state.timeout,
-};
 
 /** Later calls read configuration from the state file and reject any change. */
 function rejectInitFlagChanges(args, state) {
@@ -280,7 +272,7 @@ function rejectInitFlagChanges(args, state) {
   for (const flag of INIT_FIELDS) {
     const isGiven = flag === "timeout" ? args.timeoutProvided : args[flag] !== null;
     if (isGiven) {
-      provided.push([flag, args[flag], INIT_COMPARATORS[flag](state)]);
+      provided.push([flag, args[flag], state[flag]]);
     }
   }
   for (const roleName of ["worker", "reviewer"]) {
@@ -461,24 +453,12 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     });
   } catch (err) {
     const canceled = Boolean(err?.isCanceled);
+    const payload = { role: roleName, status: "error", error: errorMessage(err) };
     state.lifecycle = canceled ? "interrupted" : "halted";
-    state.lastResult = {
-      role: roleName,
-      status: "error",
-      error: errorMessage(err),
-      at: new Date().toISOString(),
-    };
+    state.lastResult = { ...payload, at: new Date().toISOString() };
     await writeState(paths.stateFile, state);
-    onEvent({
-      type: "result",
-      role: roleName,
-      result: { role: roleName, status: "error", error: errorMessage(err) },
-      stepsUsed: state.stepsUsed,
-    });
-    return {
-      exitCode: canceled ? 130 : 1,
-      payload: { role: roleName, status: "error", error: errorMessage(err) },
-    };
+    onEvent({ type: "result", role: roleName, result: payload, stepsUsed: state.stepsUsed });
+    return { exitCode: canceled ? 130 : 1, payload };
   }
 
   state.lifecycle = "active";

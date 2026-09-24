@@ -140,7 +140,7 @@ Role flags:
                                 state file and reject any attempt to change them.
   --prompt-file <path>          Prompt source. Default is stdin.
   --transcript <file>           Append invocation and result events (JSON lines).
-  --resume-interrupted           Explicitly continue after an uncertain previous turn.
+  --resume-interrupted          Explicitly continue after an uncertain previous turn.
 
 Options:
 
@@ -174,12 +174,7 @@ Environment:
 
 Agents:
 
-  claude
-  codex
-  agy
-  antigravity
-  opencode
-  copilot
+  ${[...supportedAgents].join("\n  ")}
 `.trim(),
   );
 }
