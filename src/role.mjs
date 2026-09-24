@@ -142,7 +142,7 @@ export function parseRoleArgs(argv) {
         break;
 
       default:
-        if (ROLE_FLAGS[arg] === undefined) {
+        if (!Object.hasOwn(ROLE_FLAGS, arg)) {
           throw new RoleError(`Unknown argument: ${arg}`);
         }
         args[ROLE_FLAGS[arg]] = readValue(arg, ++index);
