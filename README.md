@@ -430,7 +430,7 @@ pnpm test        # Run Vitest test suite
 
 ## Releasing
 
-The release workflow publishes on a published GitHub release or a manual dispatch, authenticated by OIDC trusted publishing. No npm token is stored.
+The release workflow stages a version on a published GitHub release or a manual dispatch, authenticated by OIDC trusted publishing. No npm token is stored.
 
 npm requires the package to exist before a trusted publisher can be configured, so the first version is published once from a checkout:
 
@@ -439,9 +439,17 @@ npm login
 npm publish
 ```
 
-Then add a trusted publisher on npmjs.com: package settings, **Trusted publishing**, **GitHub Actions**, organization or user `andromarces`, repository `agent-loops`, workflow filename `release.yml`.
+Then add a trusted publisher on npmjs.com: package settings, **Trusted publishing**, **GitHub Actions**, organization or user `andromarces`, repository `agent-loops`, workflow filename `release.yml`, allowed actions `npm stage publish`.
 
-For later releases, bump the version, then publish a GitHub release with tag `v<version>`. The tag must match the `package.json` version.
+For later releases, bump the version, then publish a GitHub release with tag `v<version>`. The tag must match the `package.json` version. The workflow runs `npm stage publish` and prints a stage id. Review and approve the staged version with 2FA:
+
+```bash
+npm stage list
+npm stage view <stage-id>
+npm stage approve <stage-id>
+```
+
+The version goes live only after approval. Staged publishing needs npm 11.15.0 or later and 2FA on the account.
 
 ## Manual smoke test
 
