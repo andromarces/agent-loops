@@ -35,11 +35,10 @@ export async function runAgy(state, prompt, options = {}) {
   return String(result.response ?? "").trim();
 }
 
+/** Sets top-level turn usage, or removes stale usage when Antigravity omits it. */
 function setUsage(state, result) {
-  const usage = {};
-  if (result?.usage) usage.mainLoop = result.usage;
-  if (Object.keys(usage).length > 0) {
-    state.usage = usage;
+  if (result?.usage) {
+    state.usage = { mainLoop: result.usage };
   } else {
     delete state.usage;
   }
