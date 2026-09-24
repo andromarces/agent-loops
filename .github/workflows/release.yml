@@ -8,8 +8,9 @@ on:
 permissions:
   contents: read
 
-# A publish is not a validation run: never cancel one in progress. A manual
-# dispatch publishes the checked-out ref.
+# AGENTS.md's cancel-in-progress rule targets CI validation runs. A publish is
+# not validation, so this workflow keeps the concurrency group but never cancels
+# a running publish. A manual dispatch publishes the checked-out ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false

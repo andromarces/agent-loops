@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { isEntryPoint } from "../lib/entrypoint.mjs";
 
 // Resolve the shipped instructions relative to this file, so the launcher works
-// from any directory, not only from a clone of this repository.
-const INSTRUCTIONS_PATH = fileURLToPath(
-  new URL("../../docs/orchestrator-instructions.md", import.meta.url),
-);
+// from any directory, not only from a clone of this repository. The file lives
+// outside the session workspace, so the invocation grants Copilot access to its
+// directory with --add-dir.
+const INSTRUCTIONS_DIR = fileURLToPath(new URL("../../docs", import.meta.url));
+const INSTRUCTIONS_PATH = join(INSTRUCTIONS_DIR, "orchestrator-instructions.md");
 
 const INSTRUCTIONS = (sessionId, task) =>
   [
@@ -29,7 +31,14 @@ export function buildCopilotInvocation(task, sessionId) {
   }
   return {
     command: "copilot",
-    args: ["--session-id", sessionId, "--interactive", INSTRUCTIONS(sessionId, normalizedTask)],
+    args: [
+      "--session-id",
+      sessionId,
+      "--add-dir",
+      INSTRUCTIONS_DIR,
+      "--interactive",
+      INSTRUCTIONS(sessionId, normalizedTask),
+    ],
   };
 }
 
