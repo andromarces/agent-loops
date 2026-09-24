@@ -360,7 +360,7 @@ Known limits:
 
 - Ignored files (matching `.gitignore`) are not tracked.
 - Mutations reverted within the same turn are not detected.
-- Scope is the repository that contains `--cwd`: the whole work tree, the index, and `HEAD`, not only paths under `--cwd`.
+- A change anywhere in the repository that contains `--cwd` aborts a read-only turn, even outside `--cwd`.
 
 ## Transcript
 
