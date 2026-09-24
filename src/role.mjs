@@ -163,7 +163,7 @@ function isInitCall(args) {
 }
 
 /** Rejects a non-init call when no state file exists for the work tree. */
-function loadExistingState(state, cwd) {
+function requireState(state, cwd) {
   if (!state) {
     throw new RoleError(
       `No run state for ${cwd}. Start one with: agent-loop role --task "..." --worker ... --reviewer ...`,
@@ -388,7 +388,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     }
     state = initialState(args);
   } else {
-    state = loadExistingState(existing, args.cwd);
+    state = requireState(existing, args.cwd);
     rejectInitFlagChanges(args, state);
   }
 
@@ -512,7 +512,7 @@ async function finish(args, { stdin = readStdin }) {
 
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
-    const state = loadExistingState(await readState(paths.stateFile), args.cwd);
+    const state = requireState(await readState(paths.stateFile), args.cwd);
     rejectInitFlagChanges(args, state);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
@@ -552,7 +552,7 @@ async function abort(args) {
 
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
-    const state = loadExistingState(await readState(paths.stateFile), args.cwd);
+    const state = requireState(await readState(paths.stateFile), args.cwd);
     rejectInitFlagChanges(args, state);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);

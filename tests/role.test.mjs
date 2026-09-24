@@ -447,6 +447,30 @@ test("an init with an empty prompt leaves no run for the corrected init", async 
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 
+// Usefulness: verifies a rejected init over a terminal state archives nothing
+// and leaves the terminal state in place (#123).
+test("a rejected init over a terminal state archives nothing", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), { ...basicDeps() });
+  await executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", "--reason", "done"], repo));
+  expect((await readRepoState(repo)).lifecycle).toBe("aborted");
+
+  const rejected = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    ...basicDeps(),
+    stdin: async () => "   ",
+  });
+  expect(rejected.exitCode).toBe(1);
+  expect(rejected.payload.error).toContain("Prompt on stdin is empty");
+
+  const files = await readdir(paths.stateDir);
+  expect(files.filter((name) => /^state\..+\.json$/.test(name)).length).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("aborted");
+});
+
 // Usefulness: verifies acceptance — a review-only init succeeds without
 // --worker and stores a null worker role, because the mode never dispatches it.
 test("review-only init succeeds without --worker and stores a null worker", async () => {
