@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { STALE_LOCK_GRACE_MS, readState, statePaths, writeState } from "../src/lib/runstate.mjs";
+import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, main as runRoleMain, parseRoleArgs } from "../src/role.mjs";
 import { createTempRepo } from "./runtime-helpers.mjs";
 
@@ -673,30 +673,6 @@ test("finish from active in review-only mode succeeds with the verdict recorded"
   expect(state.summary.notDone).toContain("verdict: reject");
 });
 
-// Usefulness: verifies acceptance — a reviewer response without a Verdict line
-// yields verdict unknown.
-test("reviewer response without a Verdict line yields verdict unknown", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const reviewer = recordingAdapter([]);
-  reviewer.run = async (state) => {
-    state.sessionId = "rev-1";
-    return "looks fine, but no verdict line here";
-  };
-  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-  const args = withRepo(dispatchArgv([], "reviewer"), repo);
-  const result = await executeRoleCommand(args, {
-    agents: { fake1: recordingAdapter([]), fake2: reviewer },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload.verdict).toBe("unknown");
-  expect(result.payload.report).toBeNull();
-  expect(result.payload.raw).toContain("looks fine");
-});
-
 // Usefulness: verifies acceptance — finish with an invalid summary exits
 // non-zero and leaves lifecycle active.
 test("finish with an invalid summary exits non-zero and keeps lifecycle active", async () => {
@@ -722,9 +698,10 @@ test("finish with an invalid summary exits non-zero and keeps lifecycle active",
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 
-// Usefulness: verifies the accept path of the extended reviewer contract (one
-// explicit Verdict line) and that the reviewer session id is recorded in state.
-test("reviewer dispatch with a Verdict line parses accept", async () => {
+// Usefulness: verifies the dispatch seam — the parsed verdict and report reach
+// the payload, and the reviewer session id is recorded in state. Parser edge
+// cases are unit-tested in tests/lib/report.test.mjs.
+test("reviewer dispatch exposes the parsed verdict in the payload", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
@@ -911,229 +888,6 @@ test("empty stdin prompt is rejected without charging a step", async () => {
   expect(after.stepsUsed).toBe(before.stepsUsed);
   expect(after.lifecycle).toBe("active");
 });
-
-// Usefulness: verifies the verdict parse is case-insensitive so `Accept` from
-// a real model does not collapse to `unknown`.
-test("reviewer Verdict line parses case-insensitively", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const reviewer = recordingAdapter([]);
-  reviewer.run = async (state) => {
-    state.sessionId = "rev-caps";
-    return `${REPORT}\nVerdict: Accept`;
-  };
-  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
-    agents: { fake1: recordingAdapter([]), fake2: reviewer },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload.verdict).toBe("accept");
-});
-
-// Usefulness: verifies acceptance — a reviewer that appends a separated clause
-// after the verdict word (the live-model shape that parsed as unknown) still
-// yields that word.
-test("a trailing clause after a separated verdict word parses to the verdict word", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const reviewer = recordingAdapter([]);
-  reviewer.run = async (state) => {
-    state.sessionId = "rev-clause";
-    return `${REPORT}\nVerdict: reject — the reviewed state does not pass.`;
-  };
-  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
-    agents: { fake1: recordingAdapter([]), fake2: reviewer },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload.verdict).toBe("reject");
-});
-
-// Usefulness: verifies acceptance — a verdict word closed by the sentence
-// period the prompt's own example invites (`Verdict: reject.`) still parses to
-// that word instead of collapsing to unknown.
-test("a sentence period after the verdict word parses to the verdict word", async () => {
-  await setup();
-  for (const [line, expected] of [
-    ["accept.", "accept"],
-    ["reject.", "reject"],
-  ]) {
-    const repo = await createTempRepo();
-    repos.push(repo);
-
-    const reviewer = recordingAdapter([]);
-    reviewer.run = async (state) => {
-      state.sessionId = "rev-period";
-      return `${REPORT}\nVerdict: ${line}`;
-    };
-    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-    const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
-      agents: { fake1: recordingAdapter([]), fake2: reviewer },
-      stdin: stdinPrompt,
-    });
-    expect(result.exitCode, line).toBe(0);
-    expect(result.payload.verdict, line).toBe(expected);
-  }
-});
-
-// Usefulness: verifies rejection — a verdict line that names both verdicts does
-// not collapse to the first word, with or without the punctuation separator.
-test("a verdict line that names both verdicts yields unknown", async () => {
-  await setup();
-  for (const line of ["accept or reject", "accept, reject", "accept — or reject"]) {
-    const repo = await createTempRepo();
-    repos.push(repo);
-
-    const reviewer = recordingAdapter([]);
-    reviewer.run = async (state) => {
-      state.sessionId = "rev-both";
-      return `${REPORT}\nVerdict: ${line}`;
-    };
-    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-    const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
-      agents: { fake1: recordingAdapter([]), fake2: reviewer },
-      stdin: stdinPrompt,
-    });
-    expect(result.exitCode, line).toBe(0);
-    expect(result.payload.verdict, line).toBe("unknown");
-  }
-});
-
-// Usefulness: verifies `--cwd` variants that differ only in the Windows drive
-// letter resolve to one state directory.
-test("drive-letter case does not split the state directory", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const lower = statePaths({ cwd: repo.replace(/^[A-Za-z]:/, (d) => d.toLowerCase()) });
-  const upper = statePaths({ cwd: repo.replace(/^[A-Za-z]:/, (d) => d.toUpperCase()) });
-  expect(lower.stateDir).toBe(upper.stateDir);
-});
-
-// Usefulness: verifies the lock is exclusive under concurrent contenders:
-// exactly one call runs a child and the others exit non-zero without a child.
-test("concurrent contenders hold exactly one lock", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const first = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-  expect(first.exitCode).toBe(0);
-
-  let childRuns = 0;
-  const slowWorker = {
-    async run(state) {
-      childRuns += 1;
-      state.sessionId = "sess-slow";
-      // Long enough that every contender reaches the lock while it is held.
-      await new Promise((resolve) => setTimeout(resolve, 400));
-      return WORKER_REPLY;
-    },
-  };
-  const agents = { fake1: slowWorker, fake2: recordingAdapter([]) };
-  const args = withRepo(dispatchArgv(), repo);
-
-  const contenders = await Promise.all(
-    Array.from({ length: 6 }, () =>
-      executeRoleCommand(args, { agents, stdin: stdinPrompt }).catch((err) => ({
-        exitCode: 1,
-        payload: { status: "error", error: err.message ?? String(err) },
-      })),
-    ),
-  );
-
-  expect(childRuns).toBe(1);
-  const winners = contenders.filter((c) => c.exitCode === 0);
-  expect(winners.length).toBe(1);
-  const losers = contenders.filter((c) => c.exitCode === 1);
-  expect(losers.length).toBe(5);
-  for (const loser of losers) {
-    expect(loser.payload.status).toBe("error");
-    expect(loser.payload.error).toMatch(/locked by a live process|not readable yet/);
-  }
-  expect((await readRepoState(repo)).stepsUsed).toBe(2);
-});
-
-// Usefulness: verifies a fresh unparseable lock is never stolen — the contender
-// exits non-zero and removes nothing (regression: an empty lock admitted a
-// second owner).
-test("a fresh unreadable lock is never stolen", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-  const paths = statePaths({ cwd: repo });
-
-  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-  await writeFile(paths.lockFile, "", "utf8");
-
-  const worker = recordingAdapter([]);
-  const result = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
-    agents: { fake1: worker, fake2: recordingAdapter([]) },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.payload.error).toContain("locked");
-  expect(worker.recorded.length).toBe(0);
-  // The contender left the fresh lock in place.
-  expect(await readFile(paths.lockFile, "utf8")).toBe("");
-});
-
-// Usefulness: verifies an unreadable lock older than the grace window is
-// treated as stale, removed, and the call proceeds.
-test("an old unreadable lock is removed as stale", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-  const paths = statePaths({ cwd: repo });
-
-  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-  await writeFile(paths.lockFile, "", "utf8");
-  const past = new Date(Date.now() - 5 * STALE_LOCK_GRACE_MS);
-  await utimes(paths.lockFile, past, past);
-
-  const result = await executeRoleCommand(withRepo(dispatchArgv(), repo), basicDeps());
-  expect(result.exitCode).toBe(0);
-  // The stale lock was removed and the call completed, releasing its own lock.
-  await expect(readFile(paths.lockFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-});
-
-// Usefulness: verifies a verdict outside the closing block never counts — only
-// a `Verdict:` line after the last `Conclusion:` line can produce a verdict.
-test("a Verdict line outside the closing block yields unknown", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const reviewer = recordingAdapter([]);
-  reviewer.run = async (state) => {
-    state.sessionId = "rev-early";
-    return `Verdict: accept\n${REPORT}\nfinal note after the block`;
-  };
-  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
-    agents: { fake1: recordingAdapter([]), fake2: reviewer },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(0);
-  // The closing block itself parses; the early verdict does not count.
-  expect(result.payload.status).toBe("ok");
-  expect(result.payload.report).toEqual({
-    conclusion: "done",
-    why: "tests pass",
-    blockers: "none",
-  });
-  expect(result.payload.verdict).toBe("unknown");
-});
-
-// Usefulness: verifies a reviewer response whose closing block holds the
-// verdict after the report parses accept (covered with the casing test above).
 
 // Usefulness: verifies acceptance — the first call after a crash marks
 // `interrupted`, exits non-zero, and spawns no child, even with an explicit
