@@ -21,12 +21,13 @@ Publish the CLI to the public npm registry as `@andromarces/agent-loops`, with `
 1. Keep runtime dependencies in `dependencies` and keep the `bin` entries in `package.json`; a registry install needs neither `pnpm` nor any devDependency. Expose the CLI as both `agent-loop` and `agent-loops`: with several bins, `npx` and `pnpm dlx` resolve the executable only when a bin name matches the unscoped package name.
 2. Replace `"prepare": "husky"` with `"prepare": "node .husky/install.mjs"`. The guard exits 0 when Husky is absent, so a registry or Git-URL install succeeds on Windows cmd, PowerShell, macOS, and Linux.
 3. Mark the `bin` scripts executable in git and keep the `#!/usr/bin/env node` shebang, so POSIX installs link an executable file and npm generates the Windows `.cmd` and `.ps1` shims. Detect the process entry point by comparing real paths, so a bin reached through a symlinked package directory (pnpm, npm on POSIX) runs the CLI instead of exiting with no output.
-4. Publish from a GitHub Actions release workflow on a published GitHub release or a manual dispatch, with `--provenance` and the `id-token: write` permission.
+4. Publish from a GitHub Actions release workflow on a published GitHub release or a manual dispatch, with `--provenance` and the `id-token: write` permission, on Node 24 so the bundled npm CLI supports trusted publishing. A release event must have a tag that matches the `package.json` version.
 5. Keep `--cwd` as the way to target another work tree; the default stays the current directory, so the installed command works from any directory.
 
 ## Consequences
 
 - A user installs once (`npm install -g @andromarces/agent-loops`, `pnpm add -g`, `npx`, or `pnpm dlx`) and runs `agent-loop` from any directory on all three platforms.
+- The published package ships `docs/orchestrator-instructions.md`, and the `agent-loop-copilot` launcher resolves it relative to the installed file, so the launcher works outside a clone. The parent-edit guard stays repo-local and fail-open.
 - Releases are repeatable and carry a provenance attestation that links the tarball to this repository and commit.
 - The `prepare` guard does not make Git-URL installs lightweight: npm still installs devDependencies before `prepare` runs.
 - Standalone binaries (Node SEA, `pkg`) and OS package managers (Homebrew, Scoop, winget) stay out of scope until the npm package is stable.

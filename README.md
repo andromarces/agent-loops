@@ -86,7 +86,7 @@ npx @andromarces/agent-loops --help
 pnpm dlx @andromarces/agent-loops --help
 ```
 
-The `bin` script keeps its `#!/usr/bin/env node` shebang and executable bit, so macOS and Linux link an executable file. npm generates the `.cmd` and `.ps1` shims on Windows, so `agent-loop` resolves in PowerShell and cmd. The command locates its package files relative to the installed script, not `process.cwd()`, so it works from any directory; `--cwd` selects the work tree.
+The `bin` script keeps its `#!/usr/bin/env node` shebang and executable bit, so macOS and Linux link an executable file. npm generates the `.cmd` and `.ps1` shims on Windows, so `agent-loop` resolves in PowerShell and cmd. An `agent-loops` alias points at the same CLI, so `npx @andromarces/agent-loops` and `pnpm dlx @andromarces/agent-loops` resolve it. The command locates its package files relative to the installed script, not `process.cwd()`, so it works from any directory; `--cwd` selects the work tree.
 
 ### From a clone (development)
 

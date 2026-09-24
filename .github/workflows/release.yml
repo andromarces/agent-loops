@@ -8,9 +8,11 @@ on:
 permissions:
   contents: read
 
+# A publish is not a validation run: never cancel one in progress. A manual
+# dispatch publishes the checked-out ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -21,11 +23,23 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+      # Node 24 bundles npm 11, which trusted publishing requires. The package
+      # still supports Node 22 at runtime.
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      - name: Verify the release tag matches package.json
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          version="$(node -p "JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version")"
+          tag="$GITHUB_REF_NAME"
+          if [ "$tag" != "v$version" ] && [ "$tag" != "$version" ]; then
+            echo "::error::Release tag $tag does not match package.json version $version."
+            exit 1
+          fi
       # No install step: publish packs the `files` list and runs `prepare`,
       # whose guard exits 0 without devDependencies.
       - run: npm publish --provenance

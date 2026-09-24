@@ -1,12 +1,19 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { isEntryPoint } from "../lib/entrypoint.mjs";
 
+// Resolve the shipped instructions relative to this file, so the launcher works
+// from any directory, not only from a clone of this repository.
+const INSTRUCTIONS_PATH = fileURLToPath(
+  new URL("../../docs/orchestrator-instructions.md", import.meta.url),
+);
+
 const INSTRUCTIONS = (sessionId, task) =>
   [
-    "Read `docs/orchestrator-instructions.md` and follow it for this request.",
+    `Read \`${INSTRUCTIONS_PATH}\` and follow it for this request.`,
     "The task and role settings are:",
     task,
     `This Copilot CLI session id is \`${sessionId}\`. Pass it as \`--parent-session\` on the init dispatch call.`,

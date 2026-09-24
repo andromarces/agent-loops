@@ -26,9 +26,14 @@ Collect these before the first dispatch:
 
 ## Resolving the CLI
 
-The command blocks below call `agent-loop` directly. Add the pnpm global bin
-directory to PATH, then register the `bin` field globally from the repository
-root:
+The command blocks below call `agent-loop` directly. Install the CLI globally:
+
+```bash
+npm install -g @andromarces/agent-loops
+```
+
+From a clone, register the `bin` field globally instead. Add the pnpm global
+bin directory to PATH first:
 
 ```bash
 pnpm setup   # restart the shell afterwards
