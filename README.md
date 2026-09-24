@@ -64,32 +64,52 @@ An explicit `--<role>-model` passes through unchanged, with no variant appended.
 ## Requirements
 
 - Node.js 22 or later
-- pnpm
 - Git (the target `--cwd` must be inside a Git work tree)
 - Installed and authenticated CLI agents
 
+pnpm is required only for development in a clone, not for a registry install.
+
 ## Install
 
-Clone the repository and install dependencies:
+Install the CLI globally:
+
+```bash
+npm install -g @andromarces/agent-loops
+# or
+pnpm add -g @andromarces/agent-loops
+```
+
+Run it without installing:
+
+```bash
+npx @andromarces/agent-loops --help
+pnpm dlx @andromarces/agent-loops --help
+```
+
+The `bin` script keeps its `#!/usr/bin/env node` shebang and executable bit, so macOS and Linux link an executable file. npm generates the `.cmd` and `.ps1` shims on Windows, so `agent-loop` resolves in PowerShell and cmd. The command locates its package files relative to the installed script, not `process.cwd()`, so it works from any directory; `--cwd` selects the work tree.
+
+### From a clone (development)
+
+Development uses pnpm and the repository Git hooks:
 
 ```bash
 git clone <repository-url>
 cd agent-loops
 pnpm install
+pnpm agent-loop role ...
 ```
 
-Then make `agent-loop` resolvable. Add the pnpm global bin directory to PATH, then register the `bin` field globally from the repository root:
+`pnpm agent-loop` runs the CLI entry from the repository root. To expose the `agent-loop` command on `PATH`, add the pnpm global bin directory to `PATH`, then register the `bin` field globally from the repository root:
 
 ```bash
 pnpm setup   # restart the shell afterwards
 pnpm add -g .
 ```
 
-pnpm v11 removed `pnpm link --global` and keeps global bins under `PNPM_HOME`; `pnpm add -g .` fails with `ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH` until `pnpm setup` puts that directory on PATH. Without a global install, call the CLI entry directly and quote the repository path so a path with spaces works, or use the package script from the repository root:
+pnpm v11 removed `pnpm link --global` and keeps global bins under `PNPM_HOME`; `pnpm add -g .` fails with `ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH` until `pnpm setup` puts that directory on `PATH`. Without a global install, call the CLI entry directly and quote the repository path so a path with spaces works:
 
 ```bash
 node "<repo>/src/cli.mjs" role ...
-pnpm agent-loop role ...
 ```
 
 ## Usage

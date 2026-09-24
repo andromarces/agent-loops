@@ -1,7 +1,8 @@
+#!/usr/bin/env node
+
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { execa } from "execa";
+import { isEntryPoint } from "../lib/entrypoint.mjs";
 
 const INSTRUCTIONS = (sessionId, task) =>
   [
@@ -31,8 +32,7 @@ export async function main(argv = process.argv.slice(2)) {
   await execa(invocation.command, invocation.args, { stdio: "inherit" });
 }
 
-const entryPath = process.argv[1] ? resolve(process.argv[1]) : null;
-if (entryPath === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.filename)) {
   main().catch((error) => {
     const message = String(error?.shortMessage ?? error?.message ?? error).split("\n", 1)[0];
     console.error(`agent-loop-copilot: ${message}`);

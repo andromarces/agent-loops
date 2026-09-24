@@ -1,25 +1,37 @@
 {
-  "name": "agent-loops",
+  "name": "@andromarces/agent-loops",
   "version": "0.2.0",
   "private": false,
   "description": "Run a task loop across several CLI coding agents.",
+  "homepage": "https://github.com/andromarces/agent-loops#readme",
+  "bugs": {
+    "url": "https://github.com/andromarces/agent-loops/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andromarces/agent-loops.git"
+  },
   "bin": {
     "agent-loop": "./src/cli.mjs",
-    "agent-loop-copilot": "./src/entrypoints/copilot.mjs"
+    "agent-loop-copilot": "./src/entrypoints/copilot.mjs",
+    "agent-loops": "./src/cli.mjs"
   },
   "files": [
     "src",
     "LICENSE"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "agent-loop": "node ./src/cli.mjs",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "oxlint",
     "test": "vitest run",
-    "prepare": "husky",
+    "prepare": "node .husky/install.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

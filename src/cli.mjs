@@ -9,6 +9,7 @@ import {
   readNonNegativeInt,
   readPositiveInt,
 } from "./lib/args.mjs";
+import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { setVerbose } from "./lib/log.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runLoop } from "./runtime.mjs";
@@ -329,7 +330,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
+if (isEntryPoint(import.meta.filename)) {
   main().catch((error) => {
     console.error(`\n${error.stack ?? error.message ?? error}`);
     process.exitCode = 1;
