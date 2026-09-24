@@ -17,19 +17,36 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      PNPM_HOME: ${{ runner.temp }}/pnpm-global
     steps:
       # Verify the published package on the minimum supported Node version.
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      # Run this before any global install: npx reuses a globally installed
-      # package, so the global step below would hide a broken download.
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      # pnpm refuses a global install until its bin directory is on PATH. Node
+      # builds the native path, so this works on Windows and POSIX alike.
+      - name: Add the pnpm global bin directory to PATH
+        run: node -e "const fs=require('fs'),p=require('path');const b=p.join(process.env.PNPM_HOME,'bin');fs.mkdirSync(b,{recursive:true});fs.appendFileSync(process.env.GITHUB_PATH,b+'\n')"
+      # Run these before any install: npx and pnpm dlx reuse an installed
+      # package, so an install step would hide a broken download.
       - name: Run without installing (fresh registry download)
         working-directory: ${{ runner.temp }}
-        run: npx --yes @andromarces/agent-loops --help
-      - name: Install globally and run from a clean directory
+        run: |
+          npx --yes @andromarces/agent-loops --help
+          pnpm dlx @andromarces/agent-loops --help
+      - name: Install globally with npm and run from a clean directory
         working-directory: ${{ runner.temp }}
         run: |
           npm install -g @andromarces/agent-loops
+          agent-loop --help
+          agent-loops --help
+      - name: Install globally with pnpm and run from a clean directory
+        working-directory: ${{ runner.temp }}
+        run: |
+          pnpm add -g @andromarces/agent-loops
           agent-loop --help
           agent-loops --help
