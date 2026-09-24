@@ -89,13 +89,13 @@ pnpm dlx @andromarces/agent-loops --help
 Install from a Git URL instead of the registry:
 
 ```bash
-npm install github:andromarces/agent-loops
+npm install -g github:andromarces/agent-loops
 ```
 
 npm 12 disables git fetches by default. On npm 12, pass `--allow-git=all`:
 
 ```bash
-npm install --allow-git=all github:andromarces/agent-loops
+npm install -g --allow-git=all github:andromarces/agent-loops
 ```
 
 The `bin` script keeps its `#!/usr/bin/env node` shebang and executable bit, so macOS and Linux link an executable file. npm generates the `.cmd` and `.ps1` shims on Windows, so `agent-loop` resolves in PowerShell and cmd. An `agent-loops` alias points at the same CLI, so `npx @andromarces/agent-loops` and `pnpm dlx @andromarces/agent-loops` resolve it. The command locates its package files relative to the installed script, not `process.cwd()`, so it works from any directory; `--cwd` selects the work tree.
