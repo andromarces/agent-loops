@@ -78,6 +78,16 @@ test("empty parent session is rejected before dispatch", async () => {
   );
 });
 
+// Usefulness: verifies a name inherited from Object.prototype cannot pass as a
+// role flag (regression: a plain-object lookup treated `constructor` as a
+// defined flag instead of rejecting it).
+test("object prototype names are rejected as unknown arguments", async () => {
+  await setup();
+  for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+    expect(() => parseRoleArgs([name, "x"])).toThrow(`Unknown argument: ${name}`);
+  }
+});
+
 /** Deps for calls whose child turn is not under assertion. */
 const basicDeps = () => ({
   agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },

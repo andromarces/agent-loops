@@ -26,6 +26,24 @@ export function readNonNegativeInt(flag, value) {
   return val;
 }
 
+// Role flags: `--<role>[-model|-effort]` to option key. The headless CLI reads
+// all three roles, the role subcommand reads the worker and reviewer.
+export const ROLE_KINDS = ["orchestrator", "worker", "reviewer"];
+
+export function roleFlags(roles) {
+  return Object.fromEntries(
+    roles.flatMap((role) => [
+      [`--${role}`, role],
+      [`--${role}-model`, `${role}Model`],
+      [`--${role}-effort`, `${role}Effort`],
+    ]),
+  );
+}
+
+export const ROLE_FLAG_BY_OPTION = Object.fromEntries(
+  Object.entries(roleFlags(ROLE_KINDS)).map(([flag, option]) => [option, flag]),
+);
+
 export function assertOpenCodeOptions(role, kind, model, effort) {
   if (kind && normalizeAgent(kind) !== "opencode") {
     return;
