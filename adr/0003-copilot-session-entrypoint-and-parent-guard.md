@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0005: User-scope harness integrations only](0005-user-scope-integrations.md). ADR 0005 keeps the launcher decision and moves the guard to a user hook.
 
 ## Date
 

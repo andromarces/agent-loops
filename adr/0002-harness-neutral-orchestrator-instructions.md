@@ -24,9 +24,13 @@ One harness-neutral instruction file (`docs/orchestrator-instructions.md`) defin
 
 ## Consequences
 
-- Claude Code ships a skill (`.claude/skills/agent-loop/SKILL.md`) with `disable-model-invocation: true`, so only the maintainer activates it; it passes `${CLAUDE_SESSION_ID}` as `--parent-session`.
-- OpenCode ships a local plugin (`.opencode/plugins/parent-guard.ts`) that registers the `/agent-loop` command. The executor reads `CommandInvocation.sessionID`, so the init call passes `--parent-session` and the plugin's `permission` `evaluate` hook guards the parent. The stored command template is superseded; the plugin route needs no session placeholder.
-- Codex CLI and Antigravity use the universal fallback until each documents a custom-prompt mechanism. GitHub Copilot CLI uses the session-keyed launcher and repository hook defined by ADR 0003.
+[ADR 0005](0005-user-scope-integrations.md) moves entry points and guards to user scope, installed by `agent-loop install` (#139). The paths below are the user-scope targets. Until #139 ships, the repository copies remain in use.
+
+- Claude Code ships a skill (`~/.claude/skills/agent-loop/SKILL.md`) with `disable-model-invocation: true`, so only the maintainer activates it; it passes `${CLAUDE_SESSION_ID}` as `--parent-session`.
+- OpenCode ships a global plugin (`~/.config/opencode/plugins/`) that registers the `/agent-loop` command. The executor reads `CommandInvocation.sessionID`, so the init call passes `--parent-session` and the plugin's `permission` `evaluate` hook guards the parent. The stored command template is superseded; the plugin route needs no session placeholder.
+- Codex CLI ships a skill (`~/.agents/skills/agent-loop/`) that passes `CODEX_THREAD_ID` as `--parent-session`.
+- GitHub Copilot CLI uses the session-keyed launcher from ADR 0003, with the user hook from ADR 0005.
+- Antigravity uses the universal fallback until its entry point ships (#88).
 - Role rules have exactly one source of truth; harness entry points never restate them, so a rule change is a one-file edit.
 
 ## Alternatives
@@ -46,5 +50,6 @@ Andro Marces
 - [Issue #75: Wire the parent-edit guard for OpenCode through a plugin session-id channel](https://github.com/andromarces/agent-loops/issues/75)
 - [Pull Request #80: feat: guard OpenCode parent edits through a plugin session-id channel](https://github.com/andromarces/agent-loops/pull/80)
 - [ADR 0003: GitHub Copilot CLI session entry point and parent guard](0003-copilot-session-entrypoint-and-parent-guard.md)
+- [ADR 0005: User-scope harness integrations only](0005-user-scope-integrations.md)
 - [Pull Request #59: feat: harness-neutral orchestrator instruction file with Claude Code skill and OpenCode command](https://github.com/andromarces/agent-loops/pull/59)
 - [ADR Index](README.md)
