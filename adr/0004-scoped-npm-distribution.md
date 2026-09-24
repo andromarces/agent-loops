@@ -21,7 +21,7 @@ Publish the CLI to the public npm registry as `@andromarces/agent-loops`, with `
 1. Keep runtime dependencies in `dependencies` and keep the `bin` entries in `package.json`; a registry install needs neither `pnpm` nor any devDependency. Expose the CLI as both `agent-loop` and `agent-loops`: with several bins, `npx` and `pnpm dlx` resolve the executable only when a bin name matches the unscoped package name.
 2. Replace `"prepare": "husky"` with `"prepare": "node .husky/install.mjs"`. The guard exits 0 when Husky is absent, so a registry or Git-URL install succeeds on Windows cmd, PowerShell, macOS, and Linux.
 3. Mark the `bin` scripts executable in git and keep the `#!/usr/bin/env node` shebang, so POSIX installs link an executable file and npm generates the Windows `.cmd` and `.ps1` shims. Detect the process entry point by comparing real paths, so a bin reached through a symlinked package directory (pnpm, npm on POSIX) runs the CLI instead of exiting with no output.
-4. Publish from a GitHub Actions release workflow on a published GitHub release or a manual dispatch, with `--provenance` and the `id-token: write` permission, on Node 24 so the bundled npm CLI supports trusted publishing. A release event must have a tag that matches the `package.json` version.
+4. Publish from a GitHub Actions release workflow on a published GitHub release or a manual dispatch, with `--provenance` and the `id-token: write` permission, on Node 24 so the bundled npm CLI supports trusted publishing. A release event must have a tag that matches the `package.json` version. The workflow authenticates with OIDC trusted publishing and stores no npm token. npm requires the package to exist before a trusted publisher can be configured, so the first version is published once from a developer checkout; later releases use the workflow.
 5. Keep `--cwd` as the way to target another work tree; the default stays the current directory, so the installed command works from any directory.
 
 ## Consequences
@@ -46,9 +46,12 @@ Andro Marces
 ## Links
 
 - [Issue #1: Make agent-loop installable globally and runnable from any directory](https://github.com/andromarces/agent-loops/issues/1)
+- [Pull Request #109: feat: publish the CLI as a scoped npm package](https://github.com/andromarces/agent-loops/pull/109)
+- [Pull Request #110: feat: authenticate the release workflow with OIDC trusted publishing](https://github.com/andromarces/agent-loops/pull/110)
 - [Implementation: package manifest](../package.json)
 - [Implementation: prepare guard](../.husky/install.mjs)
 - [Implementation: entry-point detection](../src/lib/entrypoint.mjs)
 - [Implementation: release workflow](../.github/workflows/release.yml)
-- [npm trusted publishing and provenance](https://docs.npmjs.com/generating-provenance-statements)
+- [npm trusted publishing with OIDC](https://docs.npmjs.com/trusted-publishers)
+- [npm provenance statements](https://docs.npmjs.com/generating-provenance-statements)
 - [ADR Index](README.md)

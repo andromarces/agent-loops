@@ -428,6 +428,21 @@ pnpm lint        # Lint files with oxlint
 pnpm test        # Run Vitest test suite
 ```
 
+## Releasing
+
+The release workflow publishes on a published GitHub release or a manual dispatch, authenticated by OIDC trusted publishing. No npm token is stored.
+
+npm requires the package to exist before a trusted publisher can be configured, so the first version is published once from a checkout:
+
+```bash
+npm login
+npm publish
+```
+
+Then add a trusted publisher on npmjs.com: package settings, **Trusted publishing**, **GitHub Actions**, organization or user `andromarces`, repository `agent-loops`, workflow filename `release.yml`.
+
+For later releases, bump the version, then publish a GitHub release with tag `v<version>`. The tag must match the `package.json` version.
+
 ## Manual smoke test
 
 Run against real CLI agents in a temporary Git repository:
