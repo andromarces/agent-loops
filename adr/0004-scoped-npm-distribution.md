@@ -29,7 +29,7 @@ Publish the CLI to the public npm registry as `@andromarces/agent-loops`, with `
 - A user installs once (`npm install -g @andromarces/agent-loops`, `pnpm add -g`, `npx`, or `pnpm dlx`) and runs `agent-loop` from any directory on all three platforms.
 - The published package ships `docs/orchestrator-instructions.md`, and the `agent-loop-copilot` launcher resolves it relative to the installed file, so the launcher works outside a clone. The parent-edit guard stays repo-local and fail-open.
 - Releases are repeatable and carry a provenance attestation that links the tarball to this repository and commit.
-- A maintainer approves each staged version with 2FA before it goes live, so the registry never receives an unreviewed version.
+- A maintainer approves each staged version with 2FA before it becomes installable. The registry stores the staged tarball, but it does not serve it until approval.
 - The `prepare` guard does not make Git-URL installs lightweight: npm still installs devDependencies before `prepare` runs.
 - Standalone binaries (Node SEA, `pkg`) and OS package managers (Homebrew, Scoop, winget) stay out of scope until the npm package is stable.
 
@@ -49,6 +49,8 @@ Andro Marces
 - [Issue #1: Make agent-loop installable globally and runnable from any directory](https://github.com/andromarces/agent-loops/issues/1)
 - [Pull Request #109: feat: publish the CLI as a scoped npm package](https://github.com/andromarces/agent-loops/pull/109)
 - [Pull Request #110: feat: authenticate the release workflow with OIDC trusted publishing](https://github.com/andromarces/agent-loops/pull/110)
+- [Pull Request #111: chore(release): 0.2.1](https://github.com/andromarces/agent-loops/pull/111)
+- [Pull Request #112: feat: stage releases with npm stage publish](https://github.com/andromarces/agent-loops/pull/112)
 - [Implementation: package manifest](../package.json)
 - [Implementation: prepare guard](../.husky/install.mjs)
 - [Implementation: entry-point detection](../src/lib/entrypoint.mjs)
