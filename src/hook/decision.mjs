@@ -1,9 +1,11 @@
-// Decision logic for the #57 parent guard. The Claude Code PreToolUse hook
-// denies file-edit tools only when the hook session id matches `parentSession`
-// in the state file registered for that session; every other session, every
-// terminal lifecycle, and every absent or corrupt record allows the call.
-// Fail-open by design: the guard is optional defense for the prompt-only
-// parent rule, so unknown records never block a tool call.
+// Decision logic and the shared command-hook flow for the #57 parent guard.
+// `decideParentGuard` denies file-edit tools only when the hook session id
+// matches `parentSession` in the state file registered for that session; every
+// other session, every terminal lifecycle, and every absent or corrupt record
+// allows the call. `runParentGuard` drives that decision from the stdin payload
+// for the Claude Code, Codex, and Copilot command hooks, each of which supplies
+// its own deny shape. Fail-open by design: the guard is optional defense for
+// the prompt-only parent rule, so unknown records never block a tool call.
 import { TERMINAL_LIFECYCLES, readStateForSession } from "../lib/runstate.mjs";
 
 export const GUARD_DENY_REASON =
