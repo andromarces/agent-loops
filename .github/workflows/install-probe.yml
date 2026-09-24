@@ -1,0 +1,29 @@
+name: Install probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      # Verify the published package on the minimum supported Node version.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install globally and run from a clean directory
+        working-directory: ${{ runner.temp }}
+        run: |
+          npm install -g @andromarces/agent-loops
+          agent-loop --help
+          agent-loops --help
+      - name: Run without installing
+        working-directory: ${{ runner.temp }}
+        run: npx --yes @andromarces/agent-loops --help
