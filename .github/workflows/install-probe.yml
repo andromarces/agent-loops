@@ -52,6 +52,10 @@ jobs:
       - name: Install globally with pnpm and run from a clean directory
         working-directory: ${{ runner.temp }}
         run: |
+          # Remove npm's copy so the only agent-loop on PATH is pnpm's. Without
+          # this, npm's bin answers even if pnpm failed to link its own.
+          npm uninstall -g @andromarces/agent-loops
           pnpm add -g @andromarces/agent-loops
+          pnpm bin -g
           agent-loop --help
           agent-loops --help
