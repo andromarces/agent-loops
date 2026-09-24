@@ -83,7 +83,7 @@ export async function readStateForSession(parentSession) {
 /**
  * Exclusive access around one state-file operation. Creates `state.lock` with
  * O_EXCL, treats an existing lock with a live owner pid as busy and a dead one
- * as stale (removed with a warning, then retried). Returns a release function.
+ * as stale (removed with a warning, then retried). Returns the result of `fn`.
  */
 export async function withStateLock(lockFile, fn) {
   await mkdir(dirname(lockFile), { recursive: true });
