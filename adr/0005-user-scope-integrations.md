@@ -37,6 +37,7 @@ These consequences hold after #139 ships.
 - A clone without `agent-loop install` has no entry point and no guard.
 - A development install ties user-scope files to one clone location. Moving the clone needs `npm link --force` and install again.
 - The installer owns user settings entries and needs a manifest, byte-identical uninstall, and upgrade handling (#139).
+- Guard settings are applied before entry-point files, and a write failure persists the manifest for the writes that completed and keeps the previous record for every target it did not complete. A failed install then leaves no entry point without its guard, and uninstall restores every file the partial install touched, including the completed writes of earlier harnesses and the old bytes of an interrupted upgrade (#156).
 - The shared `~/.agents/skills` folder exposes the Codex skill to Copilot CLI and OpenCode, and OpenCode also discovers `~/.claude/skills`. Each shared skill must identify the running harness by process ancestry: nested harnesses inherit session variables, and a foreign harness leaves `${CLAUDE_SESSION_ID}` unexpanded. Both the Codex and Claude skills refuse to start a run when the nearest harness process is not theirs. Each gate runs the installed CLI by absolute path, because Git Bash does not resolve the `agent-loop` `.cmd` shim; the skill uses that resolved invocation for every command in the instructions, exit code 3 means a harness refusal, and any other non-zero exit means the check could not run or found no harness ancestor (#151). Both shared skills set `metadata.opencode/autoinvoke: false`, so OpenCode drops them from the model's skill list and the model cannot auto-invoke one for an `/agent-loop` request; the OpenCode plugin command is then the only `/agent-loop` entry point that carries the OpenCode session id.
 - Antigravity uses `~/.gemini/antigravity-cli/skills` and `~/.gemini/config/hooks.json`. Its hook `command` cannot contain a quoted or spaced path, so the guard runs through a shim in that folder.
 
@@ -59,4 +60,7 @@ Andro Marces
 - [Issue #88: Parent-edit guard and session-id entry point for Antigravity CLI](https://github.com/andromarces/agent-loops/issues/88)
 - [PR #147: Use `npm link --force` for a moved clone and state the PATH requirement](https://github.com/andromarces/agent-loops/pull/147)
 - [PR #164: Render the Copilot parent guard from copilot-parent-guard.mjs](https://github.com/andromarces/agent-loops/pull/164)
+- [PR #167: Reject unsupported and malformed install manifests](https://github.com/andromarces/agent-loops/pull/167)
+- [PR #169: Recover a partial install when a write fails](https://github.com/andromarces/agent-loops/pull/169)
+- [Issue #156: A failed guard settings write leaves an unguarded, unrecorded entry point](https://github.com/andromarces/agent-loops/issues/156)
 - [ADR Index](README.md)
