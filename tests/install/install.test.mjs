@@ -316,6 +316,24 @@ test("the Claude skill requires the harness-check ancestry gate", async () => {
   expect(skill).toContain("CLAUDE_SESSION_ID");
 });
 
+// Usefulness: verifies the OpenCode acceptance — OpenCode discovers both
+// ~/.claude/skills and ~/.agents/skills, so each shared skill must hide itself
+// from OpenCode's model list (`metadata.opencode/autoinvoke: false`) and
+// interactive command catalog (`slash: false`). With the shared copies hidden,
+// the installed OpenCode plugin command owns /agent-loop and supplies the
+// OpenCode session id; the shared copies still refuse a foreign session through
+// their harness-check gate.
+test("the shared skills hide themselves from OpenCode", async () => {
+  const home = await makeHome();
+  for (const harness of ["claude", "codex"]) {
+    const targets = await targetPaths(harness, home);
+    const skill = targets.files.find((file) => file.path.endsWith("SKILL.md")).content;
+    const frontmatter = skill.split("---", 3)[1] ?? "";
+    expect(frontmatter, `${harness} frontmatter`).toContain("opencode/autoinvoke: false");
+    expect(frontmatter, `${harness} frontmatter`).toContain("slash: false");
+  }
+});
+
 // Usefulness: verifies the process-ancestry mechanism — the nearest harness
 // above the shell decides the running harness, an unknown or missing ancestor
 // returns null, and a nested Copilot session under a Codex shell resolves to

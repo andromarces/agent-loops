@@ -261,24 +261,33 @@ clone. The Parent guard section below lists every guard target.
 - The `~/.agents/skills` directory is shared. Copilot CLI and OpenCode also
   discover personal skills there, so the installed Codex skill appears in both.
   The Codex selection owns that directory; install and uninstall for Copilot
-  never touch it. The Codex skill refuses to start a run when the nearest
-  harness process is not Codex, so a Copilot or OpenCode session that inherits
-  `CODEX_THREAD_ID` cannot start a run through it.
+  never touch it. The Codex skill sets `metadata.opencode/autoinvoke: false` and
+  `slash: false`, so OpenCode hides it from its model list and its interactive
+  command catalog, and the OpenCode plugin command owns `/agent-loop`. The skill
+  also refuses to start a run when the nearest harness process is not Codex, so a
+  Copilot or OpenCode session that inherits `CODEX_THREAD_ID` cannot start a run
+  through it.
 - The Claude Code skill sets `disable-model-invocation: true`, so only the
   maintainer activates it with `/agent-loop`, and it omits `context: fork`, so
   the skill runs in the current session. OpenCode also discovers
-  `~/.claude/skills`, so a foreign OpenCode session loads this same copy. Before
-  the init dispatch call the skill runs `agent-loop harness-check claude`, which
-  exits 0 only when the nearest harness process above the shell is Claude Code;
-  when it exits non-zero the skill stops without registering a run, which covers
-  the literal `${CLAUDE_SESSION_ID}` that OpenCode leaves unexpanded. Its body
-  passes `${CLAUDE_SESSION_ID}` as `--parent-session` on the init dispatch call.
+  `~/.claude/skills`, so a foreign OpenCode session loads this same copy. The
+  skill sets `metadata.opencode/autoinvoke: false` and `slash: false`, so OpenCode
+  hides it from its model list and its interactive command catalog, and the
+  OpenCode plugin command owns `/agent-loop`. Before the init
+  dispatch call the skill runs `agent-loop harness-check claude`, which exits 0
+  only when the nearest harness process above the shell is Claude Code; when it
+  exits non-zero the skill stops without registering a run, which covers the
+  literal `${CLAUDE_SESSION_ID}` that OpenCode leaves unexpanded. Its body passes
+  `${CLAUDE_SESSION_ID}` as `--parent-session` on the init dispatch call.
 - The OpenCode entry point is a user plugin at
   `~/.config/opencode/plugins/parent-guard.ts`, loaded automatically from that
   directory. Stored command templates expose no session id, so the plugin
   registers the `/agent-loop` command itself: its executor reads
   `CommandInvocation.sessionID` and carries that id into the orchestrator
-  prompt, and the init dispatch call passes it as `--parent-session`.
+  prompt, and the init dispatch call passes it as `--parent-session`. The shared
+  Claude and Codex skills set `metadata.opencode/autoinvoke: false` and
+  `slash: false`, so OpenCode hides them from its model list and its command
+  catalog; the plugin command is the only OpenCode entry point.
 - The Codex CLI skill (`~/.agents/skills/agent-loop/SKILL.md`) activates only
   through `$agent-loop`. Before the init call it runs
   `agent-loop harness-check codex`, which exits 0 only when the nearest harness

@@ -1,6 +1,13 @@
 ---
 name: agent-loop
 description: Run a delegated agent-loop role orchestration when the user explicitly invokes $agent-loop.
+# OpenCode also discovers ~/.agents/skills and would expose this skill as its own
+# /agent-loop. Hide it from OpenCode's model list and interactive command catalog
+# so the installed OpenCode plugin command owns /agent-loop and supplies the
+# session id.
+metadata:
+  opencode/autoinvoke: false
+slash: false
 ---
 
 Read `__AGENT_LOOP_INSTRUCTIONS__` and follow it for this request.
