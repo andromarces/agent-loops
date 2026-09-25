@@ -214,9 +214,10 @@ const HARNESS_ALIASES = new Map([["agy", "antigravity"]]);
 /**
  * Exit code for a harness mismatch: the named harness is not the nearest
  * ancestor, so another harness owns the shell. Exit 0 means the names match;
- * every other non-zero code means the check could not run or could not read the
- * process ancestry. The distinct code lets a caller separate a genuine harness
- * refusal from a CLI that cannot run (#151).
+ * every other non-zero code means the check could not run, found no harness
+ * ancestor, or could not read the process ancestry. The distinct code lets a
+ * caller separate a genuine harness refusal from a check that did not decide
+ * (#151).
  */
 export const HARNESS_MISMATCH_EXIT = 3;
 
@@ -248,7 +249,7 @@ export async function runHarnessCheckCommand(argv, { lookup = nearestHarness } =
   }
   if (found === null || found === undefined) {
     logError(
-      `could not determine the nearest harness ancestor, so not ${harness}. Refusing to start a run.`,
+      `no known harness process was found above this shell, so not ${harness}. Not starting a run.`,
     );
     process.exitCode = 1;
     return;

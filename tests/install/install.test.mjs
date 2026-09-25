@@ -319,6 +319,7 @@ test("the Codex skill requires the harness-check ancestry gate", async () => {
   expect(skill).not.toContain("agent-loop harness-check");
   expect(skill).toContain(`\`agent-loop\` command in the instructions as \`${cliInvocation()}\``);
   expect(skill).toContain("exits 3");
+  expect(skill).toContain("found no harness ancestor");
   expect(skill).toContain("CODEX_THREAD_ID");
 });
 
@@ -335,6 +336,7 @@ test("the Claude skill requires the harness-check ancestry gate", async () => {
   expect(skill).not.toContain("agent-loop harness-check");
   expect(skill).toContain(`\`agent-loop\` command in the instructions as \`${cliInvocation()}\``);
   expect(skill).toContain("exits 3");
+  expect(skill).toContain("found no harness ancestor");
   expect(skill).toContain("CLAUDE_SESSION_ID");
 });
 
@@ -350,6 +352,7 @@ test("the Antigravity skill requires the harness-check ancestry gate", async () 
   expect(skill).not.toContain("agent-loop harness-check");
   expect(skill).toContain(`\`agent-loop\` command in the instructions as \`${cliInvocation()}\``);
   expect(skill).toContain("exits 3");
+  expect(skill).toContain("found no harness ancestor");
   expect(skill).toContain("ANTIGRAVITY_CONVERSATION_ID");
 });
 
