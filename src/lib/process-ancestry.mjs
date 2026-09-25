@@ -2,8 +2,8 @@
 // parent's session variables, so no environment variable can identify the
 // running harness. The nearest harness process above the shell command can.
 // Returns null when the platform, the process table, or the ancestry is absent,
-// so the Codex and Antigravity skills refuse to start instead of registering
-// the wrong parent.
+// so the Claude, Codex, and Antigravity skills refuse to start instead of
+// registering the wrong parent.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
