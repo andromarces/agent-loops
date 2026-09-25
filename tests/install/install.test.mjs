@@ -706,6 +706,63 @@ test("a later harness write failure still lets uninstall restore the earlier har
   expect(existsSync(manifestPath(home))).toBe(false);
 });
 
+// Usefulness: verifies the upgrade path of #156 — when a write fails during an
+// upgrade, the previous record stays for the target that did not complete, so
+// uninstall restores the old installed bytes instead of stranding an entry
+// point with no guard.
+test("a failed upgrade keeps the previous record for the target it did not complete", async () => {
+  for (const failAt of ["settings", "entry-point"]) {
+    const home = await makeHome();
+    const settingsPath = join(home, ".claude", "settings.json");
+    await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+    const seed = await readText(settingsPath);
+    await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+    // A moved package makes the next install an upgrade: both the guard and the
+    // skill render new bytes.
+    const movedRoot = await mkdtemp(join(tmpdir(), "agent-loop-upgrade-package-"));
+    homes.push(movedRoot);
+    await cp(
+      join(PACKAGE_ROOT, "src", "install", "templates"),
+      join(movedRoot, "src", "install", "templates"),
+      { recursive: true },
+    );
+    await mkdir(join(movedRoot, "docs"), { recursive: true });
+    await cp(
+      join(PACKAGE_ROOT, "docs", "orchestrator-instructions.md"),
+      join(movedRoot, "docs", "orchestrator-instructions.md"),
+    );
+
+    const skillPath = join(home, ".claude", "skills", "agent-loop", "SKILL.md");
+    const failing = failAt === "settings" ? settingsPath : skillPath;
+    const write = async (path, ...rest) => {
+      if (path === failing) {
+        throw new Error(`simulated upgrade ${failAt} write failure`);
+      }
+      return writeTextAtomic(path, ...rest);
+    };
+
+    const error = await install({
+      harnesses: ["claude"],
+      home,
+      packageRoot: movedRoot,
+      write,
+    }).catch((err) => err);
+    expect(error, failAt).toBeInstanceOf(Error);
+
+    // The previous record survives for the failed target and for the target the
+    // loop never reached, whether or not the guard write completed.
+    const manifest = await readManifest(home);
+    expect(manifest.harnesses.claude.files, failAt).toHaveLength(1);
+    expect(manifest.harnesses.claude.settings, failAt).toHaveLength(1);
+
+    await uninstall({ home });
+    expect(existsSync(skillPath), failAt).toBe(false);
+    expect(await readText(settingsPath), failAt).toBe(seed);
+    expect(existsSync(manifestPath(home)), failAt).toBe(false);
+  }
+});
+
 // Usefulness: verifies acceptance — a partial uninstall removes the empty hook
 // containers install created instead of leaving `hooks.PreToolUse: []`.
 test("uninstall prunes the empty hook containers it created", async () => {

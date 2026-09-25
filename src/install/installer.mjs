@@ -4,10 +4,12 @@
 // per target; a second install is a no-op, an upgrade replaces only the
 // recorded entry, and uninstall restores the pre-install bytes when the file is
 // unchanged since install. Guards are applied before entry points, and a failed
-// write persists the manifest for the writes that completed, so uninstall can
-// recover a partial install (#156).
+// write persists the manifest for the writes that completed and keeps the
+// previous record for every target it did not complete, so uninstall can recover
+// a partial install or an interrupted upgrade (#156).
 import { access } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
+import { logWarn } from "../lib/log.mjs";
 import {
   backupPathFor,
   ensureDir,
@@ -230,6 +232,23 @@ function report(harness, plan) {
 }
 
 /**
+ * Adds the previous record for every target without a record yet. A failed
+ * install leaves the bytes those targets held before, so uninstall must keep
+ * owning them (#156).
+ */
+function keepPriorRecords(records, targets, priorRecords) {
+  for (const target of targets) {
+    if (records.some((record) => record.path === target.path)) {
+      continue;
+    }
+    const prior = priorRecords?.find((record) => record.path === target.path);
+    if (prior) {
+      records.push(prior);
+    }
+  }
+}
+
+/**
  * Installs one or more harnesses at user scope.
  * @returns {Promise<Array<{harness: string, kind: string, action: string, path: string, detail?: string, snippet?: string}>>}
  */
@@ -340,9 +359,19 @@ export async function install({
         const record = manifest.harnesses[active.harness];
         if (record) {
           record.dirs = [...active.dirs];
+          // A target this install did not complete, including one an upgrade
+          // never reached, keeps its previous record so uninstall still owns
+          // the bytes the failed install left in place.
+          keepPriorRecords(record.settings, active.settings, active.previous?.settings);
+          keepPriorRecords(record.files, active.files, active.previous?.files);
         }
       }
-      await writeManifest(home, manifest).catch(() => {});
+      await writeManifest(home, manifest).catch((saveError) => {
+        logWarn(
+          `install failed and the manifest could not be saved (${saveError.message}); ` +
+            "uninstall cannot undo the completed writes",
+        );
+      });
     }
     throw err;
   }
