@@ -75,6 +75,13 @@ async function targetPaths(harness, home, extra = {}) {
   return targets;
 }
 
+// The rendered gate command an installed skill carries: the CLI by absolute
+// path, so it runs without an `agent-loop` PATH lookup.
+function gateCommand(harness) {
+  const cli = join(PACKAGE_ROOT, "src", "cli.mjs").replaceAll("\\", "/");
+  return `node "${cli}" harness-check ${harness}`;
+}
+
 // Usefulness: verifies the round-trip acceptance — a five-harness install then
 // uninstall restores every pre-existing settings file byte-identical, deletes
 // every created file, prunes the directories it created, and leaves an
@@ -295,25 +302,46 @@ test("uninstall keeps an unrelated edit made after install", async () => {
 });
 
 // Usefulness: verifies the shared `~/.agents/skills` acceptance — the Codex
-// skill carries the ancestry check, so a Copilot session that inherits
-// CODEX_THREAD_ID cannot start a run through it.
+// skill runs the ancestry check through the resolved CLI invocation, so a
+// Copilot session that inherits CODEX_THREAD_ID cannot start a run through it,
+// and a Git Bash session that lacks the `agent-loop` shim reports a missing CLI
+// instead of a false harness refusal (#151).
 test("the Codex skill requires the harness-check ancestry gate", async () => {
   const home = await makeHome();
   const codex = await targetPaths("codex", home);
   const skill = codex.files.find((file) => file.path.endsWith("SKILL.md")).content;
-  expect(skill).toContain("agent-loop harness-check codex");
+  expect(skill).toContain(gateCommand("codex"));
+  expect(skill).not.toContain("agent-loop harness-check");
+  expect(skill).toContain("missing CLI");
   expect(skill).toContain("CODEX_THREAD_ID");
 });
 
 // Usefulness: verifies the shared `~/.claude/skills` acceptance — the Claude
-// skill carries the ancestry check, so an OpenCode session that discovers that
-// folder cannot start an unguarded run through the Claude copy.
+// skill runs the ancestry check through the resolved CLI invocation, so an
+// OpenCode session that discovers that folder cannot start an unguarded run,
+// and a Git Bash session that lacks the `agent-loop` shim reports a missing CLI
+// instead of a false harness refusal (#151).
 test("the Claude skill requires the harness-check ancestry gate", async () => {
   const home = await makeHome();
   const claude = await targetPaths("claude", home);
   const skill = claude.files.find((file) => file.path.endsWith("SKILL.md")).content;
-  expect(skill).toContain("agent-loop harness-check claude");
+  expect(skill).toContain(gateCommand("claude"));
+  expect(skill).not.toContain("agent-loop harness-check");
+  expect(skill).toContain("missing CLI");
   expect(skill).toContain("CLAUDE_SESSION_ID");
+});
+
+// Usefulness: verifies the same #151 acceptance for the Antigravity skill — the
+// gate renders the absolute CLI invocation and names a missing CLI without
+// claiming another harness owns the session.
+test("the Antigravity skill requires the harness-check ancestry gate", async () => {
+  const home = await makeHome();
+  const antigravity = await targetPaths("antigravity", home);
+  const skill = antigravity.files.find((file) => file.path.endsWith("SKILL.md")).content;
+  expect(skill).toContain(gateCommand("antigravity"));
+  expect(skill).not.toContain("agent-loop harness-check");
+  expect(skill).toContain("missing CLI");
+  expect(skill).toContain("ANTIGRAVITY_CONVERSATION_ID");
 });
 
 // Usefulness: verifies the process-ancestry mechanism — the nearest harness

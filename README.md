@@ -256,7 +256,11 @@ happens only through explicit invocation.
 `agent-loop install` writes these files from the templates under
 `src/install/templates/`, and each rendered entry point points at the installed
 `docs/orchestrator-instructions.md` by absolute path, so it works outside a
-clone. The Parent guard section below lists every guard target.
+clone. The ancestry gate in each skill names the installed CLI by absolute path
+too (for example `node "<package>/src/cli.mjs" harness-check claude`), so a
+Git Bash session that cannot resolve the `agent-loop` command still runs the
+gate instead of misreading the missing command as a harness refusal (#151). The
+Parent guard section below lists every guard target.
 
 - The `~/.agents/skills` directory is shared. Copilot CLI and OpenCode also
   discover personal skills there, so the installed Codex skill appears in both.
@@ -268,11 +272,14 @@ clone. The Parent guard section below lists every guard target.
   maintainer activates it with `/agent-loop`, and it omits `context: fork`, so
   the skill runs in the current session. OpenCode also discovers
   `~/.claude/skills`, so a foreign OpenCode session loads this same copy. Before
-  the init dispatch call the skill runs `agent-loop harness-check claude`, which
-  exits 0 only when the nearest harness process above the shell is Claude Code;
-  when it exits non-zero the skill stops without registering a run, which covers
-  the literal `${CLAUDE_SESSION_ID}` that OpenCode leaves unexpanded. Its body
-  passes `${CLAUDE_SESSION_ID}` as `--parent-session` on the init dispatch call.
+  the init dispatch call the skill runs the installed CLI by absolute path with
+  `harness-check claude`, which exits 0 only when the nearest harness process
+  above the shell is Claude Code; when it exits non-zero the skill stops without
+  registering a run, which covers the literal `${CLAUDE_SESSION_ID}` that OpenCode
+  leaves unexpanded. The absolute invocation sidesteps the `agent-loop` PATH
+  lookup, which fails in Git Bash, and the skill reports a command that cannot run
+  as a missing CLI instead of a harness refusal. Its body passes
+  `${CLAUDE_SESSION_ID}` as `--parent-session` on the init dispatch call.
 - The OpenCode entry point is a user plugin at
   `~/.config/opencode/plugins/parent-guard.ts`, loaded automatically from that
   directory. Stored command templates expose no session id, so the plugin
@@ -280,10 +287,10 @@ clone. The Parent guard section below lists every guard target.
   `CommandInvocation.sessionID` and carries that id into the orchestrator
   prompt, and the init dispatch call passes it as `--parent-session`.
 - The Codex CLI skill (`~/.agents/skills/agent-loop/SKILL.md`) activates only
-  through `$agent-loop`. Before the init call it runs
-  `agent-loop harness-check codex`, which exits 0 only when the nearest harness
-  process above the shell is Codex CLI. When ancestry is absent or names a
-  different harness, the skill stops: an environment check cannot decide it,
+  through `$agent-loop`. Before the init call it runs the installed CLI by
+  absolute path with `harness-check codex`, which exits 0 only when the nearest
+  harness process above the shell is Codex CLI. When ancestry is absent or names
+  a different harness, the skill stops: an environment check cannot decide it,
   because a nested harness inherits `CODEX_THREAD_ID`. The skill passes
   `CODEX_THREAD_ID` as `--parent-session`. Use `$env:CODEX_THREAD_ID` in
   PowerShell and `$CODEX_THREAD_ID` in POSIX shells. In PowerShell, pass
@@ -301,8 +308,8 @@ clone. The Parent guard section below lists every guard target.
   session-id placeholder, so the launcher is the native entry point.
 - The Antigravity CLI entry point is a skill at
   `~/.gemini/antigravity-cli/skills/agent-loop/SKILL.md`, activated as
-  `/agent-loop` in an interactive session. It runs
-  `agent-loop harness-check antigravity` before the init call, then passes
+  `/agent-loop` in an interactive session. It runs the installed CLI by absolute
+  path with `harness-check antigravity` before the init call, then passes
   `ANTIGRAVITY_CONVERSATION_ID` as `--parent-session`; use
   `$env:ANTIGRAVITY_CONVERSATION_ID` in PowerShell. This environment variable is
   an undocumented dependency and can change on upgrade, and child processes
@@ -371,10 +378,11 @@ Surveyed 2026-09-21 against current vendor docs, current binaries, and the insta
 
 Codex CLI now uses its `PreToolUse` hook with the session id in hook input. Its
 entry point relies on `CODEX_THREAD_ID` from the shell environment, which is not
-documented and can break on upgrade, and on `agent-loop harness-check codex` to
-confirm the running harness. The guard fails open when the variable is absent or
-unusable. Antigravity CLI now has a user-scope skill and a global `PreToolUse`
-group, both keyed on the undocumented `ANTIGRAVITY_CONVERSATION_ID`; the guard
+documented and can break on upgrade, and on the installed CLI's `harness-check
+codex` command to confirm the running harness. The guard fails open when the
+variable is absent or unusable. Antigravity CLI now has a user-scope skill and
+a global `PreToolUse` group, both keyed on the undocumented
+`ANTIGRAVITY_CONVERSATION_ID`; the guard
 fails open when the variable is absent or unusable.
 Copilot uses the documented session-keyed launcher and its user hook file
 described above. OpenCode has both: a command reads
@@ -397,10 +405,11 @@ by `tests/hook/parent-guard.test.mjs`. The `workspace-write` leg stays
 unverified on Windows: Codex's unelevated Windows sandbox blocks the child
 `git` spawn (`EPERM`) before run initialization
 ([openai/codex#37415](https://github.com/openai/codex/issues/37415)). The same
-sandbox blocks `agent-loop harness-check codex`, because the process ancestry
-read spawns `powershell.exe` and hits `spawn EPERM`; the skill then refuses to
-start. That refusal is safe, and it is a second blocker beside the init `git`
-spawn. Run that leg on macOS or Linux, or under the elevated Windows sandbox.
+sandbox blocks `harness-check codex` (run through the installed CLI), because
+the process ancestry read spawns `powershell.exe` and hits `spawn EPERM`; the
+skill then refuses to start. That refusal is safe, and it is a second blocker
+beside the init `git` spawn. Run that leg on macOS or Linux, or under the
+elevated Windows sandbox.
 The `ps` ancestry read under the macOS Codex sandbox is not tested.
 
 ## Reviewer safety
