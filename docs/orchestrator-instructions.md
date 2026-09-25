@@ -49,8 +49,9 @@ repository root.
 
 ## Starting a run
 
-The first dispatch carries the init flags, including `--parent-session` when
-the harness provides a session id:
+The first dispatch carries the init flags, including the required
+`--parent-session`. The subcommand refuses an init without it, so an interactive
+run is never left unguarded:
 
 ```bash
 printf '%s' "<first child prompt>" | agent-loop role dispatch \
@@ -149,8 +150,9 @@ printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...",
   Report the failure and the modified paths from the envelope, then stop.
 - Every run ends in exactly one terminal lifecycle: `finished`, `aborted`, or
   `halted`. The parent-edit guard (#57, Claude Code, Codex CLI, Copilot CLI,
-  OpenCode, and Antigravity CLI) releases on any of them; any run without
-  `--parent-session` keeps its parent unguarded.
+  OpenCode, and Antigravity CLI) releases on any of them. Every `agent-loop role`
+  init requires `--parent-session`, so the guard always has a parent to match.
+  The headless `agent-loop` command is the explicit unguarded path.
 
 ## Recovery after compaction or restart
 

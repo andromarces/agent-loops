@@ -58,8 +58,22 @@ function canonicalCwd(cwd) {
   return resolved.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase());
 }
 
+// A parent session id is one path segment under <root>/sessions and is matched
+// verbatim against the harness session id by the #57 guard. Real harness ids
+// are opaque tokens, but an unexpanded template (`${CLAUDE_SESSION_ID}`,
+// `%CODEX_THREAD_ID%`), a path separator, or whitespace can only come from a
+// caller that failed to expand its placeholder. Any of them would register a
+// run whose parent never matches, so refuse all of them before a state file
+// exists.
+const SESSION_ID_FORBIDDEN = /[\\/\0\s$`{}%]/;
+
 function assertSessionId(sessionId) {
-  if (!sessionId || /[\\/\0]/.test(sessionId) || sessionId === "." || sessionId === "..") {
+  if (
+    !sessionId ||
+    sessionId === "." ||
+    sessionId === ".." ||
+    SESSION_ID_FORBIDDEN.test(sessionId)
+  ) {
     throw new Error(`Invalid session id: ${JSON.stringify(sessionId ?? null)}`);
   }
 }

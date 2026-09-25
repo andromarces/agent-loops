@@ -147,6 +147,9 @@ Role flags:
 
   --role worker|reviewer        Role to dispatch. Required for dispatch.
   --cwd <directory>             Target work tree. Defaults to the current directory.
+  --parent-session <id>         Required on the init call. The harness session id the
+                                parent-edit guard matches. The headless form (no
+                                subcommand) is the explicit unguarded path.
   --task / --mode / --parent-session / --worker* / --reviewer* / --max-steps / --timeout
                                 First (init) call only. Later calls read these from the
                                 state file and reject any attempt to change them.

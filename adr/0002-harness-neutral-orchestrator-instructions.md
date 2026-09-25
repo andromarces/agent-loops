@@ -20,7 +20,7 @@ One harness-neutral instruction file (`docs/orchestrator-instructions.md`) defin
 
 1. Role activation happens only through explicit invocation (for example `/agent-loop`). It never goes into `AGENTS.md` or `CLAUDE.md`.
 2. A native entry point is added for a harness only after that harness documents a custom-prompt mechanism; otherwise the universal fallback applies: the first prompt references the instruction file and the parent follows it.
-3. An entry point passes the parent's own session id to the `agent-loop role` init call as `--parent-session`. Claude Code exposes it in the skill template (`${CLAUDE_SESSION_ID}`). OpenCode exposes no session id in a stored command template, so its entry point is a plugin command that reads `CommandInvocation.sessionID` and carries the id into the orchestrator prompt. A harness that exposes no session id at all omits the flag (see ADR 0001 consequences for the parent guard that consumes it).
+3. An entry point passes the parent's own session id to the `agent-loop role` init call as `--parent-session`. Claude Code exposes it in the skill template (`${CLAUDE_SESSION_ID}`). OpenCode exposes no session id in a stored command template, so its entry point is a plugin command that reads `CommandInvocation.sessionID` and carries the id into the orchestrator prompt. The flag is required: a harness that exposes no session id cannot start a `role` run, and the headless `agent-loop` command is the explicit unguarded path (amended by [ADR 0006](0006-require-parent-session-for-interactive-runs.md)).
 
 ## Consequences
 

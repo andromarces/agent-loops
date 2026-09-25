@@ -77,6 +77,54 @@ test("empty parent session is rejected before dispatch", async () => {
   );
 });
 
+// Usefulness: verifies acceptance (#149) — an init without --parent-session is
+// refused before any state file is written, so no interactive run starts
+// unguarded by default.
+test("init without --parent-session is rejected before any state is written", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  const result = await executeRoleCommand(
+    withRepo(dispatchArgv(["--task", "Task.", "--worker", "fake1", "--reviewer", "fake2"]), repo),
+    { ...basicDeps() },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("--parent-session");
+  expect(await readState(paths.stateFile)).toBeNull();
+});
+
+// Usefulness: verifies acceptance (#149) — a literal placeholder is refused
+// before any state file is written, so it never registers a parent index that
+// can never match.
+test("init with a literal placeholder parent session is rejected", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  const result = await executeRoleCommand(
+    withRepo(
+      dispatchArgv([
+        "--task",
+        "Task.",
+        "--parent-session",
+        "${CLAUDE_SESSION_ID}",
+        "--worker",
+        "fake1",
+        "--reviewer",
+        "fake2",
+      ]),
+      repo,
+    ),
+    { ...basicDeps() },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("Invalid session id");
+  expect(await readState(paths.stateFile)).toBeNull();
+});
+
 // Usefulness: verifies a name inherited from Object.prototype cannot pass as a
 // role flag (regression: a plain-object lookup treated `constructor` as a
 // defined flag instead of rejecting it).
@@ -334,6 +382,8 @@ test("review-only mode rejects a worker dispatch without spawning a CLI", async 
       [
         "--task",
         "Review only.",
+        "--parent-session",
+        "parent-sess-1",
         "--mode",
         "review-only",
         "--worker",
@@ -377,6 +427,8 @@ test("a rejected worker init leaves no run for the corrected init", async () => 
         [
           "--task",
           "Review only.",
+          "--parent-session",
+          "parent-sess-1",
           "--mode",
           "review-only",
           "--worker",
@@ -399,7 +451,16 @@ test("a rejected worker init leaves no run for the corrected init", async () => 
 
   const corrected = withRepo(
     dispatchArgv(
-      ["--task", "Review only.", "--mode", "review-only", "--reviewer", "fake2"],
+      [
+        "--task",
+        "Review only.",
+        "--parent-session",
+        "parent-sess-1",
+        "--mode",
+        "review-only",
+        "--reviewer",
+        "fake2",
+      ],
       "reviewer",
     ),
     repo,
@@ -468,7 +529,16 @@ test("review-only init succeeds without --worker and stores a null worker", asyn
 
   const init = withRepo(
     dispatchArgv(
-      ["--task", "Review only.", "--mode", "review-only", "--reviewer", "fake2"],
+      [
+        "--task",
+        "Review only.",
+        "--parent-session",
+        "parent-sess-1",
+        "--mode",
+        "review-only",
+        "--reviewer",
+        "fake2",
+      ],
       "reviewer",
     ),
     repo,
@@ -494,7 +564,16 @@ test("a later --worker against a null review-only worker is rejected", async () 
 
   const init = withRepo(
     dispatchArgv(
-      ["--task", "Review only.", "--mode", "review-only", "--reviewer", "fake2"],
+      [
+        "--task",
+        "Review only.",
+        "--parent-session",
+        "parent-sess-1",
+        "--mode",
+        "review-only",
+        "--reviewer",
+        "fake2",
+      ],
       "reviewer",
     ),
     repo,
@@ -528,6 +607,8 @@ test("review-only init rejects a worker model or effort without --worker", async
       [
         "--task",
         "Review only.",
+        "--parent-session",
+        "parent-sess-1",
         "--mode",
         "review-only",
         "--reviewer",
@@ -559,6 +640,8 @@ test("review-only init rejects an OpenCode effort without a model", async () => 
       [
         "--task",
         "Review only.",
+        "--parent-session",
+        "parent-sess-1",
         "--mode",
         "review-only",
         "--reviewer",
@@ -628,6 +711,8 @@ test("finish from active in review-only mode succeeds with the verdict recorded"
       [
         "--task",
         "Review only.",
+        "--parent-session",
+        "parent-sess-1",
         "--mode",
         "review-only",
         "--worker",
@@ -790,6 +875,8 @@ test("dispatch reads the prompt from --prompt-file", async () => {
     dispatchArgv([
       "--task",
       "Task.",
+      "--parent-session",
+      "parent-sess-1",
       "--worker",
       "fake1",
       "--reviewer",
@@ -832,7 +919,18 @@ test("init --timeout persists in state and reaches the adapter", async () => {
 
   await executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", "--reason", "probe"], repo));
   const disabled = withRepo(
-    dispatchArgv(["--task", "Task.", "--worker", "fake1", "--reviewer", "fake2", "--timeout", "0"]),
+    dispatchArgv([
+      "--task",
+      "Task.",
+      "--parent-session",
+      "parent-sess-1",
+      "--worker",
+      "fake1",
+      "--reviewer",
+      "fake2",
+      "--timeout",
+      "0",
+    ]),
     repo,
   );
   const resultZero = await executeRoleCommand(disabled, {
