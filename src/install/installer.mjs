@@ -28,6 +28,7 @@ import {
   removeEntry,
   replaceEntry,
   serializeSettings,
+  validateLocator,
 } from "./settings.mjs";
 
 async function planFileWrite(target, previous) {
@@ -93,6 +94,17 @@ async function planSettingsWrite(target, previous) {
     settings = current === null ? {} : parseSettings(current, target.path);
   } catch (err) {
     return { kind: "settings", action: "refuse", path: target.path, detail: err.message, snippet };
+  }
+
+  const shape = validateLocator(settings, target.locator);
+  if (!shape.ok) {
+    return {
+      kind: "settings",
+      action: "refuse",
+      path: target.path,
+      detail: `settings file has an unexpected shape: ${shape.reason}`,
+      snippet,
+    };
   }
 
   let createdFrom = previous?.createdFrom;

@@ -227,6 +227,30 @@ test("an unparseable settings file stops install with no write and reports the s
   expect(existsSync(manifestPath(home))).toBe(false);
 });
 
+// Usefulness: verifies that a wrong-typed settings container is refused like an
+// unparseable file, so no entry point installs without its guard and no write
+// happens. Covers `"hooks": []`, `"PreToolUse": {}`, and `"PreToolUse": "x"`.
+test("a wrong-typed settings container stops install with no write", async () => {
+  const seeds = [{ hooks: [] }, { hooks: { PreToolUse: {} } }, { hooks: { PreToolUse: "x" } }];
+  for (const seed of seeds) {
+    const home = await makeHome();
+    const settingsPath = join(home, ".claude", "settings.json");
+    await writeJson(settingsPath, seed);
+    const before = await readText(settingsPath);
+
+    const error = await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT }).catch(
+      (err) => err,
+    );
+    expect(error, JSON.stringify(seed)).toBeInstanceOf(Error);
+    expect(error.snippet, JSON.stringify(seed)).toContain("hooks.PreToolUse");
+    expect(await readText(settingsPath), JSON.stringify(seed)).toBe(before);
+    expect(
+      existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md")),
+      JSON.stringify(seed),
+    ).toBe(false);
+  }
+});
+
 // Usefulness: verifies acceptance — --dry-run reports planned writes and
 // changes nothing on disk.
 test("dry-run reports planned writes and changes nothing", async () => {

@@ -56,6 +56,44 @@ export function arrayAt(settings, locator, { create = false } = {}) {
   return node;
 }
 
+/**
+ * Checks the shape along an array locator path before a merge. A wrong-typed
+ * container (`"hooks": []`, `"PreToolUse": {}`) is invalid settings, so the
+ * caller refuses with the manual snippet instead of writing a dropped or
+ * crashing entry.
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function validateLocator(settings, locator) {
+  if (locator.kind === "key") {
+    return { ok: true };
+  }
+  let node = settings;
+  for (let index = 0; index < locator.path.length; index++) {
+    const key = locator.path[index];
+    if (node === null || typeof node !== "object" || Array.isArray(node)) {
+      const where = locator.path.slice(0, index).join(".") || "(root)";
+      return { ok: false, reason: `expected an object at ${where}` };
+    }
+    if (!Object.hasOwn(node, key)) {
+      return { ok: true };
+    }
+    const value = node[key];
+    const last = index === locator.path.length - 1;
+    if (last) {
+      if (!Array.isArray(value)) {
+        return { ok: false, reason: `expected an array at ${locator.path.join(".")}` };
+      }
+    } else if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return {
+        ok: false,
+        reason: `expected an object at ${locator.path.slice(0, index + 1).join(".")}`,
+      };
+    }
+    node = value;
+  }
+  return { ok: true };
+}
+
 export function findEntryIndex(settings, locator, entry) {
   if (locator.kind === "key") {
     return Object.hasOwn(settings, locator.key) && deepEqual(settings[locator.key], entry) ? 0 : -1;
