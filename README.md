@@ -91,12 +91,36 @@ entry point and guard for each selected harness. It is interactive; pass
 writes without changing anything. A second run with the same package makes no
 change. `agent-loop uninstall` removes only the files and settings entries the
 install recorded, and restores a file that install changed when the file is
-otherwise unchanged.
+otherwise unchanged. It leaves a target in place when it cannot remove or
+restore it safely; see [Uninstall skips](#uninstall-skips).
 
 ```bash
 agent-loop install --harness claude,codex --yes
 agent-loop uninstall
 ```
+
+### Uninstall skips
+
+`agent-loop uninstall` prints one line per target as
+`<harness>: <action> <path> (<detail>)`. A target that it cannot remove or
+restore safely reports `skip`, stays on disk, and loses its manifest record:
+uninstall deletes the harness record, and removes the manifest when no harness
+remains. A later `agent-loop uninstall` cannot retry that target, and a backup
+file can remain on disk with no record, so recover a skipped target by hand.
+
+`install` writes a backup at `<file>.agent-loops-backup` only when the target
+existed before install, and uninstall reads it to restore the pre-install bytes.
+When a settings file changed after install but still parses and holds the
+recorded entry, uninstall reports `remove-entry` instead: it removes only that
+entry and keeps your edits, so the result is not byte-identical.
+
+| Reported detail                                    | Target   | What stays on disk                                        | Manual recovery                                                                                                           |
+| -------------------------------------------------- | -------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `owned file changed since install; left unchanged` | file     | The entry point or guard, edited since install            | Delete the file when the edit is disposable, or restore `<file>.agent-loops-backup` when the file existed before install. |
+| `backup missing; left unchanged`                   | file     | The file, unchanged since install, with no backup on disk | Restore the original from version control or another copy, or delete the installed file.                                  |
+| `settings do not parse; left unchanged`            | settings | The settings file, in its current invalid form            | Repair the syntax, then run `agent-loop uninstall --harness <harness>` again.                                             |
+| `recorded entry not found; left unchanged`         | settings | The settings file, without the recorded entry             | No recorded entry remains to remove; edit the file by hand only when it holds another agent-loop entry.                   |
+| `backup missing; left unchanged`                   | settings | The settings file, still holding the recorded entry       | Remove the recorded entry by hand, or restore `<file>.agent-loops-backup` when another copy exists.                       |
 
 Run it without installing:
 
