@@ -134,8 +134,8 @@ Subcommands:
   agent-loop uninstall          Remove the installed entry points and guards. Restores
                                 files that install changed.
   agent-loop harness-check      Exit 0 only when the nearest harness process above the
-                                shell matches the named harness; used by the Codex and
-                                Antigravity skills.
+                                shell matches the named harness; used by the Claude,
+                                Codex, and Antigravity skills.
 
 Role operations:
 
