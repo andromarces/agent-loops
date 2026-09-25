@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
+import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
 
 export class MutationError extends Error {
@@ -32,10 +32,6 @@ export async function assertGitWorkTree(cwd) {
   if (result.exitCode !== 0 || result.stdout.trim() !== "true") {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
   }
-}
-
-function sha256(data) {
-  return createHash("sha256").update(data).digest("hex");
 }
 
 // Returns null only for an absent or non-regular file; read errors other than ENOENT propagate.

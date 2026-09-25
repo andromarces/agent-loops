@@ -1,5 +1,6 @@
 import { parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import { setMainLoopUsage } from "./shared.mjs";
 
 export async function runAgy(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
@@ -30,16 +31,7 @@ export async function runAgy(state, prompt, options = {}) {
   }
 
   state.sessionId = result.conversation_id;
-  setUsage(state, result);
+  setMainLoopUsage(state, result?.usage);
 
   return String(result.response ?? "").trim();
-}
-
-/** Sets top-level turn usage, or removes stale usage when Antigravity omits it. */
-function setUsage(state, result) {
-  if (result?.usage) {
-    state.usage = { mainLoop: result.usage };
-  } else {
-    delete state.usage;
-  }
 }
