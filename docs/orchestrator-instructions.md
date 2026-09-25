@@ -36,12 +36,15 @@ Then run `agent-loop install` once to write the harness entry points and guards
 at user scope.
 
 From a clone, run `npm link` in the clone, then `agent-loop install`. `npm link`
-puts the clone's `bin` on PATH and points the rendered entries at the clone.
-After the clone moves, run `npm link` again from the new location, then
-`agent-loop install` again. `pnpm link` is not a supported path: pnpm 12 `link`
-has no global mode. Without a link, replace `agent-loop` with
-`node "<repo>/src/cli.mjs"` and quote the repository path so a path with spaces
-works, or run `pnpm agent-loop` from the repository root.
+writes the bin shim to the global prefix bin directory and points the rendered
+entries at the clone. That directory must be on PATH for `agent-loop` to
+resolve: it is the `npm prefix -g` directory on Windows and
+`$(npm prefix -g)/bin` on macOS and Linux. After the clone moves, run
+`npm link --force` from the new location, then `agent-loop install` again.
+`pnpm link` is not a supported path: pnpm 12 `link` has no global mode. Without a
+link, replace `agent-loop` with `node "<repo>/src/cli.mjs"` and quote the
+repository path so a path with spaces works, or run `pnpm agent-loop` from the
+repository root.
 
 ## Starting a run
 

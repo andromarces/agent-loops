@@ -25,7 +25,7 @@ Implementation: #139 built the installer and removed the repository integrations
 1. The package ships the entry points and guards as templates. The templates are their only source.
 2. Install renders each template with absolute paths into the running package. The package location comes from `import.meta.url`, not from the current directory.
 3. The repository integration files are deleted once install works.
-4. Clone users install the same way. A development setup runs `npm link` in the clone before `agent-loop install`. After the clone moves, both steps run again.
+4. Clone users install the same way. A development setup runs `npm link` in the clone before `agent-loop install`, with the global prefix bin directory on `PATH`. After the clone moves, `npm link --force` and `agent-loop install` run again.
 5. The Copilot session-id launcher from ADR 0003 stays: `agent-loop-copilot` mints one UUID, starts `copilot --session-id <uuid> --interactive <prompt>`, and passes the same id as `--parent-session`. Its guard moves from `.github/hooks/parent-guard.json` to a user hook file in `~/.copilot/hooks/`.
 
 ## Consequences
@@ -35,7 +35,7 @@ These consequences hold after #139 ships.
 - An npm install gets the same entry points and guards as a clone.
 - A harness no longer needs repository trust to load a guard. Codex still requires `/hooks` trust for each changed user hook.
 - A clone without `agent-loop install` has no entry point and no guard.
-- A development install ties user-scope files to one clone location. Moving the clone needs `npm link` and install again.
+- A development install ties user-scope files to one clone location. Moving the clone needs `npm link --force` and install again.
 - The installer owns user settings entries and needs a manifest, byte-identical uninstall, and upgrade handling (#139).
 - The shared `~/.agents/skills` folder exposes the Codex skill to Copilot CLI. The Codex skill must identify the running harness by process ancestry, because nested harnesses inherit session variables.
 - Antigravity uses `~/.gemini/antigravity-cli/skills` and `~/.gemini/config/hooks.json`. Its hook `command` cannot contain a quoted or spaced path, so the guard runs through a shim in that folder.
