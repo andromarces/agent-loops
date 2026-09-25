@@ -57,4 +57,5 @@ Andro Marces
 - [ADR 0004: Distribute the CLI as a scoped public npm package](0004-scoped-npm-distribution.md)
 - [Issue #139: Interactive install and uninstall of harness entry points and parent guards](https://github.com/andromarces/agent-loops/issues/139)
 - [Issue #88: Parent-edit guard and session-id entry point for Antigravity CLI](https://github.com/andromarces/agent-loops/issues/88)
+- [PR #147: Use `npm link --force` for a moved clone and state the PATH requirement](https://github.com/andromarces/agent-loops/pull/147)
 - [ADR Index](README.md)

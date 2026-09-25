@@ -40,7 +40,8 @@ writes the bin shim to the global prefix bin directory and points the rendered
 entries at the clone. That directory must be on PATH for `agent-loop` to
 resolve: it is the `npm prefix -g` directory on Windows and
 `$(npm prefix -g)/bin` on macOS and Linux. After the clone moves, run
-`npm link --force` from the new location, then `agent-loop install` again.
+`npm link --force` from the new location, then `agent-loop install` again; a
+plain `npm link` fails with `EEXIST` on Windows when a shim already exists.
 `pnpm link` is not a supported path: pnpm 12 `link` has no global mode. Without a
 link, replace `agent-loop` with `node "<repo>/src/cli.mjs"` and quote the
 repository path so a path with spaces works, or run `pnpm agent-loop` from the

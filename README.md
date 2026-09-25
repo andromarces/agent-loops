@@ -138,9 +138,10 @@ directory must be on `PATH` for `agent-loop` to resolve. It is the
 `npm prefix -g` directory on Windows and `$(npm prefix -g)/bin` on macOS and
 Linux.
 
-Entries rendered from a clone point at that clone. After the clone moves, the
-existing global link makes a plain `npm link` fail with `EEXIST`; run
-`npm link --force` from the new location, then `agent-loop install` again.
+Entries rendered from a clone point at that clone. After the clone moves, run
+`npm link --force` from the new location, then `agent-loop install` again. A
+plain `npm link` fails with `EEXIST` on Windows when a shim already exists;
+`--force` overwrites the shim and succeeds on Windows and macOS.
 `pnpm link` is not a supported path: pnpm 12 `link` has no global mode. Without a
 link, call the CLI entry directly and quote the repository path so a path with
 spaces works:
