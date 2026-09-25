@@ -115,3 +115,21 @@ test("statePaths normalizes the drive letter", async () => {
   const upper = statePaths({ cwd: repo.replace(/^[A-Za-z]:/, (d) => d.toUpperCase()) });
   expect(lower.stateDir).toBe(upper.stateDir);
 });
+
+// Usefulness: verifies an unexpanded session placeholder cannot register a
+// session index under a parent that never matches (#149), and that a real id
+// shape still resolves.
+test("statePaths refuses an unexpanded session placeholder", () => {
+  for (const bad of [
+    "${CLAUDE_SESSION_ID}",
+    "$CLAUDE_SESSION_ID",
+    "%CODEX_THREAD_ID%",
+    "<parent-session-id>",
+    "`id`",
+    "ses id",
+    "../../etc",
+  ]) {
+    expect(() => statePaths({ parentSession: bad })).toThrow(/Invalid session id/);
+  }
+  expect(statePaths({ parentSession: "ses_abc123" }).sessionIndexFile).toBeTruthy();
+});

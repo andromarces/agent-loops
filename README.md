@@ -213,6 +213,11 @@ agent-loop role dispatch --role reviewer --cwd /path/to/work-tree --prompt-file 
 Operations: `dispatch` (default), `finish`, `abort`.
 
 - The run state lives at a fixed path derived from the resolved `--cwd` (`<os tmpdir>/agent-loops/runs/<sha256 of cwd, shortened>/state.json`, with `state.lock` beside it). There is no `--state` flag; `AGENT_LOOP_RUNS_ROOT` overrides the root for tests only.
+- The init call requires `--parent-session`: the CLI refuses an init without it,
+  and refuses an unexpanded placeholder such as `${CLAUDE_SESSION_ID}` or
+  `%CODEX_THREAD_ID%`, before any state is written. A run through `role` is
+  therefore always guarded; the headless `agent-loop` command is the explicit
+  unguarded path.
 - The init call writes a session index entry at `<root>/sessions/<parent-session>` pointing at the state file, so a parent guard hook (#57) can look the run up by session id even when `--cwd` is a different work tree. A later init call from the same session overwrites the entry.
 - Prompts come from stdin by default, or `--prompt-file`. `finish` reads the five-key summary as JSON on stdin; `abort` takes `--reason`.
 - The state file records `task`, `mode`, `cwd`, `parentSession`, `maxSteps`, `timeout`, `stepsUsed`, `lifecycle`, `roles.{worker,reviewer}.{kind,model,effort,sessionId}` (`roles.worker` is null in `review-only`), `lastDispatch`, and `lastResult`, plus `summary` or `reason` when terminal and `resumeDecision` when a maintainer resumed an interrupted run. Updates are atomic (temp file plus rename); exclusive access uses `state.lock` with a stale-lock check on the owner pid.
@@ -299,7 +304,8 @@ section below lists every guard target.
   skill passes `CODEX_THREAD_ID` as `--parent-session`. Use `$env:CODEX_THREAD_ID` in
   PowerShell and `$CODEX_THREAD_ID` in POSIX shells. In PowerShell, pass
   `--cwd $worktree` after setting `$worktree = (Get-Location).Path`. The CLI
-  rejects an empty `--parent-session` before it initializes a run. This
+  requires `--parent-session` and rejects an empty or unexpanded value before it
+  initializes a run. This
   environment variable is an undocumented dependency and can change on upgrade.
   When it is absent, do not start a guarded run. Run `/hooks` once to review and
   trust the installed user hook; a changed hook command needs a new trust step.
@@ -322,8 +328,10 @@ section below lists every guard target.
   inherit it. When it is absent, or when the harness check stops the run, do not
   start a run.
 - Universal fallback: reference `docs/orchestrator-instructions.md` in the first
-  prompt and follow it when the harness entry point is not installed. A run
-  without `--parent-session` stays unguarded.
+  prompt and follow it when the harness entry point is not installed. The
+  fallback must still pass the harness session id as `--parent-session`; the CLI
+  refuses an init without it. The headless `agent-loop` command is the explicit
+  unguarded path.
 - On Copilot CLI, the installed `~/.copilot/hooks/parent-guard.json` registers
   PascalCase `PreToolUse`, so the payload carries `session_id` and `tool_name`,
   and the hook prints the flat `permissionDecision` object that Copilot CLI
@@ -334,8 +342,8 @@ section below lists every guard target.
   guard, so Copilot gets its own user hook file; install never relies on Copilot
   reading the Claude user settings.
 - The parent-edit guard (#57) reads `--parent-session` from the state index
-  (see Parent guard below). For any run without `--parent-session`, the parent
-  stays unguarded.
+  (see Parent guard below). Every `role` init requires `--parent-session`; a
+  legacy state written without one keeps its parent unguarded.
 
 ## Parent guard: hard read-only for the parent session
 
