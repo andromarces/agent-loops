@@ -1,20 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { execa } from "execa";
 import { main, parseArgs } from "../src/cli.mjs";
-
-async function createTempRepo() {
-  const dir = await mkdtemp(join(tmpdir(), "cli-test-repo-"));
-  await execa("git", ["init"], { cwd: dir });
-  await execa("git", ["config", "user.name", "Tester"], { cwd: dir });
-  await execa("git", ["config", "user.email", "test@example.com"], { cwd: dir });
-  await writeFile(join(dir, "init.txt"), "hello\n");
-  await execa("git", ["add", "init.txt"], { cwd: dir });
-  await execa("git", ["commit", "-m", "init"], { cwd: dir });
-  return dir;
-}
+import { createTempRepo } from "./runtime-helpers.mjs";
 
 // Usefulness: verifies missing required --orchestrator flag throws error.
 test("missing --orchestrator fails", () => {
