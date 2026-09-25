@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import { resumeMismatchError, setMainLoopUsage } from "./shared.mjs";
 
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
@@ -29,13 +30,13 @@ export async function runCopilot(state, prompt, options = {}) {
     ({ stdout } = await exec("copilot", args, { cwd, input: prompt, timeout, signal, role }));
   } catch (error) {
     const failed = parseJsonLines(error?.stdout ?? "");
-    setUsage(state, findResultEvent(failed));
+    setMainLoopUsage(state, objectUsage(findResultEvent(failed)));
     throw error;
   }
 
   const events = parseJsonLines(stdout);
   const resultEvent = findResultEvent(events);
-  setUsage(state, resultEvent);
+  setMainLoopUsage(state, objectUsage(resultEvent));
 
   const returnedId = resultEvent?.sessionId ?? resultEvent?.session_id;
   if (!returnedId) {
@@ -43,13 +44,7 @@ export async function runCopilot(state, prompt, options = {}) {
   }
 
   if (requestedSessionId && requestedSessionId !== returnedId) {
-    throw new Error(
-      [
-        "Copilot did not resume the expected session.",
-        `Expected: ${requestedSessionId}`,
-        `Received: ${returnedId}`,
-      ].join("\n"),
-    );
+    throw resumeMismatchError("Copilot", "session", requestedSessionId, returnedId);
   }
 
   state.sessionId = returnedId;
@@ -76,11 +71,8 @@ function readAssistantMessage(event) {
   return typeof content === "string" ? content : "";
 }
 
-function setUsage(state, resultEvent) {
-  if (resultEvent && resultEvent.usage && typeof resultEvent.usage === "object") {
-    state.usage = { mainLoop: resultEvent.usage };
-    return;
-  }
-
-  delete state.usage;
+/** Copilot reports usage as an object; any other shape counts as absent. */
+function objectUsage(resultEvent) {
+  const usage = resultEvent?.usage;
+  return usage && typeof usage === "object" ? usage : undefined;
 }
