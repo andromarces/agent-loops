@@ -433,8 +433,8 @@ test("rendered targets carry absolute package paths and no placeholders", async 
   const copilotHome = join(tmpdir(), "agent-loop-copilot-home");
   const copilot = await targetPaths("copilot", renderHome, { copilotHome });
   expect(copilot.files[0].path.startsWith(copilotHome)).toBe(true);
-  expect(JSON.parse(copilot.files[0].content).hooks.PreToolUse[0].args[0]).toContain(
-    "parent-guard.mjs",
+  expect(JSON.parse(copilot.files[0].content).hooks.PreToolUse[0].args[0]).toBe(
+    join(PACKAGE_ROOT, "src", "hook", "copilot-parent-guard.mjs"),
   );
 });
 
