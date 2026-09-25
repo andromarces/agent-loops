@@ -37,7 +37,7 @@ These consequences hold after #139 ships.
 - A clone without `agent-loop install` has no entry point and no guard.
 - A development install ties user-scope files to one clone location. Moving the clone needs `npm link --force` and install again.
 - The installer owns user settings entries and needs a manifest, byte-identical uninstall, and upgrade handling (#139).
-- The shared `~/.agents/skills` folder exposes the Codex skill to Copilot CLI. The Codex skill must identify the running harness by process ancestry, because nested harnesses inherit session variables.
+- The shared `~/.agents/skills` folder exposes the Codex skill to Copilot CLI and OpenCode, and OpenCode also discovers `~/.claude/skills`. Each shared skill must identify the running harness by process ancestry: nested harnesses inherit session variables, and a foreign harness leaves `${CLAUDE_SESSION_ID}` unexpanded. Both the Codex and Claude skills refuse to start a run when the nearest harness process is not theirs.
 - Antigravity uses `~/.gemini/antigravity-cli/skills` and `~/.gemini/config/hooks.json`. Its hook `command` cannot contain a quoted or spaced path, so the guard runs through a shim in that folder.
 
 ## Alternatives

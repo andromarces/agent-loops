@@ -13,4 +13,11 @@ settings from the invocation are:
 
 $ARGUMENTS
 
+Before the init dispatch call, run `agent-loop harness-check claude`. It exits 0
+only when the nearest harness process above this shell is Claude Code. If it
+exits non-zero, stop and report that another harness owns the session; do not
+start a run. Do not use `${CLAUDE_SESSION_ID}` to make this decision, because a
+foreign harness leaves the literal in place and a nested harness inherits the
+value.
+
 On the init dispatch call, pass ${CLAUDE_SESSION_ID} as `--parent-session`.

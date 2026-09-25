@@ -305,6 +305,17 @@ test("the Codex skill requires the harness-check ancestry gate", async () => {
   expect(skill).toContain("CODEX_THREAD_ID");
 });
 
+// Usefulness: verifies the shared `~/.claude/skills` acceptance — the Claude
+// skill carries the ancestry check, so an OpenCode session that discovers that
+// folder cannot start an unguarded run through the Claude copy.
+test("the Claude skill requires the harness-check ancestry gate", async () => {
+  const home = await makeHome();
+  const claude = await targetPaths("claude", home);
+  const skill = claude.files.find((file) => file.path.endsWith("SKILL.md")).content;
+  expect(skill).toContain("agent-loop harness-check claude");
+  expect(skill).toContain("CLAUDE_SESSION_ID");
+});
+
 // Usefulness: verifies the process-ancestry mechanism — the nearest harness
 // above the shell decides the running harness, an unknown or missing ancestor
 // returns null, and a nested Copilot session under a Codex shell resolves to
