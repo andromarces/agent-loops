@@ -4,6 +4,7 @@
 // `--harness`.
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { readArgValue } from "../lib/args.mjs";
 import { logError, logInfo, logWarn, setVerbose } from "../lib/log.mjs";
 import { nearestHarness } from "../lib/process-ancestry.mjs";
 import { HARNESS_META, HARNESS_ORDER, isHarness } from "./harnesses.mjs";
@@ -11,14 +12,6 @@ import { detectHarnesses, install, uninstall } from "./installer.mjs";
 import { readManifest, resolveHome } from "./manifest.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
-
-function readValue(argv, flag, index) {
-  const value = argv[index];
-  if (!value || value.startsWith("-")) {
-    throw new Error(`Missing value for ${flag}.`);
-  }
-  return value;
-}
 
 function parseHarnessList(value) {
   const harnesses = [
@@ -42,7 +35,7 @@ function parseFlags(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--harness") {
-      options.harnesses = parseHarnessList(readValue(argv, arg, ++i));
+      options.harnesses = parseHarnessList(readArgValue(argv, arg, ++i));
     } else if (arg === "--yes" || arg === "-y") {
       options.yes = true;
     } else if (arg === "--dry-run") {
