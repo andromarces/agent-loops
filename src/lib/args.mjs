@@ -26,9 +26,14 @@ export function readNonNegativeInt(flag, value) {
   return val;
 }
 
+// Defaults shared by the headless CLI, the role subcommand, and the loop runtime.
+export const DEFAULT_MAX_STEPS = 20;
+export const DEFAULT_TIMEOUT = 3600;
+
 // Role flags: `--<role>[-model|-effort]` to option key. The headless CLI reads
-// all three roles, the role subcommand reads the worker and reviewer.
-export const ROLE_KINDS = ["orchestrator", "worker", "reviewer"];
+// all three roles, the role subcommand reads the child roles.
+export const CHILD_ROLE_KINDS = ["worker", "reviewer"];
+export const ROLE_KINDS = ["orchestrator", ...CHILD_ROLE_KINDS];
 
 export function roleFlags(roles) {
   return Object.fromEntries(
