@@ -1,4 +1,5 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
+import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
@@ -101,7 +102,7 @@ export async function runLoop(options) {
   const {
     task,
     cwd,
-    maxSteps = 20,
+    maxSteps = DEFAULT_MAX_STEPS,
     timeout,
     signal,
     roles,
