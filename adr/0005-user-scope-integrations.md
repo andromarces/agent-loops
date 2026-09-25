@@ -18,7 +18,9 @@ Probes on Windows (2026-09-25) confirmed a user-scope skill or plugin and a user
 
 ## Decision
 
-Harness entry points and parent guards are installed at user scope only, by `agent-loop install`, and removed by `agent-loop uninstall`. No agent-loop entry point or guard exists at workspace level.
+Harness entry points and parent guards are installed at user scope only, by `agent-loop install`, and removed by `agent-loop uninstall`. After #139, no agent-loop entry point or guard exists at workspace level.
+
+Implementation status: #139 builds the installer and removes the repository integrations. Until it ships, the repository files stay in use, and this ADR describes the target state.
 
 1. The package ships the entry points and guards as templates. The templates are their only source.
 2. Install renders each template with absolute paths into the running package. The package location comes from `import.meta.url`, not from the current directory.
@@ -27,6 +29,8 @@ Harness entry points and parent guards are installed at user scope only, by `age
 5. The Copilot session-id launcher from ADR 0003 stays: `agent-loop-copilot` mints one UUID, starts `copilot --session-id <uuid> --interactive <prompt>`, and passes the same id as `--parent-session`. Its guard moves from `.github/hooks/parent-guard.json` to a user hook file in `~/.copilot/hooks/`.
 
 ## Consequences
+
+These consequences hold after #139 ships.
 
 - An npm install gets the same entry points and guards as a clone.
 - A harness no longer needs repository trust to load a guard. Codex still requires `/hooks` trust for each changed user hook.
