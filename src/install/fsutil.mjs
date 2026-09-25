@@ -1,7 +1,6 @@
 // Filesystem and comparison helpers for the user-scope installer (#139).
 // Every write is atomic (temp file plus rename) and every hash is SHA-256 over
 // the UTF-8 bytes, so the manifest can prove equality with what it last wrote.
-import { createHash } from "node:crypto";
 import {
   access,
   chmod,
@@ -15,9 +14,7 @@ import {
 } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-export function sha256(text) {
-  return createHash("sha256").update(text, "utf8").digest("hex");
-}
+export { sha256 } from "../lib/hash.mjs";
 
 /** Reads a file as UTF-8; returns null when the path does not exist. */
 export async function readTextOrNull(path) {

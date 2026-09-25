@@ -1,6 +1,7 @@
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logInfo } from "../lib/log.mjs";
+import { resumeMismatchError } from "./shared.mjs";
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
@@ -59,13 +60,7 @@ export async function runOpenCode(state, prompt, options = {}) {
   }
 
   if (state.sessionId && state.sessionId !== sessionId) {
-    throw new Error(
-      [
-        `opencode did not resume the expected session.`,
-        `Expected: ${state.sessionId}`,
-        `Received: ${sessionId}`,
-      ].join("\n"),
-    );
+    throw resumeMismatchError("opencode", "session", state.sessionId, sessionId);
   }
 
   state.sessionId = sessionId;
