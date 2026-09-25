@@ -59,4 +59,5 @@ Andro Marces
 - [Issue #88: Parent-edit guard and session-id entry point for Antigravity CLI](https://github.com/andromarces/agent-loops/issues/88)
 - [PR #147: Use `npm link --force` for a moved clone and state the PATH requirement](https://github.com/andromarces/agent-loops/pull/147)
 - [PR #164: Render the Copilot parent guard from copilot-parent-guard.mjs](https://github.com/andromarces/agent-loops/pull/164)
+- [PR #167: Reject unsupported and malformed install manifests](https://github.com/andromarces/agent-loops/pull/167)
 - [ADR Index](README.md)

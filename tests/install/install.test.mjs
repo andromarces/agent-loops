@@ -797,13 +797,121 @@ test("a malformed manifest stops install and uninstall with no file change", asy
     },
     {
       label: "settings entry without a locator",
-      value: { version: 1, harnesses: { claude: { settings: [{ path: "x" }] } } },
-      message: /unexpected record for harness "claude"/,
+      value: {
+        version: 1,
+        harnesses: {
+          claude: {
+            settings: [
+              {
+                path: "x",
+                shaAfter: "h",
+                shaBefore: null,
+                existedBefore: false,
+                backupPath: null,
+                entry: {},
+                userEdited: false,
+                createdFrom: 0,
+              },
+            ],
+          },
+        },
+      },
+      message: /settings\[0\]\.locator/,
     },
     {
       label: "non-array dirs record",
       value: { version: 1, harnesses: { claude: { dirs: 5 } } },
       message: /unexpected record for harness "claude"/,
+    },
+    {
+      label: "file record with a non-string shaAfter",
+      value: {
+        version: 1,
+        harnesses: {
+          claude: {
+            files: [
+              { path: "x", shaAfter: 5, shaBefore: null, existedBefore: false, backupPath: null },
+            ],
+          },
+        },
+      },
+      message: /files\[0\]\.shaAfter/,
+    },
+    {
+      label: "file record with a non-boolean existedBefore",
+      value: {
+        version: 1,
+        harnesses: {
+          claude: {
+            files: [
+              { path: "x", shaAfter: "h", shaBefore: null, existedBefore: "no", backupPath: null },
+            ],
+          },
+        },
+      },
+      message: /files\[0\]\.existedBefore/,
+    },
+    {
+      label: "file record with a non-string backupPath",
+      value: {
+        version: 1,
+        harnesses: {
+          claude: {
+            files: [
+              { path: "x", shaAfter: "h", shaBefore: null, existedBefore: false, backupPath: {} },
+            ],
+          },
+        },
+      },
+      message: /files\[0\]\.backupPath/,
+    },
+    {
+      label: "settings record with a non-integer createdFrom",
+      value: {
+        version: 1,
+        harnesses: {
+          claude: {
+            settings: [
+              {
+                path: "x",
+                shaAfter: "h",
+                shaBefore: null,
+                existedBefore: false,
+                backupPath: null,
+                locator: { kind: "key", key: "k" },
+                entry: {},
+                userEdited: false,
+                createdFrom: 1.5,
+              },
+            ],
+          },
+        },
+      },
+      message: /settings\[0\]\.createdFrom/,
+    },
+    {
+      label: "settings record with an empty array locator path",
+      value: {
+        version: 1,
+        harnesses: {
+          claude: {
+            settings: [
+              {
+                path: "x",
+                shaAfter: "h",
+                shaBefore: null,
+                existedBefore: false,
+                backupPath: null,
+                locator: { kind: "array", path: [] },
+                entry: {},
+                userEdited: false,
+                createdFrom: 0,
+              },
+            ],
+          },
+        },
+      },
+      message: /settings\[0\]\.locator/,
     },
   ];
 
@@ -865,4 +973,52 @@ test("CLI uninstall reports a malformed manifest and exits 1", async () => {
     delete process.env.AGENT_LOOP_HOME;
     process.exitCode = 0;
   }
+});
+
+// Usefulness: verifies #157 Finding 1 — a record that passes a shallow check
+// must not let uninstall change an earlier file and then fail on a malformed
+// field. A valid delete record for `a.txt` precedes a record for `b.txt` whose
+// backupPath is not a string; readManifest must reject the whole manifest before
+// uninstall removes `a.txt`, so a malformed manifest leaves every file as it was.
+test("a malformed record field stops uninstall before it changes any file", async () => {
+  const home = await makeHome();
+  const a = join(home, "a.txt");
+  const b = join(home, "b.txt");
+  await writeFile(a, "a\n", "utf8");
+  await writeFile(b, "b\n", "utf8");
+  const record = (path, content, overrides = {}) => ({
+    kind: "file",
+    path,
+    existedBefore: false,
+    shaBefore: null,
+    shaAfter: sha256(content),
+    backupPath: null,
+    ...overrides,
+  });
+  await writeJson(manifestPath(home), {
+    version: 1,
+    harnesses: {
+      claude: {
+        files: [
+          record(a, "a\n"),
+          record(b, "b\n", {
+            existedBefore: true,
+            shaBefore: sha256("b\n"),
+            backupPath: {},
+          }),
+        ],
+      },
+    },
+  });
+  const manifestBefore = await readText(manifestPath(home));
+
+  const error = await uninstall({ home }).then(
+    () => null,
+    (err) => err,
+  );
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message).toMatch(/backupPath/);
+  expect(await readText(a)).toBe("a\n");
+  expect(await readText(b)).toBe("b\n");
+  expect(await readText(manifestPath(home))).toBe(manifestBefore);
 });

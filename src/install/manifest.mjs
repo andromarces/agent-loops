@@ -52,52 +52,102 @@ function isLocator(value) {
   return (
     value.kind === "array" &&
     Array.isArray(value.path) &&
+    value.path.length > 0 &&
     value.path.every((key) => typeof key === "string")
   );
 }
 
-function unexpectedHarnessRecord(harness, path) {
-  return new Error(`Install manifest has an unexpected record for harness "${harness}": ${path}`);
+/** True for a value a record holds as a hash or a backup path. */
+function isStringOrNull(value) {
+  return value === null || typeof value === "string";
+}
+
+/** The error for a record whose named field cannot be acted on. */
+function unexpectedHarnessRecord(harness, detail, path) {
+  return new Error(
+    `Install manifest has an unexpected record for harness "${harness}" (${detail}): ${path}`,
+  );
 }
 
 /**
- * Rejects a harness record that install or uninstall cannot act on. `files` and
- * `settings` may be absent, but when present every entry must be an object with
- * a string `path`; a settings entry must also carry a valid locator and an
- * entry. `dirs` may be absent, but when present it must be an array of strings.
+ * Rejects a `files` entry install or uninstall cannot act on. Uninstall reads
+ * `shaAfter`, `existedBefore`, and `backupPath` before any write, so a wrong
+ * type there would leave a partial uninstall.
+ */
+function assertFileRecord(harness, entry, where, path) {
+  if (!isJsonObject(entry)) {
+    throw unexpectedHarnessRecord(harness, where, path);
+  }
+  if (typeof entry.path !== "string") {
+    throw unexpectedHarnessRecord(harness, `${where}.path`, path);
+  }
+  if (typeof entry.shaAfter !== "string") {
+    throw unexpectedHarnessRecord(harness, `${where}.shaAfter`, path);
+  }
+  if (!isStringOrNull(entry.shaBefore)) {
+    throw unexpectedHarnessRecord(harness, `${where}.shaBefore`, path);
+  }
+  if (typeof entry.existedBefore !== "boolean") {
+    throw unexpectedHarnessRecord(harness, `${where}.existedBefore`, path);
+  }
+  if (!isStringOrNull(entry.backupPath)) {
+    throw unexpectedHarnessRecord(harness, `${where}.backupPath`, path);
+  }
+}
+
+/** Rejects a `settings` entry, which carries the file fields plus its merge metadata. */
+function assertSettingsRecord(harness, entry, where, path) {
+  assertFileRecord(harness, entry, where, path);
+  if (!isLocator(entry.locator)) {
+    throw unexpectedHarnessRecord(harness, `${where}.locator`, path);
+  }
+  if (!Object.hasOwn(entry, "entry")) {
+    throw unexpectedHarnessRecord(harness, `${where}.entry`, path);
+  }
+  if (typeof entry.userEdited !== "boolean") {
+    throw unexpectedHarnessRecord(harness, `${where}.userEdited`, path);
+  }
+  if (!Number.isInteger(entry.createdFrom)) {
+    throw unexpectedHarnessRecord(harness, `${where}.createdFrom`, path);
+  }
+}
+
+/**
+ * Rejects a harness record that install or uninstall cannot act on, naming the
+ * first bad field. `files` and `settings` may be absent, but when present every
+ * entry must carry the fields uninstall reads; `dirs` may be absent, but when
+ * present it must be an array of strings. Every field is checked before any
+ * caller writes, so a corrupt field cannot leave a partial install or uninstall.
  */
 function assertHarnessRecord(harness, record, path) {
-  const fail = () => unexpectedHarnessRecord(harness, path);
   if (!isJsonObject(record)) {
-    throw fail();
+    throw unexpectedHarnessRecord(harness, "record", path);
   }
   if (record.files !== undefined) {
-    const valid =
-      Array.isArray(record.files) &&
-      record.files.every((entry) => isJsonObject(entry) && typeof entry.path === "string");
-    if (!valid) {
-      throw fail();
+    if (!Array.isArray(record.files)) {
+      throw unexpectedHarnessRecord(harness, "files", path);
     }
+    record.files.forEach((entry, index) =>
+      assertFileRecord(harness, entry, `files[${index}]`, path),
+    );
   }
   if (record.settings !== undefined) {
-    const valid =
-      Array.isArray(record.settings) &&
-      record.settings.every(
-        (entry) =>
-          isJsonObject(entry) &&
-          typeof entry.path === "string" &&
-          isLocator(entry.locator) &&
-          Object.hasOwn(entry, "entry"),
-      );
-    if (!valid) {
-      throw fail();
+    if (!Array.isArray(record.settings)) {
+      throw unexpectedHarnessRecord(harness, "settings", path);
     }
+    record.settings.forEach((entry, index) =>
+      assertSettingsRecord(harness, entry, `settings[${index}]`, path),
+    );
   }
-  if (
-    record.dirs !== undefined &&
-    (!Array.isArray(record.dirs) || record.dirs.some((dir) => typeof dir !== "string"))
-  ) {
-    throw fail();
+  if (record.dirs !== undefined) {
+    if (!Array.isArray(record.dirs)) {
+      throw unexpectedHarnessRecord(harness, "dirs", path);
+    }
+    record.dirs.forEach((dir, index) => {
+      if (typeof dir !== "string") {
+        throw unexpectedHarnessRecord(harness, `dirs[${index}]`, path);
+      }
+    });
   }
 }
 
