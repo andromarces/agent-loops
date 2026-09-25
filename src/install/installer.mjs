@@ -3,7 +3,9 @@
 // templates against the installed package. The manifest records one baseline
 // per target; a second install is a no-op, an upgrade replaces only the
 // recorded entry, and uninstall restores the pre-install bytes when the file is
-// unchanged since install.
+// unchanged since install. Guards are applied before entry points, and a failed
+// write persists the manifest for the writes that completed, so uninstall can
+// recover a partial install (#156).
 import { access } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import {
@@ -195,16 +197,25 @@ async function planSettingsWrite(target, previous) {
   };
 }
 
-async function applyWrite(plan, { dryRun, dirs }) {
+async function applyWrite(plan, { dryRun, dirs, write }) {
   if (dryRun || !plan.content) {
     return;
   }
   await ensureDir(dirname(plan.path), dirs);
   const mode = (await fileMode(plan.path)) ?? undefined;
   if (plan.backup) {
-    await writeTextAtomic(plan.backup.path, plan.backup.content, { mode });
+    await write(plan.backup.path, plan.backup.content, { mode });
   }
-  await writeTextAtomic(plan.path, plan.content, { mode });
+  try {
+    await write(plan.path, plan.content, { mode });
+  } catch (err) {
+    // The target kept its original bytes, so the backup just written is
+    // unneeded. Remove it before the error propagates.
+    if (plan.backup) {
+      await removeFileQuiet(plan.backup.path);
+    }
+    throw err;
+  }
 }
 
 function report(harness, plan) {
@@ -228,6 +239,7 @@ export async function install({
   packageRoot,
   copilotHome = process.env.COPILOT_HOME,
   dryRun = false,
+  write = writeTextAtomic,
 } = {}) {
   const manifest = await readManifest(home);
   const plans = [];
@@ -290,26 +302,49 @@ export async function install({
   }
 
   const reports = [];
-  for (const entry of plans) {
-    const record = { files: [], settings: [], dirs: entry.previous?.dirs ?? [] };
-    for (const { plan } of entry.files) {
-      await applyWrite(plan, { dryRun, dirs: entry.dirs });
-      if (plan.record) {
-        record.files.push(plan.record);
+  let active = null;
+  try {
+    for (const entry of plans) {
+      active = entry;
+      const record = { files: [], settings: [], dirs: entry.previous?.dirs ?? [] };
+      // Record the harness before its first write. A failure mid-harness then
+      // still leaves a manifest record that uninstall can act on.
+      if (!dryRun) {
+        manifest.harnesses[entry.harness] = record;
       }
-      reports.push(report(entry.harness, plan));
-    }
-    for (const { plan } of entry.settings) {
-      await applyWrite(plan, { dryRun, dirs: entry.dirs });
-      if (plan.record) {
-        record.settings.push(plan.record);
+      // Guard settings first: an entry point never lands without its guard,
+      // even when a later write fails.
+      for (const { plan } of entry.settings) {
+        await applyWrite(plan, { dryRun, dirs: entry.dirs, write });
+        if (plan.record) {
+          record.settings.push(plan.record);
+        }
+        reports.push(report(entry.harness, plan));
       }
-      reports.push(report(entry.harness, plan));
+      for (const { plan } of entry.files) {
+        await applyWrite(plan, { dryRun, dirs: entry.dirs, write });
+        if (plan.record) {
+          record.files.push(plan.record);
+        }
+        reports.push(report(entry.harness, plan));
+      }
+      record.dirs = [...entry.dirs];
+      active = null;
     }
-    record.dirs = [...entry.dirs];
+  } catch (err) {
     if (!dryRun) {
-      manifest.harnesses[entry.harness] = record;
+      // Persist the completed writes before the error propagates, so uninstall
+      // restores every file this partial install touched, including the
+      // completed writes of earlier harnesses.
+      if (active) {
+        const record = manifest.harnesses[active.harness];
+        if (record) {
+          record.dirs = [...active.dirs];
+        }
+      }
+      await writeManifest(home, manifest).catch(() => {});
     }
+    throw err;
   }
 
   if (harnesses.includes("codex")) {
