@@ -133,8 +133,15 @@ npm link
 agent-loop install
 ```
 
+`npm link` writes its bin shim to the global prefix bin directory, so that
+directory must be on `PATH` for `agent-loop` to resolve. It is the
+`npm prefix -g` directory on Windows and `$(npm prefix -g)/bin` on macOS and
+Linux.
+
 Entries rendered from a clone point at that clone. After the clone moves, run
-`npm link` again from the new location, then `agent-loop install` again.
+`npm link --force` from the new location, then `agent-loop install` again. A
+plain `npm link` fails with `EEXIST` on Windows when a shim already exists;
+`--force` overwrites the shim.
 `pnpm link` is not a supported path: pnpm 12 `link` has no global mode. Without a
 link, call the CLI entry directly and quote the repository path so a path with
 spaces works:
