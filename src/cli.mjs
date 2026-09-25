@@ -4,6 +4,8 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
+  DEFAULT_MAX_STEPS,
+  DEFAULT_TIMEOUT,
   ROLE_KINDS as ROLES,
   assertOpenCodeOptions,
   readArgValue,
@@ -28,8 +30,8 @@ export function parseArgs(argv) {
   const options = {
     cwd: process.cwd(),
     task: null,
-    maxSteps: 20,
-    timeout: 3600,
+    maxSteps: DEFAULT_MAX_STEPS,
+    timeout: DEFAULT_TIMEOUT,
     transcript: null,
     verbose: false,
   };
