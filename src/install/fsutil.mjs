@@ -2,7 +2,17 @@
 // Every write is atomic (temp file plus rename) and every hash is SHA-256 over
 // the UTF-8 bytes, so the manifest can prove equality with what it last wrote.
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 export function sha256(text) {
@@ -30,10 +40,30 @@ export async function pathExists(path) {
   }
 }
 
-/** Writes through a temp file in the same directory, then renames. */
-export async function writeTextAtomic(path, text) {
+/** The permission bits of a file, or null when it does not exist. */
+export async function fileMode(path) {
+  try {
+    return (await stat(path)).mode & 0o777;
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Writes through a temp file in the same directory, then renames. Preserves the
+ * destination's permission bits unless `mode` is given, so a private settings
+ * file stays private after install, backup, and restore.
+ */
+export async function writeTextAtomic(path, text, { mode } = {}) {
   const temp = `${path}.${process.pid}.tmp`;
   await writeFile(temp, text, "utf8");
+  const targetMode = mode ?? (await fileMode(path));
+  if (targetMode !== null && process.platform !== "win32") {
+    await chmod(temp, targetMode);
+  }
   await rename(temp, path);
 }
 

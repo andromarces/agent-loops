@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -386,6 +386,142 @@ test("a moved package renders entry points at the new location", async () => {
     pathToFileURL(join(movedRoot, "src", "hook", "decision.mjs")).href,
   );
 });
+
+// Usefulness: verifies the data-loss acceptance — a reinstall that reports
+// noop must not advance the recorded post-install hash, so uninstall still sees
+// the user's edit and removes only the entry instead of restoring the backup.
+test("reinstall after a user edit keeps the edit on uninstall", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const edited = JSON.parse(await readText(settingsPath));
+  edited.theme = "dark";
+  await writeFile(settingsPath, `${JSON.stringify(edited, null, 2)}\n`, "utf8");
+
+  const reports = await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  expect(reports.find((entry) => entry.kind === "settings").action).toBe("noop");
+
+  await uninstall({ home });
+  const after = JSON.parse(await readText(settingsPath));
+  expect(after.theme).toBe("dark");
+});
+
+// Usefulness: verifies the upgrade acceptance over user edits — a package move
+// rewrites the settings file, and uninstall must keep the user's unrelated edit
+// rather than restore the pre-install backup.
+test("an upgrade over a user-edited settings file keeps the edit", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const manifest = await readManifest(home);
+  const record = manifest.harnesses.claude.settings[0];
+  const oldEntry = {
+    matcher: record.entry.matcher,
+    hooks: [{ type: "command", command: "node /old/location/parent-guard.mjs", timeout: 10 }],
+  };
+  const settings = JSON.parse(await readText(settingsPath));
+  const index = settings.hooks.PreToolUse.findIndex((entry) => deepEqual(entry, record.entry));
+  settings.hooks.PreToolUse[index] = oldEntry;
+  settings.theme = "dark";
+  await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  // The manifest still records the old entry and its old hash, as a package
+  // move leaves it. Do not touch `shaAfter`: that is the user-edit evidence.
+  record.entry = oldEntry;
+  await writeFile(manifestPath(home), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  await uninstall({ home });
+  const after = JSON.parse(await readText(settingsPath));
+  expect(after.theme).toBe("dark");
+  expect(after.hooks).toBeUndefined();
+});
+
+// Usefulness: verifies "no harness installs an entry point without its guard" —
+// a user entry with the same matcher is kept and the guard is appended, so
+// Claude Code (which allows several entries per matcher) gets its guard.
+test("install appends the guard beside a same-matcher user entry", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  const userEntry = {
+    matcher: "Edit|Write|MultiEdit|NotebookEdit",
+    hooks: [{ type: "command", command: "echo user" }],
+  };
+  await writeJson(settingsPath, { hooks: { PreToolUse: [userEntry] } });
+
+  const reports = await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  expect(reports.find((entry) => entry.kind === "settings").action).toBe("update");
+  const after = JSON.parse(await readText(settingsPath));
+  expect(after.hooks.PreToolUse).toHaveLength(2);
+  expect(deepEqual(after.hooks.PreToolUse[0], userEntry)).toBe(true);
+  expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(true);
+});
+
+// Usefulness: verifies "no harness installs an entry point without its guard" —
+// a conflicting named hook group (Antigravity owns one key, so it cannot append)
+// blocks the skill and shim instead of leaving them unguarded.
+test("a conflicting guard key blocks the entry point", async () => {
+  const home = await makeHome();
+  const hooksPath = join(home, ".gemini", "config", "hooks.json");
+  await writeJson(hooksPath, {
+    "agent-loop-parent-guard": { PreToolUse: [{ matcher: "user", hooks: [] }] },
+  });
+
+  const reports = await install({ harnesses: ["antigravity"], home, packageRoot: PACKAGE_ROOT });
+  expect(reports.find((entry) => entry.kind === "settings").action).toBe("skip");
+  expect(reports.find((entry) => entry.kind === "file").action).toBe("skip");
+  expect(
+    existsSync(join(home, ".gemini", "antigravity-cli", "skills", "agent-loop", "SKILL.md")),
+  ).toBe(false);
+  const after = JSON.parse(await readText(hooksPath));
+  expect(after["agent-loop-parent-guard"].PreToolUse[0].matcher).toBe("user");
+});
+
+// Usefulness: verifies acceptance — a partial uninstall removes the empty hook
+// containers install created instead of leaving `hooks.PreToolUse: []`.
+test("uninstall prunes the empty hook containers it created", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: {}, other: 1 });
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const edited = JSON.parse(await readText(settingsPath));
+  edited.theme = "dark";
+  await writeFile(settingsPath, `${JSON.stringify(edited, null, 2)}\n`, "utf8");
+
+  await uninstall({ home });
+  const after = JSON.parse(await readText(settingsPath));
+  expect(after.hooks).toBeUndefined();
+  expect(after.other).toBe(1);
+  expect(after.theme).toBe("dark");
+});
+
+// Usefulness: verifies that a private settings file stays private through
+// install, backup, and uninstall. POSIX only: Windows does not carry these bits.
+test.skipIf(process.platform === "win32")(
+  "install preserves settings file permissions",
+  async () => {
+    const home = await makeHome();
+    const settingsPath = join(home, ".claude", "settings.json");
+    await mkdir(dirname(settingsPath), { recursive: true });
+    await writeFile(
+      settingsPath,
+      `${JSON.stringify({ hooks: { PreToolUse: [] } }, null, 2)}\n`,
+      "utf8",
+    );
+    await chmod(settingsPath, 0o600);
+
+    await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+    expect((await stat(settingsPath)).mode & 0o777).toBe(0o600);
+    expect((await stat(`${settingsPath}.agent-loops-backup`)).mode & 0o777).toBe(0o600);
+
+    await uninstall({ home });
+    expect((await stat(settingsPath)).mode & 0o777).toBe(0o600);
+  },
+);
 
 // Usefulness: verifies the CLI wiring — `install --dry-run` returns success
 // without writing, and `harness-check` fails before any harness table is read

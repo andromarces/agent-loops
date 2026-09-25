@@ -384,8 +384,12 @@ returned `GUARD_DENY_REASON`, `role abort` set the lifecycle to `aborted`, and
 by `tests/hook/parent-guard.test.mjs`. The `workspace-write` leg stays
 unverified on Windows: Codex's unelevated Windows sandbox blocks the child
 `git` spawn (`EPERM`) before run initialization
-([openai/codex#37415](https://github.com/openai/codex/issues/37415)). Run that
-leg on macOS or Linux, or under the elevated Windows sandbox.
+([openai/codex#37415](https://github.com/openai/codex/issues/37415)). The same
+sandbox blocks `agent-loop harness-check codex`, because the process ancestry
+read spawns `powershell.exe` and hits `spawn EPERM`; the skill then refuses to
+start. That refusal is safe, and it is a second blocker beside the init `git`
+spawn. Run that leg on macOS or Linux, or under the elevated Windows sandbox.
+The `ps` ancestry read under the macOS Codex sandbox is not tested.
 
 ## Reviewer safety
 

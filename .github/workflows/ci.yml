@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -42,3 +42,17 @@ jobs:
       - run: pnpm fmt:check
       - run: pnpm lint
       - run: pnpm test
+      # Exercise install and uninstall against the PR checkout on every runner,
+      # so macOS gets installer evidence before merge, not only after a release.
+      - name: Install then uninstall harness integrations into a temp home
+        shell: bash
+        run: |
+          export AGENT_LOOP_HOME="$(mktemp -d)"
+          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
+          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
+          node ./src/cli.mjs uninstall --yes
+          if [ -n "$(ls -A "$AGENT_LOOP_HOME")" ]; then
+            echo "::error::install/uninstall left files behind"
+            ls -A "$AGENT_LOOP_HOME"
+            exit 1
+          fi

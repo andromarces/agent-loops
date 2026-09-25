@@ -64,22 +64,12 @@ export function findEntryIndex(settings, locator, entry) {
   return array ? array.findIndex((candidate) => deepEqual(candidate, entry)) : -1;
 }
 
-export function sameMatcherIndex(settings, locator, entry) {
-  if (locator.kind === "key") {
-    return -1;
-  }
-  const array = existingArray(settings, locator);
-  if (!array) {
-    return -1;
-  }
-  const matcherKey = locator.matcherKey ?? "matcher";
-  return array.findIndex((candidate) => candidate?.[matcherKey] === entry[matcherKey]);
-}
-
 /**
  * Inserts the entry. Returns `{ status: "inserted" | "conflict" | "duplicate" }`.
- * A same-matcher element that is not the recorded entry is never replaced or
- * duplicated; the caller reports the manual snippet instead.
+ * An array locator appends a new entry even when another entry shares its
+ * matcher, because harnesses such as Claude Code allow several entries per
+ * matcher and a same-matcher user entry is never replaced. A key locator owns
+ * exactly one key, so a key occupied by different content is a conflict.
  */
 export function insertEntry(settings, locator, entry) {
   if (locator.kind === "key") {
@@ -94,9 +84,6 @@ export function insertEntry(settings, locator, entry) {
   const array = arrayAt(settings, locator, { create: true });
   if (findEntryIndex(settings, locator, entry) !== -1) {
     return { status: "duplicate" };
-  }
-  if (sameMatcherIndex(settings, locator, entry) !== -1) {
-    return { status: "conflict" };
   }
   array.push(entry);
   return { status: "inserted" };
@@ -136,6 +123,38 @@ export function removeEntry(settings, locator, entry) {
   }
   array.splice(index, 1);
   return true;
+}
+
+/**
+ * Deletes empty containers along an array locator path, deepest key first, after
+ * the entry is removed. Install creates the path when it is absent; leaving
+ * `"hooks": { "PreToolUse": [] }` behind after a partial uninstall is noise the
+ * user did not ask for. A container that holds anything is kept.
+ */
+export function pruneEmptyLocator(settings, locator) {
+  if (locator.kind === "key") {
+    return;
+  }
+  const chain = [];
+  let node = settings;
+  for (const key of locator.path) {
+    if (node === null || typeof node !== "object" || !Object.hasOwn(node, key)) {
+      return;
+    }
+    chain.push({ parent: node, key });
+    node = node[key];
+  }
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const { parent, key } = chain[i];
+    const value = parent[key];
+    const empty = Array.isArray(value)
+      ? value.length === 0
+      : value !== null && typeof value === "object" && Object.keys(value).length === 0;
+    if (!empty) {
+      return;
+    }
+    delete parent[key];
+  }
 }
 
 /** The fragment a maintainer can paste by hand when the installer refuses to merge. */

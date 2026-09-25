@@ -9,6 +9,7 @@ import { delimiter, dirname, join } from "node:path";
 import {
   backupPathFor,
   ensureDir,
+  fileMode,
   pruneEmptyDirs,
   readTextOrNull,
   removeFileQuiet,
@@ -22,6 +23,7 @@ import {
   insertEntry,
   manualSnippet,
   parseSettings,
+  pruneEmptyLocator,
   removeEntry,
   replaceEntry,
   serializeSettings,
@@ -113,7 +115,7 @@ async function planSettingsWrite(target, previous) {
         path: target.path,
         detail:
           result.status === "conflict"
-            ? "a different entry already uses this matcher or key"
+            ? "the named hook group already exists with different content"
             : "an identical entry already exists without a manifest record",
         snippet,
       };
@@ -122,12 +124,31 @@ async function planSettingsWrite(target, previous) {
 
   const text = serializeSettings(settings, current);
   const desiredSha = sha256(text);
+
+  if (currentSha === desiredSha) {
+    // No write: the current bytes already carry the desired entry. Keep the
+    // previous record, because its post-install hash may not match a file the
+    // user edited since install; advancing the hash would make uninstall treat
+    // those edits as installer-owned and restore the backup over them.
+    return {
+      kind: "settings",
+      action: "noop",
+      path: target.path,
+      record: previous ?? undefined,
+    };
+  }
+
   const existedBefore = previous ? previous.existedBefore : current !== null;
   const backupPath = previous?.backupPath ?? null;
   const backup =
     existedBefore && !backupPath && current !== null
       ? { path: backupPathFor(target.path), content: current }
       : null;
+  // A write that starts from bytes other than the recorded post-install hash
+  // includes user edits. Mark the record so uninstall removes only the entry
+  // instead of restoring the backup over them.
+  const userEdited =
+    Boolean(previous && previous.shaAfter !== currentSha) || Boolean(previous?.userEdited);
   const record = {
     kind: "settings",
     path: target.path,
@@ -137,11 +158,9 @@ async function planSettingsWrite(target, previous) {
     shaBefore: previous ? previous.shaBefore : currentSha,
     shaAfter: desiredSha,
     backupPath: backup ? backup.path : backupPath,
+    userEdited,
   };
 
-  if (currentSha === desiredSha) {
-    return { kind: "settings", action: "noop", path: target.path, record };
-  }
   return {
     kind: "settings",
     action: existedBefore ? "update" : "create",
@@ -157,10 +176,11 @@ async function applyWrite(plan, { dryRun, dirs }) {
     return;
   }
   await ensureDir(dirname(plan.path), dirs);
+  const mode = (await fileMode(plan.path)) ?? undefined;
   if (plan.backup) {
-    await writeTextAtomic(plan.backup.path, plan.backup.content);
+    await writeTextAtomic(plan.backup.path, plan.backup.content, { mode });
   }
-  await writeTextAtomic(plan.path, plan.content);
+  await writeTextAtomic(plan.path, plan.content, { mode });
 }
 
 function report(harness, plan) {
@@ -212,6 +232,28 @@ export async function install({
         refusal = plan;
       }
       entry.settings.push({ path: target.path, plan });
+    }
+
+    // No harness installs an entry point without its guard. When a settings
+    // target cannot be merged (a conflicting key, or a recorded entry the user
+    // removed), leave every entry-point file for that harness unchanged.
+    const guardBlocked = entry.settings.some(
+      ({ plan }) => plan.action === "skip" || plan.action === "refuse",
+    );
+    if (guardBlocked) {
+      entry.files = entry.files.map(({ path }) => {
+        const prior = previous?.files?.find((record) => record.path === path) ?? null;
+        return {
+          path,
+          plan: {
+            kind: "file",
+            action: "skip",
+            path,
+            detail: "guard settings were not installed; entry point left unchanged",
+            record: prior ?? undefined,
+          },
+        };
+      });
     }
     plans.push(entry);
   }
@@ -282,9 +324,10 @@ async function planSettingsRestore(record, dryRun) {
   }
   const currentSha = sha256(current);
 
-  if (currentSha === record.shaAfter) {
+  if (currentSha === record.shaAfter && !record.userEdited) {
     if (record.existedBefore) {
-      const backup = await readTextOrNull(record.backupPath ?? backupPathFor(record.path));
+      const backupFile = record.backupPath ?? backupPathFor(record.path);
+      const backup = await readTextOrNull(backupFile);
       if (backup === null) {
         return {
           harness: record.harness,
@@ -295,8 +338,10 @@ async function planSettingsRestore(record, dryRun) {
         };
       }
       if (!dryRun) {
-        await writeTextAtomic(record.path, backup);
-        await removeFileQuiet(record.backupPath ?? backupPathFor(record.path));
+        await writeTextAtomic(record.path, backup, {
+          mode: (await fileMode(backupFile)) ?? undefined,
+        });
+        await removeFileQuiet(backupFile);
       }
       return { harness: record.harness, kind: "settings", action: "restore", path: record.path };
     }
@@ -327,6 +372,15 @@ async function planSettingsRestore(record, dryRun) {
       detail: "recorded entry not found; left unchanged",
     };
   }
+  pruneEmptyLocator(settings, record.locator);
+  if (!record.existedBefore && Object.keys(settings).length === 0) {
+    // Install created this file and the user edited nothing else, so removing
+    // the entry empties it. Delete it instead of leaving `{}`.
+    if (!dryRun) {
+      await removeFileQuiet(record.path);
+    }
+    return { harness: record.harness, kind: "settings", action: "delete", path: record.path };
+  }
   if (!dryRun) {
     await writeTextAtomic(record.path, serializeSettings(settings, current));
   }
@@ -355,7 +409,8 @@ async function planFileRestore(record, dryRun) {
     };
   }
   if (record.existedBefore) {
-    const backup = await readTextOrNull(record.backupPath ?? backupPathFor(record.path));
+    const backupFile = record.backupPath ?? backupPathFor(record.path);
+    const backup = await readTextOrNull(backupFile);
     if (backup === null) {
       return {
         harness: record.harness,
@@ -366,8 +421,10 @@ async function planFileRestore(record, dryRun) {
       };
     }
     if (!dryRun) {
-      await writeTextAtomic(record.path, backup);
-      await removeFileQuiet(record.backupPath ?? backupPathFor(record.path));
+      await writeTextAtomic(record.path, backup, {
+        mode: (await fileMode(backupFile)) ?? undefined,
+      });
+      await removeFileQuiet(backupFile);
     }
     return { harness: record.harness, kind: "file", action: "restore", path: record.path };
   }
