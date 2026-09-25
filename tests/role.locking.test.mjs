@@ -102,9 +102,9 @@ test("concurrent dispatches: exactly one child runs, the loser exits non-zero", 
 
   expect([a.exitCode, b.exitCode].sort()).toEqual([0, 1]);
   const loser = a.exitCode === 1 ? a : b;
-  // Both refusal messages are valid fail-closed outcomes of losing the create
-  // race; the exact text is a lock implementation detail (#172).
-  expect(loser.payload.error).toMatch(/locked by a live process|not readable yet/);
+  // Lock creation is atomic (#176), so the loser always observes the owner's
+  // content and reports the live-pid refusal.
+  expect(loser.payload.error).toMatch(/locked by a live process/);
   expect(slowWorker.recorded.length).toBe(1);
   expect((await readRepoState(repo)).stepsUsed).toBe(2);
 });

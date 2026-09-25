@@ -3,15 +3,16 @@
 // resolved work tree cwd, never passed as a flag; tests override the runs
 // root with AGENT_LOOP_RUNS_ROOT.
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { logWarn } from "./log.mjs";
 
 export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
 
-// An unparseable lock younger than this is assumed to be a contender still
-// between create and content write; only an older one is stale.
+// An unparseable lock younger than this is never treated as stale. Lock
+// creation is atomic (see acquireLock), so a fresh unreadable lock is a
+// contender racing a removal or a foreign empty file, not a half-written owner.
 export const STALE_LOCK_GRACE_MS = 60_000;
 
 /**
@@ -102,8 +103,9 @@ export async function readStateForSession(parentSession) {
 
 /**
  * Exclusive access around one state-file operation. Creates `state.lock` with
- * O_EXCL, treats an existing lock with a live owner pid as busy and a dead one
- * as stale (removed with a warning, then retried). Returns the result of `fn`.
+ * an atomic hard link, treats an existing lock with a live owner pid as busy
+ * and a dead one as stale (removed with a warning, then retried). Returns the
+ * result of `fn`.
  */
 export async function withStateLock(lockFile, fn) {
   await mkdir(dirname(lockFile), { recursive: true });
@@ -115,22 +117,28 @@ export async function withStateLock(lockFile, fn) {
   }
 }
 
+// Monotonic suffix for lock temp files; keeps same-process contenders that
+// share a pid on distinct paths so one's cleanup never removes another's.
+let lockTempCounter = 0;
+
 async function acquireLock(lockFile, retry = true) {
+  // The owner content is written to a pid-named temp file first, then hard
+  // linked to the lock path. The link is atomic: EEXIST means a contender
+  // lost, and the owner content is present the instant the lock exists, so a
+  // contender never observes a half-created lock (fixes #176 path 1). The
+  // counter suffix keeps same-process contenders on distinct temp files.
+  const tempFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
+  await writeFile(
+    tempFile,
+    JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+    "utf8",
+  );
   try {
-    const handle = await open(lockFile, "wx");
-    try {
-      await handle.writeFile(
-        JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
-        "utf8",
-      );
-    } finally {
-      await handle.close();
-    }
-    // The O_EXCL create above is the lock; the content write closes the
-    // reader-visible window. Contenders finding an unparseable lock fail
-    // closed below and never remove it while it is fresh.
+    await link(tempFile, lockFile);
+    await rm(tempFile, { force: true });
     return;
   } catch (err) {
+    await rm(tempFile, { force: true });
     if (err.code !== "EEXIST") {
       throw err;
     }
@@ -144,8 +152,9 @@ async function acquireLock(lockFile, retry = true) {
   }
 
   if (!owner && (await lockAgeMs(lockFile)) < STALE_LOCK_GRACE_MS) {
-    // Unparseable and fresh: the creator may still be between create and
-    // content write, so it is never treated as stale here.
+    // Unparseable and fresh: fail closed. Creation itself is atomic, so this
+    // is a removal race (lockAgeMs reads 0 on ENOENT) or a foreign empty
+    // file, never a half-written owner.
     throw new Error("State is locked (the lock file is not readable yet; retry shortly).");
   }
 
