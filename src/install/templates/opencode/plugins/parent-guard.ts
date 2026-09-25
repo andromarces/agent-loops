@@ -21,5 +21,5 @@ import { decideParentGuard } from "__AGENT_LOOP_GUARD_URL__";
 
 export default createParentGuardPlugin({
   decideParentGuard,
-  instructionsPath: "__AGENT_LOOP_INSTRUCTIONS__",
+  instructionsPath: "{{AGENT_LOOP_INSTRUCTIONS}}",
 });

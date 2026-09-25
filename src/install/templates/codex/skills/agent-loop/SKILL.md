@@ -9,7 +9,7 @@ metadata:
   opencode/autoinvoke: false
 ---
 
-Read `__AGENT_LOOP_INSTRUCTIONS__` and follow it for this request. Run every
+Read `{{AGENT_LOOP_INSTRUCTIONS}}` and follow it for this request. Run every
 `agent-loop` command in the instructions as `__AGENT_LOOP_CLI__` instead, so the
 run does not depend on the `agent-loop` command resolving on PATH.
 

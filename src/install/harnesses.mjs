@@ -70,7 +70,6 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
   const renderSkill = (text) =>
     text
       .replaceAll("{{AGENT_LOOP_INSTRUCTIONS}}", forwardSlashes(instructions))
-      .replaceAll("__AGENT_LOOP_INSTRUCTIONS__", forwardSlashes(instructions))
       .replaceAll("__AGENT_LOOP_CLI__", cli);
 
   if (harness === "claude") {
@@ -79,14 +78,15 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       path: join(home, ".claude", "skills", "agent-loop", "SKILL.md"),
       content: renderSkill(skill),
     });
+    const entry = claudeEntry(guardPath);
     settings.push({
       path: join(home, ".claude", "settings.json"),
       locator: {
         kind: "array",
         path: ["hooks", "PreToolUse"],
-        matcher: "Edit|Write|MultiEdit|NotebookEdit",
+        matcher: entry.matcher,
       },
-      entry: claudeEntry(guardPath),
+      entry,
     });
   } else if (harness === "codex") {
     const skill = await template(templateDir, "codex", "skills", "agent-loop", "SKILL.md");
@@ -105,16 +105,21 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
         "openai.yaml",
       ),
     });
+    const entry = codexEntry(guardPath);
     settings.push({
       path: join(home, ".codex", "hooks.json"),
-      locator: { kind: "array", path: ["hooks", "PreToolUse"], matcher: "^apply_patch$" },
-      entry: codexEntry(guardPath),
+      locator: {
+        kind: "array",
+        path: ["hooks", "PreToolUse"],
+        matcher: entry.matcher,
+      },
+      entry,
     });
   } else if (harness === "opencode") {
     const plugin = await template(templateDir, "opencode", "plugins", "parent-guard.ts");
     files.push({
       path: join(home, ".config", "opencode", "plugins", "parent-guard.ts"),
-      content: plugin
+      content: renderSkill(plugin)
         .replaceAll(
           "__AGENT_LOOP_PLUGIN_URL__",
           pathToFileURL(join(packageRoot, "src/hook/opencode-plugin.mjs")).href,
@@ -122,8 +127,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
         .replaceAll(
           "__AGENT_LOOP_GUARD_URL__",
           pathToFileURL(join(packageRoot, "src/hook/decision.mjs")).href,
-        )
-        .replaceAll("__AGENT_LOOP_INSTRUCTIONS__", forwardSlashes(instructions)),
+        ),
     });
   } else if (harness === "copilot") {
     const hook = JSON.parse(await template(templateDir, "copilot", "hooks", "parent-guard.json"));

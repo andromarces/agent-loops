@@ -129,37 +129,29 @@ export function insertEntry(settings, locator, entry) {
 
 /** Replaces `current` with `next` in place. Returns true when `current` was found. */
 export function replaceEntry(settings, locator, current, next) {
-  if (locator.kind === "key") {
-    if (!Object.hasOwn(settings, locator.key) || !deepEqual(settings[locator.key], current)) {
-      return false;
-    }
-    settings[locator.key] = next;
-    return true;
-  }
-  const array = existingArray(settings, locator);
-  const index = array ? array.findIndex((candidate) => deepEqual(candidate, current)) : -1;
+  const index = findEntryIndex(settings, locator, current);
   if (index === -1) {
     return false;
   }
-  array[index] = next;
+  if (locator.kind === "key") {
+    settings[locator.key] = next;
+  } else {
+    existingArray(settings, locator)[index] = next;
+  }
   return true;
 }
 
 /** Removes the recorded entry by deep equality. Returns true when it was found. */
 export function removeEntry(settings, locator, entry) {
-  if (locator.kind === "key") {
-    if (!Object.hasOwn(settings, locator.key) || !deepEqual(settings[locator.key], entry)) {
-      return false;
-    }
-    delete settings[locator.key];
-    return true;
-  }
-  const array = existingArray(settings, locator);
-  const index = array ? array.findIndex((candidate) => deepEqual(candidate, entry)) : -1;
+  const index = findEntryIndex(settings, locator, entry);
   if (index === -1) {
     return false;
   }
-  array.splice(index, 1);
+  if (locator.kind === "key") {
+    delete settings[locator.key];
+  } else {
+    existingArray(settings, locator).splice(index, 1);
+  }
   return true;
 }
 
