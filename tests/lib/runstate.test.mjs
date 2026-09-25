@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -22,6 +22,9 @@ afterEach(async () => {
 
 // Usefulness: verifies the lock is exclusive under concurrent contenders:
 // exactly one call runs its critical section and the others reject.
+// Atomic creation (#176) removes the half-written-lock window, but the
+// removal race remains: a contender that loses the link race can still read
+// after the winner releases, so both fail-closed refusals stay valid here.
 test("withStateLock admits exactly one concurrent contender", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
@@ -49,6 +52,7 @@ test("withStateLock admits exactly one concurrent contender", async () => {
   for (const message of contenders.filter((value) => value !== "ran")) {
     expect(message).toMatch(/locked by a live process|not readable yet/);
   }
+  expect(await readdir(dir)).toEqual([]);
 });
 
 // Usefulness: verifies a lock held by a live pid rejects the contender and is
