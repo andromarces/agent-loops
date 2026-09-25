@@ -208,18 +208,20 @@ test("a user-edited owned file survives install and uninstall", async () => {
 });
 
 // Usefulness: verifies acceptance — an unparseable settings file stops the
-// command with no write at all: no created file appears and no manifest is
-// written, so a later install starts from a clean state.
-test("an unparseable settings file stops install with no write", async () => {
+// command with no write at all, and the error carries the manual snippet the
+// CLI prints, so a maintainer can add the entry by hand.
+test("an unparseable settings file stops install with no write and reports the snippet", async () => {
   const home = await makeHome();
   const settingsPath = join(home, ".claude", "settings.json");
   await mkdir(dirname(settingsPath), { recursive: true });
   await writeFile(settingsPath, "{ not json\n", "utf8");
   const before = await readText(settingsPath);
 
-  await expect(
-    install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT }),
-  ).rejects.toThrow();
+  const error = await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT }).catch(
+    (err) => err,
+  );
+  expect(error).toBeInstanceOf(Error);
+  expect(error.snippet).toContain("hooks.PreToolUse");
   expect(await readText(settingsPath)).toBe(before);
   expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(false);
   expect(existsSync(manifestPath(home))).toBe(false);
@@ -437,7 +439,9 @@ test("an upgrade over a user-edited settings file keeps the edit", async () => {
   await uninstall({ home });
   const after = JSON.parse(await readText(settingsPath));
   expect(after.theme).toBe("dark");
-  expect(after.hooks).toBeUndefined();
+  // The seed had an empty `hooks.PreToolUse`; install did not create it, so
+  // uninstall removes only the guard entry and keeps the user's container.
+  expect(after.hooks?.PreToolUse ?? []).toHaveLength(0);
 });
 
 // Usefulness: verifies "no harness installs an entry point without its guard" —
@@ -485,7 +489,7 @@ test("a conflicting guard key blocks the entry point", async () => {
 test("uninstall prunes the empty hook containers it created", async () => {
   const home = await makeHome();
   const settingsPath = join(home, ".claude", "settings.json");
-  await writeJson(settingsPath, { hooks: {}, other: 1 });
+  await writeJson(settingsPath, { other: 1 });
   await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
 
   const edited = JSON.parse(await readText(settingsPath));
@@ -497,6 +501,49 @@ test("uninstall prunes the empty hook containers it created", async () => {
   expect(after.hooks).toBeUndefined();
   expect(after.other).toBe(1);
   expect(after.theme).toBe("dark");
+});
+
+// Usefulness: verifies the finding that pruning must not remove a container the
+// user already had. The seed owns an empty `hooks`; install creates only
+// `PreToolUse` inside it, so uninstall removes `PreToolUse` and keeps `hooks`.
+test("uninstall keeps an empty container the user already had", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: {} });
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const edited = JSON.parse(await readText(settingsPath));
+  edited.theme = "dark";
+  await writeFile(settingsPath, `${JSON.stringify(edited, null, 2)}\n`, "utf8");
+
+  await uninstall({ home });
+  const after = JSON.parse(await readText(settingsPath));
+  expect(deepEqual(after.hooks, {})).toBe(true);
+  expect(after.theme).toBe("dark");
+});
+
+// Usefulness: verifies the regression fix — an identical guard entry that the
+// user added by hand has no manifest record. The guard is present, so install
+// writes the entry point and leaves the entry unowned; uninstall removes the
+// entry point and leaves the hand-added guard.
+test("a hand-added identical guard entry does not block the entry point", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  const guardEntry = (await targetPaths("claude", home)).settings[0].entry;
+  await writeJson(settingsPath, { hooks: { PreToolUse: [guardEntry] } });
+
+  const reports = await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  const settingsReport = reports.find((entry) => entry.kind === "settings");
+  expect(settingsReport.action).toBe("noop");
+  expect(settingsReport.detail).toMatch(/unowned/);
+  const skillPath = join(home, ".claude", "skills", "agent-loop", "SKILL.md");
+  expect(existsSync(skillPath)).toBe(true);
+
+  await uninstall({ home });
+  expect(existsSync(skillPath)).toBe(false);
+  const after = JSON.parse(await readText(settingsPath));
+  expect(after.hooks.PreToolUse).toHaveLength(1);
+  expect(deepEqual(after.hooks.PreToolUse[0], guardEntry)).toBe(true);
 });
 
 // Usefulness: verifies that a private settings file stays private through
@@ -550,6 +597,35 @@ test("CLI dispatches install, uninstall, and harness-check", async () => {
     process.exitCode = 0;
     await cliMain(["harness-check"]);
     expect(process.exitCode).toBe(1);
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    delete process.env.AGENT_LOOP_HOME;
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: verifies the acceptance text "Print the manual snippet instead" —
+// the CLI prints the snippet on stdout when a settings file does not parse, so
+// the maintainer can add the guard by hand.
+test("CLI prints the manual snippet when a settings file does not parse", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const settingsPath = join(home, ".claude", "settings.json");
+  await mkdir(dirname(settingsPath), { recursive: true });
+  await writeFile(settingsPath, "{ bad\n", "utf8");
+
+  const logs = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (message) => logs.push(String(message));
+  console.error = () => {};
+  try {
+    process.exitCode = 0;
+    await cliMain(["install", "--harness", "claude", "--yes"]);
+    expect(process.exitCode).toBe(1);
+    expect(logs.join("\n")).toContain("hooks.PreToolUse");
+    expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(false);
   } finally {
     console.log = originalLog;
     console.error = originalError;

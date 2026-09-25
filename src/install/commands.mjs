@@ -164,6 +164,9 @@ export async function runInstallCommand(argv) {
     });
   } catch (err) {
     logError(err.path ? `${err.path}: ${err.message}` : err.message);
+    if (err.snippet) {
+      console.log(err.snippet);
+    }
     process.exitCode = 1;
     return;
   }

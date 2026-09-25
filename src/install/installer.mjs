@@ -22,6 +22,7 @@ import {
   findEntryIndex,
   insertEntry,
   manualSnippet,
+  missingLocatorIndex,
   parseSettings,
   pruneEmptyLocator,
   removeEntry,
@@ -94,6 +95,7 @@ async function planSettingsWrite(target, previous) {
     return { kind: "settings", action: "refuse", path: target.path, detail: err.message, snippet };
   }
 
+  let createdFrom = previous?.createdFrom;
   if (previous) {
     if (findEntryIndex(settings, previous.locator, previous.entry) === -1) {
       return {
@@ -107,17 +109,26 @@ async function planSettingsWrite(target, previous) {
     }
     replaceEntry(settings, target.locator, previous.entry, target.entry);
   } else {
+    createdFrom = missingLocatorIndex(settings, target.locator);
     const result = insertEntry(settings, target.locator, target.entry);
-    if (result.status !== "inserted") {
+    if (result.status === "conflict") {
       return {
         kind: "settings",
         action: "skip",
         path: target.path,
-        detail:
-          result.status === "conflict"
-            ? "the named hook group already exists with different content"
-            : "an identical entry already exists without a manifest record",
+        detail: "the named hook group already exists with different content",
         snippet,
+      };
+    }
+    if (result.status === "duplicate") {
+      // The exact guard entry is already present but unowned. The guard is
+      // installed, so do not block the entry point; leave the entry unrecorded
+      // and uninstall never removes it.
+      return {
+        kind: "settings",
+        action: "noop",
+        path: target.path,
+        detail: "an identical guard entry is already present; left unowned",
       };
     }
   }
@@ -159,6 +170,7 @@ async function planSettingsWrite(target, previous) {
     shaAfter: desiredSha,
     backupPath: backup ? backup.path : backupPath,
     userEdited,
+    createdFrom: createdFrom ?? 0,
   };
 
   return {
@@ -261,6 +273,7 @@ export async function install({
   if (refusal && !dryRun) {
     const error = new Error(refusal.detail);
     error.path = refusal.path;
+    error.snippet = refusal.snippet;
     throw error;
   }
 
@@ -372,7 +385,7 @@ async function planSettingsRestore(record, dryRun) {
       detail: "recorded entry not found; left unchanged",
     };
   }
-  pruneEmptyLocator(settings, record.locator);
+  pruneEmptyLocator(settings, record.locator, record.createdFrom ?? 0);
   if (!record.existedBefore && Object.keys(settings).length === 0) {
     // Install created this file and the user edited nothing else, so removing
     // the entry empties it. Delete it instead of leaving `{}`.

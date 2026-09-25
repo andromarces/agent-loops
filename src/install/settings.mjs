@@ -127,11 +127,11 @@ export function removeEntry(settings, locator, entry) {
 
 /**
  * Deletes empty containers along an array locator path, deepest key first, after
- * the entry is removed. Install creates the path when it is absent; leaving
- * `"hooks": { "PreToolUse": [] }` behind after a partial uninstall is noise the
- * user did not ask for. A container that holds anything is kept.
+ * the entry is removed. `createdFrom` is the index of the first path key that
+ * install created; a container the user already had is kept even when it is
+ * empty. A container that holds anything is kept.
  */
-export function pruneEmptyLocator(settings, locator) {
+export function pruneEmptyLocator(settings, locator, createdFrom = 0) {
   if (locator.kind === "key") {
     return;
   }
@@ -144,7 +144,7 @@ export function pruneEmptyLocator(settings, locator) {
     chain.push({ parent: node, key });
     node = node[key];
   }
-  for (let i = chain.length - 1; i >= 0; i--) {
+  for (let i = chain.length - 1; i >= createdFrom; i--) {
     const { parent, key } = chain[i];
     const value = parent[key];
     const empty = Array.isArray(value)
@@ -155,6 +155,26 @@ export function pruneEmptyLocator(settings, locator) {
     }
     delete parent[key];
   }
+}
+
+/**
+ * The index of the first key along an array locator path that is absent, or the
+ * path length when every key exists. Install records it so uninstall prunes only
+ * the containers install created.
+ */
+export function missingLocatorIndex(settings, locator) {
+  if (locator.kind === "key") {
+    return Object.hasOwn(settings, locator.key) ? 1 : 0;
+  }
+  let node = settings;
+  for (let index = 0; index < locator.path.length; index++) {
+    const key = locator.path[index];
+    if (node === null || typeof node !== "object" || !Object.hasOwn(node, key)) {
+      return index;
+    }
+    node = node[key];
+  }
+  return locator.path.length;
 }
 
 /** The fragment a maintainer can paste by hand when the installer refuses to merge. */

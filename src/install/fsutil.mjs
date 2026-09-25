@@ -55,12 +55,13 @@ export async function fileMode(path) {
 /**
  * Writes through a temp file in the same directory, then renames. Preserves the
  * destination's permission bits unless `mode` is given, so a private settings
- * file stays private after install, backup, and restore.
+ * file stays private after install, backup, and restore. The temp file is
+ * created with that mode, so it is never briefly world-readable.
  */
 export async function writeTextAtomic(path, text, { mode } = {}) {
   const temp = `${path}.${process.pid}.tmp`;
-  await writeFile(temp, text, "utf8");
   const targetMode = mode ?? (await fileMode(path));
+  await writeFile(temp, text, { encoding: "utf8", mode: targetMode ?? 0o666 });
   if (targetMode !== null && process.platform !== "win32") {
     await chmod(temp, targetMode);
   }
