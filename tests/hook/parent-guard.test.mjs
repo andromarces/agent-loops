@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vitest";
 import { readStateForSession, statePaths } from "../../src/lib/runstate.mjs";
 import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mjs";
+import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
+import { buildTargets } from "../../src/install/harnesses.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
-import parentGuardPlugin, { EDIT_ACTIONS } from "../../.opencode/plugins/parent-guard.ts";
 import { createTempRepo } from "../runtime-helpers.mjs";
 
 const noopAdapter = {
@@ -44,7 +45,11 @@ async function loadPlugin() {
   const hooks = {};
   const commands = [];
   const prompts = [];
-  await parentGuardPlugin.setup({
+  const plugin = createParentGuardPlugin({
+    decideParentGuard,
+    instructionsPath: "docs/orchestrator-instructions.md",
+  });
+  await plugin.setup({
     command: {
       transform: async (register) => {
         register({ add: (command) => commands.push(command) });
@@ -282,13 +287,12 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
   expect(nullSession.stdout).toBe("");
 });
 
-// Usefulness: covers the exact `command` string registered in
-// `.claude/settings.json`, which the direct-script tests never exercise.
-// Copilot's Claude-compatible loader sets CLAUDE_PROJECT_DIR to the repository
-// root and runs this string, so it must import the guard there: deny the
-// registered parent, and stay silent for every other session, because Copilot
-// fail-closes a command hook on a non-zero exit.
-test("registered Claude settings command runs the guard through a shell", async () => {
+// Usefulness: covers the exact `command` string the installer renders into the
+// user settings target, which the direct-script tests never exercise. A shell
+// must run that string and import the guard: deny the registered parent, and
+// stay silent for every other session, because the harness fail-closes a
+// command hook on a non-zero exit.
+test("installed Claude hook command runs the guard through a shell", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
@@ -297,15 +301,13 @@ test("registered Claude settings command runs the guard through a shell", async 
     { agents: INIT_AGENTS, stdin: async () => "work" },
   );
 
-  const settings = JSON.parse(
-    await readFile(new URL("../../.claude/settings.json", import.meta.url), "utf8"),
-  );
-  const command = settings.hooks.PreToolUse[0].hooks[0].command;
-  const env = { CLAUDE_PROJECT_DIR: fileURLToPath(new URL("../../", import.meta.url)) };
+  const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const targets = await buildTargets("claude", { home: packageRoot, packageRoot });
+  const command = targets.settings[0].entry.hooks[0].command;
 
   const denied = await runShellHookCommand(
     command,
-    env,
+    {},
     JSON.stringify({ session_id: "parent-sess-1", tool_name: "Write" }),
   );
   expect(denied.code).toBe(0);
@@ -317,7 +319,7 @@ test("registered Claude settings command runs the guard through a shell", async 
 
   const allowed = await runShellHookCommand(
     command,
-    env,
+    {},
     JSON.stringify({ session_id: "other", tool_name: "Write" }),
   );
   expect(allowed.code).toBe(0);
@@ -487,7 +489,7 @@ test("Antigravity templates pass the conversation id and wire the shim", async (
     "utf8",
   );
   expect(skill).toContain("/agent-loop");
-  expect(skill).toContain("docs/orchestrator-instructions.md");
+  expect(skill).toContain("__AGENT_LOOP_INSTRUCTIONS__");
   expect(skill).toContain("ANTIGRAVITY_CONVERSATION_ID");
   expect(skill).toContain("--parent-session");
 

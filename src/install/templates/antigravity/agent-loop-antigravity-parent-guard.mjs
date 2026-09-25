@@ -1,6 +1,5 @@
-// Agent-loop Antigravity parent-guard shim (#88). Install copies this file
-// beside `hooks.json` in the global `~/.gemini/config/` folder as
-// `agent-loop-antigravity-parent-guard.mjs`, and the named
+// Agent-loop Antigravity parent-guard hook shim (#88). Install copies this file
+// beside `hooks.json` in the global `~/.gemini/config/` folder, and the named
 // `agent-loop-parent-guard` `PreToolUse` group runs it by relative path.
 // Antigravity runs the hook command without a shell and resolves it against
 // that folder, so a quoted or spaced absolute script path fails. The shim

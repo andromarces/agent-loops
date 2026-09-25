@@ -20,7 +20,7 @@ Probes on Windows (2026-09-25) confirmed a user-scope skill or plugin and a user
 
 Harness entry points and parent guards are installed at user scope only, by `agent-loop install`, and removed by `agent-loop uninstall`. After #139, no agent-loop entry point or guard exists at workspace level.
 
-Implementation status: #139 builds the installer and removes the repository integrations. Until it ships, the repository files stay in use, and this ADR describes the target state.
+Implementation: #139 built the installer and removed the repository integrations. The repository files are gone; install is the only integration path.
 
 1. The package ships the entry points and guards as templates. The templates are their only source.
 2. Install renders each template with absolute paths into the running package. The package location comes from `import.meta.url`, not from the current directory.

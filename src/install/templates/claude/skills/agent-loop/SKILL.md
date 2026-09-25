@@ -5,11 +5,10 @@ disable-model-invocation: true
 argument-hint: <task and role settings>
 ---
 
-@${CLAUDE_PROJECT_DIR}/docs/orchestrator-instructions.md
+@{{AGENT_LOOP_INSTRUCTIONS}}
 
 Follow the attached instructions for this invocation. If the file is not
-attached, read `docs/orchestrator-instructions.md` from the repository root
-before acting. The task and role
+attached, read `__AGENT_LOOP_INSTRUCTIONS__` before acting. The task and role
 settings from the invocation are:
 
 $ARGUMENTS
