@@ -91,7 +91,9 @@ entry point and guard for each selected harness. It is interactive; pass
 writes without changing anything. A second run with the same package makes no
 change. `agent-loop uninstall` removes only the files and settings entries the
 install recorded, and restores a file that install changed when the file is
-otherwise unchanged.
+otherwise unchanged. Install applies a harness guard before its entry point, and
+if a write fails part way through it records the writes that completed, so
+`uninstall` still removes or restores them.
 
 ```bash
 agent-loop install --harness claude,codex --yes
