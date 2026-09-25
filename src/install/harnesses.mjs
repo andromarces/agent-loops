@@ -59,16 +59,25 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
   const templateDir = join(packageRoot, "src/install/templates");
   const instructions = join(packageRoot, "docs/orchestrator-instructions.md");
   const guardPath = join(packageRoot, "src/hook/parent-guard.mjs");
+  // The absolute invocation works from Git Bash and PowerShell alike, where the
+  // bare `agent-loop` command is absent or resolves only to a Windows `.cmd`
+  // shim. Bash does not resolve that shim, so a PATH lookup would report a
+  // missing command and the skill would misread it as a harness refusal (#151).
+  const cli = `node "${forwardSlashes(join(packageRoot, "src/cli.mjs"))}"`;
   const files = [];
   const settings = [];
+
+  const renderSkill = (text) =>
+    text
+      .replaceAll("{{AGENT_LOOP_INSTRUCTIONS}}", forwardSlashes(instructions))
+      .replaceAll("__AGENT_LOOP_INSTRUCTIONS__", forwardSlashes(instructions))
+      .replaceAll("__AGENT_LOOP_CLI__", cli);
 
   if (harness === "claude") {
     const skill = await template(templateDir, "claude", "skills", "agent-loop", "SKILL.md");
     files.push({
       path: join(home, ".claude", "skills", "agent-loop", "SKILL.md"),
-      content: skill
-        .replaceAll("{{AGENT_LOOP_INSTRUCTIONS}}", forwardSlashes(instructions))
-        .replaceAll("__AGENT_LOOP_INSTRUCTIONS__", forwardSlashes(instructions)),
+      content: renderSkill(skill),
     });
     settings.push({
       path: join(home, ".claude", "settings.json"),
@@ -83,7 +92,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     const skill = await template(templateDir, "codex", "skills", "agent-loop", "SKILL.md");
     files.push({
       path: join(home, ".agents", "skills", "agent-loop", "SKILL.md"),
-      content: skill.replaceAll("__AGENT_LOOP_INSTRUCTIONS__", forwardSlashes(instructions)),
+      content: renderSkill(skill),
     });
     files.push({
       path: join(home, ".agents", "skills", "agent-loop", "agents", "openai.yaml"),
@@ -127,7 +136,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     const skill = await template(templateDir, "antigravity", "skills", "agent-loop", "SKILL.md");
     files.push({
       path: join(home, ".gemini", "antigravity-cli", "skills", "agent-loop", "SKILL.md"),
-      content: skill.replaceAll("__AGENT_LOOP_INSTRUCTIONS__", forwardSlashes(instructions)),
+      content: renderSkill(skill),
     });
     const shim = await template(
       templateDir,

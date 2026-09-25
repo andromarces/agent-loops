@@ -176,6 +176,14 @@ function validateInitFlags(args, agents = {}) {
   if (args.task === null || String(args.task).trim() === "") {
     throw new RoleError('Init requires --task, for example --task "Implement the change."');
   }
+  // The parent guard is the hard backstop for the prompt-only parent rule, so an
+  // interactive run is never left unguarded by default. The headless `agent-loop`
+  // command (no subcommand) is the explicit unguarded path.
+  if (args.parentSession === null) {
+    throw new RoleError(
+      "Init requires --parent-session (the harness session id the parent-edit guard matches).",
+    );
+  }
   // review-only never dispatches the worker, so --worker is optional there.
   const requiredRoles =
     (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : ["worker", "reviewer"];

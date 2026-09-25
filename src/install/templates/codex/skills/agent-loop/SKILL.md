@@ -9,12 +9,16 @@ metadata:
   opencode/autoinvoke: false
 ---
 
-Read `__AGENT_LOOP_INSTRUCTIONS__` and follow it for this request.
+Read `__AGENT_LOOP_INSTRUCTIONS__` and follow it for this request. Run every
+`agent-loop` command in the instructions as `__AGENT_LOOP_CLI__` instead, so the
+run does not depend on the `agent-loop` command resolving on PATH.
 
-Before the init dispatch call, run `agent-loop harness-check codex`. It exits 0
-only when the nearest harness process above this shell is Codex CLI. If it exits
-non-zero, stop and report that another harness owns the session; do not start a
-run. Do not use `CODEX_THREAD_ID` to make this decision, because a nested
+Before the init dispatch call, run `__AGENT_LOOP_CLI__ harness-check codex`. It
+exits 0 only when the nearest harness process above this shell is Codex CLI. If
+it exits 3, stop and report that another harness owns the session; do not start a
+run. If it exits with any other non-zero code, stop and report that the check
+could not run or found no harness ancestor, which is distinct from a harness
+refusal. Do not use `CODEX_THREAD_ID` to make this decision, because a nested
 harness inherits it.
 
 Use the invocation text as the task and role settings. Before the init dispatch

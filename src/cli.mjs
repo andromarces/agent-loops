@@ -134,8 +134,10 @@ Subcommands:
   agent-loop uninstall          Remove the installed entry points and guards. Restores
                                 files that install changed.
   agent-loop harness-check      Exit 0 only when the nearest harness process above the
-                                shell matches the named harness; used by the Claude,
-                                Codex, and Antigravity skills.
+                                shell matches the named harness, 3 when another harness
+                                is nearest, and 1 when the check cannot run or finds no
+                                harness ancestor. Used by the Claude, Codex, and
+                                Antigravity skills.
 
 Role operations:
 
@@ -147,7 +149,11 @@ Role flags:
 
   --role worker|reviewer        Role to dispatch. Required for dispatch.
   --cwd <directory>             Target work tree. Defaults to the current directory.
-  --task / --mode / --parent-session / --worker* / --reviewer* / --max-steps / --timeout
+  --parent-session <id>         Required on the init call. The harness session id the
+                                parent-edit guard matches; later calls reject a changed
+                                value. The headless form (no subcommand) is the explicit
+                                unguarded path.
+  --task / --mode / --worker* / --reviewer* / --max-steps / --timeout
                                 First (init) call only. Later calls read these from the
                                 state file and reject any attempt to change them.
   --prompt-file <path>          Prompt source. Default is stdin.

@@ -333,8 +333,9 @@ export async function install({
           "GitHub Copilot CLI and OpenCode also discover. The skill sets " +
           "`metadata.opencode/autoinvoke: false`, so OpenCode drops it from the " +
           "model's skill list and the OpenCode plugin command owns /agent-loop. " +
-          "The skill also runs `agent-loop harness-check codex` and refuses to " +
-          "start from a Copilot or OpenCode session.",
+          "The skill also runs the installed CLI by absolute path with " +
+          "`harness-check codex` and refuses to start from a Copilot or OpenCode " +
+          "session.",
       });
     }
   }
@@ -349,9 +350,8 @@ export async function install({
         "OpenCode also discovers ~/.claude/skills, so it lists the Claude skill " +
         "to the model. The skill sets `metadata.opencode/autoinvoke: false`, so " +
         "OpenCode drops it from the model's skill list and the OpenCode plugin " +
-        "command owns /agent-loop. The skill also runs " +
-        "`agent-loop harness-check claude` and refuses to start from a foreign " +
-        "session.",
+        "command owns /agent-loop. The skill also runs the installed CLI with " +
+        "`harness-check claude` and refuses to start from a foreign session.",
     });
   }
 
