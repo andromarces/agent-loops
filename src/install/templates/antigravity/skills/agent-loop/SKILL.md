@@ -3,7 +3,13 @@ name: agent-loop
 description: Run a delegated agent-loop role orchestration through the agent-loop CLI. Invoke only with /agent-loop.
 ---
 
-Read `docs/orchestrator-instructions.md` and follow it for this request.
+Read `__AGENT_LOOP_INSTRUCTIONS__` and follow it for this request.
+
+Before the init dispatch call, run `agent-loop harness-check antigravity`. It
+exits 0 only when the nearest harness process above this shell is Antigravity
+CLI. If it exits non-zero, stop and report that another harness owns the
+session; do not start a run. Do not use `ANTIGRAVITY_CONVERSATION_ID` to make
+this decision, because a nested harness inherits it.
 
 Use the invocation text as the task and role settings. Before the init dispatch
 call, verify that the active shell has `ANTIGRAVITY_CONVERSATION_ID`. Do not

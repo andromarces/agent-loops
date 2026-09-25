@@ -6,7 +6,7 @@
         "type": "command",
         "matcher": "Edit|Write",
         "exec": "node",
-        "args": ["src/hook/copilot-parent-guard.mjs"],
+        "args": ["__AGENT_LOOP_GUARD_PATH__"],
         "cwd": ".",
         "timeoutSec": 10
       }

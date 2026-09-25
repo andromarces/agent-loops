@@ -79,6 +79,25 @@ npm install -g @andromarces/agent-loops
 pnpm add -g @andromarces/agent-loops
 ```
 
+Set up the harness entry points and parent guards at user scope:
+
+```bash
+agent-loop install
+```
+
+`install` detects the harness CLIs on `PATH`, preselects them, and writes the
+entry point and guard for each selected harness. It is interactive; pass
+`--harness <list> --yes` for scripts, and `--dry-run` to print the planned
+writes without changing anything. A second run with the same package makes no
+change. `agent-loop uninstall` removes only the files and settings entries the
+install recorded, and restores a file that install changed when the file is
+otherwise unchanged.
+
+```bash
+agent-loop install --harness claude,codex --yes
+agent-loop uninstall
+```
+
 Run it without installing:
 
 ```bash
@@ -102,27 +121,31 @@ The `bin` script keeps its `#!/usr/bin/env node` shebang and executable bit, so 
 
 ### From a clone (development)
 
-Development uses pnpm and the repository Git hooks:
+Development uses pnpm and the repository Git hooks. User-scope integrations
+point at the package location, so a clone registers its own copy with `npm link`
+before `agent-loop install`:
 
 ```bash
 git clone <repository-url>
 cd agent-loops
 pnpm install
-pnpm agent-loop role ...
+npm link
+agent-loop install
 ```
 
-`pnpm agent-loop` runs the CLI entry from the repository root. To expose the `agent-loop` command on `PATH`, add the pnpm global bin directory to `PATH`, then register the `bin` field globally from the repository root:
+Entries rendered from a clone point at that clone. After the clone moves, run
+`npm link` again from the new location, then `agent-loop install` again.
+`pnpm link` is not a supported path: pnpm 12 `link` has no global mode. Without a
+link, call the CLI entry directly and quote the repository path so a path with
+spaces works:
 
 ```bash
-pnpm setup   # restart the shell afterwards
-pnpm add -g .
+node "<repo>/src/cli.mjs" install --harness claude --yes
 ```
 
-pnpm v11 removed `pnpm link --global` and keeps global bins under `PNPM_HOME`; `pnpm add -g .` fails with `ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH` until `pnpm setup` puts that directory on `PATH`. Without a global install, call the CLI entry directly and quote the repository path so a path with spaces works:
-
-```bash
-node "<repo>/src/cli.mjs" role ...
-```
+`pnpm agent-loop` still runs the CLI entry from the repository root. The
+repository Git hooks run formatting and linting on commit and push; they need
+`pnpm install` to have completed, because its `prepare` script installs husky.
 
 ## Usage
 
@@ -215,75 +238,83 @@ includes it rather than copying it. Role activation never goes into `AGENTS.md`
 or `CLAUDE.md`, because dispatched children read those files; activation
 happens only through explicit invocation.
 
-| Harness         | Entry point                                            | Invocation                                    |
+| Harness         | Installed entry point                                  | Invocation                                    |
 | --------------- | ------------------------------------------------------ | --------------------------------------------- |
-| Claude Code     | `.claude/skills/agent-loop/SKILL.md`                   | `/agent-loop <task and role settings>`        |
-| OpenCode        | `.opencode/plugins/parent-guard.ts`                    | `/agent-loop <task and role settings>`        |
-| Codex CLI       | `.agents/skills/agent-loop/SKILL.md`                   | `$agent-loop <task and role settings>`        |
-| Copilot CLI     | `src/entrypoints/copilot.mjs`                          | `agent-loop-copilot <task and role settings>` |
+| Claude Code     | `~/.claude/skills/agent-loop/SKILL.md`                 | `/agent-loop <task and role settings>`        |
+| OpenCode        | `~/.config/opencode/plugins/parent-guard.ts`           | `/agent-loop <task and role settings>`        |
+| Codex CLI       | `~/.agents/skills/agent-loop/SKILL.md`                 | `$agent-loop <task and role settings>`        |
+| Copilot CLI     | `agent-loop-copilot` (packaged bin)                    | `agent-loop-copilot <task and role settings>` |
 | Antigravity CLI | `~/.gemini/antigravity-cli/skills/agent-loop/SKILL.md` | `/agent-loop <task and role settings>`        |
 
+`agent-loop install` writes these files from the templates under
+`src/install/templates/`, and each rendered entry point points at the installed
+`docs/orchestrator-instructions.md` by absolute path, so it works outside a
+clone. The Parent guard section below lists every guard target.
+
+- The `~/.agents/skills` directory is shared. Copilot CLI also discovers
+  personal skills there, so the installed Codex skill appears in Copilot. The
+  Codex selection owns that directory; install and uninstall for Copilot never
+  touch it. The Codex skill refuses to start a run when the nearest harness
+  process is not Codex, so a Copilot session that inherits `CODEX_THREAD_ID`
+  cannot start a run through it.
 - The Claude Code skill sets `disable-model-invocation: true`, so only the
   maintainer activates it with `/agent-loop`, and it omits `context: fork`, so
   the skill runs in the current session. Its body passes `${CLAUDE_SESSION_ID}`
   as `--parent-session` on the init dispatch call.
-- The OpenCode entry point is a local plugin (`.opencode/plugins/parent-guard.ts`),
-  loaded automatically from `.opencode/plugins/`. Stored command templates expose
-  no session id, so the plugin registers the `/agent-loop` command itself: its
-  executor reads `CommandInvocation.sessionID` and carries that id into the
-  orchestrator prompt, and the init dispatch call passes it as
-  `--parent-session`.
-- The Codex CLI skill (`.agents/skills/agent-loop/SKILL.md`) activates only through
-  `$agent-loop`. It passes `CODEX_THREAD_ID` as `--parent-session`. Use
-  `$env:CODEX_THREAD_ID` in PowerShell and `$CODEX_THREAD_ID` in POSIX shells.
-  In PowerShell, pass `--cwd $worktree` after setting
-  `$worktree = (Get-Location).Path`.
-  The CLI rejects an empty `--parent-session` before it initializes a run.
-  This environment variable is an undocumented dependency and can change on
-  upgrade. When it is absent, do not start a guarded run. Run `/hooks` once to
-  review and trust the repository hook. Do not use
-  `--dangerously-bypass-hook-trust` for normal use.
-- The Copilot CLI entry point is `src/entrypoints/copilot.mjs`, exposed as
-  `agent-loop-copilot`. It mints a UUID, starts
-  `copilot --session-id <uuid> --add-dir <docs dir> --interactive <prompt>`, and includes the
-  instruction file, task, and same id for `--parent-session` in the first
-  prompt. The current CLI documentation exposes no custom command-template
+- The OpenCode entry point is a user plugin at
+  `~/.config/opencode/plugins/parent-guard.ts`, loaded automatically from that
+  directory. Stored command templates expose no session id, so the plugin
+  registers the `/agent-loop` command itself: its executor reads
+  `CommandInvocation.sessionID` and carries that id into the orchestrator
+  prompt, and the init dispatch call passes it as `--parent-session`.
+- The Codex CLI skill (`~/.agents/skills/agent-loop/SKILL.md`) activates only
+  through `$agent-loop`. Before the init call it runs
+  `agent-loop harness-check codex`, which exits 0 only when the nearest harness
+  process above the shell is Codex CLI. When ancestry is absent or names a
+  different harness, the skill stops: an environment check cannot decide it,
+  because a nested harness inherits `CODEX_THREAD_ID`. The skill passes
+  `CODEX_THREAD_ID` as `--parent-session`. Use `$env:CODEX_THREAD_ID` in
+  PowerShell and `$CODEX_THREAD_ID` in POSIX shells. In PowerShell, pass
+  `--cwd $worktree` after setting `$worktree = (Get-Location).Path`. The CLI
+  rejects an empty `--parent-session` before it initializes a run. This
+  environment variable is an undocumented dependency and can change on upgrade.
+  When it is absent, do not start a guarded run. Run `/hooks` once to review and
+  trust the installed user hook; a changed hook command needs a new trust step.
+  Do not use `--dangerously-bypass-hook-trust` for normal use.
+- The Copilot CLI entry point is the packaged `src/entrypoints/copilot.mjs`,
+  exposed as `agent-loop-copilot`. It mints a UUID, starts
+  `copilot --session-id <uuid> --add-dir <docs dir> --interactive <prompt>`, and
+  includes the instruction file, task, and same id for `--parent-session` in the
+  first prompt. The current CLI documentation exposes no custom command-template
   session-id placeholder, so the launcher is the native entry point.
-- The Antigravity CLI entry point is a skill at the user-scope path
+- The Antigravity CLI entry point is a skill at
   `~/.gemini/antigravity-cli/skills/agent-loop/SKILL.md`, activated as
-  `/agent-loop` in an interactive session. It references
-  `docs/orchestrator-instructions.md` and passes `ANTIGRAVITY_CONVERSATION_ID`
-  as `--parent-session` on the init dispatch call; use
+  `/agent-loop` in an interactive session. It runs
+  `agent-loop harness-check antigravity` before the init call, then passes
+  `ANTIGRAVITY_CONVERSATION_ID` as `--parent-session`; use
   `$env:ANTIGRAVITY_CONVERSATION_ID` in PowerShell. This environment variable is
   an undocumented dependency and can change on upgrade, and child processes
-  inherit it. When it is absent, do not start a guarded run. The shipped
-  templates are under `src/install/templates/antigravity/`. Until
-  `agent-loop install` ships (#139), place all three by hand: copy the skill to
-  the path above and rewrite its `docs/orchestrator-instructions.md` reference
-  to that file's absolute path, because the relative path resolves only inside
-  a clone; merge the `agent-loop-parent-guard` group into
-  `~/.gemini/config/hooks.json`; and copy the shim beside it, rendering its
-  guard import to the adapter's `file:///` URL. The skill alone leaves the run
-  unguarded.
+  inherit it. When it is absent, or when the harness check names a different
+  harness, do not start a run.
 - Universal fallback: reference `docs/orchestrator-instructions.md` in the first
   prompt and follow it when the harness entry point is not installed. A run
   without `--parent-session` stays unguarded.
-- On Copilot CLI, `.github/hooks/parent-guard.json` registers PascalCase `PreToolUse`, so the payload carries
-  `session_id` and `tool_name`; the hook prints the flat `permissionDecision` object that Copilot CLI consumes.
-  Repository hooks require a trusted folder. GitHub documents the `.github/hooks/*.json` path for Windows, macOS, and
-  Linux, and a live probe on Windows with Copilot CLI 1.0.87-0 confirmed the hook loaded and reported `tool_name:
-Write`; no macOS runtime was available for this change. Copilot also loads `.claude/settings.json` as repository
-  settings and sets `CLAUDE_PROJECT_DIR` to the repository root, so the Claude hook runs the same guard there and
-  Copilot honors the Claude `hookSpecificOutput.permissionDecision` response. Every Copilot `Edit`/`Write` therefore
-  runs two parent guards: the Claude-compat one and the `.github/hooks` one. Both deny the registered parent and both
-  stay silent for any other session. The `.github/hooks` hook stays as the documented, version-stable path.
+- On Copilot CLI, the installed `~/.copilot/hooks/parent-guard.json` registers
+  PascalCase `PreToolUse`, so the payload carries `session_id` and `tool_name`,
+  and the hook prints the flat `permissionDecision` object that Copilot CLI
+  consumes. A live probe on Windows with Copilot CLI 1.0.87-0 confirmed the
+  repository form of this hook loaded and reported `tool_name: Write`; no macOS
+  runtime was available for that change. Copilot reads the shared subset of a
+  _repository_ `.claude/settings.json`, which does not cover a Claude user
+  guard, so Copilot gets its own user hook file; install never relies on Copilot
+  reading the Claude user settings.
 - The parent-edit guard (#57) reads `--parent-session` from the state index
   (see Parent guard below). For any run without `--parent-session`, the parent
   stays unguarded.
 
 ## Parent guard: hard read-only for the parent session
 
-The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. Five harnesses add a hard guard for the file-edit tools: Claude Code through a `PreToolUse` hook in `.claude/settings.json`, Codex CLI through a `PreToolUse` hook in `.codex/hooks.json`, OpenCode through a `permission` `evaluate` plugin hook, GitHub Copilot CLI through a repository `PreToolUse` hook in `.github/hooks/parent-guard.json`, and Antigravity CLI through a global named `PreToolUse` group in `~/.gemini/config/hooks.json`. All share the decision logic in `src/hook/decision.mjs`, so they deny and release under the same rule.
+The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. Five harnesses add a hard guard for the file-edit tools: Claude Code through a `PreToolUse` entry in `~/.claude/settings.json`, Codex CLI through a `PreToolUse` entry in `~/.codex/hooks.json`, OpenCode through a `permission` `evaluate` plugin hook, GitHub Copilot CLI through a user `PreToolUse` hook file in `~/.copilot/hooks/parent-guard.json`, and Antigravity CLI through a named `PreToolUse` group in `~/.gemini/config/hooks.json`. All share the decision logic in `src/hook/decision.mjs`, so they deny and release under the same rule.
 
 - Matchers: Claude Code uses
   `Edit|Write|MultiEdit|NotebookEdit`. Codex CLI uses
@@ -305,8 +336,12 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
 - Deny only when the hook session id equals `parentSession` in the registered state and the lifecycle is non-terminal (`active`, `dispatched`, `interrupted`). The guard releases only on `finish`, `abort`, or a `halted` state; during `interrupted` it stays engaged, and `dispatch --resume-interrupted` keeps it engaged because the resumed run is non-terminal again.
 - Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt index entry or state file. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
 - Without a state file the hook does one absent-file read, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
-- The Claude hook is registered as a shell-form `command` with no `args`, the form both Claude Code and Copilot's Claude-compatible settings loader execute through a shell. An exec-form `command` (`node` + script `args`) fails under Copilot, which ignores the Claude `args` field and runs `node` with the hook payload on stdin; `node` then exits 1 and Copilot fail-closes the tool call. With the shell form, Copilot imports the guard, which exits 0 with no output for every session that is not the registered parent.
-- On OpenCode, `.opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session index, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
+- The installed Claude entry is a shell-form `command` with no `args`,
+  `node "<installed guard path>"`. Claude Code runs it through a shell. The user
+  settings file is Claude-only: Copilot CLI reads the shared subset of a
+  _repository_ `.claude/settings.json`, not a user one, so Copilot gets its own
+  user hook file.
+- On OpenCode, `~/.config/opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session index, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
 - The plugin runs inside the OpenCode server process, so it resolves `AGENT_LOOP_RUNS_ROOT` from that process's environment; the Claude Code hook inherits the parent shell's environment instead. The override is test-only, but using it outside tests would point the plugin and the `agent-loop` CLI at different roots and disable the guard silently.
 - On Antigravity CLI, `src/hook/antigravity-parent-guard.mjs` reads `conversationId` and `toolCall.name`, reuses `decideParentGuard`, and prints `{"decision":"deny","reason":...}` only for a guarded tool call from the registered parent. Antigravity blocks a tool call when a hook prints `{}`, prints an empty decision, or exits non-zero, so every allow path prints nothing and exits 0 and keeps the normal permission flow. The global `~/.gemini/config/hooks.json` group runs a shim in that folder by a flat relative path, and the shim imports the guard by `file:///` URL, because a quoted or spaced absolute script path fails in every quoting form tested. A stale or unreachable guard URL is swallowed, so a moved package or deleted file does not fail closed. The parent learns its id from the undocumented `ANTIGRAVITY_CONVERSATION_ID`, which child processes inherit.
 
@@ -314,23 +349,25 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
 
 Surveyed 2026-09-21 against current vendor docs, current binaries, and the installed Copilot CLI 1.0.87-0 binary; Antigravity re-surveyed 2026-09-25 on CLI 1.2.10. A session-keyed guard needs both a pre-tool hook and a way for the parent to learn its own session id at init time; the guard ships only where both exist.
 
-| Harness            | Pre-tool hook                                                                                                                          | Guard                          |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| Claude Code        | `PreToolUse`, deny supported, `session_id` in input                                                                                    | Implemented (this repo)        |
-| Codex CLI          | `PreToolUse`, deny supported, `session_id` in input; entry point depends on undocumented `CODEX_THREAD_ID`                             | Implemented (best effort)      |
-| Antigravity CLI    | Global named `PreToolUse` group in `~/.gemini/config/hooks.json`, deny supported, `conversationId` and `toolCall.name` in input        | Implemented (user scope, #139) |
-| GitHub Copilot CLI | PascalCase `PreToolUse`, deny supported, `session_id` and `tool_name` in input; repository `.github/hooks/*.json` loads in current CLI | Implemented (this repo)        |
-| OpenCode           | `permission` `evaluate` plugin hook can set `deny`; event carries `PermissionEvaluation.sessionID`                                     | Implemented (this repo)        |
+| Harness            | Pre-tool hook                                                                                                                       | Guard                     |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Claude Code        | `PreToolUse`, deny supported, `session_id` in input                                                                                 | Implemented (user scope)  |
+| Codex CLI          | `PreToolUse`, deny supported, `session_id` in input; entry point depends on undocumented `CODEX_THREAD_ID`                          | Implemented (best effort) |
+| Antigravity CLI    | Global named `PreToolUse` group in `~/.gemini/config/hooks.json`, deny supported, `conversationId` and `toolCall.name` in input     | Implemented (user scope)  |
+| GitHub Copilot CLI | PascalCase `PreToolUse`, deny supported, `session_id` and `tool_name` in input; user `~/.copilot/hooks/*.json` loads in current CLI | Implemented (user scope)  |
+| OpenCode           | `permission` `evaluate` plugin hook can set `deny`; event carries `PermissionEvaluation.sessionID`                                  | Implemented (user scope)  |
 
 Codex CLI now uses its `PreToolUse` hook with the session id in hook input. Its
 entry point relies on `CODEX_THREAD_ID` from the shell environment, which is not
-documented and can break on upgrade. The guard fails open when the variable is
-absent or unusable. Antigravity CLI now has a user-scope skill and a global
-`PreToolUse` group, both keyed on the undocumented `ANTIGRAVITY_CONVERSATION_ID`;
-the guard fails open when the variable is absent or unusable.
-Copilot uses the documented session-keyed launcher and repository hook described
-above. OpenCode has both: a command reads `CommandInvocation.sessionID`, and the
-permission hook reads `PermissionEvaluation.sessionID`.
+documented and can break on upgrade, and on `agent-loop harness-check codex` to
+confirm the running harness. The guard fails open when the variable is absent or
+unusable. Antigravity CLI now has a user-scope skill and a global `PreToolUse`
+group, both keyed on the undocumented `ANTIGRAVITY_CONVERSATION_ID`; the guard
+fails open when the variable is absent or unusable.
+Copilot uses the documented session-keyed launcher and its user hook file
+described above. OpenCode has both: a command reads
+`CommandInvocation.sessionID`, and the permission hook reads
+`PermissionEvaluation.sessionID`.
 
 The guard path blocked `apply_patch` on Codex CLI 0.156.0-alpha.14 for this
 Windows check. This is a known-good runtime, not a stable minimum version.

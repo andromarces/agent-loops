@@ -12,6 +12,11 @@ import {
   roleFlags,
 } from "./lib/args.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
+import {
+  runHarnessCheckCommand,
+  runInstallCommand,
+  runUninstallCommand,
+} from "./install/commands.mjs";
 import { setVerbose } from "./lib/log.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runLoop } from "./runtime.mjs";
@@ -124,6 +129,13 @@ Subcommands:
   agent-loop role               Run a single worker or reviewer turn, or finish/abort
                                 a run, from a lifecycle state file (see below). One JSON
                                 object on stdout; logs on stderr.
+  agent-loop install            Install harness entry points and parent guards at user
+                                scope. Interactive, or --harness <list> --yes.
+  agent-loop uninstall          Remove the installed entry points and guards. Restores
+                                files that install changed.
+  agent-loop harness-check      Exit 0 only when the nearest harness process above the
+                                shell matches the named harness; used by the Codex and
+                                Antigravity skills.
 
 Role operations:
 
@@ -192,6 +204,21 @@ function formatSummary(summary) {
 export async function main(argv = process.argv.slice(2), agents = defaultAgents) {
   if (argv[0] === "role") {
     await runRoleMain(argv.slice(1), { agents });
+    return;
+  }
+
+  if (argv[0] === "install") {
+    await runInstallCommand(argv.slice(1));
+    return;
+  }
+
+  if (argv[0] === "uninstall") {
+    await runUninstallCommand(argv.slice(1));
+    return;
+  }
+
+  if (argv[0] === "harness-check") {
+    await runHarnessCheckCommand(argv.slice(1));
     return;
   }
 

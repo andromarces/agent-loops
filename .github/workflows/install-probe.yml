@@ -48,6 +48,20 @@ jobs:
           npm install -g @andromarces/agent-loops
           agent-loop --help
           agent-loops --help
+      # Exercise install and uninstall against a temp home, so the render path
+      # and the manifest round trip are covered on macOS, Ubuntu, and Windows.
+      - name: Install then uninstall harness integrations into a temp home
+        shell: bash
+        run: |
+          export AGENT_LOOP_HOME="$(mktemp -d)"
+          agent-loop install --harness claude,codex,opencode,copilot,antigravity --yes
+          agent-loop install --harness claude,codex,opencode,copilot,antigravity --yes
+          agent-loop uninstall --yes
+          if [ -n "$(ls -A "$AGENT_LOOP_HOME")" ]; then
+            echo "::error::install/uninstall left files behind"
+            ls -A "$AGENT_LOOP_HOME"
+            exit 1
+          fi
       # bash resolves the extensionless sh shim on Windows, so check the
       # PowerShell and cmd shims explicitly. Each command carries its own exit
       # check, because pwsh does not fail a step on a middle command.

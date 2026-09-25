@@ -1,0 +1,423 @@
+import { existsSync } from "node:fs";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { afterEach, expect, test } from "vitest";
+import { main as cliMain } from "../../src/cli.mjs";
+import { deepEqual, sha256 } from "../../src/install/fsutil.mjs";
+import { buildTargets, HARNESS_ORDER } from "../../src/install/harnesses.mjs";
+import { detectHarnesses, install, uninstall } from "../../src/install/installer.mjs";
+import { manifestPath, readManifest } from "../../src/install/manifest.mjs";
+import { harnessForProcessName, nearestHarness } from "../../src/lib/process-ancestry.mjs";
+
+const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const homes = [];
+
+async function makeHome() {
+  const home = await mkdtemp(join(tmpdir(), "agent-loop-install-home-"));
+  homes.push(home);
+  return home;
+}
+
+afterEach(async () => {
+  for (const home of homes) {
+    await rm(home, { recursive: true, force: true });
+  }
+  homes.length = 0;
+});
+
+async function writeJson(path, value) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function readText(path) {
+  try {
+    return await readFile(path, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+function claudeSeed() {
+  return {
+    permissions: { allow: ["Bash"] },
+    hooks: {
+      PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "echo unrelated" }] }],
+      PostToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "echo post" }] }],
+    },
+  };
+}
+
+function codexSeed() {
+  return {
+    description: "my hooks",
+    hooks: {
+      PreToolUse: [{ matcher: "^shell$", hooks: [{ type: "command", command: "echo unrelated" }] }],
+    },
+  };
+}
+
+function antigravitySeed() {
+  return {
+    "other-group": {
+      PreToolUse: [{ matcher: "x", hooks: [{ type: "command", command: "echo x" }] }],
+    },
+  };
+}
+
+async function targetPaths(harness, home, extra = {}) {
+  const targets = await buildTargets(harness, { home, packageRoot: PACKAGE_ROOT, ...extra });
+  return targets;
+}
+
+// Usefulness: verifies the round-trip acceptance — a five-harness install then
+// uninstall restores every pre-existing settings file byte-identical, deletes
+// every created file, prunes the directories it created, and leaves an
+// unrelated file in the shared `~/.agents/skills` directory alone.
+test("install then uninstall restores pre-existing bytes and deletes created files", async () => {
+  const home = await makeHome();
+  const claudeSettings = join(home, ".claude", "settings.json");
+  const codexSettings = join(home, ".codex", "hooks.json");
+  const antigravitySettings = join(home, ".gemini", "config", "hooks.json");
+  const sentinel = join(home, ".agents", "skills", "other.txt");
+  await writeJson(claudeSettings, claudeSeed());
+  await writeJson(codexSettings, codexSeed());
+  await writeJson(antigravitySettings, antigravitySeed());
+  await writeJson(sentinel, "keep");
+
+  const before = {
+    [claudeSettings]: await readText(claudeSettings),
+    [codexSettings]: await readText(codexSettings),
+    [antigravitySettings]: await readText(antigravitySettings),
+  };
+
+  const claude = await targetPaths("claude", home);
+  const codex = await targetPaths("codex", home);
+  const opencode = await targetPaths("opencode", home);
+  const copilot = await targetPaths("copilot", home);
+  const antigravity = await targetPaths("antigravity", home);
+  const created = [
+    ...claude.files.map((file) => file.path),
+    ...codex.files.map((file) => file.path),
+    ...opencode.files.map((file) => file.path),
+    ...copilot.files.map((file) => file.path),
+    ...antigravity.files.map((file) => file.path),
+  ];
+
+  await install({ harnesses: HARNESS_ORDER, home, packageRoot: PACKAGE_ROOT });
+  for (const path of created) {
+    expect(existsSync(path), path).toBe(true);
+  }
+  const claudeInstalled = JSON.parse(await readText(claudeSettings));
+  expect(claudeInstalled.permissions.allow).toEqual(["Bash"]);
+  expect(claudeInstalled.hooks.PostToolUse).toHaveLength(1);
+
+  await uninstall({ home });
+  for (const [path, content] of Object.entries(before)) {
+    expect(await readText(path), path).toBe(content);
+  }
+  for (const path of created) {
+    expect(existsSync(path), path).toBe(false);
+  }
+  expect(existsSync(sentinel)).toBe(true);
+  expect(existsSync(manifestPath(home))).toBe(false);
+});
+
+// Usefulness: verifies acceptance — a second install with the same package
+// makes no change: every plan is a no-op and every byte is unchanged.
+test("a second install is a no-op", async () => {
+  const home = await makeHome();
+  await install({ harnesses: HARNESS_ORDER, home, packageRoot: PACKAGE_ROOT });
+  const paths = [
+    join(home, ".claude", "skills", "agent-loop", "SKILL.md"),
+    join(home, ".claude", "settings.json"),
+    join(home, ".agents", "skills", "agent-loop", "SKILL.md"),
+    join(home, ".codex", "hooks.json"),
+    join(home, ".config", "opencode", "plugins", "parent-guard.ts"),
+    join(home, ".copilot", "hooks", "parent-guard.json"),
+    join(home, ".gemini", "config", "hooks.json"),
+  ];
+  const before = Object.fromEntries(
+    await Promise.all(paths.map(async (p) => [p, await readText(p)])),
+  );
+
+  const reports = await install({ harnesses: HARNESS_ORDER, home, packageRoot: PACKAGE_ROOT });
+  const writes = reports.filter((entry) => !["noop", "note"].includes(entry.action));
+  expect(writes).toEqual([]);
+  for (const path of paths) {
+    expect(await readText(path), path).toBe(before[path]);
+  }
+});
+
+// Usefulness: verifies acceptance — install after an upgrade replaces the
+// recorded entry by deep equality and adds no duplicate, and uninstall after
+// that upgrade restores the original pre-install file rather than the earlier
+// installed version.
+test("upgrade replaces the recorded entry and uninstall restores the original", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  const original = `${JSON.stringify(claudeSeed(), null, 2)}\n`;
+  await writeJson(settingsPath, claudeSeed());
+
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  const newEntry = (await targetPaths("claude", home)).settings[0].entry;
+
+  const manifest = await readManifest(home);
+  const record = manifest.harnesses.claude.settings[0];
+  const oldEntry = {
+    matcher: record.entry.matcher,
+    hooks: [{ type: "command", command: 'node "/old/location/parent-guard.mjs"', timeout: 10 }],
+  };
+  const settings = JSON.parse(await readText(settingsPath));
+  const index = settings.hooks.PreToolUse.findIndex((entry) => deepEqual(entry, record.entry));
+  settings.hooks.PreToolUse[index] = oldEntry;
+  await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  record.entry = oldEntry;
+  record.shaAfter = sha256(await readText(settingsPath));
+  await writeFile(manifestPath(home), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  const upgraded = JSON.parse(await readText(settingsPath));
+  const matching = upgraded.hooks.PreToolUse.filter((entry) => entry.matcher === newEntry.matcher);
+  expect(matching).toHaveLength(1);
+  expect(deepEqual(matching[0], newEntry)).toBe(true);
+
+  await uninstall({ home });
+  expect(await readText(settingsPath)).toBe(original);
+});
+
+// Usefulness: verifies acceptance — a user-edited owned file survives install
+// and uninstall, and the command reports it instead of overwriting or deleting.
+test("a user-edited owned file survives install and uninstall", async () => {
+  const home = await makeHome();
+  const skillPath = join(home, ".claude", "skills", "agent-loop", "SKILL.md");
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  await writeFile(skillPath, "user edit\n", "utf8");
+
+  const installReports = await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  expect(installReports.find((entry) => entry.path === skillPath).action).toBe("skip");
+
+  const uninstallReports = await uninstall({ home });
+  expect(uninstallReports.find((entry) => entry.path === skillPath).action).toBe("skip");
+  expect(await readText(skillPath)).toBe("user edit\n");
+});
+
+// Usefulness: verifies acceptance — an unparseable settings file stops the
+// command with no write at all: no created file appears and no manifest is
+// written, so a later install starts from a clean state.
+test("an unparseable settings file stops install with no write", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await mkdir(dirname(settingsPath), { recursive: true });
+  await writeFile(settingsPath, "{ not json\n", "utf8");
+  const before = await readText(settingsPath);
+
+  await expect(
+    install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT }),
+  ).rejects.toThrow();
+  expect(await readText(settingsPath)).toBe(before);
+  expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(false);
+  expect(existsSync(manifestPath(home))).toBe(false);
+});
+
+// Usefulness: verifies acceptance — --dry-run reports planned writes and
+// changes nothing on disk.
+test("dry-run reports planned writes and changes nothing", async () => {
+  const home = await makeHome();
+  const reports = await install({
+    harnesses: ["claude", "codex"],
+    home,
+    packageRoot: PACKAGE_ROOT,
+    dryRun: true,
+  });
+  expect(reports.some((entry) => entry.action === "create")).toBe(true);
+  expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(false);
+  expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false);
+  expect(existsSync(manifestPath(home))).toBe(false);
+});
+
+// Usefulness: verifies acceptance — an unrelated edit made after install is kept
+// on uninstall, which removes only the recorded entry and reports that the file
+// is not byte-identical.
+test("uninstall keeps an unrelated edit made after install", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, claudeSeed());
+
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  const edited = JSON.parse(await readText(settingsPath));
+  edited.hooks.PreToolUse.push({
+    matcher: "Bash",
+    hooks: [{ type: "command", command: "echo added later" }],
+  });
+  await writeFile(settingsPath, `${JSON.stringify(edited, null, 2)}\n`, "utf8");
+
+  const reports = await uninstall({ home });
+  const target = reports.find((entry) => entry.path === settingsPath);
+  expect(target.action).toBe("remove-entry");
+  expect(target.detail).toMatch(/not byte-identical/);
+
+  const after = JSON.parse(await readText(settingsPath));
+  expect(after.hooks.PreToolUse).toHaveLength(2);
+  expect(after.hooks.PreToolUse.map((entry) => entry.matcher)).toEqual(["Bash", "Bash"]);
+  expect(after.permissions.allow).toEqual(["Bash"]);
+});
+
+// Usefulness: verifies the shared `~/.agents/skills` acceptance — the Codex
+// skill carries the ancestry check, so a Copilot session that inherits
+// CODEX_THREAD_ID cannot start a run through it.
+test("the Codex skill requires the harness-check ancestry gate", async () => {
+  const home = await makeHome();
+  const codex = await targetPaths("codex", home);
+  const skill = codex.files.find((file) => file.path.endsWith("SKILL.md")).content;
+  expect(skill).toContain("agent-loop harness-check codex");
+  expect(skill).toContain("CODEX_THREAD_ID");
+});
+
+// Usefulness: verifies the process-ancestry mechanism — the nearest harness
+// above the shell decides the running harness, an unknown or missing ancestor
+// returns null, and a nested Copilot session under a Codex shell resolves to
+// Copilot.
+test("nearestHarness resolves the running harness and fails closed when absent", async () => {
+  const table = [
+    { pid: 10, ppid: 1, name: "codex.exe" },
+    { pid: 20, ppid: 10, name: "cmd.exe" },
+    { pid: 30, ppid: 20, name: "node.exe" },
+    { pid: 40, ppid: 30, name: "bash" },
+    { pid: 50, ppid: 40, name: "copilot.exe" },
+  ];
+  const readProcesses = async () => table;
+  expect(await nearestHarness({ startPid: 40, readProcesses })).toBe("codex");
+  expect(await nearestHarness({ startPid: 50, readProcesses })).toBe("copilot");
+  expect(await nearestHarness({ startPid: 999, readProcesses })).toBe(null);
+  expect(await nearestHarness({ startPid: 0, readProcesses })).toBe(null);
+});
+
+test("harnessForProcessName maps harness binaries and rejects others", () => {
+  expect(harnessForProcessName("codex.exe")).toBe("codex");
+  expect(harnessForProcessName("C:\\tools\\opencode.cmd")).toBe("opencode");
+  expect(harnessForProcessName("agy")).toBe("antigravity");
+  expect(harnessForProcessName("antigravity.exe")).toBe("antigravity");
+  expect(harnessForProcessName("bash")).toBe(null);
+  expect(harnessForProcessName("")).toBe(null);
+});
+
+// Usefulness: verifies the packaging contract — every rendered target resolves
+// inside the installed package and no template placeholder survives, so a
+// registry install points at real files.
+test("rendered targets carry absolute package paths and no placeholders", async () => {
+  const renderHome = join(tmpdir(), "agent-loop-render-home");
+  for (const harness of HARNESS_ORDER) {
+    const targets = await targetPaths(harness, renderHome);
+    const texts = [
+      ...targets.files.map((file) => file.content),
+      ...targets.settings.map((settings) => JSON.stringify(settings.entry)),
+    ];
+    for (const text of texts) {
+      expect(text, harness).not.toMatch(/__AGENT_LOOP_/);
+    }
+    for (const file of targets.files) {
+      expect(file.path.startsWith(renderHome), file.path).toBe(true);
+    }
+  }
+
+  const claude = await targetPaths("claude", renderHome);
+  expect(claude.files[0].content).toContain(PACKAGE_ROOT.replaceAll("\\", "/"));
+  expect(claude.settings[0].entry.hooks[0].command).toContain(
+    join(PACKAGE_ROOT, "src", "hook", "parent-guard.mjs"),
+  );
+
+  const opencode = await targetPaths("opencode", renderHome);
+  expect(opencode.files[0].content).toContain("file:///");
+  expect(opencode.files[0].content).toContain("opencode-plugin.mjs");
+
+  const copilotHome = join(tmpdir(), "agent-loop-copilot-home");
+  const copilot = await targetPaths("copilot", renderHome, { copilotHome });
+  expect(copilot.files[0].path.startsWith(copilotHome)).toBe(true);
+  expect(JSON.parse(copilot.files[0].content).hooks.PreToolUse[0].args[0]).toContain(
+    "parent-guard.mjs",
+  );
+});
+
+// Usefulness: verifies detection runs without throwing and returns harness ids
+// in registry order; the detected set depends on the machine, so only the shape
+// is asserted.
+test("detectHarnesses returns a subset of the registry", async () => {
+  const detected = await detectHarnesses();
+  expect(Array.isArray(detected)).toBe(true);
+  for (const harness of detected) {
+    expect(HARNESS_ORDER).toContain(harness);
+  }
+});
+
+// Usefulness: verifies the development-install acceptance — after a clone
+// moves, re-running install points every rendered entry at the new package
+// location, because the entries follow `packageRoot`, not the process cwd.
+test("a moved package renders entry points at the new location", async () => {
+  const home = await makeHome();
+  const movedRoot = await mkdtemp(join(tmpdir(), "agent-loop-moved-package-"));
+  homes.push(movedRoot);
+  await cp(
+    join(PACKAGE_ROOT, "src", "install", "templates"),
+    join(movedRoot, "src", "install", "templates"),
+    {
+      recursive: true,
+    },
+  );
+  await mkdir(join(movedRoot, "docs"), { recursive: true });
+  await cp(
+    join(PACKAGE_ROOT, "docs", "orchestrator-instructions.md"),
+    join(movedRoot, "docs", "orchestrator-instructions.md"),
+  );
+
+  const claude = await buildTargets("claude", { home, packageRoot: movedRoot });
+  expect(claude.settings[0].entry.hooks[0].command).toContain(
+    join(movedRoot, "src", "hook", "parent-guard.mjs"),
+  );
+  expect(claude.files[0].content).toContain(movedRoot.replaceAll("\\", "/"));
+
+  const opencode = await buildTargets("opencode", { home, packageRoot: movedRoot });
+  expect(opencode.files[0].content).toContain(
+    pathToFileURL(join(movedRoot, "src", "hook", "decision.mjs")).href,
+  );
+});
+
+// Usefulness: verifies the CLI wiring — `install --dry-run` returns success
+// without writing, and `harness-check` fails before any harness table is read
+// for an unknown or missing harness name.
+test("CLI dispatches install, uninstall, and harness-check", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = () => {};
+  try {
+    process.exitCode = 0;
+    await cliMain(["install", "--harness", "claude", "--yes", "--dry-run"]);
+    expect(process.exitCode).toBe(0);
+    expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false);
+
+    process.exitCode = 0;
+    await cliMain(["uninstall", "--yes"]);
+    expect(process.exitCode).toBe(0);
+
+    process.exitCode = 0;
+    await cliMain(["harness-check", "not-a-harness"]);
+    expect(process.exitCode).toBe(1);
+
+    process.exitCode = 0;
+    await cliMain(["harness-check"]);
+    expect(process.exitCode).toBe(1);
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    delete process.env.AGENT_LOOP_HOME;
+    process.exitCode = 0;
+  }
+});

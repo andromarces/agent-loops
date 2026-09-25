@@ -32,19 +32,16 @@ The command blocks below call `agent-loop` directly. Install the CLI globally:
 npm install -g @andromarces/agent-loops
 ```
 
-From a clone, register the `bin` field globally instead. Add the pnpm global
-bin directory to PATH first:
+Then run `agent-loop install` once to write the harness entry points and guards
+at user scope.
 
-```bash
-pnpm setup   # restart the shell afterwards
-pnpm add -g .
-```
-
-pnpm v11 removed `pnpm link --global` and keeps global bins under `PNPM_HOME`;
-`pnpm add -g .` fails with `ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH` until
-`pnpm setup` puts that directory on PATH. Without a global install, replace
-`agent-loop` with `node "<repo>/src/cli.mjs"` and quote the repository path so
-a path with spaces works, or run `pnpm agent-loop` from the repository root.
+From a clone, run `npm link` in the clone, then `agent-loop install`. `npm link`
+puts the clone's `bin` on PATH and points the rendered entries at the clone.
+After the clone moves, run `npm link` again from the new location, then
+`agent-loop install` again. `pnpm link` is not a supported path: pnpm 12 `link`
+has no global mode. Without a link, replace `agent-loop` with
+`node "<repo>/src/cli.mjs"` and quote the repository path so a path with spaces
+works, or run `pnpm agent-loop` from the repository root.
 
 ## Starting a run
 
