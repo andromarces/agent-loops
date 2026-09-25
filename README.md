@@ -374,7 +374,16 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
   `send_message` (message a child); `manage_subagents` stays allowed, so the
   parent can still list and terminate a child. A child active before the init
   call is outside the guard, because it runs under its own id.
-- The hook (`src/hook/parent-guard.mjs`) reads the hook input on stdin and maps the harness session field: `session_id` for Claude Code, Codex CLI, and Copilot CLI, and `conversationId` for Antigravity CLI (`src/hook/antigravity-parent-guard.mjs`). It resolves the state file through the session index written by the init call, never through the hook `cwd`, so a parent whose run targets a different `--cwd` stays guarded wherever it edits. No environment variable is required at parent start-up; the harness entry points (#56) pass their session id as `--parent-session` on init.
+- The hooks read the hook input on stdin and map the harness session field:
+  `session_id` for Claude Code, Codex CLI, and Copilot CLI, and
+  `conversationId` for Antigravity CLI. Claude Code and Codex CLI run
+  `src/hook/parent-guard.mjs`, Copilot CLI runs
+  `src/hook/copilot-parent-guard.mjs`, and Antigravity CLI runs
+  `src/hook/antigravity-parent-guard.mjs`. They resolve the state file through
+  the session index written by the init call, never through the hook `cwd`, so a
+  parent whose run targets a different `--cwd` stays guarded wherever it edits.
+  No environment variable is required at parent start-up; the harness entry
+  points (#56) pass their session id as `--parent-session` on init.
 - Deny only when the hook session id equals `parentSession` in the registered state and the lifecycle is non-terminal (`active`, `dispatched`, `interrupted`). The guard releases only on `finish`, `abort`, or a `halted` state; during `interrupted` it stays engaged, and `dispatch --resume-interrupted` keeps it engaged because the resumed run is non-terminal again.
 - Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt index entry or state file. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
 - Without a state file the hook does one absent-file read, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.

@@ -127,7 +127,9 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     });
   } else if (harness === "copilot") {
     const hook = JSON.parse(await template(templateDir, "copilot", "hooks", "parent-guard.json"));
-    hook.hooks.PreToolUse[0].args = [guardPath];
+    // Copilot consumes a flat permissionDecision object, so it runs its own
+    // guard script rather than the Claude/Codex hookSpecificOutput shape (#155).
+    hook.hooks.PreToolUse[0].args = [join(packageRoot, "src/hook/copilot-parent-guard.mjs")];
     files.push({
       path: join(copilotHome ?? join(home, ".copilot"), "hooks", "parent-guard.json"),
       content: `${JSON.stringify(hook, null, 2)}\n`,
