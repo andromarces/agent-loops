@@ -196,7 +196,14 @@ export async function runUninstallCommand(argv) {
 
   let harnesses = options.harnesses;
   if (!harnesses && !options.yes && process.stdin.isTTY) {
-    const manifest = await readManifest(resolveHome());
+    let manifest;
+    try {
+      manifest = await readManifest(resolveHome());
+    } catch (err) {
+      logError(err.message);
+      process.exitCode = 1;
+      return;
+    }
     const installed = HARNESS_ORDER.filter((harness) => manifest.harnesses[harness]);
     if (installed.length === 0) {
       logInfo("No harness is installed; nothing to remove.");
@@ -205,7 +212,14 @@ export async function runUninstallCommand(argv) {
     harnesses = await selectHarnesses(installed);
   }
 
-  const reports = await uninstall({ harnesses, home: resolveHome(), dryRun: options.dryRun });
+  let reports;
+  try {
+    reports = await uninstall({ harnesses, home: resolveHome(), dryRun: options.dryRun });
+  } catch (err) {
+    logError(err.message);
+    process.exitCode = 1;
+    return;
+  }
   printReports(reports, options.dryRun);
 }
 

@@ -759,3 +759,110 @@ test("CLI prints the manual snippet when a settings file does not parse", async 
     process.exitCode = 0;
   }
 });
+
+// Usefulness: verifies #157 — readManifest rejects an unsupported version, a
+// null or array `harnesses`, and a malformed harness record with a clear error,
+// and neither install nor uninstall changes a file when the manifest is invalid.
+test("a malformed manifest stops install and uninstall with no file change", async () => {
+  const malformed = [
+    {
+      label: "unsupported version",
+      value: { version: 2, harnesses: {} },
+      message: /unsupported version/,
+    },
+    {
+      label: "null harnesses",
+      value: { version: 1, harnesses: null },
+      message: /unexpected shape/,
+    },
+    {
+      label: "array harnesses",
+      value: { version: 1, harnesses: [] },
+      message: /unexpected shape/,
+    },
+    {
+      label: "non-object harness record",
+      value: { version: 1, harnesses: { claude: "x" } },
+      message: /unexpected record for harness "claude"/,
+    },
+    {
+      label: "non-array files record",
+      value: { version: 1, harnesses: { claude: { files: "x" } } },
+      message: /unexpected record for harness "claude"/,
+    },
+    {
+      label: "file entry without a path",
+      value: { version: 1, harnesses: { claude: { files: [{}] } } },
+      message: /unexpected record for harness "claude"/,
+    },
+    {
+      label: "settings entry without a locator",
+      value: { version: 1, harnesses: { claude: { settings: [{ path: "x" }] } } },
+      message: /unexpected record for harness "claude"/,
+    },
+    {
+      label: "non-array dirs record",
+      value: { version: 1, harnesses: { claude: { dirs: 5 } } },
+      message: /unexpected record for harness "claude"/,
+    },
+  ];
+
+  for (const { label, value, message } of malformed) {
+    const home = await makeHome();
+    await writeJson(manifestPath(home), value);
+    const manifestBefore = await readText(manifestPath(home));
+    const settingsPath = join(home, ".claude", "settings.json");
+    const skillPath = join(home, ".claude", "skills", "agent-loop", "SKILL.md");
+    const sentinel = join(home, "sentinel.txt");
+    await writeFile(sentinel, "keep\n", "utf8");
+
+    const installError = await install({
+      harnesses: ["claude"],
+      home,
+      packageRoot: PACKAGE_ROOT,
+    }).then(
+      () => null,
+      (err) => err,
+    );
+    expect(installError, label).toBeInstanceOf(Error);
+    expect(installError.message, label).toMatch(message);
+
+    const uninstallError = await uninstall({ home }).then(
+      () => null,
+      (err) => err,
+    );
+    expect(uninstallError, label).toBeInstanceOf(Error);
+    expect(uninstallError.message, label).toMatch(message);
+
+    expect(existsSync(settingsPath), label).toBe(false);
+    expect(existsSync(skillPath), label).toBe(false);
+    expect(await readText(manifestPath(home)), label).toBe(manifestBefore);
+    expect(await readText(sentinel), label).toBe("keep\n");
+  }
+});
+
+// Usefulness: verifies #157 — the uninstall CLI reports a clear manifest error
+// and exits 1 instead of surfacing an unhandled rejection, so a corrupted
+// manifest is actionable.
+test("CLI uninstall reports a malformed manifest and exits 1", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  await writeJson(manifestPath(home), { version: 9, harnesses: {} });
+
+  const logs = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = (message) => logs.push(String(message));
+  try {
+    process.exitCode = 0;
+    await cliMain(["uninstall", "--yes"]);
+    expect(process.exitCode).toBe(1);
+    expect(logs.join("\n")).toContain("unsupported version");
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    delete process.env.AGENT_LOOP_HOME;
+    process.exitCode = 0;
+  }
+});
