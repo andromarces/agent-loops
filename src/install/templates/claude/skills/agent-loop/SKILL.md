@@ -3,6 +3,12 @@ name: agent-loop
 description: Run a delegated agent-loop role orchestration through the agent-loop CLI. Invoke only with /agent-loop.
 disable-model-invocation: true
 argument-hint: <task and role settings>
+# OpenCode also discovers ~/.claude/skills, lists this skill to the model, and
+# the model auto-invokes it for an /agent-loop request. Hide it from OpenCode's
+# model list so the installed OpenCode plugin command owns /agent-loop and
+# supplies the session id.
+metadata:
+  opencode/autoinvoke: false
 ---
 
 @{{AGENT_LOOP_INSTRUCTIONS}}

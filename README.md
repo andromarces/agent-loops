@@ -272,17 +272,23 @@ section below lists every guard target.
 - The `~/.agents/skills` directory is shared. Copilot CLI and OpenCode also
   discover personal skills there, so the installed Codex skill appears in both.
   The Codex selection owns that directory; install and uninstall for Copilot
-  never touch it. The Codex skill refuses to start a run when the nearest
-  harness process is not Codex, so a Copilot or OpenCode session that inherits
+  never touch it. The Codex skill sets `metadata.opencode/autoinvoke: false`, so
+  OpenCode drops it from the model's skill list and the model cannot auto-invoke
+  it for an `/agent-loop` request; the OpenCode plugin command then owns
+  `/agent-loop`. The skill also refuses to start a run when the nearest harness
+  process is not Codex, so a Copilot or OpenCode session that inherits
   `CODEX_THREAD_ID` cannot start a run through it.
 - The Claude Code skill sets `disable-model-invocation: true`, so only the
   maintainer activates it with `/agent-loop`, and it omits `context: fork`, so
   the skill runs in the current session. OpenCode also discovers
-  `~/.claude/skills`, so a foreign OpenCode session loads this same copy. Before
-  the init dispatch call the skill runs the installed CLI by absolute path with
-  `harness-check claude`; exit 3 stops the run because another harness owns the
-  session, and any other non-zero exit stops the run because the check could not
-  run or found no harness ancestor. Both cover the literal
+  `~/.claude/skills`, so a foreign OpenCode session lists this same copy to the
+  model. The skill sets `metadata.opencode/autoinvoke: false`, so OpenCode drops
+  it from the model's skill list and the model cannot auto-invoke it for an
+  `/agent-loop` request; the OpenCode plugin command then owns `/agent-loop`.
+  Before the init dispatch call the skill runs the installed CLI by absolute path
+  with `harness-check claude`; exit 3 stops the run because another harness owns
+  the session, and any other non-zero exit stops the run because the check could
+  not run or found no harness ancestor. Both cover the literal
   `${CLAUDE_SESSION_ID}` that OpenCode leaves unexpanded. The resolved invocation
   then replaces `agent-loop` for the init dispatch and every later command, so the
   run does not need the `agent-loop` command on PATH. Its body passes
@@ -292,7 +298,10 @@ section below lists every guard target.
   directory. Stored command templates expose no session id, so the plugin
   registers the `/agent-loop` command itself: its executor reads
   `CommandInvocation.sessionID` and carries that id into the orchestrator
-  prompt, and the init dispatch call passes it as `--parent-session`.
+  prompt, and the init dispatch call passes it as `--parent-session`. The shared
+  Claude and Codex skills set `metadata.opencode/autoinvoke: false`, so OpenCode
+  drops them from the model's skill list and the plugin command is the only
+  `/agent-loop` entry point.
 - The Codex CLI skill (`~/.agents/skills/agent-loop/SKILL.md`) activates only
   through `$agent-loop`. Before the init call it runs the installed CLI by
   absolute path with `harness-check codex`, which uses the same exit codes. Exit
