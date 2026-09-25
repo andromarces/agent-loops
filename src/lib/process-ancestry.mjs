@@ -5,7 +5,6 @@
 // so the Codex and Antigravity skills refuse to start instead of registering
 // the wrong parent.
 import { execFile } from "node:child_process";
-import { basename } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -24,7 +23,10 @@ export function harnessForProcessName(name) {
   if (typeof name !== "string" || name.trim() === "") {
     return null;
   }
-  const normalized = basename(name.trim())
+  const normalized = name
+    .trim()
+    .split(/[\\/]/)
+    .pop()
     .toLowerCase()
     .replace(/\.(exe|cmd|bat|com)$/, "");
   return HARNESS_BY_PROCESS.get(normalized) ?? null;
