@@ -61,11 +61,13 @@ function canonicalCwd(cwd) {
 // A parent session id is one path segment under <root>/sessions and is matched
 // verbatim against the harness session id by the #57 guard. Real harness ids
 // are opaque tokens, but an unexpanded template (`${CLAUDE_SESSION_ID}`,
-// `%CODEX_THREAD_ID%`), a path separator, or whitespace can only come from a
-// caller that failed to expand its placeholder. Any of them would register a
-// run whose parent never matches, so refuse all of them before a state file
-// exists.
-const SESSION_ID_FORBIDDEN = /[\\/\0\s$`{}%]/;
+// `%CODEX_THREAD_ID%`, `<parent-session-id>`), a path separator, or whitespace
+// can only come from a caller that failed to expand its placeholder. Any of
+// them would register a run whose parent never matches, so refuse all of them
+// before a state file exists. A bare placeholder name with no punctuation
+// (`CLAUDE_SESSION_ID`) is indistinguishable from a real token here; only a
+// harness-id allowlist would catch it, which ADR 0006 rejects.
+const SESSION_ID_FORBIDDEN = /[\\/\0\s$`{}%<>]/;
 
 function assertSessionId(sessionId) {
   if (

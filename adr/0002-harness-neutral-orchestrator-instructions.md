@@ -51,5 +51,6 @@ Andro Marces
 - [Pull Request #80: feat: guard OpenCode parent edits through a plugin session-id channel](https://github.com/andromarces/agent-loops/pull/80)
 - [ADR 0003: GitHub Copilot CLI session entry point and parent guard](0003-copilot-session-entrypoint-and-parent-guard.md)
 - [ADR 0005: User-scope harness integrations only](0005-user-scope-integrations.md)
+- [ADR 0006: Require a parent session id for interactive runs](0006-require-parent-session-for-interactive-runs.md)
 - [Pull Request #59: feat: harness-neutral orchestrator instruction file with Claude Code skill and OpenCode command](https://github.com/andromarces/agent-loops/pull/59)
 - [ADR Index](README.md)

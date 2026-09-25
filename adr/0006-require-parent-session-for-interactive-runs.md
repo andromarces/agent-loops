@@ -23,9 +23,12 @@ harness session id equals (#146, #149).
 1. Every `agent-loop role` init requires `--parent-session`. The subcommand
    refuses an init without it before any state file is written.
 2. `assertSessionId` refuses a value that cannot be a real harness session id:
-   an unexpanded placeholder (`${CLAUDE_SESSION_ID}`, `%CODEX_THREAD_ID%`), a
-   path separator, whitespace, backtick, or a relative-path token. Refusal
-   happens in `statePaths` before any state file exists.
+   an unexpanded placeholder (`${CLAUDE_SESSION_ID}`, `%CODEX_THREAD_ID%`,
+   `<parent-session-id>`), a path separator, whitespace, backtick, or a
+   relative-path token. Refusal happens in `statePaths` before any state file
+   exists. A bare placeholder name with no punctuation (`CLAUDE_SESSION_ID`) is
+   indistinguishable from a real token here; only a harness-id allowlist would
+   catch it, which alternative 2 rejects.
 3. The headless `agent-loop` command (no subcommand) is the explicit unguarded
    path. No unguarded path is the default.
 
@@ -58,5 +61,6 @@ Andro Marces
 ## Links
 
 - [Issue #149: Reject an unexpanded session-id placeholder and decide whether a guarded run requires --parent-session](https://github.com/andromarces/agent-loops/issues/149)
+- [PR #153: fix: require a parent session id and refuse placeholders (#149)](https://github.com/andromarces/agent-loops/pull/153)
 - [ADR 0002: Harness-neutral orchestrator instructions with thin entry points](0002-harness-neutral-orchestrator-instructions.md)
 - [ADR Index](README.md)

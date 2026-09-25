@@ -124,6 +124,7 @@ test("statePaths refuses an unexpanded session placeholder", () => {
     "${CLAUDE_SESSION_ID}",
     "$CLAUDE_SESSION_ID",
     "%CODEX_THREAD_ID%",
+    "<parent-session-id>",
     "`id`",
     "ses id",
     "../../etc",
