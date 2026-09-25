@@ -6,6 +6,9 @@ import { readFile, appendFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
+  CHILD_ROLE_KINDS,
+  DEFAULT_MAX_STEPS,
+  DEFAULT_TIMEOUT,
   ROLE_FLAG_BY_OPTION,
   assertOpenCodeOptions,
   readArgValue,
@@ -29,10 +32,8 @@ import { validateAction } from "./contracts/orchestrator-action.mjs";
 
 const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
 const MODES = new Set(["work-first", "review-first", "review-only"]);
-const ROLE_NAMES = new Set(["worker", "reviewer"]);
-const ROLE_FLAGS = roleFlags(["worker", "reviewer"]);
-const DEFAULT_MAX_STEPS = 20;
-const DEFAULT_TIMEOUT = 3600;
+const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
+const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 // Bound for `raw` in the envelope when the closing block could not be parsed.
 const RAW_TAIL_LIMIT = 2000;
 
@@ -186,7 +187,7 @@ function validateInitFlags(args, agents = {}) {
   }
   // review-only never dispatches the worker, so --worker is optional there.
   const requiredRoles =
-    (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : ["worker", "reviewer"];
+    (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : CHILD_ROLE_KINDS;
   for (const roleName of requiredRoles) {
     if (args[roleName] === null) {
       throw new RoleError(`Missing required --${roleName}.`);
@@ -194,7 +195,7 @@ function validateInitFlags(args, agents = {}) {
   }
   // Every supplied role is still validated; review-only may omit the worker.
   // A model or effort without its role kind is an orphan option, not a silent drop.
-  for (const roleName of ["worker", "reviewer"]) {
+  for (const roleName of CHILD_ROLE_KINDS) {
     const kind = args[roleName];
     if (kind === null) {
       for (const flag of [`${roleName}Model`, `${roleName}Effort`]) {
@@ -268,7 +269,7 @@ function rejectInitFlagChanges(args, state) {
       provided.push([flag, args[flag], state[flag]]);
     }
   }
-  for (const roleName of ["worker", "reviewer"]) {
+  for (const roleName of CHILD_ROLE_KINDS) {
     for (const [flag, path] of [
       [roleName, "kind"],
       [`${roleName}Model`, "model"],
