@@ -93,12 +93,41 @@ change. `agent-loop uninstall` removes only the files and settings entries the
 install recorded, and restores a file that install changed when the file is
 otherwise unchanged. Install applies a harness guard before its entry point, and
 if a write fails part way through it records the writes that completed, so
-`uninstall` still removes or restores them.
+`uninstall` still removes or restores them. It leaves a target in place when it
+cannot remove or restore it safely; see [Uninstall skips](#uninstall-skips).
 
 ```bash
 agent-loop install --harness claude,codex --yes
 agent-loop uninstall
 ```
+
+### Uninstall skips
+
+`agent-loop uninstall` prints one line per target as
+`<harness>: <action> <path> (<detail>)`. A target that it cannot remove or
+restore safely reports `skip`, stays on disk, and loses its manifest record:
+uninstall deletes the harness record, and removes the manifest when no harness
+remains. Uninstall never retries a skipped target, and a backup file can remain
+on disk with no record. Recover a skipped target by hand.
+
+`install` writes a backup at `<file>.agent-loops-backup` when the target existed
+before install and install changed it, and uninstall reads that file to restore
+the pre-install bytes. Install writes no backup when the target did not exist
+before install, and none when it already held the installed bytes.
+
+| Reported detail                                    | Target   | What stays on disk                                                   | Manual recovery                                                                                                                                                                                                                                                       |
+| -------------------------------------------------- | -------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `owned file changed since install; left unchanged` | file     | The file, with your later edits, and a backup when present           | Restore `<file>.agent-loops-backup` over the file when that backup exists and you want the pre-install content, or delete the file when you do not want it. Delete the backup by hand when it stays behind.                                                           |
+| `backup missing; left unchanged`                   | file     | The file, unchanged since install, with no backup                    | Install wrote no backup when the file already held the installed bytes, so the file can be your original and needs no change. Otherwise restore the original from version control or another copy, or delete the file when you do not want the installed entry point. |
+| `settings do not parse; left unchanged`            | settings | The settings file, still invalid, and a backup when present          | The record is gone, so no later `agent-loop uninstall` retries it. Repair the syntax and remove the recorded entry by hand, or restore `<file>.agent-loops-backup` when that backup exists and your later edits can be discarded. Then delete the backup.             |
+| `recorded entry not found; left unchanged`         | settings | The settings file, with no recorded entry, and a backup when present | The recorded entry is already gone. Remove another agent-loop entry by hand when one is present, then delete the backup when it exists.                                                                                                                               |
+| `backup missing; left unchanged`                   | settings | The settings file, still holding the recorded entry                  | Remove the recorded entry by hand, or restore the original from version control or another copy. The backup is gone, so none remains to delete.                                                                                                                       |
+
+When a settings file changed after install but still parses and holds the
+recorded entry, uninstall reports `remove-entry` instead: it removes only that
+entry, keeps your edits, and leaves the result not byte-identical. The backup at
+`<file>.agent-loops-backup` stays behind, so delete it by hand when you no
+longer need the pre-install copy.
 
 Run it without installing:
 
