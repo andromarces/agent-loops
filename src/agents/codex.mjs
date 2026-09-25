@@ -1,5 +1,6 @@
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import { resumeMismatchError, setMainLoopUsage } from "./shared.mjs";
 
 export async function runCodex(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
@@ -36,20 +37,11 @@ export async function runCodex(state, prompt, options = {}) {
   }
 
   if (state.sessionId && returnedId !== state.sessionId) {
-    throw new Error(
-      [
-        "Codex did not resume the expected thread.",
-        `Expected: ${state.sessionId}`,
-        `Received: ${returnedId}`,
-      ].join("\n"),
-    );
+    throw resumeMismatchError("Codex", "thread", state.sessionId, returnedId);
   }
 
   state.sessionId = returnedId;
-  setUsage(
-    state,
-    events.find((event) => event.type === "turn.completed"),
-  );
+  setMainLoopUsage(state, events.find((event) => event.type === "turn.completed")?.usage);
 
   const messages = events
     .filter((event) => event.type === "item.completed" && event.item?.type === "agent_message")
@@ -61,13 +53,4 @@ export async function runCodex(state, prompt, options = {}) {
   }
 
   return String(messages.at(-1)).trim();
-}
-
-/** Sets top-level turn usage, or removes stale usage when Codex omits it. */
-function setUsage(state, completedTurn) {
-  if (completedTurn?.usage) {
-    state.usage = { mainLoop: completedTurn.usage };
-  } else {
-    delete state.usage;
-  }
 }
