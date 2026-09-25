@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, test } from "vitest";
 import { main as cliMain } from "../../src/cli.mjs";
+import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install/commands.mjs";
 import { deepEqual, sha256 } from "../../src/install/fsutil.mjs";
 import { buildTargets, HARNESS_ORDER } from "../../src/install/harnesses.mjs";
 import { detectHarnesses, install, uninstall } from "../../src/install/installer.mjs";
@@ -75,11 +76,15 @@ async function targetPaths(harness, home, extra = {}) {
   return targets;
 }
 
-// The rendered gate command an installed skill carries: the CLI by absolute
+// The resolved CLI invocation an installed skill carries: the CLI by absolute
 // path, so it runs without an `agent-loop` PATH lookup.
-function gateCommand(harness) {
+function cliInvocation() {
   const cli = join(PACKAGE_ROOT, "src", "cli.mjs").replaceAll("\\", "/");
-  return `node "${cli}" harness-check ${harness}`;
+  return `node "${cli}"`;
+}
+
+function gateCommand(harness) {
+  return `${cliInvocation()} harness-check ${harness}`;
 }
 
 // Usefulness: verifies the round-trip acceptance — a five-harness install then
@@ -302,45 +307,49 @@ test("uninstall keeps an unrelated edit made after install", async () => {
 });
 
 // Usefulness: verifies the shared `~/.agents/skills` acceptance — the Codex
-// skill runs the ancestry check through the resolved CLI invocation, so a
-// Copilot session that inherits CODEX_THREAD_ID cannot start a run through it,
-// and a Git Bash session that lacks the `agent-loop` shim reports a missing CLI
-// instead of a false harness refusal (#151).
+// skill runs the ancestry check and every later command through the resolved
+// CLI invocation, so a Copilot session that inherits CODEX_THREAD_ID cannot
+// start a run through it and a Git Bash session without the `agent-loop` shim
+// can start a guarded run (#151).
 test("the Codex skill requires the harness-check ancestry gate", async () => {
   const home = await makeHome();
   const codex = await targetPaths("codex", home);
   const skill = codex.files.find((file) => file.path.endsWith("SKILL.md")).content;
   expect(skill).toContain(gateCommand("codex"));
   expect(skill).not.toContain("agent-loop harness-check");
-  expect(skill).toContain("missing CLI");
+  expect(skill).toContain(`\`agent-loop\` command in the instructions as \`${cliInvocation()}\``);
+  expect(skill).toContain("exits 3");
   expect(skill).toContain("CODEX_THREAD_ID");
 });
 
 // Usefulness: verifies the shared `~/.claude/skills` acceptance — the Claude
-// skill runs the ancestry check through the resolved CLI invocation, so an
-// OpenCode session that discovers that folder cannot start an unguarded run,
-// and a Git Bash session that lacks the `agent-loop` shim reports a missing CLI
-// instead of a false harness refusal (#151).
+// skill runs the ancestry check and every later command through the resolved
+// CLI invocation, so an OpenCode session that discovers that folder cannot start
+// an unguarded run and a Git Bash session without the `agent-loop` shim can
+// start a guarded run (#151).
 test("the Claude skill requires the harness-check ancestry gate", async () => {
   const home = await makeHome();
   const claude = await targetPaths("claude", home);
   const skill = claude.files.find((file) => file.path.endsWith("SKILL.md")).content;
   expect(skill).toContain(gateCommand("claude"));
   expect(skill).not.toContain("agent-loop harness-check");
-  expect(skill).toContain("missing CLI");
+  expect(skill).toContain(`\`agent-loop\` command in the instructions as \`${cliInvocation()}\``);
+  expect(skill).toContain("exits 3");
   expect(skill).toContain("CLAUDE_SESSION_ID");
 });
 
 // Usefulness: verifies the same #151 acceptance for the Antigravity skill — the
-// gate renders the absolute CLI invocation and names a missing CLI without
-// claiming another harness owns the session.
+// gate and the later commands use the resolved CLI invocation, and the skill
+// names a check that cannot run without claiming another harness owns the
+// session.
 test("the Antigravity skill requires the harness-check ancestry gate", async () => {
   const home = await makeHome();
   const antigravity = await targetPaths("antigravity", home);
   const skill = antigravity.files.find((file) => file.path.endsWith("SKILL.md")).content;
   expect(skill).toContain(gateCommand("antigravity"));
   expect(skill).not.toContain("agent-loop harness-check");
-  expect(skill).toContain("missing CLI");
+  expect(skill).toContain(`\`agent-loop\` command in the instructions as \`${cliInvocation()}\``);
+  expect(skill).toContain("exits 3");
   expect(skill).toContain("ANTIGRAVITY_CONVERSATION_ID");
 });
 
@@ -664,6 +673,40 @@ test("CLI dispatches install, uninstall, and harness-check", async () => {
     console.log = originalLog;
     console.error = originalError;
     delete process.env.AGENT_LOOP_HOME;
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: verifies the #151 exit-code contract — a harness mismatch exits
+// with its own code (3), a match exits 0, and a check that cannot read the
+// ancestry exits 1, so a skill can separate a refusal from a check that cannot
+// run.
+test("harness-check separates a harness mismatch from a check that cannot run", async () => {
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    process.exitCode = 0;
+    await runHarnessCheckCommand(["claude"], { lookup: async () => "claude" });
+    expect(process.exitCode).toBe(0);
+
+    process.exitCode = 0;
+    await runHarnessCheckCommand(["claude"], { lookup: async () => "codex" });
+    expect(process.exitCode).toBe(HARNESS_MISMATCH_EXIT);
+    expect(HARNESS_MISMATCH_EXIT).not.toBe(1);
+
+    process.exitCode = 0;
+    await runHarnessCheckCommand(["claude"], { lookup: async () => null });
+    expect(process.exitCode).toBe(1);
+
+    process.exitCode = 0;
+    await runHarnessCheckCommand(["claude"], {
+      lookup: async () => {
+        throw new Error("no process table");
+      },
+    });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    console.error = originalError;
     process.exitCode = 0;
   }
 });

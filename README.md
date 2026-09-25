@@ -256,11 +256,12 @@ happens only through explicit invocation.
 `agent-loop install` writes these files from the templates under
 `src/install/templates/`, and each rendered entry point points at the installed
 `docs/orchestrator-instructions.md` by absolute path, so it works outside a
-clone. The ancestry gate in each skill names the installed CLI by absolute path
-too (for example `node "<package>/src/cli.mjs" harness-check claude`), so a
-Git Bash session that cannot resolve the `agent-loop` command still runs the
-gate instead of misreading the missing command as a harness refusal (#151). The
-Parent guard section below lists every guard target.
+clone. Each skill renders the CLI by absolute path and runs every `agent-loop`
+command in the instructions with that resolved invocation, so a Git Bash session
+that cannot resolve the `agent-loop` command still starts a guarded run (#151).
+`harness-check` exits 0 for a match, 3 when another harness is the nearest
+ancestor, and 1 when the check cannot run, so the skill separates a refusal from a
+check that cannot run. The Parent guard section below lists every guard target.
 
 - The `~/.agents/skills` directory is shared. Copilot CLI and OpenCode also
   discover personal skills there, so the installed Codex skill appears in both.
@@ -273,12 +274,12 @@ Parent guard section below lists every guard target.
   the skill runs in the current session. OpenCode also discovers
   `~/.claude/skills`, so a foreign OpenCode session loads this same copy. Before
   the init dispatch call the skill runs the installed CLI by absolute path with
-  `harness-check claude`, which exits 0 only when the nearest harness process
-  above the shell is Claude Code; when it exits non-zero the skill stops without
-  registering a run, which covers the literal `${CLAUDE_SESSION_ID}` that OpenCode
-  leaves unexpanded. The absolute invocation sidesteps the `agent-loop` PATH
-  lookup, which fails in Git Bash, and the skill reports a command that cannot run
-  as a missing CLI instead of a harness refusal. Its body passes
+  `harness-check claude`; exit 3 stops the run because another harness owns the
+  session, and any other non-zero exit stops the run because the check could not
+  run or could not read the ancestry. Both cover the literal
+  `${CLAUDE_SESSION_ID}` that OpenCode leaves unexpanded. The resolved invocation
+  then replaces `agent-loop` for the init dispatch and every later command, so the
+  run does not need the `agent-loop` command on PATH. Its body passes
   `${CLAUDE_SESSION_ID}` as `--parent-session` on the init dispatch call.
 - The OpenCode entry point is a user plugin at
   `~/.config/opencode/plugins/parent-guard.ts`, loaded automatically from that
@@ -288,11 +289,12 @@ Parent guard section below lists every guard target.
   prompt, and the init dispatch call passes it as `--parent-session`.
 - The Codex CLI skill (`~/.agents/skills/agent-loop/SKILL.md`) activates only
   through `$agent-loop`. Before the init call it runs the installed CLI by
-  absolute path with `harness-check codex`, which exits 0 only when the nearest
-  harness process above the shell is Codex CLI. When ancestry is absent or names
-  a different harness, the skill stops: an environment check cannot decide it,
-  because a nested harness inherits `CODEX_THREAD_ID`. The skill passes
-  `CODEX_THREAD_ID` as `--parent-session`. Use `$env:CODEX_THREAD_ID` in
+  absolute path with `harness-check codex`, which uses the same exit codes. Exit
+  3 means another harness is the nearest ancestor; any other non-zero exit means
+  the check could not run. Either stops the run: an environment check cannot
+  decide it, because a nested harness inherits `CODEX_THREAD_ID`. The resolved
+  invocation replaces `agent-loop` for every command in the instructions. The
+  skill passes `CODEX_THREAD_ID` as `--parent-session`. Use `$env:CODEX_THREAD_ID` in
   PowerShell and `$CODEX_THREAD_ID` in POSIX shells. In PowerShell, pass
   `--cwd $worktree` after setting `$worktree = (Get-Location).Path`. The CLI
   rejects an empty `--parent-session` before it initializes a run. This
@@ -309,12 +311,14 @@ Parent guard section below lists every guard target.
 - The Antigravity CLI entry point is a skill at
   `~/.gemini/antigravity-cli/skills/agent-loop/SKILL.md`, activated as
   `/agent-loop` in an interactive session. It runs the installed CLI by absolute
-  path with `harness-check antigravity` before the init call, then passes
+  path with `harness-check antigravity` before the init call, and it replaces
+  `agent-loop` with that resolved invocation for every command in the
+  instructions. Then it passes
   `ANTIGRAVITY_CONVERSATION_ID` as `--parent-session`; use
   `$env:ANTIGRAVITY_CONVERSATION_ID` in PowerShell. This environment variable is
   an undocumented dependency and can change on upgrade, and child processes
-  inherit it. When it is absent, or when the harness check names a different
-  harness, do not start a run.
+  inherit it. When it is absent, or when the harness check stops the run, do not
+  start a run.
 - Universal fallback: reference `docs/orchestrator-instructions.md` in the first
   prompt and follow it when the harness entry point is not installed. A run
   without `--parent-session` stays unguarded.

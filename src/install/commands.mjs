@@ -211,7 +211,16 @@ export async function runUninstallCommand(argv) {
 
 const HARNESS_ALIASES = new Map([["agy", "antigravity"]]);
 
-export async function runHarnessCheckCommand(argv) {
+/**
+ * Exit code for a harness mismatch: the named harness is not the nearest
+ * ancestor, so another harness owns the shell. Exit 0 means the names match;
+ * every other non-zero code means the check could not run or could not read the
+ * process ancestry. The distinct code lets a caller separate a genuine harness
+ * refusal from a CLI that cannot run (#151).
+ */
+export const HARNESS_MISMATCH_EXIT = 3;
+
+export async function runHarnessCheckCommand(argv, { lookup = nearestHarness } = {}) {
   const requested = argv[0];
   if (!requested) {
     logError("harness-check requires a harness name.");
@@ -225,18 +234,25 @@ export async function runHarnessCheckCommand(argv) {
     return;
   }
 
-  let found = null;
+  let found;
   try {
-    found = await nearestHarness();
+    found = await lookup();
   } catch (err) {
     logError(`could not read the process table: ${err.message}`);
+    process.exitCode = 1;
+    return;
   }
   if (found === harness) {
     process.exitCode = 0;
     return;
   }
-  logError(
-    `nearest harness ancestor is ${found ?? "unknown"}, not ${harness}. Refusing to start a run.`,
-  );
-  process.exitCode = 1;
+  if (found === null || found === undefined) {
+    logError(
+      `could not determine the nearest harness ancestor, so not ${harness}. Refusing to start a run.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  logError(`nearest harness ancestor is ${found}, not ${harness}. Refusing to start a run.`);
+  process.exitCode = HARNESS_MISMATCH_EXIT;
 }
