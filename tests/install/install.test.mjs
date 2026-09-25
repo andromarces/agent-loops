@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, test } from "vitest";
 import { main as cliMain } from "../../src/cli.mjs";
 import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install/commands.mjs";
-import { deepEqual, sha256 } from "../../src/install/fsutil.mjs";
+import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
 import { buildTargets, HARNESS_ORDER } from "../../src/install/harnesses.mjs";
 import { detectHarnesses, install, uninstall } from "../../src/install/installer.mjs";
 import { manifestPath, readManifest } from "../../src/install/manifest.mjs";
@@ -74,6 +74,17 @@ function antigravitySeed() {
 async function targetPaths(harness, home, extra = {}) {
   const targets = await buildTargets(harness, { home, packageRoot: PACKAGE_ROOT, ...extra });
   return targets;
+}
+
+// The guard the harness owns is present in its settings file.
+async function guardIsInstalled(home, harness) {
+  const target = (await targetPaths(harness, home)).settings[0];
+  const settings = JSON.parse(await readText(target.path));
+  if (target.locator.kind === "key") {
+    return deepEqual(settings[target.locator.key], target.entry);
+  }
+  const list = target.locator.path.reduce((node, key) => node?.[key], settings);
+  return Array.isArray(list) && list.some((entry) => deepEqual(entry, target.entry));
 }
 
 // The resolved CLI invocation an installed skill carries: the CLI by absolute
@@ -574,6 +585,182 @@ test("a conflicting guard key blocks the entry point", async () => {
   ).toBe(false);
   const after = JSON.parse(await readText(hooksPath));
   expect(after["agent-loop-parent-guard"].PreToolUse[0].matcher).toBe("user");
+});
+
+// Usefulness: verifies acceptance #156 point 1 — a guard settings write failure
+// leaves no entry point without its guard, and uninstall still restores the
+// settings file and removes the backup the failed write made.
+test("a guard settings write failure leaves no unguarded entry point", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+  const before = await readText(settingsPath);
+  const skillPath = join(home, ".claude", "skills", "agent-loop", "SKILL.md");
+
+  const write = async (path, ...rest) => {
+    if (path === settingsPath) {
+      throw new Error("simulated guard settings write failure");
+    }
+    return writeTextAtomic(path, ...rest);
+  };
+
+  const error = await install({
+    harnesses: ["claude"],
+    home,
+    packageRoot: PACKAGE_ROOT,
+    write,
+  }).catch((err) => err);
+  expect(error).toBeInstanceOf(Error);
+
+  // No entry point without its guard, and the settings file is untouched.
+  expect(existsSync(skillPath)).toBe(false);
+  expect(await readText(settingsPath)).toBe(before);
+  expect(existsSync(`${settingsPath}.agent-loops-backup`)).toBe(false);
+
+  await uninstall({ home });
+  expect(await readText(settingsPath)).toBe(before);
+  expect(existsSync(skillPath)).toBe(false);
+  expect(existsSync(manifestPath(home))).toBe(false);
+});
+
+// Usefulness: verifies acceptance #156 point 2 — an entry-point write that fails
+// after the guard write completed leaves the guard and the entry point already
+// written, and uninstall restores the guard and removes that entry point.
+test("an entry-point write failure after the guard is recoverable", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".codex", "hooks.json");
+  await writeJson(settingsPath, codexSeed());
+  const before = await readText(settingsPath);
+  const codex = await targetPaths("codex", home);
+  const skill = codex.files.find((file) => file.path.endsWith("SKILL.md")).path;
+  const yaml = codex.files.find((file) => file.path.endsWith("openai.yaml")).path;
+
+  const write = async (path, ...rest) => {
+    if (path === yaml) {
+      throw new Error("simulated entry-point write failure");
+    }
+    return writeTextAtomic(path, ...rest);
+  };
+
+  const error = await install({
+    harnesses: ["codex"],
+    home,
+    packageRoot: PACKAGE_ROOT,
+    write,
+  }).catch((err) => err);
+  expect(error).toBeInstanceOf(Error);
+
+  // The guard and the earlier entry point exist; the failed one does not.
+  expect(await guardIsInstalled(home, "codex")).toBe(true);
+  expect(existsSync(skill)).toBe(true);
+  expect(existsSync(yaml)).toBe(false);
+
+  await uninstall({ home });
+  expect(await readText(settingsPath)).toBe(before);
+  expect(existsSync(skill)).toBe(false);
+  expect(existsSync(yaml)).toBe(false);
+  expect(existsSync(`${settingsPath}.agent-loops-backup`)).toBe(false);
+  expect(existsSync(manifestPath(home))).toBe(false);
+});
+
+// Usefulness: verifies acceptance #156 point 3 — a write failure in a later
+// harness does not strand the completed writes of an earlier harness; uninstall
+// restores the earlier harness and leaves the later one untouched.
+test("a later harness write failure still lets uninstall restore the earlier harness", async () => {
+  const home = await makeHome();
+  const claudeSettings = join(home, ".claude", "settings.json");
+  await writeJson(claudeSettings, claudeSeed());
+  const claudeBefore = await readText(claudeSettings);
+  const claudeSkill = join(home, ".claude", "skills", "agent-loop", "SKILL.md");
+  const codexSettings = join(home, ".codex", "hooks.json");
+  await writeJson(codexSettings, codexSeed());
+  const codexBefore = await readText(codexSettings);
+  const codexSkill = join(home, ".agents", "skills", "agent-loop", "SKILL.md");
+
+  const write = async (path, ...rest) => {
+    if (path === codexSettings) {
+      throw new Error("simulated later-harness write failure");
+    }
+    return writeTextAtomic(path, ...rest);
+  };
+
+  const error = await install({
+    harnesses: ["claude", "codex"],
+    home,
+    packageRoot: PACKAGE_ROOT,
+    write,
+  }).catch((err) => err);
+  expect(error).toBeInstanceOf(Error);
+
+  // The earlier harness completed, so its entry point has its guard. The later
+  // harness wrote nothing unguarded.
+  expect(await guardIsInstalled(home, "claude")).toBe(true);
+  expect(existsSync(claudeSkill)).toBe(true);
+  expect(await readText(codexSettings)).toBe(codexBefore);
+  expect(existsSync(codexSkill)).toBe(false);
+
+  await uninstall({ home });
+  expect(await readText(claudeSettings)).toBe(claudeBefore);
+  expect(existsSync(claudeSkill)).toBe(false);
+  expect(await readText(codexSettings)).toBe(codexBefore);
+  expect(existsSync(manifestPath(home))).toBe(false);
+});
+
+// Usefulness: verifies the upgrade path of #156 — when a write fails during an
+// upgrade, the previous record stays for the target that did not complete, so
+// uninstall restores the old installed bytes instead of stranding an entry
+// point with no guard.
+test("a failed upgrade keeps the previous record for the target it did not complete", async () => {
+  for (const failAt of ["settings", "entry-point"]) {
+    const home = await makeHome();
+    const settingsPath = join(home, ".claude", "settings.json");
+    await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+    const seed = await readText(settingsPath);
+    await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+    // A moved package makes the next install an upgrade: both the guard and the
+    // skill render new bytes.
+    const movedRoot = await mkdtemp(join(tmpdir(), "agent-loop-upgrade-package-"));
+    homes.push(movedRoot);
+    await cp(
+      join(PACKAGE_ROOT, "src", "install", "templates"),
+      join(movedRoot, "src", "install", "templates"),
+      { recursive: true },
+    );
+    await mkdir(join(movedRoot, "docs"), { recursive: true });
+    await cp(
+      join(PACKAGE_ROOT, "docs", "orchestrator-instructions.md"),
+      join(movedRoot, "docs", "orchestrator-instructions.md"),
+    );
+
+    const skillPath = join(home, ".claude", "skills", "agent-loop", "SKILL.md");
+    const failing = failAt === "settings" ? settingsPath : skillPath;
+    const write = async (path, ...rest) => {
+      if (path === failing) {
+        throw new Error(`simulated upgrade ${failAt} write failure`);
+      }
+      return writeTextAtomic(path, ...rest);
+    };
+
+    const error = await install({
+      harnesses: ["claude"],
+      home,
+      packageRoot: movedRoot,
+      write,
+    }).catch((err) => err);
+    expect(error, failAt).toBeInstanceOf(Error);
+
+    // The previous record survives for the failed target and for the target the
+    // loop never reached, whether or not the guard write completed.
+    const manifest = await readManifest(home);
+    expect(manifest.harnesses.claude.files, failAt).toHaveLength(1);
+    expect(manifest.harnesses.claude.settings, failAt).toHaveLength(1);
+
+    await uninstall({ home });
+    expect(existsSync(skillPath), failAt).toBe(false);
+    expect(await readText(settingsPath), failAt).toBe(seed);
+    expect(existsSync(manifestPath(home)), failAt).toBe(false);
+  }
 });
 
 // Usefulness: verifies acceptance — a partial uninstall removes the empty hook
