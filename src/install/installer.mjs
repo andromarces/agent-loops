@@ -35,6 +35,16 @@ import {
   validateLocator,
 } from "./settings.mjs";
 
+function planBackup(target, previous, current) {
+  const existedBefore = previous ? previous.existedBefore : current !== null;
+  const backupPath = previous?.backupPath ?? null;
+  const backup =
+    existedBefore && !backupPath && current !== null
+      ? { path: backupPathFor(target.path), content: current }
+      : null;
+  return { existedBefore, backupPath, backup };
+}
+
 async function planFileWrite(target, previous) {
   const current = await readTextOrNull(target.path);
   const currentSha = current === null ? null : sha256(current);
@@ -65,12 +75,7 @@ async function planFileWrite(target, previous) {
     return { kind: "file", action: "noop", path: target.path, record };
   }
 
-  const existedBefore = previous ? previous.existedBefore : current !== null;
-  const backupPath = previous?.backupPath ?? null;
-  const backup =
-    existedBefore && !backupPath && current !== null
-      ? { path: backupPathFor(target.path), content: current }
-      : null;
+  const { existedBefore, backupPath, backup } = planBackup(target, previous, current);
   return {
     kind: "file",
     action: existedBefore ? "update" : "create",
@@ -165,12 +170,7 @@ async function planSettingsWrite(target, previous) {
     };
   }
 
-  const existedBefore = previous ? previous.existedBefore : current !== null;
-  const backupPath = previous?.backupPath ?? null;
-  const backup =
-    existedBefore && !backupPath && current !== null
-      ? { path: backupPathFor(target.path), content: current }
-      : null;
+  const { existedBefore, backupPath, backup } = planBackup(target, previous, current);
   // A write that starts from bytes other than the recorded post-install hash
   // includes user edits. Mark the record so uninstall removes only the entry
   // instead of restoring the backup over them.
@@ -425,6 +425,33 @@ export async function install({
   return reports;
 }
 
+async function restoreOrDelete(record, kind, dryRun) {
+  if (record.existedBefore) {
+    const backupFile = record.backupPath ?? backupPathFor(record.path);
+    const backup = await readTextOrNull(backupFile);
+    if (backup === null) {
+      return {
+        harness: record.harness,
+        kind,
+        action: "skip",
+        path: record.path,
+        detail: "backup missing; left unchanged",
+      };
+    }
+    if (!dryRun) {
+      await writeTextAtomic(record.path, backup, {
+        mode: (await fileMode(backupFile)) ?? undefined,
+      });
+      await removeFileQuiet(backupFile);
+    }
+    return { harness: record.harness, kind, action: "restore", path: record.path };
+  }
+  if (!dryRun) {
+    await removeFileQuiet(record.path);
+  }
+  return { harness: record.harness, kind, action: "delete", path: record.path };
+}
+
 async function planSettingsRestore(record, dryRun) {
   const current = await readTextOrNull(record.path);
   if (current === null) {
@@ -433,30 +460,7 @@ async function planSettingsRestore(record, dryRun) {
   const currentSha = sha256(current);
 
   if (currentSha === record.shaAfter && !record.userEdited) {
-    if (record.existedBefore) {
-      const backupFile = record.backupPath ?? backupPathFor(record.path);
-      const backup = await readTextOrNull(backupFile);
-      if (backup === null) {
-        return {
-          harness: record.harness,
-          kind: "settings",
-          action: "skip",
-          path: record.path,
-          detail: "backup missing; left unchanged",
-        };
-      }
-      if (!dryRun) {
-        await writeTextAtomic(record.path, backup, {
-          mode: (await fileMode(backupFile)) ?? undefined,
-        });
-        await removeFileQuiet(backupFile);
-      }
-      return { harness: record.harness, kind: "settings", action: "restore", path: record.path };
-    }
-    if (!dryRun) {
-      await removeFileQuiet(record.path);
-    }
-    return { harness: record.harness, kind: "settings", action: "delete", path: record.path };
+    return restoreOrDelete(record, "settings", dryRun);
   }
 
   let settings;
@@ -516,30 +520,7 @@ async function planFileRestore(record, dryRun) {
       detail: "owned file changed since install; left unchanged",
     };
   }
-  if (record.existedBefore) {
-    const backupFile = record.backupPath ?? backupPathFor(record.path);
-    const backup = await readTextOrNull(backupFile);
-    if (backup === null) {
-      return {
-        harness: record.harness,
-        kind: "file",
-        action: "skip",
-        path: record.path,
-        detail: "backup missing; left unchanged",
-      };
-    }
-    if (!dryRun) {
-      await writeTextAtomic(record.path, backup, {
-        mode: (await fileMode(backupFile)) ?? undefined,
-      });
-      await removeFileQuiet(backupFile);
-    }
-    return { harness: record.harness, kind: "file", action: "restore", path: record.path };
-  }
-  if (!dryRun) {
-    await removeFileQuiet(record.path);
-  }
-  return { harness: record.harness, kind: "file", action: "delete", path: record.path };
+  return restoreOrDelete(record, "file", dryRun);
 }
 
 /** Removes every target the manifest records for the selected harnesses. */

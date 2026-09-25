@@ -14,7 +14,7 @@ metadata:
 @{{AGENT_LOOP_INSTRUCTIONS}}
 
 Follow the attached instructions for this invocation. If the file is not
-attached, read `__AGENT_LOOP_INSTRUCTIONS__` before acting. Run every
+attached, read `{{AGENT_LOOP_INSTRUCTIONS}}` before acting. Run every
 `agent-loop` command in the instructions as `__AGENT_LOOP_CLI__` instead, so the
 run does not depend on the `agent-loop` command resolving on PATH. The task and
 role settings from the invocation are:

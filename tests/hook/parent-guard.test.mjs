@@ -489,7 +489,7 @@ test("Antigravity templates pass the conversation id and wire the shim", async (
     "utf8",
   );
   expect(skill).toContain("/agent-loop");
-  expect(skill).toContain("__AGENT_LOOP_INSTRUCTIONS__");
+  expect(skill).toContain("{{AGENT_LOOP_INSTRUCTIONS}}");
   expect(skill).toContain("ANTIGRAVITY_CONVERSATION_ID");
   expect(skill).toContain("--parent-session");
 
