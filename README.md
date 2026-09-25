@@ -215,13 +215,13 @@ includes it rather than copying it. Role activation never goes into `AGENTS.md`
 or `CLAUDE.md`, because dispatched children read those files; activation
 happens only through explicit invocation.
 
-| Harness         | Entry point                          | Invocation                                    |
-| --------------- | ------------------------------------ | --------------------------------------------- |
-| Claude Code     | `.claude/skills/agent-loop/SKILL.md` | `/agent-loop <task and role settings>`        |
-| OpenCode        | `.opencode/plugins/parent-guard.ts`  | `/agent-loop <task and role settings>`        |
-| Codex CLI       | `.agents/skills/agent-loop/SKILL.md` | `$agent-loop <task and role settings>`        |
-| Copilot CLI     | `src/entrypoints/copilot.mjs`        | `agent-loop-copilot <task and role settings>` |
-| Antigravity CLI | universal fallback (below)           | first prompt references the file              |
+| Harness         | Entry point                                            | Invocation                                    |
+| --------------- | ------------------------------------------------------ | --------------------------------------------- |
+| Claude Code     | `.claude/skills/agent-loop/SKILL.md`                   | `/agent-loop <task and role settings>`        |
+| OpenCode        | `.opencode/plugins/parent-guard.ts`                    | `/agent-loop <task and role settings>`        |
+| Codex CLI       | `.agents/skills/agent-loop/SKILL.md`                   | `$agent-loop <task and role settings>`        |
+| Copilot CLI     | `src/entrypoints/copilot.mjs`                          | `agent-loop-copilot <task and role settings>` |
+| Antigravity CLI | `~/.gemini/antigravity-cli/skills/agent-loop/SKILL.md` | `/agent-loop <task and role settings>`        |
 
 - The Claude Code skill sets `disable-model-invocation: true`, so only the
   maintainer activates it with `/agent-loop`, and it omits `context: fork`, so
@@ -249,10 +249,25 @@ happens only through explicit invocation.
   instruction file, task, and same id for `--parent-session` in the first
   prompt. The current CLI documentation exposes no custom command-template
   session-id placeholder, so the launcher is the native entry point.
-- Universal fallback (Antigravity): reference
-  `docs/orchestrator-instructions.md` in the first prompt and follow it. A
-  native entry point is added only after that harness documents an explicit
-  extension mechanism.
+- The Antigravity CLI entry point is a skill at the user-scope path
+  `~/.gemini/antigravity-cli/skills/agent-loop/SKILL.md`, activated as
+  `/agent-loop` in an interactive session. It references
+  `docs/orchestrator-instructions.md` and passes `ANTIGRAVITY_CONVERSATION_ID`
+  as `--parent-session` on the init dispatch call; use
+  `$env:ANTIGRAVITY_CONVERSATION_ID` in PowerShell. This environment variable is
+  an undocumented dependency and can change on upgrade, and child processes
+  inherit it. When it is absent, do not start a guarded run. The shipped
+  templates are under `src/install/templates/antigravity/`. Until
+  `agent-loop install` ships (#139), place all three by hand: copy the skill to
+  the path above and rewrite its `docs/orchestrator-instructions.md` reference
+  to that file's absolute path, because the relative path resolves only inside
+  a clone; merge the `agent-loop-parent-guard` group into
+  `~/.gemini/config/hooks.json`; and copy the shim beside it, rendering its
+  guard import to the adapter's `file:///` URL. The skill alone leaves the run
+  unguarded.
+- Universal fallback: reference `docs/orchestrator-instructions.md` in the first
+  prompt and follow it when the harness entry point is not installed. A run
+  without `--parent-session` stays unguarded.
 - On Copilot CLI, `.github/hooks/parent-guard.json` registers PascalCase `PreToolUse`, so the payload carries
   `session_id` and `tool_name`; the hook prints the flat `permissionDecision` object that Copilot CLI consumes.
   Repository hooks require a trusted folder. GitHub documents the `.github/hooks/*.json` path for Windows, macOS, and
@@ -268,39 +283,51 @@ Write`; no macOS runtime was available for this change. Copilot also loads `.cla
 
 ## Parent guard: hard read-only for the parent session
 
-The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. Four harnesses add a hard guard for the file-edit tools: Claude Code through a `PreToolUse` hook in `.claude/settings.json`, Codex CLI through a `PreToolUse` hook in `.codex/hooks.json`, OpenCode through a `permission` `evaluate` plugin hook, and GitHub Copilot CLI through a repository `PreToolUse` hook in `.github/hooks/parent-guard.json`. All share the decision logic in `src/hook/decision.mjs`, so they deny and release under the same rule.
+The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. Five harnesses add a hard guard for the file-edit tools: Claude Code through a `PreToolUse` hook in `.claude/settings.json`, Codex CLI through a `PreToolUse` hook in `.codex/hooks.json`, OpenCode through a `permission` `evaluate` plugin hook, GitHub Copilot CLI through a repository `PreToolUse` hook in `.github/hooks/parent-guard.json`, and Antigravity CLI through a global named `PreToolUse` group in `~/.gemini/config/hooks.json`. All share the decision logic in `src/hook/decision.mjs`, so they deny and release under the same rule.
 
 - Matchers: Claude Code uses
   `Edit|Write|MultiEdit|NotebookEdit`. Codex CLI uses
   `apply_patch`, which its hook input reports as `tool_name: "apply_patch"`.
   Copilot CLI uses `Edit|Write`, which covers the current built-in edit and create
-  tools. `Bash` stays allowed because the parent needs it to run `agent-loop role`;
+  tools. Antigravity CLI uses
+  `write_to_file|replace_file_content|multi_replace_file_content|sed_file|notebook_edit|invoke_subagent|send_message`
+  in its shipped `src/install/templates/antigravity/hooks.json` group.
+  `Bash` stays allowed because the parent needs it to run `agent-loop role`;
   a shell-based edit bypasses all guards. Full enforcement needs a harness that
   exposes only orchestration tools.
-- The hook (`src/hook/parent-guard.mjs`) reads the hook input on stdin and uses only `session_id`. It resolves the state file through the session index written by the init call, never through the hook `cwd`, so a parent whose run targets a different `--cwd` stays guarded wherever it edits. No environment variable is required at parent start-up; the harness entry points (#56) pass their session id as `--parent-session` on init.
-- Deny only when the hook `session_id` equals `parentSession` in the registered state and the lifecycle is non-terminal (`active`, `dispatched`, `interrupted`). The guard releases only on `finish`, `abort`, or a `halted` state; during `interrupted` it stays engaged, and `dispatch --resume-interrupted` keeps it engaged because the resumed run is non-terminal again.
+- Subagent containment: Antigravity runs a subagent's tool calls under its own
+  `conversationId`, and the hook payload names no parent. While guarded, the
+  registered parent is denied on `invoke_subagent` (start a child) and
+  `send_message` (message a child); `manage_subagents` stays allowed, so the
+  parent can still list and terminate a child. A child active before the init
+  call is outside the guard, because it runs under its own id.
+- The hook (`src/hook/parent-guard.mjs`) reads the hook input on stdin and maps the harness session field: `session_id` for Claude Code, Codex CLI, and Copilot CLI, and `conversationId` for Antigravity CLI (`src/hook/antigravity-parent-guard.mjs`). It resolves the state file through the session index written by the init call, never through the hook `cwd`, so a parent whose run targets a different `--cwd` stays guarded wherever it edits. No environment variable is required at parent start-up; the harness entry points (#56) pass their session id as `--parent-session` on init.
+- Deny only when the hook session id equals `parentSession` in the registered state and the lifecycle is non-terminal (`active`, `dispatched`, `interrupted`). The guard releases only on `finish`, `abort`, or a `halted` state; during `interrupted` it stays engaged, and `dispatch --resume-interrupted` keeps it engaged because the resumed run is non-terminal again.
 - Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt index entry or state file. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
 - Without a state file the hook does one absent-file read, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
 - The Claude hook is registered as a shell-form `command` with no `args`, the form both Claude Code and Copilot's Claude-compatible settings loader execute through a shell. An exec-form `command` (`node` + script `args`) fails under Copilot, which ignores the Claude `args` field and runs `node` with the hook payload on stdin; `node` then exits 1 and Copilot fail-closes the tool call. With the shell form, Copilot imports the guard, which exits 0 with no output for every session that is not the registered parent.
 - On OpenCode, `.opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session index, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
 - The plugin runs inside the OpenCode server process, so it resolves `AGENT_LOOP_RUNS_ROOT` from that process's environment; the Claude Code hook inherits the parent shell's environment instead. The override is test-only, but using it outside tests would point the plugin and the `agent-loop` CLI at different roots and disable the guard silently.
+- On Antigravity CLI, `src/hook/antigravity-parent-guard.mjs` reads `conversationId` and `toolCall.name`, reuses `decideParentGuard`, and prints `{"decision":"deny","reason":...}` only for a guarded tool call from the registered parent. Antigravity blocks a tool call when a hook prints `{}`, prints an empty decision, or exits non-zero, so every allow path prints nothing and exits 0 and keeps the normal permission flow. The global `~/.gemini/config/hooks.json` group runs a shim in that folder by a flat relative path, and the shim imports the guard by `file:///` URL, because a quoted or spaced absolute script path fails in every quoting form tested. A stale or unreachable guard URL is swallowed, so a moved package or deleted file does not fail closed. The parent learns its id from the undocumented `ANTIGRAVITY_CONVERSATION_ID`, which child processes inherit.
 
 ### Pre-tool hook availability by harness
 
-Surveyed 2026-09-21 against current vendor docs, current binaries, and the installed Copilot CLI 1.0.87-0 binary. A session-keyed guard needs both a pre-tool hook and a documented way for the parent to learn its own session id at init time; the guard ships only where both exist.
+Surveyed 2026-09-21 against current vendor docs, current binaries, and the installed Copilot CLI 1.0.87-0 binary; Antigravity re-surveyed 2026-09-25 on CLI 1.2.10. A session-keyed guard needs both a pre-tool hook and a way for the parent to learn its own session id at init time; the guard ships only where both exist.
 
-| Harness            | Pre-tool hook                                                                                                                          | Guard                     |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| Claude Code        | `PreToolUse`, deny supported, `session_id` in input                                                                                    | Implemented (this repo)   |
-| Codex CLI          | `PreToolUse`, deny supported, `session_id` in input; entry point depends on undocumented `CODEX_THREAD_ID`                             | Implemented (best effort) |
-| Antigravity CLI    | `PreToolUse` hooks (workspace or global `hooks.json`), `conversationId` in input                                                       | Not implemented           |
-| GitHub Copilot CLI | PascalCase `PreToolUse`, deny supported, `session_id` and `tool_name` in input; repository `.github/hooks/*.json` loads in current CLI | Implemented (this repo)   |
-| OpenCode           | `permission` `evaluate` plugin hook can set `deny`; event carries `PermissionEvaluation.sessionID`                                     | Implemented (this repo)   |
+| Harness            | Pre-tool hook                                                                                                                          | Guard                          |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| Claude Code        | `PreToolUse`, deny supported, `session_id` in input                                                                                    | Implemented (this repo)        |
+| Codex CLI          | `PreToolUse`, deny supported, `session_id` in input; entry point depends on undocumented `CODEX_THREAD_ID`                             | Implemented (best effort)      |
+| Antigravity CLI    | Global named `PreToolUse` group in `~/.gemini/config/hooks.json`, deny supported, `conversationId` and `toolCall.name` in input        | Implemented (user scope, #139) |
+| GitHub Copilot CLI | PascalCase `PreToolUse`, deny supported, `session_id` and `tool_name` in input; repository `.github/hooks/*.json` loads in current CLI | Implemented (this repo)        |
+| OpenCode           | `permission` `evaluate` plugin hook can set `deny`; event carries `PermissionEvaluation.sessionID`                                     | Implemented (this repo)        |
 
 Codex CLI now uses its `PreToolUse` hook with the session id in hook input. Its
 entry point relies on `CODEX_THREAD_ID` from the shell environment, which is not
 documented and can break on upgrade. The guard fails open when the variable is
-absent or unusable. Antigravity still lacks a documented parent-session channel.
+absent or unusable. Antigravity CLI now has a user-scope skill and a global
+`PreToolUse` group, both keyed on the undocumented `ANTIGRAVITY_CONVERSATION_ID`;
+the guard fails open when the variable is absent or unusable.
 Copilot uses the documented session-keyed launcher and repository hook described
 above. OpenCode has both: a command reads `CommandInvocation.sessionID`, and the
 permission hook reads `PermissionEvaluation.sessionID`.

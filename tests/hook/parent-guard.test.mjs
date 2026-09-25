@@ -194,6 +194,29 @@ function runCopilotHookScript(inputJson) {
   });
 }
 
+// Runs one Node script as a hook would: the payload on stdin, and the exit
+// code and stdout captured.
+function runNodeScript(script, inputJson) {
+  return new Promise((resolveProcess) => {
+    const child = spawn(process.execPath, [script], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.on("close", (code) => {
+      resolveProcess({ code, stdout });
+    });
+    child.stdin.end(inputJson);
+  });
+}
+
+function runAntigravityHookScript(inputJson) {
+  return runNodeScript(
+    fileURLToPath(new URL("../../src/hook/antigravity-parent-guard.mjs", import.meta.url)),
+    inputJson,
+  );
+}
+
 // Runs a registered hook `command` string through the platform shell, the way
 // both Claude Code and Copilot execute a shell-form command hook. `env` adds to
 // the inherited environment.
@@ -371,6 +394,157 @@ test("Copilot hook denies the matching session with its PreToolUse JSON shape", 
   );
   expect(afterAbort.code).toBe(0);
   expect(afterAbort.stdout).toBe("");
+});
+
+// Reads the named Antigravity guard group from the shipped template, so the
+// behavioral tests below drive the adapter with the exact tools and command
+// the installer will register.
+async function readAntigravityGuardGroup() {
+  const template = JSON.parse(
+    await readFile(
+      new URL("../../src/install/templates/antigravity/hooks.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  return template["agent-loop-parent-guard"];
+}
+
+// Usefulness: verifies the Antigravity hook contract — every tool the template
+// registers is denied for the registered parent with the flat `{decision,reason}`
+// object, a non-guarded tool and every other session stay silent, and malformed
+// input or a missing conversation id fails open, because Antigravity blocks a
+// tool call when a hook prints `{}`, prints an empty decision, or exits non-zero.
+test("Antigravity hook denies guarded tools from the parent and stays silent otherwise", async () => {
+  await setup();
+  const repo = await initRunForParent();
+
+  const group = await readAntigravityGuardGroup();
+  const guarded = group.PreToolUse[0].matcher.split("|");
+  expect(guarded.length).toBeGreaterThan(0);
+
+  for (const tool of guarded) {
+    const denied = await runAntigravityHookScript(
+      JSON.stringify({ conversationId: "parent-sess-1", toolCall: { name: tool } }),
+    );
+    expect(denied.code, tool).toBe(0);
+    expect(JSON.parse(denied.stdout), tool).toEqual({
+      decision: "deny",
+      reason: GUARD_DENY_REASON,
+    });
+  }
+
+  // `manage_subagents` stays allowed so the parent can still list and terminate
+  // a child; an unregistered tool is never the adapter's concern.
+  for (const tool of ["manage_subagents", "run_command"]) {
+    const allowed = await runAntigravityHookScript(
+      JSON.stringify({ conversationId: "parent-sess-1", toolCall: { name: tool } }),
+    );
+    expect(allowed.code, tool).toBe(0);
+    expect(allowed.stdout, tool).toBe("");
+  }
+
+  const otherSession = await runAntigravityHookScript(
+    JSON.stringify({ conversationId: "unrelated-session", toolCall: { name: "write_to_file" } }),
+  );
+  expect(otherSession.code).toBe(0);
+  expect(otherSession.stdout).toBe("");
+
+  const malformed = await runAntigravityHookScript("not json");
+  expect(malformed.code).toBe(0);
+  expect(malformed.stdout).toBe("");
+
+  const missingId = await runAntigravityHookScript(
+    JSON.stringify({ toolCall: { name: "write_to_file" } }),
+  );
+  expect(missingId.code).toBe(0);
+  expect(missingId.stdout).toBe("");
+
+  const nullId = await runAntigravityHookScript(
+    JSON.stringify({ conversationId: null, toolCall: { name: "write_to_file" } }),
+  );
+  expect(nullId.code).toBe(0);
+  expect(nullId.stdout).toBe("");
+
+  const finish = await executeRoleCommand(parseRoleArgs(["finish", "--cwd", repo]), {
+    agents: INIT_AGENTS,
+    stdin: async () => FINISH_SUMMARY,
+  });
+  expect(finish.exitCode).toBe(0);
+  const afterFinish = await runAntigravityHookScript(
+    JSON.stringify({ conversationId: "parent-sess-1", toolCall: { name: "write_to_file" } }),
+  );
+  expect(afterFinish.code).toBe(0);
+  expect(afterFinish.stdout).toBe("");
+});
+
+// Usefulness: verifies the entry-point and shim templates hand the installer a
+// session-id channel and a runnable guard command, so manual placement at the
+// user-scope targets registers the parent and reaches the adapter without a
+// quoted or spaced hook path.
+test("Antigravity templates pass the conversation id and wire the shim", async () => {
+  const skill = await readFile(
+    new URL("../../src/install/templates/antigravity/skills/agent-loop/SKILL.md", import.meta.url),
+    "utf8",
+  );
+  expect(skill).toContain("/agent-loop");
+  expect(skill).toContain("docs/orchestrator-instructions.md");
+  expect(skill).toContain("ANTIGRAVITY_CONVERSATION_ID");
+  expect(skill).toContain("--parent-session");
+
+  const group = await readAntigravityGuardGroup();
+  const handler = group.PreToolUse[0].hooks[0];
+  expect(handler.type).toBe("command");
+  expect(handler.command).toBe("node ./agent-loop-antigravity-parent-guard.mjs");
+  expect(handler.command).not.toContain('"');
+
+  const shim = await readFile(
+    new URL(
+      "../../src/install/templates/antigravity/agent-loop-antigravity-parent-guard.mjs",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  expect(shim).toContain("__AGENT_LOOP_GUARD_URL__");
+});
+
+// Usefulness: verifies the shipped shim loads the guard through the rendered
+// file URL and stays silent with exit 0 when that URL is stale, because
+// Antigravity blocks a tool call on a non-zero exit and the guard must fail
+// open for every session.
+test("Antigravity shim loads the guard and fails open on a stale URL", async () => {
+  await setup();
+  await initRunForParent();
+  const template = await readFile(
+    new URL(
+      "../../src/install/templates/antigravity/agent-loop-antigravity-parent-guard.mjs",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const dir = await mkdtemp(join(runsRoot, "shim-"));
+  const guardUrl = new URL("../../src/hook/antigravity-parent-guard.mjs", import.meta.url).href;
+  const payload = JSON.stringify({
+    conversationId: "parent-sess-1",
+    toolCall: { name: "write_to_file" },
+  });
+
+  const live = join(dir, "live.mjs");
+  await writeFile(live, template.replace("__AGENT_LOOP_GUARD_URL__", guardUrl));
+  const denied = await runNodeScript(live, payload);
+  expect(denied.code).toBe(0);
+  expect(JSON.parse(denied.stdout)).toEqual({
+    decision: "deny",
+    reason: GUARD_DENY_REASON,
+  });
+
+  const stale = join(dir, "stale.mjs");
+  await writeFile(
+    stale,
+    template.replace("__AGENT_LOOP_GUARD_URL__", "file:///nonexistent/agent-loop-guard.mjs"),
+  );
+  const staleRun = await runNodeScript(stale, payload);
+  expect(staleRun.code).toBe(0);
+  expect(staleRun.stdout).toBe("");
 });
 
 // Usefulness: verifies the OpenCode guard's acceptance over the full action set

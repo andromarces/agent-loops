@@ -3,9 +3,10 @@
 // matches `parentSession` in the state file registered for that session; every
 // other session, every terminal lifecycle, and every absent or corrupt record
 // allows the call. `runParentGuard` drives that decision from the stdin payload
-// for the Claude Code, Codex, and Copilot command hooks, each of which supplies
-// its own deny shape. Fail-open by design: the guard is optional defense for
-// the prompt-only parent rule, so unknown records never block a tool call.
+// for the Claude Code, Codex, Copilot, and Antigravity command hooks, each of
+// which supplies its own input mapping and deny shape. Fail-open by design: the
+// guard is optional defense for the prompt-only parent rule, so unknown records
+// never block a tool call.
 import { TERMINAL_LIFECYCLES, readStateForSession } from "../lib/runstate.mjs";
 
 export const GUARD_DENY_REASON =
@@ -41,15 +42,30 @@ async function readHookInput() {
 }
 
 /**
- * Runs the shared command-hook flow: read the hook JSON from stdin, extract
- * `session_id`, evaluate the guard, and print one deny payload from `formatDeny`.
- * Fails open: a missing session id, unparseable input, and a lookup error all
- * exit without output, so the normal permission flow stays intact.
+ * Runs the shared command-hook flow: read the hook JSON from stdin, extract the
+ * harness's session id, evaluate the guard, and print one deny payload from
+ * `formatDeny`. Fails open: a missing session id, unparseable input, a tool the
+ * harness does not guard, and a lookup error all exit without output, so the
+ * normal permission flow stays intact.
  * @param {(reason: string) => object} formatDeny builds the harness's deny payload
+ * @param {{
+ *   readSessionId?: (input: unknown) => string | null,
+ *   isGuarded?: (input: unknown) => boolean,
+ * }} [options] maps the harness input; defaults to the Claude/Codex/Copilot
+ *   `session_id` field and every tool
  */
-export async function runParentGuard(formatDeny) {
+export async function runParentGuard(
+  formatDeny,
+  {
+    readSessionId = (input) => (typeof input?.session_id === "string" ? input.session_id : null),
+    isGuarded = () => true,
+  } = {},
+) {
   const input = await readHookInput();
-  const sessionId = typeof input?.session_id === "string" ? input.session_id : null;
+  if (!input || !isGuarded(input)) {
+    return;
+  }
+  const sessionId = readSessionId(input);
   if (!sessionId) {
     return;
   }
