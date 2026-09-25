@@ -331,11 +331,10 @@ export async function install({
         detail:
           "The Codex skill lives in the shared ~/.agents/skills directory, which " +
           "GitHub Copilot CLI and OpenCode also discover. The skill sets " +
-          "`metadata.opencode/autoinvoke: false` and `slash: false`, so OpenCode " +
-          "hides it from its model list and command catalog and the OpenCode " +
-          "plugin command owns /agent-loop. The skill also runs " +
-          "`agent-loop harness-check codex` and refuses to start from a Copilot " +
-          "or OpenCode session.",
+          "`metadata.opencode/autoinvoke: false`, so OpenCode drops it from the " +
+          "model's skill list and the OpenCode plugin command owns /agent-loop. " +
+          "The skill also runs `agent-loop harness-check codex` and refuses to " +
+          "start from a Copilot or OpenCode session.",
       });
     }
   }
@@ -347,12 +346,12 @@ export async function install({
       action: "note",
       path: join(home, ".claude", "skills"),
       detail:
-        "OpenCode also discovers ~/.claude/skills, so it loads the Claude skill. " +
-        "The skill sets `metadata.opencode/autoinvoke: false` and `slash: false`, " +
-        "so OpenCode hides it from its model list and command catalog and the " +
-        "OpenCode plugin command owns /agent-loop. The skill also " +
-        "runs `agent-loop harness-check claude` and refuses to start from a " +
-        "foreign session.",
+        "OpenCode also discovers ~/.claude/skills, so it lists the Claude skill " +
+        "to the model. The skill sets `metadata.opencode/autoinvoke: false`, so " +
+        "OpenCode drops it from the model's skill list and the OpenCode plugin " +
+        "command owns /agent-loop. The skill also runs " +
+        "`agent-loop harness-check claude` and refuses to start from a foreign " +
+        "session.",
     });
   }
 

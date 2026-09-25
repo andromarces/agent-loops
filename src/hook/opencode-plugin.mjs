@@ -13,10 +13,10 @@
 // design: every other session, every terminal lifecycle, and every absent or
 // corrupt record allows the call.
 //
-// The shared Claude and Codex skills set `metadata.opencode/autoinvoke: false`
-// and `slash: false`, so OpenCode hides them from its model list and its
-// interactive command catalog, and this command is the only `/agent-loop` entry
-// point that carries the OpenCode session id (#150).
+// The shared Claude and Codex skills set `metadata.opencode/autoinvoke: false`,
+// so OpenCode drops them from the model's skill list and the model cannot
+// auto-invoke one for an /agent-loop request. This command is then the only
+// `/agent-loop` entry point that carries the OpenCode session id (#150).
 //
 // The guard resolves the runs root from this server process's environment, so
 // an out-of-process `AGENT_LOOP_RUNS_ROOT` override (test-only) would desync

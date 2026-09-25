@@ -317,20 +317,19 @@ test("the Claude skill requires the harness-check ancestry gate", async () => {
 });
 
 // Usefulness: verifies the OpenCode acceptance — OpenCode discovers both
-// ~/.claude/skills and ~/.agents/skills, so each shared skill must hide itself
-// from OpenCode's model list (`metadata.opencode/autoinvoke: false`) and
-// interactive command catalog (`slash: false`). With the shared copies hidden,
-// the installed OpenCode plugin command owns /agent-loop and supplies the
-// OpenCode session id; the shared copies still refuse a foreign session through
-// their harness-check gate.
-test("the shared skills hide themselves from OpenCode", async () => {
+// ~/.claude/skills and ~/.agents/skills and lists each shared skill to the
+// model, so the model auto-invoked it for an /agent-loop request instead of the
+// installed plugin command. Each shared skill sets
+// `metadata.opencode/autoinvoke: false`, so OpenCode drops it from the model
+// list and the plugin command owns /agent-loop; the shared copies still refuse
+// a foreign session through their harness-check gate.
+test("the shared skills hide themselves from OpenCode's model list", async () => {
   const home = await makeHome();
   for (const harness of ["claude", "codex"]) {
     const targets = await targetPaths(harness, home);
     const skill = targets.files.find((file) => file.path.endsWith("SKILL.md")).content;
     const frontmatter = skill.split("---", 3)[1] ?? "";
     expect(frontmatter, `${harness} frontmatter`).toContain("opencode/autoinvoke: false");
-    expect(frontmatter, `${harness} frontmatter`).toContain("slash: false");
   }
 });
 
