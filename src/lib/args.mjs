@@ -15,10 +15,11 @@ export function readArgValue(argv, flag, index) {
  * is that form, or null when it is not. The value is everything after the first
  * `=`, verbatim, so a leading `-` is valid. An empty value matches the
  * space-separated form: a value flag throws `Missing value`, because every
- * caller needs a non-empty value. A boolean flag never carries a value, so a
- * name in `booleanFlags` throws instead of silently dropping the inline value.
+ * caller needs a non-empty value. The caller decides whether the flag takes a
+ * value and rejects an inline value on a flag that never consumed it, so a
+ * boolean flag cannot silently drop the inline value.
  */
-export function splitInlineFlag(arg, booleanFlags = []) {
+export function splitInlineFlag(arg) {
   if (!arg.startsWith("--")) {
     return null;
   }
@@ -27,9 +28,6 @@ export function splitInlineFlag(arg, booleanFlags = []) {
     return null;
   }
   const flag = arg.slice(0, eq);
-  if (booleanFlags.includes(flag)) {
-    throw new Error(`${flag} does not take a value.`);
-  }
   const value = arg.slice(eq + 1);
   if (value === "") {
     throw new Error(`Missing value for ${flag}.`);

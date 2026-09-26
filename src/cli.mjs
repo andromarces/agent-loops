@@ -26,8 +26,6 @@ import { runLoop } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
-// Flags that take no value; an inline `--flag=value` for one is rejected.
-const BOOLEAN_FLAGS = ["--verbose", "--help"];
 
 export function parseArgs(argv) {
   const options = {
@@ -47,9 +45,17 @@ export function parseArgs(argv) {
   const readValue = (flag, index) => readArgValue(argv, flag, index);
 
   for (let i = 0; i < argv.length; i++) {
-    const inline = splitInlineFlag(argv[i], BOOLEAN_FLAGS);
-    const arg = inline ? inline.flag : argv[i];
-    const readInline = (flag) => (inline ? inline.value : readValue(flag, ++i));
+    const raw = argv[i];
+    const inline = splitInlineFlag(raw);
+    const arg = inline ? inline.flag : raw;
+    let inlineUsed = false;
+    const readInline = (flag) => {
+      if (!inline) {
+        return readValue(flag, ++i);
+      }
+      inlineUsed = true;
+      return inline.value;
+    };
 
     if (Object.hasOwn(ROLE_FLAGS, arg)) {
       options[ROLE_FLAGS[arg]] = readInline(arg);
@@ -85,12 +91,21 @@ export function parseArgs(argv) {
 
       case "--help":
       case "-h":
+        if (inline) {
+          throw new Error(`${arg} does not take a value.`);
+        }
         printHelp();
         process.exit(0);
         break;
 
       default:
-        throw new Error(`Unknown argument: ${arg}`);
+        throw new Error(`Unknown argument: ${raw}`);
+    }
+
+    // A flag that read no value is boolean, so an inline value is an error
+    // rather than a silently dropped argument.
+    if (inline && !inlineUsed) {
+      throw new Error(`${arg} does not take a value.`);
     }
   }
 

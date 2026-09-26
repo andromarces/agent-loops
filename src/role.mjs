@@ -35,8 +35,6 @@ const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
 const MODES = new Set(["work-first", "review-first", "review-only"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
-// Flags that take no value; an inline `--flag=value` for one is rejected.
-const BOOLEAN_FLAGS = ["--resume-interrupted", "--verbose"];
 // Bound for `raw` in the envelope when the closing block could not be parsed.
 const RAW_TAIL_LIMIT = 2000;
 
@@ -83,9 +81,17 @@ export function parseRoleArgs(argv) {
   const readValue = (flag, i) => readArgValue(argv, flag, i);
 
   for (; index < argv.length; index++) {
-    const inline = splitInlineFlag(argv[index], BOOLEAN_FLAGS);
-    const arg = inline ? inline.flag : argv[index];
-    const readInline = (flag) => (inline ? inline.value : readValue(flag, ++index));
+    const raw = argv[index];
+    const inline = splitInlineFlag(raw);
+    const arg = inline ? inline.flag : raw;
+    let inlineUsed = false;
+    const readInline = (flag) => {
+      if (!inline) {
+        return readValue(flag, ++index);
+      }
+      inlineUsed = true;
+      return inline.value;
+    };
 
     switch (arg) {
       case "--role":
@@ -149,10 +155,16 @@ export function parseRoleArgs(argv) {
 
       default:
         if (!Object.hasOwn(ROLE_FLAGS, arg)) {
-          throw new RoleError(`Unknown argument: ${arg}`);
+          throw new RoleError(`Unknown argument: ${raw}`);
         }
         args[ROLE_FLAGS[arg]] = readInline(arg);
         break;
+    }
+
+    // A flag that read no value is boolean, so an inline value is an error
+    // rather than a silently dropped argument.
+    if (inline && !inlineUsed) {
+      throw new RoleError(`${arg} does not take a value.`);
     }
   }
 

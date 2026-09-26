@@ -54,6 +54,22 @@ test("role --verbose=1 is rejected", async () => {
   );
 });
 
+// Usefulness: verifies acceptance (#215) — every boolean flag rejects an inline
+// value without a hand-maintained flag list.
+test("role --resume-interrupted=1 is rejected", async () => {
+  await setup();
+  expect(() => parseRoleArgs(["dispatch", "--resume-interrupted=1"])).toThrow(
+    "--resume-interrupted does not take a value.",
+  );
+});
+
+// Usefulness: verifies acceptance (#215) — an unknown inline argument keeps the
+// `=value` segment in the error.
+test("role unknown inline argument keeps its value in the error", async () => {
+  await setup();
+  expect(() => parseRoleArgs(["--nope=bar"])).toThrow("Unknown argument: --nope=bar");
+});
+
 // Usefulness: verifies acceptance (#149) — an init without --parent-session is
 // refused before any state file is written, so no interactive run starts
 // unguarded by default.

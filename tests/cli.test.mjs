@@ -172,6 +172,12 @@ test("--verbose=1 is rejected", () => {
   expect(() => parseArgs([...BASE, "--verbose=1"])).toThrow("--verbose does not take a value.");
 });
 
+// Usefulness: verifies acceptance (#215) — an unknown inline argument keeps the
+// `=value` segment in the error, so the whole token the user typed is reported.
+test("unknown inline argument keeps its value in the error", () => {
+  expect(() => parseArgs([...BASE, "--nope=bar"])).toThrow("Unknown argument: --nope=bar");
+});
+
 // Usefulness: verifies an effort-only OpenCode role is rejected, because the installed CLI accepts
 // a variant only inside --model provider/model#variant.
 test("OpenCode effort without a model is rejected", () => {
