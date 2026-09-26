@@ -1,7 +1,17 @@
 import { existsSync } from "node:fs";
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, test } from "vitest";
 import { main as cliMain } from "../../src/cli.mjs";
@@ -9,10 +19,17 @@ import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install
 import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
 import { buildTargets, HARNESS_ORDER } from "../../src/install/harnesses.mjs";
 import { detectHarnesses, install, uninstall } from "../../src/install/installer.mjs";
-import { manifestPath, readManifest } from "../../src/install/manifest.mjs";
+import {
+  installRoot,
+  manifestLockFile,
+  manifestPath,
+  readManifest,
+} from "../../src/install/manifest.mjs";
+import { deadPid } from "../runtime-helpers.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const homes = [];
+const lockFiles = [];
 
 async function makeHome() {
   const home = await mkdtemp(join(tmpdir(), "agent-loop-install-home-"));
@@ -25,6 +42,10 @@ afterEach(async () => {
     await rm(home, { recursive: true, force: true });
   }
   homes.length = 0;
+  for (const lockFile of lockFiles) {
+    await rm(lockFile, { force: true });
+  }
+  lockFiles.length = 0;
 });
 
 async function writeJson(path, value) {
@@ -1179,4 +1200,133 @@ test("a malformed record field stops uninstall before it changes any file", asyn
   expect(await readText(a)).toBe("a\n");
   expect(await readText(b)).toBe("b\n");
   expect(await readText(manifestPath(home))).toBe(manifestBefore);
+});
+
+// Usefulness: verifies acceptance #193 — a second install or uninstall that
+// starts while a first install holds the manifest lock refuses without writing,
+// so the first read-modify-write of the manifest cannot lose another command's
+// record. The uninstall contender runs against a real held lock, not a fake one.
+test("a second install or uninstall started during a first refuses without writing", async () => {
+  const home = await makeHome();
+  let releaseFirst;
+  const firstHolds = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  let signalHolding;
+  const holding = new Promise((resolve) => {
+    signalHolding = resolve;
+  });
+  const write = async (path, ...rest) => {
+    signalHolding();
+    await firstHolds;
+    return writeTextAtomic(path, ...rest);
+  };
+
+  const first = install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT, write });
+  await holding;
+
+  const contenders = [
+    () => install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT }),
+    () => uninstall({ home }),
+  ];
+  for (const run of contenders) {
+    const error = await run().then(
+      () => null,
+      (err) => err,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/locked by a live process/);
+  }
+  expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false);
+  expect(existsSync(manifestPath(home))).toBe(false);
+
+  releaseFirst();
+  await first;
+  expect(existsSync(manifestPath(home))).toBe(true);
+});
+
+// Usefulness: verifies acceptance #193 — install and uninstall both refuse while
+// a live process holds the lock and change no file, and the refusal names the
+// install manifest so the message is actionable.
+test("install and uninstall refuse while a live lock is held", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+  const before = await readText(settingsPath);
+  const lockFile = manifestLockFile(home);
+  lockFiles.push(lockFile);
+  await mkdir(dirname(lockFile), { recursive: true });
+  await writeFile(
+    lockFile,
+    JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+    "utf8",
+  );
+
+  for (const run of [
+    () => install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT }),
+    () => uninstall({ home }),
+  ]) {
+    const error = await run().then(
+      () => null,
+      (err) => err,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/install manifest is locked by a live process/);
+  }
+  expect(await readText(settingsPath)).toBe(before);
+  expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(false);
+  expect(existsSync(manifestPath(home))).toBe(false);
+});
+
+// Usefulness: verifies acceptance #193 — a lock left by a dead process is
+// recovered: the next install removes it, proceeds, and releases it.
+test("a stale lock from a dead process is recovered", async () => {
+  const home = await makeHome();
+  const lockFile = manifestLockFile(home);
+  await mkdir(dirname(lockFile), { recursive: true });
+  await writeFile(
+    lockFile,
+    JSON.stringify({ pid: await deadPid(), startedAt: "2026-01-01T00:00:00Z" }),
+    "utf8",
+  );
+
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  expect(existsSync(manifestPath(home))).toBe(true);
+  expect(existsSync(lockFile)).toBe(false);
+});
+
+// Usefulness: verifies acceptance #193 — a relative spelling and a different
+// letter case on Windows of one install home resolve to the same lock, so the
+// commands contend instead of writing the manifest concurrently.
+test("equivalent install home spellings share one lock", async () => {
+  const home = await makeHome();
+  const key = manifestLockFile(home);
+  expect(manifestLockFile(join(home, "."))).toBe(key);
+  expect(manifestLockFile(relative(process.cwd(), home))).toBe(key);
+  if (process.platform === "win32") {
+    expect(manifestLockFile(home.toUpperCase())).toBe(key);
+  }
+});
+
+// Usefulness: verifies acceptance #193 — a dry run creates no lock file and no
+// file under the install home, not even a harness directory such as `.claude`,
+// so inspection never blocks a real command and never leaves residue.
+test("a dry run creates no lock file and no install-home file", async () => {
+  const home = await makeHome();
+  const lockFile = manifestLockFile(home);
+  await install({ harnesses: ["claude", "codex"], home, packageRoot: PACKAGE_ROOT, dryRun: true });
+  await uninstall({ home, dryRun: true });
+  expect(existsSync(lockFile)).toBe(false);
+  expect(await readdir(home)).toEqual([]);
+});
+
+// Usefulness: verifies acceptance #193 — the lock lives outside the install
+// home, so a full uninstall still deletes `<home>/.agent-loops`.
+test("a full uninstall removes the install home directory", async () => {
+  const home = await makeHome();
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  expect(existsSync(installRoot(home))).toBe(true);
+
+  await uninstall({ home });
+  expect(existsSync(installRoot(home))).toBe(false);
 });
