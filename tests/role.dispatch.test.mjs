@@ -221,11 +221,37 @@ test("reviewer dispatch exposes the parsed verdict in the payload", async () => 
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    notes: null,
+    deferred: null,
   });
 
   const state = await readRepoState(repo);
   expect(state.roles.reviewer.sessionId).toBe("rev-9");
   expect(state.lastResult.status).toBe("ok");
+});
+
+// Usefulness: verifies the dispatch seam carries the optional Notes and
+// Deferred labels from a reviewer turn into the envelope (issue #214).
+test("reviewer dispatch carries the optional Notes and Deferred labels", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state) => {
+    state.sessionId = "rev-notes";
+    return `${REPORT}\nNotes: tidy the helper later\nDeferred: migrate the legacy path\nVerdict: accept`;
+  };
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toMatchObject({
+    notes: "tidy the helper later",
+    deferred: "migrate the legacy path",
+  });
 });
 
 // Usefulness: verifies the dispatch seam when the closing block does not parse
