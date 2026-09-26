@@ -11,3 +11,25 @@ test("reviewer prompt keeps the read-only guard and requires the closing report 
   expect(prompt).toContain("Why:");
   expect(prompt).toContain("Blockers:");
 });
+
+// Usefulness: verifies every reviewer prompt traces a changed input, flag, or code path through
+// the guards that consume it, so a weakened guard surfaces as a blocker (issue #216).
+test("reviewer prompt traces changed inputs through existing guards", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "Trace each changed input, flag, or code path through the existing validators and guards that consume it.",
+  );
+});
+
+// Usefulness: verifies the spec-challenge rule limits approval, so a restated spec never approves
+// a weakened guard, and an approved change still names the affected guard or contract (issue #216).
+test("reviewer prompt challenges a spec that weakens a guard and limits approval", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "Report a change that weakens an existing guard or documented contract as a blocker",
+  );
+  expect(prompt).toContain("Explicit approval names the guard or the contract.");
+  expect(prompt).toContain(
+    "A general requirement that weakens a guard as a side effect is not approval.",
+  );
+});

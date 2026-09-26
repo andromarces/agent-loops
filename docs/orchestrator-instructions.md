@@ -108,6 +108,14 @@ Read the JSON envelope on stdout. Example reviewer envelope:
 - When the closing block cannot be parsed, `report` is null and `raw` carries
   the tail of the response. Treat a missing report as not accepted.
 
+## Reviewer prompts
+
+The reviewer prompt sets the task scope; the fixed review scope and closing
+block wrap it on every turn. Name the guards and contracts that the change puts
+at risk, so the reviewer can trace each changed input through them. Do not
+restate the spec as the pass condition: a restated spec asks the reviewer to
+confirm it, not to test it.
+
 ## Loop policy
 
 - `work-first`: worker, reviewer, worker corrections, reviewer, until
