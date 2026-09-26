@@ -69,12 +69,23 @@ export async function removeFileQuiet(path) {
   await rm(path, { force: true });
 }
 
-/** Removes an empty directory; a non-empty or missing directory throws nothing. */
+/**
+ * Removes an empty directory. A missing directory and a non-empty directory
+ * throw nothing, including the EEXIST that some platforms report for a
+ * non-empty directory. Every other error, such as EPERM, EACCES, or EBUSY,
+ * reaches the caller so it can report the failure and retry later.
+ * @returns {Promise<boolean>} true when this call removed the directory
+ */
 export async function removeDirQuiet(path) {
   try {
     await rmdir(path);
-  } catch {
-    // A non-empty or already-removed directory needs no action.
+    return true;
+  } catch (err) {
+    if (err.code === "ENOENT" || err.code === "ENOTEMPTY" || err.code === "EEXIST") {
+      // A non-empty or already-removed directory needs no action.
+      return false;
+    }
+    throw err;
   }
 }
 
@@ -105,12 +116,20 @@ export async function ensureDir(dir, created) {
   }
 }
 
-/** Removes empty directories, deepest first. Non-empty and missing entries are ignored. */
+/**
+ * Removes empty directories, deepest first. Missing and non-empty entries are
+ * ignored; any other error propagates to the caller.
+ * @returns {Promise<string[]>} the directories this call removed
+ */
 export async function pruneEmptyDirs(dirs) {
   const ordered = [...new Set(dirs)].sort((a, b) => b.length - a.length);
+  const removed = [];
   for (const dir of ordered) {
-    await removeDirQuiet(dir);
+    if (await removeDirQuiet(dir)) {
+      removed.push(dir);
+    }
   }
+  return removed;
 }
 
 /** Structural equality for JSON-shaped values. Object key order is irrelevant. */

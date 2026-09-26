@@ -575,7 +575,37 @@ async function runUninstall({ harnesses, home = resolveHome(), dryRun = false } 
       reports.push(await planFileRestore({ ...file, harness }, dryRun));
     }
     if (!dryRun) {
-      await pruneEmptyDirs(record.dirs ?? []);
+      let removedDirs;
+      try {
+        removedDirs = await pruneEmptyDirs(record.dirs ?? []);
+      } catch (err) {
+        // The file and settings targets above were already restored or
+        // deleted, so keep only the directory list. Their stale records would
+        // make the next install read a missing recorded entry and skip the
+        // whole harness, while the directory still needs a later retry.
+        manifest.harnesses[harness] = { dirs: record.dirs ?? [] };
+        reports.push({
+          harness,
+          kind: "dir",
+          action: "failed",
+          path: err.path,
+          detail:
+            `the directory could not be removed (${err.code}); ` +
+            "kept for a later uninstall to retry",
+        });
+        continue;
+      }
+      // A record kept only for its directories has no file or settings report,
+      // so name each directory this retry removed instead of printing nothing.
+      if (
+        removedDirs.length > 0 &&
+        (record.files ?? []).length === 0 &&
+        (record.settings ?? []).length === 0
+      ) {
+        for (const dir of removedDirs) {
+          reports.push({ harness, kind: "dir", action: "delete", path: dir });
+        }
+      }
     }
     delete manifest.harnesses[harness];
   }

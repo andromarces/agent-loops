@@ -206,6 +206,17 @@ export async function writeManifest(home, manifest) {
 
 /** Deletes the manifest and its now-empty directory once no harness is recorded. */
 export async function removeManifest(home) {
+  const root = installRoot(home);
   await removeFileQuiet(manifestPath(home));
-  await removeDirQuiet(installRoot(home));
+  try {
+    await removeDirQuiet(root);
+  } catch (err) {
+    // The manifest is already gone, so no later uninstall can retry this
+    // directory. Name it and ask for a manual cleanup instead of hiding it.
+    throw new Error(
+      `Install directory ${root} could not be removed (${err.code}). ` +
+        "The manifest was already deleted; remove the directory manually.",
+      { cause: err },
+    );
+  }
 }
