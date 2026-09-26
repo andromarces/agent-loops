@@ -110,6 +110,21 @@ test("withStateLock removes an old unreadable lock as stale", async () => {
   await expect(readFile(lockFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+// Usefulness: verifies a lock temp file left by a crashed process (dead pid) is
+// pruned on the next acquisition, while a live contender's temp is preserved
+// (#178). Nothing else scans the lock directory, so this is the only cleanup.
+test("withStateLock prunes a dead owner's temp file and keeps a live one", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const orphan = `state.lock.${await deadPid()}.0.tmp`;
+  const live = `state.lock.${process.pid}.7.tmp`;
+  await writeFile(join(dir, orphan), "{}", "utf8");
+  await writeFile(join(dir, live), "{}", "utf8");
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  expect(await readdir(dir)).toEqual([live]);
+});
+
 // Usefulness: verifies `--cwd` variants that differ only in the Windows drive
 // letter resolve to one state directory.
 test("statePaths normalizes the drive letter", async () => {
