@@ -107,11 +107,12 @@ export async function readStateForSession(parentSession) {
  * existing lock with a live owner pid as busy and a dead one as stale
  * (removed with a warning, then retried). Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
- * is locked instead of the generic default.
+ * is locked instead of the generic default; `noun` is the same resource as a
+ * lowercase phrase for the stale-removal warning.
  */
-export async function withStateLock(lockFile, fn, { label = "State" } = {}) {
+export async function withStateLock(lockFile, fn, { label = "State", noun = "state" } = {}) {
   await mkdir(dirname(lockFile), { recursive: true });
-  await acquireLock(lockFile, true, label);
+  await acquireLock(lockFile, { label, noun });
   try {
     return await fn();
   } finally {
@@ -143,7 +144,7 @@ const LINK_UNSUPPORTED = new Set([
 // Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
 const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
 
-async function acquireLock(lockFile, retry = true, label = "State") {
+async function acquireLock(lockFile, { retry = true, label = "State", noun = "state" } = {}) {
   if (await createLock(lockFile)) {
     // Best-effort removal of temp files left by a crash between the temp write
     // and the link (#178). Runs while the lock is held and never touches a live
@@ -171,9 +172,9 @@ async function acquireLock(lockFile, retry = true, label = "State") {
     throw new Error(`${label} lock could not be acquired after stale removal.`);
   }
 
-  logWarn(`removing stale state lock (dead pid ${owner?.pid ?? "unknown"})`);
+  logWarn(`removing stale ${noun} lock (dead pid ${owner?.pid ?? "unknown"})`);
   await rm(lockFile, { force: true });
-  return acquireLock(lockFile, false, label);
+  return acquireLock(lockFile, { retry: false, label, noun });
 }
 
 // Create the lock and its owner content. The owner JSON goes to a private temp

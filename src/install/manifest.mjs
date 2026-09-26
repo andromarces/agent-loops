@@ -38,7 +38,10 @@ export function manifestPath(home = resolveHome()) {
  * It lives under the OS temp root, not under the home, so `removeManifest` can
  * delete `<home>/.agent-loops` while the lock is held. The key is a hash of the
  * canonical home: the resolved path, lowercased on Windows, where paths compare
- * case-insensitively, so equivalent spellings share one lock.
+ * case-insensitively, so equivalent spellings share one lock. The temp root is
+ * `tmpdir()`: two processes with different `TMPDIR`/`TEMP` values compute
+ * different lock paths and do not contend, so callers that must serialize
+ * across a sandbox must share one temp root.
  */
 export function manifestLockFile(home = resolveHome()) {
   const resolved = resolve(home);

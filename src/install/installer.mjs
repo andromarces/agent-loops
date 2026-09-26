@@ -269,6 +269,7 @@ export async function install(options = {}) {
   }
   return withStateLock(manifestLockFile(home), () => runInstall(options), {
     label: "The install manifest",
+    noun: "install manifest",
   });
 }
 
@@ -555,6 +556,7 @@ export async function uninstall(options = {}) {
   }
   return withStateLock(manifestLockFile(home), () => runUninstall(options), {
     label: "The install manifest",
+    noun: "install manifest",
   });
 }
 

@@ -1246,8 +1246,8 @@ test("a second install or uninstall started during a first refuses without writi
 });
 
 // Usefulness: verifies acceptance #193 — install and uninstall both refuse while
-// a live process holds the lock and change no file, so a contender never writes
-// against a manifest the holder is rewriting.
+// a live process holds the lock and change no file, and the refusal names the
+// install manifest so the message is actionable.
 test("install and uninstall refuse while a live lock is held", async () => {
   const home = await makeHome();
   const settingsPath = join(home, ".claude", "settings.json");
@@ -1271,7 +1271,7 @@ test("install and uninstall refuse while a live lock is held", async () => {
       (err) => err,
     );
     expect(error).toBeInstanceOf(Error);
-    expect(error.message).toMatch(/locked by a live process/);
+    expect(error.message).toMatch(/install manifest is locked by a live process/);
   }
   expect(await readText(settingsPath)).toBe(before);
   expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(false);
