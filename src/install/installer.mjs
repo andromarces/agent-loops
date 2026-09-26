@@ -6,10 +6,13 @@
 // unchanged since install. Guards are applied before entry points, and a failed
 // write persists the manifest for the writes that completed and keeps the
 // previous record for every target it did not complete, so uninstall can recover
-// a partial install or an interrupted upgrade (#156).
+// a partial install or an interrupted upgrade (#156). An exclusive lock outside
+// the home serializes install and uninstall, so concurrent read-modify-write of
+// the manifest cannot drop a record (#193).
 import { access } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { logWarn } from "../lib/log.mjs";
+import { withStateLock } from "../lib/runstate.mjs";
 import {
   backupPathFor,
   ensureDir,
@@ -21,7 +24,13 @@ import {
   writeTextAtomic,
 } from "./fsutil.mjs";
 import { buildTargets, HARNESS_META, HARNESS_ORDER } from "./harnesses.mjs";
-import { readManifest, removeManifest, resolveHome, writeManifest } from "./manifest.mjs";
+import {
+  manifestLockFile,
+  readManifest,
+  removeManifest,
+  resolveHome,
+  writeManifest,
+} from "./manifest.mjs";
 import {
   findEntryIndex,
   insertEntry,
@@ -249,10 +258,23 @@ function keepPriorRecords(records, targets, priorRecords) {
 }
 
 /**
- * Installs one or more harnesses at user scope.
+ * Installs one or more harnesses at user scope under the manifest lock. A dry
+ * run takes no lock and writes nothing.
  * @returns {Promise<Array<{harness: string, kind: string, action: string, path: string, detail?: string, snippet?: string}>>}
  */
-export async function install({
+export async function install(options = {}) {
+  const home = options.home ?? resolveHome();
+  if (options.dryRun) {
+    return runInstall(options);
+  }
+  return withStateLock(manifestLockFile(home), () => runInstall(options), {
+    label: "The install manifest",
+    noun: "install manifest",
+  });
+}
+
+/** Runs the install once the caller owns the manifest lock, or for a dry run. */
+async function runInstall({
   harnesses,
   home = resolveHome(),
   packageRoot,
@@ -523,8 +545,23 @@ async function planFileRestore(record, dryRun) {
   return restoreOrDelete(record, "file", dryRun);
 }
 
-/** Removes every target the manifest records for the selected harnesses. */
-export async function uninstall({ harnesses, home = resolveHome(), dryRun = false } = {}) {
+/**
+ * Removes every target the manifest records for the selected harnesses under
+ * the manifest lock. A dry run takes no lock and writes nothing.
+ */
+export async function uninstall(options = {}) {
+  const home = options.home ?? resolveHome();
+  if (options.dryRun) {
+    return runUninstall(options);
+  }
+  return withStateLock(manifestLockFile(home), () => runUninstall(options), {
+    label: "The install manifest",
+    noun: "install manifest",
+  });
+}
+
+/** Runs the uninstall once the caller owns the manifest lock, or for a dry run. */
+async function runUninstall({ harnesses, home = resolveHome(), dryRun = false } = {}) {
   const manifest = await readManifest(home);
   const selected = (harnesses ?? HARNESS_ORDER).filter((harness) => manifest.harnesses[harness]);
   const reports = [];

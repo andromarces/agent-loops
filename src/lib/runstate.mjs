@@ -105,11 +105,14 @@ export async function readStateForSession(parentSession) {
  * Exclusive access around one state-file operation. Creates `state.lock` (an
  * atomic hard link where supported, otherwise an exclusive create), treats an
  * existing lock with a live owner pid as busy and a dead one as stale
- * (removed with a warning, then retried). Returns the result of `fn`.
+ * (removed with a warning, then retried). Returns the result of `fn`. `label`
+ * names the guarded resource in a refusal, so an installer refusal can say what
+ * is locked instead of the generic default; `noun` is the same resource as a
+ * lowercase phrase for the stale-removal warning.
  */
-export async function withStateLock(lockFile, fn) {
+export async function withStateLock(lockFile, fn, { label = "State", noun = "state" } = {}) {
   await mkdir(dirname(lockFile), { recursive: true });
-  await acquireLock(lockFile);
+  await acquireLock(lockFile, { label, noun });
   try {
     return await fn();
   } finally {
@@ -141,7 +144,7 @@ const LINK_UNSUPPORTED = new Set([
 // Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
 const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
 
-async function acquireLock(lockFile, retry = true) {
+async function acquireLock(lockFile, { retry = true, label = "State", noun = "state" } = {}) {
   if (await createLock(lockFile)) {
     // Best-effort removal of temp files left by a crash between the temp write
     // and the link (#178). Runs while the lock is held and never touches a live
@@ -153,7 +156,7 @@ async function acquireLock(lockFile, retry = true) {
   const owner = await readLockOwner(lockFile);
   if (owner && pidAlive(owner.pid)) {
     throw new Error(
-      `State is locked by a live process (pid ${owner.pid}, started ${owner.startedAt ?? "unknown"}).`,
+      `${label} is locked by a live process (pid ${owner.pid}, started ${owner.startedAt ?? "unknown"}).`,
     );
   }
 
@@ -162,16 +165,16 @@ async function acquireLock(lockFile, retry = true) {
     // is atomic, so this is a removal race (lockAgeMs reads 0 on ENOENT) or a
     // foreign file; the exclusive-create fallback can leave a half-written
     // owner, which this refusal also covers.
-    throw new Error("State is locked (the lock file is not readable yet; retry shortly).");
+    throw new Error(`${label} is locked (the lock file is not readable yet; retry shortly).`);
   }
 
   if (!retry) {
-    throw new Error("State lock could not be acquired after stale removal.");
+    throw new Error(`${label} lock could not be acquired after stale removal.`);
   }
 
-  logWarn(`removing stale state lock (dead pid ${owner?.pid ?? "unknown"})`);
+  logWarn(`removing stale ${noun} lock (dead pid ${owner?.pid ?? "unknown"})`);
   await rm(lockFile, { force: true });
-  return acquireLock(lockFile, false);
+  return acquireLock(lockFile, { retry: false, label, noun });
 }
 
 // Create the lock and its owner content. The owner JSON goes to a private temp
