@@ -972,6 +972,58 @@ test("CLI dispatches install, uninstall, and harness-check", async () => {
   }
 });
 
+// Usefulness: verifies acceptance (#210) — install and uninstall accept the
+// inline `--harness=<list>` form.
+test("CLI install and uninstall accept --harness=<list>", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = () => {};
+  try {
+    process.exitCode = 0;
+    await cliMain(["install", "--harness=claude,codex", "--yes"]);
+    expect(process.exitCode).toBe(0);
+    expect(existsSync(join(home, ".claude", "settings.json"))).toBe(true);
+    expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(true);
+
+    process.exitCode = 0;
+    await cliMain(["uninstall", "--harness=claude,codex", "--yes"]);
+    expect(process.exitCode).toBe(0);
+    expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false);
+    expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(false);
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    delete process.env.AGENT_LOOP_HOME;
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: verifies acceptance (#210) — the install parser rejects an inline
+// value on a boolean flag with a clear error instead of ignoring it.
+test("CLI install rejects --verbose=1", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const originalLog = console.log;
+  const errors = [];
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = (message) => errors.push(String(message));
+  try {
+    process.exitCode = 0;
+    await cliMain(["install", "--verbose=1", "--yes"]);
+    expect(process.exitCode).toBe(1);
+    expect(errors.join("\n")).toContain("--verbose does not take a value.");
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    delete process.env.AGENT_LOOP_HOME;
+    process.exitCode = 0;
+  }
+});
+
 // Usefulness: verifies the #151 exit-code contract — a harness mismatch exits
 // with its own code (3), a match exits 0, and a check that cannot read the
 // ancestry exits 1, so a skill can separate a refusal from a check that cannot

@@ -12,6 +12,7 @@ import {
   readNonNegativeInt,
   readPositiveInt,
   roleFlags,
+  splitInlineFlag,
 } from "./lib/args.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import {
@@ -25,6 +26,8 @@ import { runLoop } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
+// Flags that take no value; an inline `--flag=value` for one is rejected.
+const BOOLEAN_FLAGS = ["--verbose", "--help"];
 
 export function parseArgs(argv) {
   const options = {
@@ -44,34 +47,36 @@ export function parseArgs(argv) {
   const readValue = (flag, index) => readArgValue(argv, flag, index);
 
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+    const inline = splitInlineFlag(argv[i], BOOLEAN_FLAGS);
+    const arg = inline ? inline.flag : argv[i];
+    const readInline = (flag) => (inline ? inline.value : readValue(flag, ++i));
 
     if (Object.hasOwn(ROLE_FLAGS, arg)) {
-      options[ROLE_FLAGS[arg]] = readValue(arg, ++i);
+      options[ROLE_FLAGS[arg]] = readInline(arg);
       continue;
     }
 
     switch (arg) {
       case "--cwd":
-        options.cwd = resolve(readValue(arg, ++i));
+        options.cwd = resolve(readInline(arg));
         break;
 
       case "--task":
-        options.task = readValue(arg, ++i);
+        options.task = readInline(arg);
         break;
 
       case "--max-steps":
-        options.maxSteps = readPositiveInt("--max-steps", readValue("--max-steps", ++i));
+        options.maxSteps = readPositiveInt("--max-steps", readInline("--max-steps"));
         break;
 
       case "--timeout": {
-        const seconds = readNonNegativeInt("--timeout", readValue("--timeout", ++i));
+        const seconds = readNonNegativeInt("--timeout", readInline("--timeout"));
         options.timeout = seconds === 0 ? null : seconds;
         break;
       }
 
       case "--transcript":
-        options.transcript = resolve(readValue(arg, ++i));
+        options.transcript = resolve(readInline(arg));
         break;
 
       case "--verbose":
@@ -187,6 +192,10 @@ Options:
   --transcript <file>           Record execution transcript to a JSON file.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   -h, --help                    Show help.
+
+  A value flag also accepts the inline form --flag=value, for example
+  --task=-x, which allows a value that starts with a dash. A boolean flag,
+  such as --verbose, rejects the inline form.
 
 Environment:
 

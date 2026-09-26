@@ -10,6 +10,28 @@ export function readArgValue(argv, flag, index) {
   return value;
 }
 
+/**
+ * Splits the inline form `--flag=value`. Returns `{ flag, value }` when `arg`
+ * is that form, or null when it is not. The value is everything after the first
+ * `=`, verbatim, so a leading `-` and an empty string are valid values. A
+ * boolean flag never carries a value, so a name in `booleanFlags` throws
+ * instead of silently dropping the inline value.
+ */
+export function splitInlineFlag(arg, booleanFlags = []) {
+  if (!arg.startsWith("--")) {
+    return null;
+  }
+  const eq = arg.indexOf("=");
+  if (eq === -1) {
+    return null;
+  }
+  const flag = arg.slice(0, eq);
+  if (booleanFlags.includes(flag)) {
+    throw new Error(`${flag} does not take a value.`);
+  }
+  return { flag, value: arg.slice(eq + 1) };
+}
+
 export function readPositiveInt(flag, value) {
   const val = Number(value);
   if (!Number.isInteger(val) || val < 1) {

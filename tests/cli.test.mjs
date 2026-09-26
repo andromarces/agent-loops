@@ -154,6 +154,23 @@ test("readValue guards against missing or flag-like values", () => {
   );
 });
 
+// Usefulness: verifies acceptance (#210) — the inline form accepts a value that
+// starts with `-`, which the space-separated form rejects.
+test("--task=-x sets the task", () => {
+  expect(parseArgs([...BASE, "--task=-x"]).task).toBe("-x");
+});
+
+// Usefulness: verifies acceptance (#210) — an inline value may be empty; the
+// required-task check then rejects the empty task, not the value reader.
+test("--task= sets an empty task that the required check rejects", () => {
+  expect(() => parseArgs([...BASE, "--task="])).toThrow("Missing required --task.");
+});
+
+// Usefulness: verifies acceptance (#210) — a boolean flag rejects an inline value.
+test("--verbose=1 is rejected", () => {
+  expect(() => parseArgs([...BASE, "--verbose=1"])).toThrow("--verbose does not take a value.");
+});
+
 // Usefulness: verifies an effort-only OpenCode role is rejected, because the installed CLI accepts
 // a variant only inside --model provider/model#variant.
 test("OpenCode effort without a model is rejected", () => {

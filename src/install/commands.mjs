@@ -4,7 +4,7 @@
 // `--harness`.
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { readArgValue } from "../lib/args.mjs";
+import { readArgValue, splitInlineFlag } from "../lib/args.mjs";
 import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.mjs";
 import { nearestHarness } from "../lib/process-ancestry.mjs";
 import { HARNESS_META, HARNESS_ORDER, isHarness } from "./harnesses.mjs";
@@ -12,6 +12,8 @@ import { detectHarnesses, install, uninstall } from "./installer.mjs";
 import { readManifest, resolveHome } from "./manifest.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+// Flags that take no value; an inline `--flag=value` for one is rejected.
+const BOOLEAN_FLAGS = ["--yes", "--dry-run", "--verbose", "--help"];
 
 function parseHarnessList(value) {
   const harnesses = [
@@ -33,9 +35,11 @@ function parseHarnessList(value) {
 function parseFlags(argv) {
   const options = { harnesses: null, yes: false, dryRun: false, help: false };
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+    const inline = splitInlineFlag(argv[i], BOOLEAN_FLAGS);
+    const arg = inline ? inline.flag : argv[i];
+    const readInline = () => (inline ? inline.value : readArgValue(argv, arg, ++i));
     if (arg === "--harness") {
-      options.harnesses = parseHarnessList(readArgValue(argv, arg, ++i));
+      options.harnesses = parseHarnessList(readInline());
     } else if (arg === "--yes" || arg === "-y") {
       options.yes = true;
     } else if (arg === "--dry-run") {
@@ -127,6 +131,7 @@ export async function runInstallCommand(argv) {
       [
         "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run]",
         "",
+        "A value flag also accepts --flag=value, for example --harness=claude,codex.",
         `Harnesses: ${HARNESS_ORDER.join(", ")}`,
         "Without --harness, detected CLIs are preselected in an interactive prompt.",
       ].join("\n"),
@@ -182,6 +187,7 @@ export async function runUninstallCommand(argv) {
       [
         "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run]",
         "",
+        "A value flag also accepts --flag=value, for example --harness=claude,codex.",
         "Without --harness, the harnesses recorded in the install manifest are removed.",
       ].join("\n"),
     );

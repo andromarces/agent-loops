@@ -29,6 +29,21 @@ test("empty parent session is rejected before dispatch", async () => {
   );
 });
 
+// Usefulness: verifies acceptance (#210) — the role parser reads an inline
+// value verbatim, including a leading `-`.
+test("role --task=-x keeps a leading dash", async () => {
+  await setup();
+  expect(parseRoleArgs(["dispatch", "--role", "worker", "--task=-x"]).task).toBe("-x");
+});
+
+// Usefulness: verifies acceptance (#210) — a boolean flag rejects an inline value.
+test("role --verbose=1 is rejected", async () => {
+  await setup();
+  expect(() => parseRoleArgs(["dispatch", "--verbose=1"])).toThrow(
+    "--verbose does not take a value.",
+  );
+});
+
 // Usefulness: verifies acceptance (#149) — an init without --parent-session is
 // refused before any state file is written, so no interactive run starts
 // unguarded by default.
