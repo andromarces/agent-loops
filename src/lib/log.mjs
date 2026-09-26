@@ -31,8 +31,22 @@ export function logDebug(message) {
   }
 }
 
+function writeInfo(message) {
+  (stderrOnly ? console.error : console.log)(`[agent-loop] info: ${message}`);
+}
+
 export function logInfo(message) {
-  (stderrOnly ? console.error : console.log)(`[agent-loop] info: ${truncate(message)}`);
+  writeInfo(truncate(message));
+}
+
+/**
+ * Prints an info line in full, without the 300-character bound. A post-install
+ * note is trusted guidance the user must read to its last sentence, so the
+ * bound that keeps untrusted content from flooding an ordinary line does not
+ * apply.
+ */
+export function logInfoFull(message) {
+  writeInfo(message);
 }
 
 export function logWarn(message) {

@@ -5,7 +5,7 @@
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { readArgValue } from "../lib/args.mjs";
-import { logError, logInfo, logWarn, setVerbose } from "../lib/log.mjs";
+import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.mjs";
 import { nearestHarness } from "../lib/process-ancestry.mjs";
 import { HARNESS_META, HARNESS_ORDER, isHarness } from "./harnesses.mjs";
 import { detectHarnesses, install, uninstall } from "./installer.mjs";
@@ -101,7 +101,9 @@ function printReports(reports, dryRun) {
     const prefix = dryRun ? "would " : "";
     const detail = entry.detail ? ` (${entry.detail})` : "";
     if (entry.action === "note") {
-      logInfo(`${entry.harness}: ${entry.detail}`);
+      // Notes carry guidance past the 300-character log cap, so print them in
+      // full (#200).
+      logInfoFull(`${entry.harness}: ${entry.detail}`);
       continue;
     }
     logInfo(`${entry.harness}: ${prefix}${entry.action} ${entry.path}${detail}`);
