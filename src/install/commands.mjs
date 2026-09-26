@@ -12,8 +12,6 @@ import { detectHarnesses, install, uninstall } from "./installer.mjs";
 import { readManifest, resolveHome } from "./manifest.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
-// Flags that take no value; an inline `--flag=value` for one is rejected.
-const BOOLEAN_FLAGS = ["--yes", "--dry-run", "--verbose", "--help"];
 
 function parseHarnessList(value) {
   const harnesses = [
@@ -35,11 +33,22 @@ function parseHarnessList(value) {
 function parseFlags(argv) {
   const options = { harnesses: null, yes: false, dryRun: false, help: false };
   for (let i = 0; i < argv.length; i++) {
-    const inline = splitInlineFlag(argv[i], BOOLEAN_FLAGS);
-    const arg = inline ? inline.flag : argv[i];
-    const readInline = () => (inline ? inline.value : readArgValue(argv, arg, ++i));
+    const raw = argv[i];
+    const inline = splitInlineFlag(raw);
+    const arg = inline ? inline.flag : raw;
+    let inlineUsed = false;
+    const readInline = (flag) => {
+      if (!inline) {
+        return readArgValue(argv, flag, ++i);
+      }
+      inlineUsed = true;
+      if (inline.value === "") {
+        throw new Error(`Missing value for ${flag}.`);
+      }
+      return inline.value;
+    };
     if (arg === "--harness") {
-      options.harnesses = parseHarnessList(readInline());
+      options.harnesses = parseHarnessList(readInline(arg));
     } else if (arg === "--yes" || arg === "-y") {
       options.yes = true;
     } else if (arg === "--dry-run") {
@@ -49,7 +58,13 @@ function parseFlags(argv) {
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
     } else {
-      throw new Error(`Unknown argument: ${arg}`);
+      throw new Error(`Unknown argument: ${raw}`);
+    }
+
+    // A flag that read no value is boolean, so an inline value is an error
+    // rather than a silently dropped argument.
+    if (inline && !inlineUsed) {
+      throw new Error(`${arg} does not take a value.`);
     }
   }
   return options;
