@@ -939,6 +939,34 @@ test("CLI prints the manual snippet when a settings file does not parse", async 
   }
 });
 
+// Usefulness: verifies acceptance #200 — a post-install note longer than the
+// 300-character log cap prints in full, so its final sentence (that the skill
+// runs harness-check and refuses a foreign session) reaches the user.
+test("CLI prints a post-install note past the log cap in full", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+
+  const logs = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (message) => logs.push(String(message));
+  console.error = () => {};
+  try {
+    process.exitCode = 0;
+    await cliMain(["install", "--harness", "codex", "--yes"]);
+    expect(process.exitCode).toBe(0);
+    // Isolate the Codex note line: a truncated one drops its final sentence.
+    const note = logs.find((line) => line.includes("The Codex skill lives in the shared"));
+    expect(note).toBeDefined();
+    expect(note.endsWith("refuses to start from a Copilot or OpenCode session.")).toBe(true);
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    delete process.env.AGENT_LOOP_HOME;
+    process.exitCode = 0;
+  }
+});
+
 // Usefulness: verifies #157 — readManifest rejects an unsupported version, a
 // null or array `harnesses`, and a malformed harness record with a clear error,
 // and neither install nor uninstall changes a file when the manifest is invalid.

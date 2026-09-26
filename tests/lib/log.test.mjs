@@ -34,6 +34,17 @@ test("logDebug is gated behind setVerbose", () => {
   expect(logSpy).toHaveBeenCalledWith("[agent-loop] debug: shown");
 });
 
+// Usefulness: verifies acceptance #200 — the 300-character cap still bounds an ordinary
+// info line; only a post-install note is exempt through logInfoFull.
+test("logInfo truncates messages beyond 300 characters", () => {
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const long = "x".repeat(400);
+
+  logInfo(long);
+
+  expect(logSpy).toHaveBeenCalledWith(`[agent-loop] info: ${"x".repeat(300)}...`);
+});
+
 // Usefulness: verifies warn and error lines are length-bounded, so model-controlled content
 // (for example an unsupported-action echo in a repair warn) cannot flood a log line.
 test("logWarn and logError truncate messages beyond 300 characters", () => {
