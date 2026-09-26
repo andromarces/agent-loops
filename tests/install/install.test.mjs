@@ -1024,6 +1024,29 @@ test("CLI install rejects --verbose=1", async () => {
   }
 });
 
+// Usefulness: verifies acceptance (#210) — the inline form rejects an empty
+// value at parse time, so `--harness=` cannot act as a silent no-op.
+test("CLI install rejects --harness=", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const originalLog = console.log;
+  const errors = [];
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = (message) => errors.push(String(message));
+  try {
+    process.exitCode = 0;
+    await cliMain(["install", "--harness=", "--yes"]);
+    expect(process.exitCode).toBe(1);
+    expect(errors.join("\n")).toContain("Missing value for --harness.");
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    delete process.env.AGENT_LOOP_HOME;
+    process.exitCode = 0;
+  }
+});
+
 // Usefulness: verifies the #151 exit-code contract — a harness mismatch exits
 // with its own code (3), a match exits 0, and a check that cannot read the
 // ancestry exits 1, so a skill can separate a refusal from a check that cannot

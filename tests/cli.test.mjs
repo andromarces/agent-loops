@@ -160,10 +160,11 @@ test("--task=-x sets the task", () => {
   expect(parseArgs([...BASE, "--task=-x"]).task).toBe("-x");
 });
 
-// Usefulness: verifies acceptance (#210) — an inline value may be empty; the
-// required-task check then rejects the empty task, not the value reader.
-test("--task= sets an empty task that the required check rejects", () => {
-  expect(() => parseArgs([...BASE, "--task="])).toThrow("Missing required --task.");
+// Usefulness: verifies acceptance (#210) — an empty inline value is rejected at
+// parse time, matching the space-separated form, so a no-op flag value cannot
+// silently pass through.
+test("--task= is rejected as a missing value", () => {
+  expect(() => parseArgs([...BASE, "--task="])).toThrow("Missing value for --task.");
 });
 
 // Usefulness: verifies acceptance (#210) — a boolean flag rejects an inline value.

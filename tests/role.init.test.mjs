@@ -29,6 +29,16 @@ test("empty parent session is rejected before dispatch", async () => {
   );
 });
 
+// Usefulness: verifies acceptance (#210) — the inline form rejects an empty
+// parent session at parse time, so `--parent-session="$UNSET"` expanding to
+// `--parent-session=` cannot start an unguarded run.
+test("empty inline parent session is rejected before dispatch", async () => {
+  await setup();
+  expect(() => parseRoleArgs(["dispatch", "--role", "worker", "--parent-session="])).toThrow(
+    "Missing value for --parent-session.",
+  );
+});
+
 // Usefulness: verifies acceptance (#210) — the role parser reads an inline
 // value verbatim, including a leading `-`.
 test("role --task=-x keeps a leading dash", async () => {
