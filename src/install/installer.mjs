@@ -267,7 +267,9 @@ export async function install(options = {}) {
   if (options.dryRun) {
     return runInstall(options);
   }
-  return withStateLock(manifestLockFile(home), () => runInstall(options));
+  return withStateLock(manifestLockFile(home), () => runInstall(options), {
+    label: "The install manifest",
+  });
 }
 
 /** Runs the install once the caller owns the manifest lock, or for a dry run. */
@@ -551,7 +553,9 @@ export async function uninstall(options = {}) {
   if (options.dryRun) {
     return runUninstall(options);
   }
-  return withStateLock(manifestLockFile(home), () => runUninstall(options));
+  return withStateLock(manifestLockFile(home), () => runUninstall(options), {
+    label: "The install manifest",
+  });
 }
 
 /** Runs the uninstall once the caller owns the manifest lock, or for a dry run. */
