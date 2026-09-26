@@ -44,6 +44,33 @@ import {
   validateLocator,
 } from "./settings.mjs";
 
+// `npx` installs the package under `<npm-cache>/_npx/<hash>/node_modules` and
+// `pnpm dlx` under `<pnpm-home>/dlx/<hash>/<work>/node_modules`. npm or pnpm
+// can delete either directory at any time. A global install, a project
+// `node_modules`, and a linked clone all keep a stable package root.
+const EPHEMERAL_CACHE_DIRS = new Set(["_npx", "dlx"]);
+const EPHEMERAL_ROOT_MESSAGE =
+  "Refusing to install from an npx or pnpm dlx cache: npm or pnpm can delete it, " +
+  "and the entry points and guards written here would then point at missing " +
+  "files. Install globally first (npm install -g @andromarces/agent-loops or " +
+  "pnpm add -g @andromarces/agent-loops), then run install again.";
+
+/**
+ * True when the package root resolves inside an npx or pnpm dlx cache. The
+ * cache layout is a `_npx` or `dlx` directory segment, a longer hex hash, and a
+ * `node_modules` segment below both, so a path that merely names `dlx` does not
+ * match (#205).
+ */
+export function isEphemeralPackageRoot(packageRoot) {
+  const segments = packageRoot.split(/[\\/]+/).filter(Boolean);
+  for (let i = 0; i < segments.length - 2; i++) {
+    if (!EPHEMERAL_CACHE_DIRS.has(segments[i])) continue;
+    if (!/^[0-9a-f]{16,}$/.test(segments[i + 1])) continue;
+    if (segments.slice(i + 2).includes("node_modules")) return true;
+  }
+  return false;
+}
+
 function planBackup(target, previous, current) {
   const existedBefore = previous ? previous.existedBefore : current !== null;
   const backupPath = previous?.backupPath ?? null;
@@ -264,6 +291,9 @@ function keepPriorRecords(records, targets, priorRecords) {
  */
 export async function install(options = {}) {
   const home = options.home ?? resolveHome();
+  if (typeof options.packageRoot === "string" && isEphemeralPackageRoot(options.packageRoot)) {
+    throw new Error(EPHEMERAL_ROOT_MESSAGE);
+  }
   if (options.dryRun) {
     return runInstall(options);
   }

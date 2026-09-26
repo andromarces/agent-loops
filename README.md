@@ -96,6 +96,14 @@ if a write fails part way through it records the writes that completed, so
 `uninstall` still removes or restores them. It leaves a target in place when it
 cannot remove or restore it safely; see [Uninstall skips](#uninstall-skips).
 
+`install` must run from a global install or a linked clone. It writes the package
+location as an absolute path into every entry point and guard, and `npx` and
+`pnpm dlx` place the package in a cache directory that npm or pnpm can delete.
+When it detects its own package root inside that cache, `install` refuses with a
+message that asks for a global install first, so it never writes a path that can
+disappear. `uninstall` reads only the manifest and the harness files, so it still
+removes them after the package is gone.
+
 ```bash
 agent-loop install --harness claude,codex --yes
 agent-loop uninstall
@@ -135,6 +143,9 @@ Run it without installing:
 npx @andromarces/agent-loops --help
 pnpm dlx @andromarces/agent-loops --help
 ```
+
+`--help` writes no config, so it runs from the cache. `install` writes config
+that points at the package, so it refuses from the cache; see [Install](#install).
 
 Install from a Git URL instead of the registry:
 

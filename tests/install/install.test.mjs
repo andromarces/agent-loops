@@ -484,6 +484,102 @@ test("a moved package renders entry points at the new location", async () => {
   );
 });
 
+// Usefulness: verifies acceptance #205 — install refuses a package root inside
+// an `npx` or `pnpm dlx` cache with an actionable message and writes nothing,
+// because npm or pnpm can delete that cache directory and every path install
+// wrote would point at a missing file.
+test("install refuses an npx or dlx cache package root", async () => {
+  const home = await makeHome();
+  const roots = [
+    join(
+      home,
+      "npm-cache",
+      "_npx",
+      "09f5e92d3f3f415f",
+      "node_modules",
+      "@andromarces",
+      "agent-loops",
+    ),
+    join(
+      home,
+      "pnpm",
+      "dlx",
+      "0dd49d4f3230c83239c085437bfea068",
+      "mtwi8m5o-8i0",
+      "node_modules",
+      "@andromarces",
+      "agent-loops",
+    ),
+  ];
+  for (const packageRoot of roots) {
+    const error = await install({ harnesses: ["claude"], home, packageRoot }).then(
+      () => null,
+      (err) => err,
+    );
+    expect(error, packageRoot).toBeInstanceOf(Error);
+    expect(error.message, packageRoot).toMatch(/npx|dlx/);
+    expect(error.message, packageRoot).toMatch(/install globally/i);
+    expect(existsSync(join(home, ".claude", "settings.json")), packageRoot).toBe(false);
+    expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md")), packageRoot).toBe(
+      false,
+    );
+    expect(existsSync(manifestPath(home)), packageRoot).toBe(false);
+  }
+});
+
+// Usefulness: verifies the negative of acceptance #205 — a path that merely
+// contains a `dlx` segment is a normal install root, so the refusal keys on the
+// npx or dlx cache layout and not on the bare directory name.
+test("a path that is not an npx or dlx cache layout is installed normally", async () => {
+  const home = await makeHome();
+  const lookalike = join(home, "dlx", "project");
+  homes.push(lookalike);
+  await cp(
+    join(PACKAGE_ROOT, "src", "install", "templates"),
+    join(lookalike, "src", "install", "templates"),
+    { recursive: true },
+  );
+  await mkdir(join(lookalike, "docs"), { recursive: true });
+  await cp(
+    join(PACKAGE_ROOT, "docs", "orchestrator-instructions.md"),
+    join(lookalike, "docs", "orchestrator-instructions.md"),
+  );
+
+  const reports = await install({ harnesses: ["claude"], home, packageRoot: lookalike });
+  expect(reports.some((entry) => entry.action === "create")).toBe(true);
+  expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(true);
+});
+
+// Usefulness: verifies acceptance #205 — uninstall still works after the
+// package that install ran from is gone, because it acts on the manifest and
+// the harness files, not on the package root.
+test("uninstall works after the package root is gone", async () => {
+  const home = await makeHome();
+  const movedRoot = await mkdtemp(join(tmpdir(), "agent-loop-gone-package-"));
+  homes.push(movedRoot);
+  await cp(
+    join(PACKAGE_ROOT, "src", "install", "templates"),
+    join(movedRoot, "src", "install", "templates"),
+    { recursive: true },
+  );
+  await mkdir(join(movedRoot, "docs"), { recursive: true });
+  await cp(
+    join(PACKAGE_ROOT, "docs", "orchestrator-instructions.md"),
+    join(movedRoot, "docs", "orchestrator-instructions.md"),
+  );
+
+  await install({ harnesses: ["claude"], home, packageRoot: movedRoot });
+  const skillPath = join(home, ".claude", "skills", "agent-loop", "SKILL.md");
+  expect(existsSync(skillPath)).toBe(true);
+
+  await rm(movedRoot, { recursive: true, force: true });
+
+  const reports = await uninstall({ home });
+  expect(reports.find((entry) => entry.path === skillPath).action).toBe("delete");
+  expect(existsSync(skillPath)).toBe(false);
+  expect(existsSync(manifestPath(home))).toBe(false);
+});
+
 // Usefulness: verifies the data-loss acceptance — a reinstall that reports
 // noop must not advance the recorded post-install hash, so uninstall still sees
 // the user's edit and removes only the entry instead of restoring the backup.
