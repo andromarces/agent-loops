@@ -12,6 +12,7 @@ import {
   ROLE_FLAG_BY_OPTION,
   assertOpenCodeOptions,
   readArgValue,
+  readInlineValue,
   readNonNegativeInt,
   readPositiveInt,
   roleFlags,
@@ -90,10 +91,7 @@ export function parseRoleArgs(argv) {
         return readValue(flag, ++index);
       }
       inlineUsed = true;
-      if (inline.value === "") {
-        throw new Error(`Missing value for ${flag}.`);
-      }
-      return inline.value;
+      return readInlineValue(inline, flag);
     };
 
     switch (arg) {
