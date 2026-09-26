@@ -198,6 +198,7 @@ export async function removeManifest(home) {
     throw new Error(
       `Install directory ${root} could not be removed (${err.code}). ` +
         "The manifest was already deleted; remove the directory manually.",
+      { cause: err },
     );
   }
 }

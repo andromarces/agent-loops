@@ -62,6 +62,10 @@ async function readText(path) {
   }
 }
 
+function deepestDir(dirs) {
+  return [...dirs].sort((a, b) => b.length - a.length)[0];
+}
+
 // Usefulness: verifies acceptance #192 — a missing directory and a non-empty
 // directory are silent, including the EEXIST that some platforms report for a
 // non-empty directory. This is the suppression contract the two failure paths
@@ -90,7 +94,7 @@ test("a harness directory removal failure is reported and keeps the record", asy
   await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
 
   const dirs = (await readManifest(home)).harnesses.claude.dirs;
-  const blocked = [...dirs].sort((a, b) => b.length - a.length)[0];
+  const blocked = deepestDir(dirs);
   control.failures.set(blocked, "EPERM");
 
   const reports = await uninstall({ home });
@@ -103,6 +107,24 @@ test("a harness directory removal failure is reported and keeps the record", asy
   const manifest = await readManifest(home);
   expect(manifest.harnesses.claude).toBeDefined();
   expect(manifest.harnesses.claude.dirs).toContain(blocked);
+});
+
+// Usefulness: verifies the reinstall regression from #192 — the kept directory
+// record must not block the next install. The stale file and settings records
+// would make install read a missing recorded entry and skip the whole harness.
+test("a reinstall after a harness directory failure is not blocked", async () => {
+  const home = await makeHome();
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const blocked = deepestDir((await readManifest(home)).harnesses.claude.dirs);
+  control.failures.set(blocked, "EPERM");
+  await uninstall({ home });
+  control.failures.clear();
+
+  const reports = await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  expect(reports.find((entry) => entry.kind === "settings").action).not.toBe("skip");
+  expect(reports.find((entry) => entry.kind === "file").action).not.toBe("skip");
+  expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(true);
 });
 
 // Usefulness: verifies acceptance #192 path 2 — a permission failure removing

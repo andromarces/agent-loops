@@ -541,8 +541,11 @@ export async function uninstall({ harnesses, home = resolveHome(), dryRun = fals
       try {
         await pruneEmptyDirs(record.dirs ?? []);
       } catch (err) {
-        // Keep the record so a later uninstall can retry the directory that
-        // could not be removed, and report the failure now.
+        // The file and settings targets above were already restored or
+        // deleted, so keep only the directory list. Their stale records would
+        // make the next install read a missing recorded entry and skip the
+        // whole harness, while the directory still needs a later retry.
+        manifest.harnesses[harness] = { dirs: record.dirs ?? [] };
         reports.push({
           harness,
           kind: "dir",
@@ -550,7 +553,7 @@ export async function uninstall({ harnesses, home = resolveHome(), dryRun = fals
           path: err.path,
           detail:
             `the directory could not be removed (${err.code}); ` +
-            "the harness record is kept for a later retry",
+            "kept for a later uninstall to retry",
         });
         continue;
       }
