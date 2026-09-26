@@ -102,11 +102,10 @@ export async function readStateForSession(parentSession) {
 }
 
 /**
- * Exclusive access around one state-file operation. Creates `state.lock`
- * atomically (a hard link, or an exclusive create where the filesystem has no
- * link support), treats an existing lock with a live owner pid as busy and a
- * dead one as stale (removed with a warning, then retried). Returns the result
- * of `fn`.
+ * Exclusive access around one state-file operation. Creates `state.lock` (an
+ * atomic hard link where supported, otherwise an exclusive create), treats an
+ * existing lock with a live owner pid as busy and a dead one as stale
+ * (removed with a warning, then retried). Returns the result of `fn`.
  */
 export async function withStateLock(lockFile, fn) {
   await mkdir(dirname(lockFile), { recursive: true });
@@ -125,6 +124,8 @@ let lockTempCounter = 0;
 // `link` is the atomic create primitive, but FAT/exFAT and some network mounts
 // have no hard links and report one of these codes. They fall back to an
 // exclusive create, where the pre-#176 create/write window returns.
+// EISDIR is the Windows mapping: libuv translates the ERROR_INVALID_FUNCTION
+// from CreateHardLinkW on FAT/exFAT to EISDIR (nodejs/node#65817).
 const LINK_UNSUPPORTED = new Set([
   "EPERM",
   "EACCES",
@@ -134,6 +135,7 @@ const LINK_UNSUPPORTED = new Set([
   "ENOSYS",
   "EMLINK",
   "EXDEV",
+  "EISDIR",
 ]);
 
 // Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
