@@ -3,7 +3,8 @@
 // pre-install bytes and remove only entries it inserted. The baseline recorded
 // by the first install is immutable: later installs carry it forward untouched
 // and only uninstall consumes it.
-import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   ensureDir,
@@ -30,6 +31,20 @@ export function installRoot(home = resolveHome()) {
 
 export function manifestPath(home = resolveHome()) {
   return join(installRoot(home), "install.json");
+}
+
+/**
+ * The lock file that serializes `install` and `uninstall` for one install home.
+ * It lives under the OS temp root, not under the home, so `removeManifest` can
+ * delete `<home>/.agent-loops` while the lock is held. The key is a hash of the
+ * canonical home: the resolved path, lowercased on Windows, where paths compare
+ * case-insensitively, so equivalent spellings share one lock.
+ */
+export function manifestLockFile(home = resolveHome()) {
+  const resolved = resolve(home);
+  const canonical = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const key = createHash("sha256").update(canonical).digest("hex").slice(0, 12);
+  return join(tmpdir(), "agent-loops", `install-${key}.lock`);
 }
 
 export function emptyManifest() {
