@@ -90,6 +90,9 @@ export function parseRoleArgs(argv) {
         return readValue(flag, ++index);
       }
       inlineUsed = true;
+      if (inline.value === "") {
+        throw new Error(`Missing value for ${flag}.`);
+      }
       return inline.value;
     };
 

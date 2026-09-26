@@ -42,6 +42,9 @@ function parseFlags(argv) {
         return readArgValue(argv, flag, ++i);
       }
       inlineUsed = true;
+      if (inline.value === "") {
+        throw new Error(`Missing value for ${flag}.`);
+      }
       return inline.value;
     };
     if (arg === "--harness") {

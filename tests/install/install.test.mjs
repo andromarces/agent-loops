@@ -1025,9 +1025,8 @@ test("CLI install rejects --verbose=1", async () => {
 });
 
 // Usefulness: verifies acceptance (#215) — the install parser rejects an inline
-// value on any boolean flag without a hand-maintained list, and an unknown
-// inline argument keeps the `=value` segment in the error.
-test("CLI install rejects boolean inline values and reports the full unknown token", async () => {
+// value on any boolean flag, empty or not, without a hand-maintained list.
+test("CLI install rejects an inline value on a boolean flag", async () => {
   const home = await makeHome();
   process.env.AGENT_LOOP_HOME = home;
   const originalLog = console.log;
@@ -1042,6 +1041,29 @@ test("CLI install rejects boolean inline values and reports the full unknown tok
     expect(errors.join("\n")).toContain("--dry-run does not take a value.");
 
     errors.length = 0;
+    process.exitCode = 0;
+    await cliMain(["install", "--yes="]);
+    expect(process.exitCode).toBe(1);
+    expect(errors.join("\n")).toContain("--yes does not take a value.");
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    delete process.env.AGENT_LOOP_HOME;
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: verifies acceptance (#215) — an unknown inline argument keeps the
+// `=value` segment in the error, so the whole token the user typed is reported.
+test("CLI install reports the full unknown inline token", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const originalLog = console.log;
+  const errors = [];
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = (message) => errors.push(String(message));
+  try {
     process.exitCode = 0;
     await cliMain(["install", "--nope=bar", "--yes"]);
     expect(process.exitCode).toBe(1);

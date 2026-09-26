@@ -63,6 +63,15 @@ test("role --resume-interrupted=1 is rejected", async () => {
   );
 });
 
+// Usefulness: verifies acceptance (#215) — an empty inline value on a boolean
+// flag is rejected as a value on a no-value flag, not as a missing value.
+test("role --resume-interrupted= is rejected as not taking a value", async () => {
+  await setup();
+  expect(() => parseRoleArgs(["dispatch", "--resume-interrupted="])).toThrow(
+    "--resume-interrupted does not take a value.",
+  );
+});
+
 // Usefulness: verifies acceptance (#215) — an unknown inline argument keeps the
 // `=value` segment in the error.
 test("role unknown inline argument keeps its value in the error", async () => {
