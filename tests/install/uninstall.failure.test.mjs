@@ -73,17 +73,21 @@ function deepestDir(dirs) {
 test("removeDirQuiet stays silent for a missing or non-empty directory", async () => {
   const home = await makeHome();
   const missing = join(home, "missing");
-  await expect(removeDirQuiet(missing)).resolves.toBeUndefined();
+  await expect(removeDirQuiet(missing)).resolves.toBe(false);
 
   const nonEmpty = join(home, "non-empty");
   await mkdir(nonEmpty, { recursive: true });
   await writeFile(join(nonEmpty, "keep.txt"), "keep\n", "utf8");
-  await expect(removeDirQuiet(nonEmpty)).resolves.toBeUndefined();
+  await expect(removeDirQuiet(nonEmpty)).resolves.toBe(false);
   expect(existsSync(join(nonEmpty, "keep.txt"))).toBe(true);
 
   const forced = join(home, "forced");
   control.failures.set(forced, "EEXIST");
-  await expect(removeDirQuiet(forced)).resolves.toBeUndefined();
+  await expect(removeDirQuiet(forced)).resolves.toBe(false);
+
+  const empty = join(home, "empty");
+  await mkdir(empty, { recursive: true });
+  await expect(removeDirQuiet(empty)).resolves.toBe(true);
 });
 
 // Usefulness: verifies acceptance #192 path 1 — a permission failure removing a
@@ -125,6 +129,25 @@ test("a reinstall after a harness directory failure is not blocked", async () =>
   expect(reports.find((entry) => entry.kind === "settings").action).not.toBe("skip");
   expect(reports.find((entry) => entry.kind === "file").action).not.toBe("skip");
   expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(true);
+});
+
+// Usefulness: verifies the reporting gap from the review — a successful retry
+// after a directory failure names the directories it removed, so the command
+// does not print "Nothing to change." while it clears the leftover directory.
+test("a successful retry reports the directories it removed", async () => {
+  const home = await makeHome();
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const blocked = deepestDir((await readManifest(home)).harnesses.claude.dirs);
+  control.failures.set(blocked, "EPERM");
+  await uninstall({ home });
+  control.failures.clear();
+
+  const reports = await uninstall({ home });
+  expect(reports.find((entry) => entry.path === blocked)?.action).toBe("delete");
+  expect(reports.some((entry) => entry.action === "failed")).toBe(false);
+  expect(existsSync(blocked)).toBe(false);
+  expect(await readText(manifestPath(home))).toBe(null);
 });
 
 // Usefulness: verifies acceptance #192 path 2 — a permission failure removing
