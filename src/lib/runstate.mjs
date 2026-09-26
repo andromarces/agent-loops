@@ -3,16 +3,16 @@
 // resolved work tree cwd, never passed as a flag; tests override the runs
 // root with AGENT_LOOP_RUNS_ROOT.
 import { createHash } from "node:crypto";
-import { link, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { logWarn } from "./log.mjs";
 
 export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
 
-// An unparseable lock younger than this is never treated as stale. Lock
-// creation is atomic (see acquireLock), so a fresh unreadable lock is a
-// contender racing a removal or a foreign empty file, not a half-written owner.
+// An unparseable lock younger than this is never treated as stale: a fresh
+// unreadable lock is a contender racing a removal, a foreign file, or (on the
+// exclusive-create fallback path) a half-written owner.
 export const STALE_LOCK_GRACE_MS = 60_000;
 
 /**
@@ -102,10 +102,10 @@ export async function readStateForSession(parentSession) {
 }
 
 /**
- * Exclusive access around one state-file operation. Creates `state.lock` with
- * an atomic hard link, treats an existing lock with a live owner pid as busy
- * and a dead one as stale (removed with a warning, then retried). Returns the
- * result of `fn`.
+ * Exclusive access around one state-file operation. Creates `state.lock` (an
+ * atomic hard link where supported, otherwise an exclusive create), treats an
+ * existing lock with a live owner pid as busy and a dead one as stale
+ * (removed with a warning, then retried). Returns the result of `fn`.
  */
 export async function withStateLock(lockFile, fn) {
   await mkdir(dirname(lockFile), { recursive: true });
@@ -121,27 +121,33 @@ export async function withStateLock(lockFile, fn) {
 // share a pid on distinct paths so one's cleanup never removes another's.
 let lockTempCounter = 0;
 
+// `link` is the atomic create primitive, but FAT/exFAT and some network mounts
+// have no hard links and report one of these codes. They fall back to an
+// exclusive create, where the pre-#176 create/write window returns.
+// EISDIR is the Windows mapping: libuv translates the ERROR_INVALID_FUNCTION
+// from CreateHardLinkW on FAT/exFAT to EISDIR (nodejs/node#65817).
+const LINK_UNSUPPORTED = new Set([
+  "EPERM",
+  "EACCES",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+  "EINVAL",
+  "ENOSYS",
+  "EMLINK",
+  "EXDEV",
+  "EISDIR",
+]);
+
+// Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
+const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
+
 async function acquireLock(lockFile, retry = true) {
-  // The owner content is written to a pid-named temp file first, then hard
-  // linked to the lock path. The link is atomic: EEXIST means a contender
-  // lost, and the owner content is present the instant the lock exists, so a
-  // contender never observes a half-created lock (fixes #176 path 1). The
-  // counter suffix keeps same-process contenders on distinct temp files.
-  const tempFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
-  await writeFile(
-    tempFile,
-    JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
-    "utf8",
-  );
-  try {
-    await link(tempFile, lockFile);
-    await rm(tempFile, { force: true });
+  if (await createLock(lockFile)) {
+    // Best-effort removal of temp files left by a crash between the temp write
+    // and the link (#178). Runs while the lock is held and never touches a live
+    // contender's temp, so it cannot break a racing acquisition.
+    await pruneStaleLockTemps(lockFile);
     return;
-  } catch (err) {
-    await rm(tempFile, { force: true });
-    if (err.code !== "EEXIST") {
-      throw err;
-    }
   }
 
   const owner = await readLockOwner(lockFile);
@@ -152,9 +158,10 @@ async function acquireLock(lockFile, retry = true) {
   }
 
   if (!owner && (await lockAgeMs(lockFile)) < STALE_LOCK_GRACE_MS) {
-    // Unparseable and fresh: fail closed. Creation itself is atomic, so this
-    // is a removal race (lockAgeMs reads 0 on ENOENT) or a foreign empty
-    // file, never a half-written owner.
+    // Unparseable and fresh: fail closed. On a link-capable filesystem creation
+    // is atomic, so this is a removal race (lockAgeMs reads 0 on ENOENT) or a
+    // foreign file; the exclusive-create fallback can leave a half-written
+    // owner, which this refusal also covers.
     throw new Error("State is locked (the lock file is not readable yet; retry shortly).");
   }
 
@@ -165,6 +172,66 @@ async function acquireLock(lockFile, retry = true) {
   logWarn(`removing stale state lock (dead pid ${owner?.pid ?? "unknown"})`);
   await rm(lockFile, { force: true });
   return acquireLock(lockFile, false);
+}
+
+// Create the lock and its owner content. The owner JSON goes to a private temp
+// file that is hard linked to the lock path; the link is atomic, so EEXIST
+// means a contender won and the owner is readable the instant the lock exists
+// (fixes #176 path 1). On a filesystem with no hard links, an exclusive create
+// and write keeps the lock usable at the cost of that window. Returns false
+// only when another owner already holds the lock.
+async function createLock(lockFile) {
+  const owner = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+  const tempFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
+  await writeFile(tempFile, owner, "utf8");
+  try {
+    await link(tempFile, lockFile);
+    return true;
+  } catch (err) {
+    if (err.code === "EEXIST") {
+      return false;
+    }
+    if (!LINK_UNSUPPORTED.has(err.code)) {
+      throw err;
+    }
+    try {
+      await writeFile(lockFile, owner, { encoding: "utf8", flag: "wx" });
+      return true;
+    } catch (openErr) {
+      if (openErr.code === "EEXIST") {
+        return false;
+      }
+      throw openErr;
+    }
+  } finally {
+    await rm(tempFile, { force: true });
+  }
+}
+
+// Removes lock temp files whose creating pid is gone. A live contender's temp
+// is never touched, so a concurrent acquisition is unaffected; failures are
+// ignored because cleanup is best-effort and must not fail the lock holder.
+async function pruneStaleLockTemps(lockFile) {
+  try {
+    const dir = dirname(lockFile);
+    const prefix = `${basename(lockFile)}.`;
+    for (const entry of await readdir(dir)) {
+      if (!entry.startsWith(prefix)) {
+        continue;
+      }
+      const match = LOCK_TEMP_SUFFIX.exec(entry.slice(prefix.length));
+      if (match === null) {
+        continue;
+      }
+      const pid = Number(match[1]);
+      if (pid === process.pid || pidAlive(pid)) {
+        continue;
+      }
+      await rm(join(dir, entry), { force: true });
+    }
+  } catch {
+    // The lock is already held; a failed scan or unlink leaves only a temp file.
+  }
 }
 
 export function pidAlive(pid) {
