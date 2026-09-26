@@ -233,6 +233,11 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 -h, --help                    Show help.
 ```
 
+A value flag also accepts the inline form `--flag=value`, for example
+`--task=-x`, which allows a value that starts with `-`. A boolean flag rejects
+the inline form. This applies to every flag, including `--harness` for
+`install` and `uninstall`.
+
 ## Interactive child dispatch: `agent-loop role`
 
 An interactive parent session (Claude Code, Codex, or any harness with shell access) can dispatch one child turn without spawning a headless orchestrator:

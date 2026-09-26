@@ -15,6 +15,7 @@ import {
   readNonNegativeInt,
   readPositiveInt,
   roleFlags,
+  splitInlineFlag,
 } from "./lib/args.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
@@ -34,6 +35,8 @@ const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
 const MODES = new Set(["work-first", "review-first", "review-only"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
+// Flags that take no value; an inline `--flag=value` for one is rejected.
+const BOOLEAN_FLAGS = ["--resume-interrupted", "--verbose"];
 // Bound for `raw` in the envelope when the closing block could not be parsed.
 const RAW_TAIL_LIMIT = 2000;
 
@@ -80,26 +83,28 @@ export function parseRoleArgs(argv) {
   const readValue = (flag, i) => readArgValue(argv, flag, i);
 
   for (; index < argv.length; index++) {
-    const arg = argv[index];
+    const inline = splitInlineFlag(argv[index], BOOLEAN_FLAGS);
+    const arg = inline ? inline.flag : argv[index];
+    const readInline = (flag) => (inline ? inline.value : readValue(flag, ++index));
 
     switch (arg) {
       case "--role":
-        args.role = readValue(arg, ++index);
+        args.role = readInline(arg);
         if (!ROLE_NAMES.has(args.role)) {
           throw new RoleError(`--role must be worker or reviewer, got: ${args.role}`);
         }
         break;
 
       case "--cwd":
-        args.cwd = resolve(readValue(arg, ++index));
+        args.cwd = resolve(readInline(arg));
         break;
 
       case "--task":
-        args.task = readValue(arg, ++index);
+        args.task = readInline(arg);
         break;
 
       case "--mode":
-        args.mode = readValue(arg, ++index);
+        args.mode = readInline(arg);
         if (!MODES.has(args.mode)) {
           throw new RoleError(
             `--mode must be one of work-first, review-first, review-only, got: ${args.mode}`,
@@ -108,26 +113,26 @@ export function parseRoleArgs(argv) {
         break;
 
       case "--parent-session":
-        args.parentSession = readValue(arg, ++index);
+        args.parentSession = readInline(arg);
         break;
 
       case "--max-steps":
-        args.maxSteps = readPositiveInt(arg, readValue(arg, ++index));
+        args.maxSteps = readPositiveInt(arg, readInline(arg));
         break;
 
       case "--timeout": {
-        const seconds = readNonNegativeInt(arg, readValue(arg, ++index));
+        const seconds = readNonNegativeInt(arg, readInline(arg));
         args.timeout = seconds === 0 ? null : seconds;
         args.timeoutProvided = true;
         break;
       }
 
       case "--prompt-file":
-        args.promptFile = resolve(readValue(arg, ++index));
+        args.promptFile = resolve(readInline(arg));
         break;
 
       case "--transcript":
-        args.transcript = resolve(readValue(arg, ++index));
+        args.transcript = resolve(readInline(arg));
         break;
 
       case "--resume-interrupted":
@@ -135,7 +140,7 @@ export function parseRoleArgs(argv) {
         break;
 
       case "--reason":
-        args.reason = readValue(arg, ++index);
+        args.reason = readInline(arg);
         break;
 
       case "--verbose":
@@ -146,7 +151,7 @@ export function parseRoleArgs(argv) {
         if (!Object.hasOwn(ROLE_FLAGS, arg)) {
           throw new RoleError(`Unknown argument: ${arg}`);
         }
-        args[ROLE_FLAGS[arg]] = readValue(arg, ++index);
+        args[ROLE_FLAGS[arg]] = readInline(arg);
         break;
     }
   }
