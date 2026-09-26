@@ -538,7 +538,22 @@ export async function uninstall({ harnesses, home = resolveHome(), dryRun = fals
       reports.push(await planFileRestore({ ...file, harness }, dryRun));
     }
     if (!dryRun) {
-      await pruneEmptyDirs(record.dirs ?? []);
+      try {
+        await pruneEmptyDirs(record.dirs ?? []);
+      } catch (err) {
+        // Keep the record so a later uninstall can retry the directory that
+        // could not be removed, and report the failure now.
+        reports.push({
+          harness,
+          kind: "dir",
+          action: "failed",
+          path: err.path,
+          detail:
+            `the directory could not be removed (${err.code}); ` +
+            "the harness record is kept for a later retry",
+        });
+        continue;
+      }
     }
     delete manifest.harnesses[harness];
   }
