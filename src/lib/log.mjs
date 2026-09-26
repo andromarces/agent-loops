@@ -1,8 +1,9 @@
 // Lifecycle logging at operational boundaries (AGENTS.md logging guideline).
 // Every line is tagged with its level: "[agent-loop] <level>: <message>".
 // info and debug go to stdout, warn and error to stderr; debug is shown only when
-// the --verbose gate is on. Warn and error lines are length-bounded so untrusted
-// content (for example a model echo in a validation error) cannot flood a line.
+// the --verbose gate is on. Every line is length-bounded so untrusted content
+// (for example a model echo in a validation error) cannot flood a line; logInfoFull
+// prints a trusted, user-facing note in full instead.
 const MAX_LENGTH = 300;
 
 let verbose = false;

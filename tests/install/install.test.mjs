@@ -955,10 +955,10 @@ test("CLI prints a post-install note past the log cap in full", async () => {
     process.exitCode = 0;
     await cliMain(["install", "--harness", "codex", "--yes"]);
     expect(process.exitCode).toBe(0);
-    const output = logs.join("\n");
-    // The Codex note runs past the cap, so a truncated line drops this tail.
-    expect(output).toContain("refuses to start from a Copilot or OpenCode session.");
-    expect(output).not.toContain("...");
+    // Isolate the Codex note line: a truncated one drops its final sentence.
+    const note = logs.find((line) => line.includes("The Codex skill lives in the shared"));
+    expect(note).toBeDefined();
+    expect(note.endsWith("refuses to start from a Copilot or OpenCode session.")).toBe(true);
   } finally {
     console.log = originalLog;
     console.error = originalError;
