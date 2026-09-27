@@ -170,7 +170,10 @@ Subcommands:
 Role operations:
 
   dispatch (default)            Run one --role turn for the run state at --cwd.
-  finish                        End the run; the five-key summary arrives as JSON on stdin.
+  finish                        End the run; the five-key summary arrives as JSON on stdin,
+                                with an optional unresolvedCompare boolean beside the five
+                                keys to record an unresolved PR-head compare. Exits 0 for
+                                that marker, where the headless loop exits 4.
   abort                         End the run with --reason.
 
 Role flags:
@@ -196,6 +199,7 @@ Role flags:
                                 conflicts, is not blocked, and every required check
                                 passed on the commit GitHub evaluates. An app-qualified
                                 required check must pass on a check run from that app.
+                                Refuses a finish that also sets unresolvedCompare.
 
 Options:
 
