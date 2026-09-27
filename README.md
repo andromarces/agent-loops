@@ -293,7 +293,7 @@ Stdout carries exactly one JSON envelope; all logs go to stderr:
 }
 ```
 
-`report` is parsed from the closing block every child turn must end with. `conclusion`, `why`, and `blockers` are required; `notes` (non-blocking findings) and `deferred` (out-of-scope items) are optional, and an omitted or empty label yields `null` for that field without making `report` null. Each label takes one line: an empty optional label followed by content lines, for example bullets, makes the whole block unparseable, so `raw` carries the text instead of dropping it. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
+`report` is parsed from the closing block every child turn must end with. `conclusion`, `why`, and `blockers` are required; `notes` (non-blocking findings) and `deferred` (out-of-scope items) are optional, and an omitted or empty label yields `null` for that field without making `report` null. Each label takes one line: an empty optional label followed by a list, for example bullets, makes the whole block unparseable, so `raw` carries the list instead of dropping it. A non-list line, for example a closing sentence, does not make the block unparseable. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
 
 ## Interactive orchestrator: harness entry points
 

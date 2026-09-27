@@ -12,11 +12,14 @@ const REPORT_LABELS = [
 ];
 
 // A line that opens any label in the closing block, including the reviewer's
-// Verdict line. Bounds the search for text an empty optional label would drop.
+// Verdict line. Bounds the search for a list an empty optional label would drop.
 const LABEL_LINE = new RegExp(
   `^(?:${REPORT_LABELS.map(([, label]) => label).join("|")}|Verdict):`,
   "i",
 );
+
+// A markdown list line, for example `- item`, `* item`, or `1. item`.
+const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])\s+/;
 
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
@@ -42,9 +45,9 @@ function closingBlock(response) {
  * `blockers` are required, and a missing or empty one makes the whole block
  * unparseable. `notes` and `deferred` are optional: an absent or empty label
  * maps to null and never makes the block null, so a response in the pre-#214
- * format stays parseable. An empty optional label followed by a content line,
- * for example bullets, instead makes the whole block unparseable so the
- * dispatch layer surfaces the dropped text through `raw` (issue #229).
+ * format stays parseable. An empty optional label followed by a list line, for
+ * example bullets, instead makes the whole block unparseable, so the dispatch
+ * layer surfaces the dropped list through `raw` (issue #229).
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
  */
@@ -55,10 +58,11 @@ export function parseReportBlock(response) {
   }
   const report = {};
   for (const [key, label, optional] of REPORT_LABELS) {
-    const match = lastLabeledLine(block, label);
-    if (!match) {
+    const found = lastLabeled(block, label);
+    const value = found?.value ?? "";
+    if (value === "") {
       if (optional) {
-        if (hasDanglingContent(block, label)) {
+        if (found && hasListAfter(block, found.index)) {
           return null;
         }
         report[key] = null;
@@ -66,35 +70,31 @@ export function parseReportBlock(response) {
       }
       return null;
     }
-    report[key] = match;
+    report[key] = value;
   }
   return report;
 }
 
 /**
- * True when `label`'s last line in the block holds an empty value and a
- * non-blank line follows before the next label line or the block ends. Such a
- * line would otherwise be dropped.
+ * True when a list line follows `index` before the next label line or the end
+ * of the block. Such a list would otherwise be dropped, because the label above
+ * it holds no value.
  * @param {string[]} lines
- * @param {string} label
+ * @param {number} index
  * @returns {boolean}
  */
-function hasDanglingContent(lines, label) {
-  const pattern = new RegExp(`^${label}:\\s*(.*)$`, "i");
-  let index = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (pattern.test(lines[i])) {
-      index = i;
-    }
-  }
-  if (index === -1) {
-    return false;
-  }
+function hasListAfter(lines, index) {
   for (let i = index + 1; i < lines.length; i++) {
-    if (lines[i].trim() === "") {
+    const line = lines[i];
+    if (line.trim() === "") {
       continue;
     }
-    return !LABEL_LINE.test(lines[i]);
+    if (LABEL_LINE.test(line)) {
+      return false;
+    }
+    if (LIST_LINE.test(line)) {
+      return true;
+    }
   }
   return false;
 }
@@ -113,7 +113,7 @@ function hasDanglingContent(lines, label) {
  */
 export function parseVerdict(response) {
   const block = closingBlock(response);
-  const line = block ? lastLabeledLine(block, "Verdict") : null;
+  const line = block ? (lastLabeled(block, "Verdict")?.value ?? null) : null;
   const value = line ? line.replace(/\.$/, "") : null;
   const match = value ? value.match(/^(accept|reject)(?:\s*[—–:,.-]\s+(.*))?$/i) : null;
   if (!match) {
@@ -125,14 +125,15 @@ export function parseVerdict(response) {
   return match[1].toLowerCase();
 }
 
-function lastLabeledLine(lines, label) {
+/** Last line in `lines` that opens `label`, with its value and index. */
+function lastLabeled(lines, label) {
   const pattern = new RegExp(`^${label}:\\s*(.*)$`, "i");
-  let last = null;
-  for (const line of lines) {
-    const match = line.match(pattern);
+  let found = null;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(pattern);
     if (match) {
-      last = match[1].trim();
+      found = { value: match[1].trim(), index: i };
     }
   }
-  return last;
+  return found;
 }
