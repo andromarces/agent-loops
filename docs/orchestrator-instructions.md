@@ -316,8 +316,9 @@ the current behavior, and each flag fails with a clear error.
   no required contexts, so a token without repository admin still gates. A
   fine-grained PAT without the Administration permission is expected to answer
   403 `Resource not accessible by personal access token`, which is the one
-  unhandled reply and fails the run; use a token with repository admin, or a
-  `GITHUB_TOKEN`. And `gh pr checks --required` lists only checks that
+  unreadable-source reply the gate does not handle, so the run fails; use a token
+  with repository admin, or a `GITHUB_TOKEN`. A rate-limit or SSO 403 also fails
+  the run, by design. And `gh pr checks --required` lists only checks that
   already reported on the commit. A
   blocked merge state refuses after the per-check pass, so a named check refusal
   keeps its name and a required check that never started cannot escape the gate,

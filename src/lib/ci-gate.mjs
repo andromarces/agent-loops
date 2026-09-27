@@ -45,7 +45,8 @@ function fail(reason) {
 // `Not Found` is safe to read as unreadable on these two calls: the slug comes
 // from `gh repo view` and the base branch from the pull request, both of which
 // the caller has already read successfully, so a 404 here cannot be a typo in
-// either.
+// either. A genuine typo instead answers `Branch not found`, which is not
+// matched, so it throws rather than reading as an unreadable source.
 //
 // known-limit: a fine-grained PAT without the Administration permission is
 // expected to answer `Resource not accessible by personal access token` (403),
