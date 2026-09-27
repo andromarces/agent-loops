@@ -311,12 +311,21 @@ the current behavior, and each flag fails with a clear error.
   an app (a ruleset `integration_id` or a classic-protection `app_id`) is
   satisfied only by a check run from that app, and an unqualified copy of that
   name is dropped. Repository rulesets are readable with read access; classic
-  branch protection returns 404 to a caller without admin rights, and `gh pr
-checks --required` lists only checks that already reported on the commit. A
+  branch protection is not readable to a caller without admin rights, which
+  answers 404 or 403 depending on the credential, and both leave that source with
+  no required contexts, so a token without repository admin still gates. A
+  fine-grained PAT without the Administration permission is expected to answer
+  403 `Resource not accessible by personal access token`, which is the one
+  unreadable-source reply the gate does not handle, so the run fails; use a token
+  with repository admin, or a `GITHUB_TOKEN`. A rate-limit or SSO 403 also fails
+  the run, by design. And `gh pr checks --required` lists only checks that
+  already reported on the commit. A
   blocked merge state refuses after the per-check pass, so a named check refusal
-  keeps its name and a required check that never started cannot escape the gate;
-  the gate cannot tell a missing check from an unmet review or another required
-  rule, so a repository with required approvals also refuses until they are met.
+  keeps its name and a required check that never started cannot escape the gate,
+  through that refusal or, when no required check reported at all, the empty-union
+  refusal; the gate cannot tell a missing check from an unmet review or another
+  required rule, so a repository with required approvals also refuses until they
+  are met.
   GitHub computes the merge state lazily, so a retry shortly after a push can
   clear an `unknown` state. This gate needs the `gh` CLI.
 

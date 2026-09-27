@@ -21,10 +21,45 @@ function fail(reason) {
   return { ok: false, reason };
 }
 
-async function ghApi(gh, args, cwd, { allow404 = false } = {}) {
+// A source the caller cannot read answers 404 or 403, and the message names the
+// credential. Observed live on the classic-protection endpoint (#280):
+//
+//   `Not Found`                             404  a token without repository admin
+//   `Branch not protected`                  404  an admin, on a branch with no
+//                                                  classic protection
+//   `Resource not accessible by integration` 403  a `GITHUB_TOKEN`
+//
+// All three leave the source with no required contexts, and the caller refuses an
+// empty union either way, so the gate treats them alike. The second is not a
+// permission problem: the branch simply has no classic protection, and a
+// ruleset-only repository answers it for an admin.
+//
+// Match the message, not the status. `gh` renders every failure as
+// `gh: <message> (HTTP <status>)`, so a rate-limit or SSO 403 carries the same
+// suffix as the `GITHUB_TOKEN` 403 and the status cannot tell them apart. Reading
+// a rate-limit 403 as an unreadable source would silently drop every required
+// context and downgrade a named check refusal to the generic blocked refusal, so
+// anything unrecognized throws instead. A narrower match only costs a thrown
+// error, which still fails closed.
+//
+// `Not Found` is safe to read as unreadable on these two calls: the slug comes
+// from `gh repo view` and the base branch from the pull request, both of which
+// the caller has already read successfully, so a 404 here cannot be a typo in
+// either. A genuine typo instead answers `Branch not found`, which is not
+// matched, so it throws rather than reading as an unreadable source.
+//
+// known-limit: a fine-grained PAT without the Administration permission is
+// expected to answer `Resource not accessible by personal access token` (403),
+// which is not observed, because no such token was available. It throws rather
+// than contributing no contexts, which still refuses the finish. Widen this
+// pattern when that reply is observed.
+const UNREADABLE =
+  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by integration \(HTTP 403\)/;
+
+async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    if (allow404 && /HTTP 404|\b404\b/.test(stderr)) {
+    if (allowUnreadable && UNREADABLE.test(stderr)) {
       return null;
     }
     throw new Error(`gh api ${args[0]} failed: ${stderr.trim() || `exit ${status}`}`);
@@ -63,9 +98,10 @@ async function repoSlug(gh, cwd) {
 
 // `gh pr checks --required` resolves required check names without admin rights.
 // It lists only checks that already reported on the commit, exits non-zero for
-// pending or failing checks, and prints no JSON when none are required, so the
-// output is parsed leniently and an unparseable result contributes no names.
-// This source carries no app qualifier, so every name it yields is unqualified.
+// pending or failing checks, and prints no JSON when no required check has
+// reported, so the output is parsed leniently and an unparseable result
+// contributes no names. This source carries no app qualifier, so every name it
+// yields is unqualified.
 async function ghRequiredNames(gh, pr, cwd) {
   const { stdout } = await gh(["pr", "checks", String(pr), "--required", "--json", "name"], cwd);
   try {
@@ -95,13 +131,15 @@ function addContext(contexts, name, appId = null) {
 
 // Required status contexts from every source the caller can read: repository
 // rulesets, classic branch protection, and `gh pr checks --required`.
-// Deduplicated by name and app qualifier. A 404 or an unreadable source
-// contributes no contexts; the caller refuses an empty union, so a source that
-// yields no contexts fails closed instead of passing vacuously.
+// Deduplicated by name and app qualifier. An unreadable source contributes no
+// contexts; the caller refuses an empty union, so a source that yields no
+// contexts fails closed instead of passing vacuously.
 async function requiredContexts(gh, slug, base, pr, cwd) {
   const contexts = new Map();
 
-  const rules = await ghApi(gh, [`repos/${slug}/rules/branches/${base}`], cwd, { allow404: true });
+  const rules = await ghApi(gh, [`repos/${slug}/rules/branches/${base}`], cwd, {
+    allowUnreadable: true,
+  });
   if (Array.isArray(rules)) {
     for (const rule of rules) {
       if (rule?.type !== "required_status_checks") {
@@ -114,7 +152,7 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   }
 
   const protection = await ghApi(gh, [`repos/${slug}/branches/${base}/protection`], cwd, {
-    allow404: true,
+    allowUnreadable: true,
   });
   const required = protection?.required_status_checks;
   for (const context of required?.contexts ?? []) {
@@ -292,10 +330,16 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   // Run this after the per-check pass so a named check refusal keeps its name.
   // `gh pr checks --required` lists only checks that already reported, so on a
   // classic-protection-only repo a caller without admin rights cannot enumerate
-  // a required check that never started; GitHub reports that PR as blocked.
-  // Other unmet rules (a required review, unresolved conversations, a required
-  // deployment) also report blocked, and the gate cannot tell them apart, so it
-  // fails closed (#271).
+  // a required check that never started; GitHub reports that PR as blocked to such
+  // a caller, confirmed live with a non-admin `GITHUB_TOKEN` (#280). When no other
+  // required check reported, the empty-union refusal above fires first. The REST
+  // `mergeable_state` reads `blocked` for an admin and `unstable` for an anonymous
+  // caller on that same pull request, so its value depends on the viewer and is not
+  // a stable signal. The GraphQL `mergeStateStatus` reads `BLOCKED` for the admin
+  // and for a non-admin `GITHUB_TOKEN`, which is what was observed; GraphQL needs
+  // authentication, so no anonymous reading of it exists (#280). Other unmet rules
+  // (a required review, unresolved conversations, a required deployment) also report
+  // blocked, and the gate cannot tell them apart, so it fails closed (#271).
   if (info.mergeStateStatus === "BLOCKED") {
     return fail(
       "the PR merge state is blocked (a required check, review, or other required rule is unmet)",

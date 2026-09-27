@@ -36,9 +36,12 @@ function run(name, conclusion) {
   };
 }
 
-// Routes a `gh` call by a substring of its arguments. A null value answers with
-// the 404 that the caller treats as "no protection"; an unmatched call is an
-// error so a test never passes on a missing fixture.
+// Routes a `gh` call by a substring of its arguments. A `hidden` value answers
+// with the 404 a token without repository admin receives, a `forbidden` value
+// with the 403 a `GITHUB_TOKEN` receives, and a `rate limited` value with a 403
+// that is not an unreadable-source answer; an unmatched call is an error so a
+// test never passes on a missing fixture. `null` is the admin reply for a branch
+// with no classic protection, which is also unreadable but says so differently.
 function fakeGh(routes) {
   return async (args) => {
     const key = args.join(" ");
@@ -46,6 +49,19 @@ function fakeGh(routes) {
       if (key.includes(match)) {
         if (value === null) {
           return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
+        }
+        if (value === "hidden") {
+          return { status: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" };
+        }
+        if (value === "forbidden") {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "gh: Resource not accessible by integration (HTTP 403)",
+          };
+        }
+        if (value === "rate limited") {
+          return { status: 1, stdout: "", stderr: "gh: API rate limit exceeded (HTTP 403)" };
         }
         if (typeof value === "string") {
           return { status: 0, stdout: value, stderr: "" };
@@ -255,6 +271,25 @@ test("refuses when no required checks are found", async () => {
   });
 });
 
+// Usefulness: verifies a `gh pr checks --required` reply that carries no JSON
+// contributes no names, so a repository whose every required check never
+// reported refuses on the empty union instead of passing vacuously. Live, `gh`
+// writes `no required checks reported on the '<branch>' branch` to stderr and
+// nothing to stdout, and exits non-zero. The gate reads only stdout, so the exit
+// status is not modeled here (issue #280).
+test("ignores a gh pr checks --required reply that carries no JSON", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(routes({ required: [], prChecks: "", headRuns: [run("reported-pass", "success")] })),
+  });
+  expect(result).toEqual({
+    ok: false,
+    reason: "no required checks were found for the base branch",
+  });
+});
+
 // Usefulness: verifies the gate takes required names from `gh pr checks
 // --required` when the rules and classic protection sources are empty, so a
 // caller without admin rights still gates on the required checks (issue #218).
@@ -341,6 +376,120 @@ test("matches an app-qualified ruleset context to that app", async () => {
     ),
   });
   expect(rightApp).toEqual({ ok: true, commit: HEAD });
+});
+
+// Usefulness: verifies a 403 from the protection endpoint leaves the source
+// unreadable rather than failing the run, because a `GITHUB_TOKEN` without the
+// admin scope receives `Resource not accessible by integration` where a caller
+// without admin rights receives a 404. Both must reach the blocked refusal, not
+// a crash (issue #280).
+test("treats a 403 from classic protection as an unreadable source", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        required: [],
+        protection: "forbidden",
+        prChecks: [{ name: "ci (ubuntu-latest)" }],
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("blocked");
+});
+
+// Usefulness: verifies the same 403 with no other readable source refuses on the
+// empty union, so a `GITHUB_TOKEN` caller on a classic-protection-only repository
+// whose required checks never reported still fails closed (issue #280).
+test("refuses on the empty union when classic protection answers 403", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        required: [],
+        protection: "forbidden",
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result).toEqual({
+    ok: false,
+    reason: "no required checks were found for the base branch",
+  });
+});
+
+// Usefulness: verifies the 404 a token without repository admin receives leaves
+// the source unreadable rather than failing the run. This is the most common
+// non-admin caller, and it is the reply a human token gets on a protected branch,
+// confirmed live against cli/cli trunk (#280).
+test("treats a non-admin 404 from classic protection as an unreadable source", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        required: [],
+        protection: "hidden",
+        prChecks: [{ name: "build (ubuntu-latest)" }],
+        headRuns: [run("build (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("blocked");
+});
+
+// Usefulness: verifies the same non-admin 404 does not stop a caller whose
+// required checks all passed from passing. Before the message match, this threw
+// instead, so the gate was unusable for a non-admin caller on a repository with
+// classic protection (issue #280).
+test("passes for a non-admin caller when every required check passed", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: [],
+        protection: "hidden",
+        prChecks: [{ name: "ci (ubuntu-latest)" }],
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result).toEqual({ ok: true, commit: HEAD });
+});
+
+// Usefulness: verifies a 403 that is not the unreadable-source answer is not
+// swallowed. A rate-limit or SSO 403 on the same status would otherwise count as
+// "no required contexts" and downgrade a named check refusal to the generic
+// blocked refusal, so the gate throws on it instead (issue #280).
+test("does not read a rate-limit 403 from classic protection as no contexts", async () => {
+  await expect(
+    checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required: [],
+          protection: "rate limited",
+          prChecks: [{ name: "ci (ubuntu-latest)" }],
+          headRuns: [run("ci (ubuntu-latest)", "failure")],
+        }),
+      ),
+    }),
+  ).rejects.toThrow(/HTTP 403/);
 });
 
 // Usefulness: verifies an app-qualified context from classic branch protection
