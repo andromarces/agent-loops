@@ -442,6 +442,37 @@ test("reviewer dispatch exposes a null report and the raw response when the bloc
   expect(result.payload.raw).toContain("looks fine");
 });
 
+// Usefulness: verifies a closing block longer than the old 2000-character bound
+// keeps its whole text in `raw`, including a dropped list near the head, so the
+// flagged line still fails safe when the block is long (issue #268). A tail-only
+// fallback loses the head of the block, so this test fails against that behavior.
+test("worker dispatch carries the whole response in raw when the closing block is long", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const response = [
+    "Conclusion: done",
+    "Notes:",
+    "- dropped marker ALPHA",
+    `Why: ${"x".repeat(2500)}`,
+    "Blockers: none",
+  ].join("\n");
+
+  const worker = recordingAdapter([]);
+  worker.run = async (state) => {
+    state.sessionId = "sess-long-raw";
+    return response;
+  };
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toBe(response);
+});
+
 // Usefulness: verifies --transcript appends one invocation and one result
 // event per dispatched turn, in the headless event shape, accumulated across
 // calls.
