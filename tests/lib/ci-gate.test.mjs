@@ -405,9 +405,9 @@ test("names the failing check when the merge state is also blocked", async () =>
   expect(result.reason).toContain("failure");
 });
 
-// Usefulness: verifies the gate refuses a PR with merge conflicts, so an absent
-// required check on that PR cannot pass through the DIRTY merge state, which
-// does not report as blocked (issue #271).
+// Usefulness: verifies the gate refuses a conflicted PR (merge state DIRTY)
+// before the per-check pass, so a conflicted PR cannot pass even when its
+// discovered checks pass (issue #271).
 test("refuses a PR with merge conflicts", async () => {
   const result = await checkCi({
     pr: 42,
