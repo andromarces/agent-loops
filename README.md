@@ -489,7 +489,7 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
 {
   "task": "...",
   "cwd": "...",
-  "options": { "maxSteps": 20, "timeout": 3600 },
+  "options": { "maxSteps": 20, "timeout": 3600, "requireAccept": true },
   "roles": {
     "orchestrator": { "kind": "codex", "model": null, "effort": null, "sessionId": "..." },
     "worker": { "kind": "claude", "model": "...", "effort": "...", "sessionId": "..." },
@@ -501,7 +501,10 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
     { "type": "invocation", "at": "...", "stepsUsed": 1, "role": "worker", "status": "ok", "usage": { ... } },
     { "type": "result", "at": "...", "stepsUsed": 1, "role": "worker", "result": { ... } },
     { "type": "action", "at": "...", "stepsUsed": 1, "action": { "action": "finish", "summary": { ... } } },
-    { "type": "refusal", "at": "...", "stepsUsed": 1, "reason": "..." }
+    { "type": "refusal", "at": "...", "stepsUsed": 1, "reason": "no reviewer accept on the latest changed state after a worker turn" },
+    { "type": "invocation", "at": "...", "stepsUsed": 2, "role": "reviewer", "status": "ok", "usage": { ... } },
+    { "type": "result", "at": "...", "stepsUsed": 2, "role": "reviewer", "result": { ... } },
+    { "type": "action", "at": "...", "stepsUsed": 2, "action": { "action": "finish", "summary": { ... } } }
   ],
   "exitCode": 0,
   "error": null

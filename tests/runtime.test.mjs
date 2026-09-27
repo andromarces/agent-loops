@@ -1100,10 +1100,15 @@ test("--require-accept records a refused finish as a refusal event", async () =>
         stepsUsed: 1,
       },
     ]);
-    const refusedActionIndex = events.findIndex(
-      (e) => e.type === "action" && e.action.action === "finish",
-    );
-    expect(events[refusedActionIndex + 1].type).toBe("refusal");
+    const finishActionIndexes = events
+      .map((event, index) =>
+        event.type === "action" && event.action.action === "finish" ? index : -1,
+      )
+      .filter((index) => index !== -1);
+    expect(finishActionIndexes).toHaveLength(2);
+    for (const index of finishActionIndexes) {
+      expect(events[index + 1].type).toBe("refusal");
+    }
   } finally {
     await removePath(repo);
   }
