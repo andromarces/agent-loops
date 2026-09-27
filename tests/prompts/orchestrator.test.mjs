@@ -10,6 +10,21 @@ test("initialPrompt produces expected orchestrator prompt", () => {
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<instructions for worker>"}');
 });
 
+// Usefulness: verifies the headless prompt states the notes and deferred finish
+// mapping that the interactive instructions also carry: carry deferred items
+// forward, record resolved ones in changed, map unaddressed notes to open, and
+// split review-only findings between open and deferred (issue #214).
+test("initialPrompt states the notes and deferred finish mapping", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).toContain("Each child turn ends with a closing report block");
+  expect(prompt).toContain("Carry each Deferred item forward");
+  expect(prompt).toContain("record it in changed");
+  expect(prompt).toContain("Reviewer Notes that no later turn addressed go into open");
+  expect(prompt).toContain("obtain another reviewer accept on the new state before finish");
+  expect(prompt).toContain("In review-only mode, Blockers and Notes go into open");
+  expect(prompt).toContain("deferred holds out-of-scope items in every mode");
+});
+
 // Usefulness: verifies resultPrompt produces expected formatted payload for ok result.
 test("resultPrompt produces expected prompt for ok result", () => {
   const prompt = resultPrompt({

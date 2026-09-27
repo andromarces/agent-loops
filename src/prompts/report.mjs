@@ -7,4 +7,6 @@ End your response with this block, kept short:
 Conclusion: one or two sentences.
 Why: the decisive evidence behind the conclusion.
 Blockers: anything unresolved that the next turn must know, or "none".
+Notes: non-blocking findings the next turn does not need to act on, or "none". One line.
+Deferred: items found but left out of scope, or "none". One line.
 `.trim();

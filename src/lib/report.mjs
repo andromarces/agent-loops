@@ -4,9 +4,11 @@
 // verdicts in earlier prose can never produce a verdict.
 
 const REPORT_LABELS = [
-  ["conclusion", "Conclusion"],
-  ["why", "Why"],
-  ["blockers", "Blockers"],
+  ["conclusion", "Conclusion", false],
+  ["why", "Why", false],
+  ["blockers", "Blockers", false],
+  ["notes", "Notes", true],
+  ["deferred", "Deferred", true],
 ];
 
 /**
@@ -27,12 +29,15 @@ function closingBlock(response) {
 }
 
 /**
- * Extracts the closing block as `{ conclusion, why, blockers }`. Each label is
- * matched case-insensitively at line start inside the closing block only; the
- * last occurrence in that range wins. Returns null when the block or any of
- * the three labels is missing.
+ * Extracts the closing block as `{ conclusion, why, blockers, notes, deferred }`.
+ * Each label is matched case-insensitively at line start inside the closing
+ * block only; the last occurrence in that range wins. `conclusion`, `why`, and
+ * `blockers` are required, and a missing or empty one makes the whole block
+ * unparseable. `notes` and `deferred` are optional: an absent or empty label
+ * maps to null and never makes the block null, so a response in the pre-#214
+ * format stays parseable.
  * @param {string} response
- * @returns {{ conclusion: string, why: string, blockers: string } | null}
+ * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
  */
 export function parseReportBlock(response) {
   const block = closingBlock(response);
@@ -40,9 +45,13 @@ export function parseReportBlock(response) {
     return null;
   }
   const report = {};
-  for (const [key, label] of REPORT_LABELS) {
+  for (const [key, label, optional] of REPORT_LABELS) {
     const match = lastLabeledLine(block, label);
     if (!match) {
+      if (optional) {
+        report[key] = null;
+        continue;
+      }
       return null;
     }
     report[key] = match;
