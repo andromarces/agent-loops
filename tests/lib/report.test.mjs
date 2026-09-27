@@ -274,6 +274,40 @@ test("parseReportBlock keeps a block whose closing sentence resembles a list", (
   }
 });
 
+// Usefulness: verifies a closing sentence that opens with an emphasis run
+// (`*emphasis* note`) is not mistaken for a dropped bullet, so the wider #249
+// scan does not blank a report whose reviewer sentence follows the Verdict line
+// (issue #259). A spaceless bullet (`*item`) still registers, so the #243
+// behavior survives in the companion test.
+test("parseReportBlock keeps a block whose closing sentence opens with emphasis", () => {
+  for (const line of ["*emphasis* note", "*emphasis*", "*two words* here"]) {
+    expect(parseReportBlock(`${REPORT}\nVerdict: accept\n${line}`), line).toEqual({
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      checks: null,
+      notes: null,
+      deferred: null,
+    });
+  }
+});
+
+// Usefulness: verifies a closing sentence that opens with an ordered marker
+// followed by another list marker (`1.-x`, `1.*x`, `1.+x`) is not mistaken for a
+// dropped list, so the wider #249 scan does not blank the report (issue #259).
+test("parseReportBlock keeps a block whose closing sentence opens with an ordered marker", () => {
+  for (const line of ["1.-x", "1.*x", "1.+x"]) {
+    expect(parseReportBlock(`${REPORT}\nVerdict: accept\n${line}`), line).toEqual({
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      checks: null,
+      notes: null,
+      deferred: null,
+    });
+  }
+});
+
 // Usefulness: verifies a list under an earlier, shadowed occurrence of a label
 // is not dropped when a later occurrence wins the label value; the whole block
 // is unparseable, so the dispatch layer surfaces the list through `raw` (issue
