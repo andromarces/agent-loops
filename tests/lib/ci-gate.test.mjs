@@ -255,6 +255,26 @@ test("refuses when no required checks are found", async () => {
   });
 });
 
+// Usefulness: verifies a `gh pr checks --required` reply that carries no JSON
+// contributes no names, so a repository whose every required check never
+// reported refuses on the empty union instead of passing vacuously. GitHub
+// answers that query with an empty stdout, because
+// `no required checks reported on the '<branch>' branch` goes to stderr, which
+// the gate does not read. Observed live on a classic-protection-only
+// repository (issue #280).
+test("ignores a gh pr checks --required reply that carries no JSON", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(routes({ required: [], prChecks: "", headRuns: [run("reported-pass", "success")] })),
+  });
+  expect(result).toEqual({
+    ok: false,
+    reason: "no required checks were found for the base branch",
+  });
+});
+
 // Usefulness: verifies the gate takes required names from `gh pr checks
 // --required` when the rules and classic protection sources are empty, so a
 // caller without admin rights still gates on the required checks (issue #218).

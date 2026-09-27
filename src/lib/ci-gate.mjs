@@ -63,9 +63,10 @@ async function repoSlug(gh, cwd) {
 
 // `gh pr checks --required` resolves required check names without admin rights.
 // It lists only checks that already reported on the commit, exits non-zero for
-// pending or failing checks, and prints no JSON when none are required, so the
-// output is parsed leniently and an unparseable result contributes no names.
-// This source carries no app qualifier, so every name it yields is unqualified.
+// pending or failing checks, and prints no JSON when no required check has
+// reported, so the output is parsed leniently and an unparseable result
+// contributes no names. This source carries no app qualifier, so every name it
+// yields is unqualified.
 async function ghRequiredNames(gh, pr, cwd) {
   const { stdout } = await gh(["pr", "checks", String(pr), "--required", "--json", "name"], cwd);
   try {
@@ -292,10 +293,12 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   // Run this after the per-check pass so a named check refusal keeps its name.
   // `gh pr checks --required` lists only checks that already reported, so on a
   // classic-protection-only repo a caller without admin rights cannot enumerate
-  // a required check that never started; GitHub reports that PR as blocked.
-  // Other unmet rules (a required review, unresolved conversations, a required
-  // deployment) also report blocked, and the gate cannot tell them apart, so it
-  // fails closed (#271).
+  // a required check that never started; GitHub reports that PR as blocked,
+  // confirmed live (#280). When no other required check reported, the empty-union
+  // refusal above fires first. The REST `mergeable_state` for the same PR reads
+  // `unstable`, so this stays the GraphQL field. Other unmet rules (a required
+  // review, unresolved conversations, a required deployment) also report blocked,
+  // and the gate cannot tell them apart, so it fails closed (#271).
   if (info.mergeStateStatus === "BLOCKED") {
     return fail(
       "the PR merge state is blocked (a required check, review, or other required rule is unmet)",

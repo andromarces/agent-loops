@@ -267,7 +267,9 @@ the current behavior, and each flag fails with a clear error.
   branch protection returns 404 to a caller without admin rights, and `gh pr
 checks --required` lists only checks that already reported on the commit. A
   blocked merge state refuses after the per-check pass, so a named check refusal
-  keeps its name and a required check that never started cannot escape the gate;
+  keeps its name and a required check that never started cannot escape the gate,
+  through that refusal or, when no required check reported at all, the empty-union
+  refusal;
   the gate cannot tell a missing check from an unmet review or another required
   rule, so a repository with required approvals also refuses until they are met.
   GitHub computes the merge state lazily, so a retry shortly after a push can
