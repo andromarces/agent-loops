@@ -65,6 +65,7 @@ async function repoSlug(gh, cwd) {
 // It lists only checks that already reported on the commit, exits non-zero for
 // pending or failing checks, and prints no JSON when none are required, so the
 // output is parsed leniently and an unparseable result contributes no names.
+// This source carries no app qualifier, so every name it yields is unqualified.
 async function ghRequiredNames(gh, pr, cwd) {
   const { stdout } = await gh(["pr", "checks", String(pr), "--required", "--json", "name"], cwd);
   try {
@@ -75,13 +76,28 @@ async function ghRequiredNames(gh, pr, cwd) {
   }
 }
 
-// Required status context names from every source the caller can read:
-// repository rulesets, classic branch protection, and `gh pr checks --required`.
-// Deduplicated. A 404 or an unreadable source contributes no names; the caller
-// refuses an empty union, so a source that yields no names fails closed instead
-// of passing vacuously.
+// A required status context: its name, plus the id of the app whose check run
+// must satisfy it when the source qualifies the context with one. A null `appId`
+// is unqualified and is satisfied by a check run or a commit status with the
+// name. Ruleset entries carry `integration_id`, classic-protection entries carry
+// `app_id`, and `gh pr checks --required` carries no app qualifier.
+function contextKey(name, appId) {
+  return `${name}\0${appId ?? ""}`;
+}
+
+function addContext(contexts, name, appId = null) {
+  if (name) {
+    contexts.set(contextKey(name, appId), { name, appId: appId ?? null });
+  }
+}
+
+// Required status contexts from every source the caller can read: repository
+// rulesets, classic branch protection, and `gh pr checks --required`.
+// Deduplicated by name and app qualifier. A 404 or an unreadable source
+// contributes no contexts; the caller refuses an empty union, so a source that
+// yields no contexts fails closed instead of passing vacuously.
 async function requiredContexts(gh, slug, base, pr, cwd) {
-  const contexts = new Set();
+  const contexts = new Map();
 
   const rules = await ghApi(gh, [`repos/${slug}/rules/branches/${base}`], cwd, { allow404: true });
   if (Array.isArray(rules)) {
@@ -90,9 +106,7 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
         continue;
       }
       for (const check of rule.parameters?.required_status_checks ?? []) {
-        if (check?.context) {
-          contexts.add(check.context);
-        }
+        addContext(contexts, check?.context, check?.integration_id);
       }
     }
   }
@@ -102,21 +116,17 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   });
   const required = protection?.required_status_checks;
   for (const context of required?.contexts ?? []) {
-    if (context) {
-      contexts.add(context);
-    }
+    addContext(contexts, context);
   }
   for (const check of required?.checks ?? []) {
-    if (check?.context) {
-      contexts.add(check.context);
-    }
+    addContext(contexts, check?.context, check?.app_id);
   }
 
   for (const name of await ghRequiredNames(gh, pr, cwd)) {
-    contexts.add(name);
+    addContext(contexts, name);
   }
 
-  return [...contexts].sort();
+  return [...contexts.keys()].sort().map((key) => contexts.get(key));
 }
 
 async function checkRuns(gh, slug, sha, cwd) {
@@ -179,30 +189,38 @@ function latestStatus(statuses) {
   return latest?.status ?? null;
 }
 
-// Null when `name` passes as a required check, or a reason that names the
-// failing condition. Both types must pass when both carry the name.
-function evaluateContext(name, commit, runs, statuses) {
-  const matchingRuns = runs.filter((run) => run.name === name);
-  const matchingStatuses = statuses.filter((status) => status.context === name);
+// Null when the required context passes, or a reason that names the failing
+// condition. An app-qualified context is satisfied only by a check run from that
+// app; an unqualified context is satisfied by a check run or a commit status
+// with the name, and both types must pass when both carry an unqualified name.
+function evaluateContext({ name, appId }, commit, runs, statuses) {
+  const label = appId === null ? `"${name}"` : `"${name}" (app ${appId})`;
+  const matchingRuns = runs.filter(
+    (run) => run.name === name && (appId === null || run.app?.id === appId),
+  );
+  // A commit status carries no app, so it can never satisfy an app-qualified
+  // context.
+  const matchingStatuses =
+    appId === null ? statuses.filter((status) => status.context === name) : [];
 
   if (matchingRuns.length === 0 && matchingStatuses.length === 0) {
-    return `required check "${name}" is missing on ${commit}`;
+    return `required check ${label} is missing on ${commit}`;
   }
 
   if (matchingRuns.length > 0) {
     const run = latestRun(matchingRuns);
     if (run.status !== "completed") {
-      return `required check "${name}" is pending (check run status ${run.status})`;
+      return `required check ${label} is pending (check run status ${run.status})`;
     }
     if (!PASS_CHECK_CONCLUSIONS.has(run.conclusion)) {
-      return `required check "${name}" failed (check run conclusion ${run.conclusion})`;
+      return `required check ${label} failed (check run conclusion ${run.conclusion})`;
     }
   }
 
   if (matchingStatuses.length > 0) {
     const status = latestStatus(matchingStatuses);
     if (status.state !== "success") {
-      return `required check "${name}" failed (commit status ${status.state})`;
+      return `required check ${label} failed (commit status ${status.state})`;
     }
   }
 
@@ -211,9 +229,10 @@ function evaluateContext(name, commit, runs, statuses) {
 
 /**
  * Refuses unless the PR head equals the reviewed commit, the reviewed tree is
- * clean, the PR is not behind its base under a strict rule and not in an unknown
- * merge state, and every required check passed on the commit GitHub evaluates.
- * Refuses when no required checks are found, so an empty source fails closed.
+ * clean, the PR is not behind its base under a strict rule, is not in an unknown
+ * or blocked merge state, and every required check passed on the commit GitHub
+ * evaluates. Refuses when no required checks are found, so an empty source fails
+ * closed.
  * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
  */
@@ -241,9 +260,16 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   if (required.length === 0) {
     return fail("no required checks were found for the base branch");
   }
+  // `gh pr checks --required` lists only checks that already reported, so on a
+  // classic-protection-only repo a caller without admin rights cannot enumerate
+  // a required check that never started. GitHub reports that PR as blocked, so
+  // refusing a blocked merge state fails closed on the absent check (#271).
+  if (info.mergeStateStatus === "BLOCKED") {
+    return fail("the PR merge state is blocked; a required check is absent or unsatisfied");
+  }
   const { commit, runs, statuses } = await evaluatedState(gh, slug, info, cwd);
-  for (const name of required) {
-    const reason = evaluateContext(name, commit, runs, statuses);
+  for (const context of required) {
+    const reason = evaluateContext(context, commit, runs, statuses);
     if (reason) {
       return fail(reason);
     }

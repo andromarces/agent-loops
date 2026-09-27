@@ -64,6 +64,7 @@ function routes({
   headRuns = [],
   headStatuses = [],
   required = REQUIRED,
+  protection = null,
   prChecks = [],
 } = {}) {
   return [
@@ -71,7 +72,7 @@ function routes({
     ["pr checks 42", prChecks],
     ["repo view", "andromarces/agent-loops"],
     ["rules/branches/main", required],
-    ["branches/main/protection", null],
+    ["branches/main/protection", protection],
     [`commits/${MERGE}/check-runs`, [{ check_runs: mergeRuns }]],
     [`commits/${MERGE}/status`, { statuses: mergeStatuses }],
     [`commits/${HEAD}/check-runs`, [{ check_runs: headRuns }]],
@@ -271,6 +272,92 @@ test("falls back to gh pr checks --required for required names", async () => {
     ),
   });
   expect(result).toEqual({ ok: true, commit: HEAD });
+});
+
+// Usefulness: verifies the gate refuses a blocked merge state, so on a
+// classic-protection-only repo a caller without admin rights cannot pass while
+// a required check that never reported is absent from every readable source
+// (issue #271).
+test("refuses a blocked merge state when a required check never reported", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        required: [],
+        prChecks: [{ name: "ci (ubuntu-latest)" }],
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("blocked");
+});
+
+// Usefulness: verifies an app-qualified required context is matched to that app
+// and is not satisfied by a same-named check run from another app (issue #271).
+test("matches an app-qualified ruleset context to that app", async () => {
+  const appRequired = [
+    {
+      type: "required_status_checks",
+      parameters: {
+        required_status_checks: [{ context: "ci", integration_id: 15368 }],
+      },
+    },
+  ];
+
+  const wrongApp = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: appRequired,
+        headRuns: [{ ...run("ci", "success"), app: { id: 999 } }],
+      }),
+    ),
+  });
+  expect(wrongApp.ok).toBe(false);
+  expect(wrongApp.reason).toContain("app 15368");
+
+  const rightApp = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: appRequired,
+        headRuns: [
+          { ...run("ci", "failure"), app: { id: 999 }, started_at: "2026-01-02T00:00:00Z" },
+          { ...run("ci", "success"), app: { id: 15368 }, started_at: "2026-01-01T00:00:00Z" },
+        ],
+      }),
+    ),
+  });
+  expect(rightApp).toEqual({ ok: true, commit: HEAD });
+});
+
+// Usefulness: verifies an app-qualified context from classic branch protection
+// is matched by its app_id, not by name alone (issue #271).
+test("matches an app-qualified classic-protection context to that app", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: [],
+        protection: {
+          required_status_checks: { contexts: [], checks: [{ context: "ci", app_id: 15368 }] },
+        },
+        headRuns: [{ ...run("ci", "success"), app: { id: 999 } }],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("app 15368");
 });
 
 // Usefulness: verifies the gate refuses when the PR head differs from the
