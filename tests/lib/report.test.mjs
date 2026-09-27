@@ -356,9 +356,9 @@ test("parseReportBlock returns null when a spaceless bullet closes before a join
 // silent-drop shape loses it. A run closed before a space, end of line, or a
 // punctuation-only token stays prose in the companion test.
 // Usefulness: `*emph*é` pins that the letter check after the close is `\p{L}`
-// and not ASCII-only. The other nine shapes carry a non-ASCII apostrophe or em
-// dash but no non-ASCII letter or digit, so none of them reaches the check
-// where script matters (issue #291).
+// and not ASCII-only. Two of the other nine shapes carry a non-ASCII apostrophe
+// or em dash, and none carries a non-ASCII letter or digit, so none of them
+// reaches the check where script matters (issue #291).
 test("parseReportBlock returns null when an emphasis run is glued to a following word", () => {
   for (const line of [
     "*self*-hosted",
