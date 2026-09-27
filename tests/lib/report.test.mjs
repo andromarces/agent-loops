@@ -371,16 +371,37 @@ test("parseReportBlock returns null when an emphasis run is glued to a following
   }
 });
 
-// Usefulness: records the accepted residual gap that #267 does not close
-// (follow-up #275). A spaceless `*` bullet whose later `*` a letter precedes
-// and a space, a punctuation, or end of line follows (`*file*`, `*glob src/a*`,
-// `*use a* b`) is the CommonMark shape of a real emphasis run, so it stays prose
-// and the item is dropped with no `raw` signal. This test pins that accepted
-// behavior, so a future narrowing changes it on purpose.
-test("parseReportBlock leaves the residual letter-star bullet as prose", () => {
+// Usefulness: pins the accepted decision for #275 and its corrected ceiling. A
+// spaceless `*` bullet whose closing `*` a letter precedes, where the character
+// right after the close is not a word character or `*`, and where nothing glued
+// after that character is a letter or a digit, is the same bytes as a real
+// emphasis run, so the line stays prose: the report still parses and the bullet
+// is dropped with no `raw` signal. Every matching line in the block drops this
+// way, not only the first, so a block can lose three lines under one label and
+// still parse. The gap is accepted, and the acceptance is stated in the
+// `known-limit` note in src/lib/report.mjs, in docs/orchestrator-instructions.md,
+// and in the README. This test pins the accepted cost, so a future narrowing
+// changes it on purpose.
+test("parseReportBlock leaves the accepted residual letter-star bullet as prose", () => {
   for (const line of ["*file*", "*glob src/a*", "*use a* b", "*glob src/a*, b"]) {
-    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toMatchObject({ notes: null });
+    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toEqual({
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      checks: null,
+      notes: null,
+      deferred: null,
+    });
   }
+  // The ceiling is every matching line, under any label.
+  expect(
+    parseReportBlock(`${REPORT}\nNotes:\n*file*\n*glob src/a*\n*use a* b\nDeferred:\n*left*`),
+  ).toMatchObject({ notes: null, deferred: null });
+  expect(
+    parseReportBlock(`Conclusion: done\nWhy: tests pass\nBlockers: none\n*file*`),
+  ).toMatchObject({
+    blockers: "none",
+  });
 });
 
 // Usefulness: verifies a closing sentence that opens with an ordered marker
