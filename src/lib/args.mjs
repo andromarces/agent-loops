@@ -2,8 +2,6 @@
 // headless loop (src/cli.mjs) and the role subcommand (src/role.mjs).
 import { normalizeAgent } from "../agents/index.mjs";
 
-// Builds the shared missing-value error, so the space-separated and inline
-// guards report the same message from one place.
 function missingValue(flag) {
   return new Error(`Missing value for ${flag}.`);
 }
