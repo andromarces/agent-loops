@@ -37,8 +37,6 @@ const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
 const MODES = new Set(["work-first", "review-first", "review-only"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
-// Bound for `raw` in the envelope when the closing block could not be parsed.
-const RAW_TAIL_LIMIT = 2000;
 
 class RoleError extends Error {}
 
@@ -526,6 +524,9 @@ function errorMessage(err) {
   return err?.message ?? String(err);
 }
 
+// Builds the envelope for one dispatched turn. When the closing block does not
+// parse, `raw` carries the whole response: a bounded tail can drop the head of a
+// long block and with it the text the report was meant to preserve (issue #268).
 function dispatchPayload(roleName, result) {
   if (result.status !== "ok") {
     return { role: roleName, status: "error", error: result.error };
@@ -539,7 +540,7 @@ function dispatchPayload(roleName, result) {
     }
   }
   if (!report) {
-    payload.raw = result.response.slice(-RAW_TAIL_LIMIT);
+    payload.raw = result.response;
   }
   return payload;
 }
