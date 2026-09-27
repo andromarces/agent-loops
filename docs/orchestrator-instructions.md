@@ -124,7 +124,8 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.
 - When the closing block cannot be parsed, `report` is null and `raw` carries
-  the tail of the response. Treat a missing report as not accepted.
+  the whole response, so no text the block held is lost. Treat a missing report
+  as not accepted.
 - `report.checks` names the commands that ran in the reviewer turn and their
   results. It is reported evidence from the child, not proof that a command ran,
   so it never replaces the runtime `reviewed` fields.
