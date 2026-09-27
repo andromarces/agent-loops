@@ -59,14 +59,20 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // closed, but the report loses its text to `raw`, and the `acceptGateReason`
 // refusal names the wrong cause.
 //
-// known-limit: a spaceless bullet whose later `*` a letter precedes and a
-// space, a punctuation, or end of line follows (`*file*`, `*glob src/a*`,
-// `*use a* b`, `*glob src/a*, b`) reads as an emphasis run, so the block still
-// parses and the bullet is dropped with no `raw` signal (issue #275, accepted
-// gap). The bullet text and the emphasis text are the same bytes, and the parse
-// reads only those bytes, so no pattern separates them. Ceiling: one line per
-// child turn. Upgrade path: drop this exemption and read every `*` opener as a
-// list, which loses the prose shapes above into `raw` and makes the loss loud.
+// known-limit: a `*` line whose closing `*` a letter precedes, and whose close
+// is followed by end of line, a space, or punctuation with no letter or digit
+// glued after it (`*file*`, `*glob src/a*`, `*use a* b`, `*glob src/a*, b`),
+// reads as an emphasis run, so the block still parses and the line is dropped
+// with no `raw` signal (issue #275, accepted gap). The same line is a valid
+// spaceless bullet, and no pattern on the line tells the two apart; the rest of
+// the block carries no signal either, so the line is the only evidence there is.
+// Ceiling: every matching line in the block drops this way, under any label.
+// That is no new class of loss, because any line that is neither a label nor a
+// list already drops the same way (`Notes:` then `file a is stale`). Every
+// other `*` line either is a list and blanks the block (`*item`, `* item`,
+// `*file*.mjs`) or is not a list and drops as prose (`**bold** note`).
+// Upgrade path: drop this exemption and read every `*` opener as a list, which
+// loses the emphasis shapes above into `raw` and makes that loss loud.
 const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
 /**
