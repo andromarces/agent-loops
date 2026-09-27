@@ -139,7 +139,10 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   An indented label or a decorated label does the same. This covers a label that
   already holds a value, including the required `blockers`, and a label
   occurrence that a later repeat shadows. A non-list line, for example a closing
-  sentence, does not make the block unparseable.
+  sentence, does not make the block unparseable. A line that starts with `*` is
+  read as an emphasis run, not as a list, so a spaceless `*` bullet that closes
+  before a space or a punctuation is dropped without `raw`. Write no block line
+  that starts with `*` (issue #275, accepted gap).
 
 A reviewer envelope carries `reviewed`, the runtime-owned identity of the state
 the reviewer saw. The runtime writes these fields from the snapshot taken at the

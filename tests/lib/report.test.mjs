@@ -371,15 +371,24 @@ test("parseReportBlock returns null when an emphasis run is glued to a following
   }
 });
 
-// Usefulness: records the accepted residual gap that #267 does not close
-// (follow-up #275). A spaceless `*` bullet whose later `*` a letter precedes
-// and a space, a punctuation, or end of line follows (`*file*`, `*glob src/a*`,
-// `*use a* b`) is the CommonMark shape of a real emphasis run, so it stays prose
-// and the item is dropped with no `raw` signal. This test pins that accepted
-// behavior, so a future narrowing changes it on purpose.
-test("parseReportBlock leaves the residual letter-star bullet as prose", () => {
+// Usefulness: pins the accepted decision for #275. A spaceless `*` bullet whose
+// later `*` a letter precedes and a space, a punctuation, or end of line follows
+// (`*file*`, `*glob src/a*`, `*use a* b`, `*glob src/a*, b`) is the same bytes as
+// a real emphasis run, and the parse reads only those bytes, so the line stays
+// prose: the report still parses and the bullet is dropped with no `raw` signal.
+// The gap is accepted, and the acceptance is stated in the `known-limit` note in
+// src/lib/report.mjs, in docs/orchestrator-instructions.md, and in the README.
+// This test pins the accepted cost, so a future narrowing changes it on purpose.
+test("parseReportBlock leaves the accepted residual letter-star bullet as prose", () => {
   for (const line of ["*file*", "*glob src/a*", "*use a* b", "*glob src/a*, b"]) {
-    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toMatchObject({ notes: null });
+    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toEqual({
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      checks: null,
+      notes: null,
+      deferred: null,
+    });
   }
 });
 

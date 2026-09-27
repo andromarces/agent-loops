@@ -57,11 +57,16 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // src/role.mjs returns "the accepted review has no Checks line", and
 // `isAcceptedReview` in src/runtime.mjs returns false. Both directions fail
 // closed, but the report loses its text to `raw`, and the `acceptGateReason`
-// refusal names the wrong cause. The residual gap is a spaceless bullet whose
-// later `*` a letter precedes and a space, a punctuation, or end of line
-// follows (`*file*`, `*glob src/a*`, `*use a* b`); that shape is the CommonMark
-// shape of a real emphasis run, so it stays prose and the item is dropped
-// silently (issue #275).
+// refusal names the wrong cause.
+//
+// known-limit: a spaceless bullet whose later `*` a letter precedes and a
+// space, a punctuation, or end of line follows (`*file*`, `*glob src/a*`,
+// `*use a* b`, `*glob src/a*, b`) reads as an emphasis run, so the block still
+// parses and the bullet is dropped with no `raw` signal (issue #275, accepted
+// gap). The bullet text and the emphasis text are the same bytes, and the parse
+// reads only those bytes, so no pattern separates them. Ceiling: one line per
+// child turn. Upgrade path: drop this exemption and read every `*` opener as a
+// list, which loses the prose shapes above into `raw` and makes the loss loud.
 const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
 /**
