@@ -374,7 +374,7 @@ test("parseReportBlock returns null when an emphasis run is glued to a following
 // Usefulness: pins the accepted decision for #275 and its corrected ceiling. A
 // spaceless `*` bullet whose closing `*` a letter precedes, where the character
 // right after the close is not a word character or `*`, and where nothing glued
-// after that character is a letter or a digit, is the same bytes as a real
+// from that character on is a letter or a digit, is the same bytes as a real
 // emphasis run, so the line stays prose: the report still parses and the bullet
 // is dropped with no `raw` signal. Every matching line in the block drops this
 // way, not only the first, so a block can lose three lines under one label and
