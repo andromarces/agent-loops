@@ -277,6 +277,49 @@ test("worker dispatch carries text under an empty optional label into raw", asyn
   expect(result.payload.raw).toContain("item one");
 });
 
+// Usefulness: verifies a decorated optional label reaches the envelope through
+// `raw` at the dispatch seam instead of dropping its value (issue #243).
+test("worker dispatch carries a decorated label into raw", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const worker = recordingAdapter([]);
+  worker.run = async (state) => {
+    state.sessionId = "sess-decorated";
+    return `${REPORT}\nNotes: tidy\n**Deferred:** migrate the legacy path`;
+  };
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toContain("migrate the legacy path");
+});
+
+// Usefulness: verifies a bullet with no space after the marker under an empty
+// optional label reaches the envelope through `raw` at the dispatch seam
+// instead of being dropped (issue #243).
+test("worker dispatch carries a spaceless bullet into raw", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const worker = recordingAdapter([]);
+  worker.run = async (state) => {
+    state.sessionId = "sess-spaceless";
+    return `${REPORT}\nDeferred:\n-migrate the legacy path`;
+  };
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toContain("migrate the legacy path");
+});
+
 // Usefulness: verifies the dispatch seam when the closing block does not parse
 // — the payload carries a null report and the raw response, so a caller can
 // still inspect what the child returned instead of guessing.

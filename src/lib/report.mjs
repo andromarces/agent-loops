@@ -11,15 +11,26 @@ const REPORT_LABELS = [
   ["deferred", "Deferred", true],
 ];
 
+const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
+
 // A line that opens any label in the closing block, including the reviewer's
 // Verdict line. Bounds the search for a list an empty optional label would drop.
-const LABEL_LINE = new RegExp(
-  `^(?:${REPORT_LABELS.map(([, label]) => label).join("|")}|Verdict):`,
+const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}|Verdict):`, "i");
+
+// A report label that indentation or markdown decoration hides from the strict
+// match above, for example `**Deferred:** x` or `  Deferred: x`. Its value would
+// otherwise be dropped, so the whole block is unparseable and `raw` carries the
+// text (issue #243). The Verdict label is excluded: a malformed verdict already
+// maps to `unknown` and never carries report text.
+const DECORATED_LABEL_LINE = new RegExp(
+  `^(?!(?:${REPORT_LABEL_NAMES.join("|")}):)\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:${REPORT_LABEL_NAMES.join("|")}):`,
   "i",
 );
 
-// A markdown list line, for example `- item`, `* item`, or `1. item`.
-const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])\s+/;
+// A list line the parser would drop below a label, for example `- item`,
+// `* item`, `1. item`, or the same without the space after the marker
+// (`-item`). A run of markers alone, for example `---`, is not a list.
+const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])(?:\s+\S|[^\s\-*+])/;
 
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
@@ -45,15 +56,20 @@ function closingBlock(response) {
  * `blockers` are required, and a missing or empty one makes the whole block
  * unparseable. `notes` and `deferred` are optional: an absent or empty label
  * maps to null and never makes the block null, so a response in the pre-#214
- * format stays parseable. An empty optional label followed by a list line, for
- * example bullets, instead makes the whole block unparseable, so the dispatch
- * layer surfaces the dropped list through `raw` (issue #229).
+ * format stays parseable. Any text the strict read would otherwise drop makes
+ * the whole block unparseable, so the dispatch layer surfaces it through `raw`:
+ * a list line under an empty optional label, including a bullet with no space
+ * after its marker, and a label that indentation or markdown decoration hides
+ * (issues #229 and #243).
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
  */
 export function parseReportBlock(response) {
   const block = closingBlock(response);
   if (!block) {
+    return null;
+  }
+  if (block.some((line) => DECORATED_LABEL_LINE.test(line))) {
     return null;
   }
   const report = {};
@@ -78,7 +94,8 @@ export function parseReportBlock(response) {
 /**
  * True when a list line follows `index` before the next label line or the end
  * of the block. Such a list would otherwise be dropped, because the label above
- * it holds no value.
+ * it holds no value. A bullet with no space after the marker counts as a list
+ * line (issue #243).
  * @param {string[]} lines
  * @param {number} index
  * @returns {boolean}

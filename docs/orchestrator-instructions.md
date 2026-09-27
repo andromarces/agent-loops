@@ -119,10 +119,12 @@ Read the JSON envelope on stdout. Example reviewer envelope:
 - `report.notes` holds non-blocking findings the next turn does not need to act
   on. `report.deferred` holds items found but left out of scope. Both are
   optional: a child that omits the label yields `null` for that field, and the
-  block still parses. Each value is one line. An empty optional label followed
-  by a list, for example bullets, makes the block unparseable, so the list
-  surfaces through `raw` instead of being dropped. A non-list line, for example
-  a closing sentence, does not make the block unparseable.
+  block still parses. Each value is one line, the label plain at column 0. An
+  empty optional label followed by a list (including a bullet with no space
+  after the marker), an indented label, or a decorated label makes the block
+  unparseable, so the text surfaces through `raw` instead of being dropped. A
+  non-list line, for example a closing sentence, does not make the block
+  unparseable.
 
 ## Reviewer prompts
 

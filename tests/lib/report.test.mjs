@@ -92,6 +92,68 @@ test("parseReportBlock keeps an empty optional label that a label follows", () =
   });
 });
 
+// Usefulness: verifies a label wrapped in markdown emphasis is not silently
+// dropped; the whole block is unparseable, so `raw` carries its value (issue
+// #243).
+test("parseReportBlock returns null when a label is decorated with emphasis", () => {
+  expect(
+    parseReportBlock(
+      `${REPORT}\nNotes: tidy the helper later\n**Deferred:** migrate the legacy path`,
+    ),
+  ).toBeNull();
+});
+
+// Usefulness: verifies an indented label does not have its value dropped
+// silently; the whole block is unparseable, so `raw` carries the text (issue
+// #243).
+test("parseReportBlock returns null when a label is indented", () => {
+  expect(
+    parseReportBlock(`${REPORT}\nNotes: tidy\n  Deferred: migrate the legacy path`),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a decorated duplicate of a label is not dropped behind
+// the plain occurrence the parser reads; the whole block is unparseable (issue
+// #243).
+test("parseReportBlock returns null when a decorated label shadows a plain one", () => {
+  expect(parseReportBlock(`${REPORT}\n**Blockers:** the real blocker`)).toBeNull();
+});
+
+// Usefulness: verifies a bullet with no space after the marker under an empty
+// optional label is not dropped silently; the whole block is unparseable, so
+// `raw` carries the items (issue #243).
+test("parseReportBlock returns null when a spaceless bullet follows an empty optional label", () => {
+  expect(parseReportBlock(`${REPORT}\nDeferred:\n-a\n-b`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes:\n*item`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nDeferred:\n1.item`)).toBeNull();
+});
+
+// Usefulness: verifies a non-label line that begins with a word and a colon is
+// not mistaken for a decorated label, so the wider #243 rule does not reject
+// ordinary prose below an empty optional label.
+test("parseReportBlock keeps a non-label line that begins with a word and a colon", () => {
+  expect(parseReportBlock(`${REPORT}\nDeferred:\nNote: this is not a report label`)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a decorated Verdict line leaves the report parseable; a
+// malformed verdict already maps to `unknown`, so it never carries report text
+// and must not make the report unparseable (issue #243).
+test("parseReportBlock keeps the report when only the Verdict label is decorated", () => {
+  expect(parseReportBlock(`${REPORT}\n**Verdict:** accept`)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies only the last Conclusion block counts, so a verdict or
 // report in earlier prose never leaks into the parsed result.
 test("parseReportBlock parses only after the last Conclusion line", () => {
