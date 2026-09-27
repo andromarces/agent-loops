@@ -1621,3 +1621,161 @@ test("--require-ci refuses a finish that carries unresolvedCompare", async () =>
     await removePath(repo);
   }
 });
+
+// 47. Usefulness: verifies a `gh` failure inside the gate refuses the finish
+// instead of throwing out of the loop. The interactive path leaves the run active
+// for a retry, and the headless run has none outside the refusal, so a throw
+// would discard a run a second attempt could pass (#293).
+test("--require-ci turns a gh failure into a refusal, not a throw", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const events = [];
+    const failingGh = async (args) => {
+      const key = args.join(" ");
+      if (key.includes("pr view 42")) {
+        return { status: 1, stdout: "", stderr: "gh: Bad credentials (HTTP 401)" };
+      }
+      return ciGateGh(head)(args);
+    };
+
+    const result = await runLoop({
+      task: "PR work: address issue 47 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: failingGh,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker pushed the change"]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("the PR gate could not be evaluated");
+    expect(result.reason).toContain("Bad credentials");
+    // Refusals, not a throw: the first gives the orchestrator its corrective
+    // turn, and the second ends the run on the ordinary refusal path.
+    expect(events.filter((e) => e.type === "refusal").map((e) => e.reason)).toEqual([
+      expect.stringContaining("Bad credentials"),
+      expect.stringContaining("Bad credentials"),
+    ]);
+    expect(events.filter((e) => e.type === "action")).toHaveLength(4);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 48. Usefulness: verifies the refusal order matches the interactive `role
+// finish`: a finish that both sets the marker and lacks the reviewer coverage is
+// refused for the marker, so the orchestrator spends no reviewer turn on a
+// condition the gate already settles (#293).
+test("--require-ci refuses the marker before the completion rule", async () => {
+  const repo = await createTempRepo();
+  try {
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+    const calls = [];
+
+    const result = await runLoop({
+      task: "PR work: address issue 48 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      requireCi: 42,
+      gh: ciGateGh("1".repeat(40), calls),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("unresolvedCompare cannot be combined with --require-ci");
+    // No reviewer report exists, and no worker turn ran, so the completion rule
+    // would also have refused. The marker reason is the one reported.
+    expect(result.reason).not.toContain("no reviewer report");
+    expect(calls).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 49. Usefulness: verifies each refusal prompt tells the orchestrator the action
+// that clears that refusal, so a marker refusal does not ask for a reviewer turn
+// it does not need and a gate refusal does not mention the marker (#293).
+test("each --require-ci refusal prompt carries its own recovery", async () => {
+  const repo = await createTempRepo();
+  try {
+    const markerSummary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+    const orch = scripted([
+      JSON.stringify({ action: "finish", summary: markerSummary, unresolvedCompare: true }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ]);
+    await runLoop({
+      task: "PR work: address issue 49 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      requireCi: 42,
+      gh: ciGateGh("1".repeat(40)),
+      roles: gateRoles(),
+      agents: { orch, work: scripted([]), rev: scripted([]) },
+    });
+    const markerPrompt = orch.recorded[1].prompt;
+    expect(markerPrompt).toContain("remove unresolvedCompare from the finish");
+    expect(markerPrompt).not.toContain("Dispatch the reviewer");
+
+    const gateOrch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ]);
+    await runLoop({
+      task: "PR work: address issue 49 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      requireCi: 42,
+      gh: ciGateGh("1".repeat(40)),
+      roles: gateRoles(),
+      agents: {
+        orch: gateOrch,
+        work: scripted(["worker pushed"]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+    });
+    const gatePrompt = gateOrch.recorded[3].prompt;
+    expect(gatePrompt).toContain("the PR head differs from the reviewed commit");
+    expect(gatePrompt).toContain("finish again");
+  } finally {
+    await removePath(repo);
+  }
+});

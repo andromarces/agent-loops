@@ -123,11 +123,15 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  *
  * With `requireCi`, the shared `checkCi` gate resolves the PR head in the
  * runtime against the last reviewer turn's reviewed state, so a finish no
- * longer depends on the parent reporting the compare. The gate refuses a finish
- * that also sets `unresolvedCompare`, and a refusal names the gate reason and
- * takes the same corrective-turn path as the completion rule (#293). Without the
- * flag the marker stays the only trace, and an omitted marker still reads as a
- * verified finish (#286).
+ * longer depends on the parent reporting the compare. Refusals are ordered as
+ * in the interactive `role finish`: the marker combination, then the completion
+ * rule, then the gate. A refusal names the condition and takes the same
+ * corrective-turn path, and a `gh` failure inside the gate is a refusal rather
+ * than a throw, because the headless run has no retry outside it (#293). Each
+ * refusal ends the run when repeated or when no step budget is left, so a
+ * finish refused for a pending check needs a corrective turn, which costs a
+ * step. Without the flag the marker stays the only trace, and an omitted marker
+ * still reads as a verified finish (#286).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -210,22 +214,40 @@ export async function runLoop(options) {
     onEvent({ type: "action", action, stepsUsed });
 
     if (action.action === "finish") {
-      const acceptMissing =
-        requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan)
-          ? workerRan
-            ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
-            : "no reviewer report on the state"
+      // Refusal order matches the interactive `role finish`: the marker
+      // combination first, then the completion rule, then the PR gate (#293).
+      // A finish that sets the marker under the gate is refused before any
+      // reviewer work, because the marker is a contract violation the gate
+      // already settles.
+      const markerRefusal =
+        requireCi !== null && action.unresolvedCompare === true
+          ? {
+              reason: UNRESOLVED_COMPARE_WITH_CI,
+              recovery:
+                "The gate resolves that PR head, so remove unresolvedCompare from the finish, then finish again.",
+            }
           : null;
-      // The completion rule is checked first, so a finish the reviewer has not
-      // covered never reaches GitHub. The `--require-ci` gate then resolves the
-      // PR head in the runtime, which is what the parent can no longer misreport
-      // (#293).
-      const ciMissing =
-        acceptMissing || requireCi === null
+      const acceptRefusal =
+        markerRefusal || !requireAccept || (workerRan ? acceptedSinceWorker : reviewerRan)
           ? null
-          : await ciRefusalReason({ action, pr: requireCi, reviewed: lastReviewed, cwd, gh });
-      const missing = acceptMissing ?? ciMissing;
-      if (missing === null) {
+          : {
+              reason: workerRan
+                ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
+                : "no reviewer report on the state",
+              recovery: `Dispatch the reviewer, obtain ${
+                workerRan ? "Verdict: accept with a Checks line on that state" : "a reviewer report"
+              }, then finish.`,
+            };
+      // The gate resolves the PR head in the runtime, which is what the parent
+      // can no longer misreport. Its own failure is a refusal rather than a
+      // thrown error, so a `gh` failure does not discard a run that is one
+      // retry from passing (#293).
+      const gateRefusal =
+        markerRefusal || acceptRefusal || requireCi === null
+          ? null
+          : await ciRefusal({ pr: requireCi, reviewed: lastReviewed, cwd, gh });
+      const refusal = markerRefusal ?? acceptRefusal ?? gateRefusal;
+      if (refusal === null) {
         // A finish the parent marks as an unresolved PR-head compare stays on
         // the loop's own recorded-finish code 0, but it emits a
         // machine-readable event and reports the marker, so it never reads the
@@ -240,24 +262,16 @@ export async function runLoop(options) {
         }
         return stopLoop(0, { summary: action.summary, unresolvedCompare });
       }
-      onEvent({ type: "refusal", reason: missing, stepsUsed });
+      onEvent({ type: "refusal", reason: refusal.reason, stepsUsed });
       // A refusal gets one corrective turn. With no step budget left that turn
       // cannot run a child, so the refusal resolves here on the exit-1 path
       // instead of reaching the step-limit exit 2 (#248).
       if (finishRefused || stepsUsed >= maxSteps) {
-        return stopLoop(1, { reason: `Finish refused: ${missing}.` });
+        return stopLoop(1, { reason: `Finish refused: ${refusal.reason}.` });
       }
       finishRefused = true;
-      logWarn(`finish refused: ${missing}`);
-      prompt = refusalPrompt(
-        `Finish refused: ${missing}. ${
-          acceptMissing
-            ? `Dispatch the reviewer, obtain ${
-                workerRan ? "Verdict: accept with a Checks line on that state" : "a reviewer report"
-              }, then finish.`
-            : `The gate resolves the PR head from PR ${requireCi}, so the finish needs no unresolvedCompare marker. Resolve the named condition, obtain a reviewer turn on that state, then finish.`
-        }`,
-      );
+      logWarn(`finish refused: ${refusal.reason}`);
+      prompt = refusalPrompt(`Finish refused: ${refusal.reason}. ${refusal.recovery}`);
       continue;
     }
 
@@ -303,21 +317,46 @@ export async function runLoop(options) {
 }
 
 /**
+ * The marker refusal both paths share, kept as a constant so the headless gate
+ * and `role finish` cannot drift apart on the wording.
+ */
+export const UNRESOLVED_COMPARE_WITH_CI =
+  "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved";
+
+/**
  * The reason `--require-ci` refuses a finish, or null when the gate allows it.
  * The shared `checkCi` gate resolves the PR head in the runtime, so the outcome
- * comes from a gate result and not from a field the parent set (#293). A finish
- * that also records the unresolved compare is refused before the gate runs,
- * with the same message the interactive `role finish` uses: the gate resolves
- * that compare, so a marker on it would contradict the gate.
+ * comes from a gate result and not from a field the parent set (#293).
+ *
+ * A `gh` failure is a refusal, not a thrown error: `checkCi` throws on an
+ * unreadable PR, repository, or API reply, and in the interactive path that
+ * error leaves the run `active` for the parent to retry. The headless run has
+ * no retry outside this refusal, so throwing would discard a run that a second
+ * attempt could pass. The refusal fails closed either way, and its recovery
+ * text says the run can be finished again without another child turn, which a
+ * pending or failing check may need.
  * @param {object} options
- * @returns {Promise<string | null>}
+ * @returns {Promise<{ reason: string, recovery: string } | null>}
  */
-async function ciRefusalReason({ action, pr, reviewed, cwd, gh }) {
-  if (action.unresolvedCompare === true) {
-    return "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved";
+async function ciRefusal({ pr, reviewed, cwd, gh }) {
+  let gate;
+  try {
+    gate = await checkCi({ pr, reviewed, cwd, gh });
+  } catch (err) {
+    const detail = (err?.message ?? String(err)).split("\n")[0];
+    logError(`ci gate could not run: ${detail}`);
+    return {
+      reason: `the PR gate could not be evaluated: ${detail}`,
+      recovery: `That is a failure to read GitHub, not a verdict on the work. Fix the credential or the connection, then finish again; the gate resolves the PR head from PR ${pr}, so the finish carries no unresolvedCompare marker.`,
+    };
   }
-  const gate = await checkCi({ pr, reviewed, cwd, gh });
-  return gate.ok ? null : gate.reason;
+  if (gate.ok) {
+    return null;
+  }
+  return {
+    reason: gate.reason,
+    recovery: `That condition is read from PR ${pr} by the gate, so the finish carries no unresolvedCompare marker. Resolve it, then finish again; a pending or failing check clears when the check reports, and a re-finish costs no step.`,
+  };
 }
 
 // An accept counts only with a Checks line in the closing block, matching the

@@ -217,6 +217,8 @@ mapping instead, and `agent-loop --require-accept` enforces that rule. The
 headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
 PR gate headlessly, so the runtime resolves the PR head there too (#293). A
+headless gate refusal takes one corrective turn and then ends the run on exit 1,
+so budget `--max-steps` for a required check that is still pending. A
 headless finish that records an unresolved PR-head compare sets
 `"unresolvedCompare": true` on the action; the run records an
 `unresolved-compare` transcript event and exits `4` instead of `0`, so the
@@ -294,8 +296,9 @@ subcommand: `abort` exits `0` too, and the parent guard reads the state
 lifecycle, not the code. Read the marker in the envelope or the state file.
 
 Two opt-in gates apply to `work-first` and `review-first` only. Each refusal
-names the condition that failed. In `review-only`, a `finish` without them keeps
-the current behavior, and each flag fails with a clear error.
+names the condition that failed, and the order is the marker combination, then
+`--require-accept`, then `--require-ci`. In `review-only`, a `finish` without
+them keeps the current behavior, and each flag fails with a clear error.
 
 - `--require-accept`: refuse unless the latest turn is a reviewer accept with a
   `Checks` line, the reviewed snapshot is exact, and the current snapshot is

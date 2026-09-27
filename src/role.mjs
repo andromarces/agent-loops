@@ -30,7 +30,7 @@ import {
   writeState,
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
-import { runChild } from "./runtime.mjs";
+import { runChild, UNRESOLVED_COMPARE_WITH_CI } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
 const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
@@ -596,9 +596,9 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
       throw new RoleError(validated.error);
     }
     if (validated.value.unresolvedCompare && args.requireCi !== null) {
-      throw new RoleError(
-        "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved.",
-      );
+      // The headless gate refuses the same combination with the same words, so
+      // the message is one constant rather than two copies (#293).
+      throw new RoleError(`${UNRESOLVED_COMPARE_WITH_CI}.`);
     }
 
     if (args.requireAccept) {
