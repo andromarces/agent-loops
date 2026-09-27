@@ -1,11 +1,11 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
-import { createTempRepo, scripted } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
 
 // 1. Usefulness: verifies orchestrator dispatches worker first.
 test("orchestrator dispatches worker first", async () => {
@@ -40,7 +40,7 @@ test("orchestrator dispatches worker first", async () => {
     expect(workerAdapter.recorded[0].prompt).toContain("start work");
     expect(reviewerAdapter.recorded.length).toBe(0);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -77,7 +77,7 @@ test("orchestrator dispatches reviewer first", async () => {
     expect(reviewerAdapter.recorded[0].prompt).toContain("inspect repo");
     expect(workerAdapter.recorded.length).toBe(0);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -156,7 +156,7 @@ test("reviewer findings go back to worker", async () => {
     // Worker first turn wraps instructions
     expect(workerAdapter.recorded[0].prompt).toContain("fix issues");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -193,7 +193,7 @@ test("reviewer reassesses without worker turn", async () => {
     expect(reviewerAdapter.recorded.length).toBe(2);
     expect(workerAdapter.recorded.length).toBe(0);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -231,7 +231,7 @@ test("two consecutive worker turns", async () => {
     // On second turn, prompt is verbatim
     expect(workerAdapter.recorded[1].prompt).toBe("work 2");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -264,7 +264,7 @@ test("finish returns exit 0 and summary object", async () => {
     expect(result.exitCode).toBe(0);
     expect(result.summary).toEqual(summaryObj);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -303,7 +303,7 @@ test("finish after rejecting finding without worker turn", async () => {
     expect(result.exitCode).toBe(0);
     expect(workerAdapter.recorded.length).toBe(0);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -327,7 +327,7 @@ test("abort returns exit 1 and reason", async () => {
     expect(result.exitCode).toBe(1);
     expect(result.reason).toBe("spec contradiction");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -357,7 +357,7 @@ test("step limit reached refuses further child dispatch and returns exit 2", asy
     expect(result.exitCode).toBe(2);
     expect(workerAdapter.recorded.length).toBe(2);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -388,7 +388,7 @@ test("finish on stepsRemaining 0 returns exit 0", async () => {
 
     expect(result.exitCode).toBe(0);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -425,7 +425,7 @@ test("separate session IDs preserved per role", async () => {
 
     expect(roles.orchestrator.sessionId).toBe("sess-1");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -463,7 +463,7 @@ test("child adapter failure surfaces to orchestrator", async () => {
     expect(orchAdapter.recorded[1].prompt).toContain('"status": "error"');
     expect(orchAdapter.recorded[1].prompt).toContain("worker crashed");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -501,7 +501,7 @@ test("child timeout surfaces with timeout message", async () => {
     expect(result.exitCode).toBe(0);
     expect(orchAdapter.recorded[1].prompt).toContain("reviewer timed out after 10 seconds");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -529,7 +529,7 @@ test("orchestrator failure throws fatal error", async () => {
       }),
     ).rejects.toThrow("orchestrator fatal error");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -561,7 +561,7 @@ test("cancel signal stops loop", async () => {
       }),
     ).rejects.toMatchObject({ isCanceled: true });
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -603,7 +603,7 @@ test("timed-out child logs a line naming the role and timed out", async () => {
     );
   } finally {
     errorSpy.mockRestore();
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -643,7 +643,7 @@ test("verbose mode logs snapshot debug lines around reviewer and orchestrator tu
   } finally {
     setVerbose(false);
     logSpy.mockRestore();
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -692,7 +692,7 @@ test("mutation is logged exactly once", async () => {
         }),
       ).rejects.toThrow(MutationError);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await removePath(repo);
     }
     const lines = errorSpy.mock.calls.map((call) => call.join(" "));
     expect(lines.filter((line) => line.includes("Mutation detected during"))).toHaveLength(1);
@@ -765,7 +765,7 @@ test("runtime emits an invocation event per CLI call with adapter usage", async 
     // Usage is consumed per invocation and never lingers on the role state.
     expect(orchAdapter.recorded.length).toBe(3);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -805,7 +805,7 @@ test("runtime emits an error invocation event when the CLI call throws", async (
       { type: "invocation", role: "worker", status: "error", stepsUsed: 1 },
     ]);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -855,6 +855,6 @@ test("runtime keeps adapter usage on an error invocation event and clears it fro
     ]);
     expect(roles.worker.usage).toBeUndefined();
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
