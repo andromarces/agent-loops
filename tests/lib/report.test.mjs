@@ -310,6 +310,27 @@ test("parseReportBlock returns null when a spaceless bullet holds a later spaced
   }
 });
 
+// Usefulness: verifies a spaceless bullet whose later `*` is a wildcard or
+// multiplication and a non-letter precedes it is flagged as a dropped list, not
+// read as an emphasis run, so the item is not dropped with no `raw` signal
+// (issue #264). The block is unparseable, so `raw` carries the item.
+test("parseReportBlock returns null when a spaceless bullet holds a later non-letter star", () => {
+  for (const line of ["*glob src/*.mjs", "*use 2* 3"]) {
+    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
+  }
+});
+
+// Usefulness: verifies the narrowed rule treats an emphasis run closed after a
+// non-letter as a dropped list, the stated cost of closing the silent-drop gap
+// (issue #264). Blanking the report is the safe direction: the text survives in
+// `raw`, whereas the silent-drop shape loses it. A letter-closed run stays prose
+// in the companion test.
+test("parseReportBlock returns null when an emphasis run closes after a non-letter", () => {
+  for (const line of ["*see step 1* done", "*wow!* nice", "*two words,* rest"]) {
+    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
+  }
+});
+
 // Usefulness: verifies a closing sentence that opens with an ordered marker
 // followed by another list marker (`1.-x`, `1.*x`, `1.+x`) is not mistaken for a
 // dropped list, so the wider #249 scan does not blank the report (issue #259).

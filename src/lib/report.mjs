@@ -40,10 +40,13 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 
 // An emphasis run at line start, for example `*emphasis* note`. A leading `*`
 // is also a spaceless bullet marker (`*item`, issue #243), but a `*` pair whose
-// close a non-space precedes and a non-word, non-`*` character or end of line
-// follows is ordinary prose, so it does not blank the block (issue #259). The
-// non-space before the close keeps a spaceless bullet with a later ` * ` a list.
-const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\S)\*(?![\w*])/;
+// close a letter precedes and a non-word, non-`*` character or end of line
+// follows is ordinary prose, so it does not blank the block (issues #259 and
+// #264). A letter before the close tells a real emphasis run from a spaceless
+// bullet whose later `*` is a wildcard or multiplication (`*glob src/*.mjs`,
+// `*use 2* 3`), which would otherwise drop the item with no `raw` signal. The
+// letter requirement also keeps a spaceless bullet with a later ` * ` a list.
+const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])/u;
 
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
