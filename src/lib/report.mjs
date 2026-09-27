@@ -27,15 +27,23 @@ const DECORATED_LABEL_LINE = new RegExp(
 
 // A list line the parser would drop, for example `- item`, `* item`, `1. item`,
 // or the same without the space after the marker (`-item`). A run of markers
-// alone (`---`), a decimal (`1.5x`), and an arrow (`->`) are not lists: after a
-// bullet marker a `>` is rejected, and after an ordered marker a digit is
-// rejected, so an ordinary sentence that opens this way does not blank the
-// block (issue #256).
-const LIST_LINE = /^\s*(?:[-*+](?:\s+\S|[^\s\-*+>])|\d+[.)](?:\s+\S|[^\s\d]))/;
+// alone (`---`), a decimal (`1.5x`), an arrow (`->`), and an ordered marker that
+// another list marker follows (`1.-x`, `1.*x`) are not lists: after a bullet
+// marker a `>` is rejected, and after an ordered marker a digit or a list marker
+// is rejected, so an ordinary sentence that opens this way does not blank the
+// block (issues #256 and #259).
+const LIST_LINE = /^\s*(?:[-*+](?:\s+\S|[^\s\-*+>])|\d+[.)](?:\s+\S|[^\s\d\-*+]))/;
 
 // A markdown thematic break, for example `* * *` or `- - -`. It matches the
 // list pattern but carries no item, so it does not drop text.
 const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
+
+// An emphasis run at line start, for example `*emphasis* note`. A leading `*`
+// is also a spaceless bullet marker (`*item`, issue #243), but a `*` pair whose
+// close a non-space precedes and a non-word, non-`*` character or end of line
+// follows is ordinary prose, so it does not blank the block (issue #259). The
+// non-space before the close keeps a spaceless bullet with a later ` * ` a list.
+const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\S)\*(?![\w*])/;
 
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
@@ -111,13 +119,14 @@ export function parseReportBlock(response) {
  * True when the block holds a list line the parser would drop. A label holds
  * one line, so a list anywhere in the block is dropped, including under an
  * earlier occurrence of a label that a later occurrence shadows and after the
- * reviewer `Verdict:` line (issue #249). A thematic break is not a list.
+ * reviewer `Verdict:` line (issue #249). A thematic break and an emphasis run
+ * are not lists.
  * @param {string[]} lines
  * @returns {boolean}
  */
 function hasDroppedList(lines) {
   for (const line of lines) {
-    if (LIST_LINE.test(line) && !THEMATIC_BREAK.test(line)) {
+    if (LIST_LINE.test(line) && !THEMATIC_BREAK.test(line) && !EMPHASIS_LINE.test(line)) {
       return true;
     }
   }
