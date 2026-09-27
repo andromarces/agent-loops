@@ -255,10 +255,14 @@ the current behavior, and each flag fails with a clear error.
   `neutral`; a required commit status passes with the state `success`. When a
   check run and a commit status share a required name, both must pass, and a
   pending or missing check fails. Required names come from repository rulesets,
-  classic branch protection, and `gh pr checks --required`; when all three
-  sources are empty the gate refuses, so an unreadable source never passes
-  vacuously. GitHub computes the merge state lazily, so a retry shortly after a
-  push can clear an `unknown` state. This gate needs the `gh` CLI.
+  classic branch protection, and `gh pr checks --required`; when all three are
+  empty the gate refuses. Repository rulesets are readable with read access;
+  classic branch protection returns 404 to a caller without admin rights, and
+  `gh pr checks --required` lists only checks that already reported on the
+  commit, so on a classic-protection-only repo a required check that never
+  started can escape the gate. GitHub computes the merge state lazily, so a
+  retry shortly after a push can clear an `unknown` state. This gate needs the
+  `gh` CLI.
 
 ## Blockers and terminal states
 

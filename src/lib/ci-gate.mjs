@@ -62,9 +62,9 @@ async function repoSlug(gh, cwd) {
 }
 
 // `gh pr checks --required` resolves required check names without admin rights.
-// It exits non-zero for pending or failing checks and prints no JSON when none
-// are required, so the output is parsed leniently and an unparseable result
-// contributes no names.
+// It lists only checks that already reported on the commit, exits non-zero for
+// pending or failing checks, and prints no JSON when none are required, so the
+// output is parsed leniently and an unparseable result contributes no names.
 async function ghRequiredNames(gh, pr, cwd) {
   const { stdout } = await gh(["pr", "checks", String(pr), "--required", "--json", "name"], cwd);
   try {
@@ -78,8 +78,8 @@ async function ghRequiredNames(gh, pr, cwd) {
 // Required status context names from every source the caller can read:
 // repository rulesets, classic branch protection, and `gh pr checks --required`.
 // Deduplicated. A 404 or an unreadable source contributes no names; the caller
-// refuses an empty union, so an unreadable source never passes the gate
-// vacuously.
+// refuses an empty union, so a source that yields no names fails closed instead
+// of passing vacuously.
 async function requiredContexts(gh, slug, base, pr, cwd) {
   const contexts = new Set();
 
@@ -213,8 +213,7 @@ function evaluateContext(name, commit, runs, statuses) {
  * Refuses unless the PR head equals the reviewed commit, the reviewed tree is
  * clean, the PR is not behind its base under a strict rule and not in an unknown
  * merge state, and every required check passed on the commit GitHub evaluates.
- * Refuses when no required checks are found, so an unreadable protection source
- * never passes the gate vacuously.
+ * Refuses when no required checks are found, so an empty source fails closed.
  * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
  */
