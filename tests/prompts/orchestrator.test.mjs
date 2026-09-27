@@ -82,6 +82,7 @@ test("initialPrompt names the unresolvedCompare marker", () => {
     '{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}, "unresolvedCompare": true}',
   );
   expect(prompt).toContain("unresolved-compare event");
+  expect(prompt).toContain("exits 4 instead of 0");
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt
