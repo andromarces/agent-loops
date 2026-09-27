@@ -42,6 +42,56 @@ test("parseReportBlock maps an empty optional label to null", () => {
   });
 });
 
+// Usefulness: verifies an empty optional label with a list below it does not
+// silently drop the list; the whole block is unparseable, so the dispatch layer
+// falls back to `raw` and the list stays visible (issue #229).
+test("parseReportBlock returns null when an empty optional label has a following list", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- item one\n- item two`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: none\nDeferred:\n- item one`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes:\n1. item one`)).toBeNull();
+});
+
+// Usefulness: verifies a non-list line after an empty optional label, for
+// example a closing sentence or a lone code fence, does not make the block
+// unparseable; only a list that would be dropped is flagged (issue #229).
+test("parseReportBlock keeps a block whose empty optional label only a non-list line follows", () => {
+  expect(parseReportBlock(`${REPORT}\nDeferred:\nLet me know if the fix looks right.`)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: null,
+    deferred: null,
+  });
+  expect(parseReportBlock(`${REPORT}\nDeferred:\n\`\`\``)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies an empty optional label directly followed by the next
+// label is not mistaken for dropped text, so the block still parses and the
+// other labels survive (issue #229). The reviewer's Verdict line is a label
+// boundary too.
+test("parseReportBlock keeps an empty optional label that a label follows", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\nDeferred: migrate the legacy path`)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: null,
+    deferred: "migrate the legacy path",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\nDeferred:\nVerdict: accept`)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies only the last Conclusion block counts, so a verdict or
 // report in earlier prose never leaks into the parsed result.
 test("parseReportBlock parses only after the last Conclusion line", () => {
