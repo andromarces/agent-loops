@@ -83,9 +83,9 @@ test("initialPrompt names the unresolvedCompare marker", () => {
   );
   expect(prompt).toContain("unresolved-compare event");
   expect(prompt).toContain("exits 4 instead of 0");
-  // The marker is the only record of the compare, so the prompt must state that
-  // consequence and the instruction to set it, or the parent has no reason to
-  // comply beyond the rule (#286).
+  // The marker is the only machine-readable record of the compare, so the prompt
+  // must state that consequence and the instruction to set it, or the parent has
+  // no reason to comply beyond the rule (#286).
   expect(prompt).toContain(
     "nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.",
   );

@@ -173,10 +173,10 @@ Apply these parent rules:
 - When the PR head cannot be resolved, for example a read-only turn with no
   network access, do not finish as verified: abort, or record the unresolved
   compare under notDone and open in the finish summary. A recorded compare also
-  sets the machine-readable marker described under Finish output, so the record
-  never reads the same as a verified finish. That marker is the only machine
-  trace, and a finish that records the compare and omits it is indistinguishable
-  from a verified finish (issue #286, accepted gap).
+  sets the marker described under Finish output, so the record never reads the
+  same as a verified finish. That marker is the only machine-readable record of
+  the compare, and nothing else in the run distinguishes an omitted marker from a
+  verified finish, so always set it.
 
 ## Reviewer prompts
 
