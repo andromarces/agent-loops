@@ -146,6 +146,18 @@ test("initialPrompt states the --require-accept gate when enabled", () => {
   expect(prompt).toContain("refuses a finish");
 });
 
+// Usefulness: verifies the headless prompt names the PR gate and tells the parent
+// that the runtime resolves the head, so a gated run does not report a compare
+// the runtime verifies, and the prompt is unchanged without the flag (issue #293).
+test("initialPrompt states the --require-ci gate when enabled", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10, requireCi: 42 });
+  expect(prompt).toContain("--require-ci 42");
+  expect(prompt).toContain("resolves the PR head");
+  expect(initialPrompt({ task: "Implement feature X", maxSteps: 10 })).not.toContain(
+    "--require-ci",
+  );
+});
+
 // Usefulness: verifies refusalPrompt carries the refusal reason and the supported
 // actions, so the orchestrator can recover with a reviewer turn (issue #234).
 test("refusalPrompt states the reason and the supported actions", () => {

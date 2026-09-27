@@ -30,7 +30,7 @@ import {
   writeState,
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
-import { runChild } from "./runtime.mjs";
+import { runChild, UNRESOLVED_COMPARE_WITH_CI } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
 const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
@@ -552,7 +552,8 @@ function dispatchPayload(roleName, result) {
  * keys records an unresolved PR-head compare, which the envelope and the state
  * file then carry, so the finish stays distinct from a verified one (#281). An
  * omitted marker is that same accepted gap the contract documents beside the
- * field, because the runtime never resolves the PR head (#286).
+ * field, because this subcommand without `--require-ci` never resolves the PR
+ * head (#286). The headless loop resolves it under the same flag (#293).
  */
 async function finish(args, { stdin = readStdin, gh } = {}) {
   if (args.role !== null) {
@@ -595,9 +596,9 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
       throw new RoleError(validated.error);
     }
     if (validated.value.unresolvedCompare && args.requireCi !== null) {
-      throw new RoleError(
-        "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved.",
-      );
+      // The headless gate refuses the same combination with the same words, so
+      // the message is one constant rather than two copies (#293).
+      throw new RoleError(`${UNRESOLVED_COMPARE_WITH_CI}.`);
     }
 
     if (args.requireAccept) {
