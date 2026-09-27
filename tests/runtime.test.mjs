@@ -1805,9 +1805,189 @@ test("following a --require-ci refusal prompt reaches exit 0", async () => {
 
     const gatePrompt = gateOrch.recorded[3].prompt;
     expect(gatePrompt).toContain("the PR head differs from the reviewed commit");
-    expect(gatePrompt).toContain("worker turn");
-    expect(gatePrompt).not.toContain("finish again");
+    expect(gatePrompt).toContain("Dispatch the reviewer");
+    expect(gatePrompt).toContain("a worker turn alone clears neither");
     expect(gateResult.exitCode).toBe(0);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 50. Usefulness: verifies a finish refused for the marker alone recovers with a
+// re-finish and no child turn. Every other condition already passed, so a prompt
+// that insists on a child turn would spend a step and start a review cycle the
+// run did not need (#293).
+test("a marker-only refusal is cleared by a re-finish with no child turn", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const markerSummary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+    const orch = scripted([
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: markerSummary, unresolvedCompare: true }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ]);
+    const work = scripted([]);
+    const rev = scripted([REVIEW_ACCEPT]);
+
+    const result = await runLoop({
+      task: "PR work: address issue 50 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      requireCi: 42,
+      gh: ciGateGh(head),
+      roles: gateRoles(),
+      agents: { orch, work, rev },
+    });
+
+    expect(result.exitCode).toBe(0);
+    // The prompt says so, and the run spends no step on it: one reviewer turn in
+    // total, which is the one the first finish needed for the completion rule.
+    expect(orch.recorded[2].prompt).toContain("needs no child turn");
+    expect(orch.recorded[2].prompt).not.toContain("costs a step");
+    expect(work.recorded).toHaveLength(0);
+    expect(rev.recorded).toHaveLength(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 51. Usefulness: verifies the prompt for a pending required check names the
+// reviewer turn that clears it. A worker turn alone clears neither the reviewed
+// state nor the completion rule, so a prompt naming only the worker turn spends
+// an extra refusal and extra steps (#293).
+test("a pending-check refusal is cleared by the reviewer turn its prompt names", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const check = { status: "in_progress" };
+    const gateOrch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      // What the prompt names: a reviewer turn, not a worker turn.
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ]);
+    const gh = async (args) => {
+      const key = args.join(" ");
+      if (key.includes("/check-runs")) {
+        const answer = await ciGateGh(head)(args);
+        if (check.status === "completed") {
+          return answer;
+        }
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              check_runs: [
+                {
+                  name: "ci (ubuntu-latest)",
+                  status: check.status,
+                  conclusion: null,
+                  started_at: "2026-01-01T00:00:00Z",
+                },
+              ],
+            },
+          ]),
+          stderr: "",
+        };
+      }
+      return ciGateGh(head)(args);
+    };
+
+    const result = await runLoop({
+      task: "PR work: address issue 51 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      requireCi: 42,
+      gh,
+      roles: gateRoles(),
+      agents: {
+        orch: gateOrch,
+        work: scripted(["worker changed"]),
+        // The check reports while the corrective reviewer turn runs, so the
+        // finish after it passes on the same code with no further worker turn.
+        rev: scripted([
+          REVIEW_ACCEPT,
+          () => {
+            check.status = "completed";
+            return REVIEW_ACCEPT;
+          },
+        ]),
+      },
+    });
+
+    const prompt = gateOrch.recorded[3].prompt;
+    expect(prompt).toContain('required check "ci (ubuntu-latest)" is pending');
+    expect(prompt).toContain("Dispatch the reviewer to re-read the state");
+    expect(result.exitCode).toBe(0);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 52. Usefulness: verifies the `gh`-failure prompt does not tell the
+// orchestrator it is out of attempts, and names a reviewer turn as the retry.
+// Any child turn clears the prior-refusal flag, so the run keeps its corrective
+// turn while step budget remains (#293).
+test("a gh-failure refusal does not claim the run is out of attempts", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const failing = { on: true };
+    const orch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ]);
+    const gh = async (args) => {
+      const key = args.join(" ");
+      if (failing.on && key.includes("pr view 42")) {
+        return { status: 1, stdout: "", stderr: "gh: Bad credentials (HTTP 401)" };
+      }
+      return ciGateGh(head)(args);
+    };
+
+    const result = await runLoop({
+      task: "PR work: address issue 52 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      requireCi: 42,
+      gh,
+      roles: gateRoles(),
+      agents: {
+        orch,
+        work: scripted(["worker changed"]),
+        // The credential recovers while the corrective reviewer turn runs. The
+        // second `gh` failure is not the run's last, because the corrective turn
+        // cleared the prior-refusal flag.
+        rev: scripted([
+          REVIEW_ACCEPT,
+          () => {
+            failing.on = false;
+            return REVIEW_ACCEPT;
+          },
+        ]),
+      },
+    });
+
+    const prompt = orch.recorded[3].prompt;
+    expect(prompt).toContain("the PR gate could not be evaluated");
+    expect(prompt).toContain("The only retry you can make is a reviewer turn");
+    expect(prompt).not.toContain("one attempt left");
+    expect(result.exitCode).toBe(0);
   } finally {
     await removePath(repo);
   }
