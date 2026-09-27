@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { main, parseArgs } from "../src/cli.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 // Usefulness: verifies missing required --orchestrator flag throws error.
 test("missing --orchestrator fails", () => {
@@ -263,7 +263,7 @@ test("non-Git cwd exits 1 before spawn and records transcript", async () => {
   } finally {
     process.exitCode = origExitCode;
     errorSpy.mockRestore();
-    await rm(nonRepo, { recursive: true, force: true });
+    await removePath(nonRepo);
   }
 });
 
@@ -321,7 +321,7 @@ test("successful finish run writes transcript with exitCode 0", async () => {
     expect(transcript.events.map((event) => event.type)).toEqual(["invocation", "action"]);
   } finally {
     process.exitCode = origExitCode;
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -381,7 +381,7 @@ test("step limit run writes transcript with exitCode 2", async () => {
   } finally {
     process.exitCode = origExitCode;
     errorSpy.mockRestore();
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -436,7 +436,7 @@ test("orchestrator failure writes transcript with exitCode 1", async () => {
   } finally {
     process.exitCode = origExitCode;
     errorSpy.mockRestore();
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -495,6 +495,6 @@ test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () 
   } finally {
     process.exitCode = origExitCode;
     errorSpy.mockRestore();
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });

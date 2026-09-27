@@ -1,7 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
+import { removePath } from "../runtime-helpers.mjs";
 
 // Usefulness: verifies the issue-#7 mechanism that a real Windows .cmd shim rejects multi-line argv but accepts the same prompt on stdin with the newline-free argv shapes the agents now use. The adapter tests mock execa, so only this test exercises a real .cmd spawn.
 (process.platform === "win32" ? test : test.skip)(
@@ -32,7 +33,7 @@ import { expect, test, vi } from "vitest";
         expect(result.stdout).toBe(prompt);
       }
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await removePath(dir);
     }
   },
   15000,

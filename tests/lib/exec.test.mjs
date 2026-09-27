@@ -1,10 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExecError, exec } from "../../src/lib/exec.mjs";
 import { setVerbose } from "../../src/lib/log.mjs";
 import { pidAlive } from "../../src/lib/runstate.mjs";
+import { removePath } from "../runtime-helpers.mjs";
 
 afterEach(() => {
   setVerbose(false);
@@ -218,7 +219,7 @@ test("exec terminates descendants when canceled", async () => {
         // Already gone.
       }
     }
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
 });
 
