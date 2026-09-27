@@ -96,7 +96,13 @@ Read the JSON envelope on stdout. Example reviewer envelope:
 {
   "role": "reviewer",
   "status": "ok",
-  "report": { "conclusion": "...", "why": "...", "blockers": "..." },
+  "report": {
+    "conclusion": "...",
+    "why": "...",
+    "blockers": "...",
+    "notes": "...",
+    "deferred": "..."
+  },
   "verdict": "accept"
 }
 ```
@@ -107,6 +113,18 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   accepted. Process success never implies acceptance.
 - When the closing block cannot be parsed, `report` is null and `raw` carries
   the tail of the response. Treat a missing report as not accepted.
+- `report.notes` holds non-blocking findings the next turn does not need to act
+  on. `report.deferred` holds items found but left out of scope. Both are
+  optional: a child that omits the label yields `null` for that field, and the
+  block still parses. Each value is one line.
+
+## Reviewer prompts
+
+The reviewer prompt sets the task scope; the fixed review scope and closing
+block wrap it on every turn. Name the guards and contracts that the change puts
+at risk, so the reviewer can trace each changed input through them. Do not
+restate the spec as the pass condition: a restated spec asks the reviewer to
+confirm it, not to test it.
 
 ## Loop policy
 
@@ -127,6 +145,20 @@ Completion is completion of the requested work, not code acceptance.
 - `review-only`: call `finish` after the reviewer report, whatever the
   verdict. The summary records the verdict in `verified` and the findings in
   `open`.
+
+Map the child report fields into the finish summary:
+
+- Carry each `Deferred` item forward from every worker or reviewer turn. An item
+  leaves the list when a later worker turn reports it done and a later reviewer
+  `accept` covers that state; record it in `changed`. The items that remain at
+  `finish` go into `deferred`.
+- Reviewer `Notes` that no later turn addressed go into `open`.
+- Do not send an accepted note to the worker automatically. To act on a note,
+  dispatch the worker for that change, then obtain another reviewer `accept` on
+  the new state before `finish`.
+- `review-only`: `Blockers` and `Notes` go into `open`, and reviewer `Deferred`
+  items go into `deferred`. `deferred` holds out-of-scope items in every mode;
+  `open` holds unresolved in-scope findings.
 
 ## Finish output
 
