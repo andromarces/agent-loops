@@ -143,10 +143,10 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   list, and one shape is the case that matters here: a `*` line whose closing
   `*` a letter precedes, where the character right after the close is not a word
   character or `*`, and where nothing glued from that character on is a letter
-  or a digit, for example `*file*` or `*use a* b`. Such a line is dropped
-  without `raw` under any label, and every matching line in the block drops the
-  same way, so the block still parses with the text gone (issue #275, accepted
-  gap).
+  or an ASCII digit, for example `*file*` or `*use a* b`. Such a line is
+  dropped without `raw` under any label, and every matching line in the block
+  drops the same way, so the block still parses with the text gone (issue #275,
+  accepted gap).
   A child is told to write no block line that starts with `*`. Every other `*`
   line either is a list and blanks the block, for example `*item`, `* item`, or
   `*file*.mjs`, or is not a list and drops as prose, for example `**bold** note`.
