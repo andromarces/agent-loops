@@ -290,14 +290,23 @@ Stdout carries exactly one JSON envelope; all logs go to stderr:
     "conclusion": "...",
     "why": "...",
     "blockers": "...",
+    "checks": "...",
     "notes": "...",
     "deferred": "..."
   },
-  "verdict": "accept"
+  "verdict": "accept",
+  "reviewed": {
+    "head": "...",
+    "clean": true,
+    "exact": true,
+    "digest": "..."
+  }
 }
 ```
 
-`report` is parsed from the closing block every child turn must end with. `conclusion`, `why`, and `blockers` are required; `notes` (non-blocking findings) and `deferred` (out-of-scope items) are optional, and an omitted or empty label yields `null` for that field without making `report` null. Each label takes one line, plain at column 0: a list anywhere in the closing block, for example bullets under any label, after the reviewer `Verdict:` line, or a bullet with no space after the marker, an indented label, or a decorated label makes the whole block unparseable, so `raw` carries the text instead of dropping it. This covers a label that already holds a value, including the required `blockers`, and a label occurrence that a later repeat shadows. A non-list line, for example a closing sentence, does not make the block unparseable. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
+`report` is parsed from the closing block every child turn must end with. `conclusion`, `why`, and `blockers` are required; `checks` (the commands that ran and their results), `notes` (non-blocking findings), and `deferred` (out-of-scope items) are optional, and an omitted or empty label yields `null` for that field without making `report` null. Each label takes one line, plain at column 0: a list anywhere in the closing block, for example bullets under any label, after the reviewer `Verdict:` line, or a bullet with no space after the marker, an indented label, or a decorated label makes the whole block unparseable, so `raw` carries the text instead of dropping it. This covers a label that already holds a value, including the required `blockers`, and a label occurrence that a later repeat shadows. A non-list line, for example a closing sentence, does not make the block unparseable. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
+
+A reviewer envelope carries `reviewed`: `{ head, clean, exact, digest }` from the snapshot the runtime takes before the reviewer turn, so the child cannot misreport it. `head` is the commit, `clean` is true when the work tree has no uncommitted entries, `exact` is true when every entry has a content hash or is a deletion, and `digest` identifies the uncommitted state. A symlink hashes its link target text with a tag, so two links with different targets have different digests, dangling included, and a link never collides with a regular file that holds the same bytes.
 
 ## Interactive orchestrator: harness entry points
 

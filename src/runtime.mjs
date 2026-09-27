@@ -1,7 +1,7 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
-import { withMutationCheck } from "./lib/snapshot.mjs";
+import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
 import { parseVerdict } from "./lib/report.mjs";
 import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
@@ -39,8 +39,10 @@ async function invoke(agents, state, roleName, prompt, opts, onEvent, stepsUsed)
  * and cancel propagation. Returns `{ role, status, response }` on success and
  * `{ role, status: "error", error }` on a handled failure. Throws on fatal
  * errors: detected mutation, snapshot failure, or cancel.
+ * A reviewer result also carries `reviewed`, the runtime-owned identity of the
+ * work tree the reviewer saw.
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string } | { role: string, status: "error", error: string }>}
+ * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object } | { role: string, status: "error", error: string }>}
  */
 export async function runChild(options) {
   const {
@@ -73,8 +75,18 @@ export async function runChild(options) {
     );
 
   try {
-    const response = readOnly ? await withMutationCheck(cwd, roleName, runFn) : await runFn();
-    return { role: roleName, status: "ok", response };
+    let reviewed = null;
+    const response = readOnly
+      ? await withMutationCheck(cwd, roleName, (before) => {
+          // The reviewed state comes from the runtime snapshot, never from the
+          // child response, so the child cannot misreport it.
+          if (roleName === "reviewer") {
+            reviewed = reviewedState(before);
+          }
+          return runFn();
+        })
+      : await runFn();
+    return { role: roleName, status: "ok", response, ...(reviewed ? { reviewed } : {}) };
   } catch (err) {
     if (err?.name === "MutationError" || err?.name === "SnapshotError" || err?.isCanceled) {
       if (err?.isCanceled) {

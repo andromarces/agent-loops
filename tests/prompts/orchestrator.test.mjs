@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import {
   initialPrompt,
@@ -5,6 +8,11 @@ import {
   repairPrompt,
   resultPrompt,
 } from "../../src/prompts/orchestrator.mjs";
+
+const instructionsPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../docs/orchestrator-instructions.md",
+);
 
 // Usefulness: verifies initialPrompt produces exact expected string structure.
 test("initialPrompt produces expected orchestrator prompt", () => {
@@ -41,6 +49,46 @@ test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
   expect(prompt).toContain(
     "Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it",
   );
+});
+
+// Usefulness: verifies the headless parent states the same reviewed-state rules
+// as the interactive instructions: compare head, require clean, and treat an
+// accept without a Checks line as not accepted (issue #217).
+test("initialPrompt states the reviewed-state parent rules", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).toContain("Compare reviewed.head with the PR head before finish.");
+  expect(prompt).toContain("Require reviewed.clean: true for PR work.");
+  expect(prompt).toContain("Treat an accept without a Checks line as not accepted.");
+});
+
+// Usefulness: verifies the interactive instructions and the headless prompt
+// state the same reviewed-state parent rules, so the two parent paths never
+// diverge (issue #217).
+test("interactive instructions and headless prompt share the reviewed-state rules", async () => {
+  const instructions = await readFile(instructionsPath, "utf8");
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  for (const rule of [
+    "Compare reviewed.head with the PR head before finish.",
+    "Require reviewed.clean: true for PR work.",
+    "Treat an accept without a Checks line as not accepted.",
+  ]) {
+    expect(instructions).toContain(rule);
+    expect(prompt).toContain(rule);
+  }
+});
+
+// Usefulness: verifies the headless result payload carries the reviewer reviewed
+// state, so the orchestrator sees the same runtime identity the child cannot
+// misreport (issue #217).
+test("resultPrompt carries the reviewed state for a reviewer result", () => {
+  const reviewed = { head: "abc", clean: true, exact: true, digest: "d" };
+  const prompt = resultPrompt({
+    result: { role: "reviewer", status: "ok", response: "done", reviewed },
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  expect(prompt).toContain('"reviewed"');
+  expect(prompt).toContain('"digest": "d"');
 });
 
 // Usefulness: verifies the headless prompt states the completion rule and its
