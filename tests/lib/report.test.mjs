@@ -121,6 +121,39 @@ test("parseReportBlock keeps a block whose value-bearing label only a non-list l
   });
 });
 
+// Usefulness: verifies the rule applies to every label, not only the optional
+// ones: a list under `Conclusion` or `Why` is surfaced instead of dropped
+// (issue #240). The docs and the prompt state the rule for any label.
+test("parseReportBlock returns null when a list follows Conclusion or Why", () => {
+  expect(
+    parseReportBlock("Conclusion: done\n- next step\nWhy: tests pass\nBlockers: none"),
+  ).toBeNull();
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: tests pass\n- test a\nBlockers: none"),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a trailing list that no parsed label owns still makes the
+// block unparseable, so a block does not report success while dropping the list
+// (issue #240).
+test("parseReportBlock returns null when a trailing list follows the last label", () => {
+  expect(parseReportBlock(`${REPORT}\nNext steps:\n- run x`)).toBeNull();
+});
+
+// Usefulness: verifies a markdown thematic break is not mistaken for a list, so
+// a report that ends with a horizontal rule still parses (issue #240).
+test("parseReportBlock keeps a block whose label is followed by a thematic break", () => {
+  for (const rule of ["* * *", "- - -", "---"]) {
+    expect(parseReportBlock(`${REPORT}\nNotes: tidy later\n${rule}`), rule).toEqual({
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      notes: "tidy later",
+      deferred: null,
+    });
+  }
+});
+
 // Usefulness: verifies only the last Conclusion block counts, so a verdict or
 // report in earlier prose never leaks into the parsed result.
 test("parseReportBlock parses only after the last Conclusion line", () => {

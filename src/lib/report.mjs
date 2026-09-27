@@ -12,7 +12,7 @@ const REPORT_LABELS = [
 ];
 
 // A line that opens any label in the closing block, including the reviewer's
-// Verdict line. Bounds the search for a list an empty optional label would drop.
+// Verdict line. Bounds the search for a list a label would drop.
 const LABEL_LINE = new RegExp(
   `^(?:${REPORT_LABELS.map(([, label]) => label).join("|")}|Verdict):`,
   "i",
@@ -20,6 +20,10 @@ const LABEL_LINE = new RegExp(
 
 // A markdown list line, for example `- item`, `* item`, or `1. item`.
 const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])\s+/;
+
+// A markdown thematic break, for example `* * *` or `- - -`. It matches the
+// list pattern but carries no item, so it does not drop text.
+const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
@@ -86,7 +90,7 @@ export function parseReportBlock(response) {
 /**
  * True when a list line follows `index` before the next label line or the end
  * of the block. Such a list would otherwise be dropped, because a label holds
- * one line and the list below it is never read.
+ * one line and the list below it is never read. A thematic break is not a list.
  * @param {string[]} lines
  * @param {number} index
  * @returns {boolean}
@@ -100,7 +104,7 @@ function hasListAfter(lines, index) {
     if (LABEL_LINE.test(line)) {
       return false;
     }
-    if (LIST_LINE.test(line)) {
+    if (LIST_LINE.test(line) && !THEMATIC_BREAK.test(line)) {
       return true;
     }
   }
