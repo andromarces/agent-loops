@@ -818,3 +818,243 @@ test("runtime keeps adapter usage on an error invocation event and clears it fro
     await removePath(repo);
   }
 });
+
+const SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
+const REVIEW_ACCEPT = [
+  "Conclusion: the state passes.",
+  "Why: changes match the task.",
+  "Blockers: none.",
+  "Verdict: accept",
+].join("\n");
+const REVIEW_REJECT = [
+  "Conclusion: the state fails.",
+  "Why: the change is incomplete.",
+  "Blockers: none.",
+  "Verdict: reject",
+].join("\n");
+
+function gateRoles() {
+  return {
+    orchestrator: { kind: "orch", sessionId: null },
+    worker: { kind: "work", sessionId: null },
+    reviewer: { kind: "rev", sessionId: null },
+  };
+}
+
+// 29. Usefulness: verifies --require-accept refuses a finish with no later
+// reviewer accept, then allows the finish once a reviewer accepts that state
+// (issue #234).
+test("--require-accept refuses a finish until a reviewer accepts", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([REVIEW_ACCEPT]);
+
+    const result = await runLoop({
+      task: "Task 29",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: reviewerAdapter,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 30. Usefulness: verifies the gate treats a reviewer reject as not accepted, and
+// a later reviewer accept on the same state allows the finish (issue #234).
+test("--require-accept treats a reviewer reject as not accepted", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "re-review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([REVIEW_REJECT, REVIEW_ACCEPT]);
+
+    const result = await runLoop({
+      task: "Task 30",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: reviewerAdapter,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(2);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 31. Usefulness: verifies the gate maps a run with no worker turn to review-only:
+// the finish follows the report whatever the verdict (issue #234).
+test("--require-accept allows a review-only finish with no worker turn", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+
+    const result = await runLoop({
+      task: "Task 31",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: scripted([REVIEW_REJECT]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 32. Usefulness: verifies a repeated finish that still lacks a reviewer accept
+// ends the run instead of spinning (issue #234).
+test("--require-accept aborts a repeated refused finish", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+
+    const result = await runLoop({
+      task: "Task 32",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: scripted([]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("reviewer accept");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 33. Usefulness: verifies --require-accept refuses a finish with no child turn
+// and allows a review-only finish once a reviewer report exists (issue #234).
+test("--require-accept requires a reviewer report when no worker turn ran", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([REVIEW_REJECT]);
+
+    const result = await runLoop({
+      task: "Task 33",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: reviewerAdapter },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 34. Usefulness: verifies a reviewer reply with no Verdict line does not satisfy
+// the gate: process success never implies acceptance (issue #234).
+test("--require-accept does not accept a reviewer reply without a verdict", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+
+    const result = await runLoop({
+      task: "Task 34",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: scripted(["reviewed, but the verdict line is missing"]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("reviewer accept");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 35. Usefulness: verifies a later reviewer failure does not clear an earlier
+// reviewer report when no worker turn ran, so "at least one reviewer report"
+// holds (issue #234).
+test("--require-accept keeps an earlier reviewer report after a later failure", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "first review" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "second review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([
+      REVIEW_REJECT,
+      () => {
+        throw new Error("reviewer crashed");
+      },
+    ]);
+
+    const result = await runLoop({
+      task: "Task 35",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: reviewerAdapter },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(2);
+  } finally {
+    await removePath(repo);
+  }
+});
