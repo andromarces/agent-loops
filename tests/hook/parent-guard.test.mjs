@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,7 +9,7 @@ import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mj
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
 import { buildTargets } from "../../src/install/harnesses.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
-import { createTempRepo } from "../runtime-helpers.mjs";
+import { createTempRepo, removePath } from "../runtime-helpers.mjs";
 
 const noopAdapter = {
   async run() {
@@ -100,10 +100,10 @@ afterEach(async () => {
   }
   delete process.env.AGENT_LOOP_RUNS_ROOT;
   for (const dir of repos) {
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
   repos.length = 0;
-  await rm(runsRoot, { recursive: true, force: true });
+  await removePath(runsRoot);
   runsRoot = undefined;
 });
 

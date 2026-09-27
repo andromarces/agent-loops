@@ -1,15 +1,5 @@
 import { existsSync } from "node:fs";
-import {
-  chmod,
-  cp,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -25,7 +15,7 @@ import {
   manifestPath,
   readManifest,
 } from "../../src/install/manifest.mjs";
-import { deadPid } from "../runtime-helpers.mjs";
+import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const homes = [];
@@ -39,11 +29,11 @@ async function makeHome() {
 
 afterEach(async () => {
   for (const home of homes) {
-    await rm(home, { recursive: true, force: true });
+    await removePath(home);
   }
   homes.length = 0;
   for (const lockFile of lockFiles) {
-    await rm(lockFile, { force: true });
+    await removePath(lockFile);
   }
   lockFiles.length = 0;
 });
@@ -572,7 +562,7 @@ test("uninstall works after the package root is gone", async () => {
   const skillPath = join(home, ".claude", "skills", "agent-loop", "SKILL.md");
   expect(existsSync(skillPath)).toBe(true);
 
-  await rm(movedRoot, { recursive: true, force: true });
+  await removePath(movedRoot);
 
   const reports = await uninstall({ home });
   expect(reports.find((entry) => entry.path === skillPath).action).toBe("delete");
