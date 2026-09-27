@@ -3,7 +3,7 @@ import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
-import { parseVerdict } from "./lib/report.mjs";
+import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
@@ -110,11 +110,12 @@ export async function runChild(options) {
  * fatal controller errors: orchestrator failure, detected mutation, or cancel.
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
- * covered: after a worker turn it needs a later reviewer `verdict: accept`, and
- * with no worker turn it needs at least one reviewer report. A refused finish
- * gets one corrective turn; a repeated refusal, or a refusal with no step
- * budget left, ends the run with exit 1. The gate follows turn order only: an
- * edit made outside the loop between the accept and the finish is not detected.
+ * covered: after a worker turn it needs a later reviewer `verdict: accept` with
+ * a Checks line, and with no worker turn it needs at least one reviewer report.
+ * A refused finish gets one corrective turn; a repeated refusal, or a refusal
+ * with no step budget left, ends the run with exit 1. The gate follows turn
+ * order only: an edit made outside the loop between the accept and the finish
+ * is not detected.
  * @param {object} options
  * @returns {Promise<{ exitCode: 0, summary: object } | { exitCode: 1 | 2, reason: string }>}
  */
@@ -184,7 +185,7 @@ export async function runLoop(options) {
         return stopLoop(0, { summary: action.summary });
       }
       const missing = workerRan
-        ? "no reviewer accept on the latest changed state after a worker turn"
+        ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
         : "no reviewer report on the state";
       onEvent({ type: "refusal", reason: missing, stepsUsed });
       // A refusal gets one corrective turn. With no step budget left that turn
@@ -197,7 +198,7 @@ export async function runLoop(options) {
       logWarn(`finish refused: ${missing}`);
       prompt = refusalPrompt(
         `Finish refused: ${missing}. Dispatch the reviewer, obtain ${
-          workerRan ? "Verdict: accept on that state" : "a reviewer report"
+          workerRan ? "Verdict: accept with a Checks line on that state" : "a reviewer report"
         }, then finish.`,
       );
       continue;
@@ -234,10 +235,17 @@ export async function runLoop(options) {
       acceptedSinceWorker = false;
     } else {
       reviewerRan = reviewerRan || result.status === "ok";
-      acceptedSinceWorker = result.status === "ok" && parseVerdict(result.response) === "accept";
+      acceptedSinceWorker = result.status === "ok" && isAcceptedReview(result.response);
     }
     finishRefused = false;
 
     prompt = resultPrompt({ result, stepsUsed, maxSteps });
   }
+}
+
+// An accept counts only with a Checks line in the closing block, matching the
+// parent rule the prompt states (#217) and the interactive --require-accept gate
+// (issue #218). An accept without a Checks line is treated as not accepted.
+function isAcceptedReview(response) {
+  return parseVerdict(response) === "accept" && Boolean(parseReportBlock(response)?.checks);
 }

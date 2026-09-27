@@ -1,5 +1,9 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { executeRoleCommand } from "../src/role.mjs";
+import { statePaths } from "../src/lib/runstate.mjs";
+import { snapshot } from "../src/lib/snapshot.mjs";
 import {
   basicDeps,
   cleanup,
@@ -117,4 +121,236 @@ test("finish and abort reject changed init flags", async () => {
   expect(state.lifecycle).toBe("active");
   expect(state.maxSteps).toBe(20);
   expect(state.mode).toBe("work-first");
+});
+
+const GATE_SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
+const ACCEPT =
+  "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test\nVerdict: accept";
+const ACCEPT_NO_CHECKS = "Conclusion: done\nWhy: tests pass\nBlockers: none\nVerdict: accept";
+const REJECT =
+  "Conclusion: no\nWhy: broken\nBlockers: missing test\nChecks: npm test\nVerdict: reject";
+const REVIEW_ONLY_OVERRIDES = [
+  "--task",
+  "Review only.",
+  "--mode",
+  "review-only",
+  "--parent-session",
+  "parent-sess-1",
+  "--worker",
+  "fake1",
+  "--reviewer",
+  "fake2",
+];
+
+function finishCall(repo, extra = [], deps = {}) {
+  return executeRoleCommand(withRepo(["finish", "--cwd", "<repo>", ...extra], repo), {
+    stdin: async () => JSON.stringify(GATE_SUMMARY),
+    ...deps,
+  });
+}
+
+async function dispatchReviewer(repo, reply) {
+  return executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([reply]) },
+    stdin: stdinPrompt,
+  });
+}
+
+async function initWorkerRun(repo) {
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+}
+
+// Usefulness: verifies --require-accept refuses a finish after a worker turn
+// with no later reviewer turn, and keeps the run active (issue #218).
+test("--require-accept refuses a finish after a worker turn with no later review", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  const result = await finishCall(repo, ["--require-accept"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("no reviewer turn");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies --require-accept refuses a finish after a reviewer
+// reject, and allows it after a reviewer accept with a Checks line (issue #218).
+test("--require-accept follows the latest reviewer verdict", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  await dispatchReviewer(repo, REJECT);
+  const rejected = await finishCall(repo, ["--require-accept"]);
+  expect(rejected.exitCode).toBe(1);
+  expect(rejected.payload.error).toContain("Verdict: accept");
+
+  await dispatchReviewer(repo, ACCEPT);
+  const accepted = await finishCall(repo, ["--require-accept"]);
+  expect(accepted.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
+// Usefulness: verifies --require-accept refuses a finish when the work tree
+// changed after the accepted review, including an uncommitted state at the same
+// head (issue #218).
+test("--require-accept refuses a change after the accepted review", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+  await dispatchReviewer(repo, ACCEPT);
+
+  await writeFile(join(repo, "after-review.txt"), "changed after the review\n");
+  const result = await finishCall(repo, ["--require-accept"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("work tree changed");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies --require-accept refuses an accept with no Checks line,
+// matching the parent prompt rule (issue #218).
+test("--require-accept refuses an accept with no Checks line", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+  await dispatchReviewer(repo, ACCEPT_NO_CHECKS);
+
+  const result = await finishCall(repo, ["--require-accept"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("Checks");
+});
+
+// Usefulness: verifies --require-accept refuses when the reviewed snapshot is
+// not exact, because a null-hash entry has no content identity (issue #218).
+test("--require-accept refuses a reviewed snapshot that is not exact", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+  await dispatchReviewer(repo, ACCEPT);
+
+  const paths = statePaths({ cwd: repo });
+  const state = await readRepoState(repo);
+  state.lastResult.reviewed.exact = false;
+  await writeFile(paths.stateFile, `${JSON.stringify(state, null, 2)}\n`);
+
+  const result = await finishCall(repo, ["--require-accept"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("not exact");
+});
+
+// Usefulness: verifies review-only keeps a flagless finish and rejects both
+// gate flags with a clear error (issue #218).
+test("review-only rejects the finish gates and keeps a flagless finish", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await executeRoleCommand(
+    withRepo(dispatchArgv(REVIEW_ONLY_OVERRIDES, "reviewer"), repo),
+    basicDeps(),
+  );
+
+  const accepted = await finishCall(repo, ["--require-accept"]);
+  expect(accepted.exitCode).toBe(1);
+  expect(accepted.payload.error).toContain("review-only");
+
+  const ci = await finishCall(repo, ["--require-ci", "42"]);
+  expect(ci.exitCode).toBe(1);
+  expect(ci.payload.error).toContain("review-only");
+
+  const plain = await finishCall(repo);
+  expect(plain.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
+// Usefulness: verifies the gate flags are finish-only; dispatch and abort reject
+// them (issue #218).
+test("the finish gates are rejected outside finish", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  const dispatchResult = await executeRoleCommand(
+    withRepo(["dispatch", "--role", "worker", "--cwd", "<repo>", "--require-accept"], repo),
+    basicDeps(),
+  );
+  expect(dispatchResult.exitCode).toBe(1);
+  expect(dispatchResult.payload.error).toContain("only valid for finish");
+
+  const abortResult = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "r", "--require-ci", "42"], repo),
+  );
+  expect(abortResult.exitCode).toBe(1);
+  expect(abortResult.payload.error).toContain("only valid for finish");
+});
+
+// Usefulness: verifies --require-ci refuses a finish when GitHub reports an
+// unknown merge state, and passes when the reviewed head is the PR head and no
+// required check is failing (issue #218).
+test("--require-ci refuses an unknown merge state and passes a clean PR", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+  await dispatchReviewer(repo, ACCEPT);
+  const head = (await snapshot(repo)).head;
+
+  const ciGh = (mergeStateStatus) => async (args) => {
+    const key = args.join(" ");
+    const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
+    if (key.includes("pr view 42")) {
+      return json({
+        headRefOid: head,
+        baseRefName: "main",
+        mergeStateStatus,
+        potentialMergeCommit: null,
+        state: "OPEN",
+      });
+    }
+    if (key.includes("repo view")) {
+      return { status: 0, stdout: "owner/repo", stderr: "" };
+    }
+    if (key.includes("rules/branches/main")) {
+      return json([
+        {
+          type: "required_status_checks",
+          parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
+        },
+      ]);
+    }
+    if (key.includes("branches/main/protection")) {
+      return { status: 1, stdout: "", stderr: "HTTP 404" };
+    }
+    if (key.includes("/check-runs")) {
+      return json([
+        {
+          check_runs: [
+            {
+              name: "ci (ubuntu-latest)",
+              status: "completed",
+              conclusion: "success",
+              started_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      ]);
+    }
+    if (key.includes("/status")) {
+      return json({ statuses: [] });
+    }
+    return { status: 1, stdout: "", stderr: `unmatched: ${key}` };
+  };
+
+  const refused = await finishCall(repo, ["--require-ci", "42"], { gh: ciGh("UNKNOWN") });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("merge state as unknown");
+
+  const passed = await finishCall(repo, ["--require-ci", "42"], { gh: ciGh("CLEAN") });
+  expect(passed.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
