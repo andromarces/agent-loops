@@ -152,9 +152,7 @@ A task is PR work when its change is delivered on a pull request. For PR work,
 name the PR branch in the worker prompt: the worker commits its change on that
 branch and pushes it, so the PR head equals the reviewed head. The run supplies
 the PR number, and the head commit comes from that PR. In a headless run, the
-task names the PR number. A read-only Codex turn has no network access, so a
-Codex orchestrator cannot resolve the PR head with `gh`; the unresolved-compare
-rule below applies.
+task names the PR number.
 
 Apply these parent rules:
 
