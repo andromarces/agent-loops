@@ -331,6 +331,28 @@ test("worker dispatch carries text under an empty optional label into raw", asyn
   expect(result.payload.raw).toContain("item one");
 });
 
+// Usefulness: verifies a bullet list under the required `Blockers` label reaches
+// the envelope through `raw` at the dispatch seam instead of being dropped, so
+// the next turn still sees the blocker (issue #240).
+test("worker dispatch carries a list under the Blockers label into raw", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const worker = recordingAdapter([]);
+  worker.run = async (state) => {
+    state.sessionId = "sess-blocker";
+    return `${REPORT}\nBlockers: see below\n- real blocker`;
+  };
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toContain("real blocker");
+});
+
 // Usefulness: verifies the dispatch seam when the closing block does not parse
 // — the payload carries a null report and the raw response, so a caller can
 // still inspect what the child returned instead of guessing.
