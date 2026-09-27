@@ -11,6 +11,17 @@ export function readArgValue(argv, flag, index) {
 }
 
 /**
+ * Returns the value of an inline `--flag=value`. Throws the shared missing-value
+ * error when the value is empty, so every CLI parser reports the same message.
+ */
+export function readInlineValue(inline, flag) {
+  if (inline.value === "") {
+    throw new Error(`Missing value for ${flag}.`);
+  }
+  return inline.value;
+}
+
+/**
  * Splits the inline form `--flag=value`. Returns `{ flag, value }` when `arg`
  * is that form, or null when it is not. The value is everything after the first
  * `=`, verbatim, so a leading `-` is valid. The value can be empty. The caller
