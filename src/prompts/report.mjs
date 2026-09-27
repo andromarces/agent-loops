@@ -3,10 +3,10 @@
  * response, so the block carries the reasoning and open items it would otherwise re-derive.
  */
 export const reportBlock = `
-End your response with this block, kept short:
+End your response with this block, kept short. Each label takes one line; an empty label with a list under it makes the whole block unparseable:
 Conclusion: one or two sentences.
 Why: the decisive evidence behind the conclusion.
 Blockers: anything unresolved that the next turn must know, or "none".
-Notes: non-blocking findings the next turn does not need to act on, or "none". One line.
-Deferred: items found but left out of scope, or "none". One line.
+Notes: non-blocking findings the next turn does not need to act on, or "none".
+Deferred: items found but left out of scope, or "none".
 `.trim();
