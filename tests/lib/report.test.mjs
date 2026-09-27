@@ -11,6 +11,7 @@ test("parseReportBlock extracts the closing block and defaults optional labels",
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: null,
   });
@@ -25,6 +26,7 @@ test("parseReportBlock extracts the optional Notes and Deferred labels", () => {
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: "tidy the helper later",
     deferred: "migrate the legacy path",
   });
@@ -33,13 +35,24 @@ test("parseReportBlock extracts the optional Notes and Deferred labels", () => {
 // Usefulness: verifies a present-but-empty optional label maps to null rather
 // than a misleading empty string.
 test("parseReportBlock maps an empty optional label to null", () => {
-  expect(parseReportBlock(`${REPORT}\nNotes:\nDeferred:`)).toEqual({
+  expect(parseReportBlock(`${REPORT}\nChecks:\nNotes:\nDeferred:`)).toEqual({
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: null,
   });
+});
+
+// Usefulness: verifies the optional Checks label reaches the parsed report,
+// while an absent label stays null and never makes the block unparseable
+// (issue #217).
+test("parseReportBlock extracts the optional Checks label", () => {
+  expect(parseReportBlock(`${REPORT}\nChecks: npm test, npm run lint`)).toMatchObject({
+    checks: "npm test, npm run lint",
+  });
+  expect(parseReportBlock(REPORT)).toMatchObject({ checks: null });
 });
 
 // Usefulness: verifies an empty optional label with a list below it does not
@@ -59,6 +72,7 @@ test("parseReportBlock keeps a block whose empty optional label only a non-list 
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: null,
   });
@@ -66,6 +80,7 @@ test("parseReportBlock keeps a block whose empty optional label only a non-list 
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: null,
   });
@@ -80,6 +95,7 @@ test("parseReportBlock keeps an empty optional label that a label follows", () =
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: "migrate the legacy path",
   });
@@ -87,6 +103,7 @@ test("parseReportBlock keeps an empty optional label that a label follows", () =
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: null,
   });
@@ -156,6 +173,7 @@ test("parseReportBlock keeps a non-label line that begins with a word and a colo
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: null,
   });
@@ -169,6 +187,7 @@ test("parseReportBlock keeps the report when only the Verdict label is decorated
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: null,
   });
@@ -198,6 +217,7 @@ test("parseReportBlock keeps a block whose value-bearing label only a non-list l
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: "tidy later",
     deferred: null,
   });
@@ -230,6 +250,7 @@ test("parseReportBlock keeps a block whose label is followed by a thematic break
       conclusion: "done",
       why: "tests pass",
       blockers: "none",
+      checks: null,
       notes: "tidy later",
       deferred: null,
     });
@@ -244,6 +265,7 @@ test("parseReportBlock parses only after the last Conclusion line", () => {
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: null,
   });
@@ -266,12 +288,13 @@ test("parseReportBlock returns null without a Conclusion line", () => {
 test("parseReportBlock matches labels case-insensitively", () => {
   expect(
     parseReportBlock(
-      "conclusion: done\nWHY: tests pass\nblockers: none\nnotes: later\ndeferred: out",
+      "conclusion: done\nWHY: tests pass\nblockers: none\nchecks: npm test\nnotes: later\ndeferred: out",
     ),
   ).toEqual({
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: "npm test",
     notes: "later",
     deferred: "out",
   });

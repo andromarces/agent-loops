@@ -103,10 +103,17 @@ Read the JSON envelope on stdout. Example reviewer envelope:
     "conclusion": "...",
     "why": "...",
     "blockers": "...",
+    "checks": "...",
     "notes": "...",
     "deferred": "..."
   },
-  "verdict": "accept"
+  "verdict": "accept",
+  "reviewed": {
+    "head": "...",
+    "clean": true,
+    "exact": true,
+    "digest": "..."
+  }
 }
 ```
 
@@ -116,6 +123,9 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   accepted. Process success never implies acceptance.
 - When the closing block cannot be parsed, `report` is null and `raw` carries
   the tail of the response. Treat a missing report as not accepted.
+- `report.checks` names the commands that ran in the reviewer turn and their
+  results. It is reported evidence from the child, not proof that a command ran,
+  so it never replaces the runtime `reviewed` fields.
 - `report.notes` holds non-blocking findings the next turn does not need to act
   on. `report.deferred` holds items found but left out of scope. Both are
   optional: a child that omits the label yields `null` for that field, and the
@@ -125,6 +135,18 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   text surfaces through `raw` instead of being dropped. This covers a label that
   already holds a value, including the required `blockers`. A non-list line, for
   example a closing sentence, does not make the block unparseable.
+
+A reviewer envelope carries `reviewed`, the runtime-owned identity of the state
+the reviewer saw. The runtime writes these fields from the snapshot taken at the
+start of the turn, so the child cannot misreport them: `head` is the commit,
+`clean` is true when the work tree has no uncommitted entries, `exact` is true
+when every entry has a content hash or is a deletion, and `digest` identifies the
+uncommitted state (it is exhaustive only when `exact` is true; ignored files are
+out of scope). Apply these parent rules:
+
+- Compare reviewed.head with the PR head before finish.
+- Require reviewed.clean: true for PR work.
+- Treat an accept without a Checks line as not accepted.
 
 ## Reviewer prompts
 

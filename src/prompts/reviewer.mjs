@@ -3,6 +3,7 @@ import { reportBlock } from "./report.mjs";
 // Same closing block as reportBlock, with the verdict line inside it so the
 // model treats it as part of the mandatory block, not an optional extra.
 const reviewerReportBlock = `${reportBlock}
+Checks: the commands that ran and their results, or "none". One line.
 Verdict: accept or reject. One word, nothing else on the line.`;
 
 // Fixed review scope every reviewer turn carries, so a parent prompt that

@@ -7,6 +7,7 @@ const REPORT_LABELS = [
   ["conclusion", "Conclusion", false],
   ["why", "Why", false],
   ["blockers", "Blockers", false],
+  ["checks", "Checks", true],
   ["notes", "Notes", true],
   ["deferred", "Deferred", true],
 ];
@@ -55,21 +56,21 @@ function closingBlock(response) {
 }
 
 /**
- * Extracts the closing block as `{ conclusion, why, blockers, notes, deferred }`.
+ * Extracts the closing block as `{ conclusion, why, blockers, checks, notes, deferred }`.
  * Each label is matched case-insensitively at line start inside the closing
  * block only; the last occurrence in that range wins. `conclusion`, `why`, and
  * `blockers` are required, and a missing or empty one makes the whole block
- * unparseable. `notes` and `deferred` are optional: an absent or empty label
- * maps to null and never makes the block null, so a response in the pre-#214
- * format stays parseable. A label followed by a list line, for example bullets,
- * instead makes the whole block unparseable, so the dispatch layer surfaces the
- * dropped list through `raw` (issues #229 and #240); this covers a label that
- * already holds a value, including the required `blockers`, not only an empty
- * optional one. A bullet with no space after its marker counts as a list line,
- * and a label that indentation or markdown decoration hides also makes the
- * block unparseable, so `raw` carries its value (issue #243).
+ * unparseable. `checks`, `notes`, and `deferred` are optional: an absent or
+ * empty label maps to null and never makes the block null, so a response in the
+ * pre-#214 format stays parseable. A label followed by a list line, for example
+ * bullets, instead makes the whole block unparseable, so the dispatch layer
+ * surfaces the dropped list through `raw` (issues #229 and #240); this covers a
+ * label that already holds a value, including the required `blockers`, not only
+ * an empty optional one. A bullet with no space after its marker counts as a
+ * list line, and a label that indentation or markdown decoration hides also
+ * makes the block unparseable, so `raw` carries its value (issue #243).
  * @param {string} response
- * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
+ * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
  */
 export function parseReportBlock(response) {
   const block = closingBlock(response);
