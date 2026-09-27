@@ -200,7 +200,9 @@ export async function runLoop(options) {
         // the loop's own recorded-finish code 0, but it emits a
         // machine-readable event and reports the marker, so it never reads the
         // same as a verified finish (#266). The headless process exit code is
-        // the CLI's decision: UNRESOLVED_COMPARE_EXIT (#279).
+        // the CLI's decision: UNRESOLVED_COMPARE_EXIT (#279). A finish that
+        // records the compare and omits the marker reads the same as a verified
+        // one, the accepted gap the contract documents beside the field (#286).
         const unresolvedCompare = action.unresolvedCompare === true;
         if (unresolvedCompare) {
           onEvent({ type: "unresolved-compare", stepsUsed });
