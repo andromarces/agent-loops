@@ -471,7 +471,7 @@ When `--transcript <file>` is specified, a JSON transcript is written upon proce
 
 The transcript records each validated orchestrator action, each child result, and one `invocation` event per CLI call, all with timestamps, plus the final exit code and error. It does not record raw orchestrator responses.
 
-A `refusal` event records a `finish` the runtime refused under `--require-accept`, with the `reason` string and the `stepsUsed` at the refusal. The event follows the refused `action` event, so a reader sees the `finish` action, then the refusal and its reason. A run that refuses twice emits one `refusal` event per refusal, and the second refusal ends the run with exit 1.
+A `refusal` event records a `finish` the runtime refused under `--require-accept`, with the `reason` string and the `stepsUsed` at the refusal. The event follows the refused `action` event, so a reader sees the `finish` action, then the refusal and its reason. A run emits one `refusal` event per refusal. The run ends with exit 1 at the second refusal, or at a first refusal with no step budget left for the corrective turn.
 
 An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude and Copilot adapters map it from the CLI result:
 

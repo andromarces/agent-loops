@@ -1100,8 +1100,9 @@ test("--require-accept keeps an earlier reviewer report after a later failure", 
 });
 
 // 36. Usefulness: verifies a finish refused when the step budget is already used
-// ends on the refusal path with exit 1, and never attempts the corrective child
-// dispatch that the used budget cannot run (issue #248).
+// ends on the refusal path with exit 1, records the refusal event, and never
+// attempts the corrective child dispatch that the used budget cannot run
+// (issues #248, #247).
 test("--require-accept returns the refusal exit 1 when no step budget remains", async () => {
   const repo = await createTempRepo();
   try {
@@ -1111,6 +1112,7 @@ test("--require-accept returns the refusal exit 1 when no step budget remains", 
       JSON.stringify({ action: "run_reviewer", prompt: "review" }),
     ];
     const reviewerAdapter = scripted([]);
+    const events = [];
 
     const result = await runLoop({
       task: "Task 36",
@@ -1123,11 +1125,24 @@ test("--require-accept returns the refusal exit 1 when no step budget remains", 
         work: scripted(["worker changed"]),
         rev: reviewerAdapter,
       },
+      onEvent: (event) => events.push(event),
     });
 
     expect(result.exitCode).toBe(1);
     expect(result.reason).toContain("reviewer accept");
     expect(reviewerAdapter.recorded.length).toBe(0);
+    const refusals = events.filter((e) => e.type === "refusal");
+    expect(refusals).toEqual([
+      {
+        type: "refusal",
+        reason: "no reviewer accept on the latest changed state after a worker turn",
+        stepsUsed: 1,
+      },
+    ]);
+    const finishActionIndex = events.findIndex(
+      (e) => e.type === "action" && e.action.action === "finish",
+    );
+    expect(events[finishActionIndex + 1].type).toBe("refusal");
   } finally {
     await removePath(repo);
   }
