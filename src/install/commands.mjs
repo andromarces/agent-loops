@@ -4,7 +4,7 @@
 // `--harness`.
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { readArgValue, splitInlineFlag } from "../lib/args.mjs";
+import { readArgValue, readInlineValue, splitInlineFlag } from "../lib/args.mjs";
 import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.mjs";
 import { nearestHarness } from "../lib/process-ancestry.mjs";
 import { HARNESS_META, HARNESS_ORDER, isHarness } from "./harnesses.mjs";
@@ -42,10 +42,7 @@ function parseFlags(argv) {
         return readArgValue(argv, flag, ++i);
       }
       inlineUsed = true;
-      if (inline.value === "") {
-        throw new Error(`Missing value for ${flag}.`);
-      }
-      return inline.value;
+      return readInlineValue(inline, flag);
     };
     if (arg === "--harness") {
       options.harnesses = parseHarnessList(readInline(arg));

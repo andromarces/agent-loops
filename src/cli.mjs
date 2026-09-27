@@ -9,6 +9,7 @@ import {
   ROLE_KINDS as ROLES,
   assertOpenCodeOptions,
   readArgValue,
+  readInlineValue,
   readNonNegativeInt,
   readPositiveInt,
   roleFlags,
@@ -54,10 +55,7 @@ export function parseArgs(argv) {
         return readValue(flag, ++i);
       }
       inlineUsed = true;
-      if (inline.value === "") {
-        throw new Error(`Missing value for ${flag}.`);
-      }
-      return inline.value;
+      return readInlineValue(inline, flag);
     };
 
     if (Object.hasOwn(ROLE_FLAGS, arg)) {
