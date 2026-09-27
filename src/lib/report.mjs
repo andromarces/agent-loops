@@ -56,8 +56,8 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // line, so the `--require-accept` gate also refuses. `acceptGateReason` in
 // src/role.mjs returns "the accepted review has no Checks line", and
 // `isAcceptedReview` in src/runtime.mjs returns false. Both directions fail
-// closed, but the report loses its text to `raw` and the refusal reason names
-// the wrong cause. The residual gap is a spaceless bullet whose
+// closed, but the report loses its text to `raw`, and the `acceptGateReason`
+// refusal names the wrong cause. The residual gap is a spaceless bullet whose
 // later `*` a letter precedes and a space, a punctuation, or end of line
 // follows (`*file*`, `*glob src/a*`, `*use a* b`); that shape is the CommonMark
 // shape of a real emphasis run, so it stays prose and the item is dropped
