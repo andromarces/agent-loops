@@ -310,7 +310,7 @@ test.skipIf(!canCreateSymlink)(
       expect(b.exact).toBe(true);
       expect(a.digest).not.toBe(b.digest);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await removePath(repo);
     }
   },
 );
@@ -333,7 +333,7 @@ test.skipIf(!canCreateSymlink)(
       const b = reviewedState(await snapshot(repo));
       expect(a.digest).not.toBe(b.digest);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await removePath(repo);
     }
   },
 );
@@ -354,7 +354,7 @@ test.skipIf(!canCreateSymlink)(
       const fileState = reviewedState(await snapshot(repo));
       expect(linkState.digest).not.toBe(fileState.digest);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await removePath(repo);
     }
   },
 );
@@ -377,7 +377,7 @@ test.skipIf(!canCreateSymlink)(
         }),
       ).rejects.toThrow(MutationError);
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await removePath(repo);
     }
   },
 );

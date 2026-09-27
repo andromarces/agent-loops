@@ -117,7 +117,7 @@ test("headless reviewer result carries the runtime reviewed state", async () => 
     expect(resultPromptText).toContain('"clean": true');
     expect(resultPromptText).toContain('"exact": true');
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
