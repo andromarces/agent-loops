@@ -1058,3 +1058,37 @@ test("--require-accept keeps an earlier reviewer report after a later failure", 
     await removePath(repo);
   }
 });
+
+// 36. Usefulness: verifies a finish refused when the step budget is already used
+// ends on the refusal path with exit 1, and never attempts the corrective child
+// dispatch that the used budget cannot run (issue #248).
+test("--require-accept returns the refusal exit 1 when no step budget remains", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+    ];
+    const reviewerAdapter = scripted([]);
+
+    const result = await runLoop({
+      task: "Task 36",
+      cwd: repo,
+      maxSteps: 1,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: reviewerAdapter,
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("reviewer accept");
+    expect(reviewerAdapter.recorded.length).toBe(0);
+  } finally {
+    await removePath(repo);
+  }
+});
