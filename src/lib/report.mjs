@@ -7,6 +7,7 @@ const REPORT_LABELS = [
   ["conclusion", "Conclusion", false],
   ["why", "Why", false],
   ["blockers", "Blockers", false],
+  ["checks", "Checks", true],
   ["notes", "Notes", true],
   ["deferred", "Deferred", true],
 ];
@@ -29,15 +30,15 @@ function closingBlock(response) {
 }
 
 /**
- * Extracts the closing block as `{ conclusion, why, blockers, notes, deferred }`.
+ * Extracts the closing block as `{ conclusion, why, blockers, checks, notes, deferred }`.
  * Each label is matched case-insensitively at line start inside the closing
  * block only; the last occurrence in that range wins. `conclusion`, `why`, and
  * `blockers` are required, and a missing or empty one makes the whole block
- * unparseable. `notes` and `deferred` are optional: an absent or empty label
- * maps to null and never makes the block null, so a response in the pre-#214
- * format stays parseable.
+ * unparseable. `checks`, `notes`, and `deferred` are optional: an absent or
+ * empty label maps to null and never makes the block null, so a response in the
+ * pre-#214 format stays parseable.
  * @param {string} response
- * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
+ * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
  */
 export function parseReportBlock(response) {
   const block = closingBlock(response);

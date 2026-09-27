@@ -286,14 +286,23 @@ Stdout carries exactly one JSON envelope; all logs go to stderr:
     "conclusion": "...",
     "why": "...",
     "blockers": "...",
+    "checks": "...",
     "notes": "...",
     "deferred": "..."
   },
-  "verdict": "accept"
+  "verdict": "accept",
+  "reviewed": {
+    "head": "...",
+    "clean": true,
+    "exact": true,
+    "digest": "..."
+  }
 }
 ```
 
-`report` is parsed from the closing block every child turn must end with. `conclusion`, `why`, and `blockers` are required; `notes` (non-blocking findings) and `deferred` (out-of-scope items) are optional, and an omitted label yields `null` for that field without making `report` null. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
+`report` is parsed from the closing block every child turn must end with. `conclusion`, `why`, and `blockers` are required; `checks` (the commands that ran and their results), `notes` (non-blocking findings), and `deferred` (out-of-scope items) are optional, and an omitted label yields `null` for that field without making `report` null. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
+
+A reviewer envelope carries `reviewed`: `{ head, clean, exact, digest }` from the snapshot the runtime takes before the reviewer turn, so the child cannot misreport it. `head` is the commit, `clean` is true when the work tree has no uncommitted entries, `exact` is true when every entry has a content hash or is a deletion, and `digest` identifies the uncommitted state. A symlink hashes its link target text, so two links with different targets have different digests, dangling included.
 
 ## Interactive orchestrator: harness entry points
 

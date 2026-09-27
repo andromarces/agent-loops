@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -8,6 +8,7 @@ import {
   SnapshotError,
   assertGitWorkTree,
   diffSnapshots,
+  reviewedState,
   sha256File,
   snapshot,
   withMutationCheck,
@@ -240,6 +241,124 @@ test("snapshot succeeds in repository with no commits and reports unborn head", 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// Usefulness: verifies reviewedState reports clean only for a work tree with no
+// entries (issue #217).
+test("reviewedState reports clean only for an empty work tree", () => {
+  expect(reviewedState({ head: "abc", indexHash: "idx", workTree: [] })).toMatchObject({
+    clean: true,
+    exact: true,
+  });
+  const dirty = reviewedState({
+    head: "abc",
+    indexHash: "idx",
+    workTree: [{ path: "a.txt", status: " M", hash: "h" }],
+  });
+  expect(dirty.clean).toBe(false);
+});
+
+// Usefulness: verifies a deletion keeps exact true while another null-hash
+// entry, such as a submodule, makes exact false, so the parent knows when the
+// digest is exhaustive (issue #217).
+test("reviewedState treats a deletion as exact and any other null hash as inexact", () => {
+  const base = { head: "abc", indexHash: "idx" };
+  const deletion = reviewedState({
+    ...base,
+    workTree: [{ path: "gone.txt", status: " D", hash: null }],
+  });
+  expect(deletion.exact).toBe(true);
+  const submodule = reviewedState({
+    ...base,
+    workTree: [{ path: "sub", status: " M", hash: null }],
+  });
+  expect(submodule.exact).toBe(false);
+});
+
+// Usefulness: verifies the digest separates two different uncommitted states at
+// the same head and repeats for the same state (issue #217).
+test("reviewedState digest separates different states and repeats for the same state", () => {
+  const snap = (hash) => ({
+    head: "abc",
+    indexHash: "idx",
+    workTree: [{ path: "a.txt", status: " M", hash }],
+  });
+  const first = reviewedState(snap("h1"));
+  expect(reviewedState(snap("h1")).digest).toBe(first.digest);
+  expect(reviewedState(snap("h2")).digest).not.toBe(first.digest);
+});
+
+// Platform note: Windows refuses symlink creation without developer mode or an
+// elevated token, so the symlink cases run only on POSIX and macOS.
+const canCreateSymlink = process.platform !== "win32";
+
+// Usefulness: verifies two dangling symlinks with different targets produce
+// different digests, where the old content-following hash collapsed both to
+// null (issue #217).
+test.skipIf(!canCreateSymlink)(
+  "two dangling symlink targets produce different digests",
+  async () => {
+    const repo = await createTempRepo();
+    try {
+      const link = join(repo, "link");
+      await symlink("missing-a", link);
+      const a = reviewedState(await snapshot(repo));
+      await rm(link);
+      await symlink("missing-b", link);
+      const b = reviewedState(await snapshot(repo));
+      expect(a.exact).toBe(true);
+      expect(b.exact).toBe(true);
+      expect(a.digest).not.toBe(b.digest);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  },
+);
+
+// Usefulness: verifies two symlinks with different target text produce
+// different digests even when the targets hold identical content, so the link
+// itself has a content identity (issue #217).
+test.skipIf(!canCreateSymlink)(
+  "symlinks with different targets and equal content differ",
+  async () => {
+    const repo = await createTempRepo();
+    try {
+      await writeFile(join(repo, "target-a.txt"), "same\n");
+      await writeFile(join(repo, "target-b.txt"), "same\n");
+      const link = join(repo, "link");
+      await symlink("target-a.txt", link);
+      const a = reviewedState(await snapshot(repo));
+      await rm(link);
+      await symlink("target-b.txt", link);
+      const b = reviewedState(await snapshot(repo));
+      expect(a.digest).not.toBe(b.digest);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  },
+);
+
+// Usefulness: verifies the reviewer mutation check detects a changed symlink
+// target, the case the old content-following hash missed for dangling links
+// (issue #217).
+test.skipIf(!canCreateSymlink)(
+  "withMutationCheck fails when a symlink target changes",
+  async () => {
+    const repo = await createTempRepo();
+    try {
+      const link = join(repo, "link");
+      await symlink("missing-a", link);
+      await expect(
+        withMutationCheck(repo, "reviewer", async () => {
+          await rm(link);
+          await symlink("missing-b", link);
+          return "done";
+        }),
+      ).rejects.toThrow(MutationError);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  },
+);
 
 // Platform note: Windows ignores POSIX mode bits, so read-denial cannot be simulated there.
 const canSimulateReadFailure = process.platform !== "win32";

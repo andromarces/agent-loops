@@ -34,7 +34,12 @@ The finish summary requires non-empty strings for all five keys: changed, verifi
 
 When you dispatch the reviewer, name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them. Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it.
 
-Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes and deferred are optional, and the block stays valid when the child omits them.
+Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes, deferred, and checks are optional, and the block stays valid when the child omits them.
+
+A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. The report carries an optional Checks line that names the commands that ran and their results. Apply these parent rules:
+- Compare reviewed.head with the PR head before finish.
+- Require reviewed.clean: true for PR work.
+- Treat an accept without a Checks line as not accepted.
 
 Map the report fields into the finish summary:
 - Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.
@@ -53,6 +58,7 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
     role: result.role,
     status: result.status,
     ...(result.status === "ok" ? { response: result.response } : { error: result.error }),
+    ...(result.reviewed ? { reviewed: result.reviewed } : {}),
     stepsUsed,
     stepsRemaining,
   };

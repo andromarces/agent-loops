@@ -522,6 +522,9 @@ function dispatchPayload(roleName, result) {
   const payload = { role: roleName, status: "ok", report };
   if (roleName === "reviewer") {
     payload.verdict = parseVerdict(result.response);
+    if (result.reviewed) {
+      payload.reviewed = result.reviewed;
+    }
   }
   if (!report) {
     payload.raw = result.response.slice(-RAW_TAIL_LIMIT);
