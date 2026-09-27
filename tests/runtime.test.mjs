@@ -864,6 +864,7 @@ const REVIEW_ACCEPT = [
   "Conclusion: the state passes.",
   "Why: changes match the task.",
   "Blockers: none.",
+  "Checks: npm test",
   "Verdict: accept",
 ].join("\n");
 const REVIEW_REJECT = [
@@ -1135,7 +1136,8 @@ test("--require-accept returns the refusal exit 1 when no step budget remains", 
     expect(refusals).toEqual([
       {
         type: "refusal",
-        reason: "no reviewer accept on the latest changed state after a worker turn",
+        reason:
+          "no reviewer accept with a Checks line on the latest changed state after a worker turn",
         stepsUsed: 1,
       },
     ]);
@@ -1180,12 +1182,14 @@ test("--require-accept records a refused finish as a refusal event", async () =>
     expect(refusals).toEqual([
       {
         type: "refusal",
-        reason: "no reviewer accept on the latest changed state after a worker turn",
+        reason:
+          "no reviewer accept with a Checks line on the latest changed state after a worker turn",
         stepsUsed: 1,
       },
       {
         type: "refusal",
-        reason: "no reviewer accept on the latest changed state after a worker turn",
+        reason:
+          "no reviewer accept with a Checks line on the latest changed state after a worker turn",
         stepsUsed: 1,
       },
     ]);
@@ -1203,7 +1207,45 @@ test("--require-accept records a refused finish as a refusal event", async () =>
   }
 });
 
-// 38. Usefulness: verifies a finish that reports an unresolved PR-head compare
+// 38. Usefulness: verifies the gate treats a reviewer accept with no Checks line
+// as not accepted, matching the parent prompt rule (issue #217, issue #218).
+test("--require-accept treats an accept without a Checks line as not accepted", async () => {
+  const repo = await createTempRepo();
+  try {
+    const acceptNoChecks = [
+      "Conclusion: the state passes.",
+      "Why: changes match the task.",
+      "Blockers: none.",
+      "Verdict: accept",
+    ].join("\n");
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+
+    const result = await runLoop({
+      task: "Task 38",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: scripted([acceptNoChecks]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("Checks");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 39. Usefulness: verifies a finish that reports an unresolved PR-head compare
 // records a distinct `unresolved-compare` event and still exits 0 with the
 // summary, so the recorded finish no longer reads as a verified finish (#266).
 test("finish with unresolvedCompare records an unresolved-compare event", async () => {
@@ -1220,7 +1262,7 @@ test("finish with unresolvedCompare records an unresolved-compare event", async 
     const events = [];
 
     const result = await runLoop({
-      task: "Task 38",
+      task: "Task 39",
       cwd: repo,
       maxSteps: 5,
       roles: gateRoles(),
@@ -1241,7 +1283,7 @@ test("finish with unresolvedCompare records an unresolved-compare event", async 
   }
 });
 
-// 39. Usefulness: verifies a non-PR finish that carries no marker keeps its
+// 40. Usefulness: verifies a non-PR finish that carries no marker keeps its
 // current behavior: exit 0 with the summary and no unresolved-compare event (#266).
 test("finish without unresolvedCompare records no unresolved-compare event", async () => {
   const repo = await createTempRepo();
@@ -1250,7 +1292,7 @@ test("finish without unresolvedCompare records no unresolved-compare event", asy
     const events = [];
 
     const result = await runLoop({
-      task: "Task 39",
+      task: "Task 40",
       cwd: repo,
       maxSteps: 5,
       roles: gateRoles(),
