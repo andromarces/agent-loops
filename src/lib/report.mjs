@@ -11,13 +11,6 @@ const REPORT_LABELS = [
   ["deferred", "Deferred", true],
 ];
 
-// A line that opens any label in the closing block, including the reviewer's
-// Verdict line. Bounds the search for a list a label would drop.
-const LABEL_LINE = new RegExp(
-  `^(?:${REPORT_LABELS.map(([, label]) => label).join("|")}|Verdict):`,
-  "i",
-);
-
 // A markdown list line, for example `- item`, `* item`, or `1. item`.
 const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])\s+/;
 
@@ -49,17 +42,22 @@ function closingBlock(response) {
  * `blockers` are required, and a missing or empty one makes the whole block
  * unparseable. `notes` and `deferred` are optional: an absent or empty label
  * maps to null and never makes the block null, so a response in the pre-#214
- * format stays parseable. A label followed by a list line, for example bullets,
- * instead makes the whole block unparseable, so the dispatch layer surfaces the
- * dropped list through `raw` (issues #229 and #240). This covers a label that
- * already holds a value, including the required `blockers`, not only an empty
- * optional one.
+ * format stays parseable. A list line anywhere in the block, for example
+ * bullets, instead makes the whole block unparseable, so the dispatch layer
+ * surfaces the dropped list through `raw` (issues #229, #240, and #249). The
+ * scan covers every label occurrence, not only the winning last one, so a list
+ * under a shadowed earlier occurrence is not dropped; it also covers a list
+ * after the reviewer `Verdict:` line. This covers a label that already holds a
+ * value, including the required `blockers`, not only an empty optional one.
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
  */
 export function parseReportBlock(response) {
   const block = closingBlock(response);
   if (!block) {
+    return null;
+  }
+  if (hasDroppedList(block)) {
     return null;
   }
   const report = {};
@@ -70,9 +68,6 @@ export function parseReportBlock(response) {
         report[key] = null;
         continue;
       }
-      return null;
-    }
-    if (hasListAfter(block, found.index)) {
       return null;
     }
     if (found.value === "") {
@@ -88,22 +83,15 @@ export function parseReportBlock(response) {
 }
 
 /**
- * True when a list line follows `index` before the next label line or the end
- * of the block. Such a list would otherwise be dropped, because a label holds
- * one line and the list below it is never read. A thematic break is not a list.
+ * True when the block holds a list line that no label reads. A label holds one
+ * line, so a list anywhere in the block is dropped, including under an earlier
+ * occurrence of a label that a later occurrence shadows and after the reviewer
+ * `Verdict:` line. A thematic break is not a list.
  * @param {string[]} lines
- * @param {number} index
  * @returns {boolean}
  */
-function hasListAfter(lines, index) {
-  for (let i = index + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === "") {
-      continue;
-    }
-    if (LABEL_LINE.test(line)) {
-      return false;
-    }
+function hasDroppedList(lines) {
+  for (const line of lines) {
     if (LIST_LINE.test(line) && !THEMATIC_BREAK.test(line)) {
       return true;
     }

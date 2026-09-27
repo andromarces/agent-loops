@@ -154,6 +154,35 @@ test("parseReportBlock keeps a block whose label is followed by a thematic break
   }
 });
 
+// Usefulness: verifies a list under an earlier, shadowed occurrence of a label
+// is not dropped when a later occurrence wins the label value; the whole block
+// is unparseable, so the dispatch layer surfaces the list through `raw` (issue
+// #249).
+test("parseReportBlock returns null when a list sits under a shadowed earlier label", () => {
+  expect(
+    parseReportBlock(`${REPORT}\nNotes: first pass\n- dropped item\nNotes: second pass`),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a list after the reviewer Verdict line makes the block
+// unparseable, so the list surfaces through `raw` instead of being dropped
+// (issue #249, folded from the #240 review).
+test("parseReportBlock returns null when a list follows the Verdict line", () => {
+  expect(parseReportBlock(`${REPORT}\nVerdict: accept\n- dropped item`)).toBeNull();
+});
+
+// Usefulness: verifies the wider #249 list scan does not change which value a
+// repeated label yields: the last occurrence still wins when no list appears.
+test("parseReportBlock keeps last-occurrence-wins for a repeated label without a list", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: first pass\nNotes: second pass`)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: "second pass",
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies only the last Conclusion block counts, so a verdict or
 // report in earlier prose never leaks into the parsed result.
 test("parseReportBlock parses only after the last Conclusion line", () => {
