@@ -500,10 +500,12 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
     { "type": "action", "at": "...", "stepsUsed": 0, "action": { ... } },
     { "type": "invocation", "at": "...", "stepsUsed": 1, "role": "worker", "status": "ok", "usage": { ... } },
     { "type": "result", "at": "...", "stepsUsed": 1, "role": "worker", "result": { ... } },
+    { "type": "invocation", "at": "...", "stepsUsed": 1, "role": "orchestrator", "status": "ok", "usage": { ... } },
     { "type": "action", "at": "...", "stepsUsed": 1, "action": { "action": "finish", "summary": { ... } } },
     { "type": "refusal", "at": "...", "stepsUsed": 1, "reason": "no reviewer accept on the latest changed state after a worker turn" },
     { "type": "invocation", "at": "...", "stepsUsed": 2, "role": "reviewer", "status": "ok", "usage": { ... } },
     { "type": "result", "at": "...", "stepsUsed": 2, "role": "reviewer", "result": { ... } },
+    { "type": "invocation", "at": "...", "stepsUsed": 2, "role": "orchestrator", "status": "ok", "usage": { ... } },
     { "type": "action", "at": "...", "stepsUsed": 2, "action": { "action": "finish", "summary": { ... } } }
   ],
   "exitCode": 0,
