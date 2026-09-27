@@ -26,7 +26,21 @@ function fail(reason) {
 // `Branch not protected`, and a `GITHUB_TOKEN` without the admin scope gets
 // `Resource not accessible by integration`. Both mean the same thing to this
 // gate, that the source contributes no required contexts.
-const UNREADABLE = /HTTP (?:403|404)\b|\b(?:403|404)\b/;
+//
+// Match the message, not the status. `gh` renders every failure as
+// `gh: <message> (HTTP <status>)`, so a rate-limit or SSO 403 carries the same
+// suffix as the unreadable-source 403 and the status cannot tell them apart.
+// Reading a rate-limit 403 as an unreadable source would silently drop every
+// required context and downgrade a named check refusal to the generic blocked
+// refusal, so anything unrecognized throws instead. A narrower match only costs a
+// thrown error, which still fails closed.
+//
+// known-limit: these two messages are the only unreadable-source replies observed
+// live, both on the classic-protection endpoint (#280). A different message for the
+// same condition throws rather than contributing no contexts, which refuses the
+// finish. Widen this list when another unreadable-source reply is observed.
+const UNREADABLE =
+  /Branch not protected \(HTTP 404\)|Resource not accessible by integration \(HTTP 403\)/;
 
 async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
@@ -304,9 +318,11 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   // classic-protection-only repo a caller without admin rights cannot enumerate
   // a required check that never started; GitHub reports that PR as blocked to such
   // a caller, confirmed live with a non-admin `GITHUB_TOKEN` (#280). When no other
-  // required check reported, the empty-union refusal above fires first. The GraphQL
-  // `mergeStateStatus` and the REST `mergeable_state` disagree on the same pull
-  // request, so this reads the GraphQL field. Other unmet rules (a required review,
+  // required check reported, the empty-union refusal above fires first. The REST
+  // `mergeable_state` reads `blocked` for an admin and `unstable` for an anonymous
+  // caller on that same pull request, so it is not a stable signal; the GraphQL
+  // `mergeStateStatus` reads `BLOCKED` for both, so this reads the GraphQL field.
+  // Other unmet rules (a required review,
   // unresolved conversations, a required deployment) also report blocked, and the
   // gate cannot tell them apart, so it fails closed (#271).
   if (info.mergeStateStatus === "BLOCKED") {

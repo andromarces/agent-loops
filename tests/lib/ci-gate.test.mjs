@@ -37,8 +37,9 @@ function run(name, conclusion) {
 }
 
 // Routes a `gh` call by a substring of its arguments. A null value answers with
-// the 404 that the caller treats as "no protection" and a `forbidden` value with
-// the 403 a `GITHUB_TOKEN` receives from the same endpoint; an unmatched call is
+// the 404 that the caller treats as "no protection", a `forbidden` value with
+// the 403 a `GITHUB_TOKEN` receives from the same endpoint, and a `rate limited`
+// value with a 403 that is not an unreadable-source answer; an unmatched call is
 // an error so a test never passes on a missing fixture.
 function fakeGh(routes) {
   return async (args) => {
@@ -54,6 +55,9 @@ function fakeGh(routes) {
             stdout: "",
             stderr: "gh: Resource not accessible by integration (HTTP 403)",
           };
+        }
+        if (value === "rate limited") {
+          return { status: 1, stdout: "", stderr: "gh: API rate limit exceeded (HTTP 403)" };
         }
         if (typeof value === "string") {
           return { status: 0, stdout: value, stderr: "" };
@@ -416,6 +420,28 @@ test("refuses on the empty union when classic protection answers 403", async () 
     ok: false,
     reason: "no required checks were found for the base branch",
   });
+});
+
+// Usefulness: verifies a 403 that is not the unreadable-source answer is not
+// swallowed. A rate-limit or SSO 403 on the same status would otherwise count as
+// "no required contexts" and downgrade a named check refusal to the generic
+// blocked refusal, so the gate throws on it instead (issue #280).
+test("does not read a rate-limit 403 from classic protection as no contexts", async () => {
+  await expect(
+    checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required: [],
+          protection: "rate limited",
+          prChecks: [{ name: "ci (ubuntu-latest)" }],
+          headRuns: [run("ci (ubuntu-latest)", "failure")],
+        }),
+      ),
+    }),
+  ).rejects.toThrow(/HTTP 403/);
 });
 
 // Usefulness: verifies an app-qualified context from classic branch protection

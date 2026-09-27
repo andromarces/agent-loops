@@ -350,7 +350,7 @@ test("--require-ci refuses an unknown merge state and passes a clean PR", async 
       ]);
     }
     if (key.includes("branches/main/protection")) {
-      return { status: 1, stdout: "", stderr: "HTTP 404" };
+      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
     }
     if (key.includes("/check-runs")) {
       return json([

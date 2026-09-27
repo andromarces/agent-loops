@@ -301,10 +301,10 @@ the current behavior, and each flag fails with a clear error.
   an app (a ruleset `integration_id` or a classic-protection `app_id`) is
   satisfied only by a check run from that app, and an unqualified copy of that
   name is dropped. Repository rulesets are readable with read access; classic
-  branch protection is unreadable to a caller without admin rights, answering 404
-  `Branch not protected` to a token without repository admin and 403 `Resource not
-accessible by integration` to a `GITHUB_TOKEN`, and `gh pr checks --required`
-  lists only checks that already reported on the commit. A
+  branch protection is not readable to a caller without admin rights, which
+  answers 404 or 403 depending on the credential, and both leave that source with
+  no required contexts, and `gh pr checks --required` lists only checks that
+  already reported on the commit. A
   blocked merge state refuses after the per-check pass, so a named check refusal
   keeps its name and a required check that never started cannot escape the gate,
   through that refusal or, when no required check reported at all, the empty-union
