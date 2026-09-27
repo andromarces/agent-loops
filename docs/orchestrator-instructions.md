@@ -174,7 +174,9 @@ Apply these parent rules:
   network access, do not finish as verified: abort, or record the unresolved
   compare under notDone and open in the finish summary. A recorded compare also
   sets the machine-readable marker described under Finish output, so the record
-  never reads the same as a verified finish.
+  never reads the same as a verified finish. That marker is the only trace, and
+  a finish that records the compare and omits it is indistinguishable from a
+  verified finish (issue #286, accepted gap).
 
 ## Reviewer prompts
 
@@ -273,6 +275,12 @@ field absent, or set to `false`, is a verified finish. The marker cannot be
 combined with `--require-ci`: that gate resolves the PR head itself, so a
 compare it verified is not unresolved. A run that cannot use `--require-ci`,
 for example a base branch with no required checks, records the marker.
+
+The runtime never resolves the PR head, so it cannot tell an absent field from a
+verified compare. A finish that records the compare under notDone and open and
+omits the field is a verified finish to every consumer, here and in the headless
+path, which has no PR gate at all. `--require-ci` is the only gate that closes
+the gap, because it resolves the head in the runtime (issue #286, accepted gap).
 
 A marked `role finish` still exits `0`, unlike the headless finish that exits
 `4` for the same marker. The exit code is not the outcome channel of this

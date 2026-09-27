@@ -55,6 +55,20 @@ export function validateAction(value) {
       // unresolved PR-head compare instead of verifying it (#266). Free-text
       // `verified` cannot carry this, so the runtime emits a distinct
       // `unresolved-compare` transcript event on the strength of this field.
+      //
+      // known-limit: the marker is parent-set, and an omitted marker is
+      // indistinguishable from a verified finish (issue #286, accepted gap). A
+      // parent that records the unresolved compare under `notDone` and `open`
+      // and omits this field yields a finish that reads exactly like a verified
+      // one: loop exit 0, no `unresolved-compare` event, no marker in the result,
+      // and the same for the interactive envelope and state file. The omission
+      // needs the PR head to detect, and only the parent has it: the headless
+      // loop holds the task text, the interactive state holds no PR number, and
+      // `--require-ci <pr>` is the only PR input either path takes. Ceiling: one
+      // finish that claims a compare nothing verified, per run. Upgrade path:
+      // resolve the PR head in the runtime (extend `--require-ci` to the
+      // headless loop), so the outcome comes from a gate result rather than a
+      // parent-declared field and this marker stops being the only signal.
       if (value.unresolvedCompare !== undefined) {
         if (typeof value.unresolvedCompare !== "boolean") {
           return { ok: false, error: "finish unresolvedCompare must be a boolean." };

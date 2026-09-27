@@ -83,6 +83,9 @@ test("initialPrompt names the unresolvedCompare marker", () => {
   );
   expect(prompt).toContain("unresolved-compare event");
   expect(prompt).toContain("exits 4 instead of 0");
+  // The marker is the only trace, so the prompt must say an omitted one is
+  // undetectable, or the parent cannot know the omission costs the signal (#286).
+  expect(prompt).toContain("the runtime cannot detect that (issue #286, accepted gap)");
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt
