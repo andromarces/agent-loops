@@ -133,7 +133,7 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * anything else refuses it. Every other refusal needs a child turn to satisfy it,
  * and any child turn separately clears the prior-refusal flag; a second refused
  * finish with no child turn in between ends the run. That turn costs a step, so a
- * finish refused for a pending check consumes step budget to clear it, and a
+ * finish refused for a pending check consumes step budget to satisfy it, and a
  * worker turn is needed only when the condition is about the change: a worker
  * turn resets the reviewed state to none, and a gate reads that state, which only
  * a reviewer turn establishes. Without the flag the marker stays the only trace,
@@ -185,9 +185,9 @@ export async function runLoop(options) {
   let acceptedSinceWorker = false;
   let finishRefused = false;
   // The reviewed state the `--require-ci` gate reads: the runtime-owned identity
-  // of the last reviewer turn, cleared by any later turn, so a change made after
-  // that review cannot be gated against the older head (#293). It mirrors the
-  // interactive `lastResult.reviewed` the role gate reads.
+  // of the last reviewer turn, reset to none by any later turn, so a change made
+  // after that review cannot be gated against the older head (#293). It mirrors
+  // the interactive `lastResult.reviewed` the role gate reads.
   let lastReviewed = null;
 
   const orchAdapter = {
@@ -228,7 +228,7 @@ export async function runLoop(options) {
       // matches the interactive `role finish`: the marker combination, the
       // completion rule, then the PR gate.
       const refusals = [];
-      // The marker is cleared by editing the finish action itself, so it is the
+      // The marker is satisfied by editing the finish action itself, so it is the
       // one refusal that a re-finish can satisfy without a child turn. Every other
       // refusal needs one, and forcing it on the marker would spend a step and
       // start a review cycle the run did not need (#293).
@@ -363,7 +363,8 @@ export const UNRESOLVED_COMPARE_WITH_CI =
  * error leaves the run `active` for the parent to retry. The headless run has
  * no retry outside this refusal, so throwing would discard a run that a later
  * turn could pass. The refusal fails closed either way, and any child turn
- * clears it, so a retry costs a step rather than ending the run.
+ * clears the prior-refusal flag, so a retry costs a step rather than ending the
+ * run.
  * @param {object} options
  * @returns {Promise<{ reason: string, recovery: string } | null>}
  */
