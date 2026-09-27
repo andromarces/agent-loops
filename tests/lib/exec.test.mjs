@@ -1,6 +1,10 @@
 import { afterEach, expect, test, vi } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ExecError, exec } from "../../src/lib/exec.mjs";
 import { setVerbose } from "../../src/lib/log.mjs";
+import { pidAlive } from "../../src/lib/runstate.mjs";
 
 afterEach(() => {
   setVerbose(false);
@@ -142,50 +146,90 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-// Usefulness: verifies best-effort descendant kill when canceling a process tree.
+// Usefulness: verifies descendant kill when canceling a process tree.
 test("exec terminates descendants when canceled", async () => {
   const controller = new AbortController();
+  const dir = await mkdtemp(join(tmpdir(), "agent-loop-exec-"));
+  const pidFile = join(dir, "grandchild.pid");
 
-  // Child spawns a long-running grandchild and prints grandchild's pid
+  // On Windows, Node places the direct child's descendants in a job object, so
+  // killing the direct child also kills the grandchild. That hides whether
+  // execa ran its own tree kill. A detached grandchild opts out of the job
+  // object: it survives a plain parent kill, yet taskkill /T still reaches it,
+  // so the assertion below fails if descendant termination breaks. On POSIX the
+  // grandchild stays in the direct child's process group, which the group
+  // signal reaches.
+  const grandchildOptions =
+    process.platform === "win32"
+      ? '{ stdio: "ignore", detached: true, windowsHide: true }'
+      : '{ stdio: "ignore" }';
+
+  // Child spawns a long-running grandchild and writes the grandchild pid to a
+  // file. The file is the readiness signal: the test knows the descendant
+  // exists before it cancels, without guessing at a fixed delay.
   const script = `
     const { spawn } = require("node:child_process");
-    const sub = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-    console.log(sub.pid);
+    const { writeFileSync } = require("node:fs");
+    const sub = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], ${grandchildOptions});
+    writeFileSync(${JSON.stringify(pidFile)}, String(sub.pid));
+    setInterval(() => {}, 1000);
   `;
 
   let grandchildPid = null;
-  const promise = exec(process.execPath, ["-e", script], { signal: controller.signal });
-
-  // Give it a moment to spawn and output
-  await new Promise((r) => setTimeout(r, 400));
-  controller.abort();
-
-  let caughtErr;
   try {
-    await promise;
-  } catch (err) {
-    caughtErr = err;
-    const match = err.stdout.trim().match(/(\d+)/);
-    if (match) {
-      grandchildPid = Number(match[1]);
+    const promise = exec(process.execPath, ["-e", script], { signal: controller.signal });
+
+    const spawnDeadline = Date.now() + 5000;
+    while (grandchildPid === null && Date.now() < spawnDeadline) {
+      grandchildPid = await readPidFile(pidFile);
+      if (grandchildPid === null) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
     }
-  }
 
-  expect(caughtErr).toBeInstanceOf(ExecError);
-  expect(caughtErr.isCanceled).toBe(true);
+    controller.abort();
 
-  if (grandchildPid) {
-    await new Promise((r) => setTimeout(r, 200));
-    let isAlive = false;
+    let caughtErr;
     try {
-      process.kill(grandchildPid, 0);
-      isAlive = true;
-    } catch {
-      isAlive = false;
+      await promise;
+    } catch (err) {
+      caughtErr = err;
     }
-    expect(isAlive).toBe(false);
+
+    expect(caughtErr).toBeInstanceOf(ExecError);
+    expect(caughtErr.isCanceled).toBe(true);
+    expect(grandchildPid).not.toBeNull();
+
+    // Descendant termination is dispatched asynchronously (on Windows, taskkill
+    // runs without being awaited), so the grandchild can outlive the cancel
+    // rejection by more than any fixed delay. Poll to a deadline instead of
+    // sampling once, so slow teardown under load does not read as a surviving
+    // descendant (issue #221).
+    const exitDeadline = Date.now() + 5000;
+    while (pidAlive(grandchildPid) && Date.now() < exitDeadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(pidAlive(grandchildPid)).toBe(false);
+  } finally {
+    if (grandchildPid !== null && pidAlive(grandchildPid)) {
+      try {
+        process.kill(grandchildPid);
+      } catch {
+        // Already gone.
+      }
+    }
+    await rm(dir, { recursive: true, force: true });
   }
 });
+
+async function readPidFile(path) {
+  try {
+    const text = (await readFile(path, "utf8")).trim();
+    return text === "" ? null : Number(text);
+  } catch {
+    return null;
+  }
+}
 
 // Usefulness: verifies issue #26 — each agent invocation logs start and successful stop with
 // the command name, duration, and exit code at info level.
