@@ -38,10 +38,12 @@ function run(name, conclusion) {
 
 // Routes a `gh` call by a substring of its arguments. A `hidden` value answers
 // with the 404 a token without repository admin receives, a `forbidden` value
-// with the 403 a `GITHUB_TOKEN` receives, and a `rate limited` value with a 403
-// that is not an unreadable-source answer; an unmatched call is an error so a
-// test never passes on a missing fixture. `null` is the admin reply for a branch
-// with no classic protection, which is also unreadable but says so differently.
+// with the 403 a `GITHUB_TOKEN` receives, a `pat forbidden` value with the 403 a
+// fine-grained PAT without the Administration permission receives, and a
+// `rate limited` value with a 403 that is not an unreadable-source answer; an
+// unmatched call is an error so a test never passes on a missing fixture. `null`
+// is the admin reply for a branch with no classic protection, which is also
+// unreadable but says so differently.
 function fakeGh(routes) {
   return async (args) => {
     const key = args.join(" ");
@@ -58,6 +60,13 @@ function fakeGh(routes) {
             status: 1,
             stdout: "",
             stderr: "gh: Resource not accessible by integration (HTTP 403)",
+          };
+        }
+        if (value === "pat forbidden") {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "gh: Resource not accessible by personal access token (HTTP 403)",
           };
         }
         if (value === "rate limited") {
@@ -490,6 +499,73 @@ test("does not read a rate-limit 403 from classic protection as no contexts", as
       ),
     }),
   ).rejects.toThrow(/HTTP 403/);
+});
+
+// Usefulness: verifies a 403 from a fine-grained PAT without the Administration
+// permission leaves the source unreadable rather than failing the run, so the
+// caller reaches a named refusal. Before the message match, this threw even
+// though the PAT has repository read access (issue #295).
+test("treats a fine-grained PAT 403 from classic protection as an unreadable source", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        required: [],
+        protection: "pat forbidden",
+        prChecks: [{ name: "ci (ubuntu-latest)" }],
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("blocked");
+});
+
+// Usefulness: verifies the same PAT 403 refuses on the empty union when no other
+// readable source names a required check, so a fine-grained PAT caller on a
+// classic-protection-only repository still fails closed (issue #295).
+test("refuses on the empty union when classic protection answers a PAT 403", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        required: [],
+        protection: "pat forbidden",
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result).toEqual({
+    ok: false,
+    reason: "no required checks were found for the base branch",
+  });
+});
+
+// Usefulness: verifies a fine-grained PAT caller passes when every required
+// check passed and the protection source is unreadable. This is the case the
+// missing message broke: a read-capable PAT could never finish (issue #295).
+test("passes for a fine-grained PAT caller when every required check passed", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: [],
+        protection: "pat forbidden",
+        prChecks: [{ name: "ci (ubuntu-latest)" }],
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result).toEqual({ ok: true, commit: HEAD });
 });
 
 // Usefulness: verifies an app-qualified context from classic branch protection

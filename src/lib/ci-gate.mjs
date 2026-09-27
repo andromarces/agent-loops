@@ -22,14 +22,17 @@ function fail(reason) {
 }
 
 // A source the caller cannot read answers 404 or 403, and the message names the
-// credential. Observed live on the classic-protection endpoint (#280):
+// credential. Observed live on the classic-protection endpoint (#280, #295):
 //
 //   `Not Found`                             404  a token without repository admin
 //   `Branch not protected`                  404  an admin, on a branch with no
 //                                                  classic protection
 //   `Resource not accessible by integration` 403  a `GITHUB_TOKEN`
+//   `Resource not accessible by personal
+//    access token`                           403  a fine-grained PAT without the
+//                                                  Administration permission
 //
-// All three leave the source with no required contexts, and the caller refuses an
+// All four leave the source with no required contexts, and the caller refuses an
 // empty union either way, so the gate treats them alike. The second is not a
 // permission problem: the branch simply has no classic protection, and a
 // ruleset-only repository answers it for an admin.
@@ -47,14 +50,8 @@ function fail(reason) {
 // the caller has already read successfully, so a 404 here cannot be a typo in
 // either. A genuine typo instead answers `Branch not found`, which is not
 // matched, so it throws rather than reading as an unreadable source.
-//
-// known-limit: a fine-grained PAT without the Administration permission is
-// expected to answer `Resource not accessible by personal access token` (403),
-// which is not observed, because no such token was available. It throws rather
-// than contributing no contexts, which still refuses the finish. Widen this
-// pattern when that reply is observed.
 const UNREADABLE =
-  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by integration \(HTTP 403\)/;
+  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)/;
 
 async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
