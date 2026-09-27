@@ -1286,16 +1286,26 @@ test("finish with unresolvedCompare records an unresolved-compare event", async 
   }
 });
 
-// 40. Usefulness: verifies a non-PR finish that carries no marker keeps its
-// current behavior: exit 0 with the summary and no unresolved-compare event (#266).
-test("finish without unresolvedCompare records no unresolved-compare event", async () => {
+// 40. Usefulness: pins the accepted gap for #286. A PR-work finish that records
+// the unresolved compare under `notDone` and `open` and omits the marker leaves
+// no machine signal: exit 0, the summary, and no unresolved-compare event, which
+// a consumer cannot tell from a verified finish. The free text is the only trace,
+// so this pins the limit as deliberate instead of letting it drift unnoticed.
+test("a PR finish that omits unresolvedCompare reads as verified", async () => {
   const repo = await createTempRepo();
   try {
-    const orchReplies = [JSON.stringify({ action: "finish", summary: SUMMARY })];
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+    const orchReplies = [JSON.stringify({ action: "finish", summary })];
     const events = [];
 
     const result = await runLoop({
-      task: "Task 40",
+      task: "PR work: address issue 40 through PR 40.",
       cwd: repo,
       maxSteps: 5,
       roles: gateRoles(),
@@ -1304,7 +1314,7 @@ test("finish without unresolvedCompare records no unresolved-compare event", asy
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.summary).toEqual(SUMMARY);
+    expect(result.summary).toEqual(summary);
     expect(result.unresolvedCompare).toBe(false);
     expect(events.some((e) => e.type === "unresolved-compare")).toBe(false);
   } finally {

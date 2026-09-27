@@ -434,6 +434,34 @@ test("a verified finish keeps its envelope and state unchanged", async () => {
   expect(state).not.toHaveProperty("unresolvedCompare");
 });
 
+// Usefulness: pins the accepted gap for #286. A PR-work finish that records the
+// unresolved compare under `notDone` and `open` and omits the marker finishes as
+// verified: exit 0, no marker in the envelope or the state file, and the free
+// text the only trace. A consumer cannot tell it from a verified finish, so the
+// limit stays pinned here.
+test("a PR finish that omits unresolvedCompare reads as verified", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  const summary = {
+    ...GATE_SUMMARY,
+    notDone: "PR head unresolved",
+    open: "PR head unresolved",
+  };
+  const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+    stdin: async () => JSON.stringify(summary),
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({ status: "ok", lifecycle: "finished" });
+
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("finished");
+  expect(state).not.toHaveProperty("unresolvedCompare");
+  expect(state.summary).toEqual(summary);
+});
+
 // Usefulness: verifies the marker reaches the action contract instead of being
 // dropped as an unknown key, so a non-boolean value refuses the finish (#281).
 test("finish refuses a non-boolean unresolvedCompare", async () => {
