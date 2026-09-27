@@ -26,12 +26,13 @@ function fail(reason) {
 //
 //   `Not Found`                             404  a token without repository admin
 //   `Branch not protected`                  404  an admin, on a branch with no
-//                                                  classic protection, which is not
-//                                                  an unreadable source
+//                                                  classic protection
 //   `Resource not accessible by integration` 403  a `GITHUB_TOKEN`
 //
-// All three mean the same thing to this gate, that the source contributes no
-// required contexts, and the caller refuses an empty union either way.
+// All three leave the source with no required contexts, and the caller refuses an
+// empty union either way, so the gate treats them alike. The second is not a
+// permission problem: the branch simply has no classic protection, and a
+// ruleset-only repository answers it for an admin.
 //
 // Match the message, not the status. `gh` renders every failure as
 // `gh: <message> (HTTP <status>)`, so a rate-limit or SSO 403 carries the same
