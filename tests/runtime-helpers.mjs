@@ -25,7 +25,8 @@ export async function createTempRepo() {
  * EBUSY, EPERM, and ENOTEMPTY only when `maxRetries` is set (default 0), so a
  * handle held by antivirus, an indexer, or a lingering child otherwise fails
  * the removal. Retries stay scoped to fixture removal, both setup and
- * teardown; an in-test delete whose failure the test asserts keeps plain `rm`.
+ * teardown; a deliberate in-test delete that is itself the case under test
+ * keeps plain `rm`.
  */
 export async function removePath(path) {
   await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
