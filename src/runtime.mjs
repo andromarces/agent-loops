@@ -100,9 +100,9 @@ export async function runChild(options) {
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept`, and
  * with no worker turn it needs at least one reviewer report. A refused finish
- * gets one corrective turn; a repeated refusal ends the run with exit 1. The
- * gate follows turn order only: an edit made outside the loop between the
- * accept and the finish is not detected.
+ * gets one corrective turn; a repeated refusal, or a refusal with no step
+ * budget left, ends the run with exit 1. The gate follows turn order only: an
+ * edit made outside the loop between the accept and the finish is not detected.
  * @param {object} options
  * @returns {Promise<{ exitCode: 0, summary: object } | { exitCode: 1 | 2, reason: string }>}
  */
@@ -174,7 +174,10 @@ export async function runLoop(options) {
       const missing = workerRan
         ? "no reviewer accept on the latest changed state after a worker turn"
         : "no reviewer report on the state";
-      if (finishRefused) {
+      // A refusal gets one corrective turn. With no step budget left that turn
+      // cannot run a child, so the refusal resolves here on the exit-1 path
+      // instead of reaching the step-limit exit 2 (#248).
+      if (finishRefused || stepsUsed >= maxSteps) {
         return stopLoop(1, { reason: `Finish refused: ${missing}.` });
       }
       finishRefused = true;
