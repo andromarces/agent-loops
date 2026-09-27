@@ -23,6 +23,7 @@ Collect these before the first dispatch:
 - reviewer CLI, model, and effort (`--reviewer`, `--reviewer-model`, `--reviewer-effort`)
 - mode: `work-first`, `review-first`, or `review-only` (`--mode`)
 - maximum steps (`--max-steps`)
+- the PR number when the task is PR work (delivered on a pull request)
 
 ## Resolving the CLI
 
@@ -144,9 +145,15 @@ start of the turn, so the child cannot misreport them: `head` is the commit,
 `clean` is true when the work tree has no uncommitted entries, `exact` is true
 when every entry has a content hash or is a deletion, and `digest` identifies the
 uncommitted state (it is exhaustive only when `exact` is true; ignored files are
-out of scope). Apply these parent rules:
+out of scope).
 
-- Compare reviewed.head with the PR head before finish.
+A task is PR work when its change is delivered on a pull request. For PR work,
+the worker commits its change on the PR branch, so the reviewer sees a committed
+head. The PR number is a run input, and the head commit comes from that PR.
+Apply these parent rules:
+
+- Compare reviewed.head with the PR head before finish; for PR work, resolve the
+  PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
 - Treat an accept without a Checks line as not accepted.
 
