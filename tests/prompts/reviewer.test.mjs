@@ -32,4 +32,8 @@ test("reviewer prompt challenges a spec that weakens a guard and limits approval
   expect(prompt).toContain(
     "A general requirement that weakens a guard as a side effect is not approval.",
   );
+  expect(prompt).toContain("For an approved contract change, do not reject for the change itself.");
+  expect(prompt).toContain(
+    "Name the affected guard or contract in the report, and check that the docs and tests change with it.",
+  );
 });
