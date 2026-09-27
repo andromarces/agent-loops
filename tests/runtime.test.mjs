@@ -1675,11 +1675,12 @@ test("--require-ci turns a gh failure into a refusal, not a throw", async () => 
   }
 });
 
-// 48. Usefulness: verifies the refusal order matches the interactive `role
-// finish`: a finish that both sets the marker and lacks the reviewer coverage is
-// refused for the marker, so the orchestrator spends no reviewer turn on a
-// condition the gate already settles (#293).
-test("--require-ci refuses the marker before the completion rule", async () => {
+// 48. Usefulness: verifies a finish that breaks more than one rule is refused
+// for every rule it breaks, in the order the interactive `role finish` checks
+// them. One corrective turn is all the run grants, so a prompt that names only
+// the first condition spends it on a condition the next refusal names instead
+// (#293).
+test("a finish that breaks several rules is refused for all of them", async () => {
   const repo = await createTempRepo();
   try {
     const summary = {
@@ -1710,20 +1711,25 @@ test("--require-ci refuses the marker before the completion rule", async () => {
     });
 
     expect(result.exitCode).toBe(1);
+    // The marker, the missing reviewer report, and the PR head that is not the
+    // reviewed commit, since no reviewer turn ran at all.
     expect(result.reason).toContain("unresolvedCompare cannot be combined with --require-ci");
-    // No reviewer report exists, and no worker turn ran, so the completion rule
-    // would also have refused. The marker reason is the one reported.
-    expect(result.reason).not.toContain("no reviewer report");
-    expect(calls).toEqual([]);
+    expect(result.reason).toContain("no reviewer report on the state");
+    expect(result.reason).toContain("the latest reviewer turn has no reviewed state");
+    expect(result.reason.indexOf("unresolvedCompare cannot")).toBeLessThan(
+      result.reason.indexOf("no reviewer report"),
+    );
   } finally {
     await removePath(repo);
   }
 });
 
-// 49. Usefulness: verifies each refusal prompt tells the orchestrator the action
-// that clears that refusal, so a marker refusal does not ask for a reviewer turn
-// it does not need and a gate refusal does not mention the marker (#293).
-test("each --require-ci refusal prompt carries its own recovery", async () => {
+// 49. Usefulness: verifies an orchestrator that follows the refusal prompt
+// reaches exit 0, for the marker refusal and for the gate refusal. The prompt is
+// the run's only recovery, and a second refused finish with no child turn in
+// between ends the run, so wording that omits the child turn is a dead end even
+// when the wording is accurate (#293).
+test("following a --require-ci refusal prompt reaches exit 0", async () => {
   const repo = await createTempRepo();
   try {
     const markerSummary = {
@@ -1733,48 +1739,75 @@ test("each --require-ci refusal prompt carries its own recovery", async () => {
       notDone: "PR head unresolved",
       open: "PR head unresolved",
     };
-    const orch = scripted([
+    // The orchestrator does exactly what the prompt says for each refusal: read
+    // the conditions, dispatch the child turn the prompt names, then finish. A
+    // prompt that said only "finish again" would end this run on exit 1, since a
+    // second refused finish with no child turn in between ends the run (#293).
+    const markerOrch = scripted([
       JSON.stringify({ action: "finish", summary: markerSummary, unresolvedCompare: true }),
-      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
       JSON.stringify({ action: "finish", summary: SUMMARY }),
     ]);
-    await runLoop({
+    const markerResult = await runLoop({
       task: "PR work: address issue 49 through PR 42.",
       cwd: repo,
       maxSteps: 5,
       requireAccept: true,
       requireCi: 42,
-      gh: ciGateGh("1".repeat(40)),
+      gh: ciGateGh((await snapshot(repo)).head),
       roles: gateRoles(),
-      agents: { orch, work: scripted([]), rev: scripted([]) },
+      agents: { orch: markerOrch, work: scripted([]), rev: scripted([REVIEW_ACCEPT]) },
     });
-    const markerPrompt = orch.recorded[1].prompt;
-    expect(markerPrompt).toContain("remove unresolvedCompare from the finish");
-    expect(markerPrompt).not.toContain("Dispatch the reviewer");
 
+    const markerPrompt = markerOrch.recorded[1].prompt;
+    expect(markerPrompt).toContain("remove unresolvedCompare from the finish");
+    expect(markerPrompt).toContain("Dispatch the reviewer");
+    expect(markerPrompt).toContain("costs a step");
+    expect(markerResult.exitCode).toBe(0);
+    expect(markerResult.summary).toEqual(SUMMARY);
+
+    // The gate refusal: the prompt names a worker turn, and the reviewer turn
+    // after it re-establishes the reviewed state the gate reads.
+    const head = (await snapshot(repo)).head;
+    const gateHead = { current: OTHER_HEAD };
     const gateOrch = scripted([
       JSON.stringify({ action: "run_worker", prompt: "work" }),
       JSON.stringify({ action: "run_reviewer", prompt: "review" }),
       JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_worker", prompt: "push the change" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
       JSON.stringify({ action: "finish", summary: SUMMARY }),
     ]);
-    await runLoop({
+    const gateResult = await runLoop({
       task: "PR work: address issue 49 through PR 42.",
       cwd: repo,
       maxSteps: 5,
       requireAccept: true,
       requireCi: 42,
-      gh: ciGateGh("1".repeat(40)),
+      // The PR head matches the reviewed commit only after the second worker
+      // turn, which is the recovery the prompt named.
+      gh: async (args) => {
+        const key = args.join(" ");
+        const answer = ciGateGh(key.includes("pr view 42") ? gateHead.current : head);
+        const result = await answer(args);
+        if (key.includes("pr view 42")) {
+          gateHead.current = head;
+        }
+        return result;
+      },
       roles: gateRoles(),
       agents: {
         orch: gateOrch,
-        work: scripted(["worker pushed"]),
-        rev: scripted([REVIEW_ACCEPT]),
+        work: scripted(["worker changed", "worker pushed the change"]),
+        rev: scripted([REVIEW_ACCEPT, REVIEW_ACCEPT]),
       },
     });
+
     const gatePrompt = gateOrch.recorded[3].prompt;
     expect(gatePrompt).toContain("the PR head differs from the reviewed commit");
-    expect(gatePrompt).toContain("finish again");
+    expect(gatePrompt).toContain("worker turn");
+    expect(gatePrompt).not.toContain("finish again");
+    expect(gateResult.exitCode).toBe(0);
   } finally {
     await removePath(repo);
   }

@@ -123,15 +123,17 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  *
  * With `requireCi`, the shared `checkCi` gate resolves the PR head in the
  * runtime against the last reviewer turn's reviewed state, so a finish no
- * longer depends on the parent reporting the compare. Refusals are ordered as
- * in the interactive `role finish`: the marker combination, then the completion
- * rule, then the gate. A refusal names the condition and takes the same
- * corrective-turn path, and a `gh` failure inside the gate is a refusal rather
- * than a throw, because the headless run has no retry outside it (#293). Each
- * refusal ends the run when repeated or when no step budget is left, so a
- * finish refused for a pending check needs a corrective turn, which costs a
- * step. Without the flag the marker stays the only trace, and an omitted marker
- * still reads as a verified finish (#286).
+ * longer depends on the parent reporting the compare. A `gh` failure inside the
+ * gate is a refusal rather than a throw, because the headless run has no retry
+ * outside it (#293). Every applicable gate is evaluated and every refusal is
+ * reported in one prompt, ordered as in the interactive `role finish`: the
+ * marker combination, the completion rule, then the gate. A refusal is cleared
+ * only by a child turn, and a second refused finish ends the run, so a recovery
+ * that does not name a child turn is a dead end: a re-finish with no turn in
+ * between is the second refusal. That turn costs a step, so a finish refused for
+ * a pending check consumes step budget to clear it. Without the flag the marker
+ * stays the only trace, and an omitted marker still reads as a verified finish
+ * (#286).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -214,40 +216,41 @@ export async function runLoop(options) {
     onEvent({ type: "action", action, stepsUsed });
 
     if (action.action === "finish") {
-      // Refusal order matches the interactive `role finish`: the marker
-      // combination first, then the completion rule, then the PR gate (#293).
-      // A finish that sets the marker under the gate is refused before any
-      // reviewer work, because the marker is a contract violation the gate
-      // already settles.
-      const markerRefusal =
-        requireCi !== null && action.unresolvedCompare === true
-          ? {
-              reason: UNRESOLVED_COMPARE_WITH_CI,
-              recovery:
-                "The gate resolves that PR head, so remove unresolvedCompare from the finish, then finish again.",
-            }
-          : null;
-      const acceptRefusal =
-        markerRefusal || !requireAccept || (workerRan ? acceptedSinceWorker : reviewerRan)
-          ? null
-          : {
-              reason: workerRan
-                ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
-                : "no reviewer report on the state",
-              recovery: `Dispatch the reviewer, obtain ${
-                workerRan ? "Verdict: accept with a Checks line on that state" : "a reviewer report"
-              }, then finish.`,
-            };
-      // The gate resolves the PR head in the runtime, which is what the parent
-      // can no longer misreport. Its own failure is a refusal rather than a
-      // thrown error, so a `gh` failure does not discard a run that is one
-      // retry from passing (#293).
-      const gateRefusal =
-        markerRefusal || acceptRefusal || requireCi === null
-          ? null
-          : await ciRefusal({ pr: requireCi, reviewed: lastReviewed, cwd, gh });
-      const refusal = markerRefusal ?? acceptRefusal ?? gateRefusal;
-      if (refusal === null) {
+      // Every applicable gate is evaluated, and every refusal is reported in one
+      // prompt, because the run grants a single corrective turn and a second
+      // refused finish ends it. Reporting one condition at a time would spend
+      // that turn on a condition the next refusal names instead, which is how a
+      // prompt that says "finish again" becomes an exit 1 (#293). The order
+      // matches the interactive `role finish`: the marker combination, the
+      // completion rule, then the PR gate.
+      const refusals = [];
+      if (requireCi !== null && action.unresolvedCompare === true) {
+        refusals.push({
+          reason: UNRESOLVED_COMPARE_WITH_CI,
+          recovery: "The gate resolves that PR head, so remove unresolvedCompare from the finish.",
+        });
+      }
+      if (requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan)) {
+        refusals.push({
+          reason: workerRan
+            ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
+            : "no reviewer report on the state",
+          recovery: `Dispatch the reviewer, obtain ${
+            workerRan ? "Verdict: accept with a Checks line on that state" : "a reviewer report"
+          } on that state, then finish.`,
+        });
+      }
+      if (requireCi !== null) {
+        // The gate resolves the PR head in the runtime, which is what the parent
+        // can no longer misreport. Its own failure is a refusal rather than a
+        // thrown error, so a `gh` failure does not discard a run that is one
+        // retry from passing (#293).
+        const gate = await ciRefusal({ pr: requireCi, reviewed: lastReviewed, cwd, gh });
+        if (gate) {
+          refusals.push(gate);
+        }
+      }
+      if (refusals.length === 0) {
         // A finish the parent marks as an unresolved PR-head compare stays on
         // the loop's own recorded-finish code 0, but it emits a
         // machine-readable event and reports the marker, so it never reads the
@@ -262,16 +265,26 @@ export async function runLoop(options) {
         }
         return stopLoop(0, { summary: action.summary, unresolvedCompare });
       }
-      onEvent({ type: "refusal", reason: refusal.reason, stepsUsed });
+      // One reason string for the event and the run, listing every condition, so
+      // a consumer sees the full set rather than the first one.
+      const reason = refusals.map((entry) => entry.reason).join("; ");
+      onEvent({ type: "refusal", reason, stepsUsed });
       // A refusal gets one corrective turn. With no step budget left that turn
       // cannot run a child, so the refusal resolves here on the exit-1 path
-      // instead of reaching the step-limit exit 2 (#248).
+      // instead of reaching the step-limit exit 2 (#248). A refusal that is not
+      // cleared by a child turn also resolves here, because the flag that
+      // records a prior refusal is cleared by no other event.
       if (finishRefused || stepsUsed >= maxSteps) {
-        return stopLoop(1, { reason: `Finish refused: ${refusal.reason}.` });
+        return stopLoop(1, { reason: `Finish refused: ${reason}.` });
       }
       finishRefused = true;
-      logWarn(`finish refused: ${refusal.reason}`);
-      prompt = refusalPrompt(`Finish refused: ${refusal.reason}. ${refusal.recovery}`);
+      logWarn(`finish refused: ${reason}`);
+      // Every recovery names a child turn, because a refusal is cleared only by
+      // one. The turn costs a step, so the prompt says so rather than implying a
+      // re-finish is free (#293).
+      prompt = refusalPrompt(
+        `Finish refused: ${reason}. ${refusals.map((entry) => entry.recovery).join(" ")} A refusal is cleared by a child turn, so dispatch one, then finish; that turn costs a step.`,
+      );
       continue;
     }
 
@@ -333,8 +346,7 @@ export const UNRESOLVED_COMPARE_WITH_CI =
  * error leaves the run `active` for the parent to retry. The headless run has
  * no retry outside this refusal, so throwing would discard a run that a second
  * attempt could pass. The refusal fails closed either way, and its recovery
- * text says the run can be finished again without another child turn, which a
- * pending or failing check may need.
+ * text says the retry costs a child turn, because a second failure ends the run.
  * @param {object} options
  * @returns {Promise<{ reason: string, recovery: string } | null>}
  */
@@ -347,7 +359,7 @@ async function ciRefusal({ pr, reviewed, cwd, gh }) {
     logError(`ci gate could not run: ${detail}`);
     return {
       reason: `the PR gate could not be evaluated: ${detail}`,
-      recovery: `That is a failure to read GitHub, not a verdict on the work. Fix the credential or the connection, then finish again; the gate resolves the PR head from PR ${pr}, so the finish carries no unresolvedCompare marker.`,
+      recovery: `That is a failure to read GitHub, not a verdict on the work, and this run has one attempt left: a worker turn that waits for the connection to recover is the only retry, and a second failure ends the run. The finish carries no unresolvedCompare marker either way, because the gate resolves the PR head from PR ${pr}.`,
     };
   }
   if (gate.ok) {
@@ -355,7 +367,7 @@ async function ciRefusal({ pr, reviewed, cwd, gh }) {
   }
   return {
     reason: gate.reason,
-    recovery: `That condition is read from PR ${pr} by the gate, so the finish carries no unresolvedCompare marker. Resolve it, then finish again; a pending or failing check clears when the check reports, and a re-finish costs no step.`,
+    recovery: `That condition is read from PR ${pr} by the gate, so the finish carries no unresolvedCompare marker. Resolve it: a pushed change needs a worker turn, then a reviewer turn on the new state; a pending or failing check needs a worker turn that waits for it to report.`,
   };
 }
 
