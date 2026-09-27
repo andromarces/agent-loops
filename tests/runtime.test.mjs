@@ -1405,3 +1405,219 @@ test("review-only finish with the marker records the event", async () => {
     await removePath(repo);
   }
 });
+
+// Answers the `--require-ci` gate the way the shared `checkCi` gate reads `gh`:
+// the PR view, the repository slug, the two required-check sources, and the
+// check runs and commit statuses GitHub evaluates. `headRefOid` is the PR head
+// the gate compares with the reviewed commit.
+function ciGateGh(headRefOid, calls = []) {
+  return async (args) => {
+    const key = args.join(" ");
+    calls.push(key);
+    const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
+    if (key.includes("pr view 42")) {
+      return json({
+        headRefOid,
+        baseRefName: "main",
+        mergeStateStatus: "CLEAN",
+        potentialMergeCommit: null,
+        state: "OPEN",
+      });
+    }
+    if (key.includes("repo view")) {
+      return { status: 0, stdout: "owner/repo", stderr: "" };
+    }
+    if (key.includes("rules/branches/main")) {
+      return json([
+        {
+          type: "required_status_checks",
+          parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
+        },
+      ]);
+    }
+    if (key.includes("branches/main/protection")) {
+      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
+    }
+    if (key.includes("/check-runs")) {
+      return json([
+        {
+          check_runs: [
+            {
+              name: "ci (ubuntu-latest)",
+              status: "completed",
+              conclusion: "success",
+              started_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      ]);
+    }
+    if (key.includes("/status")) {
+      return json({ statuses: [] });
+    }
+    return { status: 1, stdout: "", stderr: `unmatched: ${key}` };
+  };
+}
+
+const OTHER_HEAD = "1".repeat(40);
+
+// 43. Usefulness: verifies the headless --require-ci gate resolves the PR head in
+// the runtime: a finish whose PR head is not the reviewed commit is refused with
+// the gate reason, recorded as a refusal event, and ends the run on exit 1
+// (issue #293).
+test("--require-ci refuses a finish whose PR head is not the reviewed commit", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const events = [];
+
+    const result = await runLoop({
+      task: "PR work: address issue 43 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: ciGateGh(OTHER_HEAD),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker pushed the change"]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("the PR head differs from the reviewed commit");
+    expect(events.filter((e) => e.type === "refusal").map((e) => e.reason)).toEqual([
+      "the PR head differs from the reviewed commit",
+      "the PR head differs from the reviewed commit",
+    ]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 44. Usefulness: verifies the same gate accepts the finish once the PR head is
+// the reviewed commit, so the refusal above comes from the gate result and not
+// from a gate that always refuses (issue #293).
+test("--require-ci passes a finish whose PR head is the reviewed commit", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const calls = [];
+    const events = [];
+
+    const result = await runLoop({
+      task: "PR work: address issue 44 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: ciGateGh(head, calls),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker pushed the change"]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toEqual(SUMMARY);
+    expect(events.some((e) => e.type === "refusal")).toBe(false);
+    expect(calls.some((key) => key.includes("pr view 42"))).toBe(true);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 45. Usefulness: verifies a worker turn after the reviewer turn clears the
+// reviewed state the gate reads, so a commit made after the review cannot pass
+// against the older reviewed head, matching the interactive gate (#293).
+test("--require-ci refuses a finish after a worker turn follows the review", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const events = [];
+
+    const result = await runLoop({
+      task: "PR work: address issue 45 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: ciGateGh(head),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker committed after the review"]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("the latest reviewer turn has no reviewed state");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 46. Usefulness: verifies the gate refuses a finish that also records the
+// unresolved compare, and does so without asking GitHub, because the gate
+// resolves that compare and the marker would contradict it (issue #293, #281).
+test("--require-ci refuses a finish that carries unresolvedCompare", async () => {
+  const repo = await createTempRepo();
+  try {
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+    const head = (await snapshot(repo)).head;
+    const calls = [];
+    const events = [];
+
+    const result = await runLoop({
+      task: "PR work: address issue 46 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: ciGateGh(head, calls),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("unresolvedCompare cannot be combined with --require-ci");
+    expect(calls).toEqual([]);
+    expect(events.some((e) => e.type === "unresolved-compare")).toBe(false);
+  } finally {
+    await removePath(repo);
+  }
+});

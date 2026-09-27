@@ -1,5 +1,6 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
+import { checkCi } from "./lib/ci-gate.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
@@ -120,6 +121,14 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * event and reports `unresolvedCompare: true`, which the headless CLI maps to
  * `UNRESOLVED_COMPARE_EXIT` (#266, #279).
  *
+ * With `requireCi`, the shared `checkCi` gate resolves the PR head in the
+ * runtime against the last reviewer turn's reviewed state, so a finish no
+ * longer depends on the parent reporting the compare. The gate refuses a finish
+ * that also sets `unresolvedCompare`, and a refusal names the gate reason and
+ * takes the same corrective-turn path as the completion rule (#293). Without the
+ * flag the marker stays the only trace, and an omitted marker still reads as a
+ * verified finish (#286).
+ *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
  * a Checks line, and with no worker turn it needs at least one reviewer report.
@@ -140,6 +149,8 @@ export async function runLoop(options) {
     roles,
     agents = defaultAgents,
     requireAccept = false,
+    requireCi = null,
+    gh,
     onEvent = () => {},
   } = options;
 
@@ -163,6 +174,11 @@ export async function runLoop(options) {
   let reviewerRan = false;
   let acceptedSinceWorker = false;
   let finishRefused = false;
+  // The reviewed state the `--require-ci` gate reads: the runtime-owned identity
+  // of the last reviewer turn, cleared by any later turn, so a change made after
+  // that review cannot be gated against the older head (#293). It mirrors the
+  // interactive `lastResult.reviewed` the role gate reads.
+  let lastReviewed = null;
 
   const orchAdapter = {
     async run(state, p, opts) {
@@ -172,7 +188,7 @@ export async function runLoop(options) {
     },
   };
 
-  let prompt = initialPrompt({ task, maxSteps, requireAccept });
+  let prompt = initialPrompt({ task, maxSteps, requireAccept, requireCi });
 
   while (true) {
     let action;
@@ -194,24 +210,36 @@ export async function runLoop(options) {
     onEvent({ type: "action", action, stepsUsed });
 
     if (action.action === "finish") {
-      const gateBlocks = requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan);
-      if (!gateBlocks) {
+      const acceptMissing =
+        requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan)
+          ? workerRan
+            ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
+            : "no reviewer report on the state"
+          : null;
+      // The completion rule is checked first, so a finish the reviewer has not
+      // covered never reaches GitHub. The `--require-ci` gate then resolves the
+      // PR head in the runtime, which is what the parent can no longer misreport
+      // (#293).
+      const ciMissing =
+        acceptMissing || requireCi === null
+          ? null
+          : await ciRefusalReason({ action, pr: requireCi, reviewed: lastReviewed, cwd, gh });
+      const missing = acceptMissing ?? ciMissing;
+      if (missing === null) {
         // A finish the parent marks as an unresolved PR-head compare stays on
         // the loop's own recorded-finish code 0, but it emits a
         // machine-readable event and reports the marker, so it never reads the
         // same as a verified finish (#266). The headless process exit code is
-        // the CLI's decision: UNRESOLVED_COMPARE_EXIT (#279). A finish that
-        // records the compare and omits the marker reads the same as a verified
-        // one, the accepted gap the contract documents beside the field (#286).
+        // the CLI's decision: UNRESOLVED_COMPARE_EXIT (#279). The marker stays
+        // the only signal for a run without the gate, where the loop has no PR
+        // input, so an omitted marker still reads as a verified finish there
+        // (#286, #293).
         const unresolvedCompare = action.unresolvedCompare === true;
         if (unresolvedCompare) {
           onEvent({ type: "unresolved-compare", stepsUsed });
         }
         return stopLoop(0, { summary: action.summary, unresolvedCompare });
       }
-      const missing = workerRan
-        ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
-        : "no reviewer report on the state";
       onEvent({ type: "refusal", reason: missing, stepsUsed });
       // A refusal gets one corrective turn. With no step budget left that turn
       // cannot run a child, so the refusal resolves here on the exit-1 path
@@ -222,9 +250,13 @@ export async function runLoop(options) {
       finishRefused = true;
       logWarn(`finish refused: ${missing}`);
       prompt = refusalPrompt(
-        `Finish refused: ${missing}. Dispatch the reviewer, obtain ${
-          workerRan ? "Verdict: accept with a Checks line on that state" : "a reviewer report"
-        }, then finish.`,
+        `Finish refused: ${missing}. ${
+          acceptMissing
+            ? `Dispatch the reviewer, obtain ${
+                workerRan ? "Verdict: accept with a Checks line on that state" : "a reviewer report"
+              }, then finish.`
+            : `The gate resolves the PR head from PR ${requireCi}, so the finish needs no unresolvedCompare marker. Resolve the named condition, obtain a reviewer turn on that state, then finish.`
+        }`,
       );
       continue;
     }
@@ -255,6 +287,8 @@ export async function runLoop(options) {
     });
     onEvent({ type: "result", role: roleName, result, stepsUsed });
 
+    lastReviewed = result.reviewed ?? null;
+
     if (isWorkerDispatch) {
       workerRan = true;
       acceptedSinceWorker = false;
@@ -266,6 +300,24 @@ export async function runLoop(options) {
 
     prompt = resultPrompt({ result, stepsUsed, maxSteps });
   }
+}
+
+/**
+ * The reason `--require-ci` refuses a finish, or null when the gate allows it.
+ * The shared `checkCi` gate resolves the PR head in the runtime, so the outcome
+ * comes from a gate result and not from a field the parent set (#293). A finish
+ * that also records the unresolved compare is refused before the gate runs,
+ * with the same message the interactive `role finish` uses: the gate resolves
+ * that compare, so a marker on it would contradict the gate.
+ * @param {object} options
+ * @returns {Promise<string | null>}
+ */
+async function ciRefusalReason({ action, pr, reviewed, cwd, gh }) {
+  if (action.unresolvedCompare === true) {
+    return "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved";
+  }
+  const gate = await checkCi({ pr, reviewed, cwd, gh });
+  return gate.ok ? null : gate.reason;
 }
 
 // An accept counts only with a Checks line in the closing block, matching the

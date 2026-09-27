@@ -57,18 +57,19 @@ export function validateAction(value) {
       // `unresolved-compare` transcript event on the strength of this field.
       //
       // known-limit: the marker is parent-set, and an omitted marker is
-      // indistinguishable from a verified finish (issue #286, accepted gap). A
-      // parent that records the unresolved compare under `notDone` and `open`
-      // and omits this field yields a finish that reads exactly like a verified
-      // one: loop exit 0, no `unresolved-compare` event, no marker in the result,
-      // and the same for the interactive envelope and state file. The omission
-      // needs the PR head to detect, and only the parent has it: the headless
-      // loop holds the task text and takes no PR input, and `--require-ci <pr>`
-      // is the interactive path's only PR input. Ceiling: one finish that claims
-      // a compare nothing verified, per run. Upgrade path: resolve the PR head
-      // in the runtime (extend `--require-ci` to the headless loop), so the
-      // outcome comes from a gate result rather than a parent-declared field and
-      // this marker stops being the only signal.
+      // indistinguishable from a verified finish in a run that takes no PR input
+      // (issue #286, accepted gap). A parent that records the unresolved compare
+      // under `notDone` and `open` and omits this field yields a finish that
+      // reads exactly like a verified one: loop exit 0, no `unresolved-compare`
+      // event, no marker in the result, and the same for the interactive
+      // envelope and state file. The omission needs the PR head to detect.
+      // `--require-ci <pr>` is the PR input on both paths, and both refuse a
+      // finish that sets this field because the gate resolves the compare, so a
+      // gated run has nothing left to misreport (#293). A run without the gate
+      // keeps the gap: the headless loop holds the task text only, and the
+      // interactive subcommand gates on the state file. Ceiling: one finish that
+      // claims a compare nothing verified, per ungated run. Upgrade path: require
+      // a PR input on every run.
       if (value.unresolvedCompare !== undefined) {
         if (typeof value.unresolvedCompare !== "boolean") {
           return { ok: false, error: "finish unresolvedCompare must be a boolean." };

@@ -36,7 +36,8 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
   - Enforces non-mutating safety on reviewer and orchestrator turns using CLI flags and pre/post Git work-tree mutation detection.
   - Recovers from malformed JSON via a single repair turn.
   - Enforces the completion rule with `--require-accept`: after a worker turn, a `finish` needs a later reviewer `verdict: accept` with a `Checks` line on that state; with no worker turn, it needs at least one reviewer report. The gate follows turn order only, so an edit made outside the loop after the accept is not detected.
-  - Records validated orchestrator actions, a `refusal` event for each finish the `--require-accept` gate refused, an `unresolved-compare` event for each finish that reports an unresolved PR-head compare, child results, one `invocation` event per CLI call with usage when the adapter exposes it, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses are not recorded.
+  - Resolves the PR head in the runtime with `--require-ci <pr>`, the same gate the interactive `role finish` uses, so a headless PR run no longer depends on the parent reporting the compare. It refuses a finish that also sets `unresolvedCompare`, and it reads the reviewed state of the last reviewer turn, so a worker turn after that review refuses the finish.
+  - Records validated orchestrator actions, a `refusal` event for each finish a `--require-accept` or `--require-ci` gate refused, an `unresolved-compare` event for each finish that reports an unresolved PR-head compare, child results, one `invocation` event per CLI call with usage when the adapter exposes it, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses are not recorded.
 
 See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md), [ADR 0002](adr/0002-harness-neutral-orchestrator-instructions.md)).
 
@@ -235,6 +236,15 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
                               after a worker turn that reviewer turn accepts with a Checks
                               line. Off by default; a repeated refusal, or a refusal with no
                               step budget left, ends the run.
+--require-ci <pr>             Refuse finish until the runtime resolves the PR head from
+                               this pull request: the PR head must match the reviewed
+                               commit, the reviewed tree must be clean, the PR must not be
+                               behind its base, must have no merge conflicts, must not be
+                               blocked, and every required check must have passed on the
+                               commit GitHub evaluates. Refuses a finish that also sets
+                               unresolvedCompare. Off by default; without it the
+                               unresolvedCompare marker is the only record of an
+                               unresolved compare.
 -h, --help                    Show help.
 ```
 
@@ -450,7 +460,9 @@ Reviewer and orchestrator turns run in read-only mode to prevent unintended repo
 Codex orchestrator turn cannot run `gh` to resolve a PR head, so a
 Codex-orchestrated PR run must abort, or record the unresolved compare under
 `notDone` and `open` with `"unresolvedCompare": true`, instead of finishing as
-verified. A Codex reviewer turn
+verified, unless the run carries `--require-ci <pr>`. That gate runs in the
+runtime process, which the Codex sandbox does not cover, so it resolves the PR
+head without the orchestrator needing network access (#293). A Codex reviewer turn
 cannot run `gh` either, for example to check a PR's CI status. Read-only file
 protection stays in place on every adapter: the Codex sandbox flag remains, and
 the pre/post mutation check still aborts on a detected change. The other
@@ -487,9 +499,9 @@ When `--transcript <file>` is specified, a JSON transcript is written upon proce
 
 The transcript records each validated orchestrator action, each child result, and one `invocation` event per CLI call, all with timestamps, plus the final exit code and error. It does not record raw orchestrator responses. Its `exitCode` is the process exit code, so a reader that treats `0` as success must also accept `4` for a recorded finish (#279).
 
-A `refusal` event records a `finish` the runtime refused under `--require-accept`, with the `reason` string and the `stepsUsed` at the refusal. The event follows the refused `action` event, so a reader sees the `finish` action, then the refusal and its reason. A run emits one `refusal` event per refusal. The run ends with exit 1 at the second refusal, or at a first refusal with no step budget left for the corrective turn.
+A `refusal` event records a `finish` the runtime refused under `--require-accept` or `--require-ci`, with the `reason` string and the `stepsUsed` at the refusal. The event follows the refused `action` event, so a reader sees the `finish` action, then the refusal and its reason. A `--require-ci` refusal carries the gate reason, such as `the PR head differs from the reviewed commit`. A run emits one `refusal` event per refusal. The run ends with exit 1 at the second refusal, or at a first refusal with no step budget left for the corrective turn.
 
-An `unresolved-compare` event records a `finish` whose action set `"unresolvedCompare": true`, the case where the parent records an unresolved PR-head compare under `notDone` and `open` instead of verifying it (#266). The event follows the finish `action` event and carries `stepsUsed`. The same finish exits `4` instead of `0` and keeps the same summary, so the recorded finish stays distinguishable without a transcript: a consumer that reads only the exit code sees `4` for a recorded unresolved compare and `0` for a verified finish (#279). The runtime never resolves the PR head itself, so only the parent can report this condition, through that field. A `finish` that records the compare and omits the field therefore produces no event and exits `0`, an accepted gap on the same condition as the interactive path (issue #286).
+An `unresolved-compare` event records a `finish` whose action set `"unresolvedCompare": true`, the case where the parent records an unresolved PR-head compare under `notDone` and `open` instead of verifying it (#266). The event follows the finish `action` event and carries `stepsUsed`. The same finish exits `4` instead of `0` and keeps the same summary, so the recorded finish stays distinguishable without a transcript: a consumer that reads only the exit code sees `4` for a recorded unresolved compare and `0` for a verified finish (#279). A run without `--require-ci` has no PR input, so only the parent can report the condition, through that field, and a `finish` that records the compare and omits the field produces no event and exits `0` (issue #286). With `--require-ci <pr>` the runtime resolves the PR head itself, so the marker is refused rather than recorded and the omission leaves nothing to detect (#293).
 
 An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude and Copilot adapters map it from the CLI result:
 
@@ -545,7 +557,7 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
 | Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0    | Orchestrator returned `finish` with valid 5-part summary and no `unresolvedCompare` marker.                                                                                                                                                                                                                                                                                                                                   |
-| 1    | Orchestrator returned `abort`, a `--require-accept` finish refused twice or refused with no step budget left, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover.                                                                                                                                     |
+| 1    | Orchestrator returned `abort`, a `--require-accept` or `--require-ci` finish refused twice or refused with no step budget left, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover.                                                                                                                   |
 | 2    | Step limit reached (`--max-steps`) with work remaining.                                                                                                                                                                                                                                                                                                                                                                       |
 | 4    | Orchestrator returned a `finish` that set `unresolvedCompare: true`. The run is a recorded finish, not a failure: the summary is printed as for exit 0 and the transcript holds no error. The code is what tells an exit-code-only consumer that the PR-head compare was never verified. A consumer that treats any nonzero code as failure must special-case 4, and so must a consumer that reads the transcript `exitCode`. |
 | 130  | Interrupted by `Ctrl+C` (active children killed).                                                                                                                                                                                                                                                                                                                                                                             |

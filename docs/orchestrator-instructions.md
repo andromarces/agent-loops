@@ -215,9 +215,11 @@ This section governs the interactive `role` mode. The headless loop chooses its
 own action order; its prompt states the completion rule and the `review-only`
 mapping instead, and `agent-loop --require-accept` enforces that rule. The
 headless gate follows turn order only; an edit made outside the loop after a
-reviewer accept is not detected. A headless finish that records an unresolved
-PR-head compare sets `"unresolvedCompare": true` on the action; the run records
-an `unresolved-compare` transcript event and exits `4` instead of `0`, so the
+reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
+PR gate headlessly, so the runtime resolves the PR head there too (#293). A
+headless finish that records an unresolved PR-head compare sets
+`"unresolvedCompare": true` on the action; the run records an
+`unresolved-compare` transcript event and exits `4` instead of `0`, so the
 recorded finish stays distinct from a verified one without a transcript (#266,
 #279). An interactive `role finish` records the same marker in its envelope and
 the state file instead of a transcript event (#281).
@@ -277,12 +279,14 @@ combined with `--require-ci`: that gate resolves the PR head itself, so a
 compare it verified is not unresolved. A run that cannot use `--require-ci`,
 for example a base branch with no required checks, records the marker.
 
-The runtime never resolves the PR head, so it cannot tell an absent field from a
-verified compare. A finish that records the compare under notDone and open and
-omits the field is a verified finish to every machine consumer, here and in the
-headless path, which has no PR gate at all. The free text is the only trace.
-`--require-ci` is the only gate that closes the gap, because it resolves the head
-in the runtime (issue #286, accepted gap).
+Without the gate, the runtime never resolves the PR head, so it cannot tell an
+absent field from a verified compare. A finish that records the compare under
+notDone and open and omits the field is a verified finish to every machine
+consumer, and the free text is the only trace. `--require-ci` closes the gap in
+both paths, because it resolves the head in the runtime: `agent-loop role finish
+--require-ci <pr>` here, and `agent-loop --require-ci <pr>` in the headless loop
+(issue #286, accepted gap; #293). A run with no usable gate, for example one
+that cannot read the required checks, keeps the marker as its only trace.
 
 A marked `role finish` still exits `0`, unlike the headless finish that exits
 `4` for the same marker. The exit code is not the outcome channel of this

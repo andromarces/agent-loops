@@ -552,7 +552,8 @@ function dispatchPayload(roleName, result) {
  * keys records an unresolved PR-head compare, which the envelope and the state
  * file then carry, so the finish stays distinct from a verified one (#281). An
  * omitted marker is that same accepted gap the contract documents beside the
- * field, because the runtime never resolves the PR head (#286).
+ * field, because this subcommand without `--require-ci` never resolves the PR
+ * head (#286). The headless loop resolves it under the same flag (#293).
  */
 async function finish(args, { stdin = readStdin, gh } = {}) {
   if (args.role !== null) {
