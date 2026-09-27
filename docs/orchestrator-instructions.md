@@ -152,7 +152,9 @@ A task is PR work when its change is delivered on a pull request. For PR work,
 name the PR branch in the worker prompt: the worker commits its change on that
 branch and pushes it, so the PR head equals the reviewed head. The run supplies
 the PR number, and the head commit comes from that PR. In a headless run, the
-task names the PR number.
+task names the PR number. A read-only Codex turn has no network access, so a
+Codex orchestrator cannot resolve the PR head with `gh`; the unresolved-compare
+rule below applies.
 
 Apply these parent rules:
 
@@ -160,6 +162,9 @@ Apply these parent rules:
   PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
 - Treat an accept without a Checks line as not accepted.
+- When the PR head cannot be resolved, for example a read-only turn with no
+  network access, do not finish as verified: abort, or record the unresolved
+  compare under notDone and open in the finish summary.
 
 ## Reviewer prompts
 
