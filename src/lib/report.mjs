@@ -27,8 +27,11 @@ const DECORATED_LABEL_LINE = new RegExp(
 
 // A list line the parser would drop, for example `- item`, `* item`, `1. item`,
 // or the same without the space after the marker (`-item`). A run of markers
-// alone, for example `---`, is not a list.
-const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])(?:\s+\S|[^\s\-*+])/;
+// alone (`---`), a decimal (`1.5x`), and an arrow (`->`) are not lists: after a
+// bullet marker a `>` is rejected, and after an ordered marker a digit is
+// rejected, so an ordinary sentence that opens this way does not blank the
+// block (issue #256).
+const LIST_LINE = /^\s*(?:[-*+](?:\s+\S|[^\s\-*+>])|\d+[.)](?:\s+\S|[^\s\d]))/;
 
 // A markdown thematic break, for example `* * *` or `- - -`. It matches the
 // list pattern but carries no item, so it does not drop text.
