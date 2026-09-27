@@ -45,16 +45,17 @@ function fail(reason) {
 // anything unrecognized throws instead. A narrower match only costs a thrown
 // error, which still fails closed.
 //
-// `Not Found` and the two 403s are safe to read as unreadable on these two calls:
-// the slug comes from `gh repo view` and the base branch from the pull request,
-// both of which the caller has already read successfully, so a wrong value here
-// cannot come from a typo. The `Branch not found` reply, which an admin gets for
-// a branch that does not exist, is not matched and throws, so a typo still
-// surfaces when the caller can read protection. It cannot be relied on to
-// surface otherwise: a non-admin token cannot see the branch, so a typo answers
-// the same `Not Found` as a protected branch, and a fine-grained PAT without the
-// Administration permission answers the same 403 whatever the branch is. The
-// already-read values are what make a typo impossible here, not the message.
+// `Not Found` and the 403s are safe to read as unreadable on these two calls: the
+// slug comes from `gh repo view` and the base branch from the pull request, both of
+// which the caller has already read successfully, so a wrong value here cannot come
+// from a typo. The `Branch not found` reply, which an admin gets for a branch that
+// does not exist, is not matched and throws, so a typo still surfaces when the
+// caller can read protection. It cannot be relied on to surface otherwise: a
+// non-admin token can read the branch but not its protection settings, so a typo
+// answers the same `Not Found` as a protected branch, and a fine-grained PAT
+// without the Administration permission answers the same 403 whatever the branch
+// is. The already-read values are what make a typo impossible here, not the
+// message.
 const UNREADABLE =
   /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)/;
 
