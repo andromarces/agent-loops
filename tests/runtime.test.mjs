@@ -1202,3 +1202,66 @@ test("--require-accept records a refused finish as a refusal event", async () =>
     await removePath(repo);
   }
 });
+
+// 38. Usefulness: verifies a finish that reports an unresolved PR-head compare
+// records a distinct `unresolved-compare` event and still exits 0 with the
+// summary, so the recorded finish no longer reads as a verified finish (#266).
+test("finish with unresolvedCompare records an unresolved-compare event", async () => {
+  const repo = await createTempRepo();
+  try {
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "compared reviewed.head with the PR head",
+      open: "PR head unresolved",
+    };
+    const orchReplies = [JSON.stringify({ action: "finish", summary, unresolvedCompare: true })];
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task 38",
+      cwd: repo,
+      maxSteps: 5,
+      roles: gateRoles(),
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: scripted([]) },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toEqual(summary);
+    const unresolved = events.filter((e) => e.type === "unresolved-compare");
+    expect(unresolved).toEqual([{ type: "unresolved-compare", stepsUsed: 0 }]);
+    const finishActionIndex = events.findIndex(
+      (e) => e.type === "action" && e.action.action === "finish",
+    );
+    expect(events[finishActionIndex + 1].type).toBe("unresolved-compare");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 39. Usefulness: verifies a non-PR finish that carries no marker keeps its
+// current behavior: exit 0 with the summary and no unresolved-compare event (#266).
+test("finish without unresolvedCompare records no unresolved-compare event", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [JSON.stringify({ action: "finish", summary: SUMMARY })];
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task 39",
+      cwd: repo,
+      maxSteps: 5,
+      roles: gateRoles(),
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: scripted([]) },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toEqual(SUMMARY);
+    expect(events.some((e) => e.type === "unresolved-compare")).toBe(false);
+  } finally {
+    await removePath(repo);
+  }
+});

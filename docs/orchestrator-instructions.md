@@ -200,7 +200,10 @@ This section governs the interactive `role` mode. The headless loop chooses its
 own action order; its prompt states the completion rule and the `review-only`
 mapping instead, and `agent-loop --require-accept` enforces that rule. The
 headless gate follows turn order only; an edit made outside the loop after a
-reviewer accept is not detected.
+reviewer accept is not detected. A headless finish that records an unresolved
+PR-head compare sets `"unresolvedCompare": true` on the action; the run records
+an `unresolved-compare` transcript event and still exits 0, so the recorded
+finish stays distinct from a verified one (#266).
 
 ## Completion
 

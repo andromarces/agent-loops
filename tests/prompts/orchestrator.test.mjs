@@ -66,6 +66,17 @@ test("initialPrompt states the reviewed-state parent rules", () => {
   );
 });
 
+// Usefulness: verifies the headless prompt names the machine-readable marker the
+// parent sets when it records an unresolved PR-head compare, so the runtime can
+// turn it into a distinct unresolved-compare event (issue #266).
+test("initialPrompt names the unresolvedCompare marker", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).toContain(
+    'When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action.',
+  );
+  expect(prompt).toContain("unresolved-compare event");
+});
+
 // Usefulness: verifies the interactive instructions and the headless prompt
 // state the same reviewed-state parent rules, so the two parent paths never
 // diverge (issue #217, issue #252).

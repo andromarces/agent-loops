@@ -51,6 +51,37 @@ test("validateAction accepts valid finish with summary", () => {
   });
 });
 
+// Usefulness: verifies a finish that marks an unresolved PR-head compare keeps
+// the machine-readable marker, so the runtime can emit a distinct event (#266).
+test("validateAction keeps finish unresolvedCompare", () => {
+  const input = {
+    action: "finish",
+    summary: {
+      changed: "all",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "compared reviewed.head with the PR head",
+      open: "PR head unresolved",
+    },
+    unresolvedCompare: true,
+  };
+  const result = validateAction(input);
+  expect(result).toEqual({
+    ok: true,
+    value: {
+      action: "finish",
+      summary: {
+        changed: "all",
+        verified: "not verified: PR head unresolved",
+        deferred: "none",
+        notDone: "compared reviewed.head with the PR head",
+        open: "PR head unresolved",
+      },
+      unresolvedCompare: true,
+    },
+  });
+});
+
 // Usefulness: verifies valid abort action is accepted.
 test("validateAction accepts valid abort", () => {
   const input = { action: "abort", reason: "cannot continue" };
@@ -127,6 +158,27 @@ describe("validateAction rejections", () => {
       const result = validateAction({ action: "finish", summary });
       expect(result.ok).toBe(false);
       expect(result.error).toBe(`finish summary requires a non-empty string for ${key}.`);
+    },
+  );
+
+  // Usefulness: verifies the unresolved-compare marker is machine-readable, so
+  // a non-boolean value is rejected rather than silently treated as present (#266).
+  test.each(["yes", 1, null, {}])(
+    "rejects finish with a non-boolean unresolvedCompare: %j",
+    (unresolvedCompare) => {
+      const result = validateAction({
+        action: "finish",
+        summary: {
+          changed: "all",
+          verified: "tests",
+          deferred: "none",
+          notDone: "none",
+          open: "none",
+        },
+        unresolvedCompare,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("finish unresolvedCompare must be a boolean.");
     },
   );
 
