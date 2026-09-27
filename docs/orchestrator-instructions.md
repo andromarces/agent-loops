@@ -203,8 +203,9 @@ mapping instead, and `agent-loop --require-accept` enforces that rule. The
 headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. A headless finish that records an unresolved
 PR-head compare sets `"unresolvedCompare": true` on the action; the run records
-an `unresolved-compare` transcript event and still exits 0, so the recorded
-finish stays distinct from a verified one (#266).
+an `unresolved-compare` transcript event and exits `4` instead of `0`, so the
+recorded finish stays distinct from a verified one without a transcript (#266,
+#279).
 
 ## Completion
 
