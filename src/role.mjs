@@ -548,7 +548,9 @@ function dispatchPayload(roleName, result) {
 /**
  * `finish`: accepts the five-key summary as JSON on stdin, from active only.
  * `--require-accept` and `--require-ci` gate the finish; each refusal names the
- * condition that failed.
+ * condition that failed. An optional `unresolvedCompare` boolean beside the five
+ * keys records an unresolved PR-head compare, which the envelope and the state
+ * file then carry, so the finish stays distinct from a verified one (#281).
  */
 async function finish(args, { stdin = readStdin, gh } = {}) {
   if (args.role !== null) {
@@ -579,9 +581,21 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
     } catch {
       throw new RoleError("finish summary must be a JSON object on stdin.");
     }
-    const validated = validateAction({ action: "finish", summary: value });
+    // The summary arrives unwrapped, so the marker the headless action carries
+    // beside `summary` sits beside the five keys here. The validator drops it
+    // from the summary and keeps its own boolean check (#281).
+    const action = { action: "finish", summary: value };
+    if (value?.unresolvedCompare !== undefined) {
+      action.unresolvedCompare = value.unresolvedCompare;
+    }
+    const validated = validateAction(action);
     if (!validated.ok) {
       throw new RoleError(validated.error);
+    }
+    if (validated.value.unresolvedCompare && args.requireCi !== null) {
+      throw new RoleError(
+        "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved.",
+      );
     }
 
     if (args.requireAccept) {
@@ -604,9 +618,17 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
 
     state.lifecycle = "finished";
     state.summary = validated.value.summary;
+    const payload = { status: "ok", lifecycle: "finished" };
+    if (validated.value.unresolvedCompare) {
+      // Recorded in the envelope and beside the summary in the state file, so a
+      // recorded unresolved compare never reads as a verified finish (#281). A
+      // verified finish keeps the current envelope and state.
+      state.unresolvedCompare = true;
+      payload.unresolvedCompare = true;
+    }
     await writeState(paths.stateFile, state);
     logInfo(`run finished (${state.stepsUsed} steps used)`);
-    return { exitCode: 0, payload: { status: "ok", lifecycle: "finished" } };
+    return { exitCode: 0, payload };
   });
 }
 
