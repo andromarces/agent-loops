@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { writeSessionEntry } from "../../src/lib/runstate.mjs";
+import { removePath } from "../runtime-helpers.mjs";
 
 // A real Windows EPERM needs another process to hold the destination open, so
 // it is not reproducible in-process on Linux or macOS CI. This file replaces
@@ -36,7 +37,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const dir of dirs) {
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
   dirs = [];
 });

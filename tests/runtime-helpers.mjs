@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +6,8 @@ import { execa } from "execa";
 
 /**
  * Creates a temporary git repository with one initial commit (`init.txt`).
- * Side effect: leaves a directory in the OS temp dir; callers must `rm` it.
+ * Side effect: leaves a directory in the OS temp dir; callers must remove it
+ * with `removePath`.
  */
 export async function createTempRepo() {
   const dir = await mkdtemp(join(tmpdir(), "runtime-test-repo-"));
@@ -17,6 +18,18 @@ export async function createTempRepo() {
   await execa("git", ["add", "init.txt"], { cwd: dir });
   await execa("git", ["commit", "-m", "init"], { cwd: dir });
   return dir;
+}
+
+/**
+ * Removes a test path, retrying transient Windows locks. `fs.rm` retries
+ * EBUSY, EPERM, and ENOTEMPTY only when `maxRetries` is set (default 0), so a
+ * handle held by antivirus, an indexer, or a lingering child otherwise fails
+ * the removal. Retries stay scoped to fixture removal, both setup and
+ * teardown; a deliberate in-test delete that is itself the case under test
+ * keeps plain `rm`.
+ */
+export async function removePath(path) {
+  await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 /**

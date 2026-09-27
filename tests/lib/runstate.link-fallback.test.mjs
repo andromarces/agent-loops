@@ -1,8 +1,9 @@
-import { link, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { withStateLock } from "../../src/lib/runstate.mjs";
+import { removePath } from "../runtime-helpers.mjs";
 
 // A filesystem without hard links (FAT/exFAT, some network mounts) makes every
 // `link` fail. Linux vfat reports EPERM and macOS reports ENOTSUP; Windows
@@ -29,7 +30,7 @@ async function tempDir() {
 
 afterEach(async () => {
   for (const dir of dirs) {
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
   dirs = [];
 });

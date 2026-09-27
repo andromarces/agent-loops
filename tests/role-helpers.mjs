@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
+import { removePath } from "./runtime-helpers.mjs";
 
 export const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
 export const WORKER_REPLY = `${REPORT}\nContinuing next turn.`;
@@ -76,9 +77,9 @@ export async function setup() {
 export async function cleanup() {
   delete process.env.AGENT_LOOP_RUNS_ROOT;
   for (const dir of repos) {
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
   repos.length = 0;
-  await rm(runsRoot, { recursive: true, force: true });
+  await removePath(runsRoot);
   runsRoot = undefined;
 }

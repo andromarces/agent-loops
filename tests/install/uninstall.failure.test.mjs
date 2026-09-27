@@ -3,7 +3,7 @@
 // whole module graph, so this file stays separate from install.test.mjs, whose
 // cases need the real filesystem (same reason as runstate.link-fallback.test.mjs).
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import { main as cliMain } from "../../src/cli.mjs";
 import { removeDirQuiet } from "../../src/install/fsutil.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { installRoot, manifestPath, readManifest } from "../../src/install/manifest.mjs";
+import { removePath } from "../runtime-helpers.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -46,7 +47,7 @@ async function makeHome() {
 afterEach(async () => {
   control.failures.clear();
   for (const home of homes) {
-    await rm(home, { recursive: true, force: true });
+    await removePath(home);
   }
   homes.length = 0;
 });

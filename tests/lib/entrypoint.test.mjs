@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { isEntryPoint } from "../../src/lib/entrypoint.mjs";
+import { removePath } from "../runtime-helpers.mjs";
 
 async function withArgv1(value, run) {
   const original = process.argv[1];
@@ -33,7 +34,7 @@ test("entry point detection follows a symlinked package directory", async () => 
       expect(isEntryPoint(modulePath)).toBe(true);
     });
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
 });
 
@@ -51,7 +52,7 @@ test("entry point detection rejects a different module", async () => {
       expect(isEntryPoint(modulePath)).toBe(false);
     });
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
 });
 
