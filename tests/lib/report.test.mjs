@@ -372,16 +372,16 @@ test("parseReportBlock returns null when an emphasis run is glued to a following
 });
 
 // Usefulness: pins the accepted decision for #275 and its corrected ceiling. A
-// spaceless `*` bullet whose closing `*` a letter precedes, whose close is
-// followed by end of line, whitespace, or punctuation, and with nothing glued
-// to that close that is a word character, `*`, a letter, or a digit, is the
-// same bytes as a real emphasis run, so the line stays prose: the report still
-// parses and the bullet is dropped with no `raw` signal. Every matching line in
-// the block drops this way, not only the first, so a block can lose three lines
-// under one label and still parse. The gap is accepted, and the acceptance is
-// stated in the `known-limit` note in src/lib/report.mjs, in
-// docs/orchestrator-instructions.md, and in the README. This test pins the
-// accepted cost, so a future narrowing changes it on purpose.
+// spaceless `*` bullet whose closing `*` a letter precedes, where the character
+// right after the close is not a word character or `*`, and where nothing glued
+// after that character is a letter or a digit, is the same bytes as a real
+// emphasis run, so the line stays prose: the report still parses and the bullet
+// is dropped with no `raw` signal. Every matching line in the block drops this
+// way, not only the first, so a block can lose three lines under one label and
+// still parse. The gap is accepted, and the acceptance is stated in the
+// `known-limit` note in src/lib/report.mjs, in docs/orchestrator-instructions.md,
+// and in the README. This test pins the accepted cost, so a future narrowing
+// changes it on purpose.
 test("parseReportBlock leaves the accepted residual letter-star bullet as prose", () => {
   for (const line of ["*file*", "*glob src/a*", "*use a* b", "*glob src/a*, b"]) {
     expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toEqual({
