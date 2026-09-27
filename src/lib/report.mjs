@@ -39,10 +39,11 @@ const LIST_LINE = /^\s*(?:[-*+](?:\s+\S|[^\s\-*+>])|\d+[.)](?:\s+\S|[^\s\d\-*+])
 const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 
 // An emphasis run at line start, for example `*emphasis* note`. A leading `*`
-// is also a spaceless bullet marker (`*item`, issue #243), but a `*` pair that
-// wraps a run, closed by a `*` that whitespace or end of line follows, is
-// ordinary prose, so it does not blank the block (issue #259).
-const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?:\*(?!\S))/;
+// is also a spaceless bullet marker (`*item`, issue #243), but a `*` pair whose
+// close a non-space precedes and a non-word, non-`*` character or end of line
+// follows is ordinary prose, so it does not blank the block (issue #259). The
+// non-space before the close keeps a spaceless bullet with a later ` * ` a list.
+const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\S)\*(?![\w*])/;
 
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of

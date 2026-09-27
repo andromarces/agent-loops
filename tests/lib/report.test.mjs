@@ -274,13 +274,20 @@ test("parseReportBlock keeps a block whose closing sentence resembles a list", (
   }
 });
 
-// Usefulness: verifies a closing sentence that opens with an emphasis run
-// (`*emphasis* note`) is not mistaken for a dropped bullet, so the wider #249
-// scan does not blank a report whose reviewer sentence follows the Verdict line
-// (issue #259). A spaceless bullet (`*item`) still registers, so the #243
-// behavior survives in the companion test.
+// Usefulness: verifies a closing sentence that opens with an emphasis run is
+// not mistaken for a dropped bullet, so the wider #249 scan does not blank a
+// report whose reviewer sentence follows the Verdict line (issue #259). The run
+// closes on a `*` that whitespace, punctuation, or end of line follows, so
+// `*Note*: x` and `*emph*.` count as prose too. A spaceless bullet (`*item`)
+// still registers, so the #243 behavior survives in the companion test.
 test("parseReportBlock keeps a block whose closing sentence opens with emphasis", () => {
-  for (const line of ["*emphasis* note", "*emphasis*", "*two words* here"]) {
+  for (const line of [
+    "*emphasis* note",
+    "*emphasis*",
+    "*two words* here",
+    "*Note*: x",
+    "*emph*.",
+  ]) {
     expect(parseReportBlock(`${REPORT}\nVerdict: accept\n${line}`), line).toEqual({
       conclusion: "done",
       why: "tests pass",
@@ -289,6 +296,16 @@ test("parseReportBlock keeps a block whose closing sentence opens with emphasis"
       notes: null,
       deferred: null,
     });
+  }
+});
+
+// Usefulness: verifies a spaceless bullet is still a dropped list when the line
+// holds a later ` * `, so the emphasis exclusion cannot hide the item and blank
+// the block while `raw` stays silent (issue #259). A `*` closes an emphasis run
+// only when a non-space precedes it, as CommonMark requires.
+test("parseReportBlock returns null when a spaceless bullet holds a later spaced star", () => {
+  for (const line of ["*a * b", "*item with 2 * 3 math", "*item one * item two"]) {
+    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
   }
 });
 
