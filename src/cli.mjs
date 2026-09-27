@@ -212,8 +212,9 @@ Options:
   --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
   --transcript <file>           Record execution transcript to a JSON file.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
-  --require-accept              Refuse finish until a reviewer accepts the latest state after a
-                                worker turn. Off by default; a repeated refusal ends the run.
+  --require-accept              Refuse finish until a reviewer turn reports on the state, and
+                                after a worker turn that reviewer turn accepts. Off by default;
+                                a repeated refusal ends the run.
   -h, --help                    Show help.
 
   A value flag also accepts the inline form --flag=value, for example

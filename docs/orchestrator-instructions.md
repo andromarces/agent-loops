@@ -155,7 +155,9 @@ Every command for a run passes that run's `--cwd`. Each run ends with its own
 
 This section governs the interactive `role` mode. The headless loop chooses its
 own action order; its prompt states the completion rule and the `review-only`
-mapping instead, and `agent-loop --require-accept` enforces that rule.
+mapping instead, and `agent-loop --require-accept` enforces that rule. The
+headless gate follows turn order only; an edit made outside the loop after a
+reviewer accept is not detected.
 
 ## Completion
 

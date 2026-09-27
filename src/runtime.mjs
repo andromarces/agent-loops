@@ -97,10 +97,12 @@ export async function runChild(options) {
  * a refused finish, or a step limit reached with work remaining. Throws on
  * fatal controller errors: orchestrator failure, detected mutation, or cancel.
  *
- * With `requireAccept`, the runtime refuses a `finish` that follows a worker
- * turn with no later reviewer `verdict: accept`. A refused finish gets one
- * corrective turn; a repeated refusal ends the run with exit 1. A run with no
- * worker turn maps to review-only, where the finish follows the report.
+ * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
+ * covered: after a worker turn it needs a later reviewer `verdict: accept`, and
+ * with no worker turn it needs at least one reviewer report. A refused finish
+ * gets one corrective turn; a repeated refusal ends the run with exit 1. The
+ * gate follows turn order only: an edit made outside the loop between the
+ * accept and the finish is not detected.
  * @param {object} options
  * @returns {Promise<{ exitCode: 0, summary: object } | { exitCode: 1 | 2, reason: string }>}
  */
@@ -128,9 +130,10 @@ export async function runLoop(options) {
 
   let stepsUsed = 0;
   // Completion gate state (#234). The headless loop has no mode: a worker turn
-  // marks work mode, so the finish needs a later reviewer accept; a run with no
-  // worker turn maps to review-only and finishes on the report.
+  // marks work mode and needs a later reviewer accept; no worker turn maps to
+  // review-only and needs at least one reviewer report.
   let workerRan = false;
+  let reviewerRan = false;
   let acceptedSinceWorker = false;
   let finishRefused = false;
 
@@ -164,19 +167,22 @@ export async function runLoop(options) {
     onEvent({ type: "action", action, stepsUsed });
 
     if (action.action === "finish") {
-      if (!(requireAccept && workerRan && !acceptedSinceWorker)) {
+      const gateBlocks = requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan);
+      if (!gateBlocks) {
         return stopLoop(0, { summary: action.summary });
       }
+      const missing = workerRan
+        ? "no reviewer accept on the latest changed state after a worker turn"
+        : "no reviewer report on the state";
       if (finishRefused) {
-        return stopLoop(1, {
-          reason:
-            "Finish refused: no reviewer accept on the latest changed state after a worker turn.",
-        });
+        return stopLoop(1, { reason: `Finish refused: ${missing}.` });
       }
       finishRefused = true;
-      logWarn("finish refused: no reviewer accept after the latest worker turn");
+      logWarn(`finish refused: ${missing}`);
       prompt = refusalPrompt(
-        "Finish refused: the latest worker turn has no later reviewer accept. Dispatch the reviewer, obtain Verdict: accept on that state, then finish.",
+        `Finish refused: ${missing}. Dispatch the reviewer, obtain ${
+          workerRan ? "Verdict: accept on that state" : "a reviewer report"
+        }, then finish.`,
       );
       continue;
     }
@@ -211,6 +217,7 @@ export async function runLoop(options) {
       workerRan = true;
       acceptedSinceWorker = false;
     } else {
+      reviewerRan = result.status === "ok";
       acceptedSinceWorker = result.status === "ok" && parseVerdict(result.response) === "accept";
     }
     finishRefused = false;

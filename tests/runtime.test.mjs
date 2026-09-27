@@ -965,7 +965,35 @@ test("--require-accept aborts a repeated refused finish", async () => {
   }
 });
 
-// 33. Usefulness: verifies a reviewer reply with no Verdict line does not satisfy
+// 33. Usefulness: verifies --require-accept refuses a finish with no child turn
+// and allows a review-only finish once a reviewer report exists (issue #234).
+test("--require-accept requires a reviewer report when no worker turn ran", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([REVIEW_REJECT]);
+
+    const result = await runLoop({
+      task: "Task 34",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: reviewerAdapter },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(1);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+// 34. Usefulness: verifies a reviewer reply with no Verdict line does not satisfy
 // the gate: process success never implies acceptance (issue #234).
 test("--require-accept does not accept a reviewer reply without a verdict", async () => {
   const repo = await createTempRepo();

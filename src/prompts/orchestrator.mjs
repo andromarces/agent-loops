@@ -38,7 +38,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish that has no reviewer accept after the last worker turn." : ""}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}
 
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes and deferred are optional, and the block stays valid when the child omits them.
 
