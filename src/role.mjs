@@ -18,6 +18,7 @@ import {
   roleFlags,
   splitInlineFlag,
 } from "./lib/args.mjs";
+import { checkCi } from "./lib/ci-gate.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
@@ -28,7 +29,7 @@ import {
   writeSessionEntry,
   writeState,
 } from "./lib/runstate.mjs";
-import { assertGitWorkTree } from "./lib/snapshot.mjs";
+import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { runChild } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
@@ -69,6 +70,8 @@ export function parseRoleArgs(argv) {
     transcript: null,
     resumeInterrupted: false,
     reason: null,
+    requireAccept: false,
+    requireCi: null,
     verbose: false,
     timeoutProvided: false,
   };
@@ -144,6 +147,14 @@ export function parseRoleArgs(argv) {
 
       case "--resume-interrupted":
         args.resumeInterrupted = true;
+        break;
+
+      case "--require-accept":
+        args.requireAccept = true;
+        break;
+
+      case "--require-ci":
+        args.requireCi = readPositiveInt(arg, readInline(arg));
         break;
 
       case "--reason":
@@ -381,6 +392,7 @@ async function dispatch(args, { agents, stdin = readStdin, signal }) {
   if (args.reason !== null) {
     throw new RoleError("--reason is only valid for abort.");
   }
+  rejectFinishOnlyFlags(args, "dispatch");
 
   await assertGitWorkTree(args.cwd);
   const paths = statePaths(
@@ -534,8 +546,10 @@ function dispatchPayload(roleName, result) {
 
 /**
  * `finish`: accepts the five-key summary as JSON on stdin, from active only.
+ * `--require-accept` and `--require-ci` gate the finish; each refusal names the
+ * condition that failed.
  */
-async function finish(args, { stdin = readStdin }) {
+async function finish(args, { stdin = readStdin, gh } = {}) {
   if (args.role !== null) {
     throw new RoleError("--role is only valid for dispatch.");
   }
@@ -551,6 +565,12 @@ async function finish(args, { stdin = readStdin }) {
       throw new RoleError(`finish is accepted only from active; run is ${state.lifecycle}.`);
     }
 
+    if ((args.requireAccept || args.requireCi !== null) && state.mode === "review-only") {
+      throw new RoleError(
+        "--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.",
+      );
+    }
+
     const text = await stdin(args);
     let value;
     try {
@@ -563,12 +583,76 @@ async function finish(args, { stdin = readStdin }) {
       throw new RoleError(validated.error);
     }
 
+    if (args.requireAccept) {
+      const reason = await acceptGateReason(state, args.cwd);
+      if (reason) {
+        throw new RoleError(`Finish refused: ${reason}.`);
+      }
+    }
+    if (args.requireCi !== null) {
+      const gate = await checkCi({
+        pr: args.requireCi,
+        reviewed: state.lastResult?.reviewed ?? null,
+        cwd: args.cwd,
+        gh,
+      });
+      if (!gate.ok) {
+        throw new RoleError(`Finish refused: ${gate.reason}.`);
+      }
+    }
+
     state.lifecycle = "finished";
     state.summary = validated.value.summary;
     await writeState(paths.stateFile, state);
     logInfo(`run finished (${state.stepsUsed} steps used)`);
     return { exitCode: 0, payload: { status: "ok", lifecycle: "finished" } };
   });
+}
+
+/** `--require-accept` and `--require-ci` gate `finish`; every other operation rejects them. */
+function rejectFinishOnlyFlags(args, operation) {
+  if (args.requireAccept || args.requireCi !== null) {
+    throw new RoleError(
+      `--require-accept and --require-ci are only valid for finish, not ${operation}.`,
+    );
+  }
+}
+
+/**
+ * `--require-accept`: the latest turn must be a reviewer `verdict: accept` of
+ * the current exact state, and the accepted review must carry a Checks line.
+ * The current snapshot is compared against the reviewed head and digest, so a
+ * change to an uncommitted state at the same head is detected. Returns null
+ * when the gate holds, or a reason that names the failing condition.
+ */
+async function acceptGateReason(state, cwd) {
+  const last = state.lastResult;
+  if (!last || last.role !== "reviewer" || last.status !== "ok") {
+    return "no reviewer turn after the latest worker turn";
+  }
+  if (parseVerdict(last.response) !== "accept") {
+    return "the latest reviewer turn did not return Verdict: accept";
+  }
+  if (!parseReportBlock(last.response)?.checks) {
+    return "the accepted review has no Checks line";
+  }
+  if (!last.reviewed) {
+    return "the reviewer turn carries no reviewed state";
+  }
+  if (!last.reviewed.exact) {
+    return "the reviewed snapshot is not exact";
+  }
+  const current = reviewedState(await snapshot(cwd));
+  if (!current.exact) {
+    return "the current snapshot is not exact";
+  }
+  if (current.head !== last.reviewed.head) {
+    return "the work tree HEAD changed after the accepted review";
+  }
+  if (current.digest !== last.reviewed.digest) {
+    return "the work tree changed after the accepted review";
+  }
+  return null;
 }
 
 /** `abort`: records the reason and ends the run; accepted from any non-terminal lifecycle. */
@@ -579,6 +663,7 @@ async function abort(args) {
   if (args.reason === null) {
     throw new RoleError("abort requires --reason.");
   }
+  rejectFinishOnlyFlags(args, "abort");
 
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {

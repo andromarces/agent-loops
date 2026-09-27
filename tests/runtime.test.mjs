@@ -864,6 +864,7 @@ const REVIEW_ACCEPT = [
   "Conclusion: the state passes.",
   "Why: changes match the task.",
   "Blockers: none.",
+  "Checks: npm test",
   "Verdict: accept",
 ].join("\n");
 const REVIEW_REJECT = [
@@ -1135,7 +1136,8 @@ test("--require-accept returns the refusal exit 1 when no step budget remains", 
     expect(refusals).toEqual([
       {
         type: "refusal",
-        reason: "no reviewer accept on the latest changed state after a worker turn",
+        reason:
+          "no reviewer accept with a Checks line on the latest changed state after a worker turn",
         stepsUsed: 1,
       },
     ]);
@@ -1180,12 +1182,14 @@ test("--require-accept records a refused finish as a refusal event", async () =>
     expect(refusals).toEqual([
       {
         type: "refusal",
-        reason: "no reviewer accept on the latest changed state after a worker turn",
+        reason:
+          "no reviewer accept with a Checks line on the latest changed state after a worker turn",
         stepsUsed: 1,
       },
       {
         type: "refusal",
-        reason: "no reviewer accept on the latest changed state after a worker turn",
+        reason:
+          "no reviewer accept with a Checks line on the latest changed state after a worker turn",
         stepsUsed: 1,
       },
     ]);
@@ -1198,6 +1202,44 @@ test("--require-accept records a refused finish as a refusal event", async () =>
     for (const index of finishActionIndexes) {
       expect(events[index + 1].type).toBe("refusal");
     }
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 38. Usefulness: verifies the gate treats a reviewer accept with no Checks line
+// as not accepted, matching the parent prompt rule (issue #217, issue #218).
+test("--require-accept treats an accept without a Checks line as not accepted", async () => {
+  const repo = await createTempRepo();
+  try {
+    const acceptNoChecks = [
+      "Conclusion: the state passes.",
+      "Why: changes match the task.",
+      "Blockers: none.",
+      "Verdict: accept",
+    ].join("\n");
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+
+    const result = await runLoop({
+      task: "Task 38",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: scripted([acceptNoChecks]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("Checks");
   } finally {
     await removePath(repo);
   }

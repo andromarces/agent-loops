@@ -79,6 +79,26 @@ test("role unknown inline argument keeps its value in the error", async () => {
   expect(() => parseRoleArgs(["--nope=bar"])).toThrow("Unknown argument: --nope=bar");
 });
 
+// Usefulness: verifies the finish gates parse as an opt-in boolean and a
+// positive PR number, and reject an inline value or a non-positive number
+// (issue #218).
+test("role finish gate flags parse", async () => {
+  await setup();
+  expect(parseRoleArgs(["finish"]).requireAccept).toBe(false);
+  expect(parseRoleArgs(["finish"]).requireCi).toBe(null);
+
+  const parsed = parseRoleArgs(["finish", "--require-accept", "--require-ci", "42"]);
+  expect(parsed.requireAccept).toBe(true);
+  expect(parsed.requireCi).toBe(42);
+
+  expect(() => parseRoleArgs(["finish", "--require-accept=1"])).toThrow(
+    "--require-accept does not take a value.",
+  );
+  expect(() => parseRoleArgs(["finish", "--require-ci", "0"])).toThrow(
+    "--require-ci must be a positive integer.",
+  );
+});
+
 // Usefulness: verifies acceptance (#149) — an init without --parent-session is
 // refused before any state file is written, so no interactive run starts
 // unguarded by default.

@@ -187,6 +187,13 @@ Role flags:
   --prompt-file <path>          Prompt source. Default is stdin.
   --transcript <file>           Append invocation and result events (JSON lines).
   --resume-interrupted          Explicitly continue after an uncertain previous turn.
+  --require-accept              finish only: refuse unless the latest reviewer turn
+                                accepted the current exact state, with a Checks line
+                                (work-first and review-first).
+  --require-ci <pr>             finish only: refuse unless the PR head matches the
+                                reviewed commit, the reviewed tree is clean, the PR is
+                                not behind its base under a strict rule, and every
+                                required check passed on the commit GitHub evaluates.
 
 Options:
 
@@ -213,8 +220,9 @@ Options:
   --transcript <file>           Record execution transcript to a JSON file.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   --require-accept              Refuse finish until a reviewer turn reports on the state, and
-                                after a worker turn that reviewer turn accepts. Off by default;
-                                a repeated refusal, or a refusal with no step budget left, ends the run.
+                                after a worker turn that reviewer turn accepts with a Checks
+                                line. Off by default; a repeated refusal, or a refusal with no
+                                step budget left, ends the run.
   -h, --help                    Show help.
 
   A value flag also accepts the inline form --flag=value, for example
