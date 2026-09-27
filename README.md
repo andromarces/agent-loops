@@ -233,7 +233,7 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
 --require-accept              Refuse finish until a reviewer turn reports on the state, and
                               after a worker turn that reviewer turn accepts. Off by default;
-                              a repeated refusal ends the run.
+                              a repeated refusal, or a refusal with no step budget left, ends the run.
 -h, --help                    Show help.
 ```
 
@@ -515,12 +515,12 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
 
 ## Exit codes
 
-| Code | Meaning                                                                                                                                                                                                                                               |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Orchestrator returned `finish` with valid 5-part summary.                                                                                                                                                                                             |
-| 1    | Orchestrator returned `abort`, a `--require-accept` finish refused twice, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover. |
-| 2    | Step limit reached (`--max-steps`) with work remaining.                                                                                                                                                                                               |
-| 130  | Interrupted by `Ctrl+C` (active children killed).                                                                                                                                                                                                     |
+| Code | Meaning                                                                                                                                                                                                                                                                                   |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Orchestrator returned `finish` with valid 5-part summary.                                                                                                                                                                                                                                 |
+| 1    | Orchestrator returned `abort`, a `--require-accept` finish refused twice or refused with no step budget left, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover. |
+| 2    | Step limit reached (`--max-steps`) with work remaining.                                                                                                                                                                                                                                   |
+| 130  | Interrupted by `Ctrl+C` (active children killed).                                                                                                                                                                                                                                         |
 
 ## Development
 
