@@ -36,7 +36,7 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
   - Enforces non-mutating safety on reviewer and orchestrator turns using CLI flags and pre/post Git work-tree mutation detection.
   - Recovers from malformed JSON via a single repair turn.
   - Enforces the completion rule with `--require-accept`: after a worker turn, a `finish` needs a later reviewer `verdict: accept` on that state; with no worker turn, it needs at least one reviewer report. The gate follows turn order only, so an edit made outside the loop after the accept is not detected.
-  - Records validated orchestrator actions, child results, one `invocation` event per CLI call with usage when the adapter exposes it, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses are not recorded.
+  - Records validated orchestrator actions, a `refusal` event for each finish the `--require-accept` gate refused, child results, one `invocation` event per CLI call with usage when the adapter exposes it, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses are not recorded.
 
 See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md), [ADR 0002](adr/0002-harness-neutral-orchestrator-instructions.md)).
 
@@ -462,6 +462,8 @@ When `--transcript <file>` is specified, a JSON transcript is written upon proce
 
 The transcript records each validated orchestrator action, each child result, and one `invocation` event per CLI call, all with timestamps, plus the final exit code and error. It does not record raw orchestrator responses.
 
+A `refusal` event records a `finish` the runtime refused under `--require-accept`, with the `reason` string and the `stepsUsed` at the refusal. The event follows the refused `action` event, so a reader sees the `finish` action, then the refusal and its reason. A run that refuses twice emits one `refusal` event per refusal, and the second refusal ends the run with exit 1.
+
 An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude and Copilot adapters map it from the CLI result:
 
 - `models`: the per-model usage map keyed by model id. The Claude CLI exposes it; the Copilot CLI does not.
@@ -497,7 +499,9 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
     { "type": "invocation", "at": "...", "stepsUsed": 0, "role": "orchestrator", "status": "ok", "usage": { ... } },
     { "type": "action", "at": "...", "stepsUsed": 0, "action": { ... } },
     { "type": "invocation", "at": "...", "stepsUsed": 1, "role": "worker", "status": "ok", "usage": { ... } },
-    { "type": "result", "at": "...", "stepsUsed": 1, "role": "worker", "result": { ... } }
+    { "type": "result", "at": "...", "stepsUsed": 1, "role": "worker", "result": { ... } },
+    { "type": "action", "at": "...", "stepsUsed": 1, "action": { "action": "finish", "summary": { ... } } },
+    { "type": "refusal", "at": "...", "stepsUsed": 1, "reason": "..." }
   ],
   "exitCode": 0,
   "error": null

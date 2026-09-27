@@ -1058,3 +1058,53 @@ test("--require-accept keeps an earlier reviewer report after a later failure", 
     await removePath(repo);
   }
 });
+
+// 36. Usefulness: verifies each refused finish under --require-accept is recorded
+// as a refusal event that follows the refused action, carries the reason and the
+// step count, and appears once per refusal (issue #247).
+test("--require-accept records a refused finish as a refusal event", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task 36",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(1);
+    const refusals = events.filter((e) => e.type === "refusal");
+    expect(refusals).toEqual([
+      {
+        type: "refusal",
+        reason: "no reviewer accept on the latest changed state after a worker turn",
+        stepsUsed: 1,
+      },
+      {
+        type: "refusal",
+        reason: "no reviewer accept on the latest changed state after a worker turn",
+        stepsUsed: 1,
+      },
+    ]);
+    const refusedActionIndex = events.findIndex(
+      (e) => e.type === "action" && e.action.action === "finish",
+    );
+    expect(events[refusedActionIndex + 1].type).toBe("refusal");
+  } finally {
+    await removePath(repo);
+  }
+});

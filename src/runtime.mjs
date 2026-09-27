@@ -174,6 +174,7 @@ export async function runLoop(options) {
       const missing = workerRan
         ? "no reviewer accept on the latest changed state after a worker turn"
         : "no reviewer report on the state";
+      onEvent({ type: "refusal", reason: missing, stepsUsed });
       if (finishRefused) {
         return stopLoop(1, { reason: `Finish refused: ${missing}.` });
       }
