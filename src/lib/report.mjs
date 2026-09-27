@@ -46,7 +46,13 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // bullet whose later `*` is a wildcard or multiplication (`*glob src/*.mjs`,
 // `*use 2* 3`), which would otherwise drop the item with no `raw` signal. The
 // letter requirement also keeps a spaceless bullet with a later ` * ` a list.
-const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])/u;
+// The close must not be glued to a following token that carries a letter or a
+// digit, so a spaceless bullet whose later `*` a letter precedes and a filename
+// or glob continues (`*file*.mjs`, `*glob src/a*.mjs`) counts as a list too
+// (issue #267). The cost: an emphasis run glued to a following word
+// (`*self*-hosted`) is flagged as well. That direction is safe, because `raw`
+// carries the text, whereas the silent-drop shape loses it.
+const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
