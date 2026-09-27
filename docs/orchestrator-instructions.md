@@ -119,12 +119,12 @@ Read the JSON envelope on stdout. Example reviewer envelope:
 - `report.notes` holds non-blocking findings the next turn does not need to act
   on. `report.deferred` holds items found but left out of scope. Both are
   optional: a child that omits the label yields `null` for that field, and the
-  block still parses. Each value is one line, the label plain at column 0. An
-  empty optional label followed by a list (including a bullet with no space
-  after the marker), an indented label, or a decorated label makes the block
-  unparseable, so the text surfaces through `raw` instead of being dropped. A
-  non-list line, for example a closing sentence, does not make the block
-  unparseable.
+  block still parses. Each value is one line, the label plain at column 0. A
+  label followed by a list (including a bullet with no space after the marker),
+  an indented label, or a decorated label makes the block unparseable, so the
+  text surfaces through `raw` instead of being dropped. This covers a label that
+  already holds a value, including the required `blockers`. A non-list line, for
+  example a closing sentence, does not make the block unparseable.
 
 ## Reviewer prompts
 
@@ -157,6 +157,12 @@ Every command for a run passes that run's `--cwd`. Each run ends with its own
   if needed.
 - `review-only`: reviewer, then report. Findings alone never authorize edits;
   the subcommand rejects worker dispatch in this mode.
+
+This section governs the interactive `role` mode. The headless loop chooses its
+own action order; its prompt states the completion rule and the `review-only`
+mapping instead, and `agent-loop --require-accept` enforces that rule. The
+headless gate follows turn order only; an edit made outside the loop after a
+reviewer accept is not detected.
 
 ## Completion
 

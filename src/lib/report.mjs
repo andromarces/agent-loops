@@ -14,7 +14,7 @@ const REPORT_LABELS = [
 const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 
 // A line that opens any label in the closing block, including the reviewer's
-// Verdict line. Bounds the search for a list an empty optional label would drop.
+// Verdict line. Bounds the search for a list a label would drop.
 const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}|Verdict):`, "i");
 
 // A report label that indentation or markdown decoration hides from the strict
@@ -32,6 +32,10 @@ const DECORATED_LABEL_LINE = new RegExp(
 // `* item`, `1. item`, or the same without the space after the marker
 // (`-item`). A run of markers alone, for example `---`, is not a list.
 const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])(?:\s+\S|[^\s\-*+])/;
+
+// A markdown thematic break, for example `* * *` or `- - -`. It matches the
+// list pattern but carries no item, so it does not drop text.
+const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
@@ -57,11 +61,13 @@ function closingBlock(response) {
  * `blockers` are required, and a missing or empty one makes the whole block
  * unparseable. `notes` and `deferred` are optional: an absent or empty label
  * maps to null and never makes the block null, so a response in the pre-#214
- * format stays parseable. Two shapes the strict read would otherwise drop make
- * the whole block unparseable, so the dispatch layer surfaces their text
- * through `raw`: a list line under an empty optional label, including a bullet
- * with no space after its marker (#229), and a label that indentation or
- * markdown decoration hides (#243).
+ * format stays parseable. A label followed by a list line, for example bullets,
+ * instead makes the whole block unparseable, so the dispatch layer surfaces the
+ * dropped list through `raw` (issues #229 and #240); this covers a label that
+ * already holds a value, including the required `blockers`, not only an empty
+ * optional one. A bullet with no space after its marker counts as a list line,
+ * and a label that indentation or markdown decoration hides also makes the
+ * block unparseable, so `raw` carries its value (issue #243).
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
  */
@@ -76,27 +82,34 @@ export function parseReportBlock(response) {
   const report = {};
   for (const [key, label, optional] of REPORT_LABELS) {
     const found = lastLabeled(block, label);
-    const value = found?.value ?? "";
-    if (value === "") {
+    if (!found) {
       if (optional) {
-        if (found && hasListAfter(block, found.index)) {
-          return null;
-        }
         report[key] = null;
         continue;
       }
       return null;
     }
-    report[key] = value;
+    if (hasListAfter(block, found.index)) {
+      return null;
+    }
+    if (found.value === "") {
+      if (optional) {
+        report[key] = null;
+        continue;
+      }
+      return null;
+    }
+    report[key] = found.value;
   }
   return report;
 }
 
 /**
  * True when a list line follows `index` before the next label line or the end
- * of the block. Such a list would otherwise be dropped, because the label above
- * it holds no value. A bullet with no space after the marker counts as a list
- * line (issue #243).
+ * of the block. Such a list would otherwise be dropped, because a label holds
+ * one line and the list below it is never read, and a bullet with no space
+ * after the marker counts as a list line (issue #243). A thematic break is not
+ * a list.
  * @param {string[]} lines
  * @param {number} index
  * @returns {boolean}
@@ -110,7 +123,7 @@ function hasListAfter(lines, index) {
     if (LABEL_LINE.test(line)) {
       return false;
     }
-    if (LIST_LINE.test(line)) {
+    if (LIST_LINE.test(line) && !THEMATIC_BREAK.test(line)) {
       return true;
     }
   }
