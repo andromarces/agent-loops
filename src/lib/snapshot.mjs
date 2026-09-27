@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
 import { sha256 } from "./hash.mjs";
@@ -34,16 +34,24 @@ export async function assertGitWorkTree(cwd) {
   }
 }
 
-// Returns null only for an absent or non-regular file; read errors other than ENOENT propagate.
+// Returns null only for an absent or non-regular, non-symlink entry; read errors
+// other than ENOENT propagate. A symlink hashes its link target text, not the
+// file it points to, so two links with different targets never share a hash and
+// a dangling or directory link still has a content identity. The link text is
+// tagged before hashing, so a link never collides with a regular file that
+// holds the same bytes.
 export async function sha256File(path) {
   let s;
   try {
-    s = await stat(path);
+    s = await lstat(path);
   } catch (err) {
-    if (err.code === "ENOENT" || err.code === "EISDIR") {
+    if (err.code === "ENOENT") {
       return null;
     }
     throw err;
+  }
+  if (s.isSymbolicLink()) {
+    return sha256(`symlink\0${await readlink(path)}`);
   }
   if (!s.isFile()) {
     return null;
@@ -53,7 +61,7 @@ export async function sha256File(path) {
     return sha256(content);
   } catch (err) {
     if (err.code === "ENOENT") {
-      // Raced with deletion between stat and read; treat as absent.
+      // Raced with deletion between lstat and read; treat as absent.
       return null;
     }
     throw err;
@@ -135,6 +143,29 @@ export async function snapshot(cwd) {
 }
 
 /**
+ * Derives the runtime-owned identity of the state a snapshot represents.
+ * `digest` covers the work-tree entries (path, status, hash) and the index hash,
+ * so two different uncommitted states at the same `head` differ. It identifies
+ * the full Git-visible uncommitted state only when `exact` is true: a work-tree
+ * entry with no content hash that is not a deletion (for example a submodule)
+ * has no content identity. Ignored files are out of scope, because the snapshot
+ * never lists them.
+ * @param {Awaited<ReturnType<typeof snapshot>>} snap
+ * @returns {{ head: string, clean: boolean, exact: boolean, digest: string }}
+ */
+export function reviewedState(snap) {
+  const clean = snap.workTree.length === 0;
+  const exact = snap.workTree.every((e) => e.hash !== null || e.status.includes("D"));
+  const entries = snap.workTree.map((e) => [e.path, e.status, e.hash]);
+  return {
+    head: snap.head,
+    clean,
+    exact,
+    digest: sha256(JSON.stringify({ entries, indexHash: snap.indexHash })),
+  };
+}
+
+/**
  * Diff two snapshots. Returns the sorted changed work-tree paths, plus the
  * sentinel entries `<index>` and `<HEAD>` when the index or HEAD changed.
  * @param {Awaited<ReturnType<typeof snapshot>>} before
@@ -180,10 +211,12 @@ export function diffSnapshots(before, after) {
  * Run `fn()` and compare Git snapshots taken before and after.
  * Throws `MutationError` when the diff is non-empty, even when `fn()` already
  * failed: the mutation error wins over the wrapped error, which is discarded.
+ * `fn` receives the before snapshot, so a caller can derive the reviewed state
+ * without taking a second snapshot.
  * @template T
  * @param {string} cwd
  * @param {string} role
- * @param {() => Promise<T>} fn
+ * @param {(before: Awaited<ReturnType<typeof snapshot>>) => Promise<T>} fn
  * @returns {Promise<T>}
  */
 export async function withMutationCheck(cwd, role, fn) {
@@ -193,7 +226,7 @@ export async function withMutationCheck(cwd, role, fn) {
   let result;
 
   try {
-    result = await fn();
+    result = await fn(before);
   } catch (err) {
     actionError = err;
   }

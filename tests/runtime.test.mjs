@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { ExecError } from "../src/lib/exec.mjs";
-import { MutationError } from "../src/lib/snapshot.mjs";
+import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
 import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
@@ -76,6 +76,46 @@ test("orchestrator dispatches reviewer first", async () => {
     expect(reviewerAdapter.recorded.length).toBe(1);
     expect(reviewerAdapter.recorded[0].prompt).toContain("inspect repo");
     expect(workerAdapter.recorded.length).toBe(0);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 2b. Usefulness: verifies the headless reviewer result prompt carries the
+// runtime reviewed state, so the headless parent sees the same identity the
+// interactive envelope records (issue #217).
+test("headless reviewer result carries the runtime reviewed state", async () => {
+  const repo = await createTempRepo();
+  try {
+    const expected = reviewedState(await snapshot(repo));
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "inspect repo" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ];
+    const orchAdapter = scripted(orchReplies);
+    const reviewerAdapter = scripted(["reviewer inspected"]);
+
+    const result = await runLoop({
+      task: "Task 2b",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: scripted([]), rev: reviewerAdapter },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const resultPromptText = orchAdapter.recorded[1].prompt;
+    expect(resultPromptText).toContain(`"head": "${expected.head}"`);
+    expect(resultPromptText).toContain(`"digest": "${expected.digest}"`);
+    expect(resultPromptText).toContain('"clean": true');
+    expect(resultPromptText).toContain('"exact": true');
   } finally {
     await removePath(repo);
   }

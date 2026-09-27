@@ -42,6 +42,11 @@ Completion:
 
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes and deferred are optional, and the block stays valid when the child omits them.
 
+A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. The report carries a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Apply these parent rules:
+- Compare reviewed.head with the PR head before finish.
+- Require reviewed.clean: true for PR work.
+- Treat an accept without a Checks line as not accepted.
+
 Map the report fields into the finish summary:
 - Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.
 - Reviewer Notes that no later turn addressed go into open.
@@ -59,6 +64,7 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
     role: result.role,
     status: result.status,
     ...(result.status === "ok" ? { response: result.response } : { error: result.error }),
+    ...(result.reviewed ? { reviewed: result.reviewed } : {}),
     stepsUsed,
     stepsRemaining,
   };

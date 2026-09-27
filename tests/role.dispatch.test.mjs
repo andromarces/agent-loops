@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
+import { reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";
 import {
   basicDeps,
@@ -222,6 +223,7 @@ test("reviewer dispatch exposes the parsed verdict in the payload", async () => 
     conclusion: "done",
     why: "tests pass",
     blockers: "none",
+    checks: null,
     notes: null,
     deferred: null,
   });
@@ -231,9 +233,60 @@ test("reviewer dispatch exposes the parsed verdict in the payload", async () => 
   expect(state.lastResult.status).toBe("ok");
 });
 
-// Usefulness: verifies the dispatch seam carries the optional Notes and
-// Deferred labels from a reviewer turn into the envelope (issue #214).
-test("reviewer dispatch carries the optional Notes and Deferred labels", async () => {
+// Usefulness: verifies the reviewer envelope and the state file carry the
+// runtime-owned reviewed state, and that all four fields match the work tree as
+// the turn starts — a clean tree at a real head (issue #217).
+test("reviewer dispatch carries the runtime reviewed state in envelope and state", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const reviewer = recordingAdapter([]);
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const before = await snapshot(repo);
+  const expected = reviewedState(before);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.reviewed).toMatchObject({
+    head: expected.head,
+    clean: true,
+    exact: true,
+  });
+  expect(result.payload.reviewed.digest).toBe(expected.digest);
+  expect(result.payload.reviewed.head).toMatch(/^[0-9a-f]{40}$/);
+
+  const state = await readRepoState(repo);
+  expect(state.lastResult.reviewed).toEqual(result.payload.reviewed);
+});
+
+// Usefulness: verifies a reviewer turn over a work tree with an uncommitted
+// change reports clean: false, so the parent can reject PR work on a dirty tree
+// (issue #217).
+test("reviewer dispatch reports clean: false on an uncommitted work tree", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  await writeFile(join(repo, "init.txt"), "uncommitted change\n");
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.reviewed.clean).toBe(false);
+  expect(result.payload.reviewed.exact).toBe(true);
+});
+
+// Usefulness: verifies the dispatch seam carries the optional Checks, Notes,
+// and Deferred labels from a reviewer turn into the envelope (issue #214,
+// issue #217).
+test("reviewer dispatch carries the optional Checks, Notes, and Deferred labels", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
@@ -241,7 +294,7 @@ test("reviewer dispatch carries the optional Notes and Deferred labels", async (
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
     state.sessionId = "rev-notes";
-    return `${REPORT}\nNotes: tidy the helper later\nDeferred: migrate the legacy path\nVerdict: accept`;
+    return `${REPORT}\nChecks: npm test\nNotes: tidy the helper later\nDeferred: migrate the legacy path\nVerdict: accept`;
   };
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
@@ -250,6 +303,7 @@ test("reviewer dispatch carries the optional Notes and Deferred labels", async (
   });
   expect(result.exitCode).toBe(0);
   expect(result.payload.report).toMatchObject({
+    checks: "npm test",
     notes: "tidy the helper later",
     deferred: "migrate the legacy path",
   });
