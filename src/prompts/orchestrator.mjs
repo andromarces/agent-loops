@@ -32,7 +32,7 @@ Supported action formats:
 
 The finish summary requires non-empty strings for all five keys: changed, verified, deferred, notDone, open.
 
-Each child turn ends with a closing report block. The envelope carries its fields: conclusion, why, and blockers are required; notes and deferred are optional and map to null when the child omits them.
+Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes and deferred are optional, and the block stays valid when the child omits them.
 
 Map the report fields into the finish summary:
 - Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.
