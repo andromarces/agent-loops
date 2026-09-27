@@ -437,10 +437,21 @@ Reviewer and orchestrator turns run in read-only mode to prevent unintended repo
 | CLI        | Read-only invocation flag     | Flag effect                                                                                                                        | Role-model subagent fan-out                                              | Evidence                              |
 | ---------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
 | `claude`   | `--permission-mode plan`      | Plan mode blocks file edits.                                                                                                       | Yes; Explore and Plan subagents run on the role model. Adapter disables. | Claude docs; issue #46 smoke test     |
-| `codex`    | `-c sandbox_mode="read-only"` | Passes read-only sandbox mode on new and resumed sessions.                                                                         | Yes; `spawn_agent` subagents inherit the parent model and effort.        | Codex rollout transcript              |
+| `codex`    | `-c sandbox_mode="read-only"` | Passes read-only sandbox mode on new and resumed sessions. Also blocks network access.                                             | Yes; `spawn_agent` subagents inherit the parent model and effort.        | Codex rollout transcript              |
 | `agy`      | `--mode plan`                 | Plan mode disables file edits.                                                                                                     | Yes; `invoke_subagent` subagents inherit the parent model by default.    | CLI `stream-json` step                |
 | `opencode` | `--agent plan`                | The plan agent blocks edits; a global permissions allow can cancel it. Adapter denies `edit` per turn. Shell writes stay possible. | Yes; the `subagent` tool inherits the session model. Adapter denies it.  | `run --format json` tool call; A/B    |
 | `copilot`  | `--deny-tool write`           | Denies write/edit tools. External permissions may still permit shell writes.                                                       | No; subagents run on an agent-definition default model.                  | `--output-format json` subagent event |
+
+#### Codex read-only network limit
+
+`-c sandbox_mode="read-only"` restricts network access as well as writes. A
+Codex orchestrator turn cannot run `gh` to resolve a PR head, so a
+Codex-orchestrated PR run must abort, or record the unresolved compare under
+`notDone` and `open`, instead of finishing as verified. A Codex reviewer turn
+cannot run `gh` either, for example to check a PR's CI status. Read-only file
+protection stays in place on every adapter: the Codex sandbox flag remains, and
+the pre/post mutation check still aborts on a detected change. The other
+adapters' read-only invocations keep shell network access.
 
 #### Read-only subagent fan-out
 

@@ -46,6 +46,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
 - Treat an accept without a Checks line as not accepted.
+- When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.
 
 Map the report fields into the finish summary:
 - Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.

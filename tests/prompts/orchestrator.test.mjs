@@ -61,6 +61,9 @@ test("initialPrompt states the reviewed-state parent rules", () => {
   );
   expect(prompt).toContain("Require reviewed.clean: true for PR work.");
   expect(prompt).toContain("Treat an accept without a Checks line as not accepted.");
+  expect(prompt).toContain(
+    "When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.",
+  );
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt
@@ -77,6 +80,7 @@ test("interactive instructions and headless prompt share the reviewed-state rule
     "Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.",
     "Require reviewed.clean: true for PR work.",
     "Treat an accept without a Checks line as not accepted.",
+    "When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.",
   ]) {
     expect(instructions).toContain(rule);
     expect(prompt).toContain(rule);
