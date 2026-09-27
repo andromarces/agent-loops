@@ -22,14 +22,17 @@ function fail(reason) {
 }
 
 // A source the caller cannot read answers 404 or 403, and the message names the
-// credential. Observed live on the classic-protection endpoint (#280):
+// credential. Observed live on the classic-protection endpoint (#280, #295):
 //
 //   `Not Found`                             404  a token without repository admin
 //   `Branch not protected`                  404  an admin, on a branch with no
 //                                                  classic protection
 //   `Resource not accessible by integration` 403  a `GITHUB_TOKEN`
+//   `Resource not accessible by personal
+//    access token`                           403  a fine-grained PAT without the
+//                                                  Administration permission
 //
-// All three leave the source with no required contexts, and the caller refuses an
+// All four leave the source with no required contexts, and the caller refuses an
 // empty union either way, so the gate treats them alike. The second is not a
 // permission problem: the branch simply has no classic protection, and a
 // ruleset-only repository answers it for an admin.
@@ -42,19 +45,19 @@ function fail(reason) {
 // anything unrecognized throws instead. A narrower match only costs a thrown
 // error, which still fails closed.
 //
-// `Not Found` is safe to read as unreadable on these two calls: the slug comes
-// from `gh repo view` and the base branch from the pull request, both of which
-// the caller has already read successfully, so a 404 here cannot be a typo in
-// either. A genuine typo instead answers `Branch not found`, which is not
-// matched, so it throws rather than reading as an unreadable source.
-//
-// known-limit: a fine-grained PAT without the Administration permission is
-// expected to answer `Resource not accessible by personal access token` (403),
-// which is not observed, because no such token was available. It throws rather
-// than contributing no contexts, which still refuses the finish. Widen this
-// pattern when that reply is observed.
+// `Not Found` and the 403s are safe to read as unreadable on these two calls: the
+// slug comes from `gh repo view` and the base branch from the pull request, both of
+// which the caller has already read successfully, so a wrong value here cannot come
+// from a typo. The `Branch not found` reply, which an admin gets for a branch that
+// does not exist, is not matched and throws, so a typo still surfaces when the
+// caller can read protection. It cannot be relied on to surface otherwise: a
+// non-admin token can read the branch but not its protection settings, so a typo
+// answers the same `Not Found` as a protected branch, and a fine-grained PAT
+// without the Administration permission answers the same 403 whatever the branch
+// is. The already-read values are what make a typo impossible here, not the
+// message.
 const UNREADABLE =
-  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by integration \(HTTP 403\)/;
+  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)/;
 
 async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
