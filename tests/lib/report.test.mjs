@@ -257,6 +257,23 @@ test("parseReportBlock keeps a block whose label is followed by a thematic break
   }
 });
 
+// Usefulness: verifies a closing sentence that opens like a list item — a
+// decimal (`1.5x`), a version (`2.0`), or an arrow (`->`) — is not mistaken for
+// a dropped list, so the wider #249 scan does not blank a report whose reviewer
+// sentence follows the Verdict line (issue #256).
+test("parseReportBlock keeps a block whose closing sentence resembles a list", () => {
+  for (const line of ["1.5x faster overall.", "2.0 ships", "-> see above"]) {
+    expect(parseReportBlock(`${REPORT}\nVerdict: accept\n${line}`), line).toEqual({
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      checks: null,
+      notes: null,
+      deferred: null,
+    });
+  }
+});
+
 // Usefulness: verifies a list under an earlier, shadowed occurrence of a label
 // is not dropped when a later occurrence wins the label value; the whole block
 // is unparseable, so the dispatch layer surfaces the list through `raw` (issue
