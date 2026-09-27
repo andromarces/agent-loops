@@ -233,7 +233,7 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
 --require-accept              Refuse finish until a reviewer turn reports on the state, and
                               after a worker turn that reviewer turn accepts. Off by default;
-                              a repeated refusal ends the run.
+                              a repeated refusal, or a refusal with no step budget left, ends the run.
 -h, --help                    Show help.
 ```
 
