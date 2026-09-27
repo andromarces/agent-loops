@@ -281,12 +281,18 @@ Stdout carries exactly one JSON envelope; all logs go to stderr:
 {
   "role": "reviewer",
   "status": "ok",
-  "report": { "conclusion": "...", "why": "...", "blockers": "..." },
+  "report": {
+    "conclusion": "...",
+    "why": "...",
+    "blockers": "...",
+    "notes": "...",
+    "deferred": "..."
+  },
   "verdict": "accept"
 }
 ```
 
-`report` is parsed from the closing block every child turn must end with. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
+`report` is parsed from the closing block every child turn must end with. `conclusion`, `why`, and `blockers` are required; `notes` (non-blocking findings) and `deferred` (out-of-scope items) are optional, and an omitted label yields `null` for that field without making `report` null. When parsing fails, `report` is null and `raw` carries the tail of the response. `status: "error"` carries `error`, and every error path still prints one JSON object. The subcommand launches no orchestrator model and accepts no `--orchestrator` flags.
 
 ## Interactive orchestrator: harness entry points
 
