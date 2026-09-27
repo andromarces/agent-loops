@@ -160,6 +160,9 @@ Apply these parent rules:
   PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
 - Treat an accept without a Checks line as not accepted.
+- When the PR head cannot be resolved, for example a read-only turn with no
+  network access, do not finish as verified: abort, or record the unresolved
+  compare under notDone and open in the finish summary.
 
 ## Reviewer prompts
 
