@@ -73,5 +73,6 @@ Andro Marces
 ## Links
 
 - [Issue #212: Support concurrent role runs from one parent session](https://github.com/andromarces/agent-loops/issues/212)
+- [PR #226: feat: support concurrent role runs from one parent session (#212)](https://github.com/andromarces/agent-loops/pull/226)
 - [ADR 0006: Require a parent session id for interactive runs](0006-require-parent-session-for-interactive-runs.md)
 - [ADR Index](README.md)
