@@ -347,8 +347,8 @@ test("parseReportBlock returns null when a spaceless bullet closes before a join
 });
 
 // Usefulness: verifies the narrowed rule treats an emphasis run glued to a
-// following token that carries a letter or a digit as a dropped list, the
-// stated cost of closing the silent-drop gap (issue #267). The cost covers a
+// following token that carries a letter or an ASCII digit as a dropped list,
+// the stated cost of closing the silent-drop gap (issue #267). The cost covers a
 // glued word (`*self*-hosted`), a possessive (`*Claude*'s review`), an unspaced
 // em dash (`*emph*—then more`), a slash (`*a*/b`), a colon with no following
 // space (`*Note*:x`), and a numeric continuation (`*emph*.2`). Blanking the

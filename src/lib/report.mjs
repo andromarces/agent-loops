@@ -46,22 +46,23 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // bullet whose later `*` is a wildcard or multiplication (`*glob src/*.mjs`,
 // `*use 2* 3`), which would otherwise drop the item with no `raw` signal. The
 // letter requirement also keeps a spaceless bullet with a later ` * ` a list.
-// The close must not be glued to a following token that carries a letter or a
-// digit, so a spaceless bullet whose later `*` a letter precedes and a filename
-// or glob continues (`*file*.mjs`, `*glob src/a*.mjs`) counts as a list too
-// (issue #267). The cost is wider than a glued word (`*self*-hosted`): any
-// following token that carries a letter or a digit flags as well, for example
-// `*Claude*'s review`, `*emph*—then more`, `*a*/b`, `*Note*:x`, and
-// `*emph*.2`. The cost is not only a reporting loss: a null block has no Checks
-// line, so the `--require-accept` gate also refuses. `acceptGateReason` in
-// src/role.mjs returns "the accepted review has no Checks line", and
-// `isAcceptedReview` in src/runtime.mjs returns false. Both directions fail
-// closed, but the report loses its text to `raw`, and the `acceptGateReason`
-// refusal names the wrong cause.
+// The close must not be glued to a following token that carries a letter or an
+// ASCII digit, so a spaceless bullet whose later `*` a letter precedes and a
+// filename or glob continues (`*file*.mjs`, `*glob src/a*.mjs`) counts as a
+// list too (issue #267). The cost is wider than a glued word
+// (`*self*-hosted`): any following token that carries a letter or an ASCII digit
+// flags as well, for example `*Claude*'s review`, `*emph*—then more`, `*a*/b`,
+// `*Note*:x`, and `*emph*.2`. A non-ASCII digit (`*emph*.٢`, `*file*.٢`) carries
+// no `\d`, so it does not flag. The cost is not only a reporting loss: a null
+// block has no Checks line, so the `--require-accept` gate also refuses.
+// `acceptGateReason` in src/role.mjs returns "the accepted review has no Checks
+// line", and `isAcceptedReview` in src/runtime.mjs returns false. Both
+// directions fail closed, but the report loses its text to `raw`, and the
+// `acceptGateReason` refusal names the wrong cause.
 //
 // known-limit: a `*` line whose closing `*` a letter precedes, where the
 // character right after the close is not a word character or `*`, and where
-// nothing glued from that character on is a letter or a digit (`*file*`,
+// nothing glued from that character on is a letter or an ASCII digit (`*file*`,
 // `*glob src/a*`, `*use a* b`, `*glob src/a*, b`), reads as an emphasis run, so
 // the block still parses and the line is dropped with no `raw` signal (issue
 // #275, accepted gap). The two checks are separate, so `*emph*._` stays exempt
