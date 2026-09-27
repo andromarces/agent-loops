@@ -300,9 +300,10 @@ test("parseReportBlock keeps a block whose closing sentence opens with emphasis"
 });
 
 // Usefulness: verifies a spaceless bullet is still a dropped list when the line
-// holds a later ` * `, so the emphasis exclusion cannot hide the item and blank
-// the block while `raw` stays silent (issue #259). A `*` closes an emphasis run
-// only when a non-space precedes it, as CommonMark requires.
+// holds a later ` * `, so the emphasis exclusion cannot hide the item, which
+// drops it while the block still parses and `raw` stays silent (issue #259). A
+// `*` closes an emphasis run only when a non-space precedes it, as CommonMark
+// requires.
 test("parseReportBlock returns null when a spaceless bullet holds a later spaced star", () => {
   for (const line of ["*a * b", "*item with 2 * 3 math", "*item one * item two"]) {
     expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
