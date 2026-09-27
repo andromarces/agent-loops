@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -9,7 +9,7 @@ import {
   withStateLock,
   writeSessionEntry,
 } from "../../src/lib/runstate.mjs";
-import { deadPid } from "../runtime-helpers.mjs";
+import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 let dirs = [];
 
@@ -21,7 +21,7 @@ async function tempDir() {
 
 afterEach(async () => {
   for (const dir of dirs) {
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
   dirs = [];
 });

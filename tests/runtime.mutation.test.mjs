@@ -4,7 +4,7 @@ import { expect, test } from "vitest";
 import { execa } from "execa";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
-import { createTempRepo, scripted } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
 
 // 16. Usefulness: verifies reviewer mutation is detected, fatal, and does not revert changes.
 test("reviewer mutation is detected and fatal", async () => {
@@ -36,7 +36,7 @@ test("reviewer mutation is detected and fatal", async () => {
     const s = await execa("git", ["status", "--porcelain"], { cwd: repo });
     expect(s.stdout).toContain("leak.txt");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -65,7 +65,7 @@ test("orchestrator mutation is detected and fatal", async () => {
       }),
     ).rejects.toThrow(MutationError);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -95,7 +95,7 @@ test("reviewer mutation on failed turn is fatal MutationError", async () => {
       }),
     ).rejects.toThrow(MutationError);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -127,7 +127,7 @@ test("reviewer mutation by commit is fatal MutationError", async () => {
       }),
     ).rejects.toThrow(MutationError);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -158,7 +158,7 @@ test("orchestrator mutation on repair turn is fatal MutationError", async () => 
       }),
     ).rejects.toThrow(MutationError);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -188,7 +188,7 @@ test("reviewer snapshot failure is fatal when agent succeeds", async () => {
       }),
     ).rejects.toMatchObject({ name: "SnapshotError" });
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -222,6 +222,6 @@ test("reviewer snapshot failure is fatal when agent also fails", async () => {
       cause: agentError,
     });
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });

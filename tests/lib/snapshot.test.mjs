@@ -12,6 +12,7 @@ import {
   snapshot,
   withMutationCheck,
 } from "../../src/lib/snapshot.mjs";
+import { removePath } from "../runtime-helpers.mjs";
 
 async function createTempRepo() {
   const dir = await mkdtemp(join(tmpdir(), "agent-loops-snap-test-"));
@@ -32,8 +33,8 @@ test("assertGitWorkTree validates git directory", async () => {
     await expect(assertGitWorkTree(repo)).resolves.toBeUndefined();
     await expect(assertGitWorkTree(nonRepo)).rejects.toThrow();
   } finally {
-    await rm(repo, { recursive: true, force: true });
-    await rm(nonRepo, { recursive: true, force: true });
+    await removePath(repo);
+    await removePath(nonRepo);
   }
 });
 
@@ -45,7 +46,7 @@ test("diffSnapshots returns empty list when no change occurred", async () => {
     const s2 = await snapshot(repo);
     expect(diffSnapshots(s1, s2)).toEqual([]);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -58,7 +59,7 @@ test("diffSnapshots detects modified tracked file", async () => {
     const s2 = await snapshot(repo);
     expect(diffSnapshots(s1, s2)).toEqual(["initial.txt"]);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -72,7 +73,7 @@ test("diffSnapshots detects when already-dirty file is modified again", async ()
     const s2 = await snapshot(repo);
     expect(diffSnapshots(s1, s2)).toEqual(["initial.txt"]);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -86,7 +87,7 @@ test("diffSnapshots detects when renamed dirty file is modified", async () => {
     const s2 = await snapshot(repo);
     expect(diffSnapshots(s1, s2)).toEqual(["renamed.txt"]);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -99,7 +100,7 @@ test("diffSnapshots detects untracked file addition", async () => {
     const s2 = await snapshot(repo);
     expect(diffSnapshots(s1, s2)).toEqual(["newfile.txt"]);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -112,7 +113,7 @@ test("diffSnapshots detects file deletion", async () => {
     const s2 = await snapshot(repo);
     expect(diffSnapshots(s1, s2)).toEqual(["initial.txt"]);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -132,7 +133,7 @@ test("diffSnapshots detects index modification via update-index", async () => {
     const diff = diffSnapshots(s1, s2);
     expect(diff).toContain("<index>");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -148,7 +149,7 @@ test("diffSnapshots detects commit HEAD change", async () => {
     const diff = diffSnapshots(s1, s2);
     expect(diff).toContain("<HEAD>");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -167,7 +168,7 @@ test("withMutationCheck detects mutation and throws MutationError", async () => 
     const s = await snapshot(repo);
     expect(s.workTree.some((e) => e.path === "dirty.txt")).toBe(true);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -182,7 +183,7 @@ test("withMutationCheck prioritizes MutationError when inner function throws", a
       }),
     ).rejects.toThrow(MutationError);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -198,7 +199,7 @@ test("snapshot from subdirectory detects second edit to already-modified root fi
     const s2 = await snapshot(sub);
     expect(diffSnapshots(s1, s2)).toEqual(["initial.txt"]);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -214,7 +215,7 @@ test("snapshot from subdirectory detects index change outside the subdirectory",
     const s2 = await snapshot(sub);
     expect(s2.indexHash).not.toBe(s1.indexHash);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -224,7 +225,7 @@ test("snapshot rejects with SnapshotError when cwd is not a Git work tree", asyn
   try {
     await expect(snapshot(nonRepo)).rejects.toThrow(SnapshotError);
   } finally {
-    await rm(nonRepo, { recursive: true, force: true });
+    await removePath(nonRepo);
   }
 });
 
@@ -237,7 +238,7 @@ test("snapshot succeeds in repository with no commits and reports unborn head", 
     expect(s.head).toBe("unborn");
     expect(s.workTree).toEqual([]);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
 });
 
@@ -257,7 +258,7 @@ test.skipIf(!canSimulateReadFailure)("sha256File rethrows non-ENOENT read errors
       await chmod(file, 0o644);
     }
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
 });
 
@@ -275,7 +276,7 @@ test.skipIf(!canSimulateReadFailure)(
         await chmod(file, 0o644);
       }
     } finally {
-      await rm(repo, { recursive: true, force: true });
+      await removePath(repo);
     }
   },
 );
@@ -295,6 +296,6 @@ test("withMutationCheck throws SnapshotError with agent error as cause when post
       cause: agentError,
     });
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
