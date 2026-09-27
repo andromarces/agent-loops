@@ -63,18 +63,6 @@ test("initialPrompt states the reviewed-state parent rules", () => {
   expect(prompt).toContain("Treat an accept without a Checks line as not accepted.");
 });
 
-// Usefulness: verifies the headless parent defines PR work and how the PR head
-// is resolved, matching the interactive instructions and the worker commit rule
-// (issue #252).
-test("initialPrompt defines PR work and the PR head resolution", () => {
-  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain("A task is PR work when its change is delivered on a pull request.");
-  expect(prompt).toContain(
-    "For PR work, the worker commits its change on the PR branch, so the reviewer sees a committed head.",
-  );
-  expect(prompt).toContain("The PR number is a run input, and the head commit comes from that PR.");
-});
-
 // Usefulness: verifies the interactive instructions and the headless prompt
 // state the same reviewed-state parent rules, so the two parent paths never
 // diverge (issue #217, issue #252).
@@ -83,8 +71,9 @@ test("interactive instructions and headless prompt share the reviewed-state rule
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   for (const rule of [
     "A task is PR work when its change is delivered on a pull request.",
-    "For PR work, the worker commits its change on the PR branch, so the reviewer sees a committed head.",
-    "The PR number is a run input, and the head commit comes from that PR.",
+    "For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head.",
+    "The run supplies the PR number, and the head commit comes from that PR.",
+    "In a headless run, the task names the PR number.",
     "Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.",
     "Require reviewed.clean: true for PR work.",
     "Treat an accept without a Checks line as not accepted.",

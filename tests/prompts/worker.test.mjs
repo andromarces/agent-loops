@@ -15,13 +15,14 @@ test("first worker turn requires the closing report block", () => {
   expect(prompt).toContain("Deferred:");
 });
 
-// Usefulness: verifies the first worker turn requires a commit on the PR branch
-// for PR work, so the reviewer sees a committed head and reviewed.clean can be
-// true (issue #252).
-test("first worker turn requires a commit on the PR branch for PR work", () => {
+// Usefulness: verifies the first worker turn commits and pushes on the named PR
+// branch for PR work, so the reviewer sees a committed head, the PR head matches
+// that commit, and reviewed.clean can be true (issue #252).
+test("first worker turn commits and pushes on the named PR branch for PR work", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain("For PR work, the dispatcher names the PR branch.");
   expect(prompt).toContain(
-    "For PR work, commit your change on the PR branch so the reviewer sees a committed head.",
+    "Commit your change on that branch and push it, so the reviewer sees a committed head and the PR head matches that commit.",
   );
   expect(prompt).toContain("A task is PR work when its change is delivered on a pull request.");
 });

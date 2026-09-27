@@ -23,7 +23,8 @@ Collect these before the first dispatch:
 - reviewer CLI, model, and effort (`--reviewer`, `--reviewer-model`, `--reviewer-effort`)
 - mode: `work-first`, `review-first`, or `review-only` (`--mode`)
 - maximum steps (`--max-steps`)
-- the PR number when the task is PR work (delivered on a pull request)
+- the PR number when the task is PR work (delivered on a pull request); the run
+  supplies it, and a headless run names it in the task
 
 ## Resolving the CLI
 
@@ -148,8 +149,11 @@ uncommitted state (it is exhaustive only when `exact` is true; ignored files are
 out of scope).
 
 A task is PR work when its change is delivered on a pull request. For PR work,
-the worker commits its change on the PR branch, so the reviewer sees a committed
-head. The PR number is a run input, and the head commit comes from that PR.
+name the PR branch in the worker prompt: the worker commits its change on that
+branch and pushes it, so the PR head equals the reviewed head. The run supplies
+the PR number, and the head commit comes from that PR. In a headless run, the
+task names the PR number.
+
 Apply these parent rules:
 
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the

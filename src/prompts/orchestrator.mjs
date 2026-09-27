@@ -42,7 +42,7 @@ Completion:
 
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes and deferred are optional, and the block stays valid when the child omits them.
 
-A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. The report carries a Checks line that names the commands that ran and their results; checks is null when the child omits the line. A task is PR work when its change is delivered on a pull request. For PR work, the worker commits its change on the PR branch, so the reviewer sees a committed head. The PR number is a run input, and the head commit comes from that PR. Apply these parent rules:
+A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. The report carries a Checks line that names the commands that ran and their results; checks is null when the child omits the line. A task is PR work when its change is delivered on a pull request. For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head. The run supplies the PR number, and the head commit comes from that PR. In a headless run, the task names the PR number. Apply these parent rules:
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
 - Treat an accept without a Checks line as not accepted.
