@@ -103,6 +103,26 @@ test("parseReportBlock returns null when a label is decorated with emphasis", ()
   ).toBeNull();
 });
 
+// Usefulness: verifies the common markdown label decorations — emphasis closed
+// before or after the colon, a heading, a blockquote, a code span, an ordered
+// list marker, and a space before the colon — all make the block unparseable,
+// so no decorated label value is dropped silently (issue #243).
+test("parseReportBlock returns null for common decorated label forms", () => {
+  const forms = [
+    "**Deferred**: migrate the legacy path",
+    "*Deferred:* migrate the legacy path",
+    "_Deferred:_ migrate the legacy path",
+    "### Deferred: migrate the legacy path",
+    "> Deferred: migrate the legacy path",
+    "`Deferred:` migrate the legacy path",
+    "1. Deferred: migrate the legacy path",
+    "Deferred : migrate the legacy path",
+  ];
+  for (const line of forms) {
+    expect(parseReportBlock(`${REPORT}\n${line}`), line).toBeNull();
+  }
+});
+
 // Usefulness: verifies an indented label does not have its value dropped
 // silently; the whole block is unparseable, so `raw` carries the text (issue
 // #243).

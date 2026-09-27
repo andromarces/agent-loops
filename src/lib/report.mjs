@@ -18,12 +18,13 @@ const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}|Verdict):`, "i");
 
 // A report label that indentation or markdown decoration hides from the strict
-// match above, for example `**Deferred:** x` or `  Deferred: x`. Its value would
-// otherwise be dropped, so the whole block is unparseable and `raw` carries the
-// text (issue #243). The Verdict label is excluded: a malformed verdict already
-// maps to `unknown` and never carries report text.
+// match above, for example `**Deferred**: x`, `*Deferred:* x`, `### Deferred: x`,
+// `> Deferred: x`, or `  Deferred: x`. Such a value would otherwise be dropped,
+// so the whole block is unparseable and `raw` carries the text (issue #243).
+// The Verdict label is excluded: a malformed verdict already maps to `unknown`
+// and never carries report text.
 const DECORATED_LABEL_LINE = new RegExp(
-  `^(?!(?:${REPORT_LABEL_NAMES.join("|")}):)\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:${REPORT_LABEL_NAMES.join("|")}):`,
+  `^(?!(?:${REPORT_LABEL_NAMES.join("|")}):)\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${REPORT_LABEL_NAMES.join("|")})[*_\`]{0,2}\\s*:`,
   "i",
 );
 
@@ -56,11 +57,11 @@ function closingBlock(response) {
  * `blockers` are required, and a missing or empty one makes the whole block
  * unparseable. `notes` and `deferred` are optional: an absent or empty label
  * maps to null and never makes the block null, so a response in the pre-#214
- * format stays parseable. Any text the strict read would otherwise drop makes
- * the whole block unparseable, so the dispatch layer surfaces it through `raw`:
- * a list line under an empty optional label, including a bullet with no space
- * after its marker, and a label that indentation or markdown decoration hides
- * (issues #229 and #243).
+ * format stays parseable. Two shapes the strict read would otherwise drop make
+ * the whole block unparseable, so the dispatch layer surfaces their text
+ * through `raw`: a list line under an empty optional label, including a bullet
+ * with no space after its marker (#229), and a label that indentation or
+ * markdown decoration hides (#243).
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
  */
