@@ -32,6 +32,8 @@ Supported action formats:
 
 The finish summary requires non-empty strings for all five keys: changed, verified, deferred, notDone, open.
 
+When you dispatch the reviewer, name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them. Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it.
+
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes and deferred are optional, and the block stays valid when the child omits them.
 
 Map the report fields into the finish summary:

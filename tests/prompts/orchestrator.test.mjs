@@ -25,6 +25,19 @@ test("initialPrompt states the notes and deferred finish mapping", () => {
   expect(prompt).toContain("deferred holds out-of-scope items in every mode");
 });
 
+// Usefulness: verifies the headless parent names the guards and contracts at risk
+// in a reviewer prompt and does not restate the spec as the pass condition,
+// matching the interactive reviewer-prompt rule (issue #228).
+test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).toContain(
+    "name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them",
+  );
+  expect(prompt).toContain(
+    "Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it",
+  );
+});
+
 // Usefulness: verifies resultPrompt produces expected formatted payload for ok result.
 test("resultPrompt produces expected prompt for ok result", () => {
   const prompt = resultPrompt({
