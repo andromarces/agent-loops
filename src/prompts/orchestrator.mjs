@@ -25,8 +25,10 @@ Supported action formats:
 2. Dispatch reviewer:
 {"action": "run_reviewer", "prompt": "<instructions for reviewer>"}
 
-3. Finish when work is complete and verified:
+3. Finish when the work is complete and verified, or to record an unresolved PR-head compare:
 {"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}}
+For an unresolved PR-head compare, add the marker inside the same action object:
+{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}, "unresolvedCompare": true}
 
 4. Abort if the task cannot proceed:
 {"action": "abort", "reason": "<explanation>"}
@@ -106,7 +108,7 @@ Supported action formats:
 
 1. {"action": "run_worker", "prompt": "<string>"}
 2. {"action": "run_reviewer", "prompt": "<string>"}
-3. {"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}}, with an optional boolean "unresolvedCompare": true
+3. {"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}, "unresolvedCompare": true} (unresolvedCompare is optional; omit it for a verified finish)
 4. {"action": "abort", "reason": "<string>"}
 `.trim();
 }

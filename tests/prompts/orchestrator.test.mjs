@@ -67,12 +67,19 @@ test("initialPrompt states the reviewed-state parent rules", () => {
 });
 
 // Usefulness: verifies the headless prompt names the machine-readable marker the
-// parent sets when it records an unresolved PR-head compare, so the runtime can
-// turn it into a distinct unresolved-compare event (issue #266).
+// parent sets when it records an unresolved PR-head compare, and shows it inside
+// the finish action object, so the runtime can turn it into a distinct
+// unresolved-compare event (issue #266).
 test("initialPrompt names the unresolvedCompare marker", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   expect(prompt).toContain(
     'When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action.',
+  );
+  expect(prompt).toContain(
+    "For an unresolved PR-head compare, add the marker inside the same action object:",
+  );
+  expect(prompt).toContain(
+    '{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}, "unresolvedCompare": true}',
   );
   expect(prompt).toContain("unresolved-compare event");
 });
@@ -172,4 +179,14 @@ test("repairPrompt produces expected repair prompt", () => {
   const prompt = repairPrompt("Unsupported action: foo");
   expect(prompt).toContain("Unsupported action: foo");
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<string>"}');
+});
+
+// Usefulness: verifies the repair format keeps the unresolvedCompare marker
+// inside the finish action object, so a repaired finish is not read as an
+// object with a trailing field outside it (issue #266).
+test("repairPrompt places unresolvedCompare inside the finish object", () => {
+  const prompt = repairPrompt("finish unresolvedCompare must be a boolean.");
+  expect(prompt).toContain(
+    '{"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}, "unresolvedCompare": true}',
+  );
 });

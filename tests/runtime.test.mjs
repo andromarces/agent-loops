@@ -1307,3 +1307,88 @@ test("finish without unresolvedCompare records no unresolved-compare event", asy
     await removePath(repo);
   }
 });
+
+// 41. Usefulness: verifies a finish that carries the marker emits no
+// unresolved-compare event while the --require-accept gate refuses it, and
+// emits exactly one once a reviewer accept allows the finish, so the event
+// tracks the accepted finish rather than the marker alone (#234, #266).
+test("--require-accept emits the marker event only on the accepted finish", async () => {
+  const repo = await createTempRepo();
+  try {
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "compared reviewed.head with the PR head",
+      open: "PR head unresolved",
+    };
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+    ];
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task 41",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(events.filter((e) => e.type === "refusal")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "unresolved-compare")).toEqual([
+      { type: "unresolved-compare", stepsUsed: 2 },
+    ]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 42. Usefulness: verifies a real review-only finish (a reviewer turn, no
+// worker turn) that carries the marker records the event, so review-only keeps
+// the marker behavior while its no-marker behavior stays covered by test 40
+// (#234, #266).
+test("review-only finish with the marker records the event", async () => {
+  const repo = await createTempRepo();
+  try {
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "compared reviewed.head with the PR head",
+      open: "PR head unresolved",
+    };
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+    ];
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task 42",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: scripted([REVIEW_REJECT]) },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(events.filter((e) => e.type === "unresolved-compare")).toEqual([
+      { type: "unresolved-compare", stepsUsed: 1 },
+    ]);
+  } finally {
+    await removePath(repo);
+  }
+});
