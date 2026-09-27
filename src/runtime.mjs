@@ -186,6 +186,7 @@ export async function runLoop(options) {
       const missing = workerRan
         ? "no reviewer accept on the latest changed state after a worker turn"
         : "no reviewer report on the state";
+      onEvent({ type: "refusal", reason: missing, stepsUsed });
       // A refusal gets one corrective turn. With no step budget left that turn
       // cannot run a child, so the refusal resolves here on the exit-1 path
       // instead of reaching the step-limit exit 2 (#248).
