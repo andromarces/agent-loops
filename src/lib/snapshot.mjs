@@ -37,7 +37,9 @@ export async function assertGitWorkTree(cwd) {
 // Returns null only for an absent or non-regular, non-symlink entry; read errors
 // other than ENOENT propagate. A symlink hashes its link target text, not the
 // file it points to, so two links with different targets never share a hash and
-// a dangling or directory link still has a content identity.
+// a dangling or directory link still has a content identity. The link text is
+// tagged before hashing, so a link never collides with a regular file that
+// holds the same bytes.
 export async function sha256File(path) {
   let s;
   try {
@@ -49,7 +51,7 @@ export async function sha256File(path) {
     throw err;
   }
   if (s.isSymbolicLink()) {
-    return sha256(await readlink(path));
+    return sha256(`symlink\0${await readlink(path)}`);
   }
   if (!s.isFile()) {
     return null;

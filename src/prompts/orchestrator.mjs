@@ -34,9 +34,9 @@ The finish summary requires non-empty strings for all five keys: changed, verifi
 
 When you dispatch the reviewer, name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them. Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it.
 
-Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes, deferred, and checks are optional, and the block stays valid when the child omits them.
+Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes and deferred are optional, and the block stays valid when the child omits them.
 
-A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. The report carries an optional Checks line that names the commands that ran and their results. Apply these parent rules:
+A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. The report carries a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Apply these parent rules:
 - Compare reviewed.head with the PR head before finish.
 - Require reviewed.clean: true for PR work.
 - Treat an accept without a Checks line as not accepted.

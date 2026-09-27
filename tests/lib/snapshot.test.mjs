@@ -288,7 +288,7 @@ test("reviewedState digest separates different states and repeats for the same s
 });
 
 // Platform note: Windows refuses symlink creation without developer mode or an
-// elevated token, so the symlink cases run only on POSIX and macOS.
+// elevated token, so the symlink cases are skipped on Windows.
 const canCreateSymlink = process.platform !== "win32";
 
 // Usefulness: verifies two dangling symlinks with different targets produce
@@ -331,6 +331,27 @@ test.skipIf(!canCreateSymlink)(
       await symlink("target-b.txt", link);
       const b = reviewedState(await snapshot(repo));
       expect(a.digest).not.toBe(b.digest);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  },
+);
+
+// Usefulness: verifies a symlink and a regular file holding the same bytes do
+// not share a digest, closing the collision that untagged link text created
+// (issue #217).
+test.skipIf(!canCreateSymlink)(
+  "a symlink and a regular file with the same bytes differ",
+  async () => {
+    const repo = await createTempRepo();
+    try {
+      const path = join(repo, "x");
+      await symlink("foo", path);
+      const linkState = reviewedState(await snapshot(repo));
+      await rm(path);
+      await writeFile(path, "foo");
+      const fileState = reviewedState(await snapshot(repo));
+      expect(linkState.digest).not.toBe(fileState.digest);
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
