@@ -1355,9 +1355,8 @@ test("--require-accept emits the marker event only on the accepted finish", asyn
 });
 
 // 42. Usefulness: verifies a real review-only finish (a reviewer turn, no
-// worker turn) that carries the marker records the event, so review-only keeps
-// the marker behavior while its no-marker behavior stays covered by test 40
-// (#234, #266).
+// worker turn) records the event when it carries the marker, so the marker
+// path is covered outside the worker-plus-reviewer gate path (#234, #266).
 test("review-only finish with the marker records the event", async () => {
   const repo = await createTempRepo();
   try {

@@ -108,7 +108,9 @@ Supported action formats:
 
 1. {"action": "run_worker", "prompt": "<string>"}
 2. {"action": "run_reviewer", "prompt": "<string>"}
-3. {"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}, "unresolvedCompare": true} (unresolvedCompare is optional; omit it for a verified finish)
+3. {"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}}
+For an unresolved PR-head compare, add the marker inside the same object:
+{"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}, "unresolvedCompare": true}
 4. {"action": "abort", "reason": "<string>"}
 `.trim();
 }

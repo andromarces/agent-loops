@@ -181,11 +181,14 @@ test("repairPrompt produces expected repair prompt", () => {
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<string>"}');
 });
 
-// Usefulness: verifies the repair format keeps the unresolvedCompare marker
-// inside the finish action object, so a repaired finish is not read as an
-// object with a trailing field outside it (issue #266).
-test("repairPrompt places unresolvedCompare inside the finish object", () => {
+// Usefulness: verifies the repair format shows both the plain finish object and
+// the marked finish object, with unresolvedCompare inside the object, so a
+// repaired verified finish is not copied from the marked form (issue #266).
+test("repairPrompt shows both finish forms with unresolvedCompare inside the object", () => {
   const prompt = repairPrompt("finish unresolvedCompare must be a boolean.");
+  expect(prompt).toContain(
+    '3. {"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}}\nFor an unresolved PR-head compare, add the marker inside the same object:',
+  );
   expect(prompt).toContain(
     '{"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}, "unresolvedCompare": true}',
   );
