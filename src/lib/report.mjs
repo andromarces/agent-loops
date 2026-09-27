@@ -45,9 +45,11 @@ function closingBlock(response) {
  * `blockers` are required, and a missing or empty one makes the whole block
  * unparseable. `notes` and `deferred` are optional: an absent or empty label
  * maps to null and never makes the block null, so a response in the pre-#214
- * format stays parseable. An empty optional label followed by a list line, for
- * example bullets, instead makes the whole block unparseable, so the dispatch
- * layer surfaces the dropped list through `raw` (issue #229).
+ * format stays parseable. A label followed by a list line, for example bullets,
+ * instead makes the whole block unparseable, so the dispatch layer surfaces the
+ * dropped list through `raw` (issues #229 and #240). This covers a label that
+ * already holds a value, including the required `blockers`, not only an empty
+ * optional one.
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
  */
@@ -59,26 +61,32 @@ export function parseReportBlock(response) {
   const report = {};
   for (const [key, label, optional] of REPORT_LABELS) {
     const found = lastLabeled(block, label);
-    const value = found?.value ?? "";
-    if (value === "") {
+    if (!found) {
       if (optional) {
-        if (found && hasListAfter(block, found.index)) {
-          return null;
-        }
         report[key] = null;
         continue;
       }
       return null;
     }
-    report[key] = value;
+    if (hasListAfter(block, found.index)) {
+      return null;
+    }
+    if (found.value === "") {
+      if (optional) {
+        report[key] = null;
+        continue;
+      }
+      return null;
+    }
+    report[key] = found.value;
   }
   return report;
 }
 
 /**
  * True when a list line follows `index` before the next label line or the end
- * of the block. Such a list would otherwise be dropped, because the label above
- * it holds no value.
+ * of the block. Such a list would otherwise be dropped, because a label holds
+ * one line and the list below it is never read.
  * @param {string[]} lines
  * @param {number} index
  * @returns {boolean}

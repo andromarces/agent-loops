@@ -92,6 +92,35 @@ test("parseReportBlock keeps an empty optional label that a label follows", () =
   });
 });
 
+// Usefulness: verifies a list under a label that already holds a value is not
+// dropped silently; the whole block is unparseable, so `raw` carries the list.
+// This covers the required `Blockers` label, which the next turn needs, and the
+// optional `Notes` and `Deferred` labels (issue #240).
+test("parseReportBlock returns null when a value-bearing label has a following list", () => {
+  expect(parseReportBlock(`${REPORT}\nBlockers: see below\n- real blocker`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: two items\n- a\n- b`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nDeferred: two items\n1. a`)).toBeNull();
+});
+
+// Usefulness: verifies the list is flagged even when the next label follows it,
+// so a dropped list cannot hide behind an unrelated label (issue #240).
+test("parseReportBlock returns null when a list sits between two labels", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: two items\n- a\nDeferred: later`)).toBeNull();
+});
+
+// Usefulness: verifies a non-list line after a value-bearing label, for example
+// a closing sentence, still parses, so the wider #240 rule does not reject every
+// block with trailing prose.
+test("parseReportBlock keeps a block whose value-bearing label only a non-list line follows", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: tidy later\nLet me know if that helps.`)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: "tidy later",
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies only the last Conclusion block counts, so a verdict or
 // report in earlier prose never leaks into the parsed result.
 test("parseReportBlock parses only after the last Conclusion line", () => {
