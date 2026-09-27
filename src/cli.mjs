@@ -192,8 +192,10 @@ Role flags:
                                 (work-first and review-first).
   --require-ci <pr>             finish only: refuse unless the PR head matches the
                                 reviewed commit, the reviewed tree is clean, the PR is
-                                not behind its base under a strict rule, and every
-                                required check passed on the commit GitHub evaluates.
+                                not behind its base under a strict rule, has no merge
+                                conflicts, is not blocked, and every required check
+                                passed on the commit GitHub evaluates. An app-qualified
+                                required check must pass on a check run from that app.
 
 Options:
 
