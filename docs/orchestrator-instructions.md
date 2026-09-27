@@ -141,14 +141,15 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   occurrence that a later repeat shadows. A non-list line, for example a closing
   sentence, does not make the block unparseable. A `*` line is not always a
   list, and one shape is the case that matters here: a `*` line whose closing
-  `*` a letter precedes, and whose close is followed by end of line, a space, or
-  punctuation with no letter or digit glued after it, for example `*file*` or
-  `*use a* b`. Such a line is dropped without `raw` under any label, and every
-  matching line in the block drops the same way, so the block still parses with
-  the text gone (issue #275, accepted gap). A child is told to write no block
-  line that starts with `*`. Every other `*` line either is a list and blanks
-  the block, for example `*item`, `* item`, or `*file*.mjs`, or is not a list and
-  drops as prose, for example `**bold** note`.
+  `*` a letter precedes, whose close is followed by end of line, whitespace, or
+  punctuation, and with nothing glued to that close that is a word character,
+  `*`, a letter, or a digit, for example `*file*` or `*use a* b`. Such a line is
+  dropped without `raw` under any label, and every matching line in the block
+  drops the same way, so the block still parses with the text gone (issue #275,
+  accepted gap). A child is told to write no block line that starts with `*`.
+  Every other `*` line either is a list and blanks the block, for example
+  `*item`, `* item`, or `*file*.mjs`, or is not a list and drops as prose, for
+  example `**bold** note`.
 
 A reviewer envelope carries `reviewed`, the runtime-owned identity of the state
 the reviewer saw. The runtime writes these fields from the snapshot taken at the
