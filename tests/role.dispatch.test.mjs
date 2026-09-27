@@ -255,6 +255,28 @@ test("reviewer dispatch carries the optional Notes and Deferred labels", async (
   });
 });
 
+// Usefulness: verifies an empty optional label with bullets below it reaches the
+// envelope through `raw` at the dispatch seam instead of being dropped (issue
+// #229).
+test("worker dispatch carries text under an empty optional label into raw", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const worker = recordingAdapter([]);
+  worker.run = async (state) => {
+    state.sessionId = "sess-notes";
+    return `${REPORT}\nNotes:\n- item one\n- item two`;
+  };
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toContain("item one");
+});
+
 // Usefulness: verifies the dispatch seam when the closing block does not parse
 // — the payload carries a null report and the raw response, so a caller can
 // still inspect what the child returned instead of guessing.

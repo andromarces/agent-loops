@@ -42,6 +42,35 @@ test("parseReportBlock maps an empty optional label to null", () => {
   });
 });
 
+// Usefulness: verifies an empty optional label with bullet lines below it does
+// not silently drop those lines; the whole block is unparseable, so the
+// dispatch layer falls back to `raw` and the text stays visible (issue #229).
+test("parseReportBlock returns null when an empty optional label has following lines", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- item one\n- item two`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: none\nDeferred:\n- item one`)).toBeNull();
+});
+
+// Usefulness: verifies an empty optional label directly followed by the next
+// label is not mistaken for dropped text, so the block still parses and the
+// other labels survive (issue #229). The reviewer's Verdict line is a label
+// boundary too.
+test("parseReportBlock keeps an empty optional label that a label follows", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\nDeferred: migrate the legacy path`)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: null,
+    deferred: "migrate the legacy path",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\nDeferred:\nVerdict: accept`)).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies only the last Conclusion block counts, so a verdict or
 // report in earlier prose never leaks into the parsed result.
 test("parseReportBlock parses only after the last Conclusion line", () => {

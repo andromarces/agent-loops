@@ -11,6 +11,13 @@ const REPORT_LABELS = [
   ["deferred", "Deferred", true],
 ];
 
+// A line that opens any label in the closing block, including the reviewer's
+// Verdict line. Bounds the search for text an empty optional label would drop.
+const LABEL_LINE = new RegExp(
+  `^(?:${REPORT_LABELS.map(([, label]) => label).join("|")}|Verdict):`,
+  "i",
+);
+
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
  * the response, or null when the response has no `Conclusion:` line at all.
@@ -35,7 +42,9 @@ function closingBlock(response) {
  * `blockers` are required, and a missing or empty one makes the whole block
  * unparseable. `notes` and `deferred` are optional: an absent or empty label
  * maps to null and never makes the block null, so a response in the pre-#214
- * format stays parseable.
+ * format stays parseable. An empty optional label followed by a content line,
+ * for example bullets, instead makes the whole block unparseable so the
+ * dispatch layer surfaces the dropped text through `raw` (issue #229).
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string, notes: string | null, deferred: string | null } | null}
  */
@@ -49,6 +58,9 @@ export function parseReportBlock(response) {
     const match = lastLabeledLine(block, label);
     if (!match) {
       if (optional) {
+        if (hasDanglingContent(block, label)) {
+          return null;
+        }
         report[key] = null;
         continue;
       }
@@ -57,6 +69,34 @@ export function parseReportBlock(response) {
     report[key] = match;
   }
   return report;
+}
+
+/**
+ * True when `label`'s last line in the block holds an empty value and a
+ * non-blank line follows before the next label line or the block ends. Such a
+ * line would otherwise be dropped.
+ * @param {string[]} lines
+ * @param {string} label
+ * @returns {boolean}
+ */
+function hasDanglingContent(lines, label) {
+  const pattern = new RegExp(`^${label}:\\s*(.*)$`, "i");
+  let index = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (pattern.test(lines[i])) {
+      index = i;
+    }
+  }
+  if (index === -1) {
+    return false;
+  }
+  for (let i = index + 1; i < lines.length; i++) {
+    if (lines[i].trim() === "") {
+      continue;
+    }
+    return !LABEL_LINE.test(lines[i]);
+  }
+  return false;
 }
 
 /**
