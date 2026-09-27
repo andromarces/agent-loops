@@ -235,6 +235,24 @@ printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...",
   | agent-loop role finish --cwd "<work tree>"
 ```
 
+Two opt-in gates apply to `work-first` and `review-first` only. Each refusal
+names the condition that failed. In `review-only`, a `finish` without them keeps
+the current behavior, and each flag fails with a clear error.
+
+- `--require-accept`: refuse unless the latest turn is a reviewer accept with a
+  `Checks` line, the reviewed snapshot is exact, and the current snapshot is
+  exact with the same `head` and `digest`. The `head` and `digest` comparison
+  detects a change to an uncommitted state at the same commit.
+- `--require-ci <pr>`: refuse unless the PR head equals the reviewed `head`, the
+  reviewed tree is clean, the PR is not behind its base under a strict rule and
+  GitHub reports a known merge state, and every required check passed on the
+  commit GitHub evaluates. GitHub evaluates the test merge commit when that
+  commit has a check run or a commit status, and the head commit otherwise. A
+  required check run passes with the conclusion `success`, `skipped`, or
+  `neutral`; a required commit status passes with the state `success`. When a
+  check run and a commit status share a required name, both must pass, and a
+  pending or missing check fails. This gate needs the `gh` CLI.
+
 ## Blockers and terminal states
 
 - Blocker, `interrupted` lifecycle, or step limit with work remaining: call

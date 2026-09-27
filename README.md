@@ -35,7 +35,7 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
   - Spawns agents, manages persistent sessions, and captures process signals (`Ctrl+C` exits 130).
   - Enforces non-mutating safety on reviewer and orchestrator turns using CLI flags and pre/post Git work-tree mutation detection.
   - Recovers from malformed JSON via a single repair turn.
-  - Enforces the completion rule with `--require-accept`: after a worker turn, a `finish` needs a later reviewer `verdict: accept` on that state; with no worker turn, it needs at least one reviewer report. The gate follows turn order only, so an edit made outside the loop after the accept is not detected.
+  - Enforces the completion rule with `--require-accept`: after a worker turn, a `finish` needs a later reviewer `verdict: accept` with a `Checks` line on that state; with no worker turn, it needs at least one reviewer report. The gate follows turn order only, so an edit made outside the loop after the accept is not detected.
   - Records validated orchestrator actions, a `refusal` event for each finish the `--require-accept` gate refused, child results, one `invocation` event per CLI call with usage when the adapter exposes it, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses are not recorded.
 
 See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md), [ADR 0002](adr/0002-harness-neutral-orchestrator-instructions.md)).
@@ -232,8 +232,9 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --transcript <file>           Record execution transcript to a JSON file.
 --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
 --require-accept              Refuse finish until a reviewer turn reports on the state, and
-                              after a worker turn that reviewer turn accepts. Off by default;
-                              a repeated refusal, or a refusal with no step budget left, ends the run.
+                              after a worker turn that reviewer turn accepts with a Checks
+                              line. Off by default; a repeated refusal, or a refusal with no
+                              step budget left, ends the run.
 -h, --help                    Show help.
 ```
 
@@ -277,6 +278,7 @@ Operations: `dispatch` (default), `finish`, `abort`.
 - The lock is fail-closed on ambiguity: a contender that finds a lock it cannot read (created moments ago, content not yet written) exits non-zero and never removes it; only an unparseable lock older than a grace window, or one whose recorded pid is dead, is treated as stale. Lock creation is an atomic hard link, with an exclusive-create fallback on filesystems that have no hard links (FAT/exFAT, some network mounts); a lock temp file left by a crashed process is pruned on the next acquisition.
 - The reviewer turn runs under the same `withMutationCheck` as the headless loop: a detected mutation or snapshot error is fatal, keeps the charged step, and sets `halted`. No further dispatch is possible; the next run needs a new init call, which archives the halted file as `state.<timestamp>.json`.
 - `mode: review-only` rejects `--role worker` as a hard guard and does not require `--worker` at init. `finish` is completion of the requested work, not code acceptance: it is accepted from `active` in any mode, and the five-key summary carries the reviewer verdict and unresolved findings.
+- Two opt-in finish gates apply to `work-first` and `review-first`. `--require-accept` refuses a `finish` unless the latest turn is a reviewer `verdict: accept` with a `Checks` line and the current exact snapshot has the reviewed `head` and `digest`, so a change to an uncommitted state at the same commit is detected. `--require-ci <pr>` refuses unless the PR head equals the reviewed `head`, the reviewed tree is clean, the PR is not behind its base under a strict rule and GitHub reports a known merge state, and every required check passed on the commit GitHub evaluates. Each refusal names the failed condition. In `review-only`, a flagless `finish` keeps the current behavior and each gate fails with a clear error.
 - The reviewer is required to end with one explicit `Verdict:` line (`accept` or `reject`, parsed case-insensitively) inside its closing block. The verdict word alone, the word closed by a sentence period (`reject.`), or the word followed by a separator and a trailing clause (`reject — the state does not pass`) parses to that word, unless the clause names either verdict as a whole word. Any other malformed value, including a missing line or a line that names both verdicts, yields `verdict: unknown`; process success never implies acceptance.
 - `--transcript <file>` appends one JSON line per `invocation` and `result` event, in the same shape as the headless mode, accumulating across calls.
 
