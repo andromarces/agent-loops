@@ -51,6 +51,9 @@ one-run-per-session rule existed only as a prompt rule in
   with many runs pays one read per entry.
 - The legacy index file stays readable; a workspace written before the new
   format keeps its parent guarded.
+- A run whose legacy index entry an earlier init overwrote before this upgrade
+  stays unguarded; the upgrade cannot recover an entry that is already gone.
+  Runs started after the upgrade register their own entry and are unaffected.
 - A run's entry stays valid across archives because the state file path per work
   tree is constant.
 - The one-run-per-session prompt rule is replaced by a per-work-tree rule.

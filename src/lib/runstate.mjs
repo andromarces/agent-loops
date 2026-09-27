@@ -123,11 +123,15 @@ export async function readStatesForSession(parentSession) {
 }
 
 // Collects the state file path from every entry file in the new directory and
-// from the legacy single-path index. An entry that cannot be read is skipped.
+// from the legacy single-path index. An entry that cannot be read is skipped,
+// and a temp file left by an interrupted atomic write is not an entry.
 async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
   const stateFiles = [];
   try {
     for (const name of await readdir(sessionRunsDir)) {
+      if (name.endsWith(".tmp")) {
+        continue;
+      }
       try {
         stateFiles.push((await readFile(join(sessionRunsDir, name), "utf8")).trim());
       } catch {
@@ -333,19 +337,27 @@ export async function readState(stateFile) {
 }
 
 export async function writeState(stateFile, state) {
-  const temp = `${stateFile}.${process.pid}.tmp`;
-  await writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  // Node rename replaces an existing destination on Windows and POSIX.
-  await rename(temp, stateFile);
+  await writeFileAtomic(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+// Writes `text` to `file` atomically: a private temp file in the same directory
+// is renamed over the destination, so a concurrent reader sees the old content
+// or the new content, never a partial write. Node rename replaces an existing
+// destination on Windows and POSIX.
+async function writeFileAtomic(file, text) {
+  const temp = `${file}.${process.pid}.tmp`;
+  await writeFile(temp, text, "utf8");
+  await rename(temp, file);
 }
 
 /**
  * Writes one run's entry under the parent session's entry directory. The entry
  * name is the state directory name, so a re-init in the same work tree
  * overwrites its own entry while a concurrent init in another work tree writes
- * a different file. The per-cwd state lock serializes the same-work-tree case.
+ * a different file. The per-cwd state lock serializes the same-work-tree case,
+ * and the atomic rename keeps a concurrent guard from reading a partial entry.
  */
 export async function writeSessionEntry(entryFile, stateFile) {
   await mkdir(dirname(entryFile), { recursive: true });
-  return writeFile(entryFile, `${stateFile}\n`, "utf8");
+  return writeFileAtomic(entryFile, `${stateFile}\n`);
 }

@@ -1,8 +1,14 @@
-import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { STALE_LOCK_GRACE_MS, statePaths, withStateLock } from "../../src/lib/runstate.mjs";
+import {
+  STALE_LOCK_GRACE_MS,
+  readStatesForSession,
+  statePaths,
+  withStateLock,
+  writeSessionEntry,
+} from "../../src/lib/runstate.mjs";
 import { deadPid } from "../runtime-helpers.mjs";
 
 let dirs = [];
@@ -171,4 +177,31 @@ test("statePaths names each session entry after its work tree", async () => {
   expect(statePaths({ cwd: repoA, parentSession }).sessionEntryFile).toBe(a.sessionEntryFile);
   // The legacy index path is a file, not the new directory, so the two coexist.
   expect(a.legacyIndexFile).not.toBe(a.sessionRunsDir);
+});
+
+// Usefulness: verifies a temp file left by an interrupted atomic entry write is
+// never read as a run entry, so a crashed write cannot register a spurious run
+// or a duplicate of a real one (#212).
+test("readStatesForSession ignores an entry temp file", async () => {
+  const runsRoot = await tempDir();
+  process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+  try {
+    const cwd = await tempDir();
+    const paths = statePaths({ cwd, parentSession: "ses_tmp" });
+    await mkdir(dirname(paths.stateFile), { recursive: true });
+    await writeFile(
+      paths.stateFile,
+      JSON.stringify({ parentSession: "ses_tmp", lifecycle: "active" }),
+      "utf8",
+    );
+    await writeSessionEntry(paths.sessionEntryFile, paths.stateFile);
+    await mkdir(paths.sessionRunsDir, { recursive: true });
+    await writeFile(join(paths.sessionRunsDir, "deadbeef.tmp"), `${paths.stateFile}\n`, "utf8");
+
+    expect(await readStatesForSession("ses_tmp")).toEqual([
+      { parentSession: "ses_tmp", lifecycle: "active" },
+    ]);
+  } finally {
+    delete process.env.AGENT_LOOP_RUNS_ROOT;
+  }
 });

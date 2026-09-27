@@ -40,7 +40,7 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
   `dispatch --resume-interrupted` keeps it engaged because the resumed run is
   non-terminal again.
 - Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt entry or state file. One corrupt entry never hides another active run, and a missing, unreadable, or corrupt record never denies on its own. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
-- Without a state file the hook does one absent-file read, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
+- Without a registered run the hook reads the per-run entry directory and the legacy index, finds nothing, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
 - The installed Claude entry is a shell-form `command` with no `args`,
   `node "<installed guard path>"`. Claude Code runs it through a shell. The user
   settings file is Claude-only: Copilot CLI reads the shared subset of a
