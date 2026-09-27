@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { logWarn } from "./log.mjs";
 
 export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
@@ -347,7 +348,29 @@ export async function writeState(stateFile, state) {
 async function writeFileAtomic(file, text) {
   const temp = `${file}.${process.pid}.tmp`;
   await writeFile(temp, text, "utf8");
-  await rename(temp, file);
+  await renameWithRetry(temp, file);
+}
+
+// Rename is the atomic replace step, but on Windows it fails while another
+// process holds the destination open. EPERM is the observed code; EACCES and
+// EBUSY join the retry set for the general Windows and network-mount failure
+// set. The hold is brief, so retry a few times, then rethrow the original error
+// so a real failure still surfaces (#233).
+const RENAME_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+const RENAME_RETRY_ATTEMPTS = 5;
+const RENAME_RETRY_DELAY_MS = 25;
+
+async function renameWithRetry(from, to) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await rename(from, to);
+    } catch (err) {
+      if (!RENAME_RETRY_CODES.has(err.code) || attempt >= RENAME_RETRY_ATTEMPTS) {
+        throw err;
+      }
+      await delay(RENAME_RETRY_DELAY_MS);
+    }
+  }
 }
 
 /**
