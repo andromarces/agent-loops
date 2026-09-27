@@ -61,7 +61,7 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 //
 // known-limit: a `*` line whose closing `*` a letter precedes, where the
 // character right after the close is not a word character or `*`, and where
-// nothing glued after that character is a letter or a digit (`*file*`,
+// nothing glued from that character on is a letter or a digit (`*file*`,
 // `*glob src/a*`, `*use a* b`, `*glob src/a*, b`), reads as an emphasis run, so
 // the block still parses and the line is dropped with no `raw` signal (issue
 // #275, accepted gap). The two checks are separate, so `*emph*._` stays exempt
