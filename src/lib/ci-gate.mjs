@@ -21,26 +21,38 @@ function fail(reason) {
   return { ok: false, reason };
 }
 
-// A source the caller cannot read answers 404 or 403 depending on the
-// credential: a caller without admin rights on the repository gets
-// `Branch not protected`, and a `GITHUB_TOKEN` without the admin scope gets
-// `Resource not accessible by integration`. Both mean the same thing to this
-// gate, that the source contributes no required contexts.
+// A source the caller cannot read answers 404 or 403, and the message names the
+// credential. Observed live on the classic-protection endpoint (#280):
+//
+//   `Not Found`                             404  a token without repository admin
+//   `Branch not protected`                  404  an admin, on a branch with no
+//                                                  classic protection, which is not
+//                                                  an unreadable source
+//   `Resource not accessible by integration` 403  a `GITHUB_TOKEN`
+//
+// All three mean the same thing to this gate, that the source contributes no
+// required contexts, and the caller refuses an empty union either way.
 //
 // Match the message, not the status. `gh` renders every failure as
 // `gh: <message> (HTTP <status>)`, so a rate-limit or SSO 403 carries the same
-// suffix as the unreadable-source 403 and the status cannot tell them apart.
-// Reading a rate-limit 403 as an unreadable source would silently drop every
-// required context and downgrade a named check refusal to the generic blocked
-// refusal, so anything unrecognized throws instead. A narrower match only costs a
-// thrown error, which still fails closed.
+// suffix as the `GITHUB_TOKEN` 403 and the status cannot tell them apart. Reading
+// a rate-limit 403 as an unreadable source would silently drop every required
+// context and downgrade a named check refusal to the generic blocked refusal, so
+// anything unrecognized throws instead. A narrower match only costs a thrown
+// error, which still fails closed.
 //
-// known-limit: these two messages are the only unreadable-source replies observed
-// live, both on the classic-protection endpoint (#280). A different message for the
-// same condition throws rather than contributing no contexts, which refuses the
-// finish. Widen this list when another unreadable-source reply is observed.
+// `Not Found` is safe to read as unreadable on these two calls: the slug comes
+// from `gh repo view` and the base branch from the pull request, both of which
+// the caller has already read successfully, so a 404 here cannot be a typo in
+// either.
+//
+// known-limit: a fine-grained PAT without the Administration permission is
+// expected to answer `Resource not accessible by personal access token` (403),
+// which is not observed, because no such token was available. It throws rather
+// than contributing no contexts, which still refuses the finish. Widen this
+// pattern when that reply is observed.
 const UNREADABLE =
-  /Branch not protected \(HTTP 404\)|Resource not accessible by integration \(HTTP 403\)/;
+  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by integration \(HTTP 403\)/;
 
 async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
@@ -320,11 +332,12 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   // a caller, confirmed live with a non-admin `GITHUB_TOKEN` (#280). When no other
   // required check reported, the empty-union refusal above fires first. The REST
   // `mergeable_state` reads `blocked` for an admin and `unstable` for an anonymous
-  // caller on that same pull request, so it is not a stable signal; the GraphQL
-  // `mergeStateStatus` reads `BLOCKED` for both, so this reads the GraphQL field.
-  // Other unmet rules (a required review,
-  // unresolved conversations, a required deployment) also report blocked, and the
-  // gate cannot tell them apart, so it fails closed (#271).
+  // caller on that same pull request, so its value depends on the viewer and is not
+  // a stable signal. The GraphQL `mergeStateStatus` reads `BLOCKED` for the admin
+  // and for a non-admin `GITHUB_TOKEN`, which is what was observed; GraphQL needs
+  // authentication, so no anonymous reading of it exists (#280). Other unmet rules
+  // (a required review, unresolved conversations, a required deployment) also report
+  // blocked, and the gate cannot tell them apart, so it fails closed (#271).
   if (info.mergeStateStatus === "BLOCKED") {
     return fail(
       "the PR merge state is blocked (a required check, review, or other required rule is unmet)",

@@ -36,11 +36,12 @@ function run(name, conclusion) {
   };
 }
 
-// Routes a `gh` call by a substring of its arguments. A null value answers with
-// the 404 that the caller treats as "no protection", a `forbidden` value with
-// the 403 a `GITHUB_TOKEN` receives from the same endpoint, and a `rate limited`
-// value with a 403 that is not an unreadable-source answer; an unmatched call is
-// an error so a test never passes on a missing fixture.
+// Routes a `gh` call by a substring of its arguments. A `hidden` value answers
+// with the 404 a token without repository admin receives, a `forbidden` value
+// with the 403 a `GITHUB_TOKEN` receives, and a `rate limited` value with a 403
+// that is not an unreadable-source answer; an unmatched call is an error so a
+// test never passes on a missing fixture. `null` is the admin reply for a branch
+// with no classic protection, which is also unreadable but says so differently.
 function fakeGh(routes) {
   return async (args) => {
     const key = args.join(" ");
@@ -48,6 +49,9 @@ function fakeGh(routes) {
       if (key.includes(match)) {
         if (value === null) {
           return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
+        }
+        if (value === "hidden") {
+          return { status: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" };
         }
         if (value === "forbidden") {
           return {
@@ -420,6 +424,50 @@ test("refuses on the empty union when classic protection answers 403", async () 
     ok: false,
     reason: "no required checks were found for the base branch",
   });
+});
+
+// Usefulness: verifies the 404 a token without repository admin receives leaves
+// the source unreadable rather than failing the run. This is the most common
+// non-admin caller, and it is the reply a human token gets on a protected branch,
+// confirmed live against cli/cli trunk (#280).
+test("treats a non-admin 404 from classic protection as an unreadable source", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        required: [],
+        protection: "hidden",
+        prChecks: [{ name: "build (ubuntu-latest)" }],
+        headRuns: [run("build (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("blocked");
+});
+
+// Usefulness: verifies the same non-admin 404 does not stop a caller whose
+// required checks all passed from passing. Before the message match, this threw
+// instead, so the gate was unusable for a non-admin caller on a repository with
+// classic protection (issue #280).
+test("passes for a non-admin caller when every required check passed", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: [],
+        protection: "hidden",
+        prChecks: [{ name: "ci (ubuntu-latest)" }],
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result).toEqual({ ok: true, commit: HEAD });
 });
 
 // Usefulness: verifies a 403 that is not the unreadable-source answer is not
