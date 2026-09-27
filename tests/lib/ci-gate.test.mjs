@@ -296,8 +296,10 @@ test("refuses a blocked merge state when a required check never reported", async
   expect(result.reason).toContain("blocked");
 });
 
-// Usefulness: verifies an app-qualified required context is matched to that app
-// and is not satisfied by a same-named check run from another app (issue #271).
+// Usefulness: verifies an app-qualified required context is matched to that app,
+// is not satisfied by a same-named check run from another app, and keeps its
+// qualified judgment when `gh pr checks --required` supplies the bare name
+// (issue #271).
 test("matches an app-qualified ruleset context to that app", async () => {
   const appRequired = [
     {
@@ -315,6 +317,7 @@ test("matches an app-qualified ruleset context to that app", async () => {
     gh: fakeGh(
       routes({
         required: appRequired,
+        prChecks: [{ name: "ci" }],
         headRuns: [{ ...run("ci", "success"), app: { id: 999 } }],
       }),
     ),
@@ -329,6 +332,7 @@ test("matches an app-qualified ruleset context to that app", async () => {
     gh: fakeGh(
       routes({
         required: appRequired,
+        prChecks: [{ name: "ci" }],
         headRuns: [
           { ...run("ci", "failure"), app: { id: 999 }, started_at: "2026-01-02T00:00:00Z" },
           { ...run("ci", "success"), app: { id: 15368 }, started_at: "2026-01-01T00:00:00Z" },
@@ -358,6 +362,66 @@ test("matches an app-qualified classic-protection context to that app", async ()
   });
   expect(result.ok).toBe(false);
   expect(result.reason).toContain("app 15368");
+});
+
+// Usefulness: verifies the `-1` any-app qualifier is treated as no qualifier, so
+// a check run from any app satisfies it (issue #271).
+test("treats a -1 app qualifier as unqualified", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ci", integration_id: -1 }] },
+          },
+        ],
+        headRuns: [{ ...run("ci", "success"), app: { id: 999 } }],
+      }),
+    ),
+  });
+  expect(result).toEqual({ ok: true, commit: HEAD });
+});
+
+// Usefulness: verifies a blocked merge state does not hide the name of a failing
+// required check, so a refusal still names the failed condition (issue #271).
+test("names the failing check when the merge state is also blocked", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        headRuns: [run("ci (ubuntu-latest)", "failure"), run("ci (windows-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("ci (ubuntu-latest)");
+  expect(result.reason).toContain("failure");
+});
+
+// Usefulness: verifies the gate refuses a PR with merge conflicts, so an absent
+// required check on that PR cannot pass through the DIRTY merge state, which
+// does not report as blocked (issue #271).
+test("refuses a PR with merge conflicts", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "DIRTY" }),
+        headRuns: [run("ci (ubuntu-latest)", "success"), run("ci (windows-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("conflicts");
 });
 
 // Usefulness: verifies the gate refuses when the PR head differs from the

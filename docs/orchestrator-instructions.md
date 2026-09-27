@@ -247,24 +247,27 @@ the current behavior, and each flag fails with a clear error.
   exact with the same `head` and `digest`. The `head` and `digest` comparison
   detects a change to an uncommitted state at the same commit.
 - `--require-ci <pr>`: refuse unless the PR head equals the reviewed `head`, the
-  reviewed tree is clean, the PR is not behind its base under a strict rule, the
-  merge state is known and not blocked, and every required check passed on the
-  commit GitHub evaluates. GitHub evaluates the test merge commit when that
-  commit has a check run or a commit status, and the head commit otherwise. A
-  required check run passes with the conclusion `success`, `skipped`, or
-  `neutral`; a required commit status passes with the state `success`. When a
-  check run and a commit status share a required name, both must pass, and a
-  pending or missing check fails. Required contexts come from repository
-  rulesets, classic branch protection, and `gh pr checks --required`; when all
-  three are empty the gate refuses. A context qualified by an app (a ruleset
-  `integration_id` or a classic-protection `app_id`) is satisfied only by a
-  check run from that app. Repository rulesets are readable with read access;
-  classic branch protection returns 404 to a caller without admin rights, and
-  `gh pr checks --required` lists only checks that already reported on the
-  commit. A blocked merge state refuses, so a required check that never started
-  cannot escape the gate. GitHub computes the merge state lazily, so a retry
-  shortly after a push can clear an `unknown` state. This gate needs the `gh`
-  CLI.
+  reviewed tree is clean, the PR is not behind its base under a strict rule, has
+  no merge conflicts, the merge state is known and not blocked, and every
+  required check passed on the commit GitHub evaluates. GitHub evaluates the
+  test merge commit when that commit has a check run or a commit status, and the
+  head commit otherwise. A required check run passes with the conclusion
+  `success`, `skipped`, or `neutral`; a required commit status passes with the
+  state `success`. When a check run and a commit status share a required name,
+  both must pass, and a pending or missing check fails. Required contexts come
+  from repository rulesets, classic branch protection, and `gh pr checks
+--required`; when all three are empty the gate refuses. A context qualified by
+  an app (a ruleset `integration_id` or a classic-protection `app_id`) is
+  satisfied only by a check run from that app, and an unqualified copy of that
+  name is dropped. Repository rulesets are readable with read access; classic
+  branch protection returns 404 to a caller without admin rights, and `gh pr
+checks --required` lists only checks that already reported on the commit. A
+  blocked merge state refuses after the per-check pass, so a named check refusal
+  keeps its name and a required check that never started cannot escape the gate;
+  the gate cannot tell a missing check from an unmet review or another required
+  rule, so a repository with required approvals also refuses until they are met.
+  GitHub computes the merge state lazily, so a retry shortly after a push can
+  clear an `unknown` state. This gate needs the `gh` CLI.
 
 ## Blockers and terminal states
 

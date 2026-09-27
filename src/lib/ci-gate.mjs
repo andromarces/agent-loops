@@ -87,7 +87,9 @@ function contextKey(name, appId) {
 
 function addContext(contexts, name, appId = null) {
   if (name) {
-    contexts.set(contextKey(name, appId), { name, appId: appId ?? null });
+    // A source can report `-1` as the "any app" qualifier; treat it as absent.
+    const qualifier = appId == null || appId === -1 ? null : appId;
+    contexts.set(contextKey(name, qualifier), { name, appId: qualifier });
   }
 }
 
@@ -126,7 +128,21 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
     addContext(contexts, name);
   }
 
-  return [...contexts.keys()].sort().map((key) => contexts.get(key));
+  // An unqualified copy of an app-qualified name cannot express which app must
+  // pass, so it would judge the name by the newest run from any app and could
+  // refuse a passing qualified check. Drop it in favor of the qualified
+  // context, which the per-context check enforces.
+  const values = [...contexts.values()];
+  const qualifiedNames = new Set(
+    values.filter((context) => context.appId !== null).map((context) => context.name),
+  );
+  return values
+    .filter((context) => context.appId !== null || !qualifiedNames.has(context.name))
+    .sort((a, b) => {
+      const left = contextKey(a.name, a.appId);
+      const right = contextKey(b.name, b.appId);
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
 }
 
 async function checkRuns(gh, slug, sha, cwd) {
@@ -229,10 +245,13 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
 
 /**
  * Refuses unless the PR head equals the reviewed commit, the reviewed tree is
- * clean, the PR is not behind its base under a strict rule, is not in an unknown
- * or blocked merge state, and every required check passed on the commit GitHub
- * evaluates. Refuses when no required checks are found, so an empty source fails
- * closed.
+ * clean, the PR is not behind its base under a strict rule, has no merge
+ * conflicts, is not in an unknown merge state, and every required check passed
+ * on the commit GitHub evaluates. A blocked merge state refuses after the
+ * per-check pass, so a named check refusal keeps its name; any remaining block
+ * (a required check that never reported, a required review, or another required
+ * rule) fails closed. Refuses when no required checks are found, so an empty
+ * source fails closed.
  * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
  */
@@ -251,6 +270,9 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   if (info.mergeStateStatus === "UNKNOWN") {
     return fail("GitHub reports the PR merge state as unknown (computed lazily; retry shortly)");
   }
+  if (info.mergeStateStatus === "DIRTY") {
+    return fail("the PR has merge conflicts (merge state DIRTY)");
+  }
   if (info.headRefOid !== reviewed.head) {
     return fail("the PR head differs from the reviewed commit");
   }
@@ -260,19 +282,24 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   if (required.length === 0) {
     return fail("no required checks were found for the base branch");
   }
-  // `gh pr checks --required` lists only checks that already reported, so on a
-  // classic-protection-only repo a caller without admin rights cannot enumerate
-  // a required check that never started. GitHub reports that PR as blocked, so
-  // refusing a blocked merge state fails closed on the absent check (#271).
-  if (info.mergeStateStatus === "BLOCKED") {
-    return fail("the PR merge state is blocked; a required check is absent or unsatisfied");
-  }
   const { commit, runs, statuses } = await evaluatedState(gh, slug, info, cwd);
   for (const context of required) {
     const reason = evaluateContext(context, commit, runs, statuses);
     if (reason) {
       return fail(reason);
     }
+  }
+  // Run this after the per-check pass so a named check refusal keeps its name.
+  // `gh pr checks --required` lists only checks that already reported, so on a
+  // classic-protection-only repo a caller without admin rights cannot enumerate
+  // a required check that never started; GitHub reports that PR as blocked.
+  // Other unmet rules (a required review, unresolved conversations, a required
+  // deployment) also report blocked, and the gate cannot tell them apart, so it
+  // fails closed (#271).
+  if (info.mergeStateStatus === "BLOCKED") {
+    return fail(
+      "the PR merge state is blocked (a required check, review, or other required rule is unmet)",
+    );
   }
 
   return { ok: true, commit };
