@@ -148,7 +148,10 @@ export async function runLoop(options) {
   logInfo(`agent loop started (cwd: ${cwd}, maxSteps: ${maxSteps})`);
 
   function stopLoop(exitCode, detail) {
-    logInfo(`agent loop stopped (exit ${exitCode})`);
+    // A recorded unresolved compare leaves the loop on 0 while the headless
+    // process exits UNRESOLVED_COMPARE_EXIT, so the log names it (#279).
+    const marker = detail.unresolvedCompare ? ", unresolved compare recorded" : "";
+    logInfo(`agent loop stopped (exit ${exitCode}${marker})`);
     return { exitCode, ...detail };
   }
 
@@ -193,11 +196,11 @@ export async function runLoop(options) {
     if (action.action === "finish") {
       const gateBlocks = requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan);
       if (!gateBlocks) {
-        // A finish the parent marks as an unresolved PR-head compare keeps the
-        // recorded-finish exit 0, but it emits a machine-readable event and
-        // reports the marker, so it never reads the same as a verified finish
-        // (#266). The headless CLI turns the marker into its own exit code
-        // (#279).
+        // A finish the parent marks as an unresolved PR-head compare stays on
+        // the loop's own recorded-finish code 0, but it emits a
+        // machine-readable event and reports the marker, so it never reads the
+        // same as a verified finish (#266). The headless process exit code is
+        // the CLI's decision: UNRESOLVED_COMPARE_EXIT (#279).
         const unresolvedCompare = action.unresolvedCompare === true;
         if (unresolvedCompare) {
           onEvent({ type: "unresolved-compare", stepsUsed });
