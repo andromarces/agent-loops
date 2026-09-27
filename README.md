@@ -35,6 +35,7 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
   - Spawns agents, manages persistent sessions, and captures process signals (`Ctrl+C` exits 130).
   - Enforces non-mutating safety on reviewer and orchestrator turns using CLI flags and pre/post Git work-tree mutation detection.
   - Recovers from malformed JSON via a single repair turn.
+  - Enforces the completion rule with `--require-accept`: after a worker turn, a `finish` needs a later reviewer `verdict: accept` on that state; with no worker turn, it needs at least one reviewer report. The gate follows turn order only, so an edit made outside the loop after the accept is not detected.
   - Records validated orchestrator actions, child results, one `invocation` event per CLI call with usage when the adapter exposes it, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses are not recorded.
 
 See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md), [ADR 0002](adr/0002-harness-neutral-orchestrator-instructions.md)).
@@ -230,6 +231,9 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
 --transcript <file>           Record execution transcript to a JSON file.
 --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
+--require-accept              Refuse finish until a reviewer turn reports on the state, and
+                              after a worker turn that reviewer turn accepts. Off by default;
+                              a repeated refusal ends the run.
 -h, --help                    Show help.
 ```
 
@@ -502,12 +506,12 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
 
 ## Exit codes
 
-| Code | Meaning                                                                                                                                                                                                    |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Orchestrator returned `finish` with valid 5-part summary.                                                                                                                                                  |
-| 1    | Orchestrator returned `abort`, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover. |
-| 2    | Step limit reached (`--max-steps`) with work remaining.                                                                                                                                                    |
-| 130  | Interrupted by `Ctrl+C` (active children killed).                                                                                                                                                          |
+| Code | Meaning                                                                                                                                                                                                                                               |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Orchestrator returned `finish` with valid 5-part summary.                                                                                                                                                                                             |
+| 1    | Orchestrator returned `abort`, a `--require-accept` finish refused twice, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover. |
+| 2    | Step limit reached (`--max-steps`) with work remaining.                                                                                                                                                                                               |
+| 130  | Interrupted by `Ctrl+C` (active children killed).                                                                                                                                                                                                     |
 
 ## Development
 
