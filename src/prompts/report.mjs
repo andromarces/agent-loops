@@ -3,7 +3,7 @@
  * response, so the block carries the reasoning and open items it would otherwise re-derive.
  */
 export const reportBlock = `
-End your response with this block, kept short. Each label takes one line, plain at column 0; a list anywhere in the block, an indented label, or a decorated label makes the whole block unparseable:
+End your response with this block, kept short. Each label takes one line, plain at column 0; a list anywhere in the block, an indented label, or a decorated label makes the whole block unparseable, and a line that starts with \`*\` either counts as a list or is dropped from the block, so write none:
 Conclusion: one or two sentences.
 Why: the decisive evidence behind the conclusion.
 Blockers: anything unresolved that the next turn must know, or "none".
