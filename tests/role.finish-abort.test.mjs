@@ -380,3 +380,94 @@ test("--require-ci refuses an unknown merge state and passes a clean PR", async 
   expect(passed.exitCode).toBe(0);
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
+
+const UNRESOLVED_SUMMARY = {
+  ...GATE_SUMMARY,
+  notDone: "PR head unresolved",
+  open: "PR head unresolved",
+  unresolvedCompare: true,
+};
+
+// Usefulness: verifies an interactive finish that reports an unresolved PR-head
+// compare is machine-distinct from a verified finish, in the envelope and the
+// state file, where nothing else separates the two (issue #281).
+test("finish records unresolvedCompare in the envelope and the state", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+    stdin: async () => JSON.stringify(UNRESOLVED_SUMMARY),
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({
+    status: "ok",
+    lifecycle: "finished",
+    unresolvedCompare: true,
+  });
+
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("finished");
+  expect(state.unresolvedCompare).toBe(true);
+  // The marker is a sibling of the summary, never one of its keys.
+  expect(state.summary).toEqual({
+    ...GATE_SUMMARY,
+    notDone: "PR head unresolved",
+    open: "PR head unresolved",
+  });
+});
+
+// Usefulness: verifies a verified finish keeps its current envelope and state,
+// so the new marker does not make every recorded finish look unresolved (#281).
+test("a verified finish keeps its envelope and state unchanged", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  const result = await finishCall(repo);
+  expect(result.payload).toEqual({ status: "ok", lifecycle: "finished" });
+
+  const state = await readRepoState(repo);
+  expect(state.summary).toEqual(GATE_SUMMARY);
+  expect(state).not.toHaveProperty("unresolvedCompare");
+});
+
+// Usefulness: verifies the marker reaches the action contract instead of being
+// dropped as an unknown key, so a non-boolean value refuses the finish (#281).
+test("finish refuses a non-boolean unresolvedCompare", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+    stdin: async () => JSON.stringify({ ...GATE_SUMMARY, unresolvedCompare: "yes" }),
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("unresolvedCompare must be a boolean");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies a finish cannot claim an unresolved compare and pass the
+// CI gate, which resolves the PR head and so proves the compare (#281).
+test("finish refuses unresolvedCompare together with --require-ci", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  const result = await executeRoleCommand(
+    withRepo(["finish", "--cwd", "<repo>", "--require-ci", "42"], repo),
+    {
+      stdin: async () => JSON.stringify(UNRESOLVED_SUMMARY),
+      gh: async () => {
+        throw new Error("gh must not run: the marker and the gate are contradictory.");
+      },
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("unresolvedCompare cannot be combined with --require-ci");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
