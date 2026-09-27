@@ -154,6 +154,20 @@ test("--require-accept is a boolean flag", () => {
   );
 });
 
+// Usefulness: verifies the headless loop takes a PR number for the finish gate,
+// defaults it off, and rejects a value that is not a positive integer, so a bad
+// PR number fails at parse time instead of inside the gate (issue #293).
+test("--require-ci takes a positive integer PR number", () => {
+  expect(parseArgs(BASE).requireCi).toBeNull();
+  expect(parseArgs([...BASE, "--require-ci", "42"]).requireCi).toBe(42);
+  expect(parseArgs([...BASE, "--require-ci=7"]).requireCi).toBe(7);
+  for (const bad of ["0", "abc"]) {
+    expect(() => parseArgs([...BASE, "--require-ci", bad])).toThrow(
+      "--require-ci must be a positive integer.",
+    );
+  }
+});
+
 // Usefulness: verifies readValue guards against missing value or value starting with -.
 test("readValue guards against missing or flag-like values", () => {
   expect(() => parseArgs(["--orchestrator", "--worker"])).toThrow(

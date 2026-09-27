@@ -37,6 +37,7 @@ export function parseArgs(argv) {
     transcript: null,
     verbose: false,
     requireAccept: false,
+    requireCi: null,
   };
   for (const role of ROLES) {
     options[role] = null;
@@ -93,6 +94,10 @@ export function parseArgs(argv) {
 
       case "--require-accept":
         options.requireAccept = true;
+        break;
+
+      case "--require-ci":
+        options.requireCi = readPositiveInt("--require-ci", readInline("--require-ci"));
         break;
 
       case "--help":
@@ -229,6 +234,15 @@ Options:
                                 after a worker turn that reviewer turn accepts with a Checks
                                 line. Off by default; a repeated refusal, or a refusal with no
                                 step budget left, ends the run.
+  --require-ci <pr>             Refuse finish until the runtime resolves the PR head from
+                                this pull request: the PR head must match the reviewed commit,
+                                the reviewed tree must be clean, the PR must not be behind its
+                                base, must have no merge conflicts, must not be blocked, and
+                                every required check must have passed on the commit GitHub
+                                evaluates. Refuses a finish that also sets
+                                unresolvedCompare. Off by default; without it the
+                                unresolvedCompare marker is the only record of an
+                                unresolved compare.
   -h, --help                    Show help.
 
   A value flag also accepts the inline form --flag=value, for example
@@ -305,6 +319,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       maxSteps: options.maxSteps,
       timeout: options.timeout,
       requireAccept: options.requireAccept,
+      requireCi: options.requireCi,
     },
     roles,
     events,
@@ -375,6 +390,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
         maxSteps: options.maxSteps,
         timeout: options.timeout,
         requireAccept: options.requireAccept,
+        requireCi: options.requireCi,
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,
