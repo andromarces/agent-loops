@@ -217,7 +217,7 @@ export async function runLoop(options) {
       workerRan = true;
       acceptedSinceWorker = false;
     } else {
-      reviewerRan = result.status === "ok";
+      reviewerRan = reviewerRan || result.status === "ok";
       acceptedSinceWorker = result.status === "ok" && parseVerdict(result.response) === "accept";
     }
     finishRefused = false;

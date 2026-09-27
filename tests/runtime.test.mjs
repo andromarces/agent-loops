@@ -871,7 +871,7 @@ test("--require-accept refuses a finish until a reviewer accepts", async () => {
     expect(result.exitCode).toBe(0);
     expect(reviewerAdapter.recorded.length).toBe(1);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -905,7 +905,7 @@ test("--require-accept treats a reviewer reject as not accepted", async () => {
     expect(result.exitCode).toBe(0);
     expect(reviewerAdapter.recorded.length).toBe(2);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -930,7 +930,7 @@ test("--require-accept allows a review-only finish with no worker turn", async (
 
     expect(result.exitCode).toBe(0);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -961,7 +961,7 @@ test("--require-accept aborts a repeated refused finish", async () => {
     expect(result.exitCode).toBe(1);
     expect(result.reason).toContain("reviewer accept");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -978,7 +978,7 @@ test("--require-accept requires a reviewer report when no worker turn ran", asyn
     const reviewerAdapter = scripted([REVIEW_REJECT]);
 
     const result = await runLoop({
-      task: "Task 34",
+      task: "Task 33",
       cwd: repo,
       maxSteps: 5,
       requireAccept: true,
@@ -989,7 +989,7 @@ test("--require-accept requires a reviewer report when no worker turn ran", asyn
     expect(result.exitCode).toBe(0);
     expect(reviewerAdapter.recorded.length).toBe(1);
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
   }
 });
 
@@ -1006,7 +1006,7 @@ test("--require-accept does not accept a reviewer reply without a verdict", asyn
     ];
 
     const result = await runLoop({
-      task: "Task 33",
+      task: "Task 34",
       cwd: repo,
       maxSteps: 5,
       requireAccept: true,
@@ -1021,6 +1021,40 @@ test("--require-accept does not accept a reviewer reply without a verdict", asyn
     expect(result.exitCode).toBe(1);
     expect(result.reason).toContain("reviewer accept");
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await removePath(repo);
+  }
+});
+
+// 35. Usefulness: verifies a later reviewer failure does not clear an earlier
+// reviewer report when no worker turn ran, so "at least one reviewer report"
+// holds (issue #234).
+test("--require-accept keeps an earlier reviewer report after a later failure", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "first review" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "second review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([
+      REVIEW_REJECT,
+      () => {
+        throw new Error("reviewer crashed");
+      },
+    ]);
+
+    const result = await runLoop({
+      task: "Task 35",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: { orch: scripted(orchReplies), work: scripted([]), rev: reviewerAdapter },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(2);
+  } finally {
+    await removePath(repo);
   }
 });
