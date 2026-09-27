@@ -316,13 +316,29 @@ test("--require-ci refuses an unknown merge state and passes a clean PR", async 
       return { status: 0, stdout: "owner/repo", stderr: "" };
     }
     if (key.includes("rules/branches/main")) {
-      return json([]);
+      return json([
+        {
+          type: "required_status_checks",
+          parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
+        },
+      ]);
     }
     if (key.includes("branches/main/protection")) {
       return { status: 1, stdout: "", stderr: "HTTP 404" };
     }
     if (key.includes("/check-runs")) {
-      return json([{ check_runs: [] }]);
+      return json([
+        {
+          check_runs: [
+            {
+              name: "ci (ubuntu-latest)",
+              status: "completed",
+              conclusion: "success",
+              started_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      ]);
     }
     if (key.includes("/status")) {
       return json({ statuses: [] });

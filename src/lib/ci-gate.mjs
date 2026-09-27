@@ -40,7 +40,7 @@ async function prInfo(gh, pr, cwd) {
       "view",
       String(pr),
       "--json",
-      "headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit,state",
+      "headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit",
     ],
     cwd,
   );
@@ -61,11 +61,26 @@ async function repoSlug(gh, cwd) {
   return stdout.trim();
 }
 
-// Required status contexts from repository rulesets and classic branch
-// protection, deduplicated. The rules endpoint is absent on older hosts and the
-// classic endpoint returns 404 when unprotected; both are treated as "no
-// contexts" rather than a failure.
-async function requiredContexts(gh, slug, base, cwd) {
+// `gh pr checks --required` resolves required check names without admin rights.
+// It exits non-zero for pending or failing checks and prints no JSON when none
+// are required, so the output is parsed leniently and an unparseable result
+// contributes no names.
+async function ghRequiredNames(gh, pr, cwd) {
+  const { stdout } = await gh(["pr", "checks", String(pr), "--required", "--json", "name"], cwd);
+  try {
+    const parsed = JSON.parse(stdout);
+    return Array.isArray(parsed) ? parsed.map((check) => check?.name).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Required status context names from every source the caller can read:
+// repository rulesets, classic branch protection, and `gh pr checks --required`.
+// Deduplicated. A 404 or an unreadable source contributes no names; the caller
+// refuses an empty union, so an unreadable source never passes the gate
+// vacuously.
+async function requiredContexts(gh, slug, base, pr, cwd) {
   const contexts = new Set();
 
   const rules = await ghApi(gh, [`repos/${slug}/rules/branches/${base}`], cwd, { allow404: true });
@@ -95,6 +110,10 @@ async function requiredContexts(gh, slug, base, cwd) {
     if (check?.context) {
       contexts.add(check.context);
     }
+  }
+
+  for (const name of await ghRequiredNames(gh, pr, cwd)) {
+    contexts.add(name);
   }
 
   return [...contexts].sort();
@@ -194,6 +213,8 @@ function evaluateContext(name, commit, runs, statuses) {
  * Refuses unless the PR head equals the reviewed commit, the reviewed tree is
  * clean, the PR is not behind its base under a strict rule and not in an unknown
  * merge state, and every required check passed on the commit GitHub evaluates.
+ * Refuses when no required checks are found, so an unreadable protection source
+ * never passes the gate vacuously.
  * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
  */
@@ -210,14 +231,17 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
     return fail("the PR is behind its base branch");
   }
   if (info.mergeStateStatus === "UNKNOWN") {
-    return fail("GitHub reports the PR merge state as unknown");
+    return fail("GitHub reports the PR merge state as unknown (computed lazily; retry shortly)");
   }
   if (info.headRefOid !== reviewed.head) {
     return fail("the PR head differs from the reviewed commit");
   }
 
   const slug = await repoSlug(gh, cwd);
-  const required = await requiredContexts(gh, slug, info.baseRefName, cwd);
+  const required = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
+  if (required.length === 0) {
+    return fail("no required checks were found for the base branch");
+  }
   const { commit, runs, statuses } = await evaluatedState(gh, slug, info, cwd);
   for (const name of required) {
     const reason = evaluateContext(name, commit, runs, statuses);

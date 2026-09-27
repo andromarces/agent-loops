@@ -64,9 +64,11 @@ function routes({
   headRuns = [],
   headStatuses = [],
   required = REQUIRED,
+  prChecks = [],
 } = {}) {
   return [
     ["pr view 42", info],
+    ["pr checks 42", prChecks],
     ["repo view", "andromarces/agent-loops"],
     ["rules/branches/main", required],
     ["branches/main/protection", null],
@@ -217,7 +219,8 @@ test("refuses a PR behind its base", async () => {
   expect(result).toEqual({ ok: false, reason: "the PR is behind its base branch" });
 });
 
-// Usefulness: verifies the gate refuses an unknown merge state (issue #218).
+// Usefulness: verifies the gate refuses an unknown merge state, which GitHub
+// computes lazily, and names that a retry can succeed (issue #218).
 test("refuses an unknown merge state", async () => {
   const result = await checkCi({
     pr: 42,
@@ -225,7 +228,49 @@ test("refuses an unknown merge state", async () => {
     cwd: ".",
     gh: fakeGh(routes({ info: prInfo({ mergeStateStatus: "UNKNOWN" }) })),
   });
-  expect(result).toEqual({ ok: false, reason: "GitHub reports the PR merge state as unknown" });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("merge state as unknown");
+});
+
+// Usefulness: verifies the gate refuses when every required-check source is
+// empty even though a check failed and the merge state is blocked, so an
+// unreadable protection endpoint can never pass vacuously (issue #218).
+test("refuses when no required checks are found", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        required: [],
+        headRuns: [run("ci (ubuntu-latest)", "failure")],
+      }),
+    ),
+  });
+  expect(result).toEqual({
+    ok: false,
+    reason: "no required checks were found for the base branch",
+  });
+});
+
+// Usefulness: verifies the gate takes required names from `gh pr checks
+// --required` when the rules and classic protection sources are empty, so a
+// caller without admin rights still gates on the required checks (issue #218).
+test("falls back to gh pr checks --required for required names", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: [],
+        prChecks: [{ name: "ci (ubuntu-latest)" }],
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result).toEqual({ ok: true, commit: HEAD });
 });
 
 // Usefulness: verifies the gate refuses when the PR head differs from the

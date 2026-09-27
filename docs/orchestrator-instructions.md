@@ -251,7 +251,11 @@ the current behavior, and each flag fails with a clear error.
   required check run passes with the conclusion `success`, `skipped`, or
   `neutral`; a required commit status passes with the state `success`. When a
   check run and a commit status share a required name, both must pass, and a
-  pending or missing check fails. This gate needs the `gh` CLI.
+  pending or missing check fails. Required names come from repository rulesets,
+  classic branch protection, and `gh pr checks --required`; when all three
+  sources are empty the gate refuses, so an unreadable source never passes
+  vacuously. GitHub computes the merge state lazily, so a retry shortly after a
+  push can clear an `unknown` state. This gate needs the `gh` CLI.
 
 ## Blockers and terminal states
 
