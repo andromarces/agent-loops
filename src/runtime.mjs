@@ -104,12 +104,21 @@ export async function runChild(options) {
 }
 
 /**
- * Run the orchestrator loop. Returns `{ exitCode: 0, summary }` when the
- * orchestrator returns `finish`, or `{ exitCode: 1 | 2, reason }` on `abort`,
- * a refused finish, or a step limit reached with work remaining. Throws on
- * fatal controller errors: orchestrator failure, detected mutation, or cancel.
+ * Process exit code for a recorded finish that carries `unresolvedCompare`. The
+ * loop still records the finish and prints its summary; the code is what tells
+ * an exit-code-only consumer that the PR-head compare was not verified (#279).
+ * It is 4, not 3, because 3 is the harness-refusal code of `harness-check`.
+ */
+export const UNRESOLVED_COMPARE_EXIT = 4;
+
+/**
+ * Run the orchestrator loop. Returns `{ exitCode: 0, summary, unresolvedCompare }`
+ * when the orchestrator returns `finish`, or `{ exitCode: 1 | 2, reason }` on
+ * `abort`, a refused finish, or a step limit reached with work remaining. Throws
+ * on fatal controller errors: orchestrator failure, detected mutation, or cancel.
  * A finish whose action set `unresolvedCompare` emits an `unresolved-compare`
- * event before the exit-0 return (#266).
+ * event and reports `unresolvedCompare: true`, which the headless CLI maps to
+ * `UNRESOLVED_COMPARE_EXIT` (#266, #279).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -119,7 +128,7 @@ export async function runChild(options) {
  * order only: an edit made outside the loop between the accept and the finish
  * is not detected.
  * @param {object} options
- * @returns {Promise<{ exitCode: 0, summary: object } | { exitCode: 1 | 2, reason: string }>}
+ * @returns {Promise<{ exitCode: 0, summary: object, unresolvedCompare: boolean } | { exitCode: 1 | 2, reason: string }>}
  */
 export async function runLoop(options) {
   const {
@@ -139,7 +148,10 @@ export async function runLoop(options) {
   logInfo(`agent loop started (cwd: ${cwd}, maxSteps: ${maxSteps})`);
 
   function stopLoop(exitCode, detail) {
-    logInfo(`agent loop stopped (exit ${exitCode})`);
+    // A recorded unresolved compare leaves the loop on 0 while the headless
+    // process exits UNRESOLVED_COMPARE_EXIT, so the log names it (#279).
+    const marker = detail.unresolvedCompare ? ", unresolved compare recorded" : "";
+    logInfo(`agent loop stopped (exit ${exitCode}${marker})`);
     return { exitCode, ...detail };
   }
 
@@ -184,13 +196,16 @@ export async function runLoop(options) {
     if (action.action === "finish") {
       const gateBlocks = requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan);
       if (!gateBlocks) {
-        // A finish the parent marks as an unresolved PR-head compare keeps the
-        // recorded-finish exit 0 but gains a machine-readable event, so it never
-        // reads the same as a verified finish (#266).
-        if (action.unresolvedCompare) {
+        // A finish the parent marks as an unresolved PR-head compare stays on
+        // the loop's own recorded-finish code 0, but it emits a
+        // machine-readable event and reports the marker, so it never reads the
+        // same as a verified finish (#266). The headless process exit code is
+        // the CLI's decision: UNRESOLVED_COMPARE_EXIT (#279).
+        const unresolvedCompare = action.unresolvedCompare === true;
+        if (unresolvedCompare) {
           onEvent({ type: "unresolved-compare", stepsUsed });
         }
-        return stopLoop(0, { summary: action.summary });
+        return stopLoop(0, { summary: action.summary, unresolvedCompare });
       }
       const missing = workerRan
         ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"

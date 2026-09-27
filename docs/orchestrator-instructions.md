@@ -163,7 +163,9 @@ Apply these parent rules:
 - Treat an accept without a Checks line as not accepted.
 - When the PR head cannot be resolved, for example a read-only turn with no
   network access, do not finish as verified: abort, or record the unresolved
-  compare under notDone and open in the finish summary.
+  compare under notDone and open in the finish summary. A recorded compare also
+  sets the machine-readable marker described under Finish output, so the record
+  never reads the same as a verified finish.
 
 ## Reviewer prompts
 
@@ -203,8 +205,10 @@ mapping instead, and `agent-loop --require-accept` enforces that rule. The
 headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. A headless finish that records an unresolved
 PR-head compare sets `"unresolvedCompare": true` on the action; the run records
-an `unresolved-compare` transcript event and still exits 0, so the recorded
-finish stays distinct from a verified one (#266).
+an `unresolved-compare` transcript event and exits `4` instead of `0`, so the
+recorded finish stays distinct from a verified one without a transcript (#266,
+#279). An interactive `role finish` records the same marker in its envelope and
+the state file instead of a transcript event (#281).
 
 ## Completion
 
@@ -241,6 +245,30 @@ orchestrator action contract (`validateAction`):
 printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...","open":"..."}' \
   | agent-loop role finish --cwd "<work tree>"
 ```
+
+A finish that records an unresolved PR-head compare instead of aborting sets
+`"unresolvedCompare": true` beside the five keys, the same marker the headless
+finish action carries beside its summary:
+
+```bash
+printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","deferred":"...","notDone":"PR head unresolved","open":"PR head unresolved","unresolvedCompare":true}' \
+  | agent-loop role finish --cwd "<work tree>"
+```
+
+The value must be a boolean, and the key is not one of the five summary keys:
+`summary` keeps exactly those five. The envelope then carries
+`"unresolvedCompare": true` and the state file records the same field beside
+`summary`, so a recorded unresolved compare never reads the same as a verified
+finish, which keeps the current envelope and state (#281). A finish with the
+field absent, or set to `false`, is a verified finish. The marker cannot be
+combined with `--require-ci`: that gate resolves the PR head itself, so a
+compare it verified is not unresolved. A run that cannot use `--require-ci`,
+for example a base branch with no required checks, records the marker.
+
+A marked `role finish` still exits `0`, unlike the headless finish that exits
+`4` for the same marker. The exit code is not the outcome channel of this
+subcommand: `abort` exits `0` too, and the parent guard reads the state
+lifecycle, not the code. Read the marker in the envelope or the state file.
 
 Two opt-in gates apply to `work-first` and `review-first` only. Each refusal
 names the condition that failed. In `review-only`, a `finish` without them keeps

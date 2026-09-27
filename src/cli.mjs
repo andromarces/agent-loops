@@ -23,7 +23,7 @@ import {
 } from "./install/commands.mjs";
 import { setVerbose } from "./lib/log.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
-import { runLoop } from "./runtime.mjs";
+import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
@@ -170,7 +170,10 @@ Subcommands:
 Role operations:
 
   dispatch (default)            Run one --role turn for the run state at --cwd.
-  finish                        End the run; the five-key summary arrives as JSON on stdin.
+  finish                        End the run; the five-key summary arrives as JSON on stdin,
+                                with an optional unresolvedCompare boolean beside the five
+                                keys to record an unresolved PR-head compare. Exits 0 for
+                                that marker, where the headless loop exits 4.
   abort                         End the run with --reason.
 
 Role flags:
@@ -196,6 +199,7 @@ Role flags:
                                 conflicts, is not blocked, and every required check
                                 passed on the commit GitHub evaluates. An app-qualified
                                 required check must pass on a check run from that app.
+                                Refuses a finish that also sets unresolvedCompare.
 
 Options:
 
@@ -378,9 +382,13 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       });
 
       if (result.exitCode === 0) {
+        // A recorded unresolved PR-head compare keeps the summary and gains its
+        // own exit code, so a consumer that reads only the exit code can tell it
+        // from a verified finish (#279).
+        const exitCode = result.unresolvedCompare ? UNRESOLVED_COMPARE_EXIT : 0;
         console.log("\n===== SUMMARY =====\n");
         console.log(formatSummary(result.summary));
-        await finish({ exitCode: 0, error: null });
+        await finish({ exitCode, error: null });
       } else {
         await finish({ exitCode: result.exitCode, error: new Error(result.reason) });
       }

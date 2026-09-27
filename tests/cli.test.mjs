@@ -508,3 +508,133 @@ test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () 
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a finish that reports an unresolved PR-head compare exits
+// 4 and still prints the recorded summary, so an exit-code-only consumer tells
+// it apart from the exit-0 verified finish (issue #279).
+test("finish with unresolvedCompare exits 4 and keeps the summary", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+  const fakeAgents = {
+    codex: {
+      async run() {
+        return JSON.stringify({
+          action: "finish",
+          summary: {
+            changed: "a",
+            verified: "not verified",
+            deferred: "c",
+            notDone: "d",
+            open: "e",
+          },
+          unresolvedCompare: true,
+        });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "task",
+        "--cwd",
+        repo,
+        "--transcript",
+        transcriptPath,
+      ],
+      fakeAgents,
+    );
+
+    expect(process.exitCode).toBe(4);
+    const printed = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(printed).toContain("===== SUMMARY =====");
+    expect(printed).toContain("Not done: d");
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(transcript.exitCode).toBe(4);
+    expect(transcript.error).toBeNull();
+  } finally {
+    process.exitCode = origExitCode;
+    logSpy.mockRestore();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a review-only finish without the marker keeps exit 0 and
+// its summary, so the new code fires on the marker alone (issue #279).
+test("review-only finish without unresolvedCompare keeps exit 0", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const orchReplies = [
+    JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+    JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    }),
+  ];
+
+  const fakeAgents = {
+    codex: {
+      async run() {
+        return orchReplies.shift();
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "task",
+        "--cwd",
+        repo,
+      ],
+      fakeAgents,
+    );
+
+    expect(process.exitCode).toBe(0);
+    const printed = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(printed).toContain("===== SUMMARY =====");
+    expect(printed).toContain("Verified: b");
+  } finally {
+    process.exitCode = origExitCode;
+    logSpy.mockRestore();
+    await removePath(repo);
+  }
+});

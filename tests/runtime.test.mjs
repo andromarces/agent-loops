@@ -1272,6 +1272,9 @@ test("finish with unresolvedCompare records an unresolved-compare event", async 
 
     expect(result.exitCode).toBe(0);
     expect(result.summary).toEqual(summary);
+    // The headless CLI maps this flag to its own exit code, so the loop must
+    // report it on the result and not only as an event (#279).
+    expect(result.unresolvedCompare).toBe(true);
     const unresolved = events.filter((e) => e.type === "unresolved-compare");
     expect(unresolved).toEqual([{ type: "unresolved-compare", stepsUsed: 0 }]);
     const finishActionIndex = events.findIndex(
@@ -1302,6 +1305,7 @@ test("finish without unresolvedCompare records no unresolved-compare event", asy
 
     expect(result.exitCode).toBe(0);
     expect(result.summary).toEqual(SUMMARY);
+    expect(result.unresolvedCompare).toBe(false);
     expect(events.some((e) => e.type === "unresolved-compare")).toBe(false);
   } finally {
     await removePath(repo);
