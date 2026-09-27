@@ -241,7 +241,7 @@ test("--require-accept refuses a reviewed snapshot that is not exact", async () 
 
   const result = await finishCall(repo, ["--require-accept"]);
   expect(result.exitCode).toBe(1);
-  expect(result.payload.error).toContain("not exact");
+  expect(result.payload.error).toContain("the reviewed snapshot is not exact");
 });
 
 // Usefulness: verifies --require-accept refuses when the reviewed snapshot is
