@@ -146,11 +146,23 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-// Usefulness: verifies best-effort descendant kill when canceling a process tree.
+// Usefulness: verifies descendant kill when canceling a process tree.
 test("exec terminates descendants when canceled", async () => {
   const controller = new AbortController();
   const dir = await mkdtemp(join(tmpdir(), "agent-loop-exec-"));
   const pidFile = join(dir, "grandchild.pid");
+
+  // On Windows, Node places the direct child's descendants in a job object, so
+  // killing the direct child also kills the grandchild. That hides whether
+  // execa ran its own tree kill. A detached grandchild opts out of the job
+  // object: it survives a plain parent kill, yet taskkill /T still reaches it,
+  // so the assertion below fails if descendant termination breaks. On POSIX the
+  // grandchild stays in the direct child's process group, which the group
+  // signal reaches.
+  const grandchildOptions =
+    process.platform === "win32"
+      ? '{ stdio: "ignore", detached: true, windowsHide: true }'
+      : '{ stdio: "ignore" }';
 
   // Child spawns a long-running grandchild and writes the grandchild pid to a
   // file. The file is the readiness signal: the test knows the descendant
@@ -158,14 +170,15 @@ test("exec terminates descendants when canceled", async () => {
   const script = `
     const { spawn } = require("node:child_process");
     const { writeFileSync } = require("node:fs");
-    const sub = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const sub = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], ${grandchildOptions});
     writeFileSync(${JSON.stringify(pidFile)}, String(sub.pid));
+    setInterval(() => {}, 1000);
   `;
 
+  let grandchildPid = null;
   try {
     const promise = exec(process.execPath, ["-e", script], { signal: controller.signal });
 
-    let grandchildPid = null;
     const spawnDeadline = Date.now() + 5000;
     while (grandchildPid === null && Date.now() < spawnDeadline) {
       grandchildPid = await readPidFile(pidFile);
@@ -191,14 +204,20 @@ test("exec terminates descendants when canceled", async () => {
     // runs without being awaited), so the grandchild can outlive the cancel
     // rejection by more than any fixed delay. Poll to a deadline instead of
     // sampling once, so slow teardown under load does not read as a surviving
-    // descendant (issue #221). A real termination regression still fails,
-    // because then the process never exits.
+    // descendant (issue #221).
     const exitDeadline = Date.now() + 5000;
     while (pidAlive(grandchildPid) && Date.now() < exitDeadline) {
       await new Promise((r) => setTimeout(r, 25));
     }
     expect(pidAlive(grandchildPid)).toBe(false);
   } finally {
+    if (grandchildPid !== null && pidAlive(grandchildPid)) {
+      try {
+        process.kill(grandchildPid);
+      } catch {
+        // Already gone.
+      }
+    }
     await rm(dir, { recursive: true, force: true });
   }
 });
