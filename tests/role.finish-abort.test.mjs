@@ -1,5 +1,6 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { execa } from "execa";
 import { afterEach, expect, test } from "vitest";
 import { executeRoleCommand } from "../src/role.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
@@ -241,6 +242,31 @@ test("--require-accept refuses a reviewed snapshot that is not exact", async () 
   const result = await finishCall(repo, ["--require-accept"]);
   expect(result.exitCode).toBe(1);
   expect(result.payload.error).toContain("not exact");
+});
+
+// Usefulness: verifies --require-accept refuses when the reviewed snapshot is
+// exact but the current snapshot is not, so the refusal names the current
+// snapshot rather than the reviewed one (issue #272).
+test("--require-accept refuses a current snapshot that is not exact", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+  await dispatchReviewer(repo, ACCEPT);
+  expect((await readRepoState(repo)).lastResult.reviewed.exact).toBe(true);
+
+  // Stage a gitlink after the review: the work-tree path is a directory, so the
+  // current snapshot has an entry with no content hash and is not exact.
+  const head = (await snapshot(repo)).head;
+  await mkdir(join(repo, "sub"), { recursive: true });
+  await execa("git", ["update-index", "--add", "--cacheinfo", "160000", head, "sub"], {
+    cwd: repo,
+  });
+
+  const result = await finishCall(repo, ["--require-accept"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("the current snapshot is not exact");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 
 // Usefulness: verifies review-only keeps a flagless finish and rejects both
