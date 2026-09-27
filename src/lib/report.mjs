@@ -53,10 +53,11 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // following token that carries a letter or a digit flags as well, for example
 // `*Claude*'s review`, `*emph*—then more`, `*a*/b`, `*Note*:x`, and
 // `*emph*.2`. The cost is not only a reporting loss: a null block has no Checks
-// line, so the `--require-accept` gate also refuses with that reason (see
-// acceptGateReason in src/role.mjs and isAcceptedReview in src/runtime.mjs).
-// Both directions fail closed, but the report loses its text to `raw` and the
-// gate reports the wrong cause. The residual gap is a spaceless bullet whose
+// line, so the `--require-accept` gate also refuses. `acceptGateReason` in
+// src/role.mjs returns "the accepted review has no Checks line", and
+// `isAcceptedReview` in src/runtime.mjs returns false. Both directions fail
+// closed, but the report loses its text to `raw` and the refusal reason names
+// the wrong cause. The residual gap is a spaceless bullet whose
 // later `*` a letter precedes and a space, a punctuation, or end of line
 // follows (`*file*`, `*glob src/a*`, `*use a* b`); that shape is the CommonMark
 // shape of a real emphasis run, so it stays prose and the item is dropped
