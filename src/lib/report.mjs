@@ -49,9 +49,18 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // The close must not be glued to a following token that carries a letter or a
 // digit, so a spaceless bullet whose later `*` a letter precedes and a filename
 // or glob continues (`*file*.mjs`, `*glob src/a*.mjs`) counts as a list too
-// (issue #267). The cost: an emphasis run glued to a following word
-// (`*self*-hosted`) is flagged as well. That direction is safe, because `raw`
-// carries the text, whereas the silent-drop shape loses it.
+// (issue #267). The cost is wider than a glued word (`*self*-hosted`): any
+// following token that carries a letter or a digit flags as well, for example
+// `*Claude*'s review`, `*emph*—then more`, `*a*/b`, `*Note*:x`, and
+// `*emph*.2`. The cost is not only a reporting loss: a null block has no Checks
+// line, so the `--require-accept` gate also refuses with that reason (see
+// acceptGateReason in src/role.mjs and isAcceptedReview in src/runtime.mjs).
+// Both directions fail closed, but the report loses its text to `raw` and the
+// gate reports the wrong cause. The residual gap is a spaceless bullet whose
+// later `*` a letter precedes and a space, a punctuation, or end of line
+// follows (`*file*`, `*glob src/a*`, `*use a* b`); that shape is the CommonMark
+// shape of a real emphasis run, so it stays prose and the item is dropped
+// silently (issue #275).
 const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
 /**

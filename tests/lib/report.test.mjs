@@ -347,13 +347,39 @@ test("parseReportBlock returns null when a spaceless bullet closes before a join
 });
 
 // Usefulness: verifies the narrowed rule treats an emphasis run glued to a
-// following word as a dropped list, the stated cost of closing the silent-drop
-// gap (issue #267). Blanking the report is the safe direction: the text survives
-// in `raw`, whereas the silent-drop shape loses it. A run closed before a space,
-// end of line, or a punctuation-only token stays prose in the companion test.
+// following token that carries a letter or a digit as a dropped list, the
+// stated cost of closing the silent-drop gap (issue #267). The cost covers a
+// glued word (`*self*-hosted`), a possessive (`*Claude*'s review`), an unspaced
+// em dash (`*emph*—then more`), a slash (`*a*/b`), a colon with no following
+// space (`*Note*:x`), and a numeric continuation (`*emph*.2`). Blanking the
+// report is the safe direction: the text survives in `raw`, whereas the
+// silent-drop shape loses it. A run closed before a space, end of line, or a
+// punctuation-only token stays prose in the companion test.
 test("parseReportBlock returns null when an emphasis run is glued to a following word", () => {
-  for (const line of ["*self*-hosted", "*Note*head", "*emph*text"]) {
+  for (const line of [
+    "*self*-hosted",
+    "*Note*head",
+    "*emph*text",
+    "*Claude*'s review",
+    "*Claude*’s review",
+    "*emph*—then more",
+    "*a*/b",
+    "*Note*:x",
+    "*emph*.2",
+  ]) {
     expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
+  }
+});
+
+// Usefulness: records the accepted residual gap that #267 does not close
+// (follow-up #275). A spaceless `*` bullet whose later `*` a letter precedes
+// and a space, a punctuation, or end of line follows (`*file*`, `*glob src/a*`,
+// `*use a* b`) is the CommonMark shape of a real emphasis run, so it stays prose
+// and the item is dropped with no `raw` signal. This test pins that accepted
+// behavior, so a future narrowing changes it on purpose.
+test("parseReportBlock leaves the residual letter-star bullet as prose", () => {
+  for (const line of ["*file*", "*glob src/a*", "*use a* b", "*glob src/a*, b"]) {
+    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toMatchObject({ notes: null });
   }
 });
 
