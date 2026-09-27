@@ -396,6 +396,28 @@ test("worker dispatch carries a list under the Blockers label into raw", async (
   expect(result.payload.raw).toContain("real blocker");
 });
 
+// Usefulness: verifies a list under an earlier, shadowed occurrence of a label
+// reaches the envelope through `raw` at the dispatch seam instead of being
+// dropped when a later occurrence wins the label value (issue #249).
+test("worker dispatch carries a list under a shadowed earlier label into raw", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const worker = recordingAdapter([]);
+  worker.run = async (state) => {
+    state.sessionId = "sess-shadow";
+    return `${REPORT}\nNotes: first pass\n- dropped item\nNotes: second pass`;
+  };
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toContain("dropped item");
+});
+
 // Usefulness: verifies the dispatch seam when the closing block does not parse
 // — the payload carries a null report and the raw response, so a caller can
 // still inspect what the child returned instead of guessing.
