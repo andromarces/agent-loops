@@ -127,15 +127,17 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * gate is a refusal rather than a throw, because the headless run has no retry
  * outside it (#293). Every applicable gate is evaluated and every refusal is
  * reported in one prompt, ordered as in the interactive `role finish`: the
- * marker combination, the completion rule, then the gate. The marker is cleared
- * by editing the finish action, so a finish refused for the marker alone
- * recovers with a re-finish and no child turn. Every other refusal needs one: any
- * child turn clears it, and a second refused finish with no child turn in
- * between ends the run. That turn costs a step, so a finish refused for a
- * pending check consumes step budget to clear it, and a worker turn is needed
- * only when the condition is about the change, because a gate reads the reviewed
- * state that only a reviewer turn establishes. Without the flag the marker stays
- * the only trace, and an omitted marker still reads as a verified finish (#286).
+ * marker combination, the completion rule, then the gate. The marker is satisfied
+ * by editing the finish action, so a finish refused for the marker alone recovers
+ * with a re-finish and no child turn, and that re-finish is a repeat refusal if
+ * anything else refuses it. Every other refusal needs a child turn to satisfy it,
+ * and any child turn separately clears the prior-refusal flag; a second refused
+ * finish with no child turn in between ends the run. That turn costs a step, so a
+ * finish refused for a pending check consumes step budget to clear it, and a
+ * worker turn is needed only when the condition is about the change: a worker
+ * turn resets the reviewed state to none, and a gate reads that state, which only
+ * a reviewer turn establishes. Without the flag the marker stays the only trace,
+ * and an omitted marker still reads as a verified finish (#286).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -227,7 +229,7 @@ export async function runLoop(options) {
       // completion rule, then the PR gate.
       const refusals = [];
       // The marker is cleared by editing the finish action itself, so it is the
-      // one refusal that a re-finish can clear without a child turn. Every other
+      // one refusal that a re-finish can satisfy without a child turn. Every other
       // refusal needs one, and forcing it on the marker would spend a step and
       // start a review cycle the run did not need (#293).
       let needsChildTurn = false;
@@ -282,21 +284,21 @@ export async function runLoop(options) {
       onEvent({ type: "refusal", reason, stepsUsed });
       // A refusal gets one corrective turn. With no step budget left that turn
       // cannot run a child, so the refusal resolves here on the exit-1 path
-      // instead of reaching the step-limit exit 2 (#248). A refusal that is not
-      // cleared by a child turn also resolves here, because the flag that
-      // records a prior refusal is cleared by no other event.
+      // instead of reaching the step-limit exit 2 (#248). A refusal with no child
+      // turn since the last one also resolves here, because no other event
+      // clears the prior-refusal flag.
       if (finishRefused || stepsUsed >= maxSteps) {
         return stopLoop(1, { reason: `Finish refused: ${reason}.` });
       }
       finishRefused = true;
       logWarn(`finish refused: ${reason}`);
-      // Only a refusal that needs a child turn says so, and it says the real
-      // rule: any child turn clears the prior-refusal flag, and the run ends when
-      // two refusals land with no child turn between them or the step budget runs
-      // out (#293).
+      // Two distinct things are described here and need distinct words: any child
+      // turn clears the prior-refusal flag, which is not the same as satisfying
+      // the condition that refused. The ending states the flag rule, and each
+      // recovery states what satisfies its own condition (#293).
       const ending = needsChildTurn
-        ? " A refusal that needs a child turn is cleared by any one of them, which costs a step; the run ends on a second refusal with no child turn in between, or when no step budget is left."
-        : " Re-finish without the marker; that needs no child turn.";
+        ? " Any child turn clears the prior-refusal flag, so a later refusal still gets a turn while step budget remains, and that turn costs a step. The run ends on a second refusal with no child turn in between, or when no step budget is left."
+        : " Re-finish without the marker; that needs no child turn. If the re-finish is refused again anyway, the run ends, because nothing cleared the prior-refusal flag in between.";
       prompt = refusalPrompt(
         `Finish refused: ${reason}. ${refusals.map((entry) => entry.recovery).join(" ")}${ending}`,
       );
@@ -379,7 +381,7 @@ async function ciRefusal({ pr, reviewed, cwd, gh }) {
       // turn while step budget remains. The orchestrator cannot reach a
       // credential or a network itself, so the only retry it owns is the next
       // gate read.
-      recovery: `That is a failure to read GitHub, not a verdict on the work, and the fix is outside this run's reach. The only retry you can make is a reviewer turn, which re-runs the gate; a worker turn alone does not. The finish carries no unresolvedCompare marker either way, because the gate resolves the PR head from PR ${pr}.`,
+      recovery: `That is a failure to read GitHub, not a verdict on the work, and the fix is outside this run's reach. The only retry you can make is a reviewer turn, which re-reads the reviewed state and re-runs the gate; a worker turn resets that state to none, so it does not retry the gate. The finish carries no unresolvedCompare marker either way, because the gate resolves the PR head from PR ${pr}.`,
     };
   }
   if (gate.ok) {
@@ -391,7 +393,7 @@ async function ciRefusal({ pr, reviewed, cwd, gh }) {
     // establishes the reviewed state the gate reads. A worker turn is needed
     // first only when the condition is about the change itself, and it needs a
     // reviewer turn after it either way (#293).
-    recovery: `That condition is read from PR ${pr} by the gate, so the finish carries no unresolvedCompare marker. Dispatch the reviewer to re-read the state and re-run the gate, then finish. If the condition is about the change rather than the checks, dispatch the worker first and then the reviewer on the new state; a worker turn alone clears neither the reviewed state nor the completion rule.`,
+    recovery: `That condition is read from PR ${pr} by the gate, so the finish carries no unresolvedCompare marker. Dispatch the reviewer to re-read the state and re-run the gate, then finish. If the condition is about the change rather than the checks, dispatch the worker first and then the reviewer on the new state: a worker turn resets the reviewed state to none, so on its own it satisfies neither the gate nor the completion rule.`,
   };
 }
 

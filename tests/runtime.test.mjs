@@ -1806,7 +1806,7 @@ test("following a --require-ci refusal prompt reaches exit 0", async () => {
     const gatePrompt = gateOrch.recorded[3].prompt;
     expect(gatePrompt).toContain("the PR head differs from the reviewed commit");
     expect(gatePrompt).toContain("Dispatch the reviewer");
-    expect(gatePrompt).toContain("a worker turn alone clears neither");
+    expect(gatePrompt).toContain("a worker turn resets the reviewed state to none");
     expect(gateResult.exitCode).toBe(0);
   } finally {
     await removePath(repo);
@@ -1852,6 +1852,9 @@ test("a marker-only refusal is cleared by a re-finish with no child turn", async
     // total, which is the one the first finish needed for the completion rule.
     expect(orch.recorded[2].prompt).toContain("needs no child turn");
     expect(orch.recorded[2].prompt).not.toContain("costs a step");
+    // The edge case the ending names: nothing cleared the prior-refusal flag, so
+    // a re-finish that is refused again ends the run.
+    expect(orch.recorded[2].prompt).toContain("If the re-finish is refused again anyway");
     expect(work.recorded).toHaveLength(0);
     expect(rev.recorded).toHaveLength(1);
   } finally {
@@ -1986,6 +1989,7 @@ test("a gh-failure refusal does not claim the run is out of attempts", async () 
     const prompt = orch.recorded[3].prompt;
     expect(prompt).toContain("the PR gate could not be evaluated");
     expect(prompt).toContain("The only retry you can make is a reviewer turn");
+    expect(prompt).toContain("a worker turn resets that state to none");
     expect(prompt).not.toContain("one attempt left");
     expect(result.exitCode).toBe(0);
   } finally {

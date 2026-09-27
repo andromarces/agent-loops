@@ -217,11 +217,12 @@ mapping instead, and `agent-loop --require-accept` enforces that rule. The
 headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
 PR gate headlessly, so the runtime resolves the PR head there too (#293). A
-headless gate refusal is cleared by any child turn, and the run ends on exit 1
+headless gate refusal is satisfied by a reviewer turn, and the run ends on exit 1
 when a finish is refused again with no child turn in between, so budget
 `--max-steps` for a required check that is still pending. The gate reads the
-reviewed state, so the clearing turn is a reviewer turn, and a worker turn is
-needed first only when the condition is about the change. A
+reviewed state, so the reviewer turn is the one that satisfies it; a worker turn
+resets that state to none, so it is needed first only when the condition is about
+the change. A
 headless finish that records an unresolved PR-head compare sets
 `"unresolvedCompare": true` on the action; the run records an
 `unresolved-compare` transcript event and exits `4` instead of `0`, so the
@@ -302,9 +303,10 @@ Two opt-in gates apply to `work-first` and `review-first` only. Each refusal
 names the conditions that failed, in the order the marker combination, then
 `--require-accept`, then `--require-ci`. The run ends when two refusals land with
 no child turn between them, so every condition is reported in one refusal. The
-marker clears on a re-finish, with no child turn; every other condition clears on
-any child turn, which costs a step. In `review-only`, a `finish` without them
-keeps the current behavior, and each flag fails with a clear error.
+marker is satisfied on a re-finish, with no child turn; every other condition
+needs a child turn to satisfy it, which costs a step. In `review-only`, a
+`finish` without them keeps the current behavior, and each flag fails with a
+clear error.
 
 - `--require-accept`: refuse unless the latest turn is a reviewer accept with a
   `Checks` line, the reviewed snapshot is exact, and the current snapshot is
