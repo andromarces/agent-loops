@@ -2,10 +2,16 @@
 // headless loop (src/cli.mjs) and the role subcommand (src/role.mjs).
 import { normalizeAgent } from "../agents/index.mjs";
 
+// Builds the shared missing-value error, so the space-separated and inline
+// guards report the same message from one place.
+function missingValue(flag) {
+  return new Error(`Missing value for ${flag}.`);
+}
+
 export function readArgValue(argv, flag, index) {
   const value = argv[index];
   if (!value || value.startsWith("-")) {
-    throw new Error(`Missing value for ${flag}.`);
+    throw missingValue(flag);
   }
   return value;
 }
@@ -16,7 +22,7 @@ export function readArgValue(argv, flag, index) {
  */
 export function readInlineValue(inline, flag) {
   if (inline.value === "") {
-    throw new Error(`Missing value for ${flag}.`);
+    throw missingValue(flag);
   }
   return inline.value;
 }
