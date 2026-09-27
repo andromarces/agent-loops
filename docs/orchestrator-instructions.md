@@ -153,6 +153,10 @@ Every command for a run passes that run's `--cwd`. Each run ends with its own
 - `review-only`: reviewer, then report. Findings alone never authorize edits;
   the subcommand rejects worker dispatch in this mode.
 
+This section governs the interactive `role` mode. The headless loop chooses its
+own action order; its prompt states the completion rule and the `review-only`
+mapping instead, and `agent-loop --require-accept` enforces that rule.
+
 ## Completion
 
 Completion is completion of the requested work, not code acceptance.

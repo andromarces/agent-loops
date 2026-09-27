@@ -36,6 +36,7 @@ export function parseArgs(argv) {
     timeout: DEFAULT_TIMEOUT,
     transcript: null,
     verbose: false,
+    requireAccept: false,
   };
   for (const role of ROLES) {
     options[role] = null;
@@ -88,6 +89,10 @@ export function parseArgs(argv) {
 
       case "--verbose":
         options.verbose = true;
+        break;
+
+      case "--require-accept":
+        options.requireAccept = true;
         break;
 
       case "--help":
@@ -207,6 +212,8 @@ Options:
   --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
   --transcript <file>           Record execution transcript to a JSON file.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
+  --require-accept              Refuse finish until a reviewer accepts the latest state after a
+                                worker turn. Off by default; a repeated refusal ends the run.
   -h, --help                    Show help.
 
   A value flag also accepts the inline form --flag=value, for example
@@ -282,6 +289,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
     options: {
       maxSteps: options.maxSteps,
       timeout: options.timeout,
+      requireAccept: options.requireAccept,
     },
     roles,
     events,
@@ -351,6 +359,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
         cwd: options.cwd,
         maxSteps: options.maxSteps,
         timeout: options.timeout,
+        requireAccept: options.requireAccept,
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,

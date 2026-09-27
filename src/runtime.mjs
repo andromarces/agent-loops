@@ -3,7 +3,8 @@ import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
-import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
+import { parseVerdict } from "./lib/report.mjs";
+import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
 
@@ -92,9 +93,14 @@ export async function runChild(options) {
 
 /**
  * Run the orchestrator loop. Returns `{ exitCode: 0, summary }` when the
- * orchestrator returns `finish`, or `{ exitCode: 1 | 2, reason }` on `abort`
- * or a step limit reached with work remaining. Throws on fatal controller
- * errors: orchestrator failure, detected mutation, or cancel.
+ * orchestrator returns `finish`, or `{ exitCode: 1 | 2, reason }` on `abort`,
+ * a refused finish, or a step limit reached with work remaining. Throws on
+ * fatal controller errors: orchestrator failure, detected mutation, or cancel.
+ *
+ * With `requireAccept`, the runtime refuses a `finish` that follows a worker
+ * turn with no later reviewer `verdict: accept`. A refused finish gets one
+ * corrective turn; a repeated refusal ends the run with exit 1. A run with no
+ * worker turn maps to review-only, where the finish follows the report.
  * @param {object} options
  * @returns {Promise<{ exitCode: 0, summary: object } | { exitCode: 1 | 2, reason: string }>}
  */
@@ -107,6 +113,7 @@ export async function runLoop(options) {
     signal,
     roles,
     agents = defaultAgents,
+    requireAccept = false,
     onEvent = () => {},
   } = options;
 
@@ -120,6 +127,12 @@ export async function runLoop(options) {
   }
 
   let stepsUsed = 0;
+  // Completion gate state (#234). The headless loop has no mode: a worker turn
+  // marks work mode, so the finish needs a later reviewer accept; a run with no
+  // worker turn maps to review-only and finishes on the report.
+  let workerRan = false;
+  let acceptedSinceWorker = false;
+  let finishRefused = false;
 
   const orchAdapter = {
     async run(state, p, opts) {
@@ -129,7 +142,7 @@ export async function runLoop(options) {
     },
   };
 
-  let prompt = initialPrompt({ task, maxSteps });
+  let prompt = initialPrompt({ task, maxSteps, requireAccept });
 
   while (true) {
     let action;
@@ -151,7 +164,21 @@ export async function runLoop(options) {
     onEvent({ type: "action", action, stepsUsed });
 
     if (action.action === "finish") {
-      return stopLoop(0, { summary: action.summary });
+      if (!(requireAccept && workerRan && !acceptedSinceWorker)) {
+        return stopLoop(0, { summary: action.summary });
+      }
+      if (finishRefused) {
+        return stopLoop(1, {
+          reason:
+            "Finish refused: no reviewer accept on the latest changed state after a worker turn.",
+        });
+      }
+      finishRefused = true;
+      logWarn("finish refused: no reviewer accept after the latest worker turn");
+      prompt = refusalPrompt(
+        "Finish refused: the latest worker turn has no later reviewer accept. Dispatch the reviewer, obtain Verdict: accept on that state, then finish.",
+      );
+      continue;
     }
 
     if (action.action === "abort") {
@@ -179,6 +206,14 @@ export async function runLoop(options) {
       onEvent,
     });
     onEvent({ type: "result", role: roleName, result, stepsUsed });
+
+    if (isWorkerDispatch) {
+      workerRan = true;
+      acceptedSinceWorker = false;
+    } else {
+      acceptedSinceWorker = result.status === "ok" && parseVerdict(result.response) === "accept";
+    }
+    finishRefused = false;
 
     prompt = resultPrompt({ result, stepsUsed, maxSteps });
   }

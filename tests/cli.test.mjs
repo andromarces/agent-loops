@@ -144,6 +144,16 @@ test("invalid --timeout is rejected", () => {
   }
 });
 
+// Usefulness: verifies --require-accept is an opt-in boolean gate that defaults
+// off and rejects an inline value like the other boolean flags (issue #234).
+test("--require-accept is a boolean flag", () => {
+  expect(parseArgs(BASE).requireAccept).toBe(false);
+  expect(parseArgs([...BASE, "--require-accept"]).requireAccept).toBe(true);
+  expect(() => parseArgs([...BASE, "--require-accept=1"])).toThrow(
+    "--require-accept does not take a value.",
+  );
+});
+
 // Usefulness: verifies readValue guards against missing value or value starting with -.
 test("readValue guards against missing or flag-like values", () => {
   expect(() => parseArgs(["--orchestrator", "--worker"])).toThrow(
