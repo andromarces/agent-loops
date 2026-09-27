@@ -354,21 +354,23 @@ async function writeFileAtomic(file, text) {
 // Rename is the atomic replace step, but on Windows it fails while another
 // process holds the destination open. EPERM is the observed code; EACCES and
 // EBUSY join the retry set for the general Windows and network-mount failure
-// set. The hold is brief, so retry a few times, then rethrow the original error
-// so a real failure still surfaces (#233).
+// set. A continuous reader can hold the destination past a fixed short delay,
+// so the wait grows across attempts. The budget is about 400 ms, enough to
+// outlast the observed hold while a real failure still surfaces quickly: the
+// original error is rethrown once the schedule is spent (#233, #242).
 const RENAME_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
-const RENAME_RETRY_ATTEMPTS = 5;
-const RENAME_RETRY_DELAY_MS = 25;
+// Wait before each retry, in order. Six attempts total wait 385 ms.
+const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100, 200];
 
 async function renameWithRetry(from, to) {
-  for (let attempt = 1; ; attempt += 1) {
+  for (let attempt = 0; ; attempt += 1) {
     try {
       return await rename(from, to);
     } catch (err) {
-      if (!RENAME_RETRY_CODES.has(err.code) || attempt >= RENAME_RETRY_ATTEMPTS) {
+      if (!RENAME_RETRY_CODES.has(err.code) || attempt >= RENAME_RETRY_DELAYS_MS.length) {
         throw err;
       }
-      await delay(RENAME_RETRY_DELAY_MS);
+      await delay(RENAME_RETRY_DELAYS_MS[attempt]);
     }
   }
 }
