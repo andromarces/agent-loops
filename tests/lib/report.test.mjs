@@ -355,6 +355,10 @@ test("parseReportBlock returns null when a spaceless bullet closes before a join
 // report is the safe direction: the text survives in `raw`, whereas the
 // silent-drop shape loses it. A run closed before a space, end of line, or a
 // punctuation-only token stays prose in the companion test.
+// Usefulness: `*emph*é` pins that the letter check after the close is `\p{L}`
+// and not ASCII-only. Two of the other nine shapes carry a non-ASCII apostrophe
+// or em dash, and none carries a non-ASCII letter or digit, so none of them
+// reaches the check where script matters (issue #291).
 test("parseReportBlock returns null when an emphasis run is glued to a following word", () => {
   for (const line of [
     "*self*-hosted",
@@ -366,6 +370,7 @@ test("parseReportBlock returns null when an emphasis run is glued to a following
     "*a*/b",
     "*Note*:x",
     "*emph*.2",
+    "*emph*é",
   ]) {
     expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
   }
@@ -374,16 +379,28 @@ test("parseReportBlock returns null when an emphasis run is glued to a following
 // Usefulness: pins the accepted decision for #275 and its corrected ceiling. A
 // spaceless `*` bullet whose closing `*` a letter precedes, where the character
 // right after the close is not a word character or `*`, and where nothing glued
-// from that character on is a letter or a digit, is the same bytes as a real
-// emphasis run, so the line stays prose: the report still parses and the bullet
-// is dropped with no `raw` signal. Every matching line in the block drops this
-// way, not only the first, so a block can lose three lines under one label and
-// still parse. The gap is accepted, and the acceptance is stated in the
+// from that character on is a letter or an ASCII digit, is the same bytes as a
+// real emphasis run, so the line stays prose: the report still parses and the
+// bullet is dropped with no `raw` signal. Every matching line in the block drops
+// this way, not only the first, so a block can lose three lines under one label
+// and still parse. The gap is accepted, and the acceptance is stated in the
 // `known-limit` note in src/lib/report.mjs, in docs/orchestrator-instructions.md,
 // and in the README. This test pins the accepted cost, so a future narrowing
 // changes it on purpose.
+// Usefulness: `*glob é*` and `*emph*٢` pin the two checks that the four ASCII
+// shapes above never reach. The letter before the close is `\p{L}`, so a
+// non-ASCII letter exempts the line, and a digit is `\d`, which is ASCII-only,
+// so a non-ASCII digit exempts it too. Neither holds for the ASCII shapes, which
+// is what let the prose drift (issues #290 and #291).
 test("parseReportBlock leaves the accepted residual letter-star bullet as prose", () => {
-  for (const line of ["*file*", "*glob src/a*", "*use a* b", "*glob src/a*, b"]) {
+  for (const line of [
+    "*file*",
+    "*glob src/a*",
+    "*use a* b",
+    "*glob src/a*, b",
+    "*glob é*",
+    "*emph*٢",
+  ]) {
     expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toEqual({
       conclusion: "done",
       why: "tests pass",
