@@ -21,10 +21,17 @@ function fail(reason) {
   return { ok: false, reason };
 }
 
-async function ghApi(gh, args, cwd, { allow404 = false } = {}) {
+// A source the caller cannot read answers 404 or 403 depending on the
+// credential: a caller without admin rights on the repository gets
+// `Branch not protected`, and a `GITHUB_TOKEN` without the admin scope gets
+// `Resource not accessible by integration`. Both mean the same thing to this
+// gate, that the source contributes no required contexts.
+const UNREADABLE = /HTTP (?:403|404)\b|\b(?:403|404)\b/;
+
+async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    if (allow404 && /HTTP 404|\b404\b/.test(stderr)) {
+    if (allowUnreadable && UNREADABLE.test(stderr)) {
       return null;
     }
     throw new Error(`gh api ${args[0]} failed: ${stderr.trim() || `exit ${status}`}`);
@@ -96,13 +103,15 @@ function addContext(contexts, name, appId = null) {
 
 // Required status contexts from every source the caller can read: repository
 // rulesets, classic branch protection, and `gh pr checks --required`.
-// Deduplicated by name and app qualifier. A 404 or an unreadable source
-// contributes no contexts; the caller refuses an empty union, so a source that
-// yields no contexts fails closed instead of passing vacuously.
+// Deduplicated by name and app qualifier. An unreadable source contributes no
+// contexts; the caller refuses an empty union, so a source that yields no
+// contexts fails closed instead of passing vacuously.
 async function requiredContexts(gh, slug, base, pr, cwd) {
   const contexts = new Map();
 
-  const rules = await ghApi(gh, [`repos/${slug}/rules/branches/${base}`], cwd, { allow404: true });
+  const rules = await ghApi(gh, [`repos/${slug}/rules/branches/${base}`], cwd, {
+    allowUnreadable: true,
+  });
   if (Array.isArray(rules)) {
     for (const rule of rules) {
       if (rule?.type !== "required_status_checks") {
@@ -115,7 +124,7 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   }
 
   const protection = await ghApi(gh, [`repos/${slug}/branches/${base}/protection`], cwd, {
-    allow404: true,
+    allowUnreadable: true,
   });
   const required = protection?.required_status_checks;
   for (const context of required?.contexts ?? []) {
@@ -293,12 +302,13 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   // Run this after the per-check pass so a named check refusal keeps its name.
   // `gh pr checks --required` lists only checks that already reported, so on a
   // classic-protection-only repo a caller without admin rights cannot enumerate
-  // a required check that never started; GitHub reports that PR as blocked,
-  // confirmed live (#280). When no other required check reported, the empty-union
-  // refusal above fires first. The REST `mergeable_state` for the same PR reads
-  // `unstable`, so this stays the GraphQL field. Other unmet rules (a required
-  // review, unresolved conversations, a required deployment) also report blocked,
-  // and the gate cannot tell them apart, so it fails closed (#271).
+  // a required check that never started; GitHub reports that PR as blocked to such
+  // a caller, confirmed live with a non-admin `GITHUB_TOKEN` (#280). When no other
+  // required check reported, the empty-union refusal above fires first. The GraphQL
+  // `mergeStateStatus` and the REST `mergeable_state` disagree on the same pull
+  // request, so this reads the GraphQL field. Other unmet rules (a required review,
+  // unresolved conversations, a required deployment) also report blocked, and the
+  // gate cannot tell them apart, so it fails closed (#271).
   if (info.mergeStateStatus === "BLOCKED") {
     return fail(
       "the PR merge state is blocked (a required check, review, or other required rule is unmet)",
