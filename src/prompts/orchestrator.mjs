@@ -1,7 +1,8 @@
 // Shared rule source: docs/orchestrator-instructions.md states the role rules
 // for interactive parents (#56); this headless prompt states the same rules in
-// JSON-action form. Keep the two consistent when either changes.
-export function initialPrompt({ task, maxSteps }) {
+// JSON-action form, including the completion rule. Keep the two consistent when
+// either changes.
+export function initialPrompt({ task, maxSteps, requireAccept = false }) {
   return `
 You are the orchestrator in an automated multi-agent coding loop.
 Your role is to direct the workflow to complete the user task.
@@ -33,6 +34,11 @@ Supported action formats:
 The finish summary requires non-empty strings for all five keys: changed, verified, deferred, notDone, open.
 
 When you dispatch the reviewer, name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them. Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it.
+
+Completion:
+- Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
+- When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}
 
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; notes and deferred are optional, and the block stays valid when the child omits them.
 
@@ -66,6 +72,21 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
   return `
 Role execution result:
 ${JSON.stringify(payload, null, 2)}
+
+Choose the next action.
+Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
+Supported actions: run_worker, run_reviewer, finish, abort.
+`.trim();
+}
+
+/**
+ * Prompt sent back to the orchestrator when the deterministic runtime refuses a
+ * `finish`. The refusal is not a JSON error, so it carries the failed rule and
+ * the action list that lets the orchestrator recover with a reviewer turn.
+ */
+export function refusalPrompt(reason) {
+  return `
+${reason}
 
 Choose the next action.
 Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.

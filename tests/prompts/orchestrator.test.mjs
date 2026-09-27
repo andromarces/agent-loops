@@ -2,7 +2,12 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { initialPrompt, repairPrompt, resultPrompt } from "../../src/prompts/orchestrator.mjs";
+import {
+  initialPrompt,
+  refusalPrompt,
+  repairPrompt,
+  resultPrompt,
+} from "../../src/prompts/orchestrator.mjs";
 
 const instructionsPath = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -84,6 +89,34 @@ test("resultPrompt carries the reviewed state for a reviewer result", () => {
   });
   expect(prompt).toContain('"reviewed"');
   expect(prompt).toContain('"digest": "d"');
+});
+
+// Usefulness: verifies the headless prompt states the completion rule and its
+// mode mapping: a worker change needs a later reviewer accept, a run with no
+// worker turn finishes on the report, and the loop policy stays interactive
+// (issue #234).
+test("initialPrompt states the completion rule and its mode mapping", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).toContain("Do not finish while the latest changed state lacks a reviewer accept");
+  expect(prompt).toContain("a later reviewer turn returns Verdict: accept on that state");
+  expect(prompt).toContain("When no worker turn has run");
+  expect(prompt).toContain("loop policy");
+});
+
+// Usefulness: verifies the headless prompt names the deterministic gate when the
+// run is started with --require-accept (issue #234).
+test("initialPrompt states the --require-accept gate when enabled", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10, requireAccept: true });
+  expect(prompt).toContain("--require-accept");
+  expect(prompt).toContain("refuses a finish");
+});
+
+// Usefulness: verifies refusalPrompt carries the refusal reason and the supported
+// actions, so the orchestrator can recover with a reviewer turn (issue #234).
+test("refusalPrompt states the reason and the supported actions", () => {
+  const prompt = refusalPrompt("Finish refused: no reviewer accept.");
+  expect(prompt).toContain("Finish refused: no reviewer accept.");
+  expect(prompt).toContain("Supported actions: run_worker, run_reviewer, finish, abort.");
 });
 
 // Usefulness: verifies resultPrompt produces expected formatted payload for ok result.

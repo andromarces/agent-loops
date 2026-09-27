@@ -3,7 +3,8 @@ import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
-import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
+import { parseVerdict } from "./lib/report.mjs";
+import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
 
@@ -104,9 +105,16 @@ export async function runChild(options) {
 
 /**
  * Run the orchestrator loop. Returns `{ exitCode: 0, summary }` when the
- * orchestrator returns `finish`, or `{ exitCode: 1 | 2, reason }` on `abort`
- * or a step limit reached with work remaining. Throws on fatal controller
- * errors: orchestrator failure, detected mutation, or cancel.
+ * orchestrator returns `finish`, or `{ exitCode: 1 | 2, reason }` on `abort`,
+ * a refused finish, or a step limit reached with work remaining. Throws on
+ * fatal controller errors: orchestrator failure, detected mutation, or cancel.
+ *
+ * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
+ * covered: after a worker turn it needs a later reviewer `verdict: accept`, and
+ * with no worker turn it needs at least one reviewer report. A refused finish
+ * gets one corrective turn; a repeated refusal ends the run with exit 1. The
+ * gate follows turn order only: an edit made outside the loop between the
+ * accept and the finish is not detected.
  * @param {object} options
  * @returns {Promise<{ exitCode: 0, summary: object } | { exitCode: 1 | 2, reason: string }>}
  */
@@ -119,6 +127,7 @@ export async function runLoop(options) {
     signal,
     roles,
     agents = defaultAgents,
+    requireAccept = false,
     onEvent = () => {},
   } = options;
 
@@ -132,6 +141,13 @@ export async function runLoop(options) {
   }
 
   let stepsUsed = 0;
+  // Completion gate state (#234). The headless loop has no mode: a worker turn
+  // marks work mode and needs a later reviewer accept; no worker turn maps to
+  // review-only and needs at least one reviewer report.
+  let workerRan = false;
+  let reviewerRan = false;
+  let acceptedSinceWorker = false;
+  let finishRefused = false;
 
   const orchAdapter = {
     async run(state, p, opts) {
@@ -141,7 +157,7 @@ export async function runLoop(options) {
     },
   };
 
-  let prompt = initialPrompt({ task, maxSteps });
+  let prompt = initialPrompt({ task, maxSteps, requireAccept });
 
   while (true) {
     let action;
@@ -163,7 +179,24 @@ export async function runLoop(options) {
     onEvent({ type: "action", action, stepsUsed });
 
     if (action.action === "finish") {
-      return stopLoop(0, { summary: action.summary });
+      const gateBlocks = requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan);
+      if (!gateBlocks) {
+        return stopLoop(0, { summary: action.summary });
+      }
+      const missing = workerRan
+        ? "no reviewer accept on the latest changed state after a worker turn"
+        : "no reviewer report on the state";
+      if (finishRefused) {
+        return stopLoop(1, { reason: `Finish refused: ${missing}.` });
+      }
+      finishRefused = true;
+      logWarn(`finish refused: ${missing}`);
+      prompt = refusalPrompt(
+        `Finish refused: ${missing}. Dispatch the reviewer, obtain ${
+          workerRan ? "Verdict: accept on that state" : "a reviewer report"
+        }, then finish.`,
+      );
+      continue;
     }
 
     if (action.action === "abort") {
@@ -191,6 +224,15 @@ export async function runLoop(options) {
       onEvent,
     });
     onEvent({ type: "result", role: roleName, result, stepsUsed });
+
+    if (isWorkerDispatch) {
+      workerRan = true;
+      acceptedSinceWorker = false;
+    } else {
+      reviewerRan = reviewerRan || result.status === "ok";
+      acceptedSinceWorker = result.status === "ok" && parseVerdict(result.response) === "accept";
+    }
+    finishRefused = false;
 
     prompt = resultPrompt({ result, stepsUsed, maxSteps });
   }
