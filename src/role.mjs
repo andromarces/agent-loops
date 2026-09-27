@@ -25,7 +25,7 @@ import {
   readState,
   statePaths,
   withStateLock,
-  writeSessionIndex,
+  writeSessionEntry,
   writeState,
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
@@ -461,7 +461,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     await archiveState(paths, existing);
     await writeState(paths.stateFile, state);
     if (args.parentSession) {
-      await writeSessionIndex(paths.sessionIndexFile, paths.stateFile);
+      await writeSessionEntry(paths.sessionEntryFile, paths.stateFile);
     }
     logInfo(`initialized run state (mode: ${state.mode}, maxSteps: ${state.maxSteps})`);
   }

@@ -1,8 +1,14 @@
-import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { STALE_LOCK_GRACE_MS, statePaths, withStateLock } from "../../src/lib/runstate.mjs";
+import {
+  STALE_LOCK_GRACE_MS,
+  readStatesForSession,
+  statePaths,
+  withStateLock,
+  writeSessionEntry,
+} from "../../src/lib/runstate.mjs";
 import { deadPid } from "../runtime-helpers.mjs";
 
 let dirs = [];
@@ -136,7 +142,7 @@ test("statePaths normalizes the drive letter", async () => {
 });
 
 // Usefulness: verifies an unexpanded session placeholder cannot register a
-// session index under a parent that never matches (#149), and that a real id
+// session entry under a parent that never matches (#149), and that a real id
 // shape still resolves.
 test("statePaths refuses an unexpanded session placeholder", () => {
   for (const bad of [
@@ -150,5 +156,52 @@ test("statePaths refuses an unexpanded session placeholder", () => {
   ]) {
     expect(() => statePaths({ parentSession: bad })).toThrow(/Invalid session id/);
   }
-  expect(statePaths({ parentSession: "ses_abc123" }).sessionIndexFile).toBeTruthy();
+  expect(statePaths({ parentSession: "ses_abc123" }).sessionRunsDir).toBeTruthy();
+});
+
+// Usefulness: verifies the per-run entry name matches the state directory name
+// and is stable across archives, while a different work tree gets a different
+// entry, so a parent session can register several concurrent runs without one
+// overwriting another (#212).
+test("statePaths names each session entry after its work tree", async () => {
+  const repoA = await tempDir();
+  const repoB = await tempDir();
+  const parentSession = "ses_multi";
+
+  const a = statePaths({ cwd: repoA, parentSession });
+  const b = statePaths({ cwd: repoB, parentSession });
+  expect(a.sessionEntryFile).toBe(join(a.sessionRunsDir, basename(a.stateDir)));
+  expect(a.sessionEntryFile).not.toBe(b.sessionEntryFile);
+  // The state file path is constant across archives, so the entry stays valid
+  // for the next run in the same work tree.
+  expect(statePaths({ cwd: repoA, parentSession }).sessionEntryFile).toBe(a.sessionEntryFile);
+  // The legacy index path is a file, not the new directory, so the two coexist.
+  expect(a.legacyIndexFile).not.toBe(a.sessionRunsDir);
+});
+
+// Usefulness: verifies a temp file left by an interrupted atomic entry write is
+// never read as a run entry, so a crashed write cannot register a spurious run
+// or a duplicate of a real one (#212).
+test("readStatesForSession ignores an entry temp file", async () => {
+  const runsRoot = await tempDir();
+  process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+  try {
+    const cwd = await tempDir();
+    const paths = statePaths({ cwd, parentSession: "ses_tmp" });
+    await mkdir(dirname(paths.stateFile), { recursive: true });
+    await writeFile(
+      paths.stateFile,
+      JSON.stringify({ parentSession: "ses_tmp", lifecycle: "active" }),
+      "utf8",
+    );
+    await writeSessionEntry(paths.sessionEntryFile, paths.stateFile);
+    await mkdir(paths.sessionRunsDir, { recursive: true });
+    await writeFile(join(paths.sessionRunsDir, "deadbeef.tmp"), `${paths.stateFile}\n`, "utf8");
+
+    expect(await readStatesForSession("ses_tmp")).toEqual([
+      { parentSession: "ses_tmp", lifecycle: "active" },
+    ]);
+  } finally {
+    delete process.env.AGENT_LOOP_RUNS_ROOT;
+  }
 });

@@ -74,9 +74,12 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
 - Always pass `--cwd`. It defaults to the current directory, which for an
   interactive parent is normally not the target work tree.
 - Pass the child prompt on stdin. No prompt files.
-- A second task in the same session starts a new run with a new init call, and
-  only after the previous run is terminal. The subcommand archives the previous
-  state file and rejects init over a non-terminal run.
+- A parent session can drive several runs at once, one per work tree. Init
+  registers each run under the session as its own entry keyed by the work tree,
+  so a second run in a different work tree does not replace the first. A new
+  task in the same work tree starts a new run only after that work tree's
+  previous run is terminal; the subcommand archives that work tree's previous
+  state file and rejects init over a non-terminal run there.
 - Later dispatches read the configuration from the state file. Do not repeat
   `--task` on a later dispatch: `--task` keys init detection, so a dispatch
   that carries it while a run is active fails instead of continuing the run.
@@ -125,6 +128,21 @@ block wrap it on every turn. Name the guards and contracts that the change puts
 at risk, so the reviewer can trace each changed input through them. Do not
 restate the spec as the pass condition: a restated spec asks the reviewer to
 confirm it, not to test it.
+
+## Several runs at once
+
+One parent session can drive several runs, one per work tree. Each run registers
+its own session entry keyed by the work tree, so a second run in a different
+work tree does not replace the first, and the parent-edit guard stays engaged
+while any of the session's runs is non-terminal.
+
+- Interleave: dispatch one turn per run in turn, and read each envelope before
+  the next dispatch. This works in every harness.
+- Background: run each dispatch as a background shell command where the harness
+  supports it, and read each envelope when it completes.
+
+Every command for a run passes that run's `--cwd`. Each run ends with its own
+`finish` or `abort`, and the guard releases only after every run is terminal.
 
 ## Loop policy
 

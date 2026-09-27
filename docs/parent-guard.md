@@ -24,19 +24,29 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
   `src/hook/parent-guard.mjs`, Copilot CLI runs
   `src/hook/copilot-parent-guard.mjs`, and Antigravity CLI runs
   `src/hook/antigravity-parent-guard.mjs`. They resolve the state file through
-  the session index written by the init call, never through the hook `cwd`, so a
-  parent whose run targets a different `--cwd` stays guarded wherever it edits.
+  the session-run entries written by the init call — one entry per run under
+  `<runs root>/session-runs/<parent-session>/`, named after the work tree's
+  state directory — never through the hook `cwd`, so a parent whose run targets
+  a different `--cwd` stays guarded wherever it edits. The reader unions that
+  directory with the legacy single-path `<runs root>/sessions/<parent-session>`
+  file; init writes only the per-run entries.
   No environment variable is required at parent start-up; the harness entry
   points (#56) pass their session id as `--parent-session` on init.
-- Deny only when the hook session id equals `parentSession` in the registered state and the lifecycle is non-terminal (`active`, `dispatched`, `interrupted`). The guard releases only on `finish`, `abort`, or a `halted` state; during `interrupted` it stays engaged, and `dispatch --resume-interrupted` keeps it engaged because the resumed run is non-terminal again.
-- Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt index entry or state file. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
-- Without a state file the hook does one absent-file read, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
+- Deny only when the hook session id equals `parentSession` in any registered
+  state for that session and the lifecycle is non-terminal (`active`,
+  `dispatched`, `interrupted`). One active run among several denies even when
+  another run is terminal; the guard releases only after every registered run is
+  terminal. During `interrupted` it stays engaged, and
+  `dispatch --resume-interrupted` keeps it engaged because the resumed run is
+  non-terminal again.
+- Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt entry or state file. One corrupt entry never hides another active run, and a missing, unreadable, or corrupt record never denies on its own. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
+- Without a registered run the hook reads the per-run entry directory and the legacy index, finds nothing, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
 - The installed Claude entry is a shell-form `command` with no `args`,
   `node "<installed guard path>"`. Claude Code runs it through a shell. The user
   settings file is Claude-only: Copilot CLI reads the shared subset of a
   _repository_ `.claude/settings.json`, not a user one, so Copilot gets its own
   user hook file.
-- On OpenCode, `~/.config/opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session index, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
+- On OpenCode, `~/.config/opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session-run entries, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
 - The plugin runs inside the OpenCode server process, so it resolves `AGENT_LOOP_RUNS_ROOT` from that process's environment; the Claude Code hook inherits the parent shell's environment instead. The override is test-only, but using it outside tests would point the plugin and the `agent-loop` CLI at different roots and disable the guard silently.
 - On Antigravity CLI, `src/hook/antigravity-parent-guard.mjs` reads `conversationId` and `toolCall.name`, reuses `decideParentGuard`, and prints `{"decision":"deny","reason":...}` only for a guarded tool call from the registered parent. Antigravity blocks a tool call when a hook prints `{}`, prints an empty decision, or exits non-zero, so every allow path prints nothing and exits 0 and keeps the normal permission flow. The global `~/.gemini/config/hooks.json` group runs a shim in that folder by a flat relative path, and the shim imports the guard by `file:///` URL, because a quoted or spaced absolute script path fails in every quoting form tested. A stale or unreachable guard URL is swallowed, so a moved package or deleted file does not fail closed. The parent learns its id from the undocumented `ANTIGRAVITY_CONVERSATION_ID`, which child processes inherit.
 
