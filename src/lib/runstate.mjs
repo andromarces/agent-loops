@@ -2,6 +2,15 @@
 // guard hook (#57). The state file lives at a fixed path derived from the
 // resolved work tree cwd, never passed as a flag; tests override the runs
 // root with AGENT_LOOP_RUNS_ROOT.
+//
+// One parent session can drive several concurrent runs, one per work tree. Init
+// registers each run as its own entry file at
+// `<root>/session-runs/<parent-session>/<cwd hash>` (the state directory name),
+// so simultaneous inits in different work trees never overwrite each other. The
+// guard reads every entry under that directory and denies if any resolves to a
+// non-terminal run owned by the hook session. The reader also unions the legacy
+// single-file index at `<root>/sessions/<parent-session>`; init never writes it,
+// and the directory name avoids a file-versus-directory clash at that path.
 import { createHash } from "node:crypto";
 import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,26 +26,35 @@ export const STALE_LOCK_GRACE_MS = 60_000;
 
 /**
  * Resolve the state paths for one run. `cwd` derives the per-work-tree state
- * directory; `parentSession` derives the session index entry that the #57 hook
- * reads back. Both are optional so a caller with only one of them still
- * resolves the half it needs.
+ * directory; `parentSession` derives the session-run entry directory and the
+ * legacy index file that the #57 hook reads back. Both are optional so a caller
+ * with only one of them still resolves the half it needs. `sessionEntryFile` is
+ * present only when both are given.
  * @param {{ cwd?: string, parentSession?: string }} args
- * @returns {{ root: string, stateDir?: string, stateFile?: string, lockFile?: string, sessionIndexFile?: string }}
+ * @returns {{ root: string, stateDir?: string, stateFile?: string, lockFile?: string, sessionEntryFile?: string, sessionRunsDir?: string, legacyIndexFile?: string }}
  */
 export function statePaths({ cwd, parentSession } = {}) {
   const root = stateRoot();
   const paths = { root };
 
+  if (parentSession !== undefined) {
+    assertSessionId(parentSession);
+  }
+
   if (cwd !== undefined) {
-    const stateDir = join(root, cwdHash(cwd));
+    const stateDirName = cwdHash(cwd);
+    const stateDir = join(root, stateDirName);
     paths.stateDir = stateDir;
     paths.stateFile = join(stateDir, "state.json");
     paths.lockFile = join(stateDir, "state.lock");
+    if (parentSession !== undefined) {
+      paths.sessionEntryFile = join(root, "session-runs", parentSession, stateDirName);
+    }
   }
 
   if (parentSession !== undefined) {
-    assertSessionId(parentSession);
-    paths.sessionIndexFile = join(root, "sessions", parentSession);
+    paths.sessionRunsDir = join(root, "session-runs", parentSession);
+    paths.legacyIndexFile = join(root, "sessions", parentSession);
   }
 
   return paths;
@@ -59,8 +77,9 @@ function canonicalCwd(cwd) {
   return resolved.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase());
 }
 
-// A parent session id is one path segment under <root>/sessions and is matched
-// verbatim against the harness session id by the #57 guard. Real harness ids
+// A parent session id is one path segment under <root>/session-runs and under
+// the legacy <root>/sessions, and is matched verbatim against the harness
+// session id by the #57 guard. Real harness ids
 // are opaque tokens, but an unexpanded template (`${CLAUDE_SESSION_ID}`,
 // `%CODEX_THREAD_ID%`, `<parent-session-id>`), a path separator, or whitespace
 // can only come from a caller that failed to expand its placeholder. Any of
@@ -82,23 +101,48 @@ function assertSessionId(sessionId) {
 }
 
 /**
- * Reads the state file that the init call registered for a parent session id.
- * Returns null when the session has no index entry or the file is unreadable
- * as JSON; never throws on absence, so the #57 hook can treat it as unguarded.
+ * Reads every state file registered by a parent session id and returns the
+ * parsed states that are readable. Unions the per-run entry directory with the
+ * legacy single-path index. A missing, unreadable, or corrupt entry or state
+ * file is skipped, never thrown: the #57 hook treats an empty list as
+ * unguarded, and one corrupt run never hides another active run.
+ * @returns {Promise<object[]>}
  */
-export async function readStateForSession(parentSession) {
-  const indexFile = statePaths({ parentSession }).sessionIndexFile;
-  let stateFile;
+export async function readStatesForSession(parentSession) {
+  const { sessionRunsDir, legacyIndexFile } = statePaths({ parentSession });
+  const stateFiles = await readSessionEntryPaths(sessionRunsDir, legacyIndexFile);
+  const states = [];
+  for (const stateFile of stateFiles) {
+    try {
+      states.push(JSON.parse(await readFile(stateFile, "utf8")));
+    } catch {
+      // Skip an unreadable or corrupt state file; it never denies on its own.
+    }
+  }
+  return states;
+}
+
+// Collects the state file path from every entry file in the new directory and
+// from the legacy single-path index. An entry that cannot be read is skipped.
+async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
+  const stateFiles = [];
   try {
-    stateFile = (await readFile(indexFile, "utf8")).trim();
+    for (const name of await readdir(sessionRunsDir)) {
+      try {
+        stateFiles.push((await readFile(join(sessionRunsDir, name), "utf8")).trim());
+      } catch {
+        // Skip an unreadable entry.
+      }
+    }
   } catch {
-    return null;
+    // No entry directory: every run predates the new format or none registered.
   }
   try {
-    return JSON.parse(await readFile(stateFile, "utf8"));
+    stateFiles.push((await readFile(legacyIndexFile, "utf8")).trim());
   } catch {
-    return null;
+    // No legacy entry.
   }
+  return stateFiles.filter((stateFile) => stateFile !== "");
 }
 
 /**
@@ -295,8 +339,13 @@ export async function writeState(stateFile, state) {
   await rename(temp, stateFile);
 }
 
-export async function writeSessionIndex(sessionIndexFile, stateFile) {
-  // The index entry is overwritten by the next init call from the same session.
-  await mkdir(dirname(sessionIndexFile), { recursive: true });
-  return writeFile(sessionIndexFile, `${stateFile}\n`, "utf8");
+/**
+ * Writes one run's entry under the parent session's entry directory. The entry
+ * name is the state directory name, so a re-init in the same work tree
+ * overwrites its own entry while a concurrent init in another work tree writes
+ * a different file. The per-cwd state lock serializes the same-work-tree case.
+ */
+export async function writeSessionEntry(entryFile, stateFile) {
+  await mkdir(dirname(entryFile), { recursive: true });
+  return writeFile(entryFile, `${stateFile}\n`, "utf8");
 }

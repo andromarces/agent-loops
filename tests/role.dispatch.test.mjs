@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";
@@ -55,9 +55,9 @@ test("two consecutive worker dispatches resume the same worker session", async (
 });
 
 // Usefulness: verifies acceptance — after an init call with --cwd set to a
-// directory other than the process cwd, the session index for --parent-session
+// directory other than the process cwd, the session entry for --parent-session
 // resolves to that run's state file through the shared helper.
-test("session index resolves a run dispatched into a different --cwd", async () => {
+test("session entry resolves a run dispatched into a different --cwd", async () => {
   const runsRoot = await setup();
   const repo = await createTempRepo();
   repos.push(repo);
@@ -66,11 +66,12 @@ test("session index resolves a run dispatched into a different --cwd", async () 
     ...basicDeps(),
   });
 
-  const indexFile = statePaths({ parentSession: "parent-sess-1" }).sessionIndexFile;
-  expect(indexFile).toBe(join(runsRoot, "sessions", "parent-sess-1"));
-  // The index holds the state file path; resolving it must reach the run that
+  const paths = statePaths({ cwd: repo, parentSession: "parent-sess-1" });
+  expect(dirname(paths.sessionEntryFile)).toBe(join(runsRoot, "session-runs", "parent-sess-1"));
+  // The entry holds the state file path; resolving it must reach the run that
   // was dispatched with --cwd pointing elsewhere.
-  const stateFile = (await readFile(indexFile, "utf8")).trim();
+  const stateFile = (await readFile(paths.sessionEntryFile, "utf8")).trim();
+  expect(stateFile).toBe(paths.stateFile);
   const state = JSON.parse(await readFile(stateFile, "utf8"));
   expect(state).toMatchObject({ task: "Fix the flaky test.", cwd: repo });
 });

@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vitest";
-import { readStateForSession, statePaths } from "../../src/lib/runstate.mjs";
+import { readStatesForSession, statePaths, writeSessionEntry } from "../../src/lib/runstate.mjs";
 import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mjs";
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
 import { buildTargets } from "../../src/install/harnesses.mjs";
@@ -110,7 +110,7 @@ afterEach(async () => {
 // Usefulness: verifies the acceptance matrix — the matching parent session is
 // denied in every non-terminal lifecycle (active, dispatched, interrupted),
 // while a different session id, a terminal lifecycle, a state without
-// parentSession, and a missing index entry or missing state file all allow.
+// parentSession, and a missing entry or missing state file all allow.
 test("deny matrix: non-terminal parent denied, every other record allowed", async () => {
   for (const [name, state, sessionId, expected] of [
     ["active parent", { parentSession: "p1", lifecycle: "active" }, "p1", "deny"],
@@ -121,20 +121,50 @@ test("deny matrix: non-terminal parent denied, every other record allowed", asyn
     ["missing parentSession", { lifecycle: "active" }, "p1", "allow"],
   ]) {
     const verdict = await decideParentGuard(sessionId, {
-      lookup: async () => state,
+      lookup: async () => [state],
     });
     expect(verdict.decision, name).toBe(expected);
   }
 
-  const absent = await decideParentGuard("p1", { lookup: async () => null });
+  const absent = await decideParentGuard("p1", { lookup: async () => [] });
   expect(absent.decision).toBe("allow");
+});
+
+// Usefulness: verifies acceptance (#212) — one parent session with two runs
+// stays denied while any run is non-terminal, and is released only when every
+// registered run is terminal.
+test("deny matrix: one active run among several denies until all are terminal", async () => {
+  const run = (lifecycle) => ({ parentSession: "p1", lifecycle });
+  const verdict = (states) => decideParentGuard("p1", { lookup: async () => states });
+
+  expect((await verdict([run("active"), run("active")])).decision).toBe("deny");
+  expect((await verdict([run("finished"), run("active")])).decision).toBe("deny");
+  expect((await verdict([run("active"), run("finished")])).decision).toBe("deny");
+  expect((await verdict([run("finished"), run("aborted")])).decision).toBe("allow");
+  expect((await verdict([])).decision).toBe("allow");
+});
+
+// Usefulness: verifies acceptance (#212) — a corrupt sibling record never hides
+// an active run, and a corrupt record alone never denies. The reader drops a
+// corrupt state, so it is absent from the checked list.
+test("deny matrix: a corrupt record never changes an active run's verdict", async () => {
+  const activeRun = { parentSession: "p1", lifecycle: "active" };
+  const withCorrupt = await decideParentGuard("p1", {
+    lookup: async () => [activeRun, null],
+  });
+  expect(withCorrupt.decision).toBe("deny");
+
+  const corruptOnly = await decideParentGuard("p1", {
+    lookup: async () => [null],
+  });
+  expect(corruptOnly.decision).toBe("allow");
 });
 
 // Usefulness: verifies acceptance — the deny decision names the orchestrator
 // mode so the parent learns the rule from the denial reason.
 test("deny decision names the orchestrator mode", async () => {
   const verdict = await decideParentGuard("p1", {
-    lookup: async () => ({ parentSession: "p1", lifecycle: "active" }),
+    lookup: async () => [{ parentSession: "p1", lifecycle: "active" }],
   });
   expect(verdict.reason).toMatch(/orchestrator/);
 });
@@ -142,8 +172,8 @@ test("deny decision names the orchestrator mode", async () => {
 // Usefulness: verifies acceptance — a #55 init call for a different `--cwd`
 // registers the state under the parent session, so the guard denies the parent
 // even though the lookup never consults the hook cwd; a second session in the
-// same cwd finds no index entry and is allowed. Exercises the real
-// `readStateForSession` on both sides, not a stub.
+// same cwd finds no run entry and is allowed. Exercises the real
+// `readStatesForSession` on both sides, not a stub.
 test("index lookup finds the init state file written for a different --cwd", async () => {
   await setup();
   const repo = await createTempRepo();
@@ -155,16 +185,128 @@ test("index lookup finds the init state file written for a different --cwd", asy
   );
   expect(init.exitCode).toBe(0);
 
-  // The state registered for parent-sess-1 points at the repo state file, whose
-  // cwd is the dispatch --cwd, unrelated to any hook cwd.
-  const state = await readStateForSession("parent-sess-1");
-  expect(state.parentSession).toBe("parent-sess-1");
-  expect(state.cwd).toBe(repo);
+  // The state registered for parent-sess-1 resolves through the entry directory
+  // to the repo state file, whose cwd is the dispatch --cwd, unrelated to any
+  // hook cwd.
+  const states = await readStatesForSession("parent-sess-1");
+  expect(states).toHaveLength(1);
+  expect(states[0].parentSession).toBe("parent-sess-1");
+  expect(states[0].cwd).toBe(repo);
 
   expect((await decideParentGuard("parent-sess-1")).decision).toBe("deny");
-  // A session with no index entry takes the fail-open path through the real
-  // lookup, which returns null on absence.
+  // A session with no entry takes the fail-open path through the real lookup,
+  // which returns an empty list on absence.
   expect((await decideParentGuard("unrelated-session")).decision).toBe("allow");
+});
+
+// Usefulness: verifies acceptance (#212) — a parent session can register two
+// concurrent runs in two work trees; the guard denies while either run is
+// active and releases only after every registered run is terminal.
+test("two concurrent runs from one parent session are both registered and guarded", async () => {
+  await setup();
+  const repoA = await createTempRepo();
+  const repoB = await createTempRepo();
+  repos.push(repoA, repoB);
+
+  const initFor = (repo, task) =>
+    executeRoleCommand(
+      parseRoleArgs([
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        "--task",
+        task,
+        "--parent-session",
+        "parent-sess-1",
+        "--worker",
+        "fake1",
+        "--reviewer",
+        "fake2",
+      ]),
+      { agents: INIT_AGENTS, stdin: async () => "work" },
+    );
+
+  const [a, b] = await Promise.all([initFor(repoA, "Task A."), initFor(repoB, "Task B.")]);
+  expect(a.exitCode).toBe(0);
+  expect(b.exitCode).toBe(0);
+
+  const states = await readStatesForSession("parent-sess-1");
+  expect(states.map((state) => state.cwd).sort()).toEqual([repoA, repoB].sort());
+  expect((await decideParentGuard("parent-sess-1")).decision).toBe("deny");
+
+  // Finish only run A: run B stays active, so the guard stays engaged.
+  const finishA = await executeRoleCommand(parseRoleArgs(["finish", "--cwd", repoA]), {
+    agents: INIT_AGENTS,
+    stdin: async () => FINISH_SUMMARY,
+  });
+  expect(finishA.exitCode).toBe(0);
+  expect((await decideParentGuard("parent-sess-1")).decision).toBe("deny");
+
+  // Abort run B: every registered run is terminal, so the guard releases.
+  const abortB = await executeRoleCommand(
+    parseRoleArgs(["abort", "--cwd", repoB, "--reason", "done"]),
+    { agents: INIT_AGENTS },
+  );
+  expect(abortB.exitCode).toBe(0);
+  expect((await decideParentGuard("parent-sess-1")).decision).toBe("allow");
+});
+
+// Usefulness: verifies acceptance (#212) — the reader still honors a legacy
+// single-path index: an entry pointing at an active state denies, and one
+// pointing at a terminal state allows. Uses the real reader, not a stub.
+test("legacy single-path session index still guards its run", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const { stateFile } = statePaths({ cwd: repo });
+  const legacyFile = statePaths({ parentSession: "legacy-parent" }).legacyIndexFile;
+  await mkdir(dirname(stateFile), { recursive: true });
+  await mkdir(dirname(legacyFile), { recursive: true });
+
+  await writeFile(
+    stateFile,
+    JSON.stringify({ parentSession: "legacy-parent", lifecycle: "active" }),
+    "utf8",
+  );
+  await writeFile(legacyFile, `${stateFile}\n`, "utf8");
+  expect((await decideParentGuard("legacy-parent")).decision).toBe("deny");
+
+  await writeFile(
+    stateFile,
+    JSON.stringify({ parentSession: "legacy-parent", lifecycle: "finished" }),
+    "utf8",
+  );
+  expect((await decideParentGuard("legacy-parent")).decision).toBe("allow");
+});
+
+// Usefulness: verifies acceptance (#212) — a corrupt record for one run does
+// not hide another active run through the real reader, and corrupt records
+// alone allow.
+test("a corrupt record never hides another active run", async () => {
+  await setup();
+  const repoA = await createTempRepo();
+  const repoB = await createTempRepo();
+  repos.push(repoA, repoB);
+  await initRunAt(repoA);
+
+  // Run B registers an entry whose state file is corrupt.
+  const bPaths = statePaths({ cwd: repoB, parentSession: "parent-sess-1" });
+  await mkdir(dirname(bPaths.stateFile), { recursive: true });
+  await writeFile(bPaths.stateFile, "{ not json", "utf8");
+  await writeSessionEntry(bPaths.sessionEntryFile, bPaths.stateFile);
+
+  expect((await decideParentGuard("parent-sess-1")).decision).toBe("deny");
+
+  // With run A aborted, only the corrupt record remains and the guard allows.
+  const abort = await executeRoleCommand(
+    parseRoleArgs(["abort", "--cwd", repoA, "--reason", "done"]),
+    { agents: INIT_AGENTS },
+  );
+  expect(abort.exitCode).toBe(0);
+  expect((await decideParentGuard("parent-sess-1")).decision).toBe("allow");
 });
 
 function runHookScript(inputJson) {
