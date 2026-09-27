@@ -265,7 +265,8 @@ Operations: `dispatch` (default), `finish`, `abort`.
   `%CODEX_THREAD_ID%`, before any state is written. A run through `role` is
   therefore always guarded; the headless `agent-loop` command is the explicit
   unguarded path.
-- The init call writes a session index entry at `<root>/sessions/<parent-session>` pointing at the state file, so a parent guard hook (#57) can look the run up by session id even when `--cwd` is a different work tree. A later init call from the same session overwrites the entry.
+- The init call registers one session entry per run at `<root>/session-runs/<parent-session>/<cwd hash>` (the state directory name) holding the state file path, so a parent guard hook (#57) can look a run up by session id even when `--cwd` is a different work tree. A later init call from the same session in the same work tree overwrites only its own entry, so simultaneous inits in different work trees each keep their entry and one parent session can drive several runs at once. The guard reads every entry for the session plus the legacy single-path `<root>/sessions/<parent-session>` file; init never writes the legacy file.
+- Concurrent runs: `role dispatch` blocks until the child turn ends and prints one envelope. To run several loops from one parent session, interleave one dispatch turn per run and read each envelope before the next dispatch, or run each dispatch as a background shell command where the harness supports it and read each envelope when it completes. Pass each run's `--cwd` on every command; each run ends with its own `finish` or `abort`, and the guard stays engaged while any run is non-terminal.
 - Prompts come from stdin by default, or `--prompt-file`. `finish` reads the five-key summary as JSON on stdin; `abort` takes `--reason`.
 - The state file records `task`, `mode`, `cwd`, `parentSession`, `maxSteps`, `timeout`, `stepsUsed`, `lifecycle`, `roles.{worker,reviewer}.{kind,model,effort,sessionId}` (`roles.worker` is null in `review-only`), `lastDispatch`, and `lastResult`, plus `summary` or `reason` when terminal and `resumeDecision` when a maintainer resumed an interrupted run. Updates are atomic (temp file plus rename); exclusive access uses `state.lock` with a stale-lock check on the owner pid.
 - Lifecycle values: `active`, `dispatched`, `interrupted`, `halted`, `finished`, `aborted` (terminal: `halted`, `finished`, `aborted`). A turn interrupted between the CLI start and the state write leaves `dispatched` with a dead lock owner; the first call after the crash marks it `interrupted`, exits non-zero, and never repeats the turn, even with `--resume-interrupted`. From `interrupted`, only `abort` or an explicit `dispatch --resume-interrupted` is accepted.
@@ -403,10 +404,10 @@ skill separates a refusal from a check that did not decide. See
   _repository_ `.claude/settings.json`, which does not cover a Claude user
   guard, so Copilot gets its own user hook file; install never relies on Copilot
   reading the Claude user settings.
-- The parent-edit guard (#57) reads `--parent-session` from the state index
-  (see [Parent guard details](docs/parent-guard.md)). Every `role` init requires
-  `--parent-session`; a legacy state written without one keeps its parent
-  unguarded.
+- The parent-edit guard (#57) reads `--parent-session` from the run's session
+  entry (see [Parent guard details](docs/parent-guard.md)). Every `role` init
+  requires `--parent-session`; a legacy state written without one keeps its
+  parent unguarded.
 
 ## Parent guard: hard read-only for the parent session
 
