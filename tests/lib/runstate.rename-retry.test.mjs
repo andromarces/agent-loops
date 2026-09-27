@@ -59,6 +59,28 @@ test("writeSessionEntry retries a transient rename failure on EPERM, EACCES, and
   }
 });
 
+// Usefulness: verifies a rename failure that persists past the old ~100 ms
+// budget, here for 350 ms, is still retried and the write succeeds on each
+// retryable code, so a reader that holds the destination almost continuously
+// no longer aborts the write (#242).
+test("writeSessionEntry retries a rename failure that persists for 350 ms on EPERM, EACCES, and EBUSY", async () => {
+  const dir = await tempDir();
+  for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+    const entryFile = join(dir, `entry-held-${code}`);
+    const startedAt = Date.now();
+    vi.mocked(rename).mockImplementation(async (from, to) => {
+      if (Date.now() - startedAt < 350) {
+        throw renameError(code);
+      }
+      return realFs.rename(from, to);
+    });
+
+    await writeSessionEntry(entryFile, "/runs/state.json");
+
+    expect(await readFile(entryFile, "utf8")).toBe("/runs/state.json\n");
+  }
+});
+
 // Usefulness: verifies a persistent rename failure still throws the original
 // error, so the retry never masks the failure or hangs (#233).
 test("writeSessionEntry rethrows the original error when the rename keeps failing", async () => {
