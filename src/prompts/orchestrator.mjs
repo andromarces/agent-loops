@@ -25,8 +25,10 @@ Supported action formats:
 2. Dispatch reviewer:
 {"action": "run_reviewer", "prompt": "<instructions for reviewer>"}
 
-3. Finish when work is complete and verified:
+3. Finish when the work is complete and verified, or to record an unresolved PR-head compare:
 {"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}}
+For an unresolved PR-head compare, add the marker inside the same action object:
+{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}, "unresolvedCompare": true}
 
 4. Abort if the task cannot proceed:
 {"action": "abort", "reason": "<explanation>"}
@@ -47,6 +49,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - Require reviewed.clean: true for PR work.
 - Treat an accept without a Checks line as not accepted.
 - When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.
+- When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event, so the recorded finish stays machine-distinct from a verified one.
 
 Map the report fields into the finish summary:
 - Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.
@@ -106,6 +109,8 @@ Supported action formats:
 1. {"action": "run_worker", "prompt": "<string>"}
 2. {"action": "run_reviewer", "prompt": "<string>"}
 3. {"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}}
+For an unresolved PR-head compare, add the marker inside the same object:
+{"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}, "unresolvedCompare": true}
 4. {"action": "abort", "reason": "<string>"}
 `.trim();
 }

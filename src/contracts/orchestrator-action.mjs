@@ -46,13 +46,23 @@ export function validateAction(value) {
         summary[key] = fieldVal.trim();
       }
 
-      return {
-        ok: true,
-        value: {
-          action: "finish",
-          summary,
-        },
+      const finish = {
+        action: "finish",
+        summary,
       };
+
+      // Optional machine-readable marker the parent sets when it recorded an
+      // unresolved PR-head compare instead of verifying it (#266). Free-text
+      // `verified` cannot carry this, so the runtime emits a distinct
+      // `unresolved-compare` transcript event on the strength of this field.
+      if (value.unresolvedCompare !== undefined) {
+        if (typeof value.unresolvedCompare !== "boolean") {
+          return { ok: false, error: "finish unresolvedCompare must be a boolean." };
+        }
+        finish.unresolvedCompare = value.unresolvedCompare;
+      }
+
+      return { ok: true, value: finish };
     }
 
     case "abort": {

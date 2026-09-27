@@ -108,6 +108,8 @@ export async function runChild(options) {
  * orchestrator returns `finish`, or `{ exitCode: 1 | 2, reason }` on `abort`,
  * a refused finish, or a step limit reached with work remaining. Throws on
  * fatal controller errors: orchestrator failure, detected mutation, or cancel.
+ * A finish whose action set `unresolvedCompare` emits an `unresolved-compare`
+ * event before the exit-0 return (#266).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -182,6 +184,12 @@ export async function runLoop(options) {
     if (action.action === "finish") {
       const gateBlocks = requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan);
       if (!gateBlocks) {
+        // A finish the parent marks as an unresolved PR-head compare keeps the
+        // recorded-finish exit 0 but gains a machine-readable event, so it never
+        // reads the same as a verified finish (#266).
+        if (action.unresolvedCompare) {
+          onEvent({ type: "unresolved-compare", stepsUsed });
+        }
         return stopLoop(0, { summary: action.summary });
       }
       const missing = workerRan
