@@ -434,8 +434,10 @@ public to enable this feature.`, was measured on the classic protection,
   fine-grained PAT, and a read-capable collaborator was not tested, so whether a
   non-admin sees the same 403 is unverified. That reply leaves each measured
   endpoint with no required contexts. `gh pr checks --required` is an independent
-  source, its Free-plan reply was not measured, and the gate reads only its
-  stdout, so any failure from it contributes no names. On a private Free-plan
+  source and its Free-plan reply was not measured. The gate ignores its exit code
+  and its stderr and takes required names from its stdout whatever the exit
+  status, so a non-zero exit whose stdout holds that JSON still contributes names
+  and only a stdout that is not a JSON array of named checks contributes none. On a private Free-plan
   repository all three sources are then empty and the gate reaches the
   empty-union refusal instead of throwing. And `gh pr checks
 --required` lists only checks that already reported on the commit. A
