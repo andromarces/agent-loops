@@ -187,6 +187,27 @@ Apply these parent rules:
   the compare, and nothing else in the run distinguishes an omitted marker from a
   verified finish, so always set it.
 
+## Work tree ownership
+
+The parent creates the run's work tree and owns it. Keep that work tree in place
+for the whole run, and never tell a worker to remove it: a worker turn pushes its
+branch and stops there, because every later dispatch of that run targets the same
+`--cwd`.
+
+`dispatch` checks the work tree before it reads state, charges a step, or spawns
+a child. A `--cwd` that no longer exists, or one outside a Git work tree, returns
+`status: "error"` with `--cwd must be inside a Git work tree: <path>`, writes no
+state file, and spawns no child, so the refusal costs the run nothing.
+
+- On that error the work tree is gone. Recreate it at the same path on the
+  branch the run named in the worker prompt, then continue the run: the pushed
+  branch holds every commit the worker made, and the state file is keyed by the
+  resolved `--cwd`, so it still describes the run.
+- When that branch is gone too, or the run pushed nothing, the work is not
+  recoverable. Call `abort` with the missing work tree named in the reason.
+- Never repoint a live run at another path. The state directory is named after
+  the resolved `--cwd`, so another path reads as no run state at all.
+
 ## Reviewer prompts
 
 The reviewer prompt sets the task scope; the fixed review scope and closing

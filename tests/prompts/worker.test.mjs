@@ -71,6 +71,17 @@ test("first worker turn commits and pushes on the named PR branch for PR work", 
   expect(prompt).toContain("A task is PR work when its change is delivered on a pull request.");
 });
 
+// Usefulness: verifies the first worker turn states that the work tree belongs to
+// the parent and must not be removed, moved, or switched, so a worker cannot
+// leave every later dispatch of that run targeting a path with no checkout
+// (issue #327).
+test("first worker turn states that the work tree belongs to the parent", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "The work tree this turn runs in belongs to the parent. Never remove, move, or switch it,",
+  );
+});
+
 // Usefulness: verifies later worker turns stay raw; the session already holds the instructions.
 test("later worker turns pass the prompt through unchanged", () => {
   expect(workerPrompt("next step", false)).toBe("next step");

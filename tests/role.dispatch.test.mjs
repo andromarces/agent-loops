@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
@@ -118,6 +119,34 @@ test("review-only mode rejects a worker dispatch without spawning a CLI", async 
   expect(rejected.payload.error).toContain("mode review-only rejects --role worker");
   expect(worker.recorded.length).toBe(0);
   expect((await readRepoState(repo)).stepsUsed).toBe(state.stepsUsed);
+});
+
+// Usefulness: verifies a dispatch whose `--cwd` no longer exists, or is outside a
+// Git work tree, returns an error envelope naming that path before any child
+// runs and writes no state, so a work tree a worker removed cannot leave the next
+// dispatch of the same run aimed at a path with no checkout (issue #327).
+test("dispatch refuses a missing or non-git --cwd before spawning a child", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const notARepo = await mkdtemp(join(tmpdir(), "role-test-plain-"));
+  repos.push(notARepo);
+  const removed = join(repo, "removed-work-tree");
+  const worker = recordingAdapter([]);
+  const agents = { fake1: worker, fake2: recordingAdapter([]) };
+
+  for (const cwd of [removed, notARepo]) {
+    const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), cwd), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(result.exitCode, cwd).toBe(1);
+    expect(result.payload, cwd).toMatchObject({ status: "error" });
+    expect(result.payload.error, cwd).toContain("--cwd must be inside a Git work tree");
+    expect(result.payload.error, cwd).toContain(cwd);
+    expect(await readState(statePaths({ cwd }).stateFile), cwd).toBeNull();
+  }
+  expect(worker.recorded.length).toBe(0);
 });
 
 // Usefulness: verifies acceptance — a later call that supplies --worker against
