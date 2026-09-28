@@ -1,5 +1,5 @@
 import { cp, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,7 +65,10 @@ test("hooks installed under a pnpm 12 global layout survive an upgrade", async (
   const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-home-"));
   const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-global-"));
   paths.push(home, globalHome);
-  const v11 = join(globalHome, "global", "v11");
+  // macOS hands out a temporary directory through a symlink (`/var` points at
+  // `/private/var`), and Node resolves the installed module, so the written path
+  // carries the resolved prefix. Build the expectation from the same real path.
+  const v11 = join(realpathSync(globalHome), "global", "v11");
   const hash = "b796b151e5ddf3298f8c49f2312abd5909f6f7b65dedca11ee309002b3805c31";
   const before = await pnpmGlobal(v11, { id: "637c-18d963de1bc57d7c-0", hash, version: "0.3.0" });
   // The path the pnpm bin shim calls.
