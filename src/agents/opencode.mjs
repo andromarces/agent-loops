@@ -4,9 +4,10 @@ import { logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
 import { resumeMismatchError } from "./shared.mjs";
 
-// A part that opens a closing-block label, plus the reviewer Verdict line, which the block parser
-// reads with the same column-0 match.
-const LABEL_LINE = new RegExp(`^(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")}):`, "i");
+// A part that opens a report label. The reviewer `Verdict:` line is excluded: it gates acceptance,
+// so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
+// than becoming a verdict the model never wrote on its own line (issue #316).
+const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
@@ -95,10 +96,11 @@ export async function runOpenCode(state, prompt, options = {}) {
 
 /**
  * Concatenates the text parts of a turn. The stream splits one response across parts at token
- * boundaries, so a part glues to the one before it. A part that opens a closing-block label
- * instead starts its own line, because parseReportBlock (src/lib/report.mjs) matches each label
- * plain at column 0 and otherwise reads the whole block as `raw` (issue #316). A part that
- * continues a sentence gains no line break, so the prose reads as the model wrote it.
+ * boundaries, so a part glues to the one before it. A part that opens a report label starts its
+ * own line instead, because parseReportBlock (src/lib/report.mjs) matches each label plain at
+ * column 0 and otherwise reads the whole block as `raw` (issue #316). Every other part, including
+ * one that opens the reviewer's `Verdict:` line, keeps the text before it, so the join adds a line
+ * break only before a report label.
  * @param {{ part?: { text?: string } }[]} events
  * @returns {string}
  */

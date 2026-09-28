@@ -2,7 +2,7 @@ import { expect, test, vi } from "vitest";
 import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
-import { parseReportBlock } from "../../src/lib/report.mjs";
+import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
@@ -364,27 +364,40 @@ async function runWithText(...text) {
   return runOpenCode(state, "oc prompt", { cwd: "/dir" });
 }
 
-// Usefulness: verifies a part that opens a closing-block label starts its own line, so the label
-// sits at column 0 and the block parses instead of falling through to `raw` (issue #316). A single
-// part carries the block unchanged, so the same test also covers the no-separator case.
+// Usefulness: verifies a part that opens a closing-block label starts its own line, so the
+// dispatch envelope carries the parsed report instead of falling through to `raw` (issue #316).
+// The assertions read the response through the same two functions `dispatchPayload`
+// (src/role.mjs) calls, so a caller sees exactly the `report` and `raw` fields asserted here.
+// A single part carries the block unchanged, so the same test also covers the no-separator case.
 test("opencode keeps a closing-block label at the start of its own line", async () => {
   const single = await runWithText(CLOSING_BLOCK);
 
   expect(single).toBe(CLOSING_BLOCK);
-  expect(parseReportBlock(single)?.conclusion).toBe("PR #314 fixes the part join.");
+  expect(parseReportBlock(single)).toEqual({
+    conclusion: "PR #314 fixes the part join.",
+    why: "the narration and the block arrived as two text parts.",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
 
   const split = await runWithText("The narration ends here.", CLOSING_BLOCK);
 
   expect(split).toBe("The narration ends here.\n" + CLOSING_BLOCK);
-  expect(parseReportBlock(split)).toMatchObject({
+  expect(parseReportBlock(split)).toEqual({
     conclusion: "PR #314 fixes the part join.",
     why: "the narration and the block arrived as two text parts.",
     blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
   });
 });
 
 // Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence
-// split keeps the prose intact and an unconditional newline join cannot pass (issue #316).
+// split keeps the prose intact, the envelope still carries the parsed report, and an unconditional
+// newline join cannot pass (issue #316).
 test("opencode joins a mid-sentence split without a line break", async () => {
   const response = await runWithText(
     "The fix changes the join so the",
@@ -392,5 +405,32 @@ test("opencode joins a mid-sentence split without a line break", async () => {
   );
 
   expect(response).toBe("The fix changes the join so the block parses.\n" + CLOSING_BLOCK);
-  expect(parseReportBlock(response)?.conclusion).toBe("PR #314 fixes the part join.");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "PR #314 fixes the part join.",
+    why: "the narration and the block arrived as two text parts.",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies a part boundary inside a sentence does not promote mid-line text to a
+// column-0 `Verdict:` label, so the dispatch envelope keeps `verdict: unknown` where the joined
+// string holds the word mid-line (issue #316). Lifting it would invent a verdict the model never
+// wrote as a label, and a verdict gates acceptance. The report still parses, so the probe covers
+// both envelope fields in one turn.
+test("opencode keeps a mid-line Verdict part out of the closing block", async () => {
+  const response = await runWithText(CLOSING_BLOCK + "\n\nThe reviewer said", "Verdict: accept");
+
+  expect(parseVerdict(response)).toBe("unknown");
+  expect(response).toContain("The reviewer saidVerdict: accept");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "PR #314 fixes the part join.",
+    why: "the narration and the block arrived as two text parts.",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
 });
