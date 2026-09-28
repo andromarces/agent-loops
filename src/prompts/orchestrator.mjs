@@ -68,15 +68,17 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
 /**
  * The clause a run that declares its PR adds to the line that says no turn in
  * the run can read the checks. The runtime reads the status outside every
- * read-only turn and supplies it to the reviewer prompt, and the reviewer keeps
- * its own read as the fallback (#320). The wording is the same rule
- * `docs/orchestrator-instructions.md` states, so the two paths do not drift.
+ * read-only turn and supplies it to the reviewer prompt as advisory evidence in
+ * place of the reviewer reading the checks; the reviewer keeps its own read as
+ * the fallback, and the `--require-ci` finish gate enforces the condition
+ * (#320). The wording is the same rule `docs/orchestrator-instructions.md`
+ * states, so the two paths do not drift.
  * @param {number | null} pr
  * @returns {string}
  */
 function suppliedRead(pr) {
   if (pr === null) return "";
-  return ` This run declares PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. The reviewer reports that status without reading it again, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.`;
+  return ` This run declares PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. That status is advisory evidence, in place of the reviewer reading the checks: the reviewer reports it, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The --require-ci finish gate re-reads GitHub and enforces the condition. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.`;
 }
 
 /**

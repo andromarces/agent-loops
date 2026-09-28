@@ -732,3 +732,33 @@ test("a run that declares a PR refuses a gate for a different PR", async () => {
   expect(result.payload.error).toContain("declares PR 42");
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
+
+// Usefulness: verifies a refused finish makes no GitHub call of its own, measured
+// from the moment the finish call starts. The earlier assertion proved the gate
+// never ran by throwing on any call, which also fails for a call the finish did
+// not make, so it had no boundary at which the refusal is expected to be quiet.
+// The boundary is the finish call itself, and the assertion is zero calls inside
+// it (issue #320 review, third round).
+test("a refused finish makes no GitHub call from the moment the finish starts", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+  await dispatchReviewer(repo, ACCEPT);
+
+  // The boundary: every call made from here is made by the finish.
+  const callsDuringFinish = [];
+  const result = await finishCall(repo, ["--require-ci", "7"], {
+    gh: async (args) => {
+      callsDuringFinish.push(args.join(" "));
+      return { status: 0, stdout: "[]", stderr: "" };
+    },
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("declares PR 42");
+  // Zero, not "no call the list recognises": the refusal is quiet, so a call the
+  // assertion does not know about still fails it.
+  expect(callsDuringFinish).toEqual([]);
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});

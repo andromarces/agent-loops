@@ -204,7 +204,7 @@ test("the headless prompt adds exactly the declaration rule and nothing else", (
   const block =
     "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.";
   const supplied =
-    " This run declares PR #42, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. The reviewer reports that status without reading it again, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.";
+    " This run declares PR #42, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. That status is advisory evidence, in place of the reviewer reading the checks: the reviewer reports it, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The --require-ci finish gate re-reads GitHub and enforces the condition. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.";
 
   const noGate = initialPrompt({ task: "T", maxSteps: 10 });
   const withPr = initialPrompt({ task: "T", maxSteps: 10, pr: 42 });
@@ -470,9 +470,11 @@ test("interactive instructions and headless prompt state the supplied-status rul
   }).replace(/\s+/g, " ");
   for (const rule of [
     "supplies it to every reviewer prompt",
-    "reports that status without reading it again",
+    "advisory evidence",
+    "in place of the reviewer reading the checks",
     "keeps its own read as the fallback",
     "unresolved",
+    "re-reads GitHub and enforces the condition",
     "compare it with the reviewer Checks line",
   ]) {
     expect(instructions, rule).toContain(rule);
@@ -519,9 +521,11 @@ test("the supplied-status rule states the same conditions in both surfaces", asy
 
   // Same conditions, in the same order, on both surfaces.
   for (const [first, second] of [
-    ["supplies it to every reviewer prompt", "keeps its own read as the fallback"],
+    ["supplies it to every reviewer prompt", "advisory evidence"],
+    ["advisory evidence", "keeps its own read as the fallback"],
     ["keeps its own read as the fallback", "supplied status is unresolved"],
-    ["supplied status is unresolved", "compare it with the reviewer Checks line"],
+    ["supplied status is unresolved", "re-reads GitHub and enforces the condition"],
+    ["re-reads GitHub and enforces the condition", "compare it with the reviewer Checks line"],
   ]) {
     expect(instructions.indexOf(first), first).toBeGreaterThanOrEqual(0);
     expect(declared.indexOf(first), first).toBeGreaterThanOrEqual(0);
@@ -530,4 +534,8 @@ test("the supplied-status rule states the same conditions in both surfaces", asy
   expect(instructions.indexOf("supplies it to every reviewer prompt")).toBeLessThan(
     instructions.indexOf("keeps its own read as the fallback"),
   );
+  // The moved-head gap is stated once, not twice, so the two surfaces cannot
+  // drift into two versions of the same accepted gap.
+  const movedMentions = instructions.match(/separate reads, and the pull request can advance/g);
+  expect(movedMentions).toHaveLength(1);
 });

@@ -1156,3 +1156,52 @@ test("still reports the status when the PR head does not move", async () => {
   const read = await readOn(HEAD, statusReadGh({ checks: [{ name: "ci", bucket: "pass" }] }));
   expect(read).toMatchObject({ status: "pass", head: HEAD });
 });
+
+// Usefulness: verifies every supplied status is marked advisory, because the head
+// and the checks are separate calls: a head that advances to another commit and
+// returns between them leaves both head reads naming the same commit while the
+// checks describe the other one, and no number of re-reads separates that case.
+// `gh pr checks` reports no commit, and reading check runs for the exact commit
+// would replace the required-name source with three ruleset and protection reads.
+// The status is therefore advisory evidence the reviewer and the `--require-ci`
+// gate settle, never a status a consumer can read as verified
+// (issue #320 review, third round).
+test("every supplied status is marked advisory", async () => {
+  for (const [checks, status] of [
+    [[{ name: "ci", bucket: "pass" }], "pass"],
+    [[{ name: "ci", bucket: "fail" }], "failing"],
+    [[{ name: "ci", bucket: "pending" }], "pending"],
+  ]) {
+    const exit = status === "failing" ? 1 : status === "pending" ? 8 : 0;
+    const read = await readOn(HEAD, statusReadGh({ checks, status: exit }));
+    expect(read.status, status).toBe(status);
+    // Marked advisory, so no consumer can read it as a verified status, and the
+    // marker survives a read that reached the checks through the window above.
+    expect(read.advisory, status).toBe(true);
+  }
+});
+
+// Usefulness: verifies the status is advisory in the one case the head re-read
+// cannot catch, so the mark is not a decoration that only well-behaved reads
+// carry (issue #320 review, third round).
+test("a status read through the A-to-B-to-A window is still marked advisory", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: HEAD,
+    gh: async (args) => {
+      const key = args.join(" ");
+      if (key === "pr view 42 --json headRefOid") {
+        return { status: 0, stdout: JSON.stringify({ headRefOid: HEAD }), stderr: "" };
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify([{ name: "ci-on-B", bucket: "pass" }]),
+        stderr: "",
+      };
+    },
+  });
+  // The checks belong to a commit the head reads cannot name, so the read may
+  // report a status; what it must never do is report one as verified.
+  expect(read.advisory).toBe(true);
+});

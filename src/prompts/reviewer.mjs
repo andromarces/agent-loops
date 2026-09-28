@@ -22,12 +22,13 @@ const reviewerRules = `Review scope, in addition to the task below:
   - When gh cannot read the checks, report the status as unresolved in Checks. Report a pass only when the read shows one.`;
 
 // The status a declared-PR run read for the PR head, as two lines inside the
-// required-check group. The reviewer keeps its own read as the fallback, so a
-// supplied status never removes the read it can make on its own (issue #320).
+// required-check group. These lines replace the group's own read for this turn
+// rather than sitting beside it, so the prompt never orders a read and a
+// not-read at once (issue #320).
 function runtimeReadLines(prChecks) {
   return [
-    `  - This run read the required checks for PR ${prChecks.pr} before this turn: ${prChecks.summary}, and you report that status without reading it again.`,
-    "  - You keep your own read as the fallback. Prefer it when the supplied status is unresolved, and report any difference between your read and the supplied status in Checks.",
+    `  - This run read the required checks for PR ${prChecks.pr} before this turn: ${prChecks.summary}. That status is advisory evidence for this turn, in place of the read above: report it, and treat it as a report rather than a verdict. The --require-ci finish gate re-reads GitHub and enforces the condition.`,
+    "  - Your own read is the fallback. Read the required checks yourself when the supplied status is unresolved, or when the reviewed head is not the head the supplied status names. Report any difference between your read and the supplied status in Checks.",
   ];
 }
 

@@ -507,8 +507,25 @@ async function readPrHead({ pr, cwd, gh, signal }) {
  * two reads are separate calls and the PR can advance between them: `gh pr
  * checks` reports no commit, so a head that moved is the only signal that the
  * checks belong to a different commit, and it is unresolved.
+ *
+ * known-limit: every status carries `advisory: true`, because one window survives
+ * the re-read. A head that advances to another commit and returns between the
+ * two head reads leaves both reads naming the same commit while the checks
+ * describe the other one, and no re-read separates that. The alternative,
+ * reading check runs for the exact commit, needs `gh api
+ * repos/{owner}/{repo}/commits/{sha}/check-runs`, which reports every check run
+ * on that commit rather than the required ones, so it would have to rebuild the
+ * required-name source from repository rulesets and classic protection. That is
+ * the gate's own resolution and duplicating it here would drift from the gate,
+ * which is the one read that enforces. The supplied status is therefore advisory
+ * evidence: the reviewer treats it as a report, and `--require-ci` re-reads
+ * GitHub and refuses the finish on the real condition. Ceiling: one reviewer
+ * turn whose `Checks` line reports a pass for a commit other than the reviewed
+ * head, in a run where the PR head moved away and back within the read. Upgrade
+ * path: read the required contexts and the check runs for the exact commit, and
+ * share that resolution with `checkCi` so the two cannot drift.
  * @param {{ pr: number, cwd: string, head?: string | null, gh?: Function, timeoutMs?: number }} options
- * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string }>}
+ * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string, advisory: true }>}
  */
 export async function readRequiredChecks({
   pr,
@@ -523,6 +540,7 @@ export async function readRequiredChecks({
     status: "unresolved",
     checks: [],
     summary,
+    advisory: true,
   });
 
   // The read is bounded, and the signal terminates the child, so a hung `gh`
@@ -596,6 +614,7 @@ export async function readRequiredChecks({
       status: "pass",
       checks: pass.map((check) => check.name),
       summary: `all ${pass.length} listed required checks passed ${on(prHead)}`,
+      advisory: true,
     };
   }
   // Exit 8 is a pending check whatever the buckets say. The list names the
@@ -610,6 +629,7 @@ export async function readRequiredChecks({
       summary: `a required check is pending ${on(prHead)}${
         pending.length > 0 ? `: ${names(pending)}` : ""
       }`,
+      advisory: true,
     };
   }
   if (status === 1 && failing.length > 0) {
@@ -619,6 +639,7 @@ export async function readRequiredChecks({
       status: "failing",
       checks: failing.map((check) => check.name),
       summary: `failing required checks ${on(prHead)}: ${names(failing)}`,
+      advisory: true,
     };
   }
   return unresolved(`unread: ${failure} ${on(prHead)}`, prHead);

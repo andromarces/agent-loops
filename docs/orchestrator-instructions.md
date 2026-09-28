@@ -231,17 +231,22 @@ runtime reads the required-check status for that PR head and supplies it to ever
 reviewer prompt. The prompt adds two lines inside the required-check group, so
 they apply only under the pull request condition:
 
-- This run read the required checks for PR <pr> before this turn: <summary>. You
-  report that status without reading it again.
-- You keep your own read as the fallback. Prefer it when the supplied status is
-  unresolved, and report any difference between your read and the supplied
+- This run read the required checks for PR <pr> before this turn: <summary>. That
+  status is advisory evidence for this turn, in place of the read above: report
+  it, and treat it as a report rather than a verdict. The `--require-ci` finish
+  gate re-reads GitHub and enforces the condition.
+- Your own read is the fallback. Read the required checks yourself when the
+  supplied status is unresolved, or when the reviewed head is not the head the
+  supplied status names. Report any difference between your read and the supplied
   status in `Checks`.
 
 The runtime reads the status for that PR head and supplies it to every reviewer
-prompt. The reviewer reports that status without reading it again, keeps its own
-read as the fallback, and reads the checks itself when the supplied status is
-unresolved. The runtime reports the status it read beside the reviewer result,
-so compare it with the reviewer Checks line.
+prompt. That status is advisory evidence, in place of the reviewer reading the
+checks: the reviewer reports it, keeps its own read as the fallback, and reads
+the checks itself when the supplied status is unresolved. The `--require-ci`
+finish gate re-reads GitHub and enforces the condition. The runtime reports the
+status it read beside the reviewer result, so compare it with the reviewer Checks
+line.
 
 The reviewer's own read is never removed, and the head matters. A supplied status
 is evidence for that turn, not a gate: `gh pr checks` lists only the checks that
@@ -263,10 +268,16 @@ the runtime reads the head again after the checks. A head that moved is
 unresolved, because the checks belong to a commit other than the one the status
 would name.
 
-The head and the checks are two separate reads, and the pull request can advance
-between them. `gh pr checks` reports no commit, so the runtime reads the head
-again after the checks and reports nothing when it moved, rather than naming one
-head for checks that belong to another.
+One window survives that re-read and is an accepted gap: a head that advances to
+another commit and returns between the two head reads leaves both reads naming
+the same commit while the checks describe the other one. No re-read separates
+that, and `gh api repos/{owner}/{repo}/commits/{sha}/check-runs` reports every
+check run on a commit rather than the required ones, so it would have to rebuild
+the required-name source from repository rulesets and classic protection. Every
+supplied status therefore carries `advisory: true` and is a report, not a
+verdict: the reviewer treats it as evidence, and the `--require-ci` finish gate
+re-reads GitHub and refuses the finish on the real condition. A status never
+replaces the gate.
 
 The status comes from the exit code the rule above names: 0 is a pass, 8 is a
 pending check, and 1 is a failing check, a pull request with no required check,

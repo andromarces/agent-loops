@@ -239,3 +239,51 @@ test("a supplied status mentions a pull request only inside the required-check g
 test("reviewer prompt carries no status line without a read", () => {
   expect(reviewerPrompt("review the change")).not.toContain(FAILING_READ.summary);
 });
+
+// Usefulness: verifies a supplied status is marked advisory with the finish gate
+// named as the enforcement point, because the runtime reads the head and the
+// checks in separate calls, so a head that advances and returns between them
+// cannot be told apart from a stable one and the status can describe a commit
+// other than the reviewed head. The reviewer must treat it as evidence and the
+// `--require-ci` gate, which re-reads GitHub, is what enforces
+// (issue #320 review, third round).
+test("a supplied status is advisory and the finish gate is the enforcement point", () => {
+  const prompt = reviewerPrompt("review the change", FAILING_READ);
+  expect(prompt).toMatch(/advisory/i);
+  expect(prompt).toMatch(/--require-ci/);
+  expect(prompt).toMatch(/re-reads GitHub|enforces/i);
+});
+
+// Usefulness: verifies the supplied status does not leave the fixed rule and the
+// supplied lines ordering a read and a not-read at the same time, which is the
+// contradiction a probe found: the scope tells the reviewer to read the checks
+// and the supplied line tells it not to read them again, with no condition that
+// separates the two (issue #320 review, third round).
+test("a supplied status does not contradict the rule that orders the read", () => {
+  const lines = reviewerScopeOf(reviewerPrompt("review the change", FAILING_READ)).split("\n");
+  const group = requiredCheckGroup(lines);
+  // The one line that orders the read is the group's own command bullet; a
+  // supplied line must scope itself to the status it supplies, not restate the
+  // order to read.
+  const orderingRead = lines.filter(
+    (text, index) => /read the required checks/.test(text) && index === group.start,
+  );
+  expect(orderingRead).toHaveLength(1);
+  const supplied = lines.slice(group.start + 1);
+  // The supplied lines replace the group's read rather than sitting beside it.
+  expect(supplied.join("\n")).toMatch(/in place of|instead of|rather than/i);
+  // A supplied line that mentions reading the checks must scope that read to a
+  // condition. An unscoped read is the contradiction: a bare "keep your own read
+  // as the fallback" beside "read the required checks" tells the reviewer to read
+  // and not to read in the same breath.
+  for (const text of supplied) {
+    if (!/read the required checks/.test(text)) {
+      continue;
+    }
+    expect(text, text.trim().slice(0, 80)).toMatch(
+      /when the supplied status is unresolved|in place of|instead of|rather than/i,
+    );
+  }
+  // And no line forbids the read outright, which would contradict the fallback.
+  expect(supplied.join("\n")).not.toMatch(/without reading it again|do not read/);
+});
