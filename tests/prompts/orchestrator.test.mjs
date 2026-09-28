@@ -15,41 +15,116 @@ const instructionsPath = join(
   "../../docs/orchestrator-instructions.md",
 );
 
-// Usefulness: verifies initialPrompt produces exact expected string structure.
+// A prompt rule is asserted as the short clause that carries it, never as a whole
+// prompt sentence, so a same-meaning reword of the surrounding prose passes and a
+// changed rule fails. Where the polarity of a rule is the contract, the clause
+// keeps the negation and the action together, so "finish" cannot stand in for
+// "do not finish". Where a runtime gate enforces a rule, the gate test covers the
+// behavior, and this file only asserts that the prompt states the rule.
+
+/** The clauses of a prompt or instruction text, whitespace collapsed. */
+const clauses = (text) => text.replace(/\s+/g, " ").split(/[.;]\s+/);
+
+// Asserts one clause of the text carries the rule. Every term must sit in that one
+// clause, so a term moved to another clause, or swapped with another, fails.
+function expectRule(text, ...terms) {
+  const stated = clauses(text).some((clause) => terms.every((term) => term.test(clause)));
+  expect(stated, `no clause carries ${terms.map(String).join(" ")}`).toBe(true);
+}
+
+// The target of every commit or push instruction in the text: the phrase after the
+// preposition, up to the next clause mark. A commit and a push in one clause each
+// yield a target, so a second target naming another branch is caught.
+const BRANCH_TARGET =
+  /\b(?:commit|push)(?:s|es)?\b[^.;]{0,40}?\b(?:on|onto|to)\s+([^,.;]{1,40}?)(?=\s+(?:and|so|but)\b|[,.;]|$)/gi;
+
+// A target that names a branch instead of pointing at the one the dispatcher
+// supplied. A back-reference is a determiner and the word "branch" and nothing
+// else, so `main` and `the main branch` each name a branch of their own.
+const NAMED_TARGET = /^(?!\s*(?:the|that|this|your|its)\s+branch(?:es)?\s*$)\S/i;
+
+// Asserts no commit or push in the text targets a branch of the rule's own, so a
+// target such as `main` or `origin/main` fails.
+function expectNoNamedBranchTarget(text) {
+  for (const target of commitTargets(text)) {
+    expect(NAMED_TARGET.test(target), `the rule commits on ${target}, a branch of its own`).toBe(
+      false,
+    );
+  }
+}
+
+/** Every commit or push target in the text, whitespace collapsed. */
+function commitTargets(text) {
+  const flat = text.replace(/\s+/g, " ");
+  return [...flat.matchAll(new RegExp(BRANCH_TARGET.source, "gi"))].map((match) => match[1].trim());
+}
+
+// Usefulness: verifies initialPrompt states the role, the step budget, the task
+// it completes, and the action format it answers with, so a headless turn runs
+// the loop instead of answering prose (issue #328).
 test("initialPrompt produces expected orchestrator prompt", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain("You are the orchestrator in an automated multi-agent coding loop.");
-  expect(prompt).toContain("maximum step budget of 10 steps");
+  expectRule(prompt, /orchestrator/i, /automated/i, /\bagent/i, /\bloop\b/i);
+  expectRule(prompt, /step budget/i, /\b10 steps\b/i);
   expect(prompt).toContain("Implement feature X");
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<instructions for worker>"}');
 });
 
 // Usefulness: verifies the headless prompt states the notes and deferred finish
-// mapping that the interactive instructions also carry: carry deferred items
-// forward, record resolved ones in changed, map unaddressed notes to open, and
-// split review-only findings between open and deferred (issue #214).
+// mapping that the interactive instructions also carry: which labels the closing
+// block requires, that deferred items persist, that a resolved item lands in
+// changed, that unaddressed notes land in open, that a change made for a note
+// needs a further reviewer accept, and that review-only findings split between
+// open and deferred (issue #214, issue #328).
 test("initialPrompt states the notes and deferred finish mapping", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain("Each child turn ends with a closing report block");
-  expect(prompt).toContain("Carry each Deferred item forward");
-  expect(prompt).toContain("record it in changed");
-  expect(prompt).toContain("Reviewer Notes that no later turn addressed go into open");
-  expect(prompt).toContain("obtain another reviewer accept on the new state before finish");
-  expect(prompt).toContain("In review-only mode, Blockers and Notes go into open");
-  expect(prompt).toContain("deferred holds out-of-scope items in every mode");
+  // Every child turn closes with a report block, and the block requires
+  // conclusion, why, and blockers while checks, notes, and deferred are optional.
+  expectRule(prompt, /report block/i, /child turn/i);
+  expectRule(prompt, /conclusion/i, /\bwhy\b/i, /\bblockers\b/i, /required/i);
+  expectRule(prompt, /\bchecks\b/i, /\bnotes\b/i, /\bdeferred\b/i, /optional/i);
+  // A deferred item is carried forward. It leaves the list when a later worker
+  // turn reports it done and a later reviewer accept covers that state, and the
+  // outcome is recorded in changed. The condition and the outcome are two clauses
+  // of one mapping, so each is checked where the prompt states it.
+  expectRule(prompt, /\bdeferred\b/i, /forward/i, /\bcarry\b/i);
+  expectRule(prompt, /leaves the list[^.!?]{0,80}\bworker\b/i, /\baccept\b/i);
+  expectRule(prompt, /\brecord[^.!?]{0,20}\bin changed\b/i);
+  // The items still listed at finish go into deferred.
+  expectRule(prompt, /\bitem[^.!?]{0,40}\bgo into deferred/i);
+  // A reviewer note no later turn addressed goes into open.
+  expectRule(prompt, /note[^.!?]{0,40}\bgo into open/i);
+  // The note is not handed to the worker on its own. The negation stays with the
+  // action, so "send" cannot stand in for "do not send".
+  expectRule(prompt, /do not send[^.!?]{0,40}\bnote/i, /worker/i);
+  // Acting on a note goes through the worker, and a further reviewer accept covers
+  // the new state before finish.
+  expectRule(
+    prompt,
+    /dispatch[^.!?]{0,40}\bworker/i,
+    /note/i,
+    /\baccept/i,
+    /new state/i,
+    /finish/i,
+  );
+  // In review-only mode, Blockers and Notes go into open, and reviewer Deferred
+  // items go into deferred, which holds out-of-scope items in every mode while
+  // open holds unresolved in-scope findings.
+  expectRule(prompt, /review-only[^.!?]{0,80}\bblockers/i, /note/i, /go into open/i);
+  expectRule(prompt, /reviewer[^.!?]{0,40}\bdeferred[^.!?]{0,40}\bgo into deferred/i);
+  expectRule(prompt, /\bdeferred\b/i, /out-of-scope/i, /every mode/i);
+  expectRule(prompt, /\bopen\b/i, /unresolved/i, /in-scope/i);
 });
 
 // Usefulness: verifies the headless parent names the guards and contracts at risk
 // in a reviewer prompt and does not restate the spec as the pass condition,
-// matching the interactive reviewer-prompt rule (issue #228).
+// matching the interactive reviewer-prompt rule (issue #228, issue #328).
 test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain(
-    "name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them",
-  );
-  expect(prompt).toContain(
-    "Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it",
-  );
+  expectRule(prompt, /name[^.!?]{0,60}guards/i, /reviewer/i, /at risk/i, /trace/i);
+  // The negation stays with the action, so "restate" cannot stand in for "do not
+  // restate".
+  expectRule(prompt, /do not restate[^.!?]{0,40}spec/i, /pass condition/i);
 });
 
 // The reviewer-Checks gate rule, checked for presence only: one sentence names
@@ -81,33 +156,59 @@ test("initialPrompt states that only the reviewer Checks line gates", () => {
   expectReviewerGateRule(prompt);
 });
 
+// The rule-bearing clauses of the reviewed-state parent rules. Each keeps the
+// action with the term that gives it meaning, so a reversed rule fails: the
+// compare names both heads, `reviewed.clean: true` keeps its value, an accept
+// without a Checks line is not accepted, and the unresolved-compare rule keeps
+// "do not finish as verified" with its abort and its record.
+const COMPARE_BEFORE_FINISH =
+  /compare[^.!?]{0,40}reviewed\.head[^.!?]{0,40}PR head[^.!?]{0,40}\bfinish\b/i;
+const RESOLVE_PR_HEAD = /resolve[^.!?]{0,40}PR head[^.!?]{0,40}PR number/i;
+const REQUIRE_CLEAN_TRUE = /require[^.!?]{0,40}reviewed\.clean[^.!?]{0,20}\btrue\b/i;
+const ACCEPT_WITHOUT_CHECKS =
+  /treat[^.!?]{0,60}accept[^.!?]{0,40}without[^.!?]{0,20}Checks[^.!?]{0,20}not accepted/i;
+// The unresolved-compare rule, clause by clause. `do not finish as verified` is
+// the prohibition, and the clause that follows must name both permitted actions,
+// `abort` and `record`, with the unresolved compare between them. The wording
+// that joins the two options is not the contract, so a same-meaning join such as
+// `abort or record` passes and dropping either action fails.
+const UNRESOLVED_HEAD_CONDITION = /PR head cannot be resolved/i;
+const DO_NOT_FINISH_AS_VERIFIED = /do not finish as verified/i;
+const BOTH_ACTIONS_ON_UNRESOLVED =
+  /abort[^.!?]{0,60}record[^.!?]{0,40}unresolved compare|record[^.!?]{0,60}abort[^.!?]{0,40}unresolved compare/i;
+const RECORD_UNDER_NOT_DONE_AND_OPEN =
+  /record[^.!?]{0,40}unresolved compare[^.!?]{0,40}notDone[^.!?]{0,20}\bopen\b/i;
+
 // Usefulness: verifies the headless parent states the same reviewed-state rules
-// as the interactive instructions: compare head, require clean, and treat an
-// accept without a Checks line as not accepted (issue #217).
+// as the interactive instructions: compare head, require clean, treat an accept
+// without a Checks line as not accepted, and never finish as verified on an
+// unresolved compare (issue #217, issue #328). The `--require-accept` and
+// `--require-ci` gates enforce the compare and the clean requirement, covered by
+// the gate tests in tests/role.finish-abort.test.mjs, so this asserts the prompt
+// states the rules.
 test("initialPrompt states the reviewed-state parent rules", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain(
-    "Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.",
-  );
-  expect(prompt).toContain("Require reviewed.clean: true for PR work.");
-  expect(prompt).toContain("Treat an accept without a Checks line as not accepted.");
-  expect(prompt).toContain(
-    "When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.",
-  );
+  expectRule(prompt, COMPARE_BEFORE_FINISH);
+  expectRule(prompt, RESOLVE_PR_HEAD);
+  expectRule(prompt, REQUIRE_CLEAN_TRUE);
+  expectRule(prompt, ACCEPT_WITHOUT_CHECKS);
+  // The unresolved-compare rule, clause by clause: the condition, the prohibition,
+  // both permitted actions on the unresolved compare, and the fields the record
+  // uses.
+  expectRule(prompt, UNRESOLVED_HEAD_CONDITION);
+  expectRule(prompt, DO_NOT_FINISH_AS_VERIFIED);
+  expectRule(prompt, BOTH_ACTIONS_ON_UNRESOLVED);
+  expectRule(prompt, RECORD_UNDER_NOT_DONE_AND_OPEN);
 });
 
 // Usefulness: verifies the headless prompt names the machine-readable marker the
 // parent sets when it records an unresolved PR-head compare, and shows it inside
 // the finish action object, so the runtime can turn it into a distinct
-// unresolved-compare event (issue #266).
+// unresolved-compare event (issue #266, issue #328).
 test("initialPrompt names the unresolvedCompare marker", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain(
-    'When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action.',
-  );
-  expect(prompt).toContain(
-    "For an unresolved PR-head compare, add the marker inside the same action object:",
-  );
+  expectRule(prompt, /add[^.!?]{0,40}unresolvedCompare[^.!?]{0,20}\btrue\b/i, /finish/i);
+  expectRule(prompt, /marker/i, /action object/i, /unresolved/i);
   expect(prompt).toContain(
     '{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}, "unresolvedCompare": true}',
   );
@@ -116,31 +217,43 @@ test("initialPrompt names the unresolvedCompare marker", () => {
   // The marker is the only machine-readable record of the compare, so the prompt
   // must state that consequence and the instruction to set it, or the parent has
   // no reason to comply beyond the rule (#286).
-  expect(prompt).toContain(
-    "nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.",
-  );
+  expectRule(prompt, /machine-readable/i, /omitted/i, /verified/i, /always set/i);
 });
+
+// The parent rules the interactive instructions and the headless prompt share.
+// Each entry is one check run against both texts, so a rule that one text states
+// and the other does not, or that either text states with the negation dropped or
+// the action unbound, fails the parity check (issue #217, issue #252, #328).
+const SHARED_PARENT_RULES = [
+  (text) => expectRule(text, /PR work/i, /pull request/i),
+  (text) =>
+    expectRule(text, /name[^.!?]{0,40}PR branch/i, /worker/i, /commit/i, /push/i, /reviewed head/i),
+  // Every commit or push the parent rule names must target the branch it just
+  // named, never a branch of its own, so `on main` and `origin/main` fail.
+  (text) => expectNoNamedBranchTarget(text),
+  (text) => expectRule(text, /PR number/i, /head commit/i),
+  (text) => expectRule(text, /headless/i, /task/i, /PR number/i),
+  (text) => expectRule(text, COMPARE_BEFORE_FINISH),
+  (text) => expectRule(text, RESOLVE_PR_HEAD),
+  (text) => expectRule(text, REQUIRE_CLEAN_TRUE),
+  (text) => expectRule(text, ACCEPT_WITHOUT_CHECKS),
+  (text) => expectRule(text, UNRESOLVED_HEAD_CONDITION),
+  (text) => expectRule(text, DO_NOT_FINISH_AS_VERIFIED),
+  (text) => expectRule(text, BOTH_ACTIONS_ON_UNRESOLVED),
+  (text) => expectRule(text, RECORD_UNDER_NOT_DONE_AND_OPEN),
+];
 
 // Usefulness: verifies the interactive instructions and the headless prompt
 // state the same reviewed-state parent rules, so the two parent paths never
-// diverge (issue #217, issue #252). The reviewer-Checks gate rule is compared by
-// the same presence check the gate test uses, so a reword keeps the parity check
-// and a removal breaks it (issue #318).
+// diverge (issue #217, issue #252, issue #328). The reviewer-Checks gate rule is
+// compared by the same presence check the gate test uses, so a reword keeps the
+// parity check and a removal breaks it (issue #318).
 test("interactive instructions and headless prompt share the reviewed-state rules", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
-  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  for (const rule of [
-    "A task is PR work when its change is delivered on a pull request.",
-    "For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head.",
-    "The run supplies the PR number, and the head commit comes from that PR.",
-    "In a headless run, the task names the PR number.",
-    "Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.",
-    "Require reviewed.clean: true for PR work.",
-    "Treat an accept without a Checks line as not accepted.",
-    "When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.",
-  ]) {
-    expect(instructions).toContain(rule);
-    expect(prompt).toContain(rule);
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
+  for (const rule of SHARED_PARENT_RULES) {
+    rule(instructions);
+    rule(prompt);
   }
   expectReviewerGateRule(instructions);
   expectReviewerGateRule(prompt);
@@ -163,12 +276,22 @@ test("resultPrompt carries the reviewed state for a reviewer result", () => {
 // Usefulness: verifies the headless prompt states the completion rule and its
 // mode mapping: a worker change needs a later reviewer accept, a run with no
 // worker turn finishes on the report, and the loop policy stays interactive
-// (issue #234).
+// (issue #234, issue #328). The gate the rule describes is covered where it runs,
+// in `--require-accept refuses a finish after a worker turn with no later review`
+// and `--require-accept refuses a finish that relies on a worker Checks line` in
+// tests/role.finish-abort.test.mjs, so this check covers the prompt text.
 test("initialPrompt states the completion rule and its mode mapping", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain("Do not finish while the latest changed state lacks a reviewer accept");
-  expect(prompt).toContain("a later reviewer turn returns Verdict: accept on that state");
-  expect(prompt).toContain("When no worker turn has run");
+  // The completion rule, with the negation bound to the action, so a finish
+  // before a reviewer accept cannot read as a finish after one.
+  expectRule(prompt, /do not finish[^.!?]{0,60}changed state[^.!?]{0,60}reviewer accept/i);
+  // The accept that satisfies it is the one a later reviewer turn returns for that
+  // state, and finish waits for it.
+  expectRule(prompt, /finish[^.!?]{0,40}\b(?:only|once|until)\b/i, /reviewer/i, /Verdict: accept/i);
+  // With no worker turn, the task is review-only: finish on the reviewer report
+  // whatever the verdict, and record that verdict in verified.
+  expectRule(prompt, /worker/i, /review-only/i, /\bfinish\b/i);
+  expectRule(prompt, /record[^.!?]{0,40}verified/i, /verdict/i);
   expect(prompt).toContain("loop policy");
 });
 
@@ -337,9 +460,14 @@ test("the wait rule does not depend on the reviewer CLI", () => {
 // exception to the orchestrator role rule, so the shell wait is inside the
 // contract instead of against it (issue #319).
 test("initialPrompt states the status read as the exception to the role rule", () => {
-  const roleLine = gatedPrompt("claude")
-    .split("\n")
-    .find((line) => /must NOT run agent CLIs or background processes/i.test(line));
+  const prompt = gatedPrompt("claude");
+  const roleLine = prompt.split("\n").find((line) => /agent CLIs|background processes/i.test(line));
+  expect(roleLine).toBeTruthy();
+  // The negation stays with the action, so "must run" cannot stand in for "must
+  // NOT run".
+  expect(roleLine).toMatch(
+    /must NOT (?:edit files[^.]{0,80}and you must NOT )?run agent CLIs or background processes/i,
+  );
   expect(roleLine).toMatch(/exception/i);
   expect(roleLine).toMatch(/check status/i);
 });
@@ -363,6 +491,39 @@ test("initialPrompt states that a wait can end the run at the turn timeout", () 
   const prompt = gatedPrompt("claude");
   expect(prompt).toMatch(/--timeout/);
   expect(prompt).toMatch(/exit 1/);
+});
+
+// The refused-`--cwd` rule both parent paths state the same way. It is the
+// decision, not a repair procedure: a parent ends the run and a maintainer
+// decides what happens to the work tree. The mechanism behind it differs by
+// parent, so only the decision, the qualification, and the three refused cases
+// are pinned here, and the test fails when either side drops them (issue #327).
+const REFUSED_CWD_RULE = [
+  "A refused `--cwd` is not the parent's to repair: end the run, name the path and the refusal in the reason, and leave the work tree to a maintainer, who decides whether to recreate it and start a new run.",
+  "Abort only when a non-terminal run exists at the refused `--cwd`. With no run state there, from a refused init or a path that was never this run's, no run started, so report the refusal and do not abort. A run that is already terminal needs no abort.",
+  "One rule covers every refused `--cwd`: a path that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason names that path and that message.",
+];
+
+// Usefulness: verifies the interactive instructions and the headless prompt state
+// the same refused-`--cwd` rule, so neither parent path sends a maintainer
+// through a work tree repair that the runtime never asked for (issue #327).
+test("interactive instructions and headless prompt share the refused --cwd rule", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
+  for (const rule of REFUSED_CWD_RULE) {
+    expect(instructions).toContain(rule);
+    expect(prompt).toContain(rule);
+  }
+  // Neither text keeps the repair procedure or the unrecoverable claim.
+  for (const gone of [
+    "git worktree add",
+    "git worktree prune",
+    "not recoverable",
+    "unrecoverable",
+  ]) {
+    expect(instructions).not.toContain(gone);
+    expect(prompt).not.toContain(gone);
+  }
 });
 
 // Usefulness: verifies refusalPrompt carries the refusal reason and the supported

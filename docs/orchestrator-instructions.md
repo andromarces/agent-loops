@@ -4,7 +4,9 @@ You are the parent orchestrator for an `agent-loop role` run. Per-harness entry
 points (the Claude Code, Codex CLI, and Antigravity CLI skills, the OpenCode
 plugin command, and the Copilot launcher) include this file instead of copying
 it. The headless prompt in `src/prompts/orchestrator.mjs` states the same role
-rules in JSON-action form; this file is the source for shared rules.
+rules in JSON-action form; this file is the source for shared rules. Work tree
+ownership below is stated in that prompt as well, and the two state the same
+rule.
 
 ## Role
 
@@ -186,6 +188,53 @@ Apply these parent rules:
   same as a verified finish. That marker is the only machine-readable record of
   the compare, and nothing else in the run distinguishes an omitted marker from a
   verified finish, so always set it.
+
+## Work tree ownership
+
+The parent creates the run's work tree and owns it. Keep that work tree in place
+for the whole run, and never tell a worker to remove it: a worker turn pushes its
+branch and stops there, because every later dispatch of that run targets the same
+`--cwd`.
+
+`dispatch` checks the work tree before it reads the run state, charges a step, or
+spawns a child, so a refused `--cwd` leaves the run as it was: the init call
+writes no state file, and a later dispatch charges no step, changes no lifecycle,
+and spawns no child. The envelope carries `status: "error"` with
+`--cwd must be inside a Git work tree: <path>`.
+
+A refused `--cwd` is not the parent's to repair: end the run, name the path and
+the refusal in the reason, and leave the work tree to a maintainer, who decides
+whether to recreate it and start a new run.
+
+Abort only when a non-terminal run exists at the refused `--cwd`. With no run
+state there, from a refused init or a path that was never this run's, no run
+started, so report the refusal and do not abort. A run that is already terminal
+needs no abort.
+
+One rule covers every refused `--cwd`: a path that no longer exists, a path that
+is not inside a Git work tree, and an existing work tree path whose Git metadata
+is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason
+names that path and that message.
+
+```bash
+agent-loop role abort --cwd "<work tree>" \
+  --reason "<work tree>: --cwd must be inside a Git work tree"
+```
+
+`abort` reads only the state file, so it ends the run over a work tree that is
+gone or is not a Git work tree, and it writes nothing inside that path. It needs
+a non-terminal run at that path: a path with no run state is refused with
+`No run state for <path>`, and a terminal run is refused with
+`Run is already <lifecycle>.`, so neither is a command to run there. A maintainer
+who recreates the work tree starts a new run there: a run over an aborted work
+tree is not resumed, and the state file names the work tree, not the work in it.
+
+The headless loop states the same rule and cannot act on it: `agent-loop`
+snapshots its `--cwd` before and after every orchestrator turn, so a work tree in
+any of those three states ends the run on that snapshot failure before the
+orchestrator can act, and the run keeps no state file. A headless worker turn
+gets the ownership rule from the same file, because `runChild` builds the worker
+prompt there for both paths.
 
 ## Reviewer prompts
 

@@ -14,6 +14,7 @@ const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 // carries model output, and stderr can carry a secret.
 const DETAIL_LIMIT = 500;
 const NO_DETAIL = "no provider error event in the output";
+const UNKNOWN_ERROR = "unknown error";
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
@@ -74,7 +75,10 @@ export async function runOpenCode(state, prompt, options = {}) {
     throw failure;
   }
 
-  const events = parseJsonLines(stdout);
+  // Every read below names a field of the event, so a line that parsed to another JSON value, such
+  // as the `null` of a diagnostic line, is dropped first: reading it would throw a TypeError that
+  // replaces the adapter error (issue #335).
+  const events = parseJsonLines(stdout).filter(isEvent);
 
   const sessionId = events.map((event) => event.sessionID).find(Boolean);
 
@@ -94,10 +98,12 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   // Defense-in-depth: if the CLI ever exits 0 with an error event, surface its detail instead of
   // falling through to the missing-text error. The session is recorded first, as it is on any turn.
-  const errorEvent = events.find((event) => event.type === "error");
+  // The detail is the last well-formed one, described and capped as on the non-zero path, so a long
+  // provider message cannot reach the envelope here either (issue #335).
+  const errorDetail = lastErrorDetail(events);
 
-  if (errorEvent) {
-    throw new Error(`opencode returned an error event: ${describeError(errorEvent.error)}`);
+  if (errorDetail || events.some((event) => event.type === "error")) {
+    throw new Error(`opencode returned an error event: ${errorDetail || UNKNOWN_ERROR}`);
   }
 
   const text = joinTextParts(
@@ -280,6 +286,14 @@ function providerDetail(error) {
   }
 
   return boundedLine(describeError({ type, message, status }), DETAIL_LIMIT);
+}
+
+/**
+ * Returns whether a parsed line is a stream event. `parseJsonLines` returns any JSON value, so a
+ * line can be `null`, a number, or a string, and no field read of such a line is meaningful.
+ */
+function isEvent(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** Returns the byte count of a stream, for a debug line that carries size and not content. */
