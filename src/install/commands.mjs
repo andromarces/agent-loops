@@ -8,7 +8,7 @@ import { readArgValue, readInlineValue, splitInlineFlag } from "../lib/args.mjs"
 import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.mjs";
 import { nearestHarness } from "../lib/process-ancestry.mjs";
 import { HARNESS_META, HARNESS_ORDER, isHarness } from "./harnesses.mjs";
-import { detectHarnesses, install, uninstall } from "./installer.mjs";
+import { detectHarnesses, install, stablePackageRoot, uninstall } from "./installer.mjs";
 import { readManifest, resolveHome } from "./manifest.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -171,7 +171,7 @@ export async function runInstallCommand(argv) {
     reports = await install({
       harnesses,
       home: resolveHome(),
-      packageRoot: PACKAGE_ROOT,
+      packageRoot: stablePackageRoot(PACKAGE_ROOT),
       dryRun: options.dryRun,
     });
   } catch (err) {

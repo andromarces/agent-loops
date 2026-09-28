@@ -106,6 +106,20 @@ message that asks for a global install first, so it never writes a path that can
 disappear. `uninstall` reads only the manifest and the harness files, so it still
 removes them after the package is gone.
 
+A pnpm global install resolves the package into a version-named virtual store
+entry, so the resolved path does not survive an upgrade. `install` writes the
+version-independent path instead, and checks that the path it writes resolves to
+the installed package before using it. pnpm 12 puts the store entry in an install
+directory and keeps a hash-named symlink beside that directory, which the
+`agent-loop` bin shim calls, so `install` writes it. pnpm 10 puts its store
+directory beside the global `node_modules` and links the package under that
+`node_modules`, which `pnpm root -g` reports, so `install` writes that link. An
+upgrade repoints both. An npm global install, a clone, and a linked package have
+no version in their root and render unchanged, and so does any layout with no
+link that resolves to the package. One `agent-loop install` per upgrade is still
+needed after an upgrade from a version that wrote a replaced path, because those
+installed files keep naming the deleted directory until it runs again.
+
 ```bash
 agent-loop install --harness claude,codex --yes
 agent-loop uninstall
