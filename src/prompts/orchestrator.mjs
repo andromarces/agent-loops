@@ -60,7 +60,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
 
   return [
     gate,
-    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can read the required checks and the headless loop cannot wait. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.${suppliedRead(pr)}`,
+    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself and the headless loop cannot wait. Do not run gh pr checks.${suppliedRead(pr)}`,
     "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
   ];
 }
@@ -76,7 +76,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
  */
 function suppliedRead(pr) {
   if (pr === null) return "";
-  return ` This run declares PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt, and the reviewer reports that status without reading it again, keeps its own read as the fallback, and reads it itself when the supplied status is unresolved. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.`;
+  return ` This run declares PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. The reviewer reports that status without reading it again, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.`;
 }
 
 /**

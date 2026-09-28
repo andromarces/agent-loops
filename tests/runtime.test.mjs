@@ -1461,12 +1461,24 @@ function ciGateGh(headRefOid, calls = []) {
 
 const OTHER_HEAD = "1".repeat(40);
 
+// The calls the status read makes, keyed by the exact argument list it uses. A
+// gate read is a call that is not one of these, so a refused finish is asserted
+// on by excluding the status read's own two endpoints rather than by
+// subtracting whatever the run happened to call (#320 review).
+const STATUS_READ_CALLS = [
+  "pr view 42 --json headRefOid",
+  "pr checks 42 --required --json name,bucket",
+];
+
 // The GitHub state reads the shared `checkCi` gate makes, named by the argument
 // that identifies each one. A refused finish must read none of them, so the
 // assertion names the gate's own reads rather than subtracting whatever else the
-// run happens to call (#320 review). The status read is not among them: it reads
-// `pr view <pr> --json headRefOid` on its own and never the gate's field list.
-const GATE_READS = [
+// run happens to call. The gate's PR view asks for a different field list than
+// the status read's, and its required-names read asks for `--json name` alone,
+// which is the endpoint the first list omitted.
+// Matched as a prefix of the call, because the gate passes extra arguments to
+// several of them (`api repos/{slug}/...` and the field list on its PR view).
+const GATE_READ_PREFIXES = [
   "repo view",
   "rules/branches",
   "branches/main/protection",
@@ -1475,9 +1487,20 @@ const GATE_READS = [
   "mergeStateStatus",
 ];
 
+// Matched whole, because the gate's required-names read
+// (`pr checks 42 --required --json name`) is a prefix of the status read's
+// (`... --json name,bucket`), and matching that one loosely would read the
+// status read as a gate read.
+const GATE_READ_EXACT = ["pr checks 42 --required --json name"];
+
 // The gate's own GitHub state reads, selected by endpoint so the assertion does
 // not depend on which other calls the run made.
-const gateReads = (calls) => calls.filter((key) => GATE_READS.some((e) => key.includes(e)));
+const gateReads = (calls) =>
+  calls.filter(
+    (key) =>
+      GATE_READ_PREFIXES.some((endpoint) => key.includes(endpoint)) ||
+      GATE_READ_EXACT.includes(key),
+  );
 
 // 43. Usefulness: verifies the headless --require-ci gate resolves the PR head in
 // the runtime: a finish whose PR head is not the reviewed commit is refused with
@@ -2606,6 +2629,48 @@ test("a hung required-check read yields an unresolved status and a completed tur
     // The unresolved status reaches the reviewer prompt, so the reviewer reads
     // the checks itself rather than reporting a pass it did not see.
     expect(rev.recorded[0].prompt).toMatch(/unresolved/i);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the gate-endpoint list the refusal assertions use covers
+// every endpoint the finish gate actually reads, because a list that omits one
+// lets a refused finish pass a GitHub read it should never make while the test
+// still reports no reads (issue #320 review, second round).
+test("the refusal assertion covers every endpoint the finish gate reads", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    // A run whose gate matches, so the gate runs and every endpoint it reads is
+    // recorded. That recorded list is what a refused finish must not contain.
+    const calls = [];
+    await runLoop({
+      task: "PR work: address issue 320 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      gh: ciGateGh(head, calls),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+    });
+
+    // Every call the gate made, apart from the status read's own endpoints, is
+    // covered by the list the refusal tests assert on, so a refused finish
+    // cannot slip a gate read past them.
+    const gateOnly = calls.filter((key) => !STATUS_READ_CALLS.includes(key));
+    const uncovered = gateOnly.filter((key) => gateReads([key]).length === 0);
+    expect(uncovered).toEqual([]);
+    // The gate really does read several endpoints, so the list is not vacuous.
+    expect(gateReads(calls).length).toBeGreaterThan(1);
   } finally {
     await removePath(repo);
   }

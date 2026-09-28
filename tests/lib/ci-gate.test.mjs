@@ -1074,3 +1074,85 @@ test("the real gh runner runs a bounded read and terminates a hung child", async
   });
   expect(hung.status).not.toBe(0);
 });
+
+// Usefulness: verifies a read whose PR head moves between the head read and the
+// check read reports nothing, because the checks that came back describe the new
+// head while the first head read named the old one, so a status bound to the
+// first read would describe a commit the reviewer is not looking at
+// (issue #320 review, second round).
+test("reads no status when the PR head moves between the head read and the check read", async () => {
+  const local = "1111111111111111111111111111111111111111";
+  const advanced = "2222222222222222222222222222222222222222";
+  let headReads = 0;
+
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: local,
+    gh: async (args) => {
+      const key = args.join(" ");
+      if (key === "pr view 42 --json headRefOid") {
+        headReads += 1;
+        // The first read matches the local head; the PR advances before the
+        // checks are read, so the second read names a different commit.
+        return {
+          status: 0,
+          stdout: JSON.stringify({ headRefOid: headReads === 1 ? local : advanced }),
+          stderr: "",
+        };
+      }
+      if (key === "pr checks 42 --required --json name,bucket") {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ name: "ci", bucket: "pass" }]),
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unmatched gh call: ${key}` };
+    },
+  });
+
+  // A stable head is re-read, so the race is detectable at all.
+  expect(headReads).toBeGreaterThan(1);
+  expect(read.status).toBe("unresolved");
+  expect(read.checks).toEqual([]);
+  expect(read.summary).toMatch(/(moved|changed|differs)/i);
+});
+
+// Usefulness: verifies a head that advances to a commit which then matches the
+// local reviewed head is still unresolved, because the checks were read for a
+// different commit than the one the status would name
+// (issue #320 review, second round).
+test("reads no status when the head moves even to a head the checks then describe", async () => {
+  const local = "1111111111111111111111111111111111111111";
+  const advanced = "2222222222222222222222222222222222222222";
+  let headReads = 0;
+
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: local,
+    gh: async (args) => {
+      const key = args.join(" ");
+      if (key === "pr view 42 --json headRefOid") {
+        headReads += 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify({ headRefOid: headReads === 1 ? local : advanced }),
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: JSON.stringify([{ name: "ci", bucket: "pass" }]), stderr: "" };
+    },
+  });
+
+  expect(read.status).toBe("unresolved");
+});
+
+// Usefulness: verifies a head that does not move still reports its status, so
+// the re-read refuses only a real race and not every read
+// (issue #320 review, second round).
+test("still reports the status when the PR head does not move", async () => {
+  const read = await readOn(HEAD, statusReadGh({ checks: [{ name: "ci", bucket: "pass" }] }));
+  expect(read).toMatchObject({ status: "pass", head: HEAD });
+});

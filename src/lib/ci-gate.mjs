@@ -503,7 +503,10 @@ async function readPrHead({ pr, cwd, gh, signal }) {
  * A status is reported only for the head it describes. `head` is the local
  * reviewed head, and a read whose PR head differs from it, or a read with no
  * local head to compare, is unresolved, because a status on one head says
- * nothing about the other.
+ * nothing about the other. The head is read again after the checks, because the
+ * two reads are separate calls and the PR can advance between them: `gh pr
+ * checks` reports no commit, so a head that moved is the only signal that the
+ * checks belong to a different commit, and it is unresolved.
  * @param {{ pr: number, cwd: string, head?: string | null, gh?: Function, timeoutMs?: number }} options
  * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string }>}
  */
@@ -548,6 +551,24 @@ export async function readRequiredChecks({
       );
     }
     reply = await call(["pr", "checks", String(pr), "--required", "--json", "name,bucket"]);
+    // The check read is a second call, so the PR can advance between the two.
+    // `gh pr checks` reports no commit, so the only way to bind the checks to a
+    // commit is to read the head again and refuse a head that moved. Without
+    // this the checks describe the new head while the summary names the old one,
+    // and a pass would describe a commit the reviewer is not looking at.
+    const after = await readPrHead({ pr, cwd, gh, signal: controller.signal });
+    if (after === null) {
+      return unresolved(
+        `unread: the PR head for PR ${pr} could not be re-read after the checks`,
+        prHead,
+      );
+    }
+    if (after !== prHead) {
+      return unresolved(
+        `unread: PR ${pr} head moved from ${prHead} to ${after} while the checks were read`,
+        after,
+      );
+    }
   } catch (err) {
     const detail = controller.signal.aborted
       ? `the read timed out after ${timeoutMs}ms`

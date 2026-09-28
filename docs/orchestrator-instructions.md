@@ -231,11 +231,17 @@ runtime reads the required-check status for that PR head and supplies it to ever
 reviewer prompt. The prompt adds two lines inside the required-check group, so
 they apply only under the pull request condition:
 
-- This run read the required checks for PR <pr> before this turn: <summary>, and
-  the reviewer reports that status without reading it again.
-- The reviewer keeps its own read as the fallback. Prefer it when the supplied
-  status is unresolved, and report any difference between your read and the
-  supplied status in `Checks`.
+- This run read the required checks for PR <pr> before this turn: <summary>. You
+  report that status without reading it again.
+- You keep your own read as the fallback. Prefer it when the supplied status is
+  unresolved, and report any difference between your read and the supplied
+  status in `Checks`.
+
+The runtime reads the status for that PR head and supplies it to every reviewer
+prompt. The reviewer reports that status without reading it again, keeps its own
+read as the fallback, and reads the checks itself when the supplied status is
+unresolved. The runtime reports the status it read beside the reviewer result,
+so compare it with the reviewer Checks line.
 
 The reviewer's own read is never removed, and the head matters. A supplied status
 is evidence for that turn, not a gate: `gh pr checks` lists only the checks that
@@ -250,6 +256,17 @@ so a status is reported only for the head it describes. A read whose PR head
 differs from the local head, and a read with no local head to compare, are
 unresolved, and the prompt never reports a pass for a head the reviewer is not
 looking at. Every supplied status states the head it describes.
+
+The head and the checks are two separate reads, and the pull request can advance
+between them. `gh pr checks` reports no commit and cannot be asked for one, so
+the runtime reads the head again after the checks. A head that moved is
+unresolved, because the checks belong to a commit other than the one the status
+would name.
+
+The head and the checks are two separate reads, and the pull request can advance
+between them. `gh pr checks` reports no commit, so the runtime reads the head
+again after the checks and reports nothing when it moved, rather than naming one
+head for checks that belong to another.
 
 The status comes from the exit code the rule above names: 0 is a pass, 8 is a
 pending check, and 1 is a failing check, a pull request with no required check,

@@ -204,7 +204,7 @@ test("the headless prompt adds exactly the declaration rule and nothing else", (
   const block =
     "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.";
   const supplied =
-    " This run declares PR #42, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt, and the reviewer reports that status without reading it again, keeps its own read as the fallback, and reads it itself when the supplied status is unresolved. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.";
+    " This run declares PR #42, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. The reviewer reports that status without reading it again, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.";
 
   const noGate = initialPrompt({ task: "T", maxSteps: 10 });
   const withPr = initialPrompt({ task: "T", maxSteps: 10, pr: 42 });
@@ -478,4 +478,56 @@ test("interactive instructions and headless prompt state the supplied-status rul
     expect(instructions, rule).toContain(rule);
     expect(prompt, rule).toContain(rule);
   }
+});
+
+// Usefulness: verifies the headless prompt does not tell the orchestrator that no
+// reviewer turn will read the checks in a run that declares its PR, because the
+// runtime supplies the status and the reviewer keeps its own read as the
+// fallback, so the two statements in one line would otherwise contradict each
+// other (issue #320 review, second round).
+test("a declared PR does not contradict itself about who reads the checks", () => {
+  const line = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "codex",
+    reviewerKind: "codex",
+  })
+    .split("\n")
+    .find((text) => /supplies it to every reviewer prompt/.test(text));
+  expect(line).toBeTruthy();
+  // The fallback is a real read the reviewer may make, so the prompt must not
+  // also tell the orchestrator not to expect a reviewer read.
+  expect(line).not.toMatch(/do not expect a reviewer turn to read the checks/);
+});
+
+// Usefulness: verifies the two surfaces state the supplied-status rule in the
+// same order and with the same conditions, so a parent reading the instructions
+// and an orchestrator reading the prompt resolve one rule
+// (issue #320 review, second round).
+test("the supplied-status rule states the same conditions in both surfaces", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const declared = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "codex",
+    reviewerKind: "codex",
+  }).replace(/\s+/g, " ");
+
+  // Same conditions, in the same order, on both surfaces.
+  for (const [first, second] of [
+    ["supplies it to every reviewer prompt", "keeps its own read as the fallback"],
+    ["keeps its own read as the fallback", "supplied status is unresolved"],
+    ["supplied status is unresolved", "compare it with the reviewer Checks line"],
+  ]) {
+    expect(instructions.indexOf(first), first).toBeGreaterThanOrEqual(0);
+    expect(declared.indexOf(first), first).toBeGreaterThanOrEqual(0);
+    expect(declared.indexOf(first), first).toBeLessThan(declared.indexOf(second));
+  }
+  expect(instructions.indexOf("supplies it to every reviewer prompt")).toBeLessThan(
+    instructions.indexOf("keeps its own read as the fallback"),
+  );
 });

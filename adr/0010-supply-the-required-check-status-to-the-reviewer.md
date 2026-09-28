@@ -46,22 +46,28 @@ the reviewer `Checks` line.
    local head to compare, are `unresolved`, so the prompt never supplies a pass
    for a head the reviewer is not looking at. Every supplied status states the
    head it describes.
-4. The status comes from the exit code the reviewer rules and
+4. The head and the checks are two separate calls, and the pull request can
+   advance between them, so the head is read again after the checks. `gh pr
+checks` reports no commit and accepts no commit argument, so a re-read is the
+   only way to bind the checks to a commit: a head that moved is `unresolved`.
+   This makes three calls per reviewer turn. A single call cannot, because the
+   command exposes no field that names the commit the checks belong to.
+5. The status comes from the exit code the reviewer rules and
    `docs/orchestrator-instructions.md` already name: 0 is a pass, 8 is a pending
    check, and 1 is a failing check, a pull request with no required check, or a
    read error. Exit 1 reports failing only when the reply lists a failing
    required check, the same evidence the reviewer rule requires before it calls a
    blocker. Every other exit code is `unresolved`.
-5. The reply is parsed strictly. Every listed entry must be an object with a
+6. The reply is parsed strictly. Every listed entry must be an object with a
    non-empty string `name` and a known string `bucket`, and any malformed entry
    rejects the whole reply as `unresolved`. A lenient parse that drops malformed
    entries reports a pass whenever a pass entry sits beside a malformed one, so
    it fails open on the one input that must not pass.
-6. The read is bounded in time, and the bound terminates the child, so a `gh`
+7. The read is bounded in time, and the bound terminates the child, so a `gh`
    that hangs cannot stall the dispatch or outlive it. A read that exceeds the
    bound is `unresolved` and never fails or halts the dispatch, because the
    status is supplied evidence and the reviewer keeps its own read.
-7. The supplied status is added to the reviewer prompt as two lines inside the
+8. The supplied status is added to the reviewer prompt as two lines inside the
    existing required-check group, so it applies only under the pull request
    condition and never narrows the guard rules above it. The first line names the
    PR and the status. The second states that the reviewer keeps its own read as
@@ -69,19 +75,19 @@ the reviewer `Checks` line.
    difference between the two goes in `Checks`. `docs/orchestrator-instructions.md`
    and the headless orchestrator prompt state the rule in the same words, and a
    test reads both to keep them from drifting.
-8. The reviewer's own read is never removed. The supplied status is evidence for
+9. The reviewer's own read is never removed. The supplied status is evidence for
    one turn, not a gate: `gh pr checks` lists only the checks that already
    reported, so a supplied pass covers the listed checks only.
-9. The read never fails a turn. A `gh` failure, an unreadable head, a mismatched
-   head, a malformed reply, an unexpected exit code, and a stalled call are all
-   `unresolved`, which the prompt rule already sends back to the reviewer's own
-   read.
-10. The status is reported with the reviewer result: as `prChecks` in the
+10. The read never fails a turn. A `gh` failure, an unreadable head, a mismatched
+    head, a moved head, a malformed reply, an unexpected exit code, and a
+    stalled call are all `unresolved`, which the prompt rule already sends back
+    to the reviewer's own read.
+11. The status is reported with the reviewer result: as `prChecks` in the
     dispatch envelope and beside the response in the state file's `lastResult`,
     so a parent can compare it with the reviewer `Checks` line. The `turns`
     entry keeps the fixed shape ADR 0008 defines, so the status is not recorded
     there.
-11. `--require-ci` stays the enforcement point. The supplied status changes no
+12. `--require-ci` stays the enforcement point. The supplied status changes no
     gate condition and no refusal.
 
 ## Consequences
@@ -89,12 +95,14 @@ the reviewer `Checks` line.
 - A reviewer whose CLI cannot reach the network sees the failing check on the PR
   head, so the run no longer needs a worker turn and a reviewer turn to learn it.
 - A status is never supplied for a head the reviewer is not looking at, so a
-  mismatch is unresolved rather than a pass on the wrong commit.
+  mismatch is unresolved rather than a pass on the wrong commit. A head that
+  moves between the two reads is unresolved too, so a race cannot name one head
+  for checks that belong to another.
 - The parent can compare two independent reads of the same status, so a
   disagreement between the runtime and the reviewer is visible.
-- Every reviewer turn in a declared-PR run costs two `gh` calls, the head and the
-  check list. Both are status reads that change nothing, and the reviewer prompt
-  already asks the reviewer to make the second.
+- Every reviewer turn in a declared-PR run costs three `gh` calls, the head, the
+  check list, and the head again. All are status reads that change nothing, and
+  the reviewer prompt already asks the reviewer to make the second.
 - A stalled `gh` cannot hold a dispatch open, because the read is bounded and the
   bound terminates the child.
 - The status is a point-in-time read, taken before the turn. A check that starts
@@ -128,6 +136,17 @@ the reviewer `Checks` line.
 6. **Read the check list and infer the head from it**: `gh pr checks --json`
    reports no commit, so the head needs its own read. Rejected; the head read is
    what makes a mismatch detectable at all.
+7. **Ask `gh pr checks` for a commit SHA**: it takes a pull request, a URL, or a
+   branch, and reports `no pull requests found for branch "<sha>"` for a commit,
+   so the check results cannot be bound to the reviewed commit in one call.
+   Measured live against this repository. Rejected; the head is re-read after the
+   checks instead.
+8. **Trust the first head read and let the reviewer's own read catch a race**:
+   the prompt already keeps the reviewer's read as the fallback, so a race
+   resolves to the reviewer reading the checks itself. Rejected for the supplied
+   status: the reviewer's read is the fallback for an unresolved status, and a
+   status that misnames its own head is worse than no status, so the race is
+   refused in the runtime where it happens.
 
 ## Authors
 
