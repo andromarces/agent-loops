@@ -64,16 +64,24 @@ test("reviewer prompt reports an unresolved check status instead of assuming a p
   expect(prompt).toMatch(/pass only when the read shows one/i);
 });
 
-// Usefulness: verifies the pull-request condition lives in the required-check
-// bullet alone, so a scoping bullet cannot read as limiting the guard rules
-// that follow it (issue #313).
-test("only the required-check rule bullet limits itself to a task that names a pull request", () => {
+// Usefulness: verifies only the required-check rule mentions a pull request, in
+// any spelling, so a standalone scoping bullet cannot read as limiting the
+// guard rules that follow it (issue #313). The required-check rule runs from the
+// gh pr checks bullet to the end of the rules, so every matching bullet has to
+// sit at or after that first bullet.
+test("only the required-check rule mentions a pull request", () => {
   const prompt = reviewerPrompt("review the change");
-  const scoped = prompt
-    .split("\n")
-    .filter((text) => text.startsWith("- ") && /pull request/i.test(text));
-  expect(scoped).toHaveLength(1);
-  expect(scoped[0]).toMatch(/gh pr checks/);
+  const bullets = prompt.split("\n").filter((text) => text.startsWith("- "));
+  const namesPullRequest = (text) => /\bPRs?\b/.test(text) || /pull[ -]requests?/i.test(text);
+  const requiredCheckStart = bullets.findIndex((text) => /gh pr checks/.test(text));
+  expect(requiredCheckStart).toBeGreaterThanOrEqual(0);
+  const matching = bullets.filter(namesPullRequest);
+  expect(matching.length).toBeGreaterThan(0);
+  for (const [index, text] of bullets.entries()) {
+    if (namesPullRequest(text)) {
+      expect(index).toBeGreaterThanOrEqual(requiredCheckStart);
+    }
+  }
 });
 
 // Usefulness: verifies a read pass is reported as covering only the listed
