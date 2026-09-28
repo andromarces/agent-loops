@@ -78,5 +78,7 @@ Andro Marces
 ## Links
 
 - [Issue #312: Keep a turn history for a role run without a per-call --transcript flag](https://github.com/andromarces/agent-loops/issues/312)
+- [PR #325: feat: keep a per-run turn history in the state file (#312)](https://github.com/andromarces/agent-loops/pull/325)
+- Implementation: `recordTurn` in `src/role.mjs`; tests in `tests/role.turn-history.test.mjs`; documented in `docs/orchestrator-instructions.md` and `README.md`
 - [ADR 0007: Concurrent role runs from one parent session](0007-concurrent-session-runs.md)
 - [ADR Index](README.md)
