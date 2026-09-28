@@ -51,29 +51,74 @@ test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
   );
 });
 
-// The reviewer-Checks gate rule as a meaning check, not a sentence match: the
-// reviewer Checks line is the gate input, and a worker Checks line never is.
-// Each pattern stays inside one sentence, so a mention of a gate in another
-// rule cannot stand in for this one, and a rule that drops or inverts the rule
-// fails. A reword that keeps the subject, the label, and the denial passes
+// The reviewer-Checks gate rule, asserted as meaning and not as a sentence. The
+// two sides are read separately: some sentence must give the reviewer Checks
+// line the gate-input role, and no sentence may give a worker Checks line that
+// role or an accept. Each side is read from the clause that starts at the label
+// it names, so a denial for the other label cannot satisfy it, a rule that
+// inverts the two sides fails, and a reword that keeps both sides passes
 // (issue #318).
-const REVIEWER_GATE_RULE = [
-  /reviewer'?s? checks line[^.]*gate/i,
-  /worker'?s? checks line[^.]*\b(never|not)\b/i,
-];
+const REVIEWER_CHECKS = /reviewer'?s? checks line/i;
+const WORKER_CHECKS = /worker'?s? checks line/i;
+const GATE_INPUT = /\bgate input\b/i;
+const ACCEPT = /\baccept(?:s|ed)?\b/i;
+const DENIAL = /\b(?:not|never|no)\b/i;
+
+/**
+ * The clause of `sentence` that starts at its first `label` mention, or null
+ * when the sentence does not name that label.
+ * @param {string} sentence
+ * @param {RegExp} label
+ * @returns {string | null}
+ */
+function clauseFor(sentence, label) {
+  const index = sentence.search(label);
+  return index === -1 ? null : sentence.slice(index);
+}
+
+/**
+ * True when `clause` gives the Checks line the role `role` instead of denying
+ * it, so a denial after the role word does not count.
+ * @param {string} clause
+ * @param {RegExp} role
+ * @returns {boolean}
+ */
+function claimsRole(clause, role) {
+  const match = clause.match(role);
+  return match !== null && !DENIAL.test(clause.slice(0, match.index));
+}
+
+/** Splits a text into sentences, so each rule is read where it is stated. */
+function sentences(text) {
+  return text.split(/(?<=[.!?])\s+/).filter((sentence) => /\S/.test(sentence));
+}
+
+/** Asserts the text gives the reviewer Checks line the gate input and no
+ * sentence gives a worker Checks line the gate input or an accept. */
+function expectReviewerGateRule(text) {
+  const parts = sentences(text);
+  const reviewerClauses = parts.map((part) => clauseFor(part, REVIEWER_CHECKS)).filter(Boolean);
+  expect(
+    reviewerClauses,
+    "a sentence gives the reviewer Checks line the gate input",
+  ).not.toHaveLength(0);
+  expect(
+    reviewerClauses.some((clause) => claimsRole(clause, GATE_INPUT)),
+    "the reviewer Checks line is denied the gate input, or no sentence gives it that role",
+  ).toBe(true);
+  for (const clause of parts.map((part) => clauseFor(part, WORKER_CHECKS)).filter(Boolean)) {
+    expect(claimsRole(clause, GATE_INPUT), `a worker Checks line is a gate input: ${clause}`).toBe(
+      false,
+    );
+    expect(claimsRole(clause, ACCEPT), `a worker Checks line is an accept: ${clause}`).toBe(false);
+  }
+}
 
 // The headless prompt also states that every child turn reports the line. The
 // interactive instructions state that rule on `report.checks` instead, so this
 // pattern guards the headless prompt only. The subject stays open (`every`,
 // `each`) so a reword of the subject does not break the rule.
 const EVERY_CHILD_TURN_CHECKS = /child turn[^.]*checks line/i;
-
-/** Asserts the text states the reviewer-Checks gate rule. */
-function expectReviewerGateRule(text) {
-  for (const pattern of REVIEWER_GATE_RULE) {
-    expect(text, pattern.source).toMatch(pattern);
-  }
-}
 
 // Usefulness: verifies the headless parent knows every child turn reports its
 // commands, and that only the reviewer Checks line gates, so a reported worker
