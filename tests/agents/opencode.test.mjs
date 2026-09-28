@@ -437,7 +437,7 @@ test("opencode bounds the message when a non-zero exit has no usable error event
 });
 
 // Usefulness: verifies stderr never reaches the envelope or the state file, because a CLI can print
-// a secret there, and that the debug channel still carries it for an operator (issue #326).
+// a secret there (issue #326).
 test("opencode keeps stderr out of the message on a non-zero exit", async () => {
   const error = await rejectTurnWith({
     exitCode: 1,
@@ -447,7 +447,49 @@ test("opencode keeps stderr out of the message on a non-zero exit", async () => 
 
   expect(error.message).toBe(NO_DETAIL);
   expect(error.message).not.toContain("sk-secret-value");
-  expect(logDebug).toHaveBeenCalledWith(expect.stringContaining("sk-secret-value"));
+});
+
+// Usefulness: verifies a provider error object whose fields are not strings or a number yields the
+// fixed no-detail line rather than a coerced "[object Object]" detail or a throw that would replace
+// the exit code, so a malformed provider payload cannot lose the exit code (issue #326).
+test("opencode reports no detail for a malformed provider object", async () => {
+  const error = await rejectTurnWith({
+    exitCode: 1,
+    stdout: errorEvent({
+      type: { name: "provider.internal" },
+      message: { detail: "Internal server error" },
+      status: { code: 500 },
+    }),
+  });
+
+  expect(error.message).toBe(NO_DETAIL);
+  expect(error.message).not.toContain("object Object");
+});
+
+// Usefulness: verifies no debug line carries stream or stderr content, because `logDebug` writes to
+// stdout in the loop CLI, where a caller can persist it, and because a CLI can print a secret on
+// either stream. The exit code and the byte counts stay, so an operator still sees the shape of the
+// failure (issue #326).
+test("opencode logs byte counts instead of stream or stderr content", async () => {
+  vi.mocked(logDebug).mockClear();
+
+  const error = await rejectTurnWith({
+    exitCode: 1,
+    stdout: `token sk-stream-secret in the event stream ${"S".repeat(500)}`,
+    stderr: "api key sk-stderr-secret rejected",
+  });
+
+  const logged = vi
+    .mocked(logDebug)
+    .mock.calls.map(([line]) => line)
+    .join("\n");
+
+  expect(logged).not.toContain("sk-stream-secret");
+  expect(logged).not.toContain("sk-stderr-secret");
+  expect(logged).toContain("opencode exited with code 1");
+  expect(logged).toContain(`${Buffer.byteLength(error.stdout)} stdout bytes`);
+  expect(logged).toContain(`${Buffer.byteLength(error.stderr)} stderr bytes`);
+  expect(error.stdout).toContain("sk-stream-secret");
 });
 
 // Usefulness: verifies a signal-killed turn names the signal rather than a provider error event from
@@ -546,17 +588,20 @@ test("opencode bounds the message for a malformed error event", async () => {
   expect(error.message).not.toContain("M".repeat(40));
 });
 
-// Usefulness: verifies a well-formed error event with an oversized message is truncated, so a long
-// provider message cannot fill the envelope or the state file the way the raw stream did (#326).
-test("opencode bounds an oversized error detail", async () => {
+// Usefulness: verifies a well-formed error event with an oversized message is truncated at the fixed
+// 500-character detail cap, so a long provider message cannot fill the envelope or the state file
+// the way the raw stream did (#326).
+test("opencode caps the described detail at 500 characters", async () => {
   const error = await rejectTurnWith({
     exitCode: 1,
     stdout: errorEvent({ type: "provider.internal", message: `D${"D".repeat(5000)}` }),
   });
 
-  expect(error.message).toContain("opencode exited with code 1: provider.internal:");
-  expect(error.message).not.toContain("D".repeat(400));
-  expect(error.message.length).toBeLessThan(400);
+  const prefix = "provider.internal: ";
+  expect(error.message).toBe(
+    `opencode exited with code 1: ${prefix}${"D".repeat(500 - prefix.length)}...`,
+  );
+  expect(error.message.length).toBeLessThan(600);
 });
 
 const CLOSING_BLOCK = [

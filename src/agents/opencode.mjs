@@ -12,7 +12,7 @@ const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 // Bounds for a failure message, so a long provider message cannot reach the dispatch envelope or
 // the state file (issue #326). No part of stdout or stderr is allowed into the message: a stream
 // carries model output, and stderr can carry a secret.
-const DETAIL_LIMIT = 300;
+const DETAIL_LIMIT = 500;
 const NO_DETAIL = "no provider error event in the output";
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
@@ -61,10 +61,13 @@ export async function runOpenCode(state, prompt, options = {}) {
     const events = parseJsonLines(err?.stdout ?? "");
     // A non-zero exit can still carry completed-step usage. Expose it, then rethrow.
     setUsage(state, events);
-    // A stream carries model output and stderr can carry a secret, so both stay on the debug
-    // channel and out of the envelope and the state file (issue #326).
-    logDebug(`opencode stdout on non-zero exit: ${err?.stdout ?? ""}`);
-    logDebug(`opencode stderr on non-zero exit: ${err?.stderr ?? ""}`);
+    // The stream carries model output and stderr can carry a secret, and `logDebug` writes to
+    // stdout in the loop CLI, where a caller can persist it. The debug line therefore carries the
+    // exit code and the byte counts only, and the full text stays on the error for a caller that
+    // asks for it (issue #326).
+    logDebug(
+      `opencode exited with code ${err?.exitCode ?? "none"}: ${byteLength(err?.stdout)} stdout bytes, ${byteLength(err?.stderr)} stderr bytes`,
+    );
 
     const failure = err instanceof Error ? err : new Error(String(err));
     failure.message = failureMessage(err, events, timeout);
@@ -215,25 +218,51 @@ function failureCause(err, timeout) {
 
 /**
  * Returns the described detail of the last well-formed `error` event, or an empty string when the
- * stream names none. `describeError` reports `unknown error` for a payload it cannot read, and a
- * non-object line is not an event at all, so neither contributes detail.
+ * stream names none. A payload this adapter cannot read contributes no detail, and a non-object
+ * line is not an event at all, so neither reaches the message.
  */
 function lastErrorDetail(events) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
 
-    if (event?.type !== "error") {
-      continue;
-    }
+    if (event?.type === "error") {
+      const detail = providerDetail(event.error);
 
-    const detail = describeError(event.error);
-
-    if (detail !== "unknown error") {
-      return boundedLine(detail, DETAIL_LIMIT);
+      if (detail) {
+        return detail;
+      }
     }
   }
 
   return "";
+}
+
+/**
+ * Returns the described detail of a provider error object, or an empty string when the object is
+ * not one this adapter can read. Only the string fields and a string or number status reach
+ * `describeError`, so it cannot throw on the payload, and a field of any other type is a malformed
+ * detail rather than a coerced one (issue #326).
+ */
+function providerDetail(error) {
+  if (!error || typeof error !== "object" || Array.isArray(error)) {
+    return "";
+  }
+
+  const type = typeof error.type === "string" ? error.type : "";
+  const message = typeof error.message === "string" ? error.message : "";
+  const status =
+    typeof error.status === "number" || typeof error.status === "string" ? error.status : undefined;
+
+  if (!type && !message) {
+    return "";
+  }
+
+  return boundedLine(describeError({ type, message, status }), DETAIL_LIMIT);
+}
+
+/** Returns the byte count of a stream, for a debug line that carries size and not content. */
+function byteLength(text) {
+  return Buffer.byteLength(text ?? "");
 }
 
 /**
