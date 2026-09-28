@@ -648,6 +648,26 @@ test.each(MALFORMED_NUMBERS)("opencode drops the cost value %s on a non-zero exi
   expect(state.usage.totalCostUsd).toBeUndefined();
 });
 
+// Usefulness: verifies a total that overflows to Infinity is dropped rather than recorded, because
+// two large finite values are the only way a validated sum can stop being a count, and the
+// invocation event reads the recorded usage as a number a caller can sum (issue #326). The two step
+// parts prove the overflow needs a sum, and the cost proves the second total is checked.
+test("opencode drops a usage total that overflows on a non-zero exit", async () => {
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const stdout = [
+    `{"type":"step_finish","sessionID":"sess-oc","part":{"tokens":{"input":1e308},"cost":1e308}}`,
+    `{"type":"step_finish","sessionID":"sess-oc","part":{"tokens":{"input":1e308},"cost":1e308}}`,
+  ].join("\n");
+
+  const error = await rejectTurnWith({ exitCode: 1, stdout }, {}, state);
+
+  expect(error.message).toBe(NO_DETAIL);
+  expect(state.usage).toEqual({
+    mainLoop: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  });
+  expect(state.usage.totalCostUsd).toBeUndefined();
+});
+
 const CLOSING_BLOCK = [
   "Conclusion: PR #314 fixes the part join.",
   "Why: the narration and the block arrived as two text parts.",

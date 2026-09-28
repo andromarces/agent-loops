@@ -165,9 +165,19 @@ function setUsage(state, events) {
     }
   }
 
+  // Two large finite values can sum to Infinity, which is not a count, so each total is dropped the
+  // same way a malformed input value is (issue #326).
+  if (hasTokens) {
+    tokens.input = usageNumber(tokens.input);
+    tokens.output = usageNumber(tokens.output);
+    tokens.reasoning = usageNumber(tokens.reasoning);
+    tokens.cache.read = usageNumber(tokens.cache.read);
+    tokens.cache.write = usageNumber(tokens.cache.write);
+  }
+
   const usage = {};
   if (hasTokens) usage.mainLoop = tokens;
-  if (hasCost) usage.totalCostUsd = cost;
+  if (hasCost && isUsageNumber(cost)) usage.totalCostUsd = cost;
 
   if (Object.keys(usage).length > 0) {
     state.usage = usage;
