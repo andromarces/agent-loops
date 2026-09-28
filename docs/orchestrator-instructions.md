@@ -399,12 +399,10 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   `--require-ci` names another PR is refused without reading GitHub.
 - A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
   resolves that compare. The recorded marker is the accepted gap above, and a
-  declared run does not have it. What the marker breaks depends on the gate. With
-  a matching `--require-ci <pr>`, the marker is one broken condition among the
-  gate's own, so removing it is necessary and not sufficient: fix whatever else
-  the refusal names. With no matching gate, the runtime reads no gate, so the
-  finish is refused for the declaration alone and one refusal names the marker and
-  the missing gate together.
+  declared run does not have it. One refusal names every condition the finish
+  broke, so read all of it rather than the first reason. A matching gate applies
+  its own conditions on top of the declaration, and a gate for another PR is never
+  read.
 - The gate flag is a run input, so no `dispatch` supplies it and a repeat
   `finish` is refused the same way. A declared run with no gate can only end
   through `abort` with the missing gate named in the reason.

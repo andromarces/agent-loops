@@ -192,44 +192,39 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
   );
 });
 
-// Usefulness: verifies the headless prompt states the run PR declaration, so the
-// orchestrator knows the finish must end through the gate and carries no marker,
-// and the prompt is unchanged without the declaration (issue #302).
-test("initialPrompt states the --pr declaration when enabled", () => {
-  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10, pr: 42 });
-  expect(prompt).toContain("--pr 42");
-  expect(prompt).toContain("--require-ci 42");
-  expect(initialPrompt({ task: "T", maxSteps: 10 })).not.toContain("--pr");
+// Usefulness: pins the declaration rule as one line that predicts no outcome. The
+// runtime adds conditions this text does not enumerate: a matching gate refuses a
+// finish on its own conditions, a gate for another PR is never read, and a marked
+// finish with no gate is refused for the marker and the missing gate together. A
+// per-case line naming the sole reason would contradict one of those on every
+// change to the refusal list (#302).
+test("initialPrompt states one declaration rule that names no per-case reason", () => {
+  const rule =
+    "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.";
+
+  for (const requireCi of [null, 7, 42]) {
+    const prompt = initialPrompt({ task: "T", maxSteps: 10, pr: 42, requireCi });
+    expect(prompt).toContain(rule);
+    // No per-case prediction: the runtime decides which reasons it names.
+    expect(prompt).not.toContain("the only broken condition");
+    expect(prompt).not.toContain("breaks only that condition");
+    expect(prompt).not.toContain("refused for that reason alone");
+    expect(prompt).not.toContain("with no gate condition evaluated");
+    expect(prompt).not.toContain("the gate is still missing");
+  }
 });
 
-// Usefulness: pins the two gate cases in the prompt without claiming an exhaustive
-// list of outcomes. A matching gate still refuses a finish on its own conditions,
-// for example a missing reviewed state, so the prompt may not call the marker the
-// only broken condition. A gate for another PR is never read by the runtime, so
-// the prompt may not describe a gate it does not evaluate (#302).
-test("initialPrompt states the declaration rule and each gate case without overclaiming", () => {
-  const rule =
-    'A finish must end through the --require-ci 42 gate for that PR, so a finish with no such gate, a finish with a gate for another PR, and a finish that records "unresolvedCompare": true are each refused, because that gate resolves the compare and a finish it did not clear never ends the run. One refusal names every condition the finish broke, so read all of it before acting.';
-
-  const withGate = initialPrompt({ task: "T", maxSteps: 10, pr: 42, requireCi: 42 });
-  expect(withGate).toContain(rule);
-  expect(withGate).toContain(
-    "This run carries the --require-ci 42 gate, so the gate's own conditions apply to every finish as well",
+// Usefulness: verifies a run that declares no PR keeps the prompt origin/main
+// sends, because the declaration block is the only addition and it is empty
+// without `--pr` (#302).
+test("initialPrompt adds nothing to a run that declares no PR", () => {
+  const prompt = initialPrompt({ task: "T", maxSteps: 10, requireCi: 42 });
+  expect(prompt).not.toContain("declares PR");
+  expect(prompt).not.toContain("This run declares");
+  // The origin/main gate block for the same inputs is still present and unchanged.
+  expect(prompt).toContain(
+    "This run enforces the PR gate (--require-ci 42): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit",
   );
-  expect(withGate).not.toContain("the only broken condition");
-  expect(withGate).not.toContain("breaks only that condition");
-  expect(withGate).not.toContain("never reads a gate");
-
-  for (const requireCi of [null, 7]) {
-    const noGate = initialPrompt({ task: "T", maxSteps: 10, pr: 42, requireCi });
-    expect(noGate).toContain(rule);
-    // The mismatched gate is skipped, so the prompt must not claim it is enforced.
-    expect(noGate).toContain(
-      "This run has no --require-ci 42 gate, so the runtime never reads a gate for it: a finish is refused for that reason alone, with no gate condition evaluated, whether the marker is set or not.",
-    );
-    expect(noGate).toContain("abort with the missing --require-ci 42 gate named in the reason");
-    expect(noGate).not.toContain("the gate's own conditions apply to every finish as well");
-  }
 });
 
 // Usefulness: verifies the rule is keyed on the CLI of the role that reads the

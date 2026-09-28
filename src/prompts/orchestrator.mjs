@@ -66,20 +66,15 @@ function prGateLines({ requireCi, orchestratorKind, reviewerKind }) {
 }
 
 /**
- * The `--pr` declaration block. It states the rule, not an exhaustive list of
- * outcomes, because the runtime adds conditions this block does not enumerate: a
- * matching gate refuses a finish on its own conditions too, for example a
- * missing reviewed state, so calling the marker the only broken condition would
- * send the run after the wrong fix. The closing line describes the case the
- * runtime handles differently, where no gate is read at all.
+ * The `--pr` declaration rule. It is one line on purpose: the prompt must not
+ * predict which reasons a refusal names, because the runtime collects every
+ * applicable condition. A per-case line either claims a sole reason, which is
+ * wrong whenever a second condition applies, or describes a gate for another PR
+ * that the runtime never reads (#302).
  */
-function prDeclarationBlock(pr, requireCi) {
+function prDeclarationBlock(pr) {
   if (pr === null) return "";
-  const rule = `- This run declares PR work on PR ${pr} (--pr ${pr}). A finish must end through the --require-ci ${pr} gate for that PR, so a finish with no such gate, a finish with a gate for another PR, and a finish that records "unresolvedCompare": true are each refused, because that gate resolves the compare and a finish it did not clear never ends the run. One refusal names every condition the finish broke, so read all of it before acting.`;
-  if (requireCi === pr) {
-    return `\n${rule} This run carries the --require-ci ${pr} gate, so the gate's own conditions apply to every finish as well: the reviewed state, the clean tree, the PR head, and the required checks. Removing the marker is necessary, not sufficient, so fix whatever else the refusal names.`;
-  }
-  return `\n${rule} This run has no --require-ci ${pr} gate, so the runtime never reads a gate for it: a finish is refused for that reason alone, with no gate condition evaluated, whether the marker is set or not. No turn in this run can add the flag, so a re-finish is refused the same way and the only outcome you own is abort with the missing --require-ci ${pr} gate named in the reason.`;
+  return `\n- This run declares PR #${pr}. Finish it through --require-ci ${pr} for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.`;
 }
 
 export function initialPrompt({
@@ -128,7 +123,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr, requireCi)}${prGateBlock({ requireCi, orchestratorKind, reviewerKind })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${prGateBlock({ requireCi, orchestratorKind, reviewerKind })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.
