@@ -72,24 +72,77 @@ test("reviewer prompt reports an unresolved check status instead of assuming a p
   expect(prompt).toMatch(/pass only when the read shows one/i);
 });
 
-// Usefulness: verifies only the required-check rule mentions a pull request, in
-// any spelling, so a standalone scoping bullet cannot read as limiting the
-// guard rules that follow it (issue #313). The required-check rule runs from the
-// gh pr checks bullet to the end of the rules, so every matching bullet has to
-// sit at or after that first bullet.
-test("only the required-check rule mentions a pull request", () => {
-  const prompt = reviewerPrompt("review the change");
-  const bullets = prompt.split("\n").filter((text) => text.startsWith("- "));
-  const namesPullRequest = (text) => /\bPRs?\b/.test(text) || /pull[ -]requests?/i.test(text);
-  const requiredCheckStart = bullets.findIndex((text) => /gh pr checks/.test(text));
-  expect(requiredCheckStart).toBeGreaterThanOrEqual(0);
-  const matching = bullets.filter(namesPullRequest);
-  expect(matching.length).toBeGreaterThan(0);
-  for (const [index, text] of bullets.entries()) {
-    if (namesPullRequest(text)) {
-      expect(index).toBeGreaterThanOrEqual(requiredCheckStart);
-    }
+const namesPullRequest = (text) => /\bprs?\b/i.test(text) || /pull[ -]requests?/i.test(text);
+
+// The fixed review scope block, sliced out of a reviewer prompt.
+const reviewerRulesOf = (prompt) => {
+  const start = prompt.indexOf("Review scope");
+  return prompt.slice(start, prompt.indexOf("\n\n", start));
+};
+
+// The required-check group: the bullet that names the read command plus every
+// nested sub-bullet under it. A bullet outside the group reads as a rule of its
+// own, so a pull request mention there narrows an earlier rule.
+const requiredCheckGroup = (lines) => {
+  const start = lines.findIndex((text) => /gh pr checks/.test(text));
+  if (start < 0) {
+    return null;
   }
+  let end = start;
+  while (end + 1 < lines.length && /^ {2,}- /.test(lines[end + 1])) {
+    end += 1;
+  }
+  return { start, end };
+};
+
+const prBulletsOutsideGroup = (rules) => {
+  const lines = rules.split("\n");
+  const group = requiredCheckGroup(lines);
+  return lines
+    .map((text, index) => ({ text, index }))
+    .filter(({ text }) => /^\s*- /.test(text) && namesPullRequest(text))
+    .filter(({ index }) => !group || index < group.start || index > group.end)
+    .map(({ text }) => text.trim());
+};
+
+// Usefulness: verifies the required-check bullets sit under the pull request
+// condition as one group, so no later bullet reads as unconditional
+// (issue #317).
+test("the required-check bullets sit under the pull request condition", () => {
+  const lines = reviewerRulesOf(reviewerPrompt("review the change")).split("\n");
+  const group = requiredCheckGroup(lines);
+  expect(group).not.toBeNull();
+  const later = lines.slice(group.start + 1).filter((text) => /^\s*- /.test(text));
+  expect(later.length).toBeGreaterThan(0);
+  for (const text of later) {
+    expect(text).toMatch(/^ {2,}- /);
+  }
+});
+
+// Usefulness: verifies only the required-check rule mentions a pull request, so
+// a standalone scoping bullet cannot read as limiting the guard rules that
+// follow it (issue #313, issue #317).
+test("only the required-check rule mentions a pull request", () => {
+  const rules = reviewerRulesOf(reviewerPrompt("review the change"));
+  expect(prBulletsOutsideGroup(rules)).toEqual([]);
+});
+
+// Usefulness: verifies the pull request scoping check catches a scoping bullet
+// placed after the required-check group, which the earlier check accepted
+// because every bullet sat at or after the gh pr checks bullet (issue #317).
+test("the pull request scoping check catches a scoping bullet after the group", () => {
+  const rules = reviewerRulesOf(reviewerPrompt("review the change"));
+  expect(
+    prBulletsOutsideGroup(`${rules}\n- Read the merge box on a PR before the review.`),
+  ).toHaveLength(1);
+});
+
+// Usefulness: verifies the pull request scoping check matches `pr` in any
+// spelling, which the earlier check missed because it was case-sensitive
+// (issue #317).
+test("the pull request scoping check catches a lowercase pr bullet", () => {
+  const rules = reviewerRulesOf(reviewerPrompt("review the change"));
+  expect(prBulletsOutsideGroup(`${rules}\n- Name the pr branch in the report.`)).toHaveLength(1);
 });
 
 // Usefulness: verifies a read pass is reported as covering only the listed
