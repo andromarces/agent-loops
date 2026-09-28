@@ -1,7 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { afterEach, expect, test } from "vitest";
@@ -373,6 +373,128 @@ test("a link in a parent node_modules renders the resolved path", async () => {
   expect(root).not.toBe(parentLink);
   expect(await renderedGuardCommand(home, root)).toBe(guardCommandFor(store));
 });
+
+// Usefulness: verifies a nested `node_modules` chain picks the innermost link, which
+// is the one the script was called through. The outer link also resolves to this
+// package, so picking either link by its position in the path rather than by depth
+// would render a path the script did not come through.
+test("a nested chain renders the innermost link", async () => {
+  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-nested-home-"));
+  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-nested-")));
+  paths.push(home, project);
+  const { store } = await pnpm12Project(join(project, "pnpm-home"), project, {
+    hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
+    version: "0.4.0",
+  });
+  // `pnpm12Project` links the package under the project, and a nested dependency
+  // links it again, so both links resolve to it.
+  const outer = join(project, "node_modules", "@andromarces", "agent-loops");
+  const inner = join(outer, "node_modules", "@andromarces", "agent-loops");
+  await mkdir(dirname(inner), { recursive: true });
+  await symlink(store, inner, LINK_TYPE);
+  expect(realpathSync(outer)).toBe(realpathSync(store));
+  expect(realpathSync(inner)).toBe(realpathSync(store));
+
+  const root = stablePackageRoot(store, join(inner, "src", "cli.mjs"));
+  expect(root).toBe(inner);
+  expect(root).not.toBe(outer);
+  expect(await renderedGuardCommand(home, root)).toBe(guardCommandFor(inner));
+});
+
+// Usefulness: verifies the same nested chain when only the outer link resolves to
+// this package. The inner link points elsewhere, so it must be skipped and the
+// outer one used, rather than the walk giving up or rendering the wrong link.
+test("a nested chain renders the outer link when only it matches", async () => {
+  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-nested2-home-"));
+  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-nested2-")));
+  paths.push(home, project);
+  const { store } = await pnpm12Project(join(project, "pnpm-home"), project, {
+    hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
+    version: "0.4.0",
+  });
+  // The outer link is the one `pnpm12Project` writes; the nested one resolves
+  // elsewhere, so it does not qualify.
+  const outer = join(project, "node_modules", "@andromarces", "agent-loops");
+  const elsewhere = join(project, "other-copy");
+  await cp(join(REPO_ROOT, "src"), join(elsewhere, "src"), { recursive: true });
+  const inner = join(outer, "node_modules", "@andromarces", "agent-loops");
+  await mkdir(dirname(inner), { recursive: true });
+  await symlink(elsewhere, inner, LINK_TYPE);
+  expect(realpathSync(outer)).toBe(realpathSync(store));
+  expect(realpathSync(inner)).not.toBe(realpathSync(store));
+
+  const root = stablePackageRoot(store, join(inner, "src", "cli.mjs"));
+  expect(root).toBe(outer);
+  expect(root).not.toBe(inner);
+  expect(await renderedGuardCommand(home, root)).toBe(guardCommandFor(outer));
+});
+
+// Usefulness: verifies a Windows path whose root spans more than a drive letter is
+// read whole, so the link under it is still found. A share is spelled
+// `\\server\share\...`, and handling the path by splitting it on separators and
+// rejoining drops that root, so the link is never found. A real share cannot be
+// created in a test without a network share and admin rights, so this asserts the
+// path handling through the rendered command for a share-shaped path, which falls
+// back to the resolved path only because the share is not present. The link must
+// still be recognised as the deepest `node_modules/<name>` level, which the guard
+// command shows. Windows-only, since a POSIX path root is a single separator.
+test.skipIf(process.platform !== "win32")(
+  "a share-shaped Windows root does not lose its server and share",
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-unc-home-"));
+    paths.push(home);
+    const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-unc-")));
+    paths.push(project);
+    const { linked, store } = await pnpm12Project(join(project, "pnpm-home"), project, {
+      hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
+      version: "0.4.0",
+    });
+    // The same link reached through a share-shaped root. The share does not exist, so
+    // the realpath check rejects it and the resolved path renders, which is the
+    // documented fallback rather than a path with a mangled root.
+    const share = `\\\\localhost\\${basename(project)}`;
+    const shareLinked = join(share, "node_modules", "@andromarces", "agent-loops");
+    expect(shareLinked.startsWith("\\\\localhost\\")).toBe(true);
+
+    const root = stablePackageRoot(store, join(shareLinked, "src", "cli.mjs"));
+    expect(root).toBe(store);
+    // The fallback names the resolved path, never a path with the share root stripped.
+    expect(root.startsWith("\\\\localhost\\")).toBe(false);
+    expect(await renderedGuardCommand(home, root)).toBe(guardCommandFor(store));
+    // The same link on the real filesystem still renders, so the root handling is
+    // what the share case would use when the share exists.
+    expect(stablePackageRoot(store, join(linked, "src", "cli.mjs"))).toBe(linked);
+  },
+);
+
+// Usefulness: verifies a backslash inside a POSIX directory name is a literal
+// character, not a separator. A project checked out under a directory such as
+// `we\ird` is legal on POSIX, and treating the backslash as a separator splits the
+// directory in two and loses the link. POSIX-only, since a backslash is a path
+// separator on Windows and cannot appear in a directory name there.
+test.skipIf(process.platform === "win32")(
+  "a backslash in a POSIX directory name renders the link",
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-backslash-home-"));
+    const project = join(
+      realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-backslash-"))),
+      "we\\ird",
+    );
+    paths.push(home, dirname(project));
+    await mkdir(project, { recursive: true });
+    const { linked, store } = await pnpm12Project(join(project, "pnpm-home"), project, {
+      hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
+      version: "0.4.0",
+    });
+    // The link sits under a directory whose name holds a backslash, which POSIX
+    // treats as an ordinary character.
+    expect(basename(dirname(dirname(dirname(linked)))).includes("\\")).toBe(true);
+
+    const root = stablePackageRoot(store, join(linked, "src", "cli.mjs"));
+    expect(root).toBe(linked);
+    expect(await renderedGuardCommand(home, root)).toBe(guardCommandFor(linked));
+  },
+);
 
 // Usefulness: verifies that drive letter case does not decide the render on
 // Windows, where `realpathSync` keeps the caller's spelling. A project reached

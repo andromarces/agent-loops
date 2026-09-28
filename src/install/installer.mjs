@@ -11,7 +11,7 @@
 // the manifest cannot drop a record (#193).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { basename, delimiter, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
 import { logWarn } from "../lib/log.mjs";
 import { withStateLock } from "../lib/runstate.mjs";
 import {
@@ -86,6 +86,7 @@ export function isEphemeralPackageRoot(packageRoot) {
 // shim calls names the project link (#311).
 const VIRTUAL_STORE_DIR = ".pnpm";
 const VIRTUAL_STORE_LINKS_DIR = "links";
+const VIRTUAL_STORE_MODULES_DIR = "node_modules";
 
 /**
  * The symlink in `dir` that resolves to `target`, or `null`. pnpm 12 keeps one
@@ -163,46 +164,67 @@ function isVirtualStoreLinkEntry(hashDir) {
 }
 
 /**
- * The longest prefix of `scriptPath` that ends in `node_modules/<name>`, or `null`.
- * A pnpm bin shim calls the package through that link, so the prefix is read from
- * the unresolved path alone: a nested dependency names its own, and no other
- * directory is consulted, so an unrelated project's link can never be selected.
+ * The package name as the segments `basename` produces, so a scoped name such as
+ * `@scope/name` counts as two. The name is a relative fragment, so it is peeled one
+ * `basename` at a time until nothing is left rather than walked with `dirname`,
+ * which would report `.` forever.
  */
-function invocationLink(scriptPath, name) {
-  const segments = resolve(scriptPath).split(/[\\/]+/);
-  const nameSegments = name.split(/[\\/]+/);
-  // The first match is the longest prefix, since a later `node_modules` sits deeper
-  // in the path.
-  for (let i = 0; i + 1 + nameSegments.length <= segments.length; i++) {
-    if (
-      segments[i] === "node_modules" &&
-      nameSegments.every((part, k) => segments[i + 1 + k] === part)
-    ) {
-      return segments.slice(0, i + 1 + nameSegments.length).join(sep);
+function nameSegments(name) {
+  const parts = [];
+  for (let rest = name; rest && rest !== "."; rest = dirname(rest)) {
+    parts.unshift(basename(rest));
+    if (basename(rest) === rest) {
+      break;
     }
   }
-  return null;
+  return parts;
+}
+
+/**
+ * True when `dir` ends in `node_modules/<parts>`, walking up one `basename` per
+ * part so a scoped name and the `node_modules` level are both matched by segment.
+ */
+function isNodeModulesLink(dir, parts) {
+  let cursor = dir;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (basename(cursor) !== parts[i]) {
+      return false;
+    }
+    cursor = dirname(cursor);
+  }
+  return basename(cursor) === VIRTUAL_STORE_MODULES_DIR;
 }
 
 /**
  * The `<project>/node_modules/<name>` link the invocation path names, or `null`.
- * The link is that path's own prefix, and it counts only when it resolves to this
- * same package: a link that points elsewhere, and an invocation path that names no
- * such prefix, both yield nothing so the caller falls back to the resolved package
- * root.
+ *
+ * The walk uses the platform `path` functions, so it stops at the root `parse`
+ * reports and a Windows UNC root, a Windows drive letter, and a backslash inside a
+ * POSIX directory name are all handled by the platform rather than by string
+ * handling here. The deepest directory that ends in `node_modules/<name>` and
+ * resolves to this same package wins, since a nested dependency is reached through
+ * the innermost link. A path naming no such link, or naming only links that resolve
+ * elsewhere, yields nothing so the caller falls back to the resolved package root.
  */
 function projectLinkFor(scriptPath, packageRoot, name) {
   if (typeof scriptPath !== "string" || scriptPath === "") {
     return null;
   }
-  const candidate = invocationLink(scriptPath, name);
-  if (!candidate || samePath(candidate, packageRoot)) {
-    return null;
+  const parts = nameSegments(name);
+  const { root } = parse(resolve(scriptPath));
+  for (let dir = dirname(resolve(scriptPath)); ; dir = dirname(dir)) {
+    if (isNodeModulesLink(dir, parts) && !samePath(dir, packageRoot)) {
+      const linked = linkResolvingTo(dir, packageRoot);
+      if (linked) {
+        // Normalized so the rendered path does not depend on the drive letter case
+        // the caller happened to use to reach the project.
+        return normalizeDrive(linked);
+      }
+    }
+    if (dir === root) {
+      return null;
+    }
   }
-  const linked = linkResolvingTo(candidate, packageRoot);
-  // Normalized so the rendered path does not depend on the drive letter case the
-  // caller happened to use to reach the project.
-  return linked ? normalizeDrive(linked) : null;
 }
 
 /**
