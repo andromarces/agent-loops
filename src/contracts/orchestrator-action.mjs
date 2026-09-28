@@ -65,11 +65,13 @@ export function validateAction(value) {
       // envelope and state file. The omission needs the PR head to detect.
       // `--require-ci <pr>` is the PR input on both paths, and both refuse a
       // finish that sets this field because the gate resolves the compare, so a
-      // gated run has nothing left to misreport (#293). A run without the gate
-      // keeps the gap: the headless loop holds the task text only, and the
-      // interactive subcommand gates on the state file. Ceiling: one finish that
-      // claims a compare nothing verified, per ungated run. Upgrade path: require
-      // a PR input on every run.
+      // gated run has nothing left to misreport (#293). `--pr <pr>` declares the
+      // run PR work, so such a run must carry the gate for the same PR: a finish
+      // with no gate, or with a gate for another PR, is refused, and a finish
+      // that sets this field is refused with it (#302). A run that declares
+      // neither keeps the gap: the headless loop holds the task text only, and
+      // the interactive subcommand gates on the state file. Ceiling: one finish
+      // that claims a compare nothing verified, per run that declares no PR.
       if (value.unresolvedCompare !== undefined) {
         if (typeof value.unresolvedCompare !== "boolean") {
           return { ok: false, error: "finish unresolvedCompare must be a boolean." };

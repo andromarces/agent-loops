@@ -1938,7 +1938,251 @@ test("a pending-check refusal is cleared by the reviewer turn its prompt names",
   }
 });
 
-// 52. Usefulness: verifies the `gh`-failure prompt does not tell the
+// 52. Usefulness: verifies a run that declares a PR refuses a finish with no
+// `--require-ci` gate, so a declared PR run cannot finish through a field the
+// parent set. A run without the declaration keeps the marker-only gap (#302).
+test("a run that declares a PR refuses a finish with no --require-ci gate", async () => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+
+    const result = await runLoop({
+      task: "PR work: address issue 52 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("declares PR 42");
+    expect(result.reason).toContain("--require-ci 42");
+    expect(events.some((e) => e.type === "unresolved-compare")).toBe(false);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 53. Usefulness: verifies the same declaration refuses a finish that records the
+// unresolved compare, because the gate is what the declaration requires. A
+// recorded marker on a declared PR run would read as an accepted gap, so the
+// finish is refused instead (#302).
+test("a run that declares a PR refuses a finish that carries unresolvedCompare", async () => {
+  const repo = await createTempRepo();
+  try {
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+    const events = [];
+
+    const result = await runLoop({
+      task: "PR work: address issue 53 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("declares PR 42");
+    expect(events.some((e) => e.type === "unresolved-compare")).toBe(false);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 54. Usefulness: verifies the new refusal is reported with the existing refusals
+// in their existing order, because the run grants one corrective turn and a
+// prompt naming only the declaration would spend it on the gate condition that
+// the next refusal names instead (#302).
+test("the missing-gate refusal is reported with the other refusals in order", async () => {
+  const repo = await createTempRepo();
+  try {
+    const result = await runLoop({
+      task: "PR work: address issue 54 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("declares PR 42");
+    expect(result.reason).toContain("no reviewer report on the state");
+    // The declaration reads as the PR-gate condition, so it sits where the gate
+    // sits: after the completion rule.
+    expect(result.reason.indexOf("no reviewer report")).toBeLessThan(
+      result.reason.indexOf("declares PR 42"),
+    );
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 55. Usefulness: verifies a run that declares a PR and also carries the gate
+// behaves exactly as a gated run does today, so the declaration adds no second
+// enforcement path and no new refusal (#302).
+test("a declared PR with a matching gate runs the gate and nothing else", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const result = await runLoop({
+      task: "PR work: address issue 55 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      gh: ciGateGh(head),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toEqual(SUMMARY);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 56. Usefulness: verifies a run that declares PR 42 and gates a different PR is
+// refused, so the gate cannot read one pull request while the run declares
+// another (#302).
+test("a run that declares a PR refuses a gate for a different PR", async () => {
+  const repo = await createTempRepo();
+  try {
+    const calls = [];
+
+    const result = await runLoop({
+      task: "PR work: address issue 56 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 7,
+      gh: ciGateGh((await snapshot(repo)).head, calls),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("declares PR 42");
+    // The gate is never read, so a wrong PR never costs a GitHub call.
+    expect(calls).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 57. Usefulness: verifies the missing-gate prompt tells the orchestrator what
+// the run needs, because no turn in the run can add a flag. A prompt that only
+// said "finish again" would end the run on exit 1 with no recovery named (#302).
+test("the missing-gate refusal prompt names the gate the run needs", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orch = scripted([
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "abort", reason: "no gate" }),
+    ]);
+
+    await runLoop({
+      task: "PR work: address issue 57 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      roles: gateRoles(),
+      agents: { orch, work: scripted([]), rev: scripted([]) },
+    });
+
+    const prompt = orch.recorded[1].prompt;
+    expect(prompt).toContain("--require-ci 42");
+    expect(prompt).toContain("abort");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 58. Usefulness: verifies a run that declares no PR keeps the marker-only
+// behavior it has today, so the new declaration changes nothing for an ungated
+// run that is not PR work (#302).
+test("a run that declares no PR still records a marked finish", async () => {
+  const repo = await createTempRepo();
+  try {
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task 58",
+      cwd: repo,
+      maxSteps: 5,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([JSON.stringify({ action: "finish", summary, unresolvedCompare: true })]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.unresolvedCompare).toBe(true);
+    expect(events.some((e) => e.type === "refusal")).toBe(false);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 59. Usefulness: verifies the `gh`-failure prompt does not tell the
 // orchestrator it is out of attempts, and names a reviewer turn as the retry.
 // Any child turn clears the prior-refusal flag, so the run keeps its corrective
 // turn while step budget remains (#293).

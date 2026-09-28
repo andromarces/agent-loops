@@ -187,6 +187,18 @@ test("--require-ci takes a positive integer PR number", () => {
   }
 });
 
+// Usefulness: verifies the run PR declaration takes a positive integer PR
+// number, defaults to absent, and rejects a value that is not a positive integer,
+// so a run cannot declare a PR the gate could not read (issue #302).
+test("--pr declares the run PR and takes a positive integer", () => {
+  expect(parseArgs(BASE).pr).toBeNull();
+  expect(parseArgs([...BASE, "--pr", "42"]).pr).toBe(42);
+  expect(parseArgs([...BASE, "--pr=7"]).pr).toBe(7);
+  for (const bad of ["0", "abc"]) {
+    expect(() => parseArgs([...BASE, "--pr", bad])).toThrow("--pr must be a positive integer.");
+  }
+});
+
 // Usefulness: verifies readValue guards against missing value or value starting with -.
 test("readValue guards against missing or flag-like values", () => {
   expect(() => parseArgs(["--orchestrator", "--worker"])).toThrow(

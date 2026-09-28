@@ -31,7 +31,7 @@ import {
   writeState,
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
-import { runChild, UNRESOLVED_COMPARE_WITH_CI } from "./runtime.mjs";
+import { missingGateRefusal, runChild, UNRESOLVED_COMPARE_WITH_CI } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
 const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
@@ -41,7 +41,7 @@ const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
 class RoleError extends Error {}
 
-const INIT_FIELDS = ["task", "mode", "parentSession", "maxSteps", "timeout"];
+const INIT_FIELDS = ["task", "mode", "parentSession", "maxSteps", "timeout", "pr"];
 
 /**
  * Parses `agent-loop role [dispatch|finish|abort] [flags]`. Reuses the flag
@@ -71,6 +71,7 @@ export function parseRoleArgs(argv) {
     reason: null,
     requireAccept: false,
     requireCi: null,
+    pr: null,
     verbose: false,
     timeoutProvided: false,
   };
@@ -154,6 +155,10 @@ export function parseRoleArgs(argv) {
 
       case "--require-ci":
         args.requireCi = readPositiveInt(arg, readInline(arg));
+        break;
+
+      case "--pr":
+        args.pr = readPositiveInt(arg, readInline(arg));
         break;
 
       case "--reason":
@@ -240,6 +245,14 @@ function validateInitFlags(args, agents = {}) {
       "Init requires --parent-session (the harness session id the parent-edit guard matches).",
     );
   }
+  // review-only dispatches no worker and rejects --require-ci at finish, so a
+  // declared PR there could never be gated. The run would refuse every finish, so
+  // the declaration is refused at init instead (#302).
+  if (args.pr !== null && (args.mode ?? "work-first") === "review-only") {
+    throw new RoleError(
+      "--pr declares PR work, which needs the --require-ci gate; review-only rejects that gate.",
+    );
+  }
   // review-only never dispatches the worker, so --worker is optional there.
   const requiredRoles =
     (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : CHILD_ROLE_KINDS;
@@ -277,6 +290,7 @@ function initialState(args) {
     timeout: args.timeoutProvided ? args.timeout : DEFAULT_TIMEOUT,
     stepsUsed: 0,
     lifecycle: "active",
+    pr: args.pr,
     roles: {
       worker: roleState(args, "worker"),
       reviewer: roleState(args, "reviewer"),
@@ -629,7 +643,9 @@ function dispatchPayload(roleName, result) {
  * file then carry, so the finish stays distinct from a verified one (#281). An
  * omitted marker is that same accepted gap the contract documents beside the
  * field, because this subcommand without `--require-ci` never resolves the PR
- * head (#286). The headless loop resolves it under the same flag (#293).
+ * head (#286). The headless loop resolves it under the same flag (#293). A run
+ * that declared `--pr <pr>` at init must end through the `--require-ci <pr>`
+ * gate: a finish with no gate, or with a gate for another PR, is refused (#302).
  */
 async function finish(args, { stdin = readStdin, gh } = {}) {
   if (args.role !== null) {
@@ -682,6 +698,17 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
       if (reason) {
         throw new RoleError(`Finish refused: ${reason}.`);
       }
+    }
+    // The init-time `--pr` declaration is the run's PR input, so a declared run
+    // can only end through the gate for that PR. It is checked in the gate
+    // position, after the marker and the completion rule, which is the order the
+    // headless refusal list uses. A state file written before this field has no
+    // `pr`, so an absent declaration keeps the marker-only behavior (#302).
+    const declaredPr = state.pr ?? null;
+    if (declaredPr !== null && args.requireCi !== declaredPr) {
+      throw new RoleError(
+        `Finish refused: ${missingGateRefusal(declaredPr, args.requireCi).reason}.`,
+      );
     }
     if (args.requireCi !== null) {
       const gate = await checkCi({

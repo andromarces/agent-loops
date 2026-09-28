@@ -139,6 +139,14 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * a reviewer turn establishes. Without the flag the marker stays the only trace,
  * and an omitted marker still reads as a verified finish (#286).
  *
+ * With `pr`, the run declares that its work is delivered on that pull request,
+ * so a finish must end through the `requireCi` gate for the same PR. A missing
+ * gate, or a gate naming another PR, refuses the finish and reads as a PR-gate
+ * condition, so it is reported with the other refusals in the same order. The
+ * gate flag is a run input, so no child turn satisfies that refusal and its
+ * recovery names `abort` as the outcome the orchestrator owns. A run with
+ * neither `pr` nor `requireCi` behaves exactly as before (#302).
+ *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
  * a Checks line, and with no worker turn it needs at least one reviewer report.
@@ -159,6 +167,7 @@ export async function runLoop(options) {
     roles,
     agents = defaultAgents,
     requireAccept = false,
+    pr = null,
     requireCi = null,
     gh,
     onEvent = () => {},
@@ -202,6 +211,7 @@ export async function runLoop(options) {
     task,
     maxSteps,
     requireAccept,
+    pr,
     requireCi,
     orchestratorKind: orchestrator?.kind ?? null,
     reviewerKind: reviewer?.kind ?? null,
@@ -233,7 +243,8 @@ export async function runLoop(options) {
       // that turn on a condition the next refusal names instead, which is how a
       // prompt that says "finish again" becomes an exit 1 (#293). The order
       // matches the interactive `role finish`: the marker combination, the
-      // completion rule, then the PR gate.
+      // completion rule, then the PR gate. The `--pr` declaration is the PR
+      // input, so its refusal sits where the gate sits (#302).
       const refusals = [];
       // The marker is satisfied by editing the finish action itself, so it is the
       // one refusal that a re-finish can satisfy without a child turn. Every other
@@ -257,7 +268,15 @@ export async function runLoop(options) {
           } on that state, then finish.`,
         });
       }
-      if (requireCi !== null) {
+      // The `--pr` declaration is the run's PR input, so the gate is the only
+      // way such a run ends. A declaration with no gate, or with a gate for
+      // another PR, refuses the finish: the flag cannot arrive mid-run, so no
+      // child turn satisfies it and the run ends on the refusal (#302).
+      const declaredGateMissing = pr !== null && requireCi !== pr;
+      if (declaredGateMissing) {
+        refusals.push(missingGateRefusal(pr, requireCi));
+      }
+      if (requireCi !== null && !declaredGateMissing) {
         // The gate resolves the PR head in the runtime, which is what the parent
         // can no longer misreport. Its own failure is a refusal rather than a
         // thrown error, so a `gh` failure does not discard a run that a later
@@ -302,10 +321,14 @@ export async function runLoop(options) {
       // Two distinct things are described here and need distinct words: any child
       // turn clears the prior-refusal flag, which is not the same as satisfying
       // the condition that refused. The ending states the flag rule, and each
-      // recovery states what satisfies its own condition (#293).
-      const ending = needsChildTurn
-        ? " Any child turn clears the prior-refusal flag, so a later refusal still gets a turn while step budget remains, and that turn costs a step. The run ends on a second refusal with no child turn in between, or when no step budget is left."
-        : " Re-finish without the marker; that needs no child turn. If the re-finish is refused again anyway, the run ends, because nothing cleared the prior-refusal flag in between.";
+      // recovery states what satisfies its own condition (#293). The missing gate
+      // needs its own ending, because a child turn cannot clear it and the
+      // marker wording would name a condition the finish does not carry (#302).
+      const ending = declaredGateMissing
+        ? " No child turn clears the missing gate, so this refusal ends the run: a re-finish repeats it, and the run ends on exit 1. Abort with the missing gate named in the reason, or report to the caller that the run needs the gate."
+        : needsChildTurn
+          ? " Any child turn clears the prior-refusal flag, so a later refusal still gets a turn while step budget remains, and that turn costs a step. The run ends on a second refusal with no child turn in between, or when no step budget is left."
+          : " Re-finish without the marker; that needs no child turn. If the re-finish is refused again anyway, the run ends, because nothing cleared the prior-refusal flag in between.";
       prompt = refusalPrompt(
         `Finish refused: ${reason}. ${refusals.map((entry) => entry.recovery).join(" ")}${ending}`,
       );
@@ -359,6 +382,26 @@ export async function runLoop(options) {
  */
 export const UNRESOLVED_COMPARE_WITH_CI =
   "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved";
+
+/**
+ * The refusal a `--pr <pr>` declaration gives when the run carries no gate for
+ * that PR, whether the gate is absent or names another pull request. A gate flag
+ * is a run input, so no turn in the run can supply it and the refusal ends the
+ * run; the recovery names `abort` as the only outcome the orchestrator owns.
+ * @param {number} pr the declared PR
+ * @param {number | null} requireCi the gate PR, or null when no gate was passed
+ * @returns {{ reason: string, recovery: string }}
+ */
+export function missingGateRefusal(pr, requireCi) {
+  const state =
+    requireCi === null
+      ? "this run carries no --require-ci gate"
+      : `this run gates PR ${requireCi} instead`;
+  return {
+    reason: `this run declares PR ${pr}, so a finish must end through the --require-ci ${pr} gate, and ${state}`,
+    recovery: `The gate flag is a run input, so no worker or reviewer turn can supply it, and a re-finish repeats this refusal. The only outcome you own is abort with the reason naming the missing --require-ci ${pr} gate, because this run cannot end through finish. The finish carries no unresolvedCompare marker either way, because the gate resolves that PR head.`,
+  };
+}
 
 /**
  * The reason `--require-ci` refuses a finish, or null when the gate allows it.

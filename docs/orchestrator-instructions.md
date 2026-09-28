@@ -308,7 +308,9 @@ own action order; its prompt states the completion rule and the `review-only`
 mapping instead, and `agent-loop --require-accept` enforces that rule. The
 headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
-PR gate headlessly, so the runtime resolves the PR head there too (#293). A
+PR gate headlessly, so the runtime resolves the PR head there too (#293), and
+`--pr <pr>` on either path declares the run PR work, so that run can only end
+through the gate for the same PR (#302). A
 headless gate refusal is satisfied by a reviewer turn, and the run ends on exit 1
 when a finish is refused again with no child turn in between, so budget
 `--max-steps` for a required check that is still pending. The gate reads the
@@ -386,6 +388,31 @@ both paths, because it resolves the head in the runtime: `agent-loop role finish
 (issue #286, accepted gap; #293). A run with no usable gate, for example one
 that cannot read the required checks, keeps the marker as its only trace.
 
+## Declaring a PR run
+
+`--pr <pr>` on the init call declares that this run's work is delivered on that
+pull request. The declaration is the run's PR input, so such a run can only end
+through the gate: `agent-loop role finish --require-ci <pr>` here, and
+`agent-loop --require-ci <pr>` in the headless loop, with the same PR number.
+
+- A `finish` with no `--require-ci` is refused, and a `finish` whose
+  `--require-ci` names another PR is refused without reading GitHub.
+- A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
+  resolves that compare. The recorded marker is the accepted gap above, and a
+  declared run does not have it.
+- The gate flag is a run input, so no `dispatch` supplies it and a repeat
+  `finish` is refused the same way. A declared run with no gate can only end
+  through `abort` with the missing gate named in the reason.
+- `--pr` is an init field, so a later call that changes it is refused like any
+  other init field. A state file written before this field has no `pr`, and that
+  run keeps the marker-only behavior.
+- `review-only` refuses `--pr` at init, because that mode rejects `--require-ci`
+  at finish and the run would refuse every finish.
+
+A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
+an omitted marker still reads as a verified finish. The declaration closes the
+gap for a run that states its PR (issue #302).
+
 A marked `role finish` still exits `0`, unlike the headless finish that exits
 `4` for the same marker. The exit code is not the outcome channel of this
 subcommand: `abort` exits `0` too, and the parent guard reads the state
@@ -396,9 +423,9 @@ names the conditions that failed, in the order the marker combination, then
 `--require-accept`, then `--require-ci`. The run ends when two refusals land with
 no child turn between them, so every condition is reported in one refusal. The
 marker is satisfied on a re-finish, with no child turn; every other condition
-needs a child turn to satisfy it, which costs a step. In `review-only`, a
-`finish` without them keeps the current behavior, and each flag fails with a
-clear error.
+needs a child turn to satisfy it, which costs a step, except the missing gate of
+a declared PR run, which no child turn can supply. In `review-only`, a `finish`
+without them keeps the current behavior, and each flag fails with a clear error.
 
 - `--require-accept`: refuse unless the latest turn is a reviewer accept with a
   `Checks` line, the reviewed snapshot is exact, and the current snapshot is

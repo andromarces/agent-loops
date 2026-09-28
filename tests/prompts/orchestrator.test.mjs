@@ -192,6 +192,16 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
   );
 });
 
+// Usefulness: verifies the headless prompt states the run PR declaration, so the
+// orchestrator knows the finish must end through the gate and carries no marker,
+// and the prompt is unchanged without the declaration (issue #302).
+test("initialPrompt states the --pr declaration when enabled", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10, pr: 42 });
+  expect(prompt).toContain("--pr 42");
+  expect(prompt).toContain("--require-ci 42");
+  expect(initialPrompt({ task: "T", maxSteps: 10 })).not.toContain("--pr");
+});
+
 // Usefulness: verifies the rule is keyed on the CLI of the role that reads the
 // checks, because the orchestrator and reviewer CLIs are chosen independently,
 // so a mixed run is never told that no turn can read them (issue #319).
