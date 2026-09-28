@@ -54,15 +54,20 @@ test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
 // The reviewer-Checks gate rule, asserted as meaning and not as a sentence. The
 // two sides are read separately: some sentence must give the reviewer Checks
 // line the gate-input role, and no sentence may give a worker Checks line that
-// role or an accept. Each side is read from the clause that starts at the label
-// it names, so a denial for the other label cannot satisfy it, a rule that
-// inverts the two sides fails, and a reword that keeps both sides passes
-// (issue #318).
+// role or an accept. A role word counts as denied only when the worker clause
+// itself denies it, so a denial for another role or for the reviewer side cannot
+// carry a worker grant through (issue #318).
+// known-limit: the rule is read from the words gate input and accept near not,
+// never, or no, so a grant phrased with other words, for example `a worker
+// Checks line gates the finish`, is not detected.
 const REVIEWER_CHECKS = /reviewer'?s? checks line/i;
 const WORKER_CHECKS = /worker'?s? checks line/i;
 const GATE_INPUT = /\bgate input\b/i;
 const ACCEPT = /\baccept(?:s|ed)?\b/i;
 const DENIAL = /\b(?:not|never|no)\b/i;
+
+// How far before a role word a denial in the same clause still denies it.
+const DENIAL_WINDOW = 24;
 
 /**
  * The clause of `sentence` that starts at its first `label` mention, or null
@@ -77,15 +82,19 @@ function clauseFor(sentence, label) {
 }
 
 /**
- * True when `clause` gives the Checks line the role `role` instead of denying
- * it, so a denial after the role word does not count.
+ * True when `clause` gives the Checks line the role `role`, which is a denial
+ * inside the clause within `DENIAL_WINDOW` characters before the role word.
  * @param {string} clause
  * @param {RegExp} role
  * @returns {boolean}
  */
-function claimsRole(clause, role) {
+function grantsRole(clause, role) {
   const match = clause.match(role);
-  return match !== null && !DENIAL.test(clause.slice(0, match.index));
+  if (!match) {
+    return false;
+  }
+  const before = clause.slice(Math.max(0, match.index - DENIAL_WINDOW), match.index);
+  return !DENIAL.test(before);
 }
 
 /** Splits a text into sentences, so each rule is read where it is stated. */
@@ -93,8 +102,11 @@ function sentences(text) {
   return text.split(/(?<=[.!?])\s+/).filter((sentence) => /\S/.test(sentence));
 }
 
-/** Asserts the text gives the reviewer Checks line the gate input and no
- * sentence gives a worker Checks line the gate input or an accept. */
+/**
+ * Asserts the text gives the reviewer Checks line the gate input, and that every
+ * sentence naming a worker Checks line denies the gate input or an accept in its
+ * own worker clause.
+ */
 function expectReviewerGateRule(text) {
   const parts = sentences(text);
   const reviewerClauses = parts.map((part) => clauseFor(part, REVIEWER_CHECKS)).filter(Boolean);
@@ -103,14 +115,18 @@ function expectReviewerGateRule(text) {
     "a sentence gives the reviewer Checks line the gate input",
   ).not.toHaveLength(0);
   expect(
-    reviewerClauses.some((clause) => claimsRole(clause, GATE_INPUT)),
+    reviewerClauses.some((clause) => grantsRole(clause, GATE_INPUT)),
     "the reviewer Checks line is denied the gate input, or no sentence gives it that role",
   ).toBe(true);
   for (const clause of parts.map((part) => clauseFor(part, WORKER_CHECKS)).filter(Boolean)) {
-    expect(claimsRole(clause, GATE_INPUT), `a worker Checks line is a gate input: ${clause}`).toBe(
+    expect(
+      DENIAL.test(clause),
+      `a worker Checks line clause grants without denying: ${clause}`,
+    ).toBe(true);
+    expect(grantsRole(clause, GATE_INPUT), `a worker Checks line is a gate input: ${clause}`).toBe(
       false,
     );
-    expect(claimsRole(clause, ACCEPT), `a worker Checks line is an accept: ${clause}`).toBe(false);
+    expect(grantsRole(clause, ACCEPT), `a worker Checks line is an accept: ${clause}`).toBe(false);
   }
 }
 
