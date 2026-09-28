@@ -400,9 +400,11 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
 - A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
   resolves that compare. The recorded marker is the accepted gap above, and a
   declared run does not have it. What the marker breaks depends on the gate. With
-  a matching `--require-ci <pr>`, the marker is the only broken condition, and
-  removing it from the `finish` recovers the finish. With no matching gate, the
-  marker and the missing gate are both broken and one refusal names both.
+  a matching `--require-ci <pr>`, the marker is one broken condition among the
+  gate's own, so removing it is necessary and not sufficient: fix whatever else
+  the refusal names. With no matching gate, the runtime reads no gate, so the
+  finish is refused for the declaration alone and one refusal names the marker and
+  the missing gate together.
 - The gate flag is a run input, so no `dispatch` supplies it and a repeat
   `finish` is refused the same way. A declared run with no gate can only end
   through `abort` with the missing gate named in the reason.

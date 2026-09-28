@@ -56,12 +56,14 @@ refusal.
    parent learns every condition from one call. An undeclared run keeps the error
    text it had before, so the collect-then-report rule changes only the runs that
    declare a PR.
-5. What the marker refusal says depends on the gate. With a matching
-   `--require-ci <pr>` the marker is the only broken condition, so the prompt and
-   the recovery name only the marker and a re-finish recovers the finish. With no
-   matching gate the marker and the missing gate are both broken, so both are
-   named and the recovery is `abort`. One wording for both would tell a run that
-   can finish to give up.
+5. The prompt states the rule, not an exhaustive list of outcomes, because the
+   runtime applies conditions the prompt does not enumerate. With a matching
+   `--require-ci <pr>` the gate's own conditions still refuse a finish, so the
+   prompt may not call the marker the only broken condition. With no matching
+   gate the runtime reads no gate at all, so the prompt says that instead: the
+   finish is refused for the declaration alone, with no gate condition evaluated,
+   and `abort` is the outcome the orchestrator owns. One wording for both cases
+   would describe a gate the runtime never evaluates.
 6. The `--require-ci` gate runs only when nothing above it refused on the
    interactive path, so a refused `finish` never reads GitHub. The headless loop
    evaluates every gate it owns, as it did before, because it can report all of
@@ -83,7 +85,9 @@ refusal.
     finish that omits the marker still reads as a verified one.
 11. The headless orchestrator prompt states the declaration and the gate it
     requires, so the orchestrator knows a declared run cannot finish without the
-    gate and cannot record the marker.
+    gate and cannot record the marker. It states the rule rather than an
+    exhaustive list of outcomes, so a future gate condition does not make the
+    prompt wrong.
 
 ## Consequences
 

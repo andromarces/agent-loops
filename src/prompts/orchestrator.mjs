@@ -66,24 +66,20 @@ function prGateLines({ requireCi, orchestratorKind, reviewerKind }) {
 }
 
 /**
- * The `--pr` declaration block: the run takes a PR input, so a finish must end
- * through the gate for that PR. A finish that records the unresolved compare is
- * refused too, because the gate resolves that compare.
- *
- * The two marked-finish cases need different words. When `requireCi` already
- * matches the declaration, the marker is the only broken condition and removing
- * it recovers the finish, so naming a missing gate there would send the run to
- * abort a finish it can reach. When no gate matches, the marker and the missing
- * gate are both broken, one refusal names both, and no turn in the run can supply
- * the flag, so `abort` is the only outcome the orchestrator can reach.
+ * The `--pr` declaration block. It states the rule, not an exhaustive list of
+ * outcomes, because the runtime adds conditions this block does not enumerate: a
+ * matching gate refuses a finish on its own conditions too, for example a
+ * missing reviewed state, so calling the marker the only broken condition would
+ * send the run after the wrong fix. The closing line describes the case the
+ * runtime handles differently, where no gate is read at all.
  */
 function prDeclarationBlock(pr, requireCi) {
   if (pr === null) return "";
-  const declared = `- This run declares PR work on PR ${pr} (--pr ${pr}), so every finish must end through the --require-ci ${pr} gate for that PR, and a finish that records "unresolvedCompare": true is refused, because that gate resolves the compare.`;
+  const rule = `- This run declares PR work on PR ${pr} (--pr ${pr}). A finish must end through the --require-ci ${pr} gate for that PR, so a finish with no such gate, a finish with a gate for another PR, and a finish that records "unresolvedCompare": true are each refused, because that gate resolves the compare and a finish it did not clear never ends the run. One refusal names every condition the finish broke, so read all of it before acting.`;
   if (requireCi === pr) {
-    return `\n${declared} A finish that carries the marker breaks only that condition: remove the marker and finish again, which needs no child turn. This run carries the --require-ci ${pr} gate, so the runtime clears a finish that the gate allows.`;
+    return `\n${rule} This run carries the --require-ci ${pr} gate, so the gate's own conditions apply to every finish as well: the reviewed state, the clean tree, the PR head, and the required checks. Removing the marker is necessary, not sufficient, so fix whatever else the refusal names.`;
   }
-  return `\n${declared} A finish that carries the marker breaks both conditions, and one refusal names both, so remove the marker and note that the gate is still missing. The runtime refuses a finish the gate did not clear, and no turn in this run can add the flag, so this run cannot finish: abort with the missing gate named in the reason.`;
+  return `\n${rule} This run has no --require-ci ${pr} gate, so the runtime never reads a gate for it: a finish is refused for that reason alone, with no gate condition evaluated, whether the marker is set or not. No turn in this run can add the flag, so a re-finish is refused the same way and the only outcome you own is abort with the missing --require-ci ${pr} gate named in the reason.`;
 }
 
 export function initialPrompt({

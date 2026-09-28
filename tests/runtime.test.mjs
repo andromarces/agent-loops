@@ -2156,6 +2156,85 @@ test("a run that declares a PR refuses a gate for a different PR", async () => {
   }
 });
 
+// 57. Usefulness: pins the exact refusal a declared run gives when the gate names
+// another PR, and that the gate for that other PR is never read. A prompt or a
+// consumer that reads the reason as a gate verdict would otherwise expect a gate
+// result the runtime never produced (#302).
+test("a mismatched-gate refusal names the declaration and reads no gate", async () => {
+  const repo = await createTempRepo();
+  try {
+    const calls = [];
+    const result = await runLoop({
+      task: "PR work: address issue 57 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 7,
+      gh: ciGateGh((await snapshot(repo)).head, calls),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toBe(
+      "Finish refused: this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run gates PR 7 instead.",
+    );
+    expect(calls).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 58. Usefulness: pins the exact refusal for a declared run whose gate matches and
+// whose finish breaks the marker condition and a gate condition together. The gate
+// has its own conditions, so the marker is not the only broken one, and a prompt
+// that claimed otherwise would send the run after the wrong fix (#302).
+test("a matching-gate refusal names the marker and the gate condition together", async () => {
+  const repo = await createTempRepo();
+  try {
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+
+    const result = await runLoop({
+      task: "PR work: address issue 58 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      // No reviewer turn ran, so the gate has no reviewed state to read.
+      gh: ciGateGh((await snapshot(repo)).head),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toBe(
+      "Finish refused: unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved; the latest reviewer turn has no reviewed state.",
+    );
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 57. Usefulness: verifies the missing-gate prompt tells the orchestrator what
 // the run needs, because no turn in the run can add a flag. A prompt that only
 // said "finish again" would end the run on exit 1 with no recovery named (#302).
