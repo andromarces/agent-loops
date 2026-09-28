@@ -122,10 +122,11 @@ test("review-only mode rejects a worker dispatch without spawning a CLI", async 
 });
 
 // Usefulness: verifies a dispatch whose `--cwd` no longer exists, or is outside a
-// Git work tree, returns an error envelope naming that path before any child
-// runs and writes no state, so a work tree a worker removed cannot leave the next
-// dispatch of the same run aimed at a path with no checkout (issue #327).
-test("dispatch refuses a missing or non-git --cwd before spawning a child", async () => {
+// Git work tree, is refused before the command touches the run: the init call
+// writes no state, and a later dispatch after a live run charges no step, changes
+// no lifecycle, and spawns no child, so a work tree a worker removed cannot cost
+// the run a step or leave it half dispatched (issue #327).
+test("dispatch refuses a missing or non-git --cwd before it touches the run", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
@@ -143,10 +144,27 @@ test("dispatch refuses a missing or non-git --cwd before spawning a child", asyn
     expect(result.exitCode, cwd).toBe(1);
     expect(result.payload, cwd).toMatchObject({ status: "error" });
     expect(result.payload.error, cwd).toContain("--cwd must be inside a Git work tree");
-    expect(result.payload.error, cwd).toContain(cwd);
     expect(await readState(statePaths({ cwd }).stateFile), cwd).toBeNull();
   }
   expect(worker.recorded.length).toBe(0);
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  const before = await readRepoState(repo);
+  for (const cwd of [removed, notARepo]) {
+    const result = await executeRoleCommand(withRepo(dispatchArgv(), cwd), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(result.exitCode, cwd).toBe(1);
+    expect(result.payload.error, cwd).toContain("--cwd must be inside a Git work tree");
+  }
+  expect(worker.recorded.length).toBe(1);
+  const after = await readRepoState(repo);
+  expect(after.stepsUsed).toBe(before.stepsUsed);
+  expect(after.lifecycle).toBe(before.lifecycle);
 });
 
 // Usefulness: verifies acceptance — a later call that supplies --worker against

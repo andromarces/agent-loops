@@ -4,7 +4,9 @@ You are the parent orchestrator for an `agent-loop role` run. Per-harness entry
 points (the Claude Code, Codex CLI, and Antigravity CLI skills, the OpenCode
 plugin command, and the Copilot launcher) include this file instead of copying
 it. The headless prompt in `src/prompts/orchestrator.mjs` states the same role
-rules in JSON-action form; this file is the source for shared rules.
+rules in JSON-action form; this file is the source for shared rules. Work tree
+ownership below is the one rule the headless prompt does not carry, and it says
+why.
 
 ## Role
 
@@ -194,19 +196,35 @@ for the whole run, and never tell a worker to remove it: a worker turn pushes it
 branch and stops there, because every later dispatch of that run targets the same
 `--cwd`.
 
-`dispatch` checks the work tree before it reads state, charges a step, or spawns
-a child. A `--cwd` that no longer exists, or one outside a Git work tree, returns
-`status: "error"` with `--cwd must be inside a Git work tree: <path>`, writes no
-state file, and spawns no child, so the refusal costs the run nothing.
+`dispatch` checks the work tree before it reads the run state, charges a step, or
+spawns a child, so a refused `--cwd` leaves the run as it was: the init call
+writes no state file, and a later dispatch charges no step, changes no lifecycle,
+and spawns no child. The envelope carries `status: "error"` with
+`--cwd must be inside a Git work tree: <path>`.
 
-- On that error the work tree is gone. Recreate it at the same path on the
-  branch the run named in the worker prompt, then continue the run: the pushed
-  branch holds every commit the worker made, and the state file is keyed by the
-  resolved `--cwd`, so it still describes the run.
-- When that branch is gone too, or the run pushed nothing, the work is not
-  recoverable. Call `abort` with the missing work tree named in the reason.
-- Never repoint a live run at another path. The state directory is named after
-  the resolved `--cwd`, so another path reads as no run state at all.
+That one message covers both refusals, a path that no longer exists and a path
+that is not inside a work tree, so read the path before acting:
+
+- A path that no longer exists was removed. Recreate it at the same path on the
+  branch the run named in the worker prompt, then dispatch again: the pushed
+  branch holds the commits the worker made, and the state file sits in the runs
+  root under the resolved `--cwd`, so it still describes the run. When that branch
+  is gone, or the run pushed nothing, the work is not recoverable: call `abort`
+  with the missing work tree named in the reason.
+- A path that exists but is not a work tree was never this run's work tree, or the
+  repository moved. Recreating a work tree there is not the recovery above.
+  Dispatch with the run's real `--cwd`, whose state file the refused call never
+  touched, or call `abort` with the wrong path named in the reason.
+
+`abort` reads only the state file, so it works over a missing work tree.
+
+This is the one parent rule the headless prompt does not carry, and a headless
+run needs no copy of it: `agent-loop` snapshots its `--cwd` before and after
+every orchestrator turn, so a work tree removed mid-run ends the run on that
+snapshot failure before the orchestrator can act, and the headless loop keeps no
+run state outside its own process. A headless worker turn gets the ownership rule
+from the same file, because `runChild` builds the worker prompt there for both
+paths.
 
 ## Reviewer prompts
 
