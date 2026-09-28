@@ -255,6 +255,7 @@ function initialState(args) {
     },
     lastDispatch: null,
     lastResult: null,
+    turns: [],
   };
 }
 
@@ -500,14 +501,18 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     const canceled = Boolean(err?.isCanceled);
     const payload = { role: roleName, status: "error", error: errorMessage(err) };
     state.lifecycle = canceled ? "interrupted" : "halted";
-    state.lastResult = { ...payload, at: new Date().toISOString() };
+    const at = new Date().toISOString();
+    state.lastResult = { ...payload, at };
+    recordTurn(state, roleName, payload, at);
     await writeState(paths.stateFile, state);
     onEvent({ type: "result", role: roleName, result: payload, stepsUsed: state.stepsUsed });
     return { exitCode: canceled ? 130 : 1, payload };
   }
 
   state.lifecycle = "active";
-  state.lastResult = { ...result, at: new Date().toISOString() };
+  const at = new Date().toISOString();
+  state.lastResult = { ...result, at };
+  recordTurn(state, roleName, result, at);
   if (role.sessionId) {
     state.roles[roleName].sessionId = role.sessionId;
   }
@@ -522,6 +527,34 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
 
 function errorMessage(err) {
   return err?.message ?? String(err);
+}
+
+/**
+ * Appends one turn entry to `turns`, which survives every later overwrite of
+ * `lastDispatch` and `lastResult`. The entry records the turn's identity, not
+ * its text: `role`, `status`, `verdict`, the reviewed `head`, and `at`. Report
+ * and response text stay out of it, so the state file cannot grow with the text
+ * a child returns (#312).
+ *
+ * Every call here follows a charged step, and a dispatch past `maxSteps` is
+ * refused before it runs, so one entry per step bounds the array at the run's
+ * own `maxSteps`. A state file written before this field exists starts with an
+ * empty history.
+ */
+function recordTurn(state, roleName, result, at) {
+  if (!Array.isArray(state.turns)) {
+    state.turns = [];
+  }
+  const ok = result.status === "ok";
+  state.turns.push({
+    role: roleName,
+    status: result.status,
+    // Only a reviewer turn carries a verdict; the word never comes from a
+    // worker response.
+    verdict: ok && roleName === "reviewer" ? parseVerdict(result.response) : null,
+    head: ok ? (result.reviewed?.head ?? null) : null,
+    at,
+  });
 }
 
 // Builds the envelope for one dispatched turn. When the closing block does not

@@ -400,3 +400,24 @@ the state file's `mode` and `lifecycle`, and continue from `stepsUsed` and
 `lastResult`. A resumed review-only task keeps its prohibition on worker
 dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
 to resume with `dispatch --resume-interrupted`.
+
+## Turn history
+
+Every `agent-loop role` run keeps its own turn history. No `--transcript` flag is
+needed: the subcommand records each dispatched turn itself.
+
+- The state file's `turns` array holds one entry per dispatched turn, in order,
+  and each entry survives every later dispatch that overwrites `lastDispatch`
+  and `lastResult`.
+- Each entry holds `role`, `status`, `verdict`, `head`, and `at`: the role that
+  ran, `ok` or `error`, the reviewer verdict for a reviewer turn (`null`
+  otherwise), the head the reviewer turn reviewed (`null` otherwise), and the
+  turn time. Report and response text stay out of the entries.
+- Size bound: one entry per charged step, and a dispatch past `maxSteps` is
+  refused before it runs, so `turns` holds at most `maxSteps` entries. The
+  entries are fixed-shape, so the history cannot grow with the text a child
+  returns.
+- Read `turns` after compaction or restart to rebuild which turns ran, which
+  verdicts they returned, and which head each reviewer turn saw.
+- `--transcript <file>` still appends one JSON line per `invocation` and
+  `result` event. It stays a per-call flag and is not the turn history.
