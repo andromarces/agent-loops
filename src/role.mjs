@@ -454,6 +454,17 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     // `interrupted`, exits non-zero, and spawns no child; a maintainer can
     // resume from `interrupted` on a later call.
     state.lifecycle = "interrupted";
+    // The previous call charged a step and recorded no result for it, so the
+    // history is missing that turn. Record it here, marked `interrupted`: no
+    // child ran, so there is no verdict and no reviewed head to record. Role
+    // and time come from that turn's `lastDispatch`, because this call's
+    // `--role` need not be the role that ended uncertainly (#312).
+    recordTurn(
+      state,
+      state.lastDispatch?.role ?? roleName,
+      { status: "interrupted" },
+      state.lastDispatch?.at ?? new Date().toISOString(),
+    );
     await writeState(paths.stateFile, state);
     throw new RoleError(
       "Previous turn ended uncertainly; state marked interrupted. Use abort, or dispatch --resume-interrupted to continue.",
@@ -536,10 +547,14 @@ function errorMessage(err) {
  * and response text stay out of it, so the state file cannot grow with the text
  * a child returns (#312).
  *
- * Every call here follows a charged step, and a dispatch past `maxSteps` is
- * refused before it runs, so one entry per step bounds the array at the run's
- * own `maxSteps`. A state file written before this field exists starts with an
- * empty history.
+ * Exactly one entry exists per charged step: an entry is written when a
+ * dispatch records its result, when a child fails, and when the recovery call
+ * records the turn a crash left uncertain. A dispatch past `maxSteps` is refused
+ * before it runs, so the array holds at most `maxSteps` entries. A state file
+ * written before this field exists starts with an empty history.
+ *
+ * `status` is `ok`, `error`, or `interrupted`. `interrupted` marks a charged
+ * turn whose outcome is unknown, so it carries no verdict and no reviewed head.
  */
 function recordTurn(state, roleName, result, at) {
   if (!Array.isArray(state.turns)) {

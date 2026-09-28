@@ -406,17 +406,22 @@ to resume with `dispatch --resume-interrupted`.
 Every `agent-loop role` run keeps its own turn history. No `--transcript` flag is
 needed: the subcommand records each dispatched turn itself.
 
-- The state file's `turns` array holds one entry per dispatched turn, in order,
-  and each entry survives every later dispatch that overwrites `lastDispatch`
-  and `lastResult`.
+- The state file's `turns` array holds one entry per charged step, in order, and
+  each entry survives every later dispatch that overwrites `lastDispatch` and
+  `lastResult`.
 - Each entry holds `role`, `status`, `verdict`, `head`, and `at`: the role that
-  ran, `ok` or `error`, the reviewer verdict for a reviewer turn (`null`
+  ran, the turn `status`, the reviewer verdict for a reviewer turn (`null`
   otherwise), the head the reviewer turn reviewed (`null` otherwise), and the
   turn time. Report and response text stay out of the entries.
-- Size bound: one entry per charged step, and a dispatch past `maxSteps` is
-  refused before it runs, so `turns` holds at most `maxSteps` entries. The
-  entries are fixed-shape, so the history cannot grow with the text a child
-  returns.
+- `status` is `ok`, `error`, or `interrupted`. An `interrupted` entry is a turn
+  whose step was charged but whose outcome is unknown: no child result was ever
+  recorded for it, so its verdict and head are `null`. The call that marks the
+  run `interrupted` records it, so the history stays complete across recovery.
+- Size bound: exactly one entry per charged step, and a dispatch past `maxSteps`
+  is refused before it runs, so `turns` holds at most `maxSteps` entries. The
+  recovery call records an already-charged step and charges none of its own, so
+  it does not push the history past that bound. The entries are fixed-shape, so
+  the history cannot grow with the text a child returns.
 - Read `turns` after compaction or restart to rebuild which turns ran, which
   verdicts they returned, and which head each reviewer turn saw.
 - `--transcript <file>` still appends one JSON line per `invocation` and

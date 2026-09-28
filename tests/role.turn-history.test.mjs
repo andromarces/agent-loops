@@ -1,6 +1,8 @@
 import { afterEach, expect, test } from "vitest";
+import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
 import {
+  basicDeps,
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
@@ -131,4 +133,78 @@ test("a turn whose child fails records an error turn", async () => {
     head: null,
   });
   expect(state.turns[0].at).toEqual(expect.any(String));
+});
+
+/**
+ * Puts the state file in the state a crash leaves: the step is charged, the
+ * lifecycle is `dispatched`, and no result was recorded for that turn, so
+ * `turns` holds only the turns before it.
+ */
+async function crashDuringDispatch(repo) {
+  const state = await readState(statePaths({ cwd: repo }).stateFile);
+  state.lifecycle = "dispatched";
+  state.turns = state.turns.slice(0, -1);
+  await writeState(statePaths({ cwd: repo }).stateFile, state);
+}
+
+// Usefulness: verifies the interrupted recovery path — a charged turn whose
+// outcome is uncertain is still in the history. The call that marks the run
+// `interrupted` runs no child and charges no step, so it must record the turn
+// the previous call left in `dispatched`, marked interrupted, with no verdict
+// and no head it never observed (issue #312).
+test("the charged uncertain turn is recorded when the run recovers into interrupted", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  await crashDuringDispatch(repo);
+
+  const recovery = await executeRoleCommand(
+    withRepo(dispatchArgv(["--resume-interrupted"]), repo),
+    basicDeps(),
+  );
+  expect(recovery.exitCode).toBe(1);
+  expect(recovery.payload.error).toContain("interrupted");
+
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("interrupted");
+  expect(state.turns).toHaveLength(1);
+  expect(state.turns[0]).toMatchObject({
+    role: "worker",
+    status: "interrupted",
+    verdict: null,
+    head: null,
+  });
+  expect(state.turns[0].at).toEqual(expect.any(String));
+});
+
+// Usefulness: verifies no duplicate entry and no budget overrun — the resumed
+// turn is charged and recorded once on its own, so the history holds the
+// uncertain turn and the resumed turn as two distinct entries, one per charged
+// step (issue #312).
+test("a resumed turn records one entry after the interrupted entry", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "2"]), repo), {
+    ...basicDeps(),
+  });
+  await crashDuringDispatch(repo);
+
+  await executeRoleCommand(withRepo(dispatchArgv(["--resume-interrupted"]), repo), basicDeps());
+  const resumed = await executeRoleCommand(withRepo(dispatchArgv(["--resume-interrupted"]), repo), {
+    ...basicDeps(),
+  });
+  expect(resumed.exitCode).toBe(0);
+
+  const state = await readRepoState(repo);
+  expect(state.turns.map((turn) => turn.status)).toEqual(["interrupted", "ok"]);
+  // The recovery call charges no step, so its entry accounts for the step the
+  // crashed call already charged. Entries stay at one per charged step, so the
+  // bound of `maxSteps` still holds.
+  expect(state.stepsUsed).toBe(2);
+  expect(state.turns).toHaveLength(state.stepsUsed);
+  expect(state.turns).toHaveLength(state.maxSteps);
 });

@@ -27,22 +27,32 @@ following the instructions records nothing.
 
 1. Every `agent-loop role` dispatch appends one entry to a `turns` array in the
    state file, whether or not `--transcript` was passed. The entry holds the
-   turn's identity, not its text: `role`, `status` (`ok` or `error`),
-   `verdict` (the parsed reviewer verdict, `null` for every other turn), `head`
-   (the head a reviewer turn reviewed, `null` otherwise), and `at`.
-2. The entry is appended on both the success and the handled-failure path, so a
-   failed turn stays countable. The entry carries the same `at` as that call's
-   `lastResult`.
-3. Report and response text stay out of the entry. `lastResult` keeps the full
+   turn's identity, not its text: `role`, `status`, `verdict` (the parsed
+   reviewer verdict, `null` for every other turn), `head` (the head a reviewer
+   turn reviewed, `null` otherwise), and `at`.
+2. Exactly one entry exists per charged step. `status` is `ok`, `error`, or
+   `interrupted`. An entry is appended when a dispatch records its result, when
+   a child fails, and when the recovery call records the turn a crash left in
+   `dispatched`. The last of these runs no child and charges no step: it records
+   the already-charged turn the crashed call never recorded, so the history stays
+   complete across recovery. It takes the role and time from that turn's
+   `lastDispatch`, because the recovery call's `--role` need not be the role that
+   ended uncertainly, and it records no verdict and no head, because no child
+   result was ever observed.
+3. A resumed turn is charged and recorded once on its own, so the uncertain turn
+   and the resumed turn are two distinct entries, not the uncertain one twice.
+4. Report and response text stay out of the entry. `lastResult` keeps the full
    last response; the history keeps only the fields a later review needs.
-4. Size bound: one entry per charged step, and a dispatch past `maxSteps` is
+5. Size bound: one entry per charged step, and a dispatch past `maxSteps` is
    refused before it runs, so the array holds at most `maxSteps` fixed-shape
-   entries. No truncation or pruning rule is needed because the step budget
-   already caps the count.
-5. `verdict` is parsed from a reviewer turn's own closing block, so it cannot be
+   entries. The recovery entry does not consume a step of its own; it accounts
+   for the step the crashed call already charged, so the bound still holds.
+   No truncation or pruning rule is needed because the step budget already caps
+   the count.
+6. `verdict` is parsed from a reviewer turn's own closing block, so it cannot be
    inferred from process success. The state file is the only place the history
    lives; `--transcript` stays a per-call per-event log and is not the history.
-6. A state file written before this field starts with an empty history, so a run
+7. A state file written before this field starts with an empty history, so a run
    that began on an earlier version keeps working.
 
 ## Consequences
