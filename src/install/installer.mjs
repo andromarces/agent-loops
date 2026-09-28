@@ -151,7 +151,8 @@ export function stablePackageRoot(packageRoot) {
   const hashLink = installDir && symlinkResolvingTo(dirname(installDir), installDir);
   for (const candidate of [
     hashLink && join(hashLink, basename(store), tail),
-    // pnpm 12 and a pnpm project install: the `node_modules` holding `.pnpm`.
+    // pnpm 10 project install, and a pnpm 12 global install behind its hash
+    // link: the `node_modules` holding `.pnpm`.
     join(pnpmParent, tail),
     // pnpm 10: the `node_modules` beside the `.pnpm` directory.
     join(pnpmParent, basename(store), tail),

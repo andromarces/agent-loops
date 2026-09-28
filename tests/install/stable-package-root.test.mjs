@@ -154,6 +154,73 @@ test("a pnpm 10 global layout renders its version-independent link", async () =>
   expect(stablePackageRoot(after.store)).toBe(after.linked);
 });
 
+/**
+ * Builds a pnpm 10 project layout, verified end to end against a real pnpm 10.34.5
+ * `pnpm add` in a temp project: the virtual store is `<project>/node_modules/.pnpm`
+ * and the package is linked under the project `node_modules`, which carries no
+ * version. An upgrade adds a store entry and repoints the link. A global install is
+ * the other pnpm 10 shape, and it places both differently.
+ */
+async function pnpmProject(project, version) {
+  const store = join(
+    project,
+    "node_modules",
+    ".pnpm",
+    `@andromarces+agent-loops@${version}`,
+    "node_modules",
+    "@andromarces",
+    "agent-loops",
+  );
+  await mkdir(store, { recursive: true });
+  await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
+  await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
+  // The one runtime dependency, beside the package the way pnpm places it.
+  await symlink(
+    join(REPO_ROOT, "node_modules", "execa"),
+    join(dirname(dirname(store)), "execa"),
+    LINK_TYPE,
+  );
+  const linked = join(project, "node_modules", "@andromarces", "agent-loops");
+  await mkdir(dirname(linked), { recursive: true });
+  await symlink(store, linked, LINK_TYPE);
+  return { linked, store };
+}
+
+// Usefulness: verifies the project install shape of #305, which the pnpm 10 global
+// case does not reach. The store path names the package by version, so install
+// must render the link under the project `node_modules`, which carries no version
+// and which an upgrade repoints. A version-named path here is the stale install
+// #305 reports.
+test("hooks installed in a pnpm 10 project layout survive an upgrade", async () => {
+  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm10-project-home-"));
+  // macOS hands out a temporary directory through a symlink (`/var` points at
+  // `/private/var`), and Node resolves the installed module, so the written path
+  // carries the resolved prefix. Build the layout under the same real path.
+  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm10-project-")));
+  paths.push(home, project);
+  const before = await pnpmProject(project, "0.3.0");
+
+  await execa(
+    process.execPath,
+    [join(before.store, "src", "cli.mjs"), "install", "--harness", "claude", "--yes"],
+    { env: { ...process.env, AGENT_LOOP_HOME: home } },
+  );
+
+  const settings = JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"));
+  const guardPath = settings.hooks.PreToolUse[0].hooks[0].command.match(/^node "(.+)"$/)?.[1];
+  expect(guardPath).toBe(join(before.linked, "src", "hook", "parent-guard.mjs"));
+
+  // The upgrade: a new store entry takes the new version, the link is repointed
+  // at it, and pnpm deletes the old store entry. The rendered path must still be
+  // the link, not the store entry, or the install is stale again.
+  await rm(before.linked, { force: true });
+  const after = await pnpmProject(project, "0.4.0");
+  await removePath(before.store);
+  expect(existsSync(before.store)).toBe(false);
+  expect(stablePackageRoot(after.store)).toBe(after.linked);
+  expect(existsSync(guardPath)).toBe(true);
+});
+
 // Usefulness: verifies the negative of both pnpm cases. A store with no link to
 // the package, an npm global root, and a clone have no path that survives an
 // upgrade, so the rendered root stays the resolved one rather than a path that
