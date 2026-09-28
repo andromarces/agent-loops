@@ -433,7 +433,8 @@ needed: the subcommand records each dispatched turn itself.
   so it proceeds and ends the run. Use it to close a run whose stored `maxSteps`
   is out of range: `dispatch` and `finish` are refused, and a new init refuses
   over a non-terminal run, so `abort` is the only route to a terminal lifecycle
-  for such a run.
+  for such a run. A new init then starts normally and archives the old state
+  file. No field has to be hand-corrected.
 - Read `turns` after compaction or restart to rebuild which turns ran, which
   verdicts they returned, and which head each reviewer turn saw.
 - `--transcript <file>` still appends one JSON line per `invocation` and

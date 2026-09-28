@@ -66,8 +66,11 @@ following the instructions records nothing.
    the check would buy nothing there, and refusing it would remove the only route
    to a terminal lifecycle: `dispatch` and `finish` are refused, and a new init
    refuses over a non-terminal run, so the run and its parent-edit guard would
-   stay stuck. `abort` proceeds and ends the run; the invalid stored value stays
-   in the state file for the maintainer to correct.
+   stay stuck. `abort` proceeds and ends the run. A new init then starts
+   normally: init reads only the stored `lifecycle`, which is terminal, and
+   archives the old state file without re-checking the old `maxSteps`. No field
+   has to be hand-corrected, and the invalid value survives only in the archived
+   file.
 9. `verdict` is parsed from a reviewer turn's own closing block, so it cannot be
    inferred from process success. The state file is the only place the history
    lives; `--transcript` stays a per-call per-event log and is not the history.
@@ -85,9 +88,9 @@ following the instructions records nothing.
   than `Number.MAX_SAFE_INTEGER` steps.
 - A run whose stored `maxSteps` is outside the range is refused on its next
   `dispatch` or `finish`, naming the state file field. Such a run cannot
-  continue, but `abort` still ends it, so the parent-edit guard releases. The
-  invalid value stays in the state file, so the maintainer corrects the field
-  before a new init, which would otherwise refuse over the non-terminal run.
+  continue, but `abort` still ends it, so the parent-edit guard releases, and a
+  new init then starts normally and archives the old state file. No field has to
+  be hand-corrected; the invalid value survives only in the archived file.
 - `docs/orchestrator-instructions.md` documents the history, so an orchestrator
   following the instructions reads it after compaction or restart.
 - A turn's response text is still only in `lastResult` and, with

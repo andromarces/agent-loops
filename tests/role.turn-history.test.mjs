@@ -1,3 +1,5 @@
+import { readdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
@@ -171,16 +173,20 @@ test("dispatch and finish refuse a state file with a maxSteps outside the safe i
   expect((await readState(stateFile)).lifecycle).toBe("active");
 });
 
-// Usefulness: verifies the run can still end — `abort` charges no step and reads
-// no budget, so it is not refused by the stored-`maxSteps` check. Without this,
-// an unsafe stored value would block every route to a terminal lifecycle: abort
-// would refuse, and a new init refuses over a non-terminal run, so the run and
-// its parent-edit guard would stay stuck (issue #312).
-test("abort still ends a run whose stored maxSteps is outside the safe integer range", async () => {
+// Usefulness: verifies the run can still end and be replaced — `abort` charges
+// no step and reads no budget, so it is not refused by the stored-`maxSteps`
+// check. Without this, an unsafe stored value would block every route to a
+// terminal lifecycle: abort would refuse, and a new init refuses over a
+// non-terminal run, so the run and its parent-edit guard would stay stuck
+// (issue #312). Once aborted, a new init starts normally, because init reads
+// only the stored lifecycle and archives the old file without re-checking the
+// old `maxSteps`, so no field has to be hand-corrected.
+test("abort ends a run with an unsafe stored maxSteps and a new init then starts normally", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
-  const stateFile = statePaths({ cwd: repo }).stateFile;
+  const paths = statePaths({ cwd: repo });
+  const stateFile = paths.stateFile;
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   const state = await readState(stateFile);
@@ -199,6 +205,25 @@ test("abort still ends a run whose stored maxSteps is outside the safe integer r
   // Abort charges no step, so the history and the step count are untouched.
   expect(after.stepsUsed).toBe(1);
   expect(after.turns).toHaveLength(1);
+
+  const restarted = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    ...basicDeps(),
+  });
+  expect(restarted.exitCode).toBe(0);
+
+  // The new run starts from the flag value, and the aborted run is archived
+  // with its unsafe value rather than blocking the init.
+  const fresh = await readState(stateFile);
+  expect(fresh.lifecycle).toBe("active");
+  expect(fresh.maxSteps).toBe(20);
+  // `state.lock` sits in the same directory, so match the archive name shape.
+  const archived = (await readdir(dirname(stateFile))).filter((name) =>
+    /^state\..+\.json$/.test(name),
+  );
+  expect(archived).toHaveLength(1);
+  expect((await readState(join(dirname(stateFile), archived[0]))).maxSteps).toBe(
+    1000000000000000000000,
+  );
 });
 
 /**
