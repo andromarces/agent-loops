@@ -6,6 +6,7 @@ import {
   initialPrompt,
   refusalPrompt,
   repairPrompt,
+  requiredCheckWait,
   resultPrompt,
 } from "../../src/prompts/orchestrator.mjs";
 
@@ -189,6 +190,142 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
   expect(initialPrompt({ task: "Implement feature X", maxSteps: 10 })).not.toContain(
     "--require-ci",
   );
+});
+
+// Usefulness: verifies the rule is keyed on the CLI of the role that reads the
+// checks, because the orchestrator and reviewer CLIs are chosen independently,
+// so a mixed run is never told that no turn can read them (issue #319).
+test("requiredCheckWait reports the rule per orchestrator and reviewer CLI", () => {
+  const rule = (orchestratorKind, reviewerKind) =>
+    requiredCheckWait({ requireCi: 42, orchestratorKind, reviewerKind });
+  expect(rule("claude", "claude")).toBe("wait");
+  expect(rule("agy", "opencode")).toBe("wait");
+  // The codex read-only sandbox blocks network, so a codex turn cannot read.
+  expect(rule("codex", "claude")).toBe("reviewer");
+  expect(rule("codex", "codex")).toBe("gate");
+  // An unnamed CLI on either role cannot read the checks.
+  expect(rule("codex", null)).toBe("gate");
+  expect(requiredCheckWait({ requireCi: null, orchestratorKind: "claude" })).toBeNull();
+  // An unnamed CLI renders as a CLI, not as a missing value.
+  expect(initialPrompt({ task: "T", maxSteps: 10, requireCi: 42 }).includes("through null")).toBe(
+    false,
+  );
+});
+
+const gatedPrompt = (orchestratorKind, reviewerKind = "claude") =>
+  initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    requireCi: 42,
+    orchestratorKind,
+    reviewerKind,
+  });
+
+// Usefulness: verifies a --require-ci run states the wait at both points that
+// need it, the reviewer dispatch and the finish after a pending check, as two
+// rules the parent can act on separately, for every orchestrator CLI whose
+// read-only turn can read the checks (issue #319).
+test("initialPrompt states the required-check wait at the reviewer and at finish", () => {
+  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
+    const lines = gatedPrompt(kind).split("\n");
+    const beforeReviewer = lines.find(
+      (line) => /dispatch the reviewer/i.test(line) && /wait/i.test(line),
+    );
+    const beforeFinish = lines.find(
+      (line) => /finish/i.test(line) && /pending/i.test(line) && /wait/i.test(line),
+    );
+    expect(beforeReviewer, kind).toBeTruthy();
+    expect(beforeFinish, kind).toBeTruthy();
+    expect(beforeFinish, kind).not.toBe(beforeReviewer);
+  }
+});
+
+// Usefulness: verifies the pending-check wait point keeps a pending check out of
+// the finish summary, because the --require-ci gate refuses a finish while a
+// required check is pending, so the run must wait, re-review, or abort (issue #319).
+test("the pending-check wait point does not put a pending check in a finish summary", () => {
+  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
+    const line = gatedPrompt(kind)
+      .split("\n")
+      .find((entry) => /finish/i.test(entry) && /pending/i.test(entry) && /wait/i.test(entry));
+    expect(line, kind).toMatch(/abort/i);
+    expect(line, kind).not.toMatch(/notDone/);
+  }
+});
+
+// Usefulness: verifies a run whose reviewer CLI keeps read-only network states
+// that the reviewer turn is the check read, so a codex orchestrator with a
+// networked reviewer is never told that no turn can read the checks (issue #319).
+test("a mixed run reads the checks in the reviewer turn", () => {
+  const prompt = gatedPrompt("codex", "claude");
+  const reviewerRead = prompt
+    .split("\n")
+    .find((line) => /\bclaude\b/.test(line) && /reviewer/i.test(line) && /read/i.test(line));
+  expect(reviewerRead).toBeTruthy();
+  expect(prompt).not.toMatch(/no turn in this run can read/i);
+  // The orchestrator cannot run the watch in this run.
+  expect(prompt).not.toContain("--watch");
+
+  const pending = prompt.split("\n").find((line) => /pending/i.test(line) && /abort/i.test(line));
+  expect(pending).toBeTruthy();
+  expect(pending).not.toMatch(/notDone/);
+});
+
+// Usefulness: verifies a run where neither role CLI keeps read-only network
+// names the runtime gate as the only check read, and states that a gate refusal
+// charges no step while the reviewer dispatch that corrects it does (issue #319).
+test("a run with no read-only network on either role names the gate as the only check read", () => {
+  const prompt = gatedPrompt("codex", "codex");
+  const lines = prompt.split("\n");
+  const cannotWait = lines.find((line) => /cannot wait/i.test(line));
+  expect(cannotWait).toMatch(/codex/);
+  expect(cannotWait).not.toMatch(/--watch/);
+  expect(prompt).not.toMatch(/reviewer turn reads/i);
+
+  const gateLine = lines.find((line) => /--require-ci/.test(line) && /only check read/i.test(line));
+  expect(gateLine).toMatch(/refusal[^.]*no step/i);
+  expect(gateLine).toMatch(/reviewer dispatch[^.]*step/i);
+  expect(gateLine).toMatch(/abort/i);
+  expect(gateLine).not.toMatch(/notDone/);
+});
+
+// Usefulness: verifies the wait rule follows the orchestrator CLI alone, because
+// the orchestrator does the read when it can, whatever the reviewer CLI is
+// (issue #319).
+test("the wait rule does not depend on the reviewer CLI", () => {
+  expect(gatedPrompt("claude", "codex")).toBe(gatedPrompt("claude", "claude"));
+});
+
+// Usefulness: verifies the prompt states the check status read as the one named
+// exception to the orchestrator role rule, so the shell wait is inside the
+// contract instead of against it (issue #319).
+test("initialPrompt states the status read as the exception to the role rule", () => {
+  const roleLine = gatedPrompt("claude")
+    .split("\n")
+    .find((line) => /must NOT run agent CLIs or background processes/i.test(line));
+  expect(roleLine).toMatch(/exception/i);
+  expect(roleLine).toMatch(/check status/i);
+});
+
+// Usefulness: verifies the two parent paths state the same narrow exception, so
+// an interactive parent and a headless orchestrator resolve the role conflict the
+// same way (issue #319).
+test("interactive instructions and headless prompt share the status-read exception", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const prompt = gatedPrompt("claude").replace(/\s+/g, " ");
+  for (const rule of ["status read", "not a review", "not a test"]) {
+    expect(instructions).toContain(rule);
+    expect(prompt).toContain(rule);
+  }
+});
+
+// Usefulness: verifies the wait rule states the turn cost, because a headless
+// orchestrator turn that outlasts the per-invocation timeout ends the run instead
+// of returning an action (issue #319).
+test("initialPrompt states that a wait can end the run at the turn timeout", () => {
+  const prompt = gatedPrompt("claude");
+  expect(prompt).toMatch(/--timeout/);
+  expect(prompt).toMatch(/exit 1/);
 });
 
 // Usefulness: verifies refusalPrompt carries the refusal reason and the supported

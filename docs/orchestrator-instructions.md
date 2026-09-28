@@ -11,6 +11,10 @@ rules in JSON-action form; this file is the source for shared rules.
 - Delegate the task, track results, handle blockers, and report completion.
 - Never implement changes, never review code yourself, never run tests, never
   open child transcripts.
+- The one exception is a pull request check status read, which a run that ends
+  with `--require-ci` allows, as the waiting rules below state. A status read is
+  not a review, not a test, and not an edit, and `gh pr checks` is the only
+  command it covers.
 - Read only the JSON envelope the subcommand prints on stdout. Child stderr
   logs and child response text beyond the envelope are not input.
 
@@ -217,6 +221,63 @@ rule below belongs to that one condition, so the prompt nests them under it:
 The `--require-ci` finish gate stays the enforcement point. The rule only lets
 the reviewer see a failure before the gate refuses, so the run needs no extra
 worker turn and no extra reviewer turn for that failure.
+
+## Waiting for required checks
+
+When a run will end with `--require-ci`, wait for the required checks on the new
+PR head to complete before you dispatch the reviewer. When a reviewer turn
+reports a pending required check in `Checks`, wait for those checks to complete
+before you call `finish`.
+
+The wait is the status read the role rule excepts, and it changes nothing:
+`gh pr checks <pr> --required --watch` blocks until the checks report, and it
+returns the same exit codes as one read. Add `--fail-fast` to stop on the first
+failure, and `--interval <seconds>` to set the refresh. Never record a check you
+could not read as passed.
+
+Keep the wait inside the command timeout your harness applies to a shell command.
+
+A required check still pending after a wait is not a finish condition. The
+`--require-ci` gate refuses a finish while a required check is pending, so a
+finish summary cannot carry it. Wait again, dispatch the reviewer again, or
+`abort` with the pending check named in the reason.
+
+## Waiting in the headless loop
+
+The orchestrator CLI and the reviewer CLI are chosen independently, so each
+statement below names the role whose CLI performs the read. A read-only
+invocation keeps shell network access for `claude`, `agy`, `opencode`, and
+`copilot`. The `codex` read-only sandbox blocks network, and it is the only
+adapter that does; see "Codex read-only network limit" in the README for the
+probe.
+
+- Orchestrator CLI keeps network: the orchestrator waits, at both points below.
+- Orchestrator CLI blocks network, reviewer CLI keeps it: the orchestrator cannot
+  wait. Every reviewer turn reads the required checks, as the reviewer scope
+  states, so name the required checks in the reviewer prompt and let the reviewer
+  turn read them. Each further reviewer dispatch costs a step, so the step budget
+  has to cover those dispatches.
+- Both CLIs block network: no turn in the run can read the required checks, so
+  the headless loop cannot wait. The `--require-ci` finish gate is the only check
+  read, because the runtime applies it outside every read-only turn. The gate
+  refuses a finish while a required check is pending. A refusal itself charges no
+  step, and the reviewer dispatch that corrects it charges one, so the step budget
+  has to cover those dispatches. Dispatch the reviewer when the gate refuses, or
+  `abort` with the pending check named in the reason.
+
+A headless status read spends no step, because a step is charged only to
+`run_worker` and `run_reviewer`. It is not free of other cost. The turn is
+bounded by the per-invocation `--timeout`, which defaults to 3600 seconds and is
+unbounded at 0, and a turn that outlasts that bound ends the run on exit 1
+before it returns an action, so a long watch can end a run that would otherwise
+have finished. Bound the watch to a few minutes so it returns inside the turn.
+
+On an orchestrator CLI that can run the status read, both wait points hold in the
+headless loop: the wait before the reviewer dispatch, and the wait before
+`finish` when a reviewer turn reported a pending check. A check still pending
+after a wait is not a finish condition there either, because the gate refuses
+the finish. Wait again, dispatch the reviewer again, or `abort` with the pending
+check named in the reason.
 
 ## Several runs at once
 

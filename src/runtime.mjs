@@ -198,7 +198,14 @@ export async function runLoop(options) {
     },
   };
 
-  let prompt = initialPrompt({ task, maxSteps, requireAccept, requireCi });
+  let prompt = initialPrompt({
+    task,
+    maxSteps,
+    requireAccept,
+    requireCi,
+    orchestratorKind: orchestrator?.kind ?? null,
+    reviewerKind: reviewer?.kind ?? null,
+  });
 
   while (true) {
     let action;
