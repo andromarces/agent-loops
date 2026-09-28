@@ -74,14 +74,17 @@ test("reviewer prompt reports an unresolved check status instead of assuming a p
 
 const namesPullRequest = (text) => /\bprs?\b/i.test(text) || /pull[ -]requests?/i.test(text);
 
-// The fixed review scope block, sliced out of a reviewer prompt.
-const reviewerRulesOf = (prompt) => {
+// The fixed review scope as rendered, from the scope header to the closing
+// report block. The scope has no blank line of its own, so slicing at the first
+// one would drop a scoping line placed after one.
+const reviewerScopeOf = (prompt) => {
   const start = prompt.indexOf("Review scope");
-  return prompt.slice(start, prompt.indexOf("\n\n", start));
+  const end = prompt.indexOf("End your response with this block");
+  return prompt.slice(start, end < 0 ? undefined : end).trimEnd();
 };
 
 // The required-check group: the bullet that names the read command plus every
-// nested sub-bullet under it. A bullet outside the group reads as a rule of its
+// nested sub-bullet under it. Any other line of the scope reads as a rule of its
 // own, so a pull request mention there narrows an earlier rule.
 const requiredCheckGroup = (lines) => {
   const start = lines.findIndex((text) => /gh pr checks/.test(text));
@@ -95,54 +98,74 @@ const requiredCheckGroup = (lines) => {
   return { start, end };
 };
 
-const prBulletsOutsideGroup = (rules) => {
-  const lines = rules.split("\n");
+// Every line of the scope that names a pull request outside the group, in any
+// line shape, so a scoping bullet, a scoping sentence, and a line past a blank
+// line all fail the check.
+const prMentionsOutsideGroup = (scope) => {
+  const lines = scope.split("\n");
   const group = requiredCheckGroup(lines);
   return lines
     .map((text, index) => ({ text, index }))
-    .filter(({ text }) => /^\s*- /.test(text) && namesPullRequest(text))
+    .filter(({ text }) => namesPullRequest(text))
     .filter(({ index }) => !group || index < group.start || index > group.end)
     .map(({ text }) => text.trim());
 };
 
-// Usefulness: verifies the required-check bullets sit under the pull request
-// condition as one group, so no later bullet reads as unconditional
-// (issue #317).
-test("the required-check bullets sit under the pull request condition", () => {
-  const lines = reviewerRulesOf(reviewerPrompt("review the change")).split("\n");
-  const group = requiredCheckGroup(lines);
-  expect(group).not.toBeNull();
-  const later = lines.slice(group.start + 1).filter((text) => /^\s*- /.test(text));
-  expect(later.length).toBeGreaterThan(0);
-  for (const text of later) {
-    expect(text).toMatch(/^ {2,}- /);
-  }
-});
-
 // Usefulness: verifies only the required-check rule mentions a pull request, so
-// a standalone scoping bullet cannot read as limiting the guard rules that
+// a standalone scoping line cannot read as limiting the guard rules that
 // follow it (issue #313, issue #317).
 test("only the required-check rule mentions a pull request", () => {
-  const rules = reviewerRulesOf(reviewerPrompt("review the change"));
-  expect(prBulletsOutsideGroup(rules)).toEqual([]);
+  const scope = reviewerScopeOf(reviewerPrompt("review the change"));
+  expect(prMentionsOutsideGroup(scope)).toEqual([]);
+});
+
+// Usefulness: verifies the required-check bullets sit under the pull request
+// condition as one group, so no later line of the scope reads as unconditional
+// (issue #317).
+test("the required-check bullets sit under the pull request condition", () => {
+  const lines = reviewerScopeOf(reviewerPrompt("review the change")).split("\n");
+  const group = requiredCheckGroup(lines);
+  expect(group).not.toBeNull();
+  expect(lines.length).toBeGreaterThan(group.start + 1);
+  for (const text of lines.slice(group.start + 1)) {
+    expect(text).toMatch(/^ {2,}- /);
+  }
 });
 
 // Usefulness: verifies the pull request scoping check catches a scoping bullet
 // placed after the required-check group, which the earlier check accepted
 // because every bullet sat at or after the gh pr checks bullet (issue #317).
 test("the pull request scoping check catches a scoping bullet after the group", () => {
-  const rules = reviewerRulesOf(reviewerPrompt("review the change"));
-  expect(
-    prBulletsOutsideGroup(`${rules}\n- Read the merge box on a PR before the review.`),
-  ).toHaveLength(1);
+  const scope = reviewerScopeOf(reviewerPrompt("review the change"));
+  const after = "- Read the merge box on a PR before the review.";
+  expect(prMentionsOutsideGroup(`${scope}\n${after}`)).toEqual([after]);
 });
 
 // Usefulness: verifies the pull request scoping check matches `pr` in any
 // spelling, which the earlier check missed because it was case-sensitive
 // (issue #317).
 test("the pull request scoping check catches a lowercase pr bullet", () => {
-  const rules = reviewerRulesOf(reviewerPrompt("review the change"));
-  expect(prBulletsOutsideGroup(`${rules}\n- Name the pr branch in the report.`)).toHaveLength(1);
+  const scope = reviewerScopeOf(reviewerPrompt("review the change"));
+  const after = "- Name the pr branch in the report.";
+  expect(prMentionsOutsideGroup(`${scope}\n${after}`)).toEqual([after]);
+});
+
+// Usefulness: verifies the pull request scoping check reads every line of the
+// review scope, not only its bullets, so a scoping sentence in the scope cannot
+// escape the check (issue #317).
+test("the pull request scoping check catches a scoping sentence that is not a bullet", () => {
+  const scope = reviewerScopeOf(reviewerPrompt("review the change"));
+  const after = "A pull request always needs a reviewer.";
+  expect(prMentionsOutsideGroup(`${scope}\n${after}`)).toEqual([after]);
+});
+
+// Usefulness: verifies the pull request scoping check reads the review scope to
+// its end, so a blank line does not cut the scan short and let a scoping bullet
+// through (issue #317).
+test("the pull request scoping check catches a scoping bullet after a blank line", () => {
+  const scope = reviewerScopeOf(reviewerPrompt("review the change"));
+  const after = "- Read the merge state of the PR before the review.";
+  expect(prMentionsOutsideGroup(`${scope}\n\n${after}`)).toEqual([after]);
 });
 
 // Usefulness: verifies a read pass is reported as covering only the listed
