@@ -399,7 +399,8 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   `--require-ci` names another PR is refused without reading GitHub.
 - A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
   resolves that compare. The recorded marker is the accepted gap above, and a
-  declared run does not have it.
+  declared run does not have it. A finish that carries the marker breaks that
+  rule and the gate rule together, and one refusal names both.
 - The gate flag is a run input, so no `dispatch` supplies it and a repeat
   `finish` is refused the same way. A declared run with no gate can only end
   through `abort` with the missing gate named in the reason.
@@ -418,14 +419,19 @@ A marked `role finish` still exits `0`, unlike the headless finish that exits
 subcommand: `abort` exits `0` too, and the parent guard reads the state
 lifecycle, not the code. Read the marker in the envelope or the state file.
 
-Two opt-in gates apply to `work-first` and `review-first` only. Each refusal
-names the conditions that failed, in the order the marker combination, then
-`--require-accept`, then `--require-ci`. The run ends when two refusals land with
-no child turn between them, so every condition is reported in one refusal. The
-marker is satisfied on a re-finish, with no child turn; every other condition
-needs a child turn to satisfy it, which costs a step, except the missing gate of
-a declared PR run, which no child turn can supply. In `review-only`, a `finish`
-without them keeps the current behavior, and each flag fails with a clear error.
+Two opt-in gates apply to `work-first` and `review-first` only. One refusal
+names every condition the finish breaks, in the order the marker condition, then
+`--require-accept`, then the declared-PR gate condition, then `--require-ci`. The
+headless loop grants one corrective turn, so a refusal that named a single
+condition would spend it on the condition the next refusal names instead. The
+`role finish` command applies the same rule and order, so a parent learns every
+condition from one call. A headless run ends when two refusals land with no child
+turn between them. The marker is satisfied on a re-finish, with no child
+turn; every other condition needs a child turn to satisfy it, which costs a step,
+except the missing gate of a declared PR run, which no child turn can supply.
+The `--require-ci` gate runs only when nothing above it refused, so a refused
+`finish` never reads GitHub. In `review-only`, a `finish` without them keeps the
+current behavior, and each flag fails with a clear error.
 
 - `--require-accept`: refuse unless the latest turn is a reviewer accept with a
   `Checks` line, the reviewed snapshot is exact, and the current snapshot is

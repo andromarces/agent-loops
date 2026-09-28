@@ -142,8 +142,10 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * With `pr`, the run declares that its work is delivered on that pull request,
  * so a finish must end through the `requireCi` gate for the same PR. A missing
  * gate, or a gate naming another PR, refuses the finish and reads as a PR-gate
- * condition, so it is reported with the other refusals in the same order. The
- * gate flag is a run input, so no child turn satisfies that refusal and its
+ * condition, so it is reported with the other refusals in the same order. A
+ * declared run refuses the unresolved-compare marker the same way a gated run
+ * does, and that refusal is collected with the rest rather than replacing them.
+ * The gate flag is a run input, so no child turn satisfies that refusal and its
  * recovery names `abort` as the outcome the orchestrator owns. A run with
  * neither `pr` nor `requireCi` behaves exactly as before (#302).
  *
@@ -242,18 +244,23 @@ export async function runLoop(options) {
       // refused finish ends it. Reporting one condition at a time would spend
       // that turn on a condition the next refusal names instead, which is how a
       // prompt that says "finish again" becomes an exit 1 (#293). The order
-      // matches the interactive `role finish`: the marker combination, the
-      // completion rule, then the PR gate. The `--pr` declaration is the PR
-      // input, so its refusal sits where the gate sits (#302).
+      // matches the interactive `role finish`: the marker condition, the
+      // completion rule, the declared-PR gate condition, then the PR gate. The
+      // `--pr` declaration is the PR input, so its refusal sits where the gate
+      // sits (#302).
       const refusals = [];
       // The marker is satisfied by editing the finish action itself, so it is the
       // one refusal that a re-finish can satisfy without a child turn. Every other
       // refusal needs one, and forcing it on the marker would spend a step and
       // start a review cycle the run did not need (#293).
       let needsChildTurn = false;
-      if (requireCi !== null && action.unresolvedCompare === true) {
+      // The marker condition applies to a run that carries the gate and to a run
+      // that declares its PR, because both require the gate that resolves the
+      // compare. A run that declares neither keeps the marker (#302).
+      const markerReason = unresolvedCompareReason({ pr, requireCi });
+      if (markerReason !== null && action.unresolvedCompare === true) {
         refusals.push({
-          reason: UNRESOLVED_COMPARE_WITH_CI,
+          reason: markerReason,
           recovery: "The gate resolves that PR head, so remove unresolvedCompare from the finish.",
         });
       }
@@ -376,12 +383,29 @@ export async function runLoop(options) {
   }
 }
 
-/**
- * The marker refusal both paths share, kept as a constant so the headless gate
- * and `role finish` cannot drift apart on the wording.
- */
-export const UNRESOLVED_COMPARE_WITH_CI =
+// The marker refusal a gated run gets, kept as a constant so the shared reason
+// function cannot drift apart on the wording.
+const UNRESOLVED_COMPARE_WITH_CI =
   "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved";
+
+/**
+ * The marker refusal for the run's PR input, or null when the run declares
+ * neither a gate nor a PR, where the marker stays the only record. A declared
+ * PR run needs the gate the same way a gated run does, so it refuses the marker
+ * too and names the gate it must reach instead of a flag it never carried
+ * (#302). The two paths share this function so the wording cannot drift.
+ * @param {object} options
+ * @returns {string | null}
+ */
+export function unresolvedCompareReason({ pr = null, requireCi = null }) {
+  if (requireCi !== null) {
+    return UNRESOLVED_COMPARE_WITH_CI;
+  }
+  if (pr !== null) {
+    return `unresolvedCompare cannot be combined with a run that declares PR ${pr} (--pr): the run must end through the --require-ci ${pr} gate, which resolves that PR head, so that compare is not unresolved`;
+  }
+  return null;
+}
 
 /**
  * The refusal a `--pr <pr>` declaration gives when the run carries no gate for

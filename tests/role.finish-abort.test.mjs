@@ -622,6 +622,56 @@ test("a run that declares a PR refuses a finish that records unresolvedCompare",
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 
+// Usefulness: verifies the interactive path reports every applicable condition in
+// one refusal, in the order the headless list uses, so a parent that fixes one
+// condition per `finish` call spends a call on the condition the next refusal
+// names instead (#302).
+test("a declared PR with no gate reports the marker and the gate in one refusal", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+
+  const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+    stdin: async () => JSON.stringify(UNRESOLVED_SUMMARY),
+    gh: async () => {
+      throw new Error("gh must not run: no gate was requested.");
+    },
+  });
+
+  const marker =
+    "unresolvedCompare cannot be combined with a run that declares PR 42 (--pr): the run must end through the --require-ci 42 gate, which resolves that PR head, so that compare is not unresolved";
+  const gate =
+    "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toBe(`Finish refused: ${marker}; ${gate}.`);
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies the same collect-then-report rule covers the completion
+// rule, so a declared PR run learns about the unmet reviewer turn and the missing
+// gate from one `finish` call (#302).
+test("a declared PR with no gate reports the completion rule and the gate in one refusal", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+
+  const result = await finishCall(repo, ["--require-accept"], {
+    gh: async () => {
+      throw new Error("gh must not run: no gate was requested.");
+    },
+  });
+
+  const gate =
+    "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toBe(
+    `Finish refused: no reviewer turn after the latest worker turn; ${gate}.`,
+  );
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
 // Usefulness: verifies a run that declares a PR and gates the same PR behaves as
 // a gated run does today, so the declaration adds no second enforcement path
 // (#302).

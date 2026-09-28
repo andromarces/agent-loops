@@ -74,7 +74,7 @@ function prGateLines({ requireCi, orchestratorKind, reviewerKind }) {
  */
 function prDeclarationBlock(pr) {
   if (pr === null) return "";
-  return `\n- This run declares PR work on PR ${pr} (--pr ${pr}), so every finish must end through the --require-ci ${pr} gate for that PR, and a finish that records "unresolvedCompare": true is refused, because that gate resolves the compare. The runtime refuses a finish the gate did not clear, and no turn in this run can add the flag, so a run started without --require-ci ${pr} cannot finish: abort with the missing gate named in the reason.`;
+  return `\n- This run declares PR work on PR ${pr} (--pr ${pr}), so every finish must end through the --require-ci ${pr} gate for that PR, and a finish that records "unresolvedCompare": true is refused, because that gate resolves the compare. A finish that carries the marker breaks both rules, and one refusal names both, so remove the marker and note that the gate is still missing. The runtime refuses a finish the gate did not clear, and no turn in this run can add the flag, so a run started without --require-ci ${pr} cannot finish: abort with the missing gate named in the reason.`;
 }
 
 export function initialPrompt({

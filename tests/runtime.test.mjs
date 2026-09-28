@@ -2013,15 +2013,57 @@ test("a run that declares a PR refuses a finish that carries unresolvedCompare",
   }
 });
 
-// 54. Usefulness: verifies the new refusal is reported with the existing refusals
-// in their existing order, because the run grants one corrective turn and a
-// prompt naming only the declaration would spend it on the gate condition that
-// the next refusal names instead (#302).
+// 54. Usefulness: verifies the marker refusal fires on a declared PR run with no
+// gate, and that one refusal names both conditions in the existing order. The
+// finish breaks two rules and the run grants one corrective turn, so a refusal
+// that names one of them spends it on the condition the next refusal names
+// instead (#302).
+test("a declared PR with no gate reports the marker and the gate in one refusal", async () => {
+  const repo = await createTempRepo();
+  try {
+    const summary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+
+    const result = await runLoop({
+      task: "PR work: address issue 54 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+          JSON.stringify({ action: "finish", summary, unresolvedCompare: true }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+    });
+
+    const marker =
+      "unresolvedCompare cannot be combined with a run that declares PR 42 (--pr): the run must end through the --require-ci 42 gate, which resolves that PR head, so that compare is not unresolved";
+    const gate =
+      "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toBe(`Finish refused: ${marker}; ${gate}.`);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// 55. Usefulness: verifies the declared-PR refusal is reported with the completion
+// rule in the existing order, so one refusal names every condition the finish
+// breaks (#302).
 test("the missing-gate refusal is reported with the other refusals in order", async () => {
   const repo = await createTempRepo();
   try {
     const result = await runLoop({
-      task: "PR work: address issue 54 through PR 42.",
+      task: "PR work: address issue 55 through PR 42.",
       cwd: repo,
       maxSteps: 5,
       pr: 42,
@@ -2037,14 +2079,10 @@ test("the missing-gate refusal is reported with the other refusals in order", as
       },
     });
 
+    const gate =
+      "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
     expect(result.exitCode).toBe(1);
-    expect(result.reason).toContain("declares PR 42");
-    expect(result.reason).toContain("no reviewer report on the state");
-    // The declaration reads as the PR-gate condition, so it sits where the gate
-    // sits: after the completion rule.
-    expect(result.reason.indexOf("no reviewer report")).toBeLessThan(
-      result.reason.indexOf("declares PR 42"),
-    );
+    expect(result.reason).toBe(`Finish refused: no reviewer report on the state; ${gate}.`);
   } finally {
     await removePath(repo);
   }

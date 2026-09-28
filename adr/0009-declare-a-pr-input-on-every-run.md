@@ -44,38 +44,52 @@ refusal.
    refused. The gate is never read for another PR, so a wrong number costs no
    GitHub call.
 3. A declared run also refuses a finish that sets `unresolvedCompare`, because
-   the gate it requires resolves that compare. The existing
-   `UNRESOLVED_COMPARE_WITH_CI` wording is unchanged: a declared run refuses the
-   marker for the same reason a gated run does.
-4. The refusal is one entry in the existing headless refusal list, in the gate
-   position, so it is reported with the other refusals in their existing order
-   and the run still grants one corrective turn.
-5. The gate flag is a run input, so no child turn can supply it. That refusal
+   the gate it requires resolves that compare. The refusal wording comes from one
+   shared function, so a gated run keeps the existing `--require-ci` wording and
+   a declared run without a gate names the gate it must reach instead. The
+   wording is now one function on both paths rather than an exported constant,
+   because `unresolvedCompareReason` is what both paths call.
+4. Every applicable refusal is collected and reported in one refusal, in the
+   order marker condition, `--require-accept`, declared-PR gate condition,
+   `--require-ci`. The interactive `role finish` applies the same rule and the
+   same order, so a finish that breaks two rules names both on either path and a
+   parent learns every condition from one call.
+5. The `--require-ci` gate runs only when nothing above it refused on the
+   interactive path, so a refused `finish` never reads GitHub. The headless loop
+   evaluates every gate it owns, as it did before, because it can report all of
+   them and a `gh` failure is already a refusal there.
+6. The gate flag is a run input, so no child turn can supply it. That refusal
    therefore needs no child turn, and its recovery names `abort` with the
    missing gate as the only outcome the orchestrator owns. The refusal prompt
    gets its own ending text, because the marker ending would tell the
    orchestrator to re-finish without a marker it does not carry.
-6. The interactive path applies the same rule at `finish`, reading the declared
+7. The interactive path applies the same rule at `finish`, reading the declared
    PR from the state file. `--pr` is an init field, so a later call that changes
    it is refused like `--task` or `--mode`. A state file written before this
    field has no `pr` and keeps the marker-only behavior.
-7. `review-only` refuses `--pr` at init. That mode rejects `--require-ci` at
+8. `review-only` refuses `--pr` at init. That mode rejects `--require-ci` at
    finish, so a declared run there would refuse every finish and could never
    end. The refusal moves to init, where the parent can still correct it.
-8. A run that declares no PR behaves exactly as before: the marker is recorded,
+9. A run that declares no PR behaves exactly as before: the marker is recorded,
    the exit code is `UNRESOLVED_COMPARE_EXIT` for a recorded compare, and a
    finish that omits the marker still reads as a verified one.
-9. The headless orchestrator prompt states the declaration and the gate it
-   requires, so the orchestrator knows a declared run cannot finish without the
-   gate and cannot record the marker.
+10. The headless orchestrator prompt states the declaration and the gate it
+    requires, so the orchestrator knows a declared run cannot finish without the
+    gate and cannot record the marker.
 
 ## Consequences
 
 - A run that states its PR cannot end through a field the parent set, so a
   forgotten `--require-ci` is a refusal instead of a silent verified finish.
+- A finish that breaks two conditions now names both on either path, so a
+  corrective turn or a `finish` call is not spent on the condition the next
+  refusal would name.
 - A parent must pass both flags on the headless path, and must init with `--pr`
   and finish with `--require-ci` on the interactive path. That is the price of
   the runtime knowing the run is PR work.
+- `role finish` no longer returns only the first refusal. A refused `finish`
+  that also carries `--require-ci` does not read GitHub, so a parent learns the
+  local conditions in one call and reaches the gate only once they pass.
 - A declared run with a base branch that has no required checks cannot be
   gated, because `checkCi` refuses an empty union of required checks. Such a
   run must not declare a PR, and the marker stays its only trace. The ceiling
