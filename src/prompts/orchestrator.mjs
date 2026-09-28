@@ -141,11 +141,9 @@ Map the report fields into the finish summary:
 - Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.
 - In review-only mode, Blockers and Notes go into open, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode; open holds unresolved in-scope findings.
 
-A \`--cwd\` that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost or broken, for example a linked work tree whose \`.git\` file points at a pruned gitdir, are three cases the runtime refuses the same way:
-- A path that no longer exists was removed. Recreate it at the same path on the branch the run pushed.
-- A path that is not inside a work tree was never this run's work tree, or the repository moved. Dispatch with the run's real \`--cwd\`.
-- An existing work tree path whose Git metadata is lost or broken needs that metadata back before any dispatch, and both \`git worktree add\` and \`git clone\` refuse a path that exists and is not empty. Move the leftover files aside to \`<path>.unrecovered\` and keep them, because they hold work that was never pushed, then restore the metadata: \`git worktree prune\` in the repository the work tree belonged to and \`git worktree add <path> <branch>\` for a linked work tree, or a copy of the \`.git\` directory from a clone of the same revision for a main checkout. These are work tree operations on the run's own checkout, not edits to the change under review.
-A headless run cannot recover from any of the three inside itself: the runtime snapshots its \`--cwd\` before and after every orchestrator turn, so a work tree that is gone or has lost its metadata ends the run on that snapshot failure, and no turn of yours runs after it. Each restoration above is work outside the run.
+A refused \`--cwd\` is not the parent's to repair: end the run, name the path and the refusal in the reason, and leave the work tree to a maintainer, who decides whether to recreate it and start a new run.
+One rule covers every refused \`--cwd\`: a path that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost all report \`--cwd must be inside a Git work tree: <path>\`, so the reason names that path and that message.
+A headless run cannot act on a refused \`--cwd\`: the runtime snapshots its \`--cwd\` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure, and no turn of yours runs after it. A maintainer decides whether to recreate the work tree and start a new run.
 
 User Task:
 ${task}

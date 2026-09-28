@@ -6,7 +6,7 @@ plugin command, and the Copilot launcher) include this file instead of copying
 it. The headless prompt in `src/prompts/orchestrator.mjs` states the same role
 rules in JSON-action form; this file is the source for shared rules. Work tree
 ownership below is stated in that prompt as well, and the two state the same
-diagnosis.
+rule.
 
 ## Role
 
@@ -202,38 +202,32 @@ writes no state file, and a later dispatch charges no step, changes no lifecycle
 and spawns no child. The envelope carries `status: "error"` with
 `--cwd must be inside a Git work tree: <path>`.
 
-A `--cwd` that no longer exists, a path that is not inside a Git work tree, and
-an existing work tree path whose Git metadata is lost or broken, for example a
-linked work tree whose `.git` file points at a pruned gitdir, are three cases the
-runtime refuses the same way:
+A refused `--cwd` is not the parent's to repair: end the run, name the path and
+the refusal in the reason, and leave the work tree to a maintainer, who decides
+whether to recreate it and start a new run.
 
-- A path that no longer exists was removed. Recreate it at the same path on the
-  branch the run pushed. The state file sits in the runs root under the resolved
-  `--cwd`, so the run survives: dispatch again once that tree is back. When the
-  branch is gone, or the run pushed nothing, the work is not recoverable: call
-  `abort` with the missing work tree named in the reason.
-- A path that is not inside a work tree was never this run's work tree, or the
-  repository moved. Dispatch with the run's real `--cwd`. Its state file is one
-  the refused call never touched, so the run is intact there; call `abort` with
-  the wrong path in the reason when that is not the tree you want.
-- An existing work tree path whose Git metadata is lost or broken needs that
-  metadata back before any dispatch, and both `git worktree add` and `git clone`
-  refuse a path that exists and is not empty. Move the leftover files aside to
-  `<path>.unrecovered` and keep them, because they hold work that was never
-  pushed, then restore the metadata: `git worktree prune` in the repository the
-  work tree belonged to and `git worktree add <path> <branch>` for a linked work
-  tree, or a copy of the `.git` directory from a clone of the same revision for a
-  main checkout. These are work tree operations on the run's own checkout, not
-  edits to the change under review.
+One rule covers every refused `--cwd`: a path that no longer exists, a path that
+is not inside a Git work tree, and an existing work tree path whose Git metadata
+is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason
+names that path and that message.
 
-`abort` reads only the state file, so it works over a missing or broken work tree.
+```bash
+agent-loop role abort --cwd "<work tree>" \
+  --reason "<work tree>: --cwd must be inside a Git work tree"
+```
 
-The headless loop takes the same diagnosis and has no in-run recovery for it:
-`agent-loop` snapshots its `--cwd` before and after every orchestrator turn, so a
-work tree that is gone or has lost its metadata ends the run on that snapshot
-failure before the orchestrator can act, and the headless loop keeps no run state
-outside its own process. A headless worker turn gets the ownership rule from the
-same file, because `runChild` builds the worker prompt there for both paths.
+`abort` reads only the state file, so it ends the run over a work tree that is
+gone or is not a Git work tree, and it writes nothing inside that path. A
+maintainer who recreates the work tree starts a new run there: a run over an
+aborted work tree is not resumed, and the state file names the work tree, not the
+work in it.
+
+The headless loop states the same rule and cannot act on it: `agent-loop`
+snapshots its `--cwd` before and after every orchestrator turn, so a work tree in
+any of those three states ends the run on that snapshot failure before the
+orchestrator can act, and the run keeps no state file. A headless worker turn
+gets the ownership rule from the same file, because `runChild` builds the worker
+prompt there for both paths.
 
 ## Reviewer prompts
 

@@ -365,30 +365,35 @@ test("initialPrompt states that a wait can end the run at the turn timeout", () 
   expect(prompt).toMatch(/exit 1/);
 });
 
-// The work tree diagnosis both parent paths state the same way, so a parent on
-// either path reads the same recovery for a `--cwd` the runtime refuses. The
-// third case is the one a single message hides: an existing work tree path whose
-// Git metadata is lost or broken, which a linked work tree with a pruned gitdir
-// looks like, and which is neither a removed path nor a path that was never a
-// work tree. Its recovery names the two commands that refuse a non-empty path,
-// so no parent is told to run one that cannot work (issue #327).
-const WORK_TREE_DIAGNOSIS = [
-  "A `--cwd` that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost or broken, for example a linked work tree whose `.git` file points at a pruned gitdir, are three cases the runtime refuses the same way:",
-  "A path that no longer exists was removed. Recreate it at the same path on the branch the run pushed.",
-  "A path that is not inside a work tree was never this run's work tree, or the repository moved. Dispatch with the run's real `--cwd`.",
-  "An existing work tree path whose Git metadata is lost or broken needs that metadata back before any dispatch, and both `git worktree add` and `git clone` refuse a path that exists and is not empty. Move the leftover files aside to `<path>.unrecovered` and keep them, because they hold work that was never pushed, then restore the metadata: `git worktree prune` in the repository the work tree belonged to and `git worktree add <path> <branch>` for a linked work tree, or a copy of the `.git` directory from a clone of the same revision for a main checkout. These are work tree operations on the run's own checkout, not edits to the change under review.",
+// The refused-`--cwd` rule both parent paths state the same way. It is the
+// decision, not a repair procedure: a parent ends the run and a maintainer
+// decides what happens to the work tree. The mechanism behind it differs by
+// parent, so only the decision and the three refused cases are pinned here, and
+// the test fails when either side drops them (issue #327).
+const REFUSED_CWD_RULE = [
+  "A refused `--cwd` is not the parent's to repair: end the run, name the path and the refusal in the reason, and leave the work tree to a maintainer, who decides whether to recreate it and start a new run.",
+  "One rule covers every refused `--cwd`: a path that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason names that path and that message.",
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt state
-// the same work tree diagnosis, including the existing path whose Git metadata is
-// lost, so neither parent path tells a maintainer a wrong recovery for the one
-// message the runtime sends for all three cases (issue #327).
-test("interactive instructions and headless prompt share the work tree diagnosis", async () => {
+// the same refused-`--cwd` rule, so neither parent path sends a maintainer
+// through a work tree repair that the runtime never asked for (issue #327).
+test("interactive instructions and headless prompt share the refused --cwd rule", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
-  for (const rule of WORK_TREE_DIAGNOSIS) {
+  for (const rule of REFUSED_CWD_RULE) {
     expect(instructions).toContain(rule);
     expect(prompt).toContain(rule);
+  }
+  // Neither text keeps the repair procedure or the unrecoverable claim.
+  for (const gone of [
+    "git worktree add",
+    "git worktree prune",
+    "not recoverable",
+    "unrecoverable",
+  ]) {
+    expect(instructions).not.toContain(gone);
+    expect(prompt).not.toContain(gone);
   }
 });
 

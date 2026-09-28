@@ -17,9 +17,43 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
+
+// Usefulness: verifies abort ends a run whose `--cwd` no longer exists or is no
+// longer a Git work tree. A refused dispatch leaves that run active, and the
+// parent rule for it is to abort rather than repair, so abort has to be the one
+// command that works without a usable work tree (issue #327).
+test("abort ends a run whose --cwd is missing or not a Git work tree", async () => {
+  await setup();
+  const goneRepo = await createTempRepo();
+  repos.push(goneRepo);
+  const plainRepo = await createTempRepo();
+  repos.push(plainRepo);
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+
+  for (const repo of [goneRepo, plainRepo]) {
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+      agents,
+      stdin: stdinPrompt,
+    });
+  }
+  await removePath(goneRepo);
+  await removePath(join(plainRepo, ".git"));
+
+  for (const repo of [goneRepo, plainRepo]) {
+    const result = await executeRoleCommand(
+      withRepo(["abort", "--cwd", "<repo>", "--reason", "work tree unusable"], repo),
+      { agents },
+    );
+    expect(result.exitCode, repo).toBe(0);
+    expect(result.payload, repo).toMatchObject({ status: "ok", lifecycle: "aborted" });
+    const state = await readRepoState(repo);
+    expect(state.lifecycle, repo).toBe("aborted");
+    expect(state.reason, repo).toBe("work tree unusable");
+  }
+});
 
 // Usefulness: verifies acceptance — finish from active in review-only mode
 // succeeds with verdict: reject recorded in the summary.
