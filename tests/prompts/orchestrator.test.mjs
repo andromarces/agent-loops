@@ -370,12 +370,13 @@ test("initialPrompt states that a wait can end the run at the turn timeout", () 
 // third case is the one a single message hides: an existing work tree path whose
 // Git metadata is lost or broken, which a linked work tree with a pruned gitdir
 // looks like, and which is neither a removed path nor a path that was never a
-// work tree (issue #327).
+// work tree. Its recovery names the two commands that refuse a non-empty path,
+// so no parent is told to run one that cannot work (issue #327).
 const WORK_TREE_DIAGNOSIS = [
   "A `--cwd` that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost or broken, for example a linked work tree whose `.git` file points at a pruned gitdir, are three cases the runtime refuses the same way:",
   "A path that no longer exists was removed. Recreate it at the same path on the branch the run pushed.",
   "A path that is not inside a work tree was never this run's work tree, or the repository moved. Dispatch with the run's real `--cwd`.",
-  "An existing work tree path whose Git metadata is lost or broken needs that metadata back before any dispatch: re-add a linked work tree with `git worktree add <path> <branch>` from its repository, and restore `.git` in a main checkout from a clone.",
+  "An existing work tree path whose Git metadata is lost or broken needs that metadata back before any dispatch, and both `git worktree add` and `git clone` refuse a path that exists and is not empty. Move the leftover files aside to `<path>.unrecovered` and keep them, because they hold work that was never pushed, then restore the metadata: `git worktree prune` in the repository the work tree belonged to and `git worktree add <path> <branch>` for a linked work tree, or a copy of the `.git` directory from a clone of the same revision for a main checkout. These are work tree operations on the run's own checkout, not edits to the change under review.",
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt state

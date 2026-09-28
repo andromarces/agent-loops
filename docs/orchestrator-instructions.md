@@ -217,11 +217,14 @@ runtime refuses the same way:
   the refused call never touched, so the run is intact there; call `abort` with
   the wrong path in the reason when that is not the tree you want.
 - An existing work tree path whose Git metadata is lost or broken needs that
-  metadata back before any dispatch: re-add a linked work tree with
-  `git worktree add <path> <branch>` from its repository, and restore `.git` in a
-  main checkout from a clone. The directory and the work tree files can be intact
-  while the repository they belong to is not, so read the metadata before
-  concluding the path was removed.
+  metadata back before any dispatch, and both `git worktree add` and `git clone`
+  refuse a path that exists and is not empty. Move the leftover files aside to
+  `<path>.unrecovered` and keep them, because they hold work that was never
+  pushed, then restore the metadata: `git worktree prune` in the repository the
+  work tree belonged to and `git worktree add <path> <branch>` for a linked work
+  tree, or a copy of the `.git` directory from a clone of the same revision for a
+  main checkout. These are work tree operations on the run's own checkout, not
+  edits to the change under review.
 
 `abort` reads only the state file, so it works over a missing or broken work tree.
 
