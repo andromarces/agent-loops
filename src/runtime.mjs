@@ -184,6 +184,11 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * recovery names `abort` as the outcome the orchestrator owns. A run with
  * neither `pr` nor `requireCi` behaves exactly as before (#302).
  *
+ * With `mode`, the headless run names its loop policy with the same flag and the
+ * same values the interactive path takes, and the prompt states that mode. A
+ * `review-only` mode is a run that dispatches no worker, so the CLI refuses
+ * `pr` and `requireCi` before the run starts; nothing here reads them (#337).
+ *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
  * a Checks line, and with no worker turn it needs at least one reviewer report.
@@ -206,6 +211,7 @@ export async function runLoop(options) {
     requireAccept = false,
     pr = null,
     requireCi = null,
+    mode = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -251,6 +257,7 @@ export async function runLoop(options) {
     requireAccept,
     pr,
     requireCi,
+    mode,
     orchestratorKind: orchestrator?.kind ?? null,
     reviewerKind: reviewer?.kind ?? null,
   });

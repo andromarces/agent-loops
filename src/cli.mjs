@@ -6,8 +6,12 @@ import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.m
 import {
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
+  MODES,
+  REVIEW_ONLY_GATE_REFUSAL,
+  REVIEW_ONLY_PR_REFUSAL,
   ROLE_KINDS as ROLES,
   assertOpenCodeOptions,
+  modeError,
   readArgValue,
   readInlineValue,
   readMaxSteps,
@@ -40,6 +44,7 @@ export function parseArgs(argv) {
     requireAccept: false,
     pr: null,
     requireCi: null,
+    mode: null,
   };
   for (const role of ROLES) {
     options[role] = null;
@@ -106,6 +111,13 @@ export function parseArgs(argv) {
         options.requireCi = readPositiveInt("--require-ci", readInline("--require-ci"));
         break;
 
+      case "--mode":
+        options.mode = readInline("--mode");
+        if (!MODES.has(options.mode)) {
+          throw new Error(modeError(options.mode));
+        }
+        break;
+
       case "--help":
       case "-h":
         if (inline) {
@@ -142,6 +154,18 @@ export function parseArgs(argv) {
     throw new Error(
       'Missing required --task. Provide the task, for example --task "Implement the change."',
     );
+  }
+
+  // A review-only run dispatches no worker and gates no PR, so it takes neither
+  // PR flag. Both arrive on this one command line, so the interactive path's
+  // refusals move here and keep their wording, shared from one constant (#337).
+  if (options.mode === "review-only") {
+    if (options.pr !== null) {
+      throw new Error(REVIEW_ONLY_PR_REFUSAL);
+    }
+    if (options.requireCi !== null) {
+      throw new Error(REVIEW_ONLY_GATE_REFUSAL);
+    }
   }
 
   // The headless path takes both flags on one command line, so a gate for another
@@ -261,6 +285,12 @@ Options:
 
   --cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
   --task <text>                 Task description. Required.
+  --mode <mode>                 Loop policy: work-first, review-first, or review-only, the
+                                same values the role subcommand takes. review-only
+                                dispatches no worker and takes neither --pr nor
+                                --require-ci, which are refused with the same wording the
+                                role path uses. Off by default, so a run without the flag
+                                keeps the current behavior.
   --max-steps <count>           Maximum child steps. Defaults to 20. 1 to 9007199254740991.
   --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
   --transcript <file>           Record execution transcript to a JSON file.
@@ -277,7 +307,8 @@ Options:
                                 declared run with no matching gate cannot finish, and no
                                 turn in the run can add the flag. Off by default; a run with
                                 neither --pr nor --require-ci keeps the unresolvedCompare
-                                marker as the only record of an unresolved compare.
+                                marker as the only record of an unresolved compare. A
+                                --mode review-only run refuses it outright.
   --require-ci <pr>             Refuse finish until the runtime resolves the PR head from
                                 this pull request: the PR head must match the reviewed commit,
                                 the reviewed tree must be clean, the PR must not be behind its
@@ -286,7 +317,8 @@ Options:
                                 evaluates. Refuses a finish that also sets
                                 unresolvedCompare. Off by default; without it the
                                 unresolvedCompare marker is the only record of an
-                                unresolved compare.
+                                unresolved compare. A --mode review-only run refuses
+                                it outright.
   -h, --help                    Show help.
 
   A value flag also accepts the inline form --flag=value, for example
@@ -365,6 +397,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       requireAccept: options.requireAccept,
       pr: options.pr,
       requireCi: options.requireCi,
+      mode: options.mode,
     },
     roles,
     events,
@@ -437,6 +470,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
         requireAccept: options.requireAccept,
         pr: options.pr,
         requireCi: options.requireCi,
+        mode: options.mode,
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,

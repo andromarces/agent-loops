@@ -295,6 +295,28 @@ test("initialPrompt states the completion rule and its mode mapping", () => {
   expect(prompt).toContain("loop policy");
 });
 
+// Usefulness: verifies a review-only headless run states the mapping the mode
+// already carries in the interactive path: no worker dispatch, a finish on the
+// reviewer report whatever the verdict, and the review-only summary mapping. A
+// run without `--mode` keeps the mode-free prompt, so the block cannot reach a
+// run that did not ask for it (issue #337).
+test("a review-only run states the review-only mapping", () => {
+  const reviewOnly = initialPrompt({ task: "T", maxSteps: 10, mode: "review-only" });
+  expectRule(reviewOnly, /review-only/i, /do not dispatch[^.!?]{0,40}worker/i);
+  expectRule(reviewOnly, /reviewer/i, /\bfinish\b/i, /verdict/i);
+  expectRule(reviewOnly, /Blockers/i, /open/i);
+  // The mode-free prompt carries none of it, so an ordinary run is untouched.
+  const noMode = initialPrompt({ task: "T", maxSteps: 10 });
+  expect(noMode).not.toContain("This run is review-only");
+  expect(reviewOnly).not.toBe(noMode);
+  // A work-first or review-first run states its own mode and takes both gates.
+  for (const mode of ["work-first", "review-first"]) {
+    const prompt = initialPrompt({ task: "T", maxSteps: 10, mode, pr: 42, requireCi: 42 });
+    expect(prompt).toContain(`This run is ${mode}`);
+    expect(prompt).toContain("--require-ci 42");
+  }
+});
+
 // Usefulness: verifies the headless prompt names the deterministic gate when the
 // run is started with --require-accept (issue #234).
 test("initialPrompt states the --require-accept gate when enabled", () => {

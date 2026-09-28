@@ -477,9 +477,16 @@ Every command for a run passes that run's `--cwd`. Each run ends with its own
 - `review-only`: reviewer, then report. Findings alone never authorize edits;
   the subcommand rejects worker dispatch in this mode.
 
-This section governs the interactive `role` mode. The headless loop chooses its
-own action order; its prompt states the completion rule and the `review-only`
-mapping instead, and `agent-loop --require-accept` enforces that rule. The
+Both paths name the mode with the same flag and the same three values:
+`agent-loop --mode <mode>` on the headless command and `--mode <mode>` on the
+`role` init call. The headless loop chooses its own action order, and its
+`--mode` is off by default, so a run without the flag keeps the current
+behavior. `--mode review-only` changes what a run accepts on either path: it
+dispatches no worker, so it takes neither `--pr` nor `--require-ci`, and the
+headless command refuses each of them at parse time with the same wording the
+interactive path uses. Its prompt states the completion rule and the
+`review-only` mapping instead, and `agent-loop --require-accept` enforces that
+rule. The
 headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
 PR gate headlessly, so the runtime resolves the PR head there too (#293), and
@@ -588,7 +595,10 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   other init field. A state file written before this field has no `pr`, and that
   run keeps the marker-only behavior.
 - `review-only` refuses `--pr` at init, because that mode rejects `--require-ci`
-  at finish and the run would refuse every finish.
+  at finish and the run would refuse every finish. On the headless path both
+  flags arrive on one command line, so `agent-loop --mode review-only --pr 42`
+  and `agent-loop --mode review-only --require-ci 42` are usage errors before the
+  run starts, with the same two wordings this section states.
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the

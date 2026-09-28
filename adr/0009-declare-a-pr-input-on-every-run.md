@@ -84,7 +84,10 @@ refusal.
    field has no `pr` and keeps the marker-only behavior.
 9. `review-only` refuses `--pr` at init. That mode rejects `--require-ci` at
    finish, so a declared run there would refuse every finish and could never
-   end. The refusal moves to init, where the parent can still correct it.
+   end. The refusal moves to init, where the parent can still correct it. The
+   headless path applies both refusals at parse time, because it takes both
+   flags on one command line and names the mode with the same `--mode` flag the
+   init call takes (#337).
 10. A run that declares no PR behaves exactly as before: the marker is recorded,
     the exit code is `UNRESOLVED_COMPARE_EXIT` for a recorded compare, and a
     finish that omits the marker still reads as a verified one.
@@ -145,6 +148,7 @@ Andro Marces
 
 - [Issue #302: Require a PR input on every run so an omitted unresolvedCompare marker cannot read as verified](https://github.com/andromarces/agent-loops/issues/302)
 - Implementation: `missingGateRefusal` in `src/runtime.mjs`, the finish gate in `src/role.mjs`, the `--pr` flag in `src/cli.mjs`, the prompt block in `src/prompts/orchestrator.mjs`; tests in `tests/runtime.test.mjs`, `tests/role.finish-abort.test.mjs`, `tests/role.init.test.mjs`, `tests/cli.test.mjs`, and `tests/prompts/orchestrator.test.mjs`; documented in `docs/orchestrator-instructions.md` and `README.md`
+- [Issue #337: Reject --require-ci and --pr on a review-only headless run](https://github.com/andromarces/agent-loops/issues/337) — the headless `--mode`, the two refusals, and the shared refusal wording in `src/lib/args.mjs`
 - [Issue #286: An omitted unresolvedCompare marker reads as a verified finish](https://github.com/andromarces/agent-loops/issues/286)
 - [PR #293](https://github.com/andromarces/agent-loops/pull/293)
 - [ADR Index](README.md)

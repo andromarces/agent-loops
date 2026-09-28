@@ -216,6 +216,58 @@ test("--pr with --require-ci for another pull request is a usage error", () => {
   expect(parseArgs([...BASE, "--require-ci", "7"]).requireCi).toBe(7);
 });
 
+// Usefulness: verifies a review-only headless run refuses --pr before any child
+// turn runs, with the interactive init wording, so the two paths state one rule
+// for a mode that could never reach the gate (issue #337).
+test("--mode review-only refuses --pr", () => {
+  expect(() => parseArgs([...BASE, "--mode", "review-only", "--pr", "42"])).toThrow(
+    "--pr declares PR work, which needs the --require-ci gate; review-only rejects that gate.",
+  );
+  expect(() => parseArgs([...BASE, "--mode=review-only", "--pr=42"])).toThrow(
+    "--pr declares PR work, which needs the --require-ci gate; review-only rejects that gate.",
+  );
+});
+
+// Usefulness: verifies a review-only headless run refuses --require-ci before any
+// child turn runs, with the interactive finish wording, because review-only
+// accepts any verdict and the gate has no finish to gate (issue #337).
+test("--mode review-only refuses --require-ci", () => {
+  expect(() => parseArgs([...BASE, "--mode", "review-only", "--require-ci", "42"])).toThrow(
+    "--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.",
+  );
+  expect(() => parseArgs([...BASE, "--mode=review-only", "--require-ci=42"])).toThrow(
+    "--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.",
+  );
+});
+
+// Usefulness: verifies a review-only headless run takes neither gate flag, so
+// both refusals stay reachable, and that a work-first or review-first run keeps
+// accepting them, because only review-only rejects the gate (issue #337).
+test("--mode review-only takes no gate flag and the other modes keep both", () => {
+  expect(parseArgs([...BASE, "--mode", "review-only"]).pr).toBeNull();
+  expect(parseArgs([...BASE, "--mode", "review-only"]).requireCi).toBeNull();
+  for (const mode of ["work-first", "review-first"]) {
+    expect(parseArgs([...BASE, "--mode", mode, "--pr", "42", "--require-ci", "42"]).pr).toBe(42);
+  }
+  // No --mode keeps today's behavior, because a run without the flag is not
+  // review-only.
+  expect(parseArgs([...BASE, "--pr", "42", "--require-ci", "42"]).requireCi).toBe(42);
+});
+
+// Usefulness: verifies the headless --mode accepts the same three values as the
+// interactive path and refuses any other, so a caller learns the mode names from
+// one list on both paths (issue #337).
+test("--mode takes the interactive mode values", () => {
+  for (const mode of ["work-first", "review-first", "review-only"]) {
+    expect(parseArgs([...BASE, "--mode", mode]).mode).toBe(mode);
+  }
+  expect(parseArgs([...BASE, "--mode=review-only"]).mode).toBe("review-only");
+  expect(parseArgs(BASE).mode).toBeNull();
+  expect(() => parseArgs([...BASE, "--mode", "nope"])).toThrow(
+    "--mode must be one of work-first, review-first, review-only, got: nope",
+  );
+});
+
 // Usefulness: verifies readValue guards against missing value or value starting with -.
 test("readValue guards against missing or flag-like values", () => {
   expect(() => parseArgs(["--orchestrator", "--worker"])).toThrow(
