@@ -209,8 +209,9 @@ test("opencode rejects an effort without a model and names the model flag", asyn
 });
 
 // Usefulness: verifies a failed turn rethrows the same error instance with its operational fields
-// intact, so the caller keeps timeout, cancel, and exit-code detail.
-test("opencode rethrows a failed turn unchanged", async () => {
+// intact, so the caller keeps timeout, cancel, and exit-code detail. The message is rebuilt from
+// those fields, so the raw stdout that exec appended never reaches the caller (issue #326).
+test("opencode rethrows a failed turn with its operational fields", async () => {
   const { ExecError } = await vi.importActual("../../src/lib/exec.mjs");
   const failure = new ExecError(
     "opencode exited with code 1.\n\nprovider.internal: Internal server error (status 500)",
@@ -352,7 +353,7 @@ test("opencode keeps step_finish usage when an error event follows", async () =>
 test("opencode exposes usage from stdout when the CLI exits non-zero", async () => {
   const stdout = stepFinishEvent({ input: 10, output: 2, reasoning: 0, cost: 0.001 });
   vi.mocked(exec).mockRejectedValueOnce(
-    Object.assign(new Error("opencode exited with code 1."), { stdout, stderr: "" }),
+    Object.assign(new Error("opencode exited with code 1."), { exitCode: 1, stdout, stderr: "" }),
   );
 
   const state = {
@@ -363,7 +364,7 @@ test("opencode exposes usage from stdout when the CLI exits non-zero", async () 
     usage: { stale: 1 },
   };
   await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow(
-    "opencode exited with code 1.",
+    "opencode exited with code 1",
   );
   expect(state.usage).toEqual({
     mainLoop: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -371,40 +372,125 @@ test("opencode exposes usage from stdout when the CLI exits non-zero", async () 
   });
 });
 
-// Usefulness: verifies a non-zero exit reports the provider error event instead of the whole event
-// stream, so the dispatch envelope names the cause and does not carry the text events (issue #326).
-// The message is asserted whole, so an implementation that appends the stream still fails.
-test("opencode reports the last error event when the CLI exits non-zero", async () => {
+/** Rejects the turn with a real ExecError at exit code 1 carrying `stdout` and `stderr`. */
+async function rejectWithFailure(stdout, stderr = "") {
   const { ExecError } = await vi.importActual("../../src/lib/exec.mjs");
-  const stdout = [
-    textEvent("work in progress"),
-    JSON.stringify({
-      type: "error",
-      sessionID: "sess-oc",
-      error: {
-        type: "provider.invalid-output",
-        message: "OpenAI Chat stream ended without finish_reason",
-        status: 200,
-      },
-    }),
-  ].join("\n");
   vi.mocked(exec).mockRejectedValueOnce(
-    new ExecError(`opencode exited with code 1.\n\n${stdout}`, {
+    new ExecError(`opencode exited with code 1.\n\n${stdout}\n\n${stderr}`, {
       command: "opencode",
       exitCode: 1,
       stdout,
-      stderr: "",
+      stderr,
     }),
   );
-
   const state = { kind: "opencode", sessionId: null, model: null, effort: null };
-  const error = await runOpenCode(state, "oc prompt", { cwd: "/dir" }).catch((err) => err);
+  return runOpenCode(state, "oc prompt", { cwd: "/dir" }).catch((err) => err);
+}
+
+function errorEvent(error) {
+  return JSON.stringify({ type: "error", sessionID: "sess-oc", error });
+}
+
+// Usefulness: verifies a non-zero exit reports the exit code and the provider detail instead of the
+// whole event stream, so the dispatch envelope names the cause and the exit code stays visible
+// (issue #326). The message is asserted whole, so an implementation that appends the stream fails.
+test("opencode reports the exit code and the last error event on a non-zero exit", async () => {
+  const error = await rejectWithFailure(
+    [
+      textEvent("work in progress"),
+      errorEvent({
+        type: "provider.invalid-output",
+        message: "OpenAI Chat stream ended without finish_reason",
+        status: 200,
+      }),
+    ].join("\n"),
+  );
 
   expect(error.message).toBe(
-    "opencode returned an error event: provider.invalid-output: OpenAI Chat stream ended without finish_reason (status 200)",
+    "opencode exited with code 1: provider.invalid-output: OpenAI Chat stream ended without finish_reason (status 200)",
   );
   expect(error.message).not.toContain("work in progress");
   expect(error.exitCode).toBe(1);
+});
+
+// Usefulness: verifies a stream that is truncated, unparseable, or free of error events yields the
+// bare exit code, so a crash before the stream completes cannot dump a partial stream into the
+// envelope or the state file (issue #326).
+test("opencode bounds the message when a non-zero exit has no usable error event", async () => {
+  const error = await rejectWithFailure(
+    [`{"type":"text","part":{"text":"${"X".repeat(5000)}`, "not json at all"].join("\n"),
+  );
+
+  expect(error.message).toBe("opencode exited with code 1");
+  expect(error.message).not.toContain("X".repeat(40));
+});
+
+// Usefulness: verifies a non-zero exit with an empty stream falls back to a bounded stderr tail, so
+// the envelope keeps the cause that only stderr carries. The last token proves the end of stderr
+// survives, the first token proves the head is dropped, and the length bound proves neither the
+// stream nor a stderr dump can reach the state file (issue #326).
+test("opencode falls back to a bounded stderr tail when the stream is empty", async () => {
+  const stderr = `${Array.from({ length: 500 }, (_, index) => `err${index}`).join(" ")} config file not found`;
+  const error = await rejectWithFailure("", stderr);
+
+  expect(error.message.startsWith("opencode exited with code 1:")).toBe(true);
+  expect(error.message).toContain("config file not found");
+  expect(error.message).not.toContain("err0 ");
+  expect(error.message.length).toBeLessThan(400);
+});
+
+// Usefulness: verifies a stream with several error events names the last one, so a retried turn
+// reports its most recent failure rather than the first (issue #326).
+test("opencode reports the last error event when the stream holds several", async () => {
+  const error = await rejectWithFailure(
+    [
+      errorEvent({ type: "provider.rate-limit", message: "slow down" }),
+      textEvent("retrying"),
+      errorEvent({ type: "provider.invalid-output", message: "stream ended early", status: 200 }),
+    ].join("\n"),
+  );
+
+  expect(error.message).toBe(
+    "opencode exited with code 1: provider.invalid-output: stream ended early (status 200)",
+  );
+});
+
+// Usefulness: verifies a trailing malformed error event does not mask an earlier well-formed one,
+// so an unexpected trailing shape still leaves the reported cause readable (issue #326).
+test("opencode reports the last well-formed error event", async () => {
+  const error = await rejectWithFailure(
+    [
+      errorEvent({ type: "provider.internal", message: "Internal server error", status: 500 }),
+      errorEvent(`unreadable payload ${"R".repeat(5000)}`),
+    ].join("\n"),
+  );
+
+  expect(error.message).toBe(
+    "opencode exited with code 1: provider.internal: Internal server error (status 500)",
+  );
+  expect(error.message).not.toContain("R".repeat(40));
+});
+
+// Usefulness: verifies an error event whose payload is not the documented object yields a bounded
+// message rather than a crash or the raw event, so an unexpected CLI shape cannot break the turn
+// (issue #326).
+test("opencode bounds the message for a malformed error event", async () => {
+  const error = await rejectWithFailure(errorEvent(`unreadable payload ${"M".repeat(5000)}`));
+
+  expect(error.message).toBe("opencode exited with code 1");
+  expect(error.message).not.toContain("M".repeat(40));
+});
+
+// Usefulness: verifies a well-formed error event with an oversized message is truncated, so a long
+// provider message cannot fill the envelope or the state file the way the raw stream did (#326).
+test("opencode bounds an oversized error detail", async () => {
+  const error = await rejectWithFailure(
+    errorEvent({ type: "provider.internal", message: `D${"D".repeat(5000)}` }),
+  );
+
+  expect(error.message).toContain("opencode exited with code 1: provider.internal:");
+  expect(error.message).not.toContain("D".repeat(400));
+  expect(error.message.length).toBeLessThan(400);
 });
 
 const CLOSING_BLOCK = [

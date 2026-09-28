@@ -9,6 +9,11 @@ import { resumeMismatchError } from "./shared.mjs";
 // than becoming a verdict the model never wrote on its own line (issue #316).
 const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 
+// Bounds for a non-zero-exit message, so no part of a stream or a stderr dump can reach the
+// dispatch envelope or the state file (issue #326).
+const DETAIL_LIMIT = 300;
+const STDERR_LIMIT = 200;
+
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
 // invisibly. Deny the action for the read-only turn only; see the README.
@@ -55,18 +60,14 @@ export async function runOpenCode(state, prompt, options = {}) {
     const events = parseJsonLines(err?.stdout ?? "");
     // A non-zero exit can still carry completed-step usage. Expose it, then rethrow.
     setUsage(state, events);
+    logDebug(`opencode stream on non-zero exit: ${err?.stdout ?? ""}`);
 
-    // The last error event is the cause; the ExecError message otherwise carries the whole stream
-    // into the dispatch envelope, which a turn can make hundreds of kilobytes (issue #326). The
-    // stream stays on the error for debug and rethrow, and only the message changes.
-    const errorEvent = events.filter((event) => event.type === "error").at(-1);
-
-    if (errorEvent) {
-      logDebug(`opencode stream on non-zero exit: ${err.stdout}`);
-      err.message = `opencode returned an error event: ${describeError(errorEvent.error)}`;
-    }
-
-    throw err;
+    // exec builds its message from the whole stream, so the adapter always replaces it with one
+    // bounded line. The stream stays on the error for debug and stays out of the envelope and the
+    // state file, which a turn can otherwise make hundreds of kilobytes (issue #326).
+    const failure = err instanceof Error ? err : new Error(String(err));
+    failure.message = failureMessage(err, lastErrorDetail(events));
+    throw failure;
   }
 
   const events = parseJsonLines(stdout);
@@ -165,6 +166,61 @@ function setUsage(state, events) {
   } else {
     delete state.usage;
   }
+}
+
+/**
+ * Builds the message for a non-zero exit: the child exit code, the described detail of the last
+ * well-formed error event when the stream names one, then a bounded stderr tail. No part of the
+ * stream reaches the message, so the dispatch envelope and the state file stay readable (#326).
+ */
+function failureMessage(err, detail) {
+  const status =
+    err?.exitCode == null
+      ? "opencode exited without an exit code"
+      : `opencode exited with code ${err.exitCode}`;
+
+  return [status, detail, boundedLine(err?.stderr, STDERR_LIMIT, "tail")]
+    .filter(Boolean)
+    .join(": ");
+}
+
+/**
+ * Returns the described detail of the last well-formed `error` event, or an empty string when the
+ * stream names none. `describeError` reports `unknown error` for a payload it cannot read, so a
+ * malformed event contributes no detail and the message falls back to the stderr tail.
+ */
+function lastErrorDetail(events) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+
+    if (event?.type !== "error") {
+      continue;
+    }
+
+    const detail = describeError(event.error);
+
+    if (detail !== "unknown error") {
+      return boundedLine(detail, DETAIL_LIMIT);
+    }
+  }
+
+  return "";
+}
+
+/**
+ * Flattens `text` to one line and keeps `limit` characters of it, the head by default and the tail
+ * when `keep` is `tail`. The bound is what stops a long stream line from reaching the envelope.
+ */
+function boundedLine(text, limit, keep = "head") {
+  const flat = String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (flat.length <= limit) {
+    return flat;
+  }
+
+  return keep === "tail" ? `...${flat.slice(-limit)}` : `${flat.slice(0, limit)}...`;
 }
 
 /**
