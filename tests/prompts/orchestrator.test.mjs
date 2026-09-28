@@ -52,12 +52,15 @@ test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
 });
 
 // Usefulness: verifies the headless parent knows every child turn reports its
-// commands, and that only the reviewer Checks line is a gate input, so a
-// reported worker Checks line never reads as an accept (issue #310).
+// commands, and that only the reviewer Checks line gates, so a reported worker
+// Checks line never reads as an accept (issue #310). Matched as rule fragments
+// instead of a full sentence, so a reword that keeps the rule keeps the
+// assertion (issue #318).
 test("initialPrompt states that only the reviewer Checks line gates", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain("Every child turn reports a Checks line");
-  expect(prompt).toContain("Only the reviewer Checks line is a gate input");
+  expect(prompt).toMatch(/every child turn reports a checks line/i);
+  expect(prompt).toMatch(/only the reviewer checks line is a gate input/i);
+  expect(prompt).toMatch(/worker checks line .*never an accept/i);
 });
 
 // Usefulness: verifies the headless parent states the same reviewed-state rules
@@ -102,10 +105,15 @@ test("initialPrompt names the unresolvedCompare marker", () => {
 
 // Usefulness: verifies the interactive instructions and the headless prompt
 // state the same reviewed-state parent rules, so the two parent paths never
-// diverge (issue #217, issue #252).
+// diverge (issue #217, issue #252). A rule that needs more than a literal match
+// is listed as a pattern, so both texts are still compared for it (issue #318).
 test("interactive instructions and headless prompt share the reviewed-state rules", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  const patterns = [
+    /only the reviewer checks line is a gate input/i,
+    /worker checks line .*never an accept/i,
+  ];
   for (const rule of [
     "A task is PR work when its change is delivered on a pull request.",
     "For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head.",
@@ -114,11 +122,14 @@ test("interactive instructions and headless prompt share the reviewed-state rule
     "Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.",
     "Require reviewed.clean: true for PR work.",
     "Treat an accept without a Checks line as not accepted.",
-    "Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.",
     "When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.",
   ]) {
     expect(instructions).toContain(rule);
     expect(prompt).toContain(rule);
+  }
+  for (const pattern of patterns) {
+    expect(instructions).toMatch(pattern);
+    expect(prompt).toMatch(pattern);
   }
 });
 
