@@ -1,6 +1,6 @@
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
-import { logInfo } from "../lib/log.mjs";
+import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
 import { resumeMismatchError } from "./shared.mjs";
 
@@ -52,8 +52,20 @@ export async function runOpenCode(state, prompt, options = {}) {
   try {
     ({ stdout } = await exec("opencode", args, execOptions));
   } catch (err) {
+    const events = parseJsonLines(err?.stdout ?? "");
     // A non-zero exit can still carry completed-step usage. Expose it, then rethrow.
-    setUsage(state, parseJsonLines(err?.stdout ?? ""));
+    setUsage(state, events);
+
+    // The last error event is the cause; the ExecError message otherwise carries the whole stream
+    // into the dispatch envelope, which a turn can make hundreds of kilobytes (issue #326). The
+    // stream stays on the error for debug and rethrow, and only the message changes.
+    const errorEvent = events.filter((event) => event.type === "error").at(-1);
+
+    if (errorEvent) {
+      logDebug(`opencode stream on non-zero exit: ${err.stdout}`);
+      err.message = `opencode returned an error event: ${describeError(errorEvent.error)}`;
+    }
+
     throw err;
   }
 

@@ -371,6 +371,42 @@ test("opencode exposes usage from stdout when the CLI exits non-zero", async () 
   });
 });
 
+// Usefulness: verifies a non-zero exit reports the provider error event instead of the whole event
+// stream, so the dispatch envelope names the cause and does not carry the text events (issue #326).
+// The message is asserted whole, so an implementation that appends the stream still fails.
+test("opencode reports the last error event when the CLI exits non-zero", async () => {
+  const { ExecError } = await vi.importActual("../../src/lib/exec.mjs");
+  const stdout = [
+    textEvent("work in progress"),
+    JSON.stringify({
+      type: "error",
+      sessionID: "sess-oc",
+      error: {
+        type: "provider.invalid-output",
+        message: "OpenAI Chat stream ended without finish_reason",
+        status: 200,
+      },
+    }),
+  ].join("\n");
+  vi.mocked(exec).mockRejectedValueOnce(
+    new ExecError(`opencode exited with code 1.\n\n${stdout}`, {
+      command: "opencode",
+      exitCode: 1,
+      stdout,
+      stderr: "",
+    }),
+  );
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const error = await runOpenCode(state, "oc prompt", { cwd: "/dir" }).catch((err) => err);
+
+  expect(error.message).toBe(
+    "opencode returned an error event: provider.invalid-output: OpenAI Chat stream ended without finish_reason (status 200)",
+  );
+  expect(error.message).not.toContain("work in progress");
+  expect(error.exitCode).toBe(1);
+});
+
 const CLOSING_BLOCK = [
   "Conclusion: PR #314 fixes the part join.",
   "Why: the narration and the block arrived as two text parts.",
