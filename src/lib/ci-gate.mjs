@@ -11,9 +11,24 @@ import { execa } from "execa";
 // every non-completed status fails the gate.
 const PASS_CHECK_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 
-/** Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr }`; a non-zero exit is data, not a throw. */
-export async function runGh(args, cwd) {
-  const result = await execa("gh", args, { cwd, reject: false });
+/**
+ * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr }`; a
+ * non-zero exit is data, not a throw.
+ *
+ * `options.signal` bounds the call and terminates the child: the caller supplies
+ * it so a `gh` that hangs cannot outlive the read (#320). The default runner
+ * passes it to `execa`, which kills the child and reports a timeout.
+ */
+export async function runGh(args, cwd, options = {}) {
+  // `cancelSignal` is the execa 10 name for the abort signal, the same one
+  // `src/lib/exec.mjs` passes. The old `signal` name throws before the child
+  // starts, so every real read failed and read as unresolved.
+  const result = await execa("gh", args, {
+    cwd,
+    reject: false,
+    cancelSignal: options.signal,
+    timeout: options.timeoutMs,
+  });
   return { status: result.exitCode, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
@@ -387,9 +402,18 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
 
 // The buckets `gh pr checks --required --json name,bucket` reports. `pass` and
 // `skipping` read as a pass, the same conclusions the gate accepts; `fail` and
-// `cancel` are failures; `pending` is neither.
+// `cancel` are failures; `pending` is neither. A bucket outside this set is not
+// a status this read knows, so it is unresolved rather than a guess.
 const PASS_BUCKETS = new Set(["pass", "skipping"]);
 const FAILING_BUCKETS = new Set(["fail", "cancel"]);
+const KNOWN_BUCKETS = new Set([...PASS_BUCKETS, ...FAILING_BUCKETS, "pending"]);
+
+/**
+ * The default bound on a status read. The read sits in front of a child turn
+ * that has its own much longer `--timeout`, so it needs its own bound: a `gh`
+ * that hangs must not hold the dispatch open (#320).
+ */
+export const DEFAULT_READ_TIMEOUT_MS = 60_000;
 
 /** One line of text for a prompt line or a report field. */
 function oneLine(text) {
@@ -398,7 +422,13 @@ function oneLine(text) {
     .trim();
 }
 
-/** The listed checks with a name, or null when the reply carries no such list. */
+/**
+ * The listed checks, or null when the reply is not a wholly well-formed list.
+ * Every entry must be an object with a non-empty string `name` and a known
+ * string `bucket`. A lenient parse that drops the malformed entries would read
+ * as a pass whenever a pass entry sits beside a malformed one, so any malformed
+ * entry rejects the whole reply (#320 review).
+ */
 function parseListedChecks(stdout) {
   let parsed;
   try {
@@ -406,13 +436,52 @@ function parseListedChecks(stdout) {
   } catch {
     return null;
   }
-  if (!Array.isArray(parsed)) {
+  if (!Array.isArray(parsed) || parsed.length === 0) {
     return null;
   }
-  return parsed.filter((check) => typeof check?.name === "string");
+  for (const check of parsed) {
+    if (typeof check !== "object" || check === null || Array.isArray(check)) {
+      return null;
+    }
+    if (typeof check.name !== "string" || oneLine(check.name) === "") {
+      return null;
+    }
+    if (typeof check.bucket !== "string" || !KNOWN_BUCKETS.has(check.bucket)) {
+      return null;
+    }
+  }
+  return parsed;
 }
 
 const names = (checks) => checks.map((check) => check.name).join(", ");
+
+/**
+ * Resolves the PR head, the commit GitHub evaluates the required checks for. A
+ * separate read from the check list, because `gh pr checks --json` reports no
+ * commit: the status is meaningless without the head it describes, and the
+ * reviewer must be able to compare it with the local head.
+ * @param {{ pr: number, cwd: string, gh: Function, signal: AbortSignal }} context
+ * @returns {Promise<string | null>} the head, or null when it cannot be read
+ */
+async function readPrHead({ pr, cwd, gh, signal }) {
+  try {
+    const { status, stdout } = await gh(["pr", "view", String(pr), "--json", "headRefOid"], cwd, {
+      signal,
+    });
+    if (status !== 0) {
+      return null;
+    }
+    const head = JSON.parse(stdout)?.headRefOid;
+    return typeof head === "string" && head !== "" ? head : null;
+  } catch (err) {
+    // An aborted read stopped on the time bound, which is a different condition
+    // from a head that cannot be read, and the summary must name it.
+    if (signal.aborted) {
+      throw err;
+    }
+    return null;
+  }
+}
 
 /**
  * Reads the required-check status for the PR head, which a declared-PR run
@@ -423,53 +492,113 @@ const names = (checks) => checks.map((check) => check.name).join(", ");
  * It never throws. A failed read is `unresolved`, because the reviewer keeps its
  * own read as the fallback and a turn must not fail over supplied evidence.
  *
- * The exit code is read last: `gh` exits non-zero for a failing check and for a
- * pending one, and the list decides both, so an exit code that disagrees with a
- * listed check never overrides it. A non-zero exit with no listed failing or
- * pending check is unresolved, which covers a read error and a pull request with
- * no required check.
- * @param {{ pr: number, cwd: string, gh?: Function }} options
- * @returns {Promise<{ pr: number, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string }>}
+ * The status comes from the exit code, which is the contract the reviewer rules
+ * and `docs/orchestrator-instructions.md` already state: 0 is a pass, 8 is a
+ * pending check, and 1 covers a failing check, a pull request with no required
+ * check, and a read error. Exit 1 reports failing only when the reply lists a
+ * failing required check, which is the same evidence the reviewer rule requires
+ * before it calls a blocker. Every other exit code, and any reply that is not a
+ * wholly well-formed list, is unresolved.
+ *
+ * A status is reported only for the head it describes. `head` is the local
+ * reviewed head, and a read whose PR head differs from it, or a read with no
+ * local head to compare, is unresolved, because a status on one head says
+ * nothing about the other.
+ * @param {{ pr: number, cwd: string, head?: string | null, gh?: Function, timeoutMs?: number }} options
+ * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string }>}
  */
-export async function readRequiredChecks({ pr, cwd, gh = runGh }) {
-  const unresolved = (summary) => ({ pr, status: "unresolved", checks: [], summary });
+export async function readRequiredChecks({
+  pr,
+  cwd,
+  head = null,
+  gh = runGh,
+  timeoutMs = DEFAULT_READ_TIMEOUT_MS,
+}) {
+  const unresolved = (summary, prHead = null) => ({
+    pr,
+    head: prHead,
+    status: "unresolved",
+    checks: [],
+    summary,
+  });
+
+  // The read is bounded, and the signal terminates the child, so a hung `gh`
+  // cannot stall the dispatch or outlive it. An external abort is reported as a
+  // timeout here, because from the read's side the call simply stopped.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const call = (args) => gh(args, cwd, { signal: controller.signal, timeoutMs });
   let reply;
+  let prHead;
   try {
-    reply = await gh(["pr", "checks", String(pr), "--required", "--json", "name,bucket"], cwd);
+    prHead = await readPrHead({ pr, cwd, gh, signal: controller.signal });
+    if (prHead === null) {
+      return unresolved(`unread: the PR head for PR ${pr} could not be resolved`);
+    }
+    if (head === null) {
+      return unresolved(
+        `unread: PR ${pr} head ${prHead} cannot be compared with a local reviewed head`,
+        prHead,
+      );
+    }
+    if (prHead !== head) {
+      return unresolved(
+        `unread: PR ${pr} head ${prHead} differs from the local reviewed head ${head}`,
+        prHead,
+      );
+    }
+    reply = await call(["pr", "checks", String(pr), "--required", "--json", "name,bucket"]);
   } catch (err) {
-    return unresolved(`unread: ${oneLine(err?.message ?? err)}`);
+    const detail = controller.signal.aborted
+      ? `the read timed out after ${timeoutMs}ms`
+      : oneLine(err?.message ?? err);
+    return unresolved(`unread: ${detail}`, prHead ?? null);
+  } finally {
+    clearTimeout(timer);
   }
+
   const { status, stdout, stderr } = reply;
   const failure = oneLine(stderr) || `exit ${status}`;
+  const on = (head) => `on PR head ${head}`;
   const listed = parseListedChecks(stdout);
-  if (listed === null || listed.length === 0) {
-    return unresolved(`unread: ${failure}`);
+  if (listed === null) {
+    return unresolved(`unread: ${failure} ${on(prHead)}`, prHead);
   }
   const failing = listed.filter((check) => FAILING_BUCKETS.has(check.bucket));
-  if (failing.length > 0) {
+  const pending = listed.filter((check) => check.bucket === "pending");
+  const pass = listed.filter((check) => PASS_BUCKETS.has(check.bucket));
+
+  if (status === 0 && failing.length === 0 && pending.length === 0) {
     return {
       pr,
-      status: "failing",
-      checks: failing.map((check) => check.name),
-      summary: `failing required checks: ${names(failing)}`,
+      head: prHead,
+      status: "pass",
+      checks: pass.map((check) => check.name),
+      summary: `all ${pass.length} listed required checks passed ${on(prHead)}`,
     };
   }
-  const pending = listed.filter((check) => check.bucket === "pending");
-  if (pending.length > 0) {
+  // Exit 8 is a pending check whatever the buckets say. The list names the
+  // pending checks when it has them; the exit code is what makes the status
+  // pending, so a list whose buckets disagree does not change the status.
+  if (status === 8 && failing.length === 0) {
     return {
       pr,
+      head: prHead,
       status: "pending",
       checks: pending.map((check) => check.name),
-      summary: `pending required checks: ${names(pending)}`,
+      summary: `a required check is pending ${on(prHead)}${
+        pending.length > 0 ? `: ${names(pending)}` : ""
+      }`,
     };
   }
-  if (status !== 0 || listed.some((check) => !PASS_BUCKETS.has(check.bucket))) {
-    return unresolved(`unread: ${failure}`);
+  if (status === 1 && failing.length > 0) {
+    return {
+      pr,
+      head: prHead,
+      status: "failing",
+      checks: failing.map((check) => check.name),
+      summary: `failing required checks ${on(prHead)}: ${names(failing)}`,
+    };
   }
-  return {
-    pr,
-    status: "pass",
-    checks: listed.map((check) => check.name),
-    summary: `all ${listed.length} listed required checks passed`,
-  };
+  return unresolved(`unread: ${failure} ${on(prHead)}`, prHead);
 }

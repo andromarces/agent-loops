@@ -782,27 +782,40 @@ test("refuses when there is no reviewed state", async () => {
   });
 });
 
-// A `gh pr checks <pr> --required --json name,bucket` reply, shaped as the
-// runtime read asks for it.
-function checksGh(checks) {
+// A status-read stub: it answers the PR head the read resolves first, then the
+// required-check list. `checks` is the list body, `status` the exit code `gh`
+// reports with it, and `head` the PR head the stub claims, so a test can place
+// the read on a head that matches or does not match the local one.
+function statusReadGh({ checks = [], status = 0, head = HEAD, stderr = "" } = {}) {
   return async (args) => {
-    expect(args).toEqual(["pr", "checks", "42", "--required", "--json", "name,bucket"]);
-    return { status: 0, stdout: JSON.stringify(checks), stderr: "" };
+    const key = args.join(" ");
+    if (key === "pr view 42 --json headRefOid") {
+      return { status: 0, stdout: JSON.stringify({ headRefOid: head }), stderr: "" };
+    }
+    if (key === "pr checks 42 --required --json name,bucket") {
+      return { status, stdout: JSON.stringify(checks), stderr };
+    }
+    return { status: 1, stdout: "", stderr: `unmatched gh call: ${key}` };
   };
 }
+
+// The read resolves the PR head before the check list, so every status test
+// states the local head it compares against.
+const readOn = (head, gh) => readRequiredChecks({ pr: 42, cwd: ".", head, gh });
 
 // Usefulness: verifies the read reports a pass from a reply that lists the
 // required checks, so a reviewer prompt carries the status and the evidence
 // behind it rather than a bare word (issue #320).
 test("reads a passing status with the names of the listed required checks", async () => {
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    gh: checksGh([
-      { name: "ci (ubuntu-latest)", bucket: "pass" },
-      { name: "ci (windows-latest)", bucket: "skipping" },
-    ]),
-  });
+  const read = await readOn(
+    HEAD,
+    statusReadGh({
+      checks: [
+        { name: "ci (ubuntu-latest)", bucket: "pass" },
+        { name: "ci (windows-latest)", bucket: "skipping" },
+      ],
+    }),
+  );
   expect(read).toMatchObject({
     pr: 42,
     status: "pass",
@@ -814,14 +827,18 @@ test("reads a passing status with the names of the listed required checks", asyn
 // cannot reach the network still sees which required check failed on the PR
 // head (issue #320).
 test("reads a failing status with the name of the failing required check", async () => {
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    gh: checksGh([
-      { name: "ci (macos-latest)", bucket: "fail" },
-      { name: "ci (ubuntu-latest)", bucket: "pass" },
-    ]),
-  });
+  const read = await readOn(
+    HEAD,
+    statusReadGh({
+      // Exit 1 is how `gh` reports a failing check, alongside a pass and a
+      // pending one in the same list.
+      status: 1,
+      checks: [
+        { name: "ci (macos-latest)", bucket: "fail" },
+        { name: "ci (ubuntu-latest)", bucket: "pass" },
+      ],
+    }),
+  );
   expect(read).toMatchObject({ status: "failing", checks: ["ci (macos-latest)"] });
   expect(read.summary).toContain("ci (macos-latest)");
 });
@@ -829,35 +846,39 @@ test("reads a failing status with the name of the failing required check", async
 // Usefulness: verifies a pending check reads as pending and not as a failure,
 // because a pending check is not a blocker (issue #320).
 test("reads a pending status with the name of the pending required check", async () => {
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    gh: checksGh([
-      { name: "ci (ubuntu-latest)", bucket: "pass" },
-      { name: "ci (windows-latest)", bucket: "pending" },
-    ]),
-  });
+  const read = await readOn(
+    HEAD,
+    statusReadGh({
+      status: 8,
+      checks: [
+        { name: "ci (ubuntu-latest)", bucket: "pass" },
+        { name: "ci (windows-latest)", bucket: "pending" },
+      ],
+    }),
+  );
   expect(read).toMatchObject({ status: "pending", checks: ["ci (windows-latest)"] });
 });
 
 // Usefulness: verifies a failing check outranks a pending one, because a
 // failing check is the blocker a reviewer must see first (issue #320).
 test("reads a failing status when a pending check sits beside a failing one", async () => {
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    gh: checksGh([
-      { name: "ci (macos-latest)", bucket: "fail" },
-      { name: "ci (windows-latest)", bucket: "pending" },
-    ]),
-  });
+  const read = await readOn(
+    HEAD,
+    statusReadGh({
+      status: 1,
+      checks: [
+        { name: "ci (macos-latest)", bucket: "fail" },
+        { name: "ci (windows-latest)", bucket: "pending" },
+      ],
+    }),
+  );
   expect(read).toMatchObject({ status: "failing", checks: ["ci (macos-latest)"] });
 });
 
 // Usefulness: verifies a reply that lists no check reads as unresolved, so an
 // empty required set never reaches a reviewer prompt as a pass (issue #320).
 test("reads an unresolved status when the reply lists no required check", async () => {
-  const read = await readRequiredChecks({ pr: 42, cwd: ".", gh: checksGh([]) });
+  const read = await readOn(HEAD, statusReadGh({ checks: [] }));
   expect(read).toMatchObject({ status: "unresolved", checks: [] });
 });
 
@@ -868,11 +889,27 @@ test("reads an unresolved status when gh cannot list the required checks", async
   const read = await readRequiredChecks({
     pr: 42,
     cwd: ".",
-    gh: async () => ({ status: 1, stdout: "", stderr: "no required checks" }),
+    head: HEAD,
+    gh: statusReadGhRaw({ status: 1, stdout: "", stderr: "no required checks" }),
   });
   expect(read).toMatchObject({ status: "unresolved", checks: [] });
   expect(read.summary).toContain("no required checks");
 });
+
+// A stub that answers the check list with a raw body, for a reply that is not
+// the JSON the read asks for.
+function statusReadGhRaw({ status, stdout, stderr }) {
+  return async (args) => {
+    const key = args.join(" ");
+    if (key === "pr view 42 --json headRefOid") {
+      return { status: 0, stdout: JSON.stringify({ headRefOid: HEAD }), stderr: "" };
+    }
+    if (key === "pr checks 42 --required --json name,bucket") {
+      return { status, stdout, stderr };
+    }
+    return { status: 1, stdout: "", stderr: `unmatched gh call: ${key}` };
+  };
+}
 
 // Usefulness: verifies a gh failure that throws reads as unresolved instead of
 // failing the reviewer turn, because the read is supplied evidence and the
@@ -881,10 +918,159 @@ test("reads an unresolved status when the gh runner fails", async () => {
   const read = await readRequiredChecks({
     pr: 42,
     cwd: ".",
-    gh: async () => {
+    head: HEAD,
+    gh: async (args) => {
+      const key = args.join(" ");
+      if (key === "pr view 42 --json headRefOid") {
+        return { status: 0, stdout: JSON.stringify({ headRefOid: HEAD }), stderr: "" };
+      }
       throw new Error("spawn gh ENOENT");
     },
   });
   expect(read).toMatchObject({ status: "unresolved", checks: [] });
   expect(read.summary).toContain("spawn gh ENOENT");
+});
+
+// Usefulness: verifies the read never reports a pass for a PR head that differs
+// from the local head the reviewer sees, because a status read on one head says
+// nothing about the other, and the supplied status must state the head it
+// describes (issue #320 review).
+test("never reports a pass when the PR head differs from the local reviewed head", async () => {
+  const local = "2222222222222222222222222222222222222222";
+  const read = await readOn(
+    local,
+    statusReadGh({ checks: [{ name: "ci (ubuntu-latest)", bucket: "pass" }] }),
+  );
+  expect(read.status).toBe("unresolved");
+  expect(read.summary).toContain(HEAD);
+  expect(read.summary).toContain(local);
+});
+
+// Usefulness: verifies a matching head still reports its status, so the head
+// comparison refuses only a mismatch and not every read (issue #320 review).
+test("reports the status for a read whose PR head matches the local reviewed head", async () => {
+  const read = await readOn(
+    HEAD,
+    statusReadGh({ checks: [{ name: "ci (ubuntu-latest)", bucket: "pass" }] }),
+  );
+  expect(read).toMatchObject({ status: "pass", head: HEAD });
+  expect(read.summary).toContain(HEAD);
+});
+
+// Usefulness: verifies every supplied status states the head it describes, so a
+// reviewer and a parent can tell which commit the status covers (issue #320
+// review).
+test("states the PR head in the summary of every status", async () => {
+  for (const [bucket, exit, status] of [
+    ["pass", 0, "pass"],
+    ["fail", 1, "failing"],
+    ["pending", 8, "pending"],
+  ]) {
+    const read = await readOn(
+      HEAD,
+      statusReadGh({ checks: [{ name: "ci", bucket }], status: exit }),
+    );
+    expect(read.status, bucket).toBe(status);
+    expect(read.summary, bucket).toContain(HEAD);
+  }
+});
+
+// Usefulness: verifies a read with no local head to compare against never reports
+// a pass, because the runtime cannot show the status belongs to the reviewed
+// commit (issue #320 review).
+test("reads an unresolved status when no local head is available to compare", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: null,
+    gh: statusReadGh({ checks: [{ name: "ci (ubuntu-latest)", bucket: "pass" }] }),
+  });
+  expect(read.status).toBe("unresolved");
+});
+
+// Usefulness: verifies malformed output reads as unresolved rather than as a
+// pass, because a lenient parse drops the malformed entries and keeps the
+// passing ones, so a reply that is not wholly well-formed must not report a
+// status (issue #320 review).
+test("reads an unresolved status when the reply mixes a pass entry with malformed entries", async () => {
+  for (const stdout of [
+    '[{"name":"ci","bucket":"pass"},"junk"]',
+    '[{"name":"ci","bucket":"pass"},null]',
+    '[{"name":"ci","bucket":"pass"},{"name":7,"bucket":"pass"}]',
+    '[{"name":"ci","bucket":"pass"},{"name":"x","bucket":true}]',
+  ]) {
+    const read = await readOn(HEAD, statusReadGhRaw({ status: 0, stdout, stderr: "" }));
+    expect(read.status, stdout).toBe("unresolved");
+  }
+});
+
+// Usefulness: verifies every status is read from the exit code the documented
+// contract names, so a reply that carries a different exit code never reports a
+// status the exit code contradicts (issue #320 review).
+test("reads the status the documented exit code names, and unresolved otherwise", async () => {
+  const listed = JSON.stringify([{ name: "ci", bucket: "pass" }]);
+  for (const [status, expected] of [
+    [0, "pass"],
+    [8, "pending"],
+    [1, "unresolved"],
+    [2, "unresolved"],
+    [null, "unresolved"],
+    [undefined, "unresolved"],
+  ]) {
+    const read = await readOn(HEAD, statusReadGhRaw({ status, stdout: listed, stderr: "" }));
+    expect(read.status, `exit ${status}`).toBe(expected);
+  }
+});
+
+// Usefulness: verifies exit code 1 with a listed failing check reports failing,
+// because that combination is how `gh` reports a failing check, and the read must
+// not lose the name the finish gate would refuse on (issue #320 review).
+test("reads a failing status from exit code 1 with a listed failing check", async () => {
+  const read = await readOn(
+    HEAD,
+    statusReadGh({ status: 1, checks: [{ name: "ci (macos-latest)", bucket: "fail" }] }),
+  );
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (macos-latest)"] });
+});
+
+// Usefulness: verifies a read that exceeds its time bound yields unresolved
+// rather than stalling the dispatch, and the hung child is terminated so it
+// cannot outlive the read (issue #320 review).
+test("reads an unresolved status when the gh call exceeds the time bound", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: HEAD,
+    timeoutMs: 25,
+    gh: (args, _cwd, options) =>
+      new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new Error("read timed out")));
+      }),
+  });
+  expect(read).toMatchObject({ status: "unresolved", checks: [] });
+  expect(read.summary).toMatch(/timed out|abort/i);
+});
+
+// Usefulness: verifies the real `gh` runner answers a status read through the
+// same options the read passes, including the abort signal. The unit stubs
+// accept any option shape, so only the real runner catches an option name that
+// the installed execa rejects, which is what made every real read fail
+// (issue #320 review).
+test("the real gh runner runs a bounded read and terminates a hung child", async () => {
+  const { runGh } = await import("../../src/lib/ci-gate.mjs");
+  const controller = new AbortController();
+  const reply = await runGh(["--version"], ".", {
+    signal: controller.signal,
+    timeoutMs: 60_000,
+  });
+  expect(reply.status).toBe(0);
+  expect(reply.stdout.trim()).toMatch(/^gh version/);
+
+  // A hung child is terminated by the bound, which is what keeps a stalled
+  // `gh` from outliving the read.
+  const hung = await runGh(["pr", "checks", "42", "--json", "name,bucket"], ".", {
+    signal: AbortSignal.timeout(1),
+    timeoutMs: 1,
+  });
+  expect(hung.status).not.toBe(0);
 });

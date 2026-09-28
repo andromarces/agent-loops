@@ -761,11 +761,21 @@ test("a declared PR supplies the runtime-read required-check status to the revie
   const init = dispatchArgv([...INIT_OVERRIDES, "--pr", "42"], "worker");
   await executeRoleCommand(withRepo(init, repo), { agents, stdin: stdinPrompt });
 
-  const gh = async () => ({
-    status: 0,
-    stdout: JSON.stringify([{ name: "ci (macos-latest)", bucket: "fail" }]),
-    stderr: "",
-  });
+  // The status read resolves the PR head first and compares it with the local
+  // reviewed head, then lists the required checks. `gh` reports a failing check
+  // with exit 1.
+  const localHead = (await snapshot(repo)).head;
+  const gh = async (args) => {
+    const key = args.join(" ");
+    if (key === "pr view 42 --json headRefOid") {
+      return { status: 0, stdout: JSON.stringify({ headRefOid: localHead }), stderr: "" };
+    }
+    return {
+      status: 1,
+      stdout: JSON.stringify([{ name: "ci (macos-latest)", bucket: "fail" }]),
+      stderr: "",
+    };
+  };
   const turn = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
     agents,
     stdin: stdinPrompt,

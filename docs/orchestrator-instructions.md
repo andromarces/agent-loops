@@ -231,18 +231,31 @@ runtime reads the required-check status for that PR head and supplies it to ever
 reviewer prompt. The prompt adds two lines inside the required-check group, so
 they apply only under the pull request condition:
 
-- This run read the required checks for PR <pr> before this turn: <summary>.
-  Report that status and do not read it again.
-- Keep your own read as the fallback. Prefer it when the supplied status is
-  unresolved, and report any difference between your read and the supplied
-  status in `Checks`.
+- This run read the required checks for PR <pr> before this turn: <summary>, and
+  the reviewer reports that status without reading it again.
+- The reviewer keeps its own read as the fallback. Prefer it when the supplied
+  status is unresolved, and report any difference between your read and the
+  supplied status in `Checks`.
 
-The reviewer's own read is never removed. A supplied status is evidence for that
-turn, not a gate: `gh pr checks` lists only the checks that already reported, so a
-supplied pass covers the listed checks only, and a failed read is an unresolved
-status rather than a turn failure. The runtime reports the status it read beside
-the reviewer result, in the dispatch envelope and in the state file, so you can
-compare it with the reviewer `Checks` line and see a disagreement.
+The reviewer's own read is never removed, and the head matters. A supplied status
+is evidence for that turn, not a gate: `gh pr checks` lists only the checks that
+already reported, so a supplied pass covers the listed checks only, and a failed
+read is an unresolved status rather than a turn failure. The runtime reports the
+status it read beside the reviewer result, in the dispatch envelope and in the
+state file, so compare it with the reviewer Checks line and act on a
+disagreement.
+
+The runtime reads the PR head first and compares it with the local reviewed head,
+so a status is reported only for the head it describes. A read whose PR head
+differs from the local head, and a read with no local head to compare, are
+unresolved, and the prompt never reports a pass for a head the reviewer is not
+looking at. Every supplied status states the head it describes.
+
+The status comes from the exit code the rule above names: 0 is a pass, 8 is a
+pending check, and 1 is a failing check, a pull request with no required check,
+or a read error. Exit 1 reports a failing check only when the reply lists a
+failing required check, the same evidence the rule requires before a blocker. A
+reply that is not a well-formed list, and any other exit code, are unresolved.
 
 A run that declares no PR reads no status, and the reviewer keeps its own read.
 The read follows `--pr`, which is the PR input both paths know at dispatch. A

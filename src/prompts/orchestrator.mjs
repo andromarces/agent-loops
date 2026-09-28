@@ -68,15 +68,15 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
 /**
  * The clause a run that declares its PR adds to the line that says no turn in
  * the run can read the checks. The runtime reads the status outside every
- * read-only turn and supplies it to the reviewer prompt, so the reviewer reports
- * it without reading it again (#320). A run that declares no PR has no PR input
- * to read, so the line reads as before.
+ * read-only turn and supplies it to the reviewer prompt, and the reviewer keeps
+ * its own read as the fallback (#320). The wording is the same rule
+ * `docs/orchestrator-instructions.md` states, so the two paths do not drift.
  * @param {number | null} pr
  * @returns {string}
  */
 function suppliedRead(pr) {
   if (pr === null) return "";
-  return ` This run declares PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt, and the reviewer reports that status without reading it again.`;
+  return ` This run declares PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt, and the reviewer reports that status without reading it again, keeps its own read as the fallback, and reads it itself when the supplied status is unresolved. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.`;
 }
 
 /**

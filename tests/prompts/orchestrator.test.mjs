@@ -204,7 +204,7 @@ test("the headless prompt adds exactly the declaration rule and nothing else", (
   const block =
     "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.";
   const supplied =
-    " This run declares PR #42, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt, and the reviewer reports that status without reading it again.";
+    " This run declares PR #42, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt, and the reviewer reports that status without reading it again, keeps its own read as the fallback, and reads it itself when the supplied status is unresolved. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.";
 
   const noGate = initialPrompt({ task: "T", maxSteps: 10 });
   const withPr = initialPrompt({ task: "T", maxSteps: 10, pr: 42 });
@@ -452,4 +452,30 @@ test("a declared PR states that the runtime supplies the required-check status",
 // the runtime has no PR input to read the status from (issue #320).
 test("a gated run with no declared PR does not state a supplied status", () => {
   expect(gatedPrompt("codex", "codex")).not.toMatch(/suppl(y|ies) it to every reviewer/i);
+});
+
+// Usefulness: verifies the interactive instructions and the headless prompt
+// state the supplied-status rule the same way, because the two paths resolve the
+// same rule for a parent and a drifted statement would tell one of them the
+// reviewer still reads the checks (issue #320 review).
+test("interactive instructions and headless prompt state the supplied-status rule alike", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "codex",
+    reviewerKind: "codex",
+  }).replace(/\s+/g, " ");
+  for (const rule of [
+    "supplies it to every reviewer prompt",
+    "reports that status without reading it again",
+    "keeps its own read as the fallback",
+    "unresolved",
+    "compare it with the reviewer Checks line",
+  ]) {
+    expect(instructions, rule).toContain(rule);
+    expect(prompt, rule).toContain(rule);
+  }
 });

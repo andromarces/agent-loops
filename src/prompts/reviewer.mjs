@@ -26,8 +26,8 @@ const reviewerRules = `Review scope, in addition to the task below:
 // supplied status never removes the read it can make on its own (issue #320).
 function runtimeReadLines(prChecks) {
   return [
-    `  - This run read the required checks for PR ${prChecks.pr} before this turn: ${prChecks.summary}. Report that status and do not read it again.`,
-    "  - Keep your own read as the fallback. Prefer it when the supplied status is unresolved, and report any difference between your read and the supplied status in Checks.",
+    `  - This run read the required checks for PR ${prChecks.pr} before this turn: ${prChecks.summary}, and you report that status without reading it again.`,
+    "  - You keep your own read as the fallback. Prefer it when the supplied status is unresolved, and report any difference between your read and the supplied status in Checks.",
   ];
 }
 
