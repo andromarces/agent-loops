@@ -144,6 +144,16 @@ export function parseArgs(argv) {
     );
   }
 
+  // The headless path takes both flags on one command line, so a gate for another
+  // pull request is knowable before the run starts. The runtime refuses a finish
+  // for that mismatch as a defensive check, and the interactive `role` path keeps
+  // the refusal because its `--require-ci` arrives only at `finish` (#302).
+  if (options.pr !== null && options.requireCi !== null && options.pr !== options.requireCi) {
+    throw new Error(
+      `--pr ${options.pr} and --require-ci ${options.requireCi} must name the same pull request.`,
+    );
+  }
+
   return options;
 }
 
@@ -249,11 +259,12 @@ Options:
   --pr <pr>                    Declare the run PR work on this pull request. Every finish
                                 must end through the --require-ci <pr> gate for the same PR,
                                 and a finish that sets unresolvedCompare is refused, because
-                                that gate resolves the compare. A declared run with no
-                                matching gate cannot finish, and no turn in the run can add
-                                the flag. Off by default; a run with neither --pr nor
-                                --require-ci keeps the unresolvedCompare marker as the only
-                                record of an unresolved compare.
+                                that gate resolves the compare. --pr with --require-ci for
+                                another pull request is rejected as a usage error. A
+                                declared run with no matching gate cannot finish, and no
+                                turn in the run can add the flag. Off by default; a run with
+                                neither --pr nor --require-ci keeps the unresolvedCompare
+                                marker as the only record of an unresolved compare.
   --require-ci <pr>             Refuse finish until the runtime resolves the PR head from
                                 this pull request: the PR head must match the reviewed commit,
                                 the reviewed tree must be clean, the PR must not be behind its

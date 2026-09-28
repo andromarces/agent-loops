@@ -199,6 +199,23 @@ test("--pr declares the run PR and takes a positive integer", () => {
   }
 });
 
+// Usefulness: verifies the headless path refuses a gate for another pull request
+// at parse time, before any child turn runs and before the prompt is built. Both
+// flags arrive on one command line there, so a run that could never be gated
+// never starts, and the prompt never has to describe a case it cannot reach.
+// A matching gate is still accepted, and `--pr` alone is still accepted (issue #302).
+test("--pr with --require-ci for another pull request is a usage error", () => {
+  expect(() => parseArgs([...BASE, "--pr", "42", "--require-ci", "7"])).toThrow(
+    "--pr 42 and --require-ci 7 must name the same pull request.",
+  );
+  expect(() => parseArgs([...BASE, "--pr=42", "--require-ci=7"])).toThrow(
+    "--pr 42 and --require-ci 7 must name the same pull request.",
+  );
+  expect(parseArgs([...BASE, "--pr", "42", "--require-ci", "42"]).requireCi).toBe(42);
+  expect(parseArgs([...BASE, "--pr", "42"]).pr).toBe(42);
+  expect(parseArgs([...BASE, "--require-ci", "7"]).requireCi).toBe(7);
+});
+
 // Usefulness: verifies readValue guards against missing value or value starting with -.
 test("readValue guards against missing or flag-like values", () => {
   expect(() => parseArgs(["--orchestrator", "--worker"])).toThrow(

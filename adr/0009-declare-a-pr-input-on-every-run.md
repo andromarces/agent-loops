@@ -40,9 +40,13 @@ refusal.
    `agent-loop role` init call, and it is a positive integer, read by the same
    `readPositiveInt` that reads `--require-ci` and `--max-steps`.
 2. A run that declares a PR must end through the `--require-ci <pr>` gate for
-   that same PR. A finish with no gate, or with a gate naming another PR, is
-   refused. The gate is never read for another PR, so a wrong number costs no
-   GitHub call.
+   that same PR. A finish with no gate is refused. On the headless path a gate
+   for another PR is a usage error at argument-validation time, before any child
+   turn runs and before the prompt is built, because both flags arrive on one
+   command line there. The gate is never read for another PR, so a wrong number
+   costs no GitHub call. The interactive path keeps the finish refusal, because
+   its `--require-ci` arrives only at `finish`, and the runtime keeps that
+   refusal on both paths as a defensive check.
 3. A declared run also refuses a finish that sets `unresolvedCompare`, because
    the gate it requires resolves that compare. The refusal wording comes from one
    shared function, so a gated run keeps the existing `--require-ci` wording and
@@ -57,12 +61,13 @@ refusal.
    text it had before, so the collect-then-report rule changes only the runs that
    declare a PR.
 5. The prompt states one rule and predicts no outcome: a declared run finishes
-   through the gate for the declared PR; a finish with no gate, a gate for
-   another PR, or the unresolved-compare marker is refused; a gate for another PR
-   is not read; a matching gate still applies its own conditions; and one refusal
-   names every condition that failed. The runtime collects every applicable
-   condition, so a per-case line that named the sole reason, or described a gate
-   the runtime never evaluates, would contradict it. The block is empty without
+   through the gate for the declared PR; a finish with no gate or with the
+   unresolved-compare marker is refused; a matching gate still applies its own
+   conditions; and one refusal names every condition that failed. The runtime
+   collects every applicable condition, so a per-case line that named the sole
+   reason, or described a gate the runtime never evaluates, would contradict it.
+   The prompt therefore has no line for a mismatched gate: the headless path
+   refuses that combination before the prompt exists. The block is empty without
    `--pr`, so an undeclared run keeps the prompt it had.
 6. The `--require-ci` gate runs only when nothing above it refused on the
    interactive path, so a refused `finish` never reads GitHub. The headless loop

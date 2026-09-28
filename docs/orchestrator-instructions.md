@@ -396,7 +396,11 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
 `agent-loop --require-ci <pr>` in the headless loop, with the same PR number.
 
 - A `finish` with no `--require-ci` is refused, and a `finish` whose
-  `--require-ci` names another PR is refused without reading GitHub.
+  `--require-ci` names another PR is refused without reading GitHub. That refusal
+  is the only way the interactive path can catch a wrong number, because its
+  `--require-ci` arrives at `finish`. The headless path takes both flags on one
+  command line, so `agent-loop --pr 42 --require-ci 7` is a usage error before the
+  run starts.
 - A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
   resolves that compare. The recorded marker is the accepted gap above, and a
   declared run does not have it. One refusal names every condition the finish
