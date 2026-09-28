@@ -37,13 +37,15 @@ const NEGATION =
 // How far a term may sit from the one before it in an ordered rule.
 const ORDER_GAP = 40;
 
-// Each match of an action, with the text close by and the wider text around it,
-// so a condition counts only when it sits with the action it governs.
+// Each match of an action, with the text close by, the wider text around it, and
+// the text that leads up to it, so a condition counts only when it sits with the
+// action it governs.
 function spans(sentence, action) {
   const global = new RegExp(action.source, action.flags.replace("g", "") + "g");
   return [...sentence.matchAll(global)].map((match) => ({
     near: sentence.slice(Math.max(0, match.index - 25), match.index + match[0].length + 25),
     wide: sentence.slice(Math.max(0, match.index - 160), match.index + match[0].length + 160),
+    lead: sentence.slice(0, match.index),
   }));
 }
 
@@ -80,6 +82,26 @@ function expectProhibition(text, action, ...conditions) {
   expect(stated, `no sentence negates ${action} for ${conditions.map(String).join(" ")}`).toBe(
     true,
   );
+}
+
+// A resolvable PR head: the opposite of UNRESOLVED_HEAD, written out so the check
+// reads on its own.
+const RESOLVABLE_HEAD =
+  /(?:PR head|PR-head)[^.!?]{0,30}\b(?:can|is|was)\s+(?:be\s+)?(?:resolved|read)\b/i;
+
+// A conditioned rule: one sentence binds the action to a condition that leads it,
+// so moving an action under a different condition fails. The contrary condition
+// must not appear in the sentence either: a rule that says to abort when the head
+// cannot be resolved and again when it can be resolved states two rules, and the
+// second one reverses the first.
+function expectConditioned(text, condition, contrary, action, ...outcomes) {
+  const stated = sentences(text).some(
+    (sentence) =>
+      !contrary.test(sentence) &&
+      spans(sentence, action).some((span) => condition.test(span.lead)) &&
+      outcomes.every((outcome) => outcome.test(sentence)),
+  );
+  expect(stated, `no sentence binds ${action} to a leading ${condition}`).toBe(true);
 }
 
 // An ordered rule: one clause carries the terms in this order, each within one
@@ -190,6 +212,13 @@ test("initialPrompt states that only the reviewer Checks line gates", () => {
   expectReviewerGateRule(prompt);
 });
 
+// The condition the unresolved-compare rule hangs on, with its own polarity: the
+// rule applies when the PR head cannot be resolved. A rule that keeps the
+// prohibition but flips the condition to a head that can be resolved, or that
+// finishes as verified in that case, fails.
+const UNRESOLVED_HEAD =
+  /(?:PR head|PR-head)[^.!?]{0,30}(?:cannot|can ?not|is not|are not|never|no)\b/i;
+
 // Usefulness: verifies the headless parent states the same reviewed-state rules
 // as the interactive instructions: compare head, require clean, treat an accept
 // without a Checks line as not accepted, and never finish as verified on an
@@ -200,9 +229,18 @@ test("initialPrompt states the reviewed-state parent rules", () => {
   expectAction(prompt, /resolve/i, /PR head/i, /PR number/i);
   expectAction(prompt, /require[^.!?]{0,40}reviewed\.clean/i, /\btrue\b/i, /PR work/i);
   expectAction(prompt, /treat[^.!?]{0,80}accept/i, /not accepted/i, /Checks/i);
-  expectProhibition(prompt, /finish/i, /verified/i);
-  expectAction(prompt, /abort/i, /notDone/i, /\bopen\b/i);
-  expectAction(prompt, /record[^.!?]{0,60}unresolved compare/i, /notDone/i, /\bopen\b/i);
+  expectProhibition(prompt, /finish/i, UNRESOLVED_HEAD, /verified/i);
+  // The abort and the record are the action for an unresolved head, not for a
+  // resolvable one, so each binds to the condition that leads it.
+  expectConditioned(prompt, UNRESOLVED_HEAD, RESOLVABLE_HEAD, /abort/i, /notDone/i, /\bopen\b/i);
+  expectConditioned(
+    prompt,
+    UNRESOLVED_HEAD,
+    RESOLVABLE_HEAD,
+    /record[^.!?]{0,60}unresolved compare/i,
+    /notDone/i,
+    /\bopen\b/i,
+  );
 });
 
 // Usefulness: verifies the headless prompt names the machine-readable marker the
@@ -245,9 +283,18 @@ const SHARED_PARENT_RULES = [
   (text) => expectAction(text, /resolve/i, /PR head/i, /PR number/i),
   (text) => expectAction(text, /require[^.!?]{0,40}reviewed\.clean/i, /\btrue\b/i, /PR work/i),
   (text) => expectAction(text, /treat[^.!?]{0,80}accept/i, /not accepted/i, /Checks/i),
-  (text) => expectProhibition(text, /finish/i, /verified/i),
-  (text) => expectAction(text, /abort/i, /notDone/i, /\bopen\b/i),
-  (text) => expectAction(text, /record[^.!?]{0,60}unresolved compare/i, /notDone/i, /\bopen\b/i),
+  (text) => expectProhibition(text, /finish/i, UNRESOLVED_HEAD, /verified/i),
+  (text) =>
+    expectConditioned(text, UNRESOLVED_HEAD, RESOLVABLE_HEAD, /abort/i, /notDone/i, /\bopen\b/i),
+  (text) =>
+    expectConditioned(
+      text,
+      UNRESOLVED_HEAD,
+      RESOLVABLE_HEAD,
+      /record[^.!?]{0,60}unresolved compare/i,
+      /notDone/i,
+      /\bopen\b/i,
+    ),
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt

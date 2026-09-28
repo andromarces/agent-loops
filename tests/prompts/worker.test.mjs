@@ -71,33 +71,51 @@ function branchBullet(prompt) {
   return bullet;
 }
 
-// Words that point back to the branch the dispatcher named, so a rule that uses
-// the dispatcher's branch does not read as naming one of its own.
-const BRANCH_REFERENCE =
-  /^(?:that|the|this|your|its|a|an|it|each|every|which|one|named|supplied|given|new)\b/i;
+// The phrase a commit or push instruction targets: the preposition and the words
+// after it, up to the next clause mark. The preposition may sit several words
+// later, so "commit your change on that branch" and "commit on that branch" both
+// match, and one instruction cannot read into the next. The determiner is
+// captured with the phrase, so "on the main branch" yields "the main branch" and
+// not the word "the" alone.
+const TARGET =
+  /\b(?:commit|push)\b[^.;]{0,60}?\b(?:on|onto|to)\s+([^,.;]{1,40}?)(?=\s+(?:and|so|but|to)\b|[,.;]|$)/gi;
 
-// A branch the rule names for itself: the word after "on" or "onto", when it names
-// a branch instead of referring to the one the dispatcher supplied.
-function namedBranches(bullet) {
-  return bullet
-    .split(/\b(?:on|onto)\b/i)
-    .slice(1)
-    .map((tail) => /^\s*([^\s,.;:]+)/.exec(tail)?.[1])
-    .filter((word) => word && !BRANCH_REFERENCE.test(word));
+// A determiner that points at a branch without naming one.
+const DETERMINER = /^(?:the|a|an|that|this|your|its|it|each|every|which|one)\b\s*/i;
+
+// A phrase that names no branch of its own: a determiner alone, as in "the", or
+// the generic branch word with only a reference beside it, as in "that branch"
+// and "the branch the dispatcher named". A phrase with a name in it is not one.
+function genericBranch(phrase) {
+  const rest = phrase.replace(DETERMINER, "").trim();
+  if (rest === phrase.trim()) return false;
+  return rest === "" || /^(?:branch|branches)\b/i.test(rest);
+}
+
+// The branches the commit and push instructions name, read out of the bullet.
+function commitTargets(bullet) {
+  return [...bullet.matchAll(TARGET)].map((match) => match[1].trim());
 }
 
 // Usefulness: verifies the first worker turn tells the worker to commit and push
-// on the branch the dispatcher named, and to take that branch from the task
-// instead of a branch of its own, so a wrong branch never reaches the commit and
-// the PR head does not match the reviewed head (issue #252, issue #328).
+// on the branch the dispatcher supplied, so the commit lands where the reviewer
+// will look and the PR head matches the reviewed head (issue #252, issue #328).
 test("first worker turn commits and pushes on the branch the dispatcher named", () => {
   const branch = "feat/328-prompt-test-literals";
   const prompt = workerPrompt(`land the change on ${branch}`, true);
   // The dispatcher supplies the branch through the task, so the prompt carries it.
   expect(prompt).toContain(branch);
   const bullet = branchBullet(prompt);
-  // The rule must point at that branch, so a substituted branch fails here.
-  expect(namedBranches(bullet)).toEqual([]);
+  const targets = commitTargets(bullet);
+  expect(targets.length, "the branch rule names no commit or push target").toBeGreaterThan(0);
+  // Every target is the supplied branch, or a reference back to it. A rule that
+  // names another branch fails here.
+  for (const target of targets) {
+    expect(
+      target === branch || genericBranch(target),
+      `the rule commits on ${target}, not the supplied branch`,
+    ).toBe(true);
+  }
   for (const term of [/\bcommit\b/i, /\bpush\b/i, /pull request/i]) {
     expect(bullet, String(term)).toMatch(term);
   }
