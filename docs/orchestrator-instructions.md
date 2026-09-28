@@ -417,15 +417,29 @@ clear error.
 --required`; when all three are empty the gate refuses. A context qualified by
   an app (a ruleset `integration_id` or a classic-protection `app_id`) is
   satisfied only by a check run from that app, and an unqualified copy of that
-  name is dropped. Repository rulesets are readable with read access; classic
-  branch protection answers 404 or 403 depending on the credential, and each of
-  those replies leaves that source with no required contexts, so a token without
-  repository admin still gates. The observed replies are `Not Found` (404) for a
-  token without repository admin, `Branch not protected` (404) for an admin on a
-  branch with no classic protection, `Resource not accessible by integration`
-  (403) for a `GITHUB_TOKEN`, and `Resource not accessible by personal access
-token` (403) for a fine-grained PAT without the Administration permission. A
-  rate-limit or SSO 403 also fails the run, by design. And `gh pr checks
+  name is dropped. Repository rulesets are readable with read access on a
+  repository whose plan allows the rule; classic branch protection answers 404 or
+  403 depending on the credential, and each of those replies leaves that source
+  with no required contexts, so a token without repository admin still gates. The
+  observed replies are `Not Found` (404) for a token without repository admin,
+  `Branch not protected` (404) for an admin on a branch with no classic
+  protection, `Resource not accessible by integration` (403) for a
+  `GITHUB_TOKEN`, and `Resource not accessible by personal access token` (403)
+  for a fine-grained PAT without the Administration permission. A rate-limit or
+  SSO 403 also fails the run, by design. The exception to ruleset readability is
+  a private repository on the GitHub Free plan, where the plan does not allow the
+  rule at all. The Free-plan 403, `Upgrade to GitHub Pro or make this repository
+public to enable this feature.`, was measured on the classic protection,
+  branch rules, and rulesets endpoints with an admin classic PAT and an admin
+  fine-grained PAT, and a read-capable collaborator was not tested, so whether a
+  non-admin sees the same 403 is unverified. That reply leaves each measured
+  endpoint with no required contexts. `gh pr checks --required` is an independent
+  source and its Free-plan reply was not measured. The gate ignores its exit code
+  and its stderr and takes required names from its stdout whatever the exit
+  status, so a non-zero exit whose stdout holds that JSON still contributes names
+  and only a stdout that is not a JSON array of named checks contributes none. On a private Free-plan
+  repository all three sources are then empty and the gate reaches the
+  empty-union refusal instead of throwing. And `gh pr checks
 --required` lists only checks that already reported on the commit. A
   blocked merge state refuses after the per-check pass, so a named check refusal
   keeps its name and a required check that never started cannot escape the gate,
