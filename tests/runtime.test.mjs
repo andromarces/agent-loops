@@ -331,6 +331,79 @@ test("abort returns exit 1 and reason", async () => {
   }
 });
 
+// Usefulness: verifies a review-only headless run refuses a run_worker action,
+// because that mode dispatches no worker, the same hard guard the interactive
+// path applies to --role worker. The refusal ends the run on exit 1 with the
+// reason, spawns no worker, and charges no step (issue #337).
+test("a review-only run refuses a run_worker action", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "edit the file" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const workerAdapter = scripted(["worker did task"]);
+
+    const result = await runLoop({
+      task: "Review only.",
+      cwd: repo,
+      maxSteps: 5,
+      mode: "review-only",
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("mode review-only rejects a run_worker action");
+    // No worker turn ran, so no step was charged and the run did not recover by
+    // asking the orchestrator again.
+    expect(workerAdapter.recorded.length).toBe(0);
+    expect(orchAdapter.recorded.length).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a run with no --mode still dispatches the worker, so the
+// review-only refusal reaches only the runs that asked for it (issue #337).
+test("a run with no mode still dispatches the worker", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "edit the file" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const workerAdapter = scripted(["worker did task"]);
+
+    const result = await runLoop({
+      task: "Implement.",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(workerAdapter.recorded.length).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 9. Usefulness: verifies step limit enforcement (exit 2).
 test("step limit reached refuses further child dispatch and returns exit 2", async () => {
   const repo = await createTempRepo();

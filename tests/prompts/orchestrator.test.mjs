@@ -303,6 +303,7 @@ test("initialPrompt states the completion rule and its mode mapping", () => {
 test("a review-only run states the review-only mapping", () => {
   const reviewOnly = initialPrompt({ task: "T", maxSteps: 10, mode: "review-only" });
   expectRule(reviewOnly, /review-only/i, /do not dispatch[^.!?]{0,40}worker/i);
+  expectRule(reviewOnly, /runtime/i, /refuses[^.!?]{0,40}run_worker/i);
   expectRule(reviewOnly, /reviewer/i, /\bfinish\b/i, /verdict/i);
   expectRule(reviewOnly, /Blockers/i, /open/i);
   // The mode-free prompt carries none of it, so an ordinary run is untouched.
@@ -315,6 +316,16 @@ test("a review-only run states the review-only mapping", () => {
     expect(prompt).toContain(`This run is ${mode}`);
     expect(prompt).toContain("--require-ci 42");
   }
+});
+
+// Usefulness: verifies a run with no --mode keeps the origin/main prompt text
+// byte for byte, so a run that never asked for a mode gets no changed prompt
+// from this flag. The line is pinned verbatim because the PR promises it is
+// unchanged (issue #337).
+test("a run with no mode keeps the mode-free prompt", () => {
+  expect(initialPrompt({ task: "T", maxSteps: 10 })).toContain(
+    "- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.",
+  );
 });
 
 // Usefulness: verifies the headless prompt names the deterministic gate when the

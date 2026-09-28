@@ -187,7 +187,9 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * With `mode`, the headless run names its loop policy with the same flag and the
  * same values the interactive path takes, and the prompt states that mode. A
  * `review-only` mode is a run that dispatches no worker, so the CLI refuses
- * `pr` and `requireCi` before the run starts; nothing here reads them (#337).
+ * `pr`, `requireAccept`, and `requireCi` before the run starts, and the loop
+ * refuses a `run_worker` action at runtime, the guard the interactive path
+ * applies to `--role worker` (#337).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -389,6 +391,14 @@ export async function runLoop(options) {
       return stopLoop(1, { reason: action.reason });
     }
 
+    // review-only dispatches no worker, the same hard guard the interactive path
+    // applies to `--role worker`. The run ends rather than retrying the action,
+    // because a corrective turn would cost a step to reach the state the run
+    // started in (#337).
+    if (mode === "review-only" && action.action === "run_worker") {
+      return stopLoop(1, { reason: REVIEW_ONLY_WORKER_REFUSAL });
+    }
+
     if (stepsUsed >= maxSteps) {
       return stopLoop(2, { reason: "Step limit reached with work remaining." });
     }
@@ -431,6 +441,10 @@ export async function runLoop(options) {
     prompt = resultPrompt({ result, stepsUsed, maxSteps });
   }
 }
+
+// The review-only worker refusal, worded after the interactive `--role worker`
+// guard it mirrors, so a parent reads one rule on both paths.
+const REVIEW_ONLY_WORKER_REFUSAL = "mode review-only rejects a run_worker action";
 
 // The marker refusal a gated run gets, kept as a constant so the shared reason
 // function cannot drift apart on the wording.

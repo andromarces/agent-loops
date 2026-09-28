@@ -240,6 +240,18 @@ test("--mode review-only refuses --require-ci", () => {
   );
 });
 
+// Usefulness: verifies a review-only headless run refuses --require-accept too,
+// with the same interactive wording, because that flag also applies only to
+// work-first and review-first (issue #337).
+test("--mode review-only refuses --require-accept", () => {
+  expect(() => parseArgs([...BASE, "--mode", "review-only", "--require-accept"])).toThrow(
+    "--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.",
+  );
+  expect(() => parseArgs([...BASE, "--mode=review-only", "--require-accept"])).toThrow(
+    "--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.",
+  );
+});
+
 // Usefulness: verifies a review-only headless run takes neither gate flag, so
 // both refusals stay reachable, and that a work-first or review-first run keeps
 // accepting them, because only review-only rejects the gate (issue #337).
@@ -266,6 +278,16 @@ test("--mode takes the interactive mode values", () => {
   expect(() => parseArgs([...BASE, "--mode", "nope"])).toThrow(
     "--mode must be one of work-first, review-first, review-only, got: nope",
   );
+});
+
+// Usefulness: verifies a repeated --mode takes the last value, the way every
+// other repeated single-value flag on this path already behaves, such as --task,
+// so the flag adds no new rule (issue #337).
+test("a repeated --mode takes the last value", () => {
+  expect(parseArgs([...BASE, "--mode", "work-first", "--mode", "review-only"]).mode).toBe(
+    "review-only",
+  );
+  expect(parseArgs([...BASE, "--task", "first", "--task", "second"]).task).toBe("second");
 });
 
 // Usefulness: verifies readValue guards against missing value or value starting with -.

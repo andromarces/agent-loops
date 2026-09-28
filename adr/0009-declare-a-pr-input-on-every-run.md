@@ -85,9 +85,9 @@ refusal.
 9. `review-only` refuses `--pr` at init. That mode rejects `--require-ci` at
    finish, so a declared run there would refuse every finish and could never
    end. The refusal moves to init, where the parent can still correct it. The
-   headless path applies both refusals at parse time, because it takes both
-   flags on one command line and names the mode with the same `--mode` flag the
-   init call takes (#337).
+   headless path applies the refusals at parse time, because it takes every flag
+   on one command line and names the mode with the same `--mode` flag the init
+   call takes (#337).
 10. A run that declares no PR behaves exactly as before: the marker is recorded,
     the exit code is `UNRESOLVED_COMPARE_EXIT` for a recorded compare, and a
     finish that omits the marker still reads as a verified one.

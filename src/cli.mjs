@@ -156,14 +156,15 @@ export function parseArgs(argv) {
     );
   }
 
-  // A review-only run dispatches no worker and gates no PR, so it takes neither
-  // PR flag. Both arrive on this one command line, so the interactive path's
-  // refusals move here and keep their wording, shared from one constant (#337).
+  // A review-only run dispatches no worker, so it gates no PR: neither
+  // declaration nor gate nor the accept rule has a finish to apply to. All three
+  // arrive on this one command line, so the interactive path's refusals move
+  // here and keep their wording, shared from one constant each (#337).
   if (options.mode === "review-only") {
     if (options.pr !== null) {
       throw new Error(REVIEW_ONLY_PR_REFUSAL);
     }
-    if (options.requireCi !== null) {
+    if (options.requireAccept || options.requireCi !== null) {
       throw new Error(REVIEW_ONLY_GATE_REFUSAL);
     }
   }
@@ -287,10 +288,13 @@ Options:
   --task <text>                 Task description. Required.
   --mode <mode>                 Loop policy: work-first, review-first, or review-only, the
                                 same values the role subcommand takes. review-only
-                                dispatches no worker and takes neither --pr nor
-                                --require-ci, which are refused with the same wording the
-                                role path uses. Off by default, so a run without the flag
-                                keeps the current behavior.
+                                dispatches no worker, so it takes neither --pr, nor
+                                --require-accept, nor --require-ci, each refused with the
+                                wording the role path uses, and a run_worker action is
+                                refused at runtime. Off by default, so a run without the
+                                flag keeps the current behavior. A repeated --mode takes
+                                the last value, as every other repeated value flag here
+                                does.
   --max-steps <count>           Maximum child steps. Defaults to 20. 1 to 9007199254740991.
   --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
   --transcript <file>           Record execution transcript to a JSON file.
@@ -298,7 +302,8 @@ Options:
   --require-accept              Refuse finish until a reviewer turn reports on the state, and
                                 after a worker turn that reviewer turn accepts with a Checks
                                 line. Off by default; a repeated refusal, or a refusal with no
-                                step budget left, ends the run.
+                                step budget left, ends the run. A --mode review-only run
+                                refuses it outright.
   --pr <pr>                    Declare the run PR work on this pull request. Every finish
                                 must end through the --require-ci <pr> gate for the same PR,
                                 and a finish that sets unresolvedCompare is refused, because
