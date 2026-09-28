@@ -11,7 +11,7 @@
 // the manifest cannot drop a record (#193).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { basename, delimiter, dirname, join, relative } from "node:path";
+import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
 import { logWarn } from "../lib/log.mjs";
 import { withStateLock } from "../lib/runstate.mjs";
 import {
@@ -80,8 +80,12 @@ export function isEphemeralPackageRoot(packageRoot) {
 // keeps `.pnpm` beside its global `node_modules` and links the package under that
 // `node_modules`, which `pnpm root -g` reports. Node resolves a module to the
 // store entry, which the upgrade replaces, so the store entry must not be written
-// into installed files (#305).
+// into installed files (#305). pnpm 12 links a project install into the global
+// virtual store at `store/v11/links/<name>/<version>/<hash>/node_modules/<name>`,
+// and that path names a version but no project, so only the script path the bin
+// shim calls names the project link (#311).
 const VIRTUAL_STORE_DIR = ".pnpm";
+const VIRTUAL_STORE_LINKS_DIR = "links";
 
 /**
  * The symlink in `dir` that resolves to `target`, or `null`. pnpm 12 keeps one
@@ -123,25 +127,80 @@ function linkResolvingTo(candidate, target) {
 }
 
 /**
- * The version-independent package root to render into installed files. A pnpm 12
- * global layout yields the hash-named symlink the bin shim calls. A pnpm 10
- * global layout yields the link under the `node_modules` beside the virtual store
- * directory. Both are repointed by a global upgrade. Every other layout (an npm
- * global install, a clone, a linked package) has no version in its root and
- * returns `packageRoot` unchanged, as does a layout with no link that resolves to
- * this same package.
+ * True when `hashDir` is the `<hash>` level of a pnpm 12 global virtual store
+ * entry, which sits below `links/<name>/<version>`. No store entry a project keeps
+ * under its own `.pnpm` carries a bare hex hash name, so the two shapes never
+ * collide.
  */
-export function stablePackageRoot(packageRoot) {
+function isVirtualStoreLinkEntry(hashDir) {
+  if (!/^[0-9a-f]{16,}$/.test(basename(hashDir))) {
+    return false;
+  }
+  for (let dir = dirname(hashDir); dir !== dirname(dir); dir = dirname(dir)) {
+    if (basename(dir) === VIRTUAL_STORE_LINKS_DIR) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The `<project>/node_modules/<name>` link the script path names, or `null`. A pnpm
+ * bin shim calls the package through that link, so the innermost `node_modules`
+ * above the script is the project one, and a nested dependency names its own. A
+ * candidate counts only when it links to this same package, so a script path that
+ * reaches the store itself yields nothing.
+ */
+function projectLinkFor(scriptPath, packageRoot, name) {
+  if (typeof scriptPath !== "string" || scriptPath === "") {
+    return null;
+  }
+  let dir = dirname(resolve(scriptPath));
+  for (;;) {
+    if (basename(dir) === "node_modules") {
+      const linked = linkResolvingTo(join(dir, name), packageRoot);
+      if (linked && linked !== packageRoot) {
+        return linked;
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      return null;
+    }
+    dir = parent;
+  }
+}
+
+/**
+ * The version-independent package root to render into installed files. A pnpm 12
+ * project layout yields the project link, which only `scriptPath` names. A pnpm 12
+ * global layout yields the hash-named symlink the bin shim calls. A pnpm 10 layout
+ * yields the link under the `node_modules` beside its virtual store directory.
+ * Every one of them is repointed by an upgrade. Every other layout (an npm global
+ * install, a clone, a linked package) has no version in its root and returns
+ * `packageRoot` unchanged, as does a layout with no link that resolves to this same
+ * package.
+ */
+export function stablePackageRoot(packageRoot, scriptPath) {
   // Two levels up is the store entry's `node_modules`, and two more is the `.pnpm`
   // directory holding that entry. The `node_modules` a pnpm layout links the
   // package under is either that directory (pnpm 12, a project install) or a
   // sibling of it (a pnpm 10 global install), so both are candidates.
   const store = dirname(dirname(packageRoot));
   const pnpmDir = dirname(dirname(store));
-  if (basename(store) !== "node_modules" || basename(pnpmDir) !== VIRTUAL_STORE_DIR) {
+  if (basename(store) !== "node_modules") {
     return packageRoot;
   }
   const tail = relative(store, packageRoot);
+  // A pnpm 12 project install resolves into the global virtual store, where the
+  // entry carries the version and no `.pnpm` directory names it. No candidate below
+  // applies there, so the project link comes from the script path.
+  if (isVirtualStoreLinkEntry(dirname(store))) {
+    return projectLinkFor(scriptPath, packageRoot, tail) ?? packageRoot;
+  }
+  if (basename(pnpmDir) !== VIRTUAL_STORE_DIR) {
+    return packageRoot;
+  }
   const pnpmParent = dirname(pnpmDir);
   // pnpm 12 keeps `.pnpm` inside the install directory's `node_modules` and links
   // that directory into the global directory under a hash name, which the bin
@@ -151,8 +210,9 @@ export function stablePackageRoot(packageRoot) {
   const hashLink = installDir && symlinkResolvingTo(dirname(installDir), installDir);
   for (const candidate of [
     hashLink && join(hashLink, basename(store), tail),
-    // pnpm 10 project install, and a pnpm 12 global install behind its hash
-    // link: the `node_modules` holding `.pnpm`.
+    // The `node_modules` holding `.pnpm`. A pnpm 10 project install reaches it
+    // directly, and a pnpm 12 global install reaches it only when no hash link
+    // resolves, since the first candidate above wins whenever one does.
     join(pnpmParent, tail),
     // pnpm 10: the `node_modules` beside the `.pnpm` directory.
     join(pnpmParent, basename(store), tail),

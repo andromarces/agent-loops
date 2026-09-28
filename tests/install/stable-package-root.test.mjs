@@ -221,6 +221,99 @@ test("hooks installed in a pnpm 10 project layout survive an upgrade", async () 
   expect(existsSync(guardPath)).toBe(true);
 });
 
+/**
+ * Builds a pnpm 12 project layout, verified against a real pnpm 12.7.0 `pnpm add`
+ * in a temp project: the package is linked from the global virtual store at
+ * `store/v11/links/<name>/<version>/<hash>/node_modules/<name>`, and
+ * `<project>/node_modules/.pnpm` holds only `lock.yaml` and `node_modules`, so no
+ * `.pnpm` directory names a store entry. The bin shim calls the package through
+ * the project link, which is the path the script is given.
+ */
+async function pnpm12Project(pnpmHome, project, { hash, version }) {
+  const store = join(
+    pnpmHome,
+    "store",
+    "v11",
+    "links",
+    "@andromarces",
+    "agent-loops",
+    version,
+    hash,
+    "node_modules",
+    "@andromarces",
+    "agent-loops",
+  );
+  await mkdir(store, { recursive: true });
+  await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
+  await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
+  // The one runtime dependency, beside the package the way pnpm places it.
+  await symlink(
+    join(REPO_ROOT, "node_modules", "execa"),
+    join(dirname(dirname(store)), "execa"),
+    LINK_TYPE,
+  );
+  const linked = join(project, "node_modules", "@andromarces", "agent-loops");
+  await mkdir(dirname(linked), { recursive: true });
+  await symlink(store, linked, LINK_TYPE);
+  // The project virtual store holds no store entry of its own.
+  await mkdir(join(project, "node_modules", ".pnpm", "node_modules"), { recursive: true });
+  return { linked, store };
+}
+
+// Usefulness: verifies the pnpm 12 project layout of #311, which no other case
+// reaches. The store path names the package by version and no `.pnpm` directory
+// sits above it, so only the script path the bin shim calls names the project.
+// Without that script path there is nothing stable to render, and the resolved
+// path stays.
+test("a pnpm 12 project layout renders the project link its script path names", async () => {
+  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-project-")));
+  const pnpmHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-store-"));
+  paths.push(project, pnpmHome);
+  const hash = "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d";
+  const { linked, store } = await pnpm12Project(pnpmHome, project, { hash, version: "0.4.0" });
+
+  expect(stablePackageRoot(store)).toBe(store);
+  expect(stablePackageRoot(store, join(linked, "src", "cli.mjs"))).toBe(linked);
+  // A script path that does not name the package, such as one reached through the
+  // store itself, renders the resolved path.
+  expect(stablePackageRoot(store, join(store, "src", "cli.mjs"))).toBe(store);
+});
+
+// Usefulness: verifies the acceptance of #311 end to end. The hook command must
+// name the project link the bin shim calls, so a project upgrade that repoints
+// that link and deletes the old store entry leaves the installed files pointing
+// at a package that still exists.
+test("hooks installed in a pnpm 12 project layout survive an upgrade", async () => {
+  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-project-home-"));
+  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-project-")));
+  const pnpmHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-store-"));
+  paths.push(home, project, pnpmHome);
+  const hash = "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d";
+  const before = await pnpm12Project(pnpmHome, project, { hash, version: "0.3.0" });
+
+  // The path the bin shim passes to node: the project link, not the store entry
+  // Node resolves it to.
+  await execa(
+    process.execPath,
+    [join(before.linked, "src", "cli.mjs"), "install", "--harness", "claude", "--yes"],
+    { env: { ...process.env, AGENT_LOOP_HOME: home } },
+  );
+
+  const settings = JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"));
+  const guardPath = settings.hooks.PreToolUse[0].hooks[0].command.match(/^node "(.+)"$/)?.[1];
+  expect(guardPath).toBe(join(before.linked, "src", "hook", "parent-guard.mjs"));
+
+  // The upgrade: a new store entry takes the new version, the link is repointed
+  // at it, and pnpm deletes the old store entry. The rendered path must still be
+  // the link, not the store entry, or the install is stale again.
+  await rm(before.linked, { force: true });
+  const after = await pnpm12Project(pnpmHome, project, { hash, version: "0.4.0" });
+  await removePath(before.store);
+  expect(existsSync(before.store)).toBe(false);
+  expect(existsSync(guardPath)).toBe(true);
+  expect(existsSync(join(after.linked, "src", "hook", "parent-guard.mjs"))).toBe(true);
+});
+
 // Usefulness: verifies the negative of both pnpm cases. A store with no link to
 // the package, an npm global root, and a clone have no path that survives an
 // upgrade, so the rendered root stays the resolved one rather than a path that
