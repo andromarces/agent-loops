@@ -528,3 +528,207 @@ test("finish refuses unresolvedCompare together with --require-ci", async () => 
   expect(result.payload.error).toContain("unresolvedCompare cannot be combined with --require-ci");
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
+
+// Usefulness: pins the exact error text an undeclared run gets. The collect-then-
+// report rule added a `Finish refused:` prefix to every collected reason, which
+// changed the error an undeclared run returns for the one refusal it had before.
+// Collect-then-report was for the declared-PR rule, so an undeclared run keeps the
+// text origin/main returned (#302).
+test("an undeclared run keeps the marker refusal text it had before", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  const result = await executeRoleCommand(
+    withRepo(["finish", "--cwd", "<repo>", "--require-ci", "42"], repo),
+    {
+      stdin: async () => JSON.stringify(UNRESOLVED_SUMMARY),
+      gh: async () => {
+        throw new Error("gh must not run: the marker and the gate are contradictory.");
+      },
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toBe(
+    "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved.",
+  );
+});
+
+async function initPrRun(repo, pr) {
+  await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", String(pr)]), repo), {
+    ...basicDeps(),
+  });
+}
+
+function cleanPrGh(head) {
+  return async (args) => {
+    const key = args.join(" ");
+    const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
+    if (key.includes("pr view")) {
+      return json({
+        headRefOid: head,
+        baseRefName: "main",
+        mergeStateStatus: "CLEAN",
+        potentialMergeCommit: null,
+        state: "OPEN",
+      });
+    }
+    if (key.includes("repo view")) {
+      return { status: 0, stdout: "owner/repo", stderr: "" };
+    }
+    if (key.includes("rules/branches/main")) {
+      return json([
+        {
+          type: "required_status_checks",
+          parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
+        },
+      ]);
+    }
+    if (key.includes("branches/main/protection")) {
+      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
+    }
+    if (key.includes("/check-runs")) {
+      return json([
+        {
+          check_runs: [
+            {
+              name: "ci (ubuntu-latest)",
+              status: "completed",
+              conclusion: "success",
+              started_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      ]);
+    }
+    if (key.includes("/status")) {
+      return json({ statuses: [] });
+    }
+    return { status: 1, stdout: "", stderr: `unmatched: ${key}` };
+  };
+}
+
+// Usefulness: verifies an interactive run that declares a PR refuses a finish
+// with no `--require-ci` gate, so a declared PR run cannot end through a field
+// the parent set. The run stays active, so the parent can finish with the gate
+// (#302).
+test("a run that declares a PR refuses a finish with no --require-ci gate", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+
+  const refused = await finishCall(repo, [], {
+    gh: async () => {
+      throw new Error("gh must not run: no gate was requested.");
+    },
+  });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("declares PR 42");
+  expect(refused.payload.error).toContain("--require-ci 42");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies the same refusal covers a finish that records the
+// unresolved compare, because the declaration requires the gate that resolves
+// that compare. A recorded marker here would be an accepted gap the run must not
+// produce (#302).
+test("a run that declares a PR refuses a finish that records unresolvedCompare", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+
+  const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+    stdin: async () => JSON.stringify(UNRESOLVED_SUMMARY),
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("declares PR 42");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies the interactive path reports every applicable condition in
+// one refusal, in the order the headless list uses, so a parent that fixes one
+// condition per `finish` call spends a call on the condition the next refusal
+// names instead (#302).
+test("a declared PR with no gate reports the marker and the gate in one refusal", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+
+  const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+    stdin: async () => JSON.stringify(UNRESOLVED_SUMMARY),
+    gh: async () => {
+      throw new Error("gh must not run: no gate was requested.");
+    },
+  });
+
+  const marker =
+    "unresolvedCompare cannot be combined with a run that declares PR 42 (--pr): the run must end through the --require-ci 42 gate, which resolves that PR head, so that compare is not unresolved";
+  const gate =
+    "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toBe(`Finish refused: ${marker}; ${gate}.`);
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies the same collect-then-report rule covers the completion
+// rule, so a declared PR run learns about the unmet reviewer turn and the missing
+// gate from one `finish` call (#302).
+test("a declared PR with no gate reports the completion rule and the gate in one refusal", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+
+  const result = await finishCall(repo, ["--require-accept"], {
+    gh: async () => {
+      throw new Error("gh must not run: no gate was requested.");
+    },
+  });
+
+  const gate =
+    "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toBe(
+    `Finish refused: no reviewer turn after the latest worker turn; ${gate}.`,
+  );
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies a run that declares a PR and gates the same PR behaves as
+// a gated run does today, so the declaration adds no second enforcement path
+// (#302).
+test("a declared PR with a matching gate finishes as the gate allows", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+  await dispatchReviewer(repo, ACCEPT);
+  const head = (await snapshot(repo)).head;
+
+  const result = await finishCall(repo, ["--require-ci", "42"], { gh: cleanPrGh(head) });
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
+// Usefulness: verifies a run that declares a PR refuses a gate for a different
+// PR without reading GitHub, so a wrong PR never reaches the gate (#302).
+test("a run that declares a PR refuses a gate for a different PR", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+  await dispatchReviewer(repo, ACCEPT);
+
+  const result = await finishCall(repo, ["--require-ci", "7"], {
+    gh: async () => {
+      throw new Error("gh must not run: the gate names a different PR.");
+    },
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("declares PR 42");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});

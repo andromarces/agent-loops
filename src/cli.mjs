@@ -38,6 +38,7 @@ export function parseArgs(argv) {
     transcript: null,
     verbose: false,
     requireAccept: false,
+    pr: null,
     requireCi: null,
   };
   for (const role of ROLES) {
@@ -97,6 +98,10 @@ export function parseArgs(argv) {
         options.requireAccept = true;
         break;
 
+      case "--pr":
+        options.pr = readPositiveInt("--pr", readInline("--pr"));
+        break;
+
       case "--require-ci":
         options.requireCi = readPositiveInt("--require-ci", readInline("--require-ci"));
         break;
@@ -136,6 +141,16 @@ export function parseArgs(argv) {
   if (options.task === null || options.task === undefined || String(options.task).trim() === "") {
     throw new Error(
       'Missing required --task. Provide the task, for example --task "Implement the change."',
+    );
+  }
+
+  // The headless path takes both flags on one command line, so a gate for another
+  // pull request is knowable before the run starts. The runtime refuses a finish
+  // for that mismatch as a defensive check, and the interactive `role` path keeps
+  // the refusal because its `--require-ci` arrives only at `finish` (#302).
+  if (options.pr !== null && options.requireCi !== null && options.pr !== options.requireCi) {
+    throw new Error(
+      `--pr ${options.pr} and --require-ci ${options.requireCi} must name the same pull request.`,
     );
   }
 
@@ -199,6 +214,12 @@ Role flags:
   --require-accept              finish only: refuse unless the latest reviewer turn
                                 accepted the current exact state, with a Checks line
                                 (work-first and review-first).
+  --pr <pr>                    init only. Declares the run PR work on this pull
+                                request, so a finish must end through the
+                                --require-ci <pr> gate for the same PR. Refuses a
+                                finish with no such gate and a finish that sets
+                                unresolvedCompare. Later calls read it from the
+                                state file and reject any attempt to change it.
   --require-ci <pr>             finish only: refuse unless the PR head matches the
                                 reviewed commit, the reviewed tree is clean, the PR is
                                 not behind its base under a strict rule, has no merge
@@ -235,6 +256,15 @@ Options:
                                 after a worker turn that reviewer turn accepts with a Checks
                                 line. Off by default; a repeated refusal, or a refusal with no
                                 step budget left, ends the run.
+  --pr <pr>                    Declare the run PR work on this pull request. Every finish
+                                must end through the --require-ci <pr> gate for the same PR,
+                                and a finish that sets unresolvedCompare is refused, because
+                                that gate resolves the compare. --pr with --require-ci for
+                                another pull request is rejected as a usage error. A
+                                declared run with no matching gate cannot finish, and no
+                                turn in the run can add the flag. Off by default; a run with
+                                neither --pr nor --require-ci keeps the unresolvedCompare
+                                marker as the only record of an unresolved compare.
   --require-ci <pr>             Refuse finish until the runtime resolves the PR head from
                                 this pull request: the PR head must match the reviewed commit,
                                 the reviewed tree must be clean, the PR must not be behind its
@@ -320,6 +350,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       maxSteps: options.maxSteps,
       timeout: options.timeout,
       requireAccept: options.requireAccept,
+      pr: options.pr,
       requireCi: options.requireCi,
     },
     roles,
@@ -391,6 +422,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
         maxSteps: options.maxSteps,
         timeout: options.timeout,
         requireAccept: options.requireAccept,
+        pr: options.pr,
         requireCi: options.requireCi,
         signal: controller.signal,
         roles: transcriptData.roles,

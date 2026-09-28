@@ -123,6 +123,83 @@ test("init with a max-steps above the safe integer range is rejected", async () 
   expect((await readState(paths.stateFile)).maxSteps).toBe(9007199254740991);
 });
 
+// Usefulness: verifies the run PR declaration parses on init and takes a positive
+// PR number, so an interactive PR run records the PR the gate must read (issue #302).
+test("role --pr parses on init and records the declared PR", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  expect(() => parseRoleArgs(["dispatch", "--pr", "0"])).toThrow(
+    "--pr must be a positive integer.",
+  );
+
+  const result = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", "42"]), repo),
+    basicDeps(),
+  );
+  expect(result.exitCode).toBe(0);
+  expect((await readState(paths.stateFile)).pr).toBe(42);
+});
+
+// Usefulness: verifies review-only refuses a declared PR at init, because
+// review-only rejects the gate a declared run requires, so the run would refuse
+// every finish and never end (issue #302).
+test("review-only refuses an init that declares a PR", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  const result = await executeRoleCommand(
+    withRepo(
+      dispatchArgv(
+        [
+          "--task",
+          "Review only.",
+          "--mode",
+          "review-only",
+          "--parent-session",
+          "parent-sess-1",
+          "--reviewer",
+          "fake2",
+          "--pr",
+          "42",
+        ],
+        "reviewer",
+      ),
+      repo,
+    ),
+    basicDeps(),
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("--pr");
+  expect(await readState(paths.stateFile)).toBeNull();
+});
+
+// Usefulness: verifies the declared PR is an init field, so a later call cannot
+// change it and swap the PR the gate must read (issue #302).
+test("a later call cannot change the declared PR", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", "42"]), repo),
+    basicDeps(),
+  );
+
+  const changed = await executeRoleCommand(
+    withRepo(["finish", "--cwd", "<repo>", "--pr", "43"], repo),
+    {
+      stdin: async () =>
+        JSON.stringify({ changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" }),
+    },
+  );
+  expect(changed.exitCode).toBe(1);
+  expect(changed.payload.error).toContain("--pr cannot be changed after init");
+});
+
 // Usefulness: verifies acceptance (#149) — an init without --parent-session is
 // refused before any state file is written, so no interactive run starts
 // unguarded by default.

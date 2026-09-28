@@ -31,7 +31,7 @@ import {
   writeState,
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
-import { runChild, UNRESOLVED_COMPARE_WITH_CI } from "./runtime.mjs";
+import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
 const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
@@ -41,7 +41,7 @@ const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
 class RoleError extends Error {}
 
-const INIT_FIELDS = ["task", "mode", "parentSession", "maxSteps", "timeout"];
+const INIT_FIELDS = ["task", "mode", "parentSession", "maxSteps", "timeout", "pr"];
 
 /**
  * Parses `agent-loop role [dispatch|finish|abort] [flags]`. Reuses the flag
@@ -71,6 +71,7 @@ export function parseRoleArgs(argv) {
     reason: null,
     requireAccept: false,
     requireCi: null,
+    pr: null,
     verbose: false,
     timeoutProvided: false,
   };
@@ -154,6 +155,10 @@ export function parseRoleArgs(argv) {
 
       case "--require-ci":
         args.requireCi = readPositiveInt(arg, readInline(arg));
+        break;
+
+      case "--pr":
+        args.pr = readPositiveInt(arg, readInline(arg));
         break;
 
       case "--reason":
@@ -240,6 +245,14 @@ function validateInitFlags(args, agents = {}) {
       "Init requires --parent-session (the harness session id the parent-edit guard matches).",
     );
   }
+  // review-only dispatches no worker and rejects --require-ci at finish, so a
+  // declared PR there could never be gated. The run would refuse every finish, so
+  // the declaration is refused at init instead (#302).
+  if (args.pr !== null && (args.mode ?? "work-first") === "review-only") {
+    throw new RoleError(
+      "--pr declares PR work, which needs the --require-ci gate; review-only rejects that gate.",
+    );
+  }
   // review-only never dispatches the worker, so --worker is optional there.
   const requiredRoles =
     (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : CHILD_ROLE_KINDS;
@@ -277,6 +290,7 @@ function initialState(args) {
     timeout: args.timeoutProvided ? args.timeout : DEFAULT_TIMEOUT,
     stepsUsed: 0,
     lifecycle: "active",
+    pr: args.pr,
     roles: {
       worker: roleState(args, "worker"),
       reviewer: roleState(args, "reviewer"),
@@ -623,13 +637,18 @@ function dispatchPayload(roleName, result) {
 
 /**
  * `finish`: accepts the five-key summary as JSON on stdin, from active only.
- * `--require-accept` and `--require-ci` gate the finish; each refusal names the
- * condition that failed. An optional `unresolvedCompare` boolean beside the five
+ * `--require-accept` and `--require-ci` gate the finish; every applicable
+ * refusal is collected and reported in one error, in the order the headless list
+ * uses, because a finish that breaks two rules must name both. An optional
+ * `unresolvedCompare` boolean beside the five
  * keys records an unresolved PR-head compare, which the envelope and the state
  * file then carry, so the finish stays distinct from a verified one (#281). An
  * omitted marker is that same accepted gap the contract documents beside the
  * field, because this subcommand without `--require-ci` never resolves the PR
- * head (#286). The headless loop resolves it under the same flag (#293).
+ * head (#286). The headless loop resolves it under the same flag (#293). A run
+ * that declared `--pr <pr>` at init must end through the `--require-ci <pr>`
+ * gate: a finish with no gate, or with a gate for another PR, is refused, and so
+ * is one that carries the marker (#302).
  */
 async function finish(args, { stdin = readStdin, gh } = {}) {
   if (args.role !== null) {
@@ -671,17 +690,45 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
     if (!validated.ok) {
       throw new RoleError(validated.error);
     }
-    if (validated.value.unresolvedCompare && args.requireCi !== null) {
-      // The headless gate refuses the same combination with the same words, so
-      // the message is one constant rather than two copies (#293).
-      throw new RoleError(`${UNRESOLVED_COMPARE_WITH_CI}.`);
+    // Every applicable refusal is collected and reported in one error, in the
+    // order the headless list uses: the marker condition, the completion rule,
+    // then the declared-PR gate condition, then the gate. A finish that breaks
+    // two rules must name both, or the parent spends a `finish` call per
+    // condition. The gate runs only when nothing above refused, so a refused
+    // finish never reads GitHub, which the headless loop cannot promise because
+    // it owns the whole run (#302).
+    const refusals = [];
+    // The headless gate refuses the same combination with the same words, so the
+    // message is one function rather than two copies (#293).
+    const markerReason = unresolvedCompareReason({
+      pr: state.pr ?? null,
+      requireCi: args.requireCi,
+    });
+    const markerRefused = markerReason !== null && validated.value.unresolvedCompare;
+    if (markerRefused) {
+      refusals.push(markerReason);
     }
-
     if (args.requireAccept) {
       const reason = await acceptGateReason(state, args.cwd);
       if (reason) {
-        throw new RoleError(`Finish refused: ${reason}.`);
+        refusals.push(reason);
       }
+    }
+    // The init-time `--pr` declaration is the run's PR input, so a declared run
+    // can only end through the gate for that PR. A state file written before this
+    // field has no `pr`, so an absent declaration keeps the marker-only behavior.
+    const declaredPr = state.pr ?? null;
+    if (declaredPr !== null && args.requireCi !== declaredPr) {
+      refusals.push(missingGateRefusal(declaredPr, args.requireCi).reason);
+    }
+    if (refusals.length > 0) {
+      // The marker contradiction against a gate was its own error text before
+      // collect-then-report, and a run that declares no PR still returns that text
+      // on its own, because it has the same single refusal it always had (#302).
+      if (refusals.length === 1 && markerRefused && declaredPr === null) {
+        throw new RoleError(`${markerReason}.`);
+      }
+      throw new RoleError(`Finish refused: ${refusals.join("; ")}.`);
     }
     if (args.requireCi !== null) {
       const gate = await checkCi({

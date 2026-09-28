@@ -192,6 +192,43 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
   );
 });
 
+// Usefulness: pins the exact text the headless prompt adds for a declared run, in
+// the two combinations the headless CLI accepts: `--pr` alone, and `--pr` with a
+// matching gate. A mismatched gate is a usage error before the prompt is built, so
+// the prompt never has to describe a gate the runtime skips. Removing the block
+// must restore the prompt a run without `--pr` gets, which is what keeps the
+// undeclared prompt byte-identical to the one before the declaration (#302).
+test("the headless prompt adds exactly the declaration rule and nothing else", () => {
+  const block =
+    "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.";
+
+  const noGate = initialPrompt({ task: "T", maxSteps: 10 });
+  const withPr = initialPrompt({ task: "T", maxSteps: 10, pr: 42 });
+  expect(withPr).toContain(`\n${block}\n`);
+  expect(withPr.replace(`\n${block}`, "")).toBe(noGate);
+
+  const gated = initialPrompt({ task: "T", maxSteps: 10, requireCi: 42 });
+  const withPrAndGate = initialPrompt({ task: "T", maxSteps: 10, pr: 42, requireCi: 42 });
+  expect(withPrAndGate.replace(`\n${block}`, "")).toBe(gated);
+  // The origin/main gate line is still what follows, naming the declared PR.
+  expect(withPrAndGate).toContain(
+    `${block}\n- This run enforces the PR gate (--require-ci 42): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit`,
+  );
+});
+
+// Usefulness: verifies a run that declares no PR keeps the prompt origin/main
+// sends, because the declaration block is the only addition and it is empty
+// without `--pr` (#302).
+test("initialPrompt adds nothing to a run that declares no PR", () => {
+  const prompt = initialPrompt({ task: "T", maxSteps: 10, requireCi: 42 });
+  expect(prompt).not.toContain("declares PR");
+  expect(prompt).not.toContain("This run declares");
+  // The origin/main gate block for the same inputs is still present and unchanged.
+  expect(prompt).toContain(
+    "This run enforces the PR gate (--require-ci 42): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit",
+  );
+});
+
 // Usefulness: verifies the rule is keyed on the CLI of the role that reads the
 // checks, because the orchestrator and reviewer CLIs are chosen independently,
 // so a mixed run is never told that no turn can read them (issue #319).
