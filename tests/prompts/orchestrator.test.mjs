@@ -168,12 +168,14 @@ const REQUIRE_CLEAN_TRUE = /require[^.!?]{0,40}reviewed\.clean[^.!?]{0,20}\btrue
 const ACCEPT_WITHOUT_CHECKS =
   /treat[^.!?]{0,60}accept[^.!?]{0,40}without[^.!?]{0,20}Checks[^.!?]{0,20}not accepted/i;
 // The unresolved-compare rule, clause by clause. `do not finish as verified` is
-// the prohibition, and `abort, or record` joins its two options: that joined pair
-// is the contract, so it is asserted as a retained literal. Splitting the two
-// options apart, or softening one to "avoid abort", fails.
+// the prohibition, and the clause that follows must name both permitted actions,
+// `abort` and `record`, with the unresolved compare between them. The wording
+// that joins the two options is not the contract, so a same-meaning join such as
+// `abort or record` passes and dropping either action fails.
 const UNRESOLVED_HEAD_CONDITION = /PR head cannot be resolved/i;
 const DO_NOT_FINISH_AS_VERIFIED = /do not finish as verified/i;
-const ABORT_OR_RECORD = /abort, or record the unresolved compare/i;
+const BOTH_ACTIONS_ON_UNRESOLVED =
+  /abort[^.!?]{0,60}record[^.!?]{0,40}unresolved compare|record[^.!?]{0,60}abort[^.!?]{0,40}unresolved compare/i;
 const RECORD_UNDER_NOT_DONE_AND_OPEN =
   /record[^.!?]{0,40}unresolved compare[^.!?]{0,40}notDone[^.!?]{0,20}\bopen\b/i;
 
@@ -191,10 +193,11 @@ test("initialPrompt states the reviewed-state parent rules", () => {
   expectRule(prompt, REQUIRE_CLEAN_TRUE);
   expectRule(prompt, ACCEPT_WITHOUT_CHECKS);
   // The unresolved-compare rule, clause by clause: the condition, the prohibition,
-  // the two options joined as "abort, or record", and the fields the record uses.
+  // both permitted actions on the unresolved compare, and the fields the record
+  // uses.
   expectRule(prompt, UNRESOLVED_HEAD_CONDITION);
   expectRule(prompt, DO_NOT_FINISH_AS_VERIFIED);
-  expectRule(prompt, ABORT_OR_RECORD);
+  expectRule(prompt, BOTH_ACTIONS_ON_UNRESOLVED);
   expectRule(prompt, RECORD_UNDER_NOT_DONE_AND_OPEN);
 });
 
@@ -236,7 +239,7 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, ACCEPT_WITHOUT_CHECKS),
   (text) => expectRule(text, UNRESOLVED_HEAD_CONDITION),
   (text) => expectRule(text, DO_NOT_FINISH_AS_VERIFIED),
-  (text) => expectRule(text, ABORT_OR_RECORD),
+  (text) => expectRule(text, BOTH_ACTIONS_ON_UNRESOLVED),
   (text) => expectRule(text, RECORD_UNDER_NOT_DONE_AND_OPEN),
 ];
 
