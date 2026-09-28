@@ -235,7 +235,18 @@ async function acquireLock(lockFile, { retry = true, label = "State", noun = "st
 async function createLock(lockFile) {
   const owner = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
   const tempFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
-  await writeFile(tempFile, owner, "utf8");
+  // The write is inside the guard because it creates the temp file: a write cut
+  // short leaves a partial temp behind, and the prune never removes a temp owned
+  // by the running process, so nothing else would clean it (#353).
+  try {
+    await writeFile(tempFile, owner, "utf8");
+    return await linkLock(tempFile, lockFile, owner);
+  } finally {
+    await rm(tempFile, { force: true });
+  }
+}
+
+async function linkLock(tempFile, lockFile, owner) {
   try {
     await link(tempFile, lockFile);
     return true;
@@ -255,8 +266,6 @@ async function createLock(lockFile) {
       }
       throw openErr;
     }
-  } finally {
-    await rm(tempFile, { force: true });
   }
 }
 

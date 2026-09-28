@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import {
   STALE_LOCK_GRACE_MS,
   readStatesForSession,
@@ -19,16 +19,7 @@ async function tempDir() {
   return dir;
 }
 
-// Every test resolves its paths against a private runs root. Without the
-// override, `stateRoot` falls back to the shared `os.tmpdir()/agent-loops/runs`,
-// which a live `agent-loop` run on the same machine also writes lock and state
-// files into (#353).
-beforeEach(async () => {
-  process.env.AGENT_LOOP_RUNS_ROOT = await tempDir();
-});
-
 afterEach(async () => {
-  delete process.env.AGENT_LOOP_RUNS_ROOT;
   for (const dir of dirs) {
     await removePath(dir);
   }
@@ -192,19 +183,25 @@ test("statePaths names each session entry after its work tree", async () => {
 // never read as a run entry, so a crashed write cannot register a spurious run
 // or a duplicate of a real one (#212).
 test("readStatesForSession ignores an entry temp file", async () => {
-  const cwd = await tempDir();
-  const paths = statePaths({ cwd, parentSession: "ses_tmp" });
-  await mkdir(dirname(paths.stateFile), { recursive: true });
-  await writeFile(
-    paths.stateFile,
-    JSON.stringify({ parentSession: "ses_tmp", lifecycle: "active" }),
-    "utf8",
-  );
-  await writeSessionEntry(paths.sessionEntryFile, paths.stateFile);
-  await mkdir(paths.sessionRunsDir, { recursive: true });
-  await writeFile(join(paths.sessionRunsDir, "deadbeef.tmp"), `${paths.stateFile}\n`, "utf8");
+  const runsRoot = await tempDir();
+  process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+  try {
+    const cwd = await tempDir();
+    const paths = statePaths({ cwd, parentSession: "ses_tmp" });
+    await mkdir(dirname(paths.stateFile), { recursive: true });
+    await writeFile(
+      paths.stateFile,
+      JSON.stringify({ parentSession: "ses_tmp", lifecycle: "active" }),
+      "utf8",
+    );
+    await writeSessionEntry(paths.sessionEntryFile, paths.stateFile);
+    await mkdir(paths.sessionRunsDir, { recursive: true });
+    await writeFile(join(paths.sessionRunsDir, "deadbeef.tmp"), `${paths.stateFile}\n`, "utf8");
 
-  expect(await readStatesForSession("ses_tmp")).toEqual([
-    { parentSession: "ses_tmp", lifecycle: "active" },
-  ]);
+    expect(await readStatesForSession("ses_tmp")).toEqual([
+      { parentSession: "ses_tmp", lifecycle: "active" },
+    ]);
+  } finally {
+    delete process.env.AGENT_LOOP_RUNS_ROOT;
+  }
 });
