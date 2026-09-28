@@ -41,11 +41,12 @@ function run(name, conclusion) {
 // with the 403 a `GITHUB_TOKEN` receives, a `pat forbidden` value with the 403 a
 // fine-grained PAT without the Administration permission receives, a
 // `free plan` value with the 403 a private repository on the GitHub Free plan
-// returns for every required-context source, and a `rate limited` value with a
-// 403 that is not an unreadable-source answer; an unmatched call is an error so
-// a test never passes on a missing fixture. `null` is the admin reply for a
-// branch with no classic protection, which is also unreadable but says so
-// differently.
+// returns for every required-context source, a `free plan prefixed` or
+// `free plan suffixed` value with that same 403 carrying extra text, and a
+// `rate limited` value with a 403 that is not an unreadable-source answer; an
+// unmatched call is an error so a test never passes on a missing fixture. `null`
+// is the admin reply for a branch with no classic protection, which is also
+// unreadable but says so differently.
 function fakeGh(routes) {
   return async (args) => {
     const key = args.join(" ");
@@ -77,6 +78,22 @@ function fakeGh(routes) {
             stdout: "",
             stderr:
               "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)",
+          };
+        }
+        if (value === "free plan prefixed") {
+          return {
+            status: 1,
+            stdout: "",
+            stderr:
+              "gh: failed to fetch: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)",
+          };
+        }
+        if (value === "free plan suffixed") {
+          return {
+            status: 1,
+            stdout: "",
+            stderr:
+              "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403): retry later",
           };
         }
         if (value === "rate limited") {
@@ -602,6 +619,47 @@ test("refuses on the empty union when every required-context source answers the 
     ok: false,
     reason: "no required checks were found for the base branch",
   });
+});
+
+// Usefulness: verifies a Free-plan 403 carrying extra text before the message
+// does not match, so a reply that is not the rendered line throws instead of
+// counting as an unreadable source (issue #301).
+test("throws on a Free-plan 403 with text before the message", async () => {
+  await expect(
+    checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required: [],
+          protection: "free plan prefixed",
+          prChecks: [{ name: "ci (ubuntu-latest)" }],
+          headRuns: [run("ci (ubuntu-latest)", "failure")],
+        }),
+      ),
+    }),
+  ).rejects.toThrow(/HTTP 403/);
+});
+
+// Usefulness: verifies a Free-plan 403 carrying extra text after the status does
+// not match either, for the same reason as the prefix case (issue #301).
+test("throws on a Free-plan 403 with text after the status", async () => {
+  await expect(
+    checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required: [],
+          protection: "free plan suffixed",
+          prChecks: [{ name: "ci (ubuntu-latest)" }],
+          headRuns: [run("ci (ubuntu-latest)", "failure")],
+        }),
+      ),
+    }),
+  ).rejects.toThrow(/HTTP 403/);
 });
 
 // Usefulness: verifies an app-qualified context from classic branch protection

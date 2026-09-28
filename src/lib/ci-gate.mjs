@@ -61,6 +61,11 @@ function fail(reason) {
 // anything unrecognized throws instead. A narrower match only costs a thrown
 // error, which still fails closed.
 //
+// Anchor the whole rendered line, with the `m` flag so a trailing newline and any
+// other stderr line do not stop the match. Every alternative is the whole message
+// `gh` received, so a reply that carries extra text before or after it is a
+// different message and must throw rather than be read as an unreadable source.
+//
 // `Not Found` and the 403s are safe to read as unreadable on these two calls: the
 // slug comes from `gh repo view` and the base branch from the pull request, both of
 // which the caller has already read successfully, so a wrong value here cannot come
@@ -73,7 +78,7 @@ function fail(reason) {
 // is. The already-read values are what make a typo impossible here, not the
 // message.
 const UNREADABLE =
-  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)|Upgrade to GitHub Pro or make this repository public to enable this feature\. \(HTTP 403\)/;
+  /^gh: (?:(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)|Upgrade to GitHub Pro or make this repository public to enable this feature\. \(HTTP 403\))$/m;
 
 async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
