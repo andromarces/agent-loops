@@ -215,6 +215,31 @@ The `--require-ci` finish gate stays the enforcement point. The rule only lets
 the reviewer see a failure before the gate refuses, so the run needs no extra
 worker turn and no extra reviewer turn for that failure.
 
+## Waiting for required checks
+
+When a run will end with `--require-ci`, wait for the required checks on the new
+PR head to complete before you dispatch the reviewer. When a reviewer turn
+reports a pending required check in `Checks`, wait for those checks to complete
+before you call `finish`.
+
+The wait is a read of check status, so it stays inside the parent rules:
+`gh pr checks <pr> --required --watch` blocks until the checks report, and it
+returns the same exit codes as one read. Add `--fail-fast` to stop on the first
+failure, and `--interval <seconds>` to set the refresh. The command changes
+nothing, so the wait costs no dispatch.
+
+Keep the wait inside the command timeout your harness applies to a shell command.
+A required check that never reports leaves the wait unfinished: record it under
+`notDone` and `open` in the finish summary, or abort.
+
+The headless orchestrator waits the same way, inside its own turn, for the same
+reason: its turn is read-only, the watch changes nothing, and a step is charged
+only to `run_worker` and `run_reviewer`, so the wait costs no step
+(`src/prompts/orchestrator.mjs`). One difference remains. A parent waits under
+the timeout its harness applies to a command, while a headless turn waits under
+the per-invocation timeout `--timeout`, which defaults to 3600 seconds and is
+unbounded at 0.
+
 ## Several runs at once
 
 One parent session can drive several runs, one per work tree. Each run registers

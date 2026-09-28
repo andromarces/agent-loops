@@ -168,6 +168,16 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
   );
 });
 
+// Usefulness: verifies a --require-ci run is told to wait for the required checks
+// on the new PR head inside its own turn, so a pending check costs no reviewer
+// step, and the rule is absent without the flag (issue #319).
+test("initialPrompt states the required-check wait in a --require-ci run", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10, requireCi: 42 });
+  expect(prompt).toContain("gh pr checks <pr> --required --watch");
+  expect(prompt).toContain("costs no step");
+  expect(initialPrompt({ task: "Implement feature X", maxSteps: 10 })).not.toContain("--watch");
+});
+
 // Usefulness: verifies refusalPrompt carries the refusal reason and the supported
 // actions, so the orchestrator can recover with a reviewer turn (issue #234).
 test("refusalPrompt states the reason and the supported actions", () => {
