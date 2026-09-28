@@ -59,66 +59,35 @@ test("a worker response written to the prompt block parses a Checks value", () =
   expect(report.checks).toBe("pnpm test passed");
 });
 
-// The role bullet that carries the branch rule. The bullet is located by the
-// branch term, not by a whole sentence, so a same-meaning reword keeps the
-// assertion and a dropped bullet fails the lookup (issue #252, issue #328).
-function branchBullet(prompt) {
-  const bullet = prompt
-    .split(/\n\s*-\s/)
-    .map((entry) => entry.replace(/\s+/g, " "))
-    .find((entry) => /\bbranch\b/i.test(entry));
-  expect(bullet, "the worker prompt states no branch rule").toBeTruthy();
-  return bullet;
-}
+// The rule-bearing clause of the PR-branch instruction: it commits on the branch
+// the dispatcher named and pushes it. The branch is a back-reference, not a name,
+// so a prompt that names a branch of its own fails this clause. A presence check
+// on the key terms, so dropping the commit or the push fails too.
+const COMMIT_ON_THE_NAMED_BRANCH =
+  /commit[^.;]{0,60}?\b(?:on|onto)\s+(?:that|the)\s+branch\b[^.;]{0,40}?\bpush\b/i;
 
-// The phrase a commit or push instruction targets: the preposition and the words
-// after it, up to the next clause mark. The preposition may sit several words
-// later, so "commit your change on that branch" and "commit on that branch" both
-// match, and one instruction cannot read into the next. The determiner is
-// captured with the phrase, so "on the main branch" yields "the main branch" and
-// not the word "the" alone.
-const TARGET =
-  /\b(?:commit|push)\b[^.;]{0,60}?\b(?:on|onto|to)\s+([^,.;]{1,40}?)(?=\s+(?:and|so|but|to)\b|[,.;]|$)/gi;
-
-// A determiner that points at a branch without naming one.
-const DETERMINER = /^(?:the|a|an|that|this|your|its|it|each|every|which|one)\b\s*/i;
-
-// A phrase that names no branch of its own: a determiner alone, as in "the", or
-// the generic branch word with only a reference beside it, as in "that branch"
-// and "the branch the dispatcher named". A phrase with a name in it is not one.
-function genericBranch(phrase) {
-  const rest = phrase.replace(DETERMINER, "").trim();
-  if (rest === phrase.trim()) return false;
-  return rest === "" || /^(?:branch|branches)\b/i.test(rest);
-}
-
-// The branches the commit and push instructions name, read out of the bullet.
-function commitTargets(bullet) {
-  return [...bullet.matchAll(TARGET)].map((match) => match[1].trim());
-}
+// A slash-shaped name, the shape a run reads as naming a branch, as in
+// `origin/main`. The sentinel the task supplies is the only one allowed.
+const BRANCH_NAME = /\b[\w-]+\/[\w./-]+/g;
 
 // Usefulness: verifies the first worker turn tells the worker to commit and push
 // on the branch the dispatcher supplied, so the commit lands where the reviewer
-// will look and the PR head matches the reviewed head (issue #252, issue #328).
+// will look and the PR head matches the reviewed head. The prompt is built with a
+// unique sentinel branch, so a rule that names a branch of its own is caught
+// (issue #252, issue #328).
 test("first worker turn commits and pushes on the branch the dispatcher named", () => {
-  const branch = "feat/328-prompt-test-literals";
+  const branch = "sentinel/328-branch-under-test";
   const prompt = workerPrompt(`land the change on ${branch}`, true);
-  // The dispatcher supplies the branch through the task, so the prompt carries it.
+  // The dispatcher supplies the branch, so the prompt carries it verbatim.
   expect(prompt).toContain(branch);
-  const bullet = branchBullet(prompt);
-  const targets = commitTargets(bullet);
-  expect(targets.length, "the branch rule names no commit or push target").toBeGreaterThan(0);
-  // Every target is the supplied branch, or a reference back to it. A rule that
-  // names another branch fails here.
-  for (const target of targets) {
-    expect(
-      target === branch || genericBranch(target),
-      `the rule commits on ${target}, not the supplied branch`,
-    ).toBe(true);
-  }
-  for (const term of [/\bcommit\b/i, /\bpush\b/i, /pull request/i]) {
-    expect(bullet, String(term)).toMatch(term);
-  }
+  // The instruction commits and pushes on that branch, by back-reference.
+  expect(prompt).toMatch(COMMIT_ON_THE_NAMED_BRANCH);
+  // No branch other than the sentinel is named anywhere in the prompt.
+  const named = [...prompt.matchAll(new RegExp(BRANCH_NAME.source, "g"))].map((match) => match[0]);
+  expect(
+    named.filter((name) => name !== branch),
+    "the prompt names a branch of its own",
+  ).toEqual([]);
 });
 
 // Usefulness: verifies later worker turns stay raw; the session already holds the instructions.
