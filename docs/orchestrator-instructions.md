@@ -241,23 +241,26 @@ finish summary cannot carry it. Wait again, dispatch the reviewer again, or
 
 ## Waiting in the headless loop
 
-The headless orchestrator turn is read-only, and whether it can run the status
-read depends on the orchestrator CLI. A read-only invocation keeps shell
-network access for `claude`, `agy`, `opencode`, and `copilot`, so those turns
-can run the watch.
+The orchestrator CLI and the reviewer CLI are chosen independently, so each
+statement below names the role whose CLI performs the read. A read-only
+invocation keeps shell network access for `claude`, `agy`, `opencode`, and
+`copilot`. The `codex` read-only sandbox blocks network, and it is the only
+adapter that does; see "Codex read-only network limit" in the README for the
+probe.
 
-A CLI that blocks network in a read-only orchestrator turn blocks it in the
-reviewer turn too, because both run under the same read-only flag. The `codex`
-read-only sandbox blocks network, so a `codex` run has no turn that can read the
-required checks, and the headless loop cannot wait there. No other CLI in
-`src/agents` blocks network. See "Codex read-only network limit" in the README
-for the probe.
-
-For a run with no read-only network, the `--require-ci` finish gate is the only
-check read, because the runtime applies it outside the sandbox. The gate refuses
-a finish while a required check is pending, and each refusal costs a reviewer
-turn, so the step budget has to cover those turns. Dispatch the reviewer when the
-gate refuses, or `abort` with the pending check named in the reason.
+- Orchestrator CLI keeps network: the orchestrator waits, at both points below.
+- Orchestrator CLI blocks network, reviewer CLI keeps it: the orchestrator cannot
+  wait. Every reviewer turn reads the required checks, as the reviewer scope
+  states, so name the required checks in the reviewer prompt and let the reviewer
+  turn read them. Each further reviewer dispatch costs a step, so the step budget
+  has to cover those dispatches.
+- Both CLIs block network: no turn in the run can read the required checks, so
+  the headless loop cannot wait. The `--require-ci` finish gate is the only check
+  read, because the runtime applies it outside every read-only turn. The gate
+  refuses a finish while a required check is pending. A refusal itself charges no
+  step, and the reviewer dispatch that corrects it charges one, so the step budget
+  has to cover those dispatches. Dispatch the reviewer when the gate refuses, or
+  `abort` with the pending check named in the reason.
 
 A headless status read spends no step, because a step is charged only to
 `run_worker` and `run_reviewer`. It is not free of other cost. The turn is
@@ -266,12 +269,12 @@ unbounded at 0, and a turn that outlasts that bound ends the run on exit 1
 before it returns an action, so a long watch can end a run that would otherwise
 have finished. Bound the watch to a few minutes so it returns inside the turn.
 
-On a CLI that can run the status read, both wait points hold in the headless
-loop: the wait before the reviewer dispatch, and the wait before `finish` when a
-reviewer turn reported a pending check. A check still pending after a wait is not
-a finish condition there either, because the gate refuses the finish. Wait
-again, dispatch the reviewer again, or `abort` with the pending check named in
-the reason.
+On an orchestrator CLI that can run the status read, both wait points hold in the
+headless loop: the wait before the reviewer dispatch, and the wait before
+`finish` when a reviewer turn reported a pending check. A check still pending
+after a wait is not a finish condition there either, because the gate refuses
+the finish. Wait again, dispatch the reviewer again, or `abort` with the pending
+check named in the reason.
 
 ## Several runs at once
 

@@ -204,6 +204,7 @@ export async function runLoop(options) {
     requireAccept,
     requireCi,
     orchestratorKind: orchestrator?.kind ?? null,
+    reviewerKind: reviewer?.kind ?? null,
   });
 
   while (true) {

@@ -169,28 +169,33 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
   );
 });
 
-// Usefulness: verifies the wait rule depends on the orchestrator CLI's read-only
-// network access, so a run that cannot read the checks is never told to wait for
-// them, and an ungated run is unaffected (issue #319).
-test("requiredCheckWait reports whether the orchestrator CLI can wait", () => {
-  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
-    expect(requiredCheckWait({ requireCi: 42, orchestratorKind: kind })).toBe("wait");
-  }
-  // The codex read-only sandbox blocks network, so its turn cannot read the checks.
-  expect(requiredCheckWait({ requireCi: 42, orchestratorKind: "codex" })).toBe("unavailable");
+// Usefulness: verifies the rule is keyed on the CLI of the role that reads the
+// checks, because the orchestrator and reviewer CLIs are chosen independently,
+// so a mixed run is never told that no turn can read them (issue #319).
+test("requiredCheckWait reports the rule per orchestrator and reviewer CLI", () => {
+  const rule = (orchestratorKind, reviewerKind) =>
+    requiredCheckWait({ requireCi: 42, orchestratorKind, reviewerKind });
+  expect(rule("claude", "claude")).toBe("wait");
+  expect(rule("agy", "opencode")).toBe("wait");
+  // The codex read-only sandbox blocks network, so a codex turn cannot read.
+  expect(rule("codex", "claude")).toBe("reviewer");
+  expect(rule("codex", "codex")).toBe("gate");
+  // An unnamed CLI on either role cannot read the checks.
+  expect(rule("codex", null)).toBe("gate");
   expect(requiredCheckWait({ requireCi: null, orchestratorKind: "claude" })).toBeNull();
   // An unnamed CLI renders as a CLI, not as a missing value.
-  expect(
-    initialPrompt({ task: "T", maxSteps: 10, requireCi: 42 }).includes("orchestrates through null"),
-  ).toBe(false);
+  expect(initialPrompt({ task: "T", maxSteps: 10, requireCi: 42 }).includes("through null")).toBe(
+    false,
+  );
 });
 
-const gatedPrompt = (kind) =>
+const gatedPrompt = (orchestratorKind, reviewerKind = "claude") =>
   initialPrompt({
     task: "Implement feature X",
     maxSteps: 10,
     requireCi: 42,
-    orchestratorKind: kind,
+    orchestratorKind,
+    reviewerKind,
   });
 
 // Usefulness: verifies a --require-ci run states the wait at both points that
@@ -225,24 +230,47 @@ test("the pending-check wait point does not put a pending check in a finish summ
   }
 });
 
-// Usefulness: verifies a run with no read-only network states that no turn in it
-// can read the required checks, so the prompt promises no reviewer read that a
-// codex reviewer turn cannot perform, and names the runtime gate as the only
-// check read, with the reviewer turn a refusal costs (issue #319).
-test("a run with no read-only network states it cannot wait at all", () => {
-  const lines = gatedPrompt("codex").split("\n");
+// Usefulness: verifies a run whose reviewer CLI keeps read-only network states
+// that the reviewer turn is the check read, so a codex orchestrator with a
+// networked reviewer is never told that no turn can read the checks (issue #319).
+test("a mixed run reads the checks in the reviewer turn", () => {
+  const prompt = gatedPrompt("codex", "claude");
+  const reviewerRead = prompt
+    .split("\n")
+    .find((line) => /\bclaude\b/.test(line) && /reviewer/i.test(line) && /read/i.test(line));
+  expect(reviewerRead).toBeTruthy();
+  expect(prompt).not.toMatch(/no turn in this run can read/i);
+  // The orchestrator cannot run the watch in this run.
+  expect(prompt).not.toContain("--watch");
+
+  const pending = prompt.split("\n").find((line) => /pending/i.test(line) && /abort/i.test(line));
+  expect(pending).toBeTruthy();
+  expect(pending).not.toMatch(/notDone/);
+});
+
+// Usefulness: verifies a run where neither role CLI keeps read-only network
+// names the runtime gate as the only check read, and states that a gate refusal
+// charges no step while the reviewer dispatch that corrects it does (issue #319).
+test("a run with no read-only network on either role names the gate as the only check read", () => {
+  const prompt = gatedPrompt("codex", "codex");
+  const lines = prompt.split("\n");
   const cannotWait = lines.find((line) => /cannot wait/i.test(line));
-  expect(cannotWait).toMatch(/reviewer turn/i);
+  expect(cannotWait).toMatch(/codex/);
   expect(cannotWait).not.toMatch(/--watch/);
+  expect(prompt).not.toMatch(/reviewer turn reads/i);
 
-  // No line may promise that a reviewer turn reads the checks on this CLI.
-  expect(gatedPrompt("codex")).not.toMatch(/reviewer turn reads/i);
-
-  const gateLine = lines.find((line) => /gate/i.test(line) && /reviewer turn/i.test(line));
-  expect(gateLine).toMatch(/--require-ci/);
-  expect(gateLine).toMatch(/step/i);
+  const gateLine = lines.find((line) => /--require-ci/.test(line) && /only check read/i.test(line));
+  expect(gateLine).toMatch(/refusal[^.]*no step/i);
+  expect(gateLine).toMatch(/reviewer dispatch[^.]*step/i);
   expect(gateLine).toMatch(/abort/i);
   expect(gateLine).not.toMatch(/notDone/);
+});
+
+// Usefulness: verifies the wait rule follows the orchestrator CLI alone, because
+// the orchestrator does the read when it can, whatever the reviewer CLI is
+// (issue #319).
+test("the wait rule does not depend on the reviewer CLI", () => {
+  expect(gatedPrompt("claude", "codex")).toBe(gatedPrompt("claude", "claude"));
 });
 
 // Usefulness: verifies the prompt states the check status read as the one named
