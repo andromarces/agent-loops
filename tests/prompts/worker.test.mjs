@@ -59,26 +59,46 @@ test("a worker response written to the prompt block parses a Checks value", () =
   expect(report.checks).toBe("pnpm test passed");
 });
 
-// The role bullet that carries the PR-branch rule. The bullet is located by the
-// branch term and checked for the terms that carry the rule, not against a whole
-// sentence, so a same-meaning reword keeps the assertion and a dropped bullet
-// fails the lookup (issue #252, issue #328).
-function prBranchBullet(prompt) {
+// The role bullet that carries the branch rule. The bullet is located by the
+// branch term, not by a whole sentence, so a same-meaning reword keeps the
+// assertion and a dropped bullet fails the lookup (issue #252, issue #328).
+function branchBullet(prompt) {
   const bullet = prompt
     .split(/\n\s*-\s/)
     .map((entry) => entry.replace(/\s+/g, " "))
-    .find((entry) => /PR branch/i.test(entry));
-  expect(bullet, "the worker prompt states no PR-branch rule").toBeTruthy();
+    .find((entry) => /\bbranch\b/i.test(entry));
+  expect(bullet, "the worker prompt states no branch rule").toBeTruthy();
   return bullet;
 }
 
+// Words that point back to the branch the dispatcher named, so a rule that uses
+// the dispatcher's branch does not read as naming one of its own.
+const BRANCH_REFERENCE =
+  /^(?:that|the|this|your|its|a|an|it|each|every|which|one|named|supplied|given|new)\b/i;
+
+// A branch the rule names for itself: the word after "on" or "onto", when it names
+// a branch instead of referring to the one the dispatcher supplied.
+function namedBranches(bullet) {
+  return bullet
+    .split(/\b(?:on|onto)\b/i)
+    .slice(1)
+    .map((tail) => /^\s*([^\s,.;:]+)/.exec(tail)?.[1])
+    .filter((word) => word && !BRANCH_REFERENCE.test(word));
+}
+
 // Usefulness: verifies the first worker turn tells the worker to commit and push
-// on the branch the dispatcher names, and what counts as PR work, so the
-// reviewer sees a committed head, the PR head matches that commit, and
-// reviewed.clean can be true (issue #252, issue #328).
-test("first worker turn commits and pushes on the named PR branch for PR work", () => {
-  const bullet = prBranchBullet(workerPrompt("do the task", true));
-  for (const term of [/\bPR branch\b/i, /\bcommit\b/i, /\bpush\b/i, /pull request/i]) {
+// on the branch the dispatcher named, and to take that branch from the task
+// instead of a branch of its own, so a wrong branch never reaches the commit and
+// the PR head does not match the reviewed head (issue #252, issue #328).
+test("first worker turn commits and pushes on the branch the dispatcher named", () => {
+  const branch = "feat/328-prompt-test-literals";
+  const prompt = workerPrompt(`land the change on ${branch}`, true);
+  // The dispatcher supplies the branch through the task, so the prompt carries it.
+  expect(prompt).toContain(branch);
+  const bullet = branchBullet(prompt);
+  // The rule must point at that branch, so a substituted branch fails here.
+  expect(namedBranches(bullet)).toEqual([]);
+  for (const term of [/\bcommit\b/i, /\bpush\b/i, /pull request/i]) {
     expect(bullet, String(term)).toMatch(term);
   }
 });

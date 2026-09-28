@@ -15,16 +15,87 @@ const instructionsPath = join(
   "../../docs/orchestrator-instructions.md",
 );
 
+// A prompt rule is asserted as the terms one statement carries, never as a whole
+// prompt sentence, so a same-meaning reword keeps the assertion and a changed
+// rule breaks it. A statement is a sentence, a clause inside it, or an action
+// with the conditions it governs, and each predicate below picks the shape the
+// rule needs. Every split needs a mark plus whitespace, so a period inside
+// `reviewed.head` does not end a sentence.
+
 /** The sentences of a prompt or instruction text, whitespace collapsed. */
 const sentences = (text) => text.replace(/\s+/g, " ").split(/(?<=[.!?])\s+/);
 
-// A rule is asserted as the terms its own sentence carries, never as a whole
-// prompt sentence, so a same-meaning reword in either parent text keeps the
-// assertion and a dropped rule breaks it. The split needs a mark plus
-// whitespace, so a period inside `reviewed.head` does not end a sentence.
+/** The clauses of a text: its sentences, then the list items inside them. */
+const clauses = (text) => text.replace(/\s+/g, " ").split(/[.;]\s+/);
+
+// A negation that governs an action next to it. A bare "no" is left out, because
+// "no network access" and "no reviewer turn" are conditions, not prohibitions,
+// and so is "non-empty".
+const NEGATION =
+  /\b(?:do not|do n't|does not|does n't|did not|don't|doesn't|didn't|never|not|without|cannot|can't|must not|may not|refuse[sd]?|refusing)\b/i;
+
+// How far a term may sit from the one before it in an ordered rule.
+const ORDER_GAP = 40;
+
+// Each match of an action, with the text close by and the wider text around it,
+// so a condition counts only when it sits with the action it governs.
+function spans(sentence, action) {
+  const global = new RegExp(action.source, action.flags.replace("g", "") + "g");
+  return [...sentence.matchAll(global)].map((match) => ({
+    near: sentence.slice(Math.max(0, match.index - 25), match.index + match[0].length + 25),
+    wide: sentence.slice(Math.max(0, match.index - 160), match.index + match[0].length + 160),
+  }));
+}
+
+// A presence rule: one sentence carries every term.
 function expectRule(text, ...terms) {
   const stated = sentences(text).some((sentence) => terms.every((term) => term.test(sentence)));
   expect(stated, `no sentence carries ${terms.map(String).join(" ")}`).toBe(true);
+}
+
+// A clause rule: one clause carries every term, so moving a term into another
+// clause, or swapping what a clause carries, fails.
+function expectClause(text, ...terms) {
+  const stated = clauses(text).some((clause) => terms.every((term) => term.test(clause)));
+  expect(stated, `no clause carries ${terms.map(String).join(" ")}`).toBe(true);
+}
+
+// An action rule: one sentence binds the action to every condition, so removing
+// the action, removing a condition, or changing what the action produces fails.
+function expectAction(text, action, ...conditions) {
+  const stated = sentences(text).some((sentence) =>
+    spans(sentence, action).some((span) => conditions.every((term) => term.test(span.wide))),
+  );
+  expect(stated, `no sentence binds ${action} to ${conditions.map(String).join(" ")}`).toBe(true);
+}
+
+// A prohibition rule: the same binding, plus a negation close to the action, so
+// the same rule read the other way, "finish" for "do not finish", fails.
+function expectProhibition(text, action, ...conditions) {
+  const stated = sentences(text).some((sentence) =>
+    spans(sentence, action).some(
+      (span) => NEGATION.test(span.near) && conditions.every((term) => term.test(span.wide)),
+    ),
+  );
+  expect(stated, `no sentence negates ${action} for ${conditions.map(String).join(" ")}`).toBe(
+    true,
+  );
+}
+
+// An ordered rule: one clause carries the terms in this order, each within one
+// gap of the last, so a subject that maps to a different target fails while a
+// reword of either side keeps them close.
+function expectOrder(text, ...terms) {
+  const stated = clauses(text).some((clause) => {
+    let at = 0;
+    for (const term of terms) {
+      const found = new RegExp(term.source, term.flags).exec(clause.slice(at, at + ORDER_GAP));
+      if (!found) return false;
+      at += found.index + found[0].length;
+    }
+    return true;
+  });
+  expect(stated, `no clause carries ${terms.map(String).join(" then ")}`).toBe(true);
 }
 
 // Usefulness: verifies initialPrompt states the role, the step budget, the task
@@ -33,32 +104,52 @@ function expectRule(text, ...terms) {
 test("initialPrompt produces expected orchestrator prompt", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   expectRule(prompt, /orchestrator/i, /automated/i, /\bagent/i, /\bloop\b/i);
-  expectRule(prompt, /step budget/i, /\b10 steps\b/i);
+  expectAction(prompt, /step budget/i, /\b10 steps\b/i);
   expect(prompt).toContain("Implement feature X");
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<instructions for worker>"}');
 });
 
 // Usefulness: verifies the headless prompt states the notes and deferred finish
-// mapping that the interactive instructions also carry: carry deferred items
-// forward, record resolved ones in changed, map unaddressed notes to open, re-
-// review a change made for a note, and split review-only findings between open
-// and deferred (issue #214, issue #328).
+// mapping that the interactive instructions also carry: which labels the closing
+// block requires, that deferred items persist, that a resolved item lands in
+// changed, that unaddressed notes land in open, that a change made for a note
+// needs a further reviewer accept, and that review-only findings split between
+// open and deferred (issue #214, issue #328).
 test("initialPrompt states the notes and deferred finish mapping", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  // The closing block: every child turn carries it, and conclusion, why, and
-  // blockers are required while checks, notes, and deferred are optional.
+  // Every child turn closes with a report block, and the block requires
+  // conclusion, why, and blockers while checks, notes, and deferred are optional.
   expectRule(prompt, /report block/i, /child turn/i);
-  expectRule(prompt, /conclusion/i, /\bwhy\b/i, /\bblockers\b/i, /required/i);
-  expectRule(prompt, /\bchecks\b/i, /\bnotes\b/i, /\bdeferred\b/i, /optional/i);
-  // Deferred items persist, leave the list on a later worker turn and a later
-  // reviewer accept, and the rest go into deferred at finish.
-  expectRule(prompt, /\bdeferred\b/i, /forward/i, /\bcarry\b/i);
-  expectRule(prompt, /\bchanged\b/i, /\baccept\b/i, /worker/i);
-  expectRule(prompt, /\bdeferred\b/i, /\bfinish\b/i, /\bitem/i);
-  expectRule(prompt, /\bnotes\b/i, /addressed/i, /\bopen\b/i);
-  expectRule(prompt, /note/i, /worker/i, /\baccept\b/i, /new state/i, /\bfinish\b/i);
-  expectRule(prompt, /review-only/i, /\bblockers\b/i, /\bnotes\b/i, /\bopen\b/i, /\bdeferred\b/i);
-  expectRule(prompt, /out-of-scope/i, /every mode/i, /unresolved/i, /\bopen\b/i);
+  expectClause(prompt, /conclusion/i, /\bwhy\b/i, /\bblockers\b/i, /required/i);
+  expectClause(prompt, /\bchecks\b/i, /\bnotes\b/i, /\bdeferred\b/i, /optional/i);
+  // A deferred item is carried forward, leaves the list only on a later worker
+  // turn and a later reviewer accept, and lands in changed when it does.
+  expectClause(prompt, /\bdeferred\b/i, /forward/i, /\bcarry\b/i);
+  expectAction(prompt, /record[^.!?]{0,40}changed/i, /worker/i, /\baccept\b/i);
+  expectOrder(prompt, /\bitem/i, /\bfinish\b/i, /go into deferred/i);
+  // A reviewer note no later turn addressed lands in open, and a change made for
+  // a note goes through the worker and a further reviewer accept before finish.
+  expectOrder(prompt, /note/i, /address/i, /\bopen\b/i);
+  expectProhibition(
+    prompt,
+    /(?:send|hand|pass|give|forward)[^.!?]{0,24}note/i,
+    /automatic|by itself|on its own|unasked/i,
+  );
+  expectAction(
+    prompt,
+    /dispatch[^.!?]{0,40}worker/i,
+    /note/i,
+    /\baccept\b/i,
+    /new state/i,
+    /\bfinish\b/i,
+  );
+  // In review-only mode, Blockers and Notes go to open, and reviewer Deferred
+  // items go to deferred, which holds out-of-scope items in every mode while
+  // open holds unresolved in-scope findings.
+  expectOrder(prompt, /review-only/i, /\bblockers\b/i, /note/i, /go into open/i);
+  expectAction(prompt, /go into deferred/i, /reviewer/i, /\bdeferred\b/i);
+  expectClause(prompt, /\bdeferred\b/i, /out-of-scope/i, /every mode/i);
+  expectClause(prompt, /\bopen\b/i, /unresolved/i, /in-scope/i);
 });
 
 // Usefulness: verifies the headless parent names the guards and contracts at risk
@@ -66,8 +157,8 @@ test("initialPrompt states the notes and deferred finish mapping", () => {
 // matching the interactive reviewer-prompt rule (issue #228, issue #328).
 test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expectRule(prompt, /reviewer/i, /guards/i, /contracts/i, /at risk/i, /trace/i);
-  expectRule(prompt, /restate/i, /spec/i, /pass condition/i, /reviewer/i);
+  expectAction(prompt, /name[^.!?]{0,60}guards/i, /reviewer/i, /at risk/i, /trace/i);
+  expectProhibition(prompt, /restate[^.!?]{0,20}spec/i, /pass condition/i);
 });
 
 // The reviewer-Checks gate rule, checked for presence only: one sentence names
@@ -100,14 +191,18 @@ test("initialPrompt states that only the reviewer Checks line gates", () => {
 });
 
 // Usefulness: verifies the headless parent states the same reviewed-state rules
-// as the interactive instructions: compare head, require clean, and treat an
-// accept without a Checks line as not accepted (issue #217, issue #328).
+// as the interactive instructions: compare head, require clean, treat an accept
+// without a Checks line as not accepted, and never finish as verified on an
+// unresolved compare (issue #217, issue #328).
 test("initialPrompt states the reviewed-state parent rules", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expectRule(prompt, /reviewed\.head/i, /PR head/i, /resolve/i, /\bfinish\b/i);
-  expectRule(prompt, /reviewed\.clean/i, /\btrue\b/i, /PR work/i);
-  expectRule(prompt, /\baccept\b/i, /Checks/i, /not accepted/i);
-  expectRule(prompt, /PR head/i, /resolved/i, /verified/i, /abort/i, /notDone/i, /\bopen\b/i);
+  expectAction(prompt, /compare/i, /reviewed\.head/i, /PR head/i, /\bfinish\b/i);
+  expectAction(prompt, /resolve/i, /PR head/i, /PR number/i);
+  expectAction(prompt, /require[^.!?]{0,40}reviewed\.clean/i, /\btrue\b/i, /PR work/i);
+  expectAction(prompt, /treat[^.!?]{0,80}accept/i, /not accepted/i, /Checks/i);
+  expectProhibition(prompt, /finish/i, /verified/i);
+  expectAction(prompt, /abort/i, /notDone/i, /\bopen\b/i);
+  expectAction(prompt, /record[^.!?]{0,60}unresolved compare/i, /notDone/i, /\bopen\b/i);
 });
 
 // Usefulness: verifies the headless prompt names the machine-readable marker the
@@ -116,8 +211,8 @@ test("initialPrompt states the reviewed-state parent rules", () => {
 // unresolved-compare event (issue #266, issue #328).
 test("initialPrompt names the unresolvedCompare marker", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expectRule(prompt, /unresolvedCompare/i, /abort/i, /\btrue\b/i);
-  expectRule(prompt, /marker/i, /action object/i);
+  expectAction(prompt, /add[^.!?]{0,40}unresolvedCompare/i, /\btrue\b/i, /\bfinish\b/i);
+  expectClause(prompt, /marker/i, /action object/i, /unresolved/i);
   expect(prompt).toContain(
     '{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}, "unresolvedCompare": true}',
   );
@@ -126,23 +221,33 @@ test("initialPrompt names the unresolvedCompare marker", () => {
   // The marker is the only machine-readable record of the compare, so the prompt
   // must state that consequence and the instruction to set it, or the parent has
   // no reason to comply beyond the rule (#286).
-  expectRule(prompt, /marker/i, /machine-readable/i, /\bopen\b|omitted/i, /verified/i);
+  expectAction(prompt, /always set/i, /machine-readable/i, /omitted/i, /verified/i);
 });
 
-// The parent rules the interactive instructions and the headless prompt share,
-// each as the terms one sentence of both texts must carry. Term presence, not an
-// exact sentence, so a same-meaning reword of either text keeps the parity check
-// and a rule dropped from either text breaks it (issue #217, issue #252, issue
-// #328).
+// The parent rules the interactive instructions and the headless prompt share.
+// Each entry is one check run against both texts, so a rule that one text states
+// and the other does not, or that either text states with the negation dropped or
+// the action unbound, fails the parity check (issue #217, issue #252, #328).
 const SHARED_PARENT_RULES = [
-  [/PR work/i, /pull request/i],
-  [/PR branch/i, /worker/i, /commit/i, /push/i, /reviewed head/i],
-  [/PR number/i, /head commit/i],
-  [/headless/i, /task/i, /PR number/i],
-  [/reviewed\.head/i, /PR head/i, /resolve/i, /\bfinish\b/i],
-  [/reviewed\.clean/i, /\btrue\b/i, /PR work/i],
-  [/\baccept\b/i, /Checks/i, /not accepted/i],
-  [/PR head/i, /resolved/i, /verified/i, /abort/i, /notDone/i, /\bopen\b/i],
+  (text) => expectRule(text, /PR work/i, /pull request/i),
+  (text) =>
+    expectAction(
+      text,
+      /name[^.!?]{0,40}PR branch/i,
+      /worker/i,
+      /commit/i,
+      /push/i,
+      /reviewed head/i,
+    ),
+  (text) => expectOrder(text, /PR number/i, /head commit/i),
+  (text) => expectClause(text, /headless/i, /task/i, /PR number/i),
+  (text) => expectAction(text, /compare/i, /reviewed\.head/i, /PR head/i, /\bfinish\b/i),
+  (text) => expectAction(text, /resolve/i, /PR head/i, /PR number/i),
+  (text) => expectAction(text, /require[^.!?]{0,40}reviewed\.clean/i, /\btrue\b/i, /PR work/i),
+  (text) => expectAction(text, /treat[^.!?]{0,80}accept/i, /not accepted/i, /Checks/i),
+  (text) => expectProhibition(text, /finish/i, /verified/i),
+  (text) => expectAction(text, /abort/i, /notDone/i, /\bopen\b/i),
+  (text) => expectAction(text, /record[^.!?]{0,60}unresolved compare/i, /notDone/i, /\bopen\b/i),
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt
@@ -154,8 +259,8 @@ test("interactive instructions and headless prompt share the reviewed-state rule
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   for (const rule of SHARED_PARENT_RULES) {
-    expectRule(instructions, ...rule);
-    expectRule(prompt, ...rule);
+    rule(instructions);
+    rule(prompt);
   }
   expectReviewerGateRule(instructions);
   expectReviewerGateRule(prompt);
@@ -184,9 +289,14 @@ test("resultPrompt carries the reviewed state for a reviewer result", () => {
 // tests/role.finish-abort.test.mjs, so this check covers the prompt text.
 test("initialPrompt states the completion rule and its mode mapping", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expectRule(prompt, /\bfinish\b/i, /reviewer accept/i, /changed state/i);
-  expectRule(prompt, /reviewer/i, /Verdict: accept/i, /state/i);
-  expectRule(prompt, /worker/i, /review-only/i, /\bfinish\b/i);
+  // A finish before a reviewer accept on the changed state is prohibited, and the
+  // accept is the one a later reviewer turn returns for that state.
+  expectProhibition(prompt, /finish/i, /reviewer accept/i, /changed state/i);
+  expectAction(prompt, /finish/i, /only|once|until/i, /reviewer/i, /Verdict: accept/i, /state/i);
+  // With no worker turn, the task is review-only: finish on the reviewer report
+  // whatever the verdict, and record that verdict in verified.
+  expectClause(prompt, /worker/i, /review-only/i, /\bfinish\b/i);
+  expectAction(prompt, /record[^.!?]{0,40}verified/i, /verdict/i);
   expect(prompt).toContain("loop policy");
 });
 
@@ -355,9 +465,10 @@ test("the wait rule does not depend on the reviewer CLI", () => {
 // exception to the orchestrator role rule, so the shell wait is inside the
 // contract instead of against it (issue #319).
 test("initialPrompt states the status read as the exception to the role rule", () => {
-  const roleLine = gatedPrompt("claude")
-    .split("\n")
-    .find((line) => /must NOT run agent CLIs or background processes/i.test(line));
+  const prompt = gatedPrompt("claude");
+  const roleLine = prompt.split("\n").find((line) => /agent CLIs|background processes/i.test(line));
+  expect(roleLine).toBeTruthy();
+  expectProhibition(roleLine, /run/i, /agent CLIs|background processes/i);
   expect(roleLine).toMatch(/exception/i);
   expect(roleLine).toMatch(/check status/i);
 });
