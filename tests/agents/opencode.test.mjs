@@ -30,10 +30,24 @@ let dispatchPaths = [];
 
 afterEach(async () => {
   delete process.env.AGENT_LOOP_RUNS_ROOT;
-  for (const path of dispatchPaths) {
-    await removePath(path);
-  }
+  const paths = dispatchPaths;
   dispatchPaths = [];
+  // Every registered path is attempted so one failure cannot strand the rest, and the first
+  // failure is rethrown so a real cleanup failure still fails the run.
+  let firstError;
+  for (const path of paths) {
+    if (typeof path !== "string") {
+      continue;
+    }
+    try {
+      await removePath(path);
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  if (firstError) {
+    throw firstError;
+  }
 });
 
 function textEvent(text) {
