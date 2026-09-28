@@ -206,6 +206,11 @@ A refused `--cwd` is not the parent's to repair: end the run, name the path and
 the refusal in the reason, and leave the work tree to a maintainer, who decides
 whether to recreate it and start a new run.
 
+Abort only when a non-terminal run exists at the refused `--cwd`. With no run
+state there, from a refused init or a path that was never this run's, no run
+started, so report the refusal and do not abort. A run that is already terminal
+needs no abort.
+
 One rule covers every refused `--cwd`: a path that no longer exists, a path that
 is not inside a Git work tree, and an existing work tree path whose Git metadata
 is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason
@@ -217,10 +222,12 @@ agent-loop role abort --cwd "<work tree>" \
 ```
 
 `abort` reads only the state file, so it ends the run over a work tree that is
-gone or is not a Git work tree, and it writes nothing inside that path. A
-maintainer who recreates the work tree starts a new run there: a run over an
-aborted work tree is not resumed, and the state file names the work tree, not the
-work in it.
+gone or is not a Git work tree, and it writes nothing inside that path. It needs
+a non-terminal run at that path: a path with no run state is refused with
+`No run state for <path>`, and a terminal run is refused with
+`Run is already <lifecycle>.`, so neither is a command to run there. A maintainer
+who recreates the work tree starts a new run there: a run over an aborted work
+tree is not resumed, and the state file names the work tree, not the work in it.
 
 The headless loop states the same rule and cannot act on it: `agent-loop`
 snapshots its `--cwd` before and after every orchestrator turn, so a work tree in
