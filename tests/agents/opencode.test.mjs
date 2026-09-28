@@ -608,6 +608,69 @@ test("opencode caps the described detail at 500 characters", async () => {
   expect(error.message.length).toBeLessThan(600);
 });
 
+// Usefulness: verifies a line that parses to a non-object value, such as the `null` of a diagnostic
+// line, is skipped on the exit-0 path, so reading the event shape cannot throw a TypeError that
+// replaces the adapter error the turn already produced (issue #335).
+test("opencode reads an exit-0 stream that holds non-object lines", async () => {
+  const stdout = ["null", "42", '"a string"', textEvent("final reply")].join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const response = await runOpenCode(state, "oc prompt", { cwd: "/dir" });
+
+  expect(response).toBe("final reply");
+  expect(state.sessionId).toBe("sess-oc");
+});
+
+// Usefulness: verifies an exit-0 error event detail is capped at the same 500 characters the
+// non-zero path applies, so a long provider message cannot reach the dispatch envelope or the state
+// file the way the raw event did (issue #335).
+test("opencode caps the described detail of an exit-0 error event at 500 characters", async () => {
+  const stdout = errorEvent({ type: "provider.internal", message: `D${"D".repeat(5000)}` });
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const error = await runOpenCode(state, "oc prompt", { cwd: "/dir" }).catch((err) => err);
+
+  const prefix = "provider.internal: ";
+  expect(error.message).toBe(
+    `opencode returned an error event: ${prefix}${"D".repeat(500 - prefix.length)}...`,
+  );
+  expect(error.message.length).toBeLessThan(600);
+});
+
+// Usefulness: verifies an exit-0 stream holding several error events names the last one, the rule
+// the non-zero path uses, so a turn that retried reports its most recent failure rather than the
+// first (issue #335).
+test("opencode reports the last error event on an exit-0 turn", async () => {
+  const stdout = [
+    errorEvent({ type: "provider.rate-limit", message: "slow down" }),
+    errorEvent({ type: "provider.invalid-output", message: "stream ended early", status: 200 }),
+  ].join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const error = await runOpenCode(state, "oc prompt", { cwd: "/dir" }).catch((err) => err);
+
+  expect(error.message).toBe(
+    "opencode returned an error event: provider.invalid-output: stream ended early (status 200)",
+  );
+});
+
+// Usefulness: verifies an error event whose payload is not the documented object still fails the
+// turn with a fixed detail, rather than coercing the payload into the message or crashing on it
+// (issue #335).
+test("opencode reports an unreadable exit-0 error event as unknown", async () => {
+  const stdout = errorEvent(`unreadable payload ${"M".repeat(5000)}`);
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const error = await runOpenCode(state, "oc prompt", { cwd: "/dir" }).catch((err) => err);
+
+  expect(error.message).toBe("opencode returned an error event: unknown error");
+  expect(error.message).not.toContain("M".repeat(40));
+});
+
 // A stream cannot carry NaN: JSON.parse rejects the literal, so the stream-reachable non-finite
 // number is an overflow to Infinity. Every entry is the raw JSON of one malformed usage value, and
 // `output` and `cost` stay valid so a dropped value is not confused with a whole-part loss.
