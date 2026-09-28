@@ -169,13 +169,14 @@ const ACCEPT_WITHOUT_CHECKS =
   /treat[^.!?]{0,60}accept[^.!?]{0,40}without[^.!?]{0,20}Checks[^.!?]{0,20}not accepted/i;
 // The unresolved-compare rule, clause by clause. `do not finish as verified` is
 // the prohibition, and the clause that follows must name both permitted actions,
-// `abort` and `record`, with the unresolved compare between them. The wording
-// that joins the two options is not the contract, so a same-meaning join such as
-// `abort or record` passes and dropping either action fails.
+// `abort` and `record`, beside the unresolved compare. The order is not the
+// contract, so `abort, or record the unresolved compare` and `record the
+// unresolved compare or abort` each pass, and a clause that drops either action
+// fails. `expectRule` puts the three terms in one clause, so the check covers the
+// order-agnostic form without an alternation per order (issue #351).
 const UNRESOLVED_HEAD_CONDITION = /PR head cannot be resolved/i;
 const DO_NOT_FINISH_AS_VERIFIED = /do not finish as verified/i;
-const BOTH_ACTIONS_ON_UNRESOLVED =
-  /abort[^.!?]{0,60}record[^.!?]{0,40}unresolved compare|record[^.!?]{0,60}abort[^.!?]{0,40}unresolved compare/i;
+const BOTH_ACTIONS_ON_UNRESOLVED = [/\babort\b/i, /\brecord\b/i, /unresolved compare/i];
 const RECORD_UNDER_NOT_DONE_AND_OPEN =
   /record[^.!?]{0,40}unresolved compare[^.!?]{0,40}notDone[^.!?]{0,20}\bopen\b/i;
 
@@ -197,7 +198,7 @@ test("initialPrompt states the reviewed-state parent rules", () => {
   // uses.
   expectRule(prompt, UNRESOLVED_HEAD_CONDITION);
   expectRule(prompt, DO_NOT_FINISH_AS_VERIFIED);
-  expectRule(prompt, BOTH_ACTIONS_ON_UNRESOLVED);
+  expectRule(prompt, ...BOTH_ACTIONS_ON_UNRESOLVED);
   expectRule(prompt, RECORD_UNDER_NOT_DONE_AND_OPEN);
 });
 
@@ -239,7 +240,7 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, ACCEPT_WITHOUT_CHECKS),
   (text) => expectRule(text, UNRESOLVED_HEAD_CONDITION),
   (text) => expectRule(text, DO_NOT_FINISH_AS_VERIFIED),
-  (text) => expectRule(text, BOTH_ACTIONS_ON_UNRESOLVED),
+  (text) => expectRule(text, ...BOTH_ACTIONS_ON_UNRESOLVED),
   (text) => expectRule(text, RECORD_UNDER_NOT_DONE_AND_OPEN),
 ];
 
