@@ -280,16 +280,20 @@ test("a pnpm 12 project layout renders the project link its script path names", 
 });
 
 /**
- * Installs the Claude harness into a throwaway home and returns the package root
- * written into the guard command. Renders the real settings file rather than
- * asserting on `stablePackageRoot` alone, so it covers the path the harness
- * actually runs. The home is a temp directory, never the real user config.
+ * Installs the Claude harness into a throwaway home and returns the full guard
+ * command string written into `settings.json`. Asserting the whole command rather
+ * than an extracted root covers the exact bytes a harness runs. The home is a temp
+ * directory, never the real user config.
  */
-async function renderedGuardRoot(home, packageRoot) {
+async function renderedGuardCommand(home, packageRoot) {
   await install({ harnesses: ["claude"], home, packageRoot });
   const settings = JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"));
-  const guardPath = settings.hooks.PreToolUse[0].hooks[0].command.match(/^node "(.+)"$/)?.[1];
-  return dirname(dirname(dirname(guardPath)));
+  return settings.hooks.PreToolUse[0].hooks[0].command;
+}
+
+/** The guard command a package root is expected to render. */
+function guardCommandFor(packageRoot) {
+  return `node "${join(packageRoot, "src", "hook", "parent-guard.mjs")}"`;
 }
 
 /**
@@ -309,48 +313,74 @@ async function pnpm12Fixture() {
   return { home, project, ...layout };
 }
 
-// Usefulness: verifies the valid case renders the project link into the guard
-// command, which is what a real pnpm 12 project bin shim produces. The
-// lowercase-drive and foreign-link cases below each protect one precondition of
-// this one, so it is the baseline they are compared against.
-test("a pnpm 12 project link renders into the guard command", async () => {
+// Usefulness: verifies the valid case renders the whole project-link guard command,
+// which is what a real pnpm 12 project bin shim produces. The cases below each
+// protect one precondition of this one, so it is the baseline they are compared
+// against.
+test("a pnpm 12 project link renders the whole guard command", async () => {
   const { home, linked, store } = await pnpm12Fixture();
 
-  const rendered = await renderedGuardRoot(
+  const command = await renderedGuardCommand(
     home,
     stablePackageRoot(store, join(linked, "src", "cli.mjs")),
   );
-  expect(rendered).toBe(linked);
+  expect(command).toBe(guardCommandFor(linked));
+  // The store path must not appear anywhere in the command the harness runs.
+  expect(command).not.toContain("0.4.0");
 });
 
-// Usefulness: verifies the guard on the invocation path. A script path that does
-// not resolve into this package is some other program, so trusting its
-// `node_modules` would render a project link for an install that never ran from
-// one. The rendered root must stay the resolved path, which is the documented
-// fallback.
+// Usefulness: verifies a script path naming another package renders the resolved
+// path. The sibling package sits in the same `node_modules` that holds the real
+// link, so a lookup that searched parent directories for any link to this package
+// would pick that link up and render a path this invocation never named.
 test("a foreign script path renders the resolved path, not a project link", async () => {
   const { home, linked, project, store } = await pnpm12Fixture();
-  // A sibling package in the same `node_modules`, so the walk up from it reaches a
-  // directory that does hold a link to this package.
   const foreign = join(project, "node_modules", "other-package", "src", "cli.mjs");
   await mkdir(dirname(foreign), { recursive: true });
   await writeFile(foreign, "// not this package\n");
+  // The real link is present in the very `node_modules` the foreign path sits under.
   expect(existsSync(join(project, "node_modules", "@andromarces", "agent-loops"))).toBe(true);
 
   const root = stablePackageRoot(store, foreign);
   expect(root).toBe(store);
-  expect(await renderedGuardRoot(home, root)).toBe(store);
+  expect(await renderedGuardCommand(home, root)).toBe(guardCommandFor(store));
   // The real link is still the answer for the real script path.
   expect(stablePackageRoot(store, join(linked, "src", "cli.mjs"))).toBe(linked);
 });
 
+// Usefulness: verifies the junction case. The store sits under a `node_modules`
+// that also holds a link resolving to this package, so a lookup that searched parent
+// directories returned that link even though the invocation path reached the store
+// directly and never named it. Rendering it would write a path the invocation did
+// not name, so the resolved path must be used instead.
+test("a link in a parent node_modules renders the resolved path", async () => {
+  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-junction-home-"));
+  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-junction-")));
+  paths.push(home, project);
+  const modules = join(project, "node_modules");
+  const { store } = await pnpm12Project(modules, project, {
+    hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
+    version: "0.4.0",
+  });
+  // The link a parent-directory search would reach: live, and resolving to this
+  // package, so only the invocation path keeps it from being selected.
+  const parentLink = join(modules, "@andromarces", "agent-loops");
+  expect(realpathSync(parentLink)).toBe(realpathSync(store));
+
+  // The invocation path reached the store itself and names no other project.
+  const root = stablePackageRoot(store, join(store, "src", "cli.mjs"));
+  expect(root).toBe(store);
+  expect(root).not.toBe(parentLink);
+  expect(await renderedGuardCommand(home, root)).toBe(guardCommandFor(store));
+});
+
 // Usefulness: verifies that drive letter case does not decide the render on
 // Windows, where `realpathSync` keeps the caller's spelling. A project reached
-// through a lower-case drive letter is the same project, so the guard must still
-// name the project link. POSIX has no drive letter, so the case is Windows-only
-// and the test asserts the positive there.
+// through a lower-case drive letter is the same project, so the guard must render
+// the same command as any other spelling. POSIX has no drive letter, so the case is
+// Windows-only and the test asserts the positive there.
 test.skipIf(process.platform !== "win32")(
-  "a lower-case drive letter still renders the project link",
+  "a lower-case drive letter renders the same guard command",
   async () => {
     const { home, linked, store } = await pnpm12Fixture();
     const lowered = join(linked, "src", "cli.mjs").replace(/^([A-Z]):/, (drive) =>
@@ -359,8 +389,9 @@ test.skipIf(process.platform !== "win32")(
     expect(lowered).not.toBe(join(linked, "src", "cli.mjs"));
 
     const root = stablePackageRoot(store, lowered);
-    expect(root).toBe(linked);
-    expect(await renderedGuardRoot(home, root)).toBe(linked);
+    // The rendered command is byte-identical to the upper-case spelling, so the
+    // output does not depend on how the project was reached.
+    expect(await renderedGuardCommand(home, root)).toBe(guardCommandFor(linked));
   },
 );
 

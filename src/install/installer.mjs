@@ -11,7 +11,7 @@
 // the manifest cannot drop a record (#193).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { logWarn } from "../lib/log.mjs";
 import { withStateLock } from "../lib/runstate.mjs";
 import {
@@ -163,50 +163,46 @@ function isVirtualStoreLinkEntry(hashDir) {
 }
 
 /**
- * The `<project>/node_modules/<name>` link the script path names, or `null`.
- *
- * A pnpm bin shim calls the package through the project link, so the innermost
- * `node_modules` above the script is the project one, and a nested dependency names
- * its own. That only holds when the script is this package's own CLI, so the
- * resolved script must sit inside the resolved package root: a path that names some
- * other package, or any path that does not resolve into this one, yields nothing and
- * the caller falls back to the resolved package root.
+ * The longest prefix of `scriptPath` that ends in `node_modules/<name>`, or `null`.
+ * A pnpm bin shim calls the package through that link, so the prefix is read from
+ * the unresolved path alone: a nested dependency names its own, and no other
+ * directory is consulted, so an unrelated project's link can never be selected.
+ */
+function invocationLink(scriptPath, name) {
+  const segments = resolve(scriptPath).split(/[\\/]+/);
+  const nameSegments = name.split(/[\\/]+/);
+  // The first match is the longest prefix, since a later `node_modules` sits deeper
+  // in the path.
+  for (let i = 0; i + 1 + nameSegments.length <= segments.length; i++) {
+    if (
+      segments[i] === "node_modules" &&
+      nameSegments.every((part, k) => segments[i + 1 + k] === part)
+    ) {
+      return segments.slice(0, i + 1 + nameSegments.length).join(sep);
+    }
+  }
+  return null;
+}
+
+/**
+ * The `<project>/node_modules/<name>` link the invocation path names, or `null`.
+ * The link is that path's own prefix, and it counts only when it resolves to this
+ * same package: a link that points elsewhere, and an invocation path that names no
+ * such prefix, both yield nothing so the caller falls back to the resolved package
+ * root.
  */
 function projectLinkFor(scriptPath, packageRoot, name) {
   if (typeof scriptPath !== "string" || scriptPath === "") {
     return null;
   }
-  try {
-    const script = realpathSync(scriptPath);
-    const root = realpathSync(packageRoot);
-    if (!samePath(script, root) && !startsWithPath(script, root)) {
-      return null;
-    }
-  } catch {
+  const candidate = invocationLink(scriptPath, name);
+  if (!candidate || samePath(candidate, packageRoot)) {
     return null;
   }
-  let dir = dirname(resolve(scriptPath));
-  for (;;) {
-    if (basename(dir) === "node_modules") {
-      const linked = linkResolvingTo(join(dir, name), packageRoot);
-      if (linked && linked !== packageRoot) {
-        // Normalized so the rendered path does not depend on the drive letter case
-        // the caller happened to use to reach the project.
-        return normalizeDrive(linked);
-      }
-    }
-    const parent = dirname(dir);
-    if (parent === dir) {
-      return null;
-    }
-    dir = parent;
-  }
-}
-
-/** True when `path` is inside `parent`, ignoring only drive letter case. */
-function startsWithPath(path, parent) {
-  const rest = relative(normalizeDrive(parent), normalizeDrive(path));
-  return rest !== "" && !rest.startsWith("..") && !isAbsolute(rest);
+  const linked = linkResolvingTo(candidate, packageRoot);
+  // Normalized so the rendered path does not depend on the drive letter case the
+  // caller happened to use to reach the project.
+  return linked ? normalizeDrive(linked) : null;
 }
 
 /**
