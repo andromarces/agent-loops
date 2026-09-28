@@ -106,6 +106,13 @@ message that asks for a global install first, so it never writes a path that can
 disappear. `uninstall` reads only the manifest and the harness files, so it still
 removes them after the package is gone.
 
+A `pnpm add -g` upgrade deletes the version-named store directory the package was
+installed from, so `install` writes the version-independent `node_modules` link
+pnpm keeps beside it, which the same upgrade repoints. One `agent-loop install`
+per upgrade is still needed after an upgrade from a version that wrote the store
+path, because those installed files keep naming the deleted directory until it
+runs again.
+
 ```bash
 agent-loop install --harness claude,codex --yes
 agent-loop uninstall

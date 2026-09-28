@@ -9,8 +9,9 @@
 // a partial install or an interrupted upgrade (#156). An exclusive lock outside
 // the home serializes install and uninstall, so concurrent read-modify-write of
 // the manifest cannot drop a record (#193).
+import { realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join, relative } from "node:path";
 import { logWarn } from "../lib/log.mjs";
 import { withStateLock } from "../lib/runstate.mjs";
 import {
@@ -69,6 +70,41 @@ export function isEphemeralPackageRoot(packageRoot) {
     if (segments.slice(i + 2).includes("node_modules")) return true;
   }
   return false;
+}
+
+// pnpm installs the package into a version-named virtual store directory
+// (`<root>/node_modules/.pnpm/<name>@<version>/node_modules/<name>`) and links
+// it into `<root>/node_modules/<name>`. Node resolves a module to the store
+// path, but an upgrade deletes that directory and repoints the link, so the
+// store path must not be written into installed files (#305).
+const VIRTUAL_STORE_DIR = ".pnpm";
+
+/**
+ * The version-independent package root to render into installed files. A pnpm
+ * layout yields the `node_modules` link beside the store entry, which the same
+ * upgrade repoints instead of deleting. Every other layout (an npm global
+ * install, a clone, a linked package) has no version in its root and returns
+ * `packageRoot` unchanged, as does a pnpm layout with no such link.
+ */
+export function stablePackageRoot(packageRoot) {
+  // Two levels up is the store entry's `node_modules`; three is the
+  // `node_modules` that holds `.pnpm`, where the version-independent link lives.
+  const store = dirname(dirname(packageRoot));
+  if (
+    basename(store) !== "node_modules" ||
+    basename(dirname(dirname(store))) !== VIRTUAL_STORE_DIR
+  ) {
+    return packageRoot;
+  }
+  const linked = join(dirname(dirname(dirname(store))), relative(store, packageRoot));
+  try {
+    // A `.pnpm` segment can appear in a path that is no store entry, so the
+    // candidate link only counts when it resolves to this same package.
+    return realpathSync(linked) === realpathSync(packageRoot) ? linked : packageRoot;
+  } catch {
+    // No such link, or an unreadable one: the resolved path is all there is.
+    return packageRoot;
+  }
 }
 
 function planBackup(target, previous, current) {
