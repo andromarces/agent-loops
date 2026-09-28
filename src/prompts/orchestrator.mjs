@@ -4,8 +4,9 @@
 // either changes.
 // Orchestrator CLIs whose read-only turn keeps shell network access, so the turn
 // itself can read the required checks. The `codex` read-only sandbox blocks
-// network, so its turn cannot; an unknown CLI is treated the same as `codex`,
-// because a wait it cannot perform costs a run.
+// network, and the reviewer turn runs under the same flag, so a codex run has
+// no turn that can read them; an unknown CLI is treated the same way, because a
+// wait it cannot perform costs a run.
 const NETWORKED_READ_ONLY_ORCHESTRATORS = new Set(["claude", "agy", "opencode", "copilot"]);
 
 /**
@@ -20,8 +21,9 @@ export function requiredCheckWait({ requireCi, orchestratorKind }) {
 /**
  * The `--require-ci` block: the runtime gate, then the two points where the run
  * waits for the required checks, and the shell status read that the role rule
- * excepts. A wait that cannot run on this CLI routes both points through a
- * reviewer turn, which reads the checks in its own turn.
+ * excepts. A CLI whose read-only turn blocks network also blocks it in the
+ * reviewer turn, so that variant states the loop cannot wait and leaves the gate
+ * as the only check read.
  */
 function prGateBlock({ requireCi, orchestratorKind }) {
   if (requireCi === null) return "";
@@ -44,10 +46,8 @@ function prGateLines({ requireCi, orchestratorKind }) {
 
   return [
     gate,
-    `- This run orchestrates through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, so the status-read exception does not apply and you cannot read the required checks. Do not run gh pr checks here.`,
-    "- The two wait points still apply, and only a reviewer turn can cover them, because the reviewer reads the checks in its own turn:",
-    "  - Before you dispatch the reviewer on a new PR head, wait for the required checks on that head through the reviewer turn: name the required checks in the reviewer prompt, and the reviewer turn reads and reports them.",
-    "  - When a reviewer turn reports a pending required check, wait for it through another reviewer turn: dispatch the reviewer again until it reports the check complete, or abort with the pending check named in the reason. A check still pending after a reviewer turn is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check.",
+    `- This run orchestrates through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network. A reviewer turn in this run is read-only under the same limit, so no turn in this run can read the required checks and the headless loop cannot wait here. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.`,
+    "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside your sandbox. A required check still pending is not a finish condition: the gate refuses the finish, and each refusal costs a reviewer turn, so the step budget has to cover those turns. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
   ];
 }
 

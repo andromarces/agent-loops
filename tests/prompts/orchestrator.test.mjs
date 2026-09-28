@@ -195,9 +195,10 @@ const gatedPrompt = (kind) =>
 
 // Usefulness: verifies a --require-ci run states the wait at both points that
 // need it, the reviewer dispatch and the finish after a pending check, as two
-// rules the parent can act on separately, for every orchestrator CLI (issue #319).
+// rules the parent can act on separately, for every orchestrator CLI whose
+// read-only turn can read the checks (issue #319).
 test("initialPrompt states the required-check wait at the reviewer and at finish", () => {
-  for (const kind of ["claude", "codex"]) {
+  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
     const lines = gatedPrompt(kind).split("\n");
     const beforeReviewer = lines.find(
       (line) => /dispatch the reviewer/i.test(line) && /wait/i.test(line),
@@ -215,13 +216,33 @@ test("initialPrompt states the required-check wait at the reviewer and at finish
 // the finish summary, because the --require-ci gate refuses a finish while a
 // required check is pending, so the run must wait, re-review, or abort (issue #319).
 test("the pending-check wait point does not put a pending check in a finish summary", () => {
-  for (const kind of ["claude", "codex"]) {
+  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
     const line = gatedPrompt(kind)
       .split("\n")
       .find((entry) => /finish/i.test(entry) && /pending/i.test(entry) && /wait/i.test(entry));
     expect(line, kind).toMatch(/abort/i);
     expect(line, kind).not.toMatch(/notDone/);
   }
+});
+
+// Usefulness: verifies a run with no read-only network states that no turn in it
+// can read the required checks, so the prompt promises no reviewer read that a
+// codex reviewer turn cannot perform, and names the runtime gate as the only
+// check read, with the reviewer turn a refusal costs (issue #319).
+test("a run with no read-only network states it cannot wait at all", () => {
+  const lines = gatedPrompt("codex").split("\n");
+  const cannotWait = lines.find((line) => /cannot wait/i.test(line));
+  expect(cannotWait).toMatch(/reviewer turn/i);
+  expect(cannotWait).not.toMatch(/--watch/);
+
+  // No line may promise that a reviewer turn reads the checks on this CLI.
+  expect(gatedPrompt("codex")).not.toMatch(/reviewer turn reads/i);
+
+  const gateLine = lines.find((line) => /gate/i.test(line) && /reviewer turn/i.test(line));
+  expect(gateLine).toMatch(/--require-ci/);
+  expect(gateLine).toMatch(/step/i);
+  expect(gateLine).toMatch(/abort/i);
+  expect(gateLine).not.toMatch(/notDone/);
 });
 
 // Usefulness: verifies the prompt states the check status read as the one named
