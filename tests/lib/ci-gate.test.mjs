@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { checkCi } from "../../src/lib/ci-gate.mjs";
+import { checkCi, readRequiredChecks } from "../../src/lib/ci-gate.mjs";
 
 const HEAD = "1111111111111111111111111111111111111111";
 const MERGE = "2222222222222222222222222222222222222222";
@@ -780,4 +780,111 @@ test("refuses when there is no reviewed state", async () => {
     ok: false,
     reason: "the latest reviewer turn has no reviewed state",
   });
+});
+
+// A `gh pr checks <pr> --required --json name,bucket` reply, shaped as the
+// runtime read asks for it.
+function checksGh(checks) {
+  return async (args) => {
+    expect(args).toEqual(["pr", "checks", "42", "--required", "--json", "name,bucket"]);
+    return { status: 0, stdout: JSON.stringify(checks), stderr: "" };
+  };
+}
+
+// Usefulness: verifies the read reports a pass from a reply that lists the
+// required checks, so a reviewer prompt carries the status and the evidence
+// behind it rather than a bare word (issue #320).
+test("reads a passing status with the names of the listed required checks", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    gh: checksGh([
+      { name: "ci (ubuntu-latest)", bucket: "pass" },
+      { name: "ci (windows-latest)", bucket: "skipping" },
+    ]),
+  });
+  expect(read).toMatchObject({
+    pr: 42,
+    status: "pass",
+    checks: ["ci (ubuntu-latest)", "ci (windows-latest)"],
+  });
+});
+
+// Usefulness: verifies the read names the failing check, so a reviewer that
+// cannot reach the network still sees which required check failed on the PR
+// head (issue #320).
+test("reads a failing status with the name of the failing required check", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    gh: checksGh([
+      { name: "ci (macos-latest)", bucket: "fail" },
+      { name: "ci (ubuntu-latest)", bucket: "pass" },
+    ]),
+  });
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (macos-latest)"] });
+  expect(read.summary).toContain("ci (macos-latest)");
+});
+
+// Usefulness: verifies a pending check reads as pending and not as a failure,
+// because a pending check is not a blocker (issue #320).
+test("reads a pending status with the name of the pending required check", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    gh: checksGh([
+      { name: "ci (ubuntu-latest)", bucket: "pass" },
+      { name: "ci (windows-latest)", bucket: "pending" },
+    ]),
+  });
+  expect(read).toMatchObject({ status: "pending", checks: ["ci (windows-latest)"] });
+});
+
+// Usefulness: verifies a failing check outranks a pending one, because a
+// failing check is the blocker a reviewer must see first (issue #320).
+test("reads a failing status when a pending check sits beside a failing one", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    gh: checksGh([
+      { name: "ci (macos-latest)", bucket: "fail" },
+      { name: "ci (windows-latest)", bucket: "pending" },
+    ]),
+  });
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (macos-latest)"] });
+});
+
+// Usefulness: verifies a reply that lists no check reads as unresolved, so an
+// empty required set never reaches a reviewer prompt as a pass (issue #320).
+test("reads an unresolved status when the reply lists no required check", async () => {
+  const read = await readRequiredChecks({ pr: 42, cwd: ".", gh: checksGh([]) });
+  expect(read).toMatchObject({ status: "unresolved", checks: [] });
+});
+
+// Usefulness: verifies a non-zero reply with no JSON reads as unresolved, so a
+// read error or a repository with no required check never reads as a pass
+// (issue #320).
+test("reads an unresolved status when gh cannot list the required checks", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    gh: async () => ({ status: 1, stdout: "", stderr: "no required checks" }),
+  });
+  expect(read).toMatchObject({ status: "unresolved", checks: [] });
+  expect(read.summary).toContain("no required checks");
+});
+
+// Usefulness: verifies a gh failure that throws reads as unresolved instead of
+// failing the reviewer turn, because the read is supplied evidence and the
+// reviewer keeps its own read (issue #320).
+test("reads an unresolved status when the gh runner fails", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    gh: async () => {
+      throw new Error("spawn gh ENOENT");
+    },
+  });
+  expect(read).toMatchObject({ status: "unresolved", checks: [] });
+  expect(read.summary).toContain("spawn gh ENOENT");
 });

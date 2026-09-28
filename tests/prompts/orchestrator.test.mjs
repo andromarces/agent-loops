@@ -197,10 +197,14 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
 // matching gate. A mismatched gate is a usage error before the prompt is built, so
 // the prompt never has to describe a gate the runtime skips. Removing the block
 // must restore the prompt a run without `--pr` gets, which is what keeps the
-// undeclared prompt byte-identical to the one before the declaration (#302).
+// undeclared prompt byte-identical to the one before the declaration (#302). The
+// supplied-status clause is the one addition beyond that block, and only on the
+// gated combination, because the runtime reads the status for a declared PR (#320).
 test("the headless prompt adds exactly the declaration rule and nothing else", () => {
   const block =
     "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.";
+  const supplied =
+    " This run declares PR #42, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt, and the reviewer reports that status without reading it again.";
 
   const noGate = initialPrompt({ task: "T", maxSteps: 10 });
   const withPr = initialPrompt({ task: "T", maxSteps: 10, pr: 42 });
@@ -209,7 +213,8 @@ test("the headless prompt adds exactly the declaration rule and nothing else", (
 
   const gated = initialPrompt({ task: "T", maxSteps: 10, requireCi: 42 });
   const withPrAndGate = initialPrompt({ task: "T", maxSteps: 10, pr: 42, requireCi: 42 });
-  expect(withPrAndGate.replace(`\n${block}`, "")).toBe(gated);
+  expect(withPrAndGate.replace(`\n${block}`, "").replace(supplied, "")).toBe(gated);
+  expect(gated).not.toContain(supplied);
   // The origin/main gate line is still what follows, naming the declared PR.
   expect(withPrAndGate).toContain(
     `${block}\n- This run enforces the PR gate (--require-ci 42): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit`,
@@ -418,4 +423,33 @@ test("repairPrompt shows both finish forms with unresolvedCompare inside the obj
   expect(prompt).toContain(
     '{"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}, "unresolvedCompare": true}',
   );
+});
+
+// Usefulness: verifies a run that declares its PR is told the runtime supplies
+// the required-check status, so an orchestrator whose own turn and whose
+// reviewer both block the network is not left to expect a reviewer read that
+// cannot happen (issue #320).
+test("a declared PR states that the runtime supplies the required-check status", () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "codex",
+    reviewerKind: "codex",
+  });
+  const supplied = prompt
+    .split("\n")
+    .find((line) => /suppl(y|ies) it to every reviewer/i.test(line));
+  expect(supplied).toBeTruthy();
+  expect(supplied).toMatch(/42/);
+  // The rule that tells the reviewer to report the status without reading again
+  // is the reviewer prompt's, not the orchestrator's.
+  expect(supplied).toMatch(/reads the required-check status/i);
+});
+
+// Usefulness: verifies a gated run that declares no PR keeps its prompt, because
+// the runtime has no PR input to read the status from (issue #320).
+test("a gated run with no declared PR does not state a supplied status", () => {
+  expect(gatedPrompt("codex", "codex")).not.toMatch(/suppl(y|ies) it to every reviewer/i);
 });

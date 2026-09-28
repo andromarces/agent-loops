@@ -222,6 +222,33 @@ The `--require-ci` finish gate stays the enforcement point. The rule only lets
 the reviewer see a failure before the gate refuses, so the run needs no extra
 worker turn and no extra reviewer turn for that failure.
 
+## The runtime supplies the required-check status
+
+A reviewer turn that cannot reach the network, for example a sandboxed Codex
+reviewer, could only report the status as unresolved before. A run that declares
+its PR with `--pr <pr>` knows the pull request before the first turn, so the
+runtime reads the required-check status for that PR head and supplies it to every
+reviewer prompt. The prompt adds two lines inside the required-check group, so
+they apply only under the pull request condition:
+
+- This run read the required checks for PR <pr> before this turn: <summary>.
+  Report that status and do not read it again.
+- Keep your own read as the fallback. Prefer it when the supplied status is
+  unresolved, and report any difference between your read and the supplied
+  status in `Checks`.
+
+The reviewer's own read is never removed. A supplied status is evidence for that
+turn, not a gate: `gh pr checks` lists only the checks that already reported, so a
+supplied pass covers the listed checks only, and a failed read is an unresolved
+status rather than a turn failure. The runtime reports the status it read beside
+the reviewer result, in the dispatch envelope and in the state file, so you can
+compare it with the reviewer `Checks` line and see a disagreement.
+
+A run that declares no PR reads no status, and the reviewer keeps its own read.
+The read follows `--pr`, which is the PR input both paths know at dispatch. A
+headless run that takes only `--require-ci` and declares no `--pr` reads no
+status.
+
 ## Waiting for required checks
 
 When a run will end with `--require-ci`, wait for the required checks on the new
@@ -258,8 +285,10 @@ probe.
   turn read them. Each further reviewer dispatch costs a step, so the step budget
   has to cover those dispatches.
 - Both CLIs block network: no turn in the run can read the required checks, so
-  the headless loop cannot wait. The `--require-ci` finish gate is the only check
-  read, because the runtime applies it outside every read-only turn. The gate
+  the headless loop cannot wait. A run that declares its PR with `--pr <pr>` still
+  supplies the status to each reviewer turn, because the runtime reads it outside
+  every read-only turn, so the reviewer does not have to. Without that
+  declaration the `--require-ci` finish gate is the only check read. The gate
   refuses a finish while a required check is pending. A refusal itself charges no
   step, and the reviewer dispatch that corrects it charges one, so the step budget
   has to cover those dispatches. Dispatch the reviewer when the gate refuses, or

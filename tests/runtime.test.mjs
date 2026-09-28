@@ -1461,6 +1461,12 @@ function ciGateGh(headRefOid, calls = []) {
 
 const OTHER_HEAD = "1".repeat(40);
 
+// The calls the shared `checkCi` gate makes, which is every `gh` call the run
+// makes apart from the reviewer required-check status read. That read is a
+// status read on the declared PR, not a gate read (#320).
+const gateCalls = (calls) =>
+  calls.filter((key) => !key.startsWith("pr checks") || !key.includes("--json name,bucket"));
+
 // 43. Usefulness: verifies the headless --require-ci gate resolves the PR head in
 // the runtime: a finish whose PR head is not the reviewed commit is refused with
 // the gate reason, recorded as a refusal event, and ends the run on exit 1
@@ -2149,8 +2155,10 @@ test("a run that declares a PR refuses a gate for a different PR", async () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.reason).toContain("declares PR 42");
-    // The gate is never read, so a wrong PR never costs a GitHub call.
-    expect(calls).toEqual([]);
+    // The gate is never read, so a wrong PR never costs a GitHub call. The
+    // reviewer status read is not the gate: it names the declared PR 42 and
+    // asks only for the check status (#320).
+    expect(gateCalls(calls)).toEqual([]);
   } finally {
     await removePath(repo);
   }
@@ -2168,6 +2176,7 @@ test("a mismatched-gate refusal names the declaration and reads no gate", async 
       task: "PR work: address issue 57 through PR 42.",
       cwd: repo,
       maxSteps: 5,
+      // No reviewer turn here, so the status read never runs and no call is made.
       pr: 42,
       requireCi: 7,
       gh: ciGateGh((await snapshot(repo)).head, calls),
@@ -2418,6 +2427,102 @@ test("a gh-failure refusal does not claim the run is out of attempts", async () 
     expect(prompt).toContain("a worker turn resets that state to none");
     expect(prompt).not.toContain("one attempt left");
     expect(result.exitCode).toBe(0);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Answers the runtime read of the required checks for PR 42 and defers every
+// other call to the shared gate fixture, so one stub covers the reviewer read
+// and the finish gate.
+function reviewerReadGh(headRefOid, checks) {
+  const gate = ciGateGh(headRefOid);
+  return async (args) => {
+    const key = args.join(" ");
+    if (key.includes("pr checks") && key.includes("bucket")) {
+      return { status: 0, stdout: JSON.stringify(checks), stderr: "" };
+    }
+    return gate(args);
+  };
+}
+
+// Usefulness: verifies a run that declares a PR supplies the required-check
+// status the runtime read to the reviewer turn and records that read in the
+// result, so a reviewer whose turn cannot reach the network still sees the
+// failing check and the parent can compare it with the reviewer Checks line
+// (issue #320).
+test("a declared PR supplies the runtime-read required-check status to the reviewer", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const rev = scripted([REVIEW_ACCEPT]);
+    const events = [];
+
+    const result = await runLoop({
+      task: "PR work: address issue 320 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      gh: reviewerReadGh(head, [{ name: "ci (macos-latest)", bucket: "fail" }]),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_worker", prompt: "work" }),
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted(["worker pushed the change"]),
+        rev,
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(rev.recorded[0].prompt).toContain("ci (macos-latest)");
+    expect(rev.recorded[0].prompt).toContain("42");
+    const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer");
+    expect(reviewed.result.prChecks).toMatchObject({ pr: 42, status: "failing" });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a run that declares no PR reads no status and records
+// none, so the reviewer prompt never carries a read the runtime did not make
+// (issue #320).
+test("a run with no PR input reads no required-check status", async () => {
+  const repo = await createTempRepo();
+  try {
+    const calls = [];
+    const rev = scripted([REVIEW_ACCEPT]);
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task without a pull request.",
+      cwd: repo,
+      maxSteps: 5,
+      gh: async (args) => {
+        calls.push(args.join(" "));
+        return { status: 0, stdout: "[]", stderr: "" };
+      },
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev,
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toEqual([]);
+    expect(rev.recorded[0].prompt).not.toMatch(/runtime read/);
+    const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer");
+    expect(reviewed.result.prChecks).toBeUndefined();
   } finally {
     await removePath(repo);
   }

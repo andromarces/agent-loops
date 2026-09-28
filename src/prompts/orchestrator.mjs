@@ -29,12 +29,12 @@ export function requiredCheckWait({ requireCi, orchestratorKind, reviewerKind })
  * excepts. Each statement names the role whose CLI performs the read, because
  * the orchestrator and reviewer CLIs are chosen independently.
  */
-function prGateBlock({ requireCi, orchestratorKind, reviewerKind }) {
+function prGateBlock({ pr = null, requireCi, orchestratorKind, reviewerKind }) {
   if (requireCi === null) return "";
-  return `\n${prGateLines({ requireCi, orchestratorKind, reviewerKind }).join("\n")}`;
+  return `\n${prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }).join("\n")}`;
 }
 
-function prGateLines({ requireCi, orchestratorKind, reviewerKind }) {
+function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
   const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
   const rule = requiredCheckWait({ requireCi, orchestratorKind, reviewerKind });
 
@@ -60,9 +60,23 @@ function prGateLines({ requireCi, orchestratorKind, reviewerKind }) {
 
   return [
     gate,
-    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can read the required checks and the headless loop cannot wait. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.`,
+    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can read the required checks and the headless loop cannot wait. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.${suppliedRead(pr)}`,
     "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
   ];
+}
+
+/**
+ * The clause a run that declares its PR adds to the line that says no turn in
+ * the run can read the checks. The runtime reads the status outside every
+ * read-only turn and supplies it to the reviewer prompt, so the reviewer reports
+ * it without reading it again (#320). A run that declares no PR has no PR input
+ * to read, so the line reads as before.
+ * @param {number | null} pr
+ * @returns {string}
+ */
+function suppliedRead(pr) {
+  if (pr === null) return "";
+  return ` This run declares PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt, and the reviewer reports that status without reading it again.`;
 }
 
 /**
@@ -123,7 +137,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${prGateBlock({ requireCi, orchestratorKind, reviewerKind })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.

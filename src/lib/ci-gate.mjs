@@ -384,3 +384,92 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
 
   return { ok: true, commit };
 }
+
+// The buckets `gh pr checks --required --json name,bucket` reports. `pass` and
+// `skipping` read as a pass, the same conclusions the gate accepts; `fail` and
+// `cancel` are failures; `pending` is neither.
+const PASS_BUCKETS = new Set(["pass", "skipping"]);
+const FAILING_BUCKETS = new Set(["fail", "cancel"]);
+
+/** One line of text for a prompt line or a report field. */
+function oneLine(text) {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The listed checks with a name, or null when the reply carries no such list. */
+function parseListedChecks(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) {
+    return null;
+  }
+  return parsed.filter((check) => typeof check?.name === "string");
+}
+
+const names = (checks) => checks.map((check) => check.name).join(", ");
+
+/**
+ * Reads the required-check status for the PR head, which a declared-PR run
+ * supplies to each reviewer prompt (issue #320). The read is evidence for the
+ * reviewer, not a gate: `gh pr checks` lists only the checks that already
+ * reported, so a pass here covers the listed checks only.
+ *
+ * It never throws. A failed read is `unresolved`, because the reviewer keeps its
+ * own read as the fallback and a turn must not fail over supplied evidence.
+ *
+ * The exit code is read last: `gh` exits non-zero for a failing check and for a
+ * pending one, and the list decides both, so an exit code that disagrees with a
+ * listed check never overrides it. A non-zero exit with no listed failing or
+ * pending check is unresolved, which covers a read error and a pull request with
+ * no required check.
+ * @param {{ pr: number, cwd: string, gh?: Function }} options
+ * @returns {Promise<{ pr: number, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string }>}
+ */
+export async function readRequiredChecks({ pr, cwd, gh = runGh }) {
+  const unresolved = (summary) => ({ pr, status: "unresolved", checks: [], summary });
+  let reply;
+  try {
+    reply = await gh(["pr", "checks", String(pr), "--required", "--json", "name,bucket"], cwd);
+  } catch (err) {
+    return unresolved(`unread: ${oneLine(err?.message ?? err)}`);
+  }
+  const { status, stdout, stderr } = reply;
+  const failure = oneLine(stderr) || `exit ${status}`;
+  const listed = parseListedChecks(stdout);
+  if (listed === null || listed.length === 0) {
+    return unresolved(`unread: ${failure}`);
+  }
+  const failing = listed.filter((check) => FAILING_BUCKETS.has(check.bucket));
+  if (failing.length > 0) {
+    return {
+      pr,
+      status: "failing",
+      checks: failing.map((check) => check.name),
+      summary: `failing required checks: ${names(failing)}`,
+    };
+  }
+  const pending = listed.filter((check) => check.bucket === "pending");
+  if (pending.length > 0) {
+    return {
+      pr,
+      status: "pending",
+      checks: pending.map((check) => check.name),
+      summary: `pending required checks: ${names(pending)}`,
+    };
+  }
+  if (status !== 0 || listed.some((check) => !PASS_BUCKETS.has(check.bucket))) {
+    return unresolved(`unread: ${failure}`);
+  }
+  return {
+    pr,
+    status: "pass",
+    checks: listed.map((check) => check.name),
+    summary: `all ${listed.length} listed required checks passed`,
+  };
+}

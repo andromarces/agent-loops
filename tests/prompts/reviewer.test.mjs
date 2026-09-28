@@ -186,3 +186,56 @@ test("reviewer prompt requires a listed failing check before it reports a blocke
   expect(prompt).toMatch(/blocker only when the output lists a failing required check/i);
   expect(prompt).toMatch(/any other exit (code )?1.*unresolved/i);
 });
+
+const FAILING_READ = {
+  pr: 42,
+  status: "failing",
+  checks: ["ci (macos-latest)"],
+  summary: "failing required checks: ci (macos-latest)",
+};
+const UNREADABLE_READ = { pr: 42, status: "unresolved", checks: [], summary: "unread: exit 1" };
+
+// Usefulness: verifies a supplied status reaches the reviewer prompt with its
+// pull request and the failing check named, so a reviewer whose turn cannot reach
+// the network still sees the failure the finish gate would refuse (issue #320).
+test("reviewer prompt carries the runtime-read status and the pull request it names", () => {
+  const prompt = reviewerPrompt("review the change", FAILING_READ);
+  expect(prompt).toContain("42");
+  expect(prompt).toContain("ci (macos-latest)");
+  expect(prompt).toContain(FAILING_READ.summary);
+});
+
+// Usefulness: verifies the reviewer read stays the fallback, so a supplied
+// status never removes the only read a reviewer can make on its own (issue #320).
+test("reviewer prompt keeps its own read as the fallback for a supplied status", () => {
+  const prompt = reviewerPrompt("review the change", UNREADABLE_READ);
+  expect(prompt).toMatch(/gh pr checks .*--required/);
+  expect(prompt).toMatch(/fallback/i);
+  expect(prompt).toMatch(/unresolved/i);
+});
+
+// Usefulness: verifies a supplied status keeps every later scope line nested
+// under the pull request condition, because an unnested line reads as an
+// unconditional rule and narrows the guard rules above it (issue #317, #320).
+test("a supplied status keeps the required-check bullets nested", () => {
+  const lines = reviewerScopeOf(reviewerPrompt("review the change", FAILING_READ)).split("\n");
+  const group = requiredCheckGroup(lines);
+  expect(group).not.toBeNull();
+  for (const text of lines.slice(group.start + 1)) {
+    expect(text).toMatch(/^ {2,}- /);
+  }
+});
+
+// Usefulness: verifies a supplied status adds no pull request mention outside
+// the required-check group, so it cannot narrow an earlier guard rule
+// (issue #317, #320).
+test("a supplied status mentions a pull request only inside the required-check group", () => {
+  const scope = reviewerScopeOf(reviewerPrompt("review the change", FAILING_READ));
+  expect(prMentionsOutsideGroup(scope)).toEqual([]);
+});
+
+// Usefulness: verifies a run with no read supplies no status, so a prompt never
+// carries a status the runtime did not read (issue #320).
+test("reviewer prompt carries no status line without a read", () => {
+  expect(reviewerPrompt("review the change")).not.toContain(FAILING_READ.summary);
+});

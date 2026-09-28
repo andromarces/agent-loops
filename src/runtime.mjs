@@ -1,6 +1,6 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
-import { checkCi } from "./lib/ci-gate.mjs";
+import { checkCi, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
@@ -41,9 +41,10 @@ async function invoke(agents, state, roleName, prompt, opts, onEvent, stepsUsed)
  * `{ role, status: "error", error }` on a handled failure. Throws on fatal
  * errors: detected mutation, snapshot failure, or cancel.
  * A reviewer result also carries `reviewed`, the runtime-owned identity of the
- * work tree the reviewer saw.
+ * work tree the reviewer saw, and `prChecks`, the required-check status the
+ * runtime read for a declared PR (#320).
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object } | { role: string, status: "error", error: string }>}
+ * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object } | { role: string, status: "error", error: string }>}
  */
 export async function runChild(options) {
   const {
@@ -55,14 +56,29 @@ export async function runChild(options) {
     timeout,
     signal,
     stepsUsed = 0,
+    pr = null,
+    gh,
     onEvent = () => {},
   } = options;
 
   const isWorker = roleName === "worker";
   const readOnly = !isWorker;
+  // The required-check status a declared-PR run supplies to the reviewer, read
+  // before the turn so a reviewer whose CLI cannot reach the network still sees
+  // it. A failed read is an unresolved status rather than a turn failure, and the
+  // reviewer keeps its own read as the fallback (issue #320). The status covers
+  // the PR head on GitHub, so it is evidence for the reviewer, not a gate.
+  // known-limit: a headless run that takes only `--require-ci` and declares no
+  // `--pr` reads no status, because `pr` is the PR input both paths know at
+  // dispatch. The reviewer's own read stays the source there.
+  const prChecks =
+    roleName === "reviewer" && pr !== null ? await readRequiredChecks({ pr, cwd, gh }) : null;
+  if (prChecks !== null) {
+    logInfo(`runtime read the required checks for PR ${pr}: ${prChecks.summary}`);
+  }
   const finalPrompt = isWorker
     ? workerPrompt(prompt, role.sessionId === null)
-    : reviewerPrompt(prompt);
+    : reviewerPrompt(prompt, prChecks);
 
   const runFn = () =>
     invoke(
@@ -87,7 +103,13 @@ export async function runChild(options) {
           return runFn();
         })
       : await runFn();
-    return { role: roleName, status: "ok", response, ...(reviewed ? { reviewed } : {}) };
+    return {
+      role: roleName,
+      status: "ok",
+      response,
+      ...(reviewed ? { reviewed } : {}),
+      ...(prChecks ? { prChecks } : {}),
+    };
   } catch (err) {
     if (err?.name === "MutationError" || err?.name === "SnapshotError" || err?.isCanceled) {
       if (err?.isCanceled) {
@@ -364,6 +386,11 @@ export async function runLoop(options) {
       timeout,
       signal,
       stepsUsed,
+      // The declared PR is the run's PR input, so it is known before the turn and
+      // supplies the reviewer with the required-check status (#320). A run with no
+      // declaration reads nothing, and the reviewer keeps its own read.
+      pr,
+      gh,
       onEvent,
     });
     onEvent({ type: "result", role: roleName, result, stepsUsed });
