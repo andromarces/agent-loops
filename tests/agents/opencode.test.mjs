@@ -657,18 +657,24 @@ test("opencode reports the last error event on an exit-0 turn", async () => {
   );
 });
 
-// Usefulness: verifies an error event whose payload is not the documented object still fails the
-// turn with a fixed detail, rather than coercing the payload into the message or crashing on it
-// (issue #335).
-test("opencode reports an unreadable exit-0 error event as unknown", async () => {
-  const stdout = errorEvent(`unreadable payload ${"M".repeat(5000)}`);
+// Usefulness: verifies an exit-0 error event whose payload fields are not strings reports the fixed
+// `unknown error` detail, not a coerced "[object Object]: [object Object]" that the raw describeError
+// on this path produces, so a malformed provider payload cannot put an unreadable detail in the
+// envelope (issue #335). The object form is the case that discriminates: a non-object payload
+// already described as `unknown error` before the change.
+test("opencode reports no detail for a malformed exit-0 provider object", async () => {
+  const stdout = errorEvent({
+    type: { name: "provider.internal" },
+    message: { detail: "Internal server error" },
+    status: { code: 500 },
+  });
   vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
 
   const state = { kind: "opencode", sessionId: null, model: null, effort: null };
   const error = await runOpenCode(state, "oc prompt", { cwd: "/dir" }).catch((err) => err);
 
   expect(error.message).toBe("opencode returned an error event: unknown error");
-  expect(error.message).not.toContain("M".repeat(40));
+  expect(error.message).not.toContain("object Object");
 });
 
 // A stream cannot carry NaN: JSON.parse rejects the literal, so the stream-reachable non-finite
