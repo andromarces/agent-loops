@@ -238,7 +238,8 @@ agent-loop role wait-checks --cwd <dir> --pr <n> --timeout <seconds>
 ```
 
 The command returns inside its own bound, before the command timeout your harness
-applies to a shell command, and prints one JSON envelope on stdout:
+applies to a shell command, and prints one JSON envelope on stdout. `--cwd` must
+be inside a Git work tree, as it is for `dispatch`, because the read runs there:
 
 ```json
 {
@@ -252,13 +253,23 @@ applies to a shell command, and prints one JSON envelope on stdout:
 `--timeout` is in seconds and defaults to 300. Set it below the command timeout
 your harness applies when that timeout is smaller. `--timeout 0` is refused.
 
-`timedOut: true` means the bound elapsed with a required check still pending. It
-is a completed read, not a read failure: the envelope still carries the last
-check states. A `bucket` of `pending` marks a pending check, and `fail` marks a
-failed one. A check that has not started is absent from `checks`, so an empty
-list means no required check has reported yet. `status: "error"` means the read
-itself failed, for example no `gh` or no network, and no check state is recorded
-for that wait. Never record a check you could not read as passed.
+The bound covers the reads, not only the pauses between them. Every read is
+limited to the time the wait has left, and a read that reaches the limit is
+stopped, so a slow or hung `gh` returns on the bound instead of past it. A wait
+that ends on the limit reports `timedOut: true` with the last check states it
+read. It is a completed read, not a read failure.
+
+The `gh pr checks` exit codes decide the outcome, as the reviewer read states:
+exit 0 with no pending check listed is settled, exit 8 is pending, and exit 1 is
+settled only when the output lists a failing required check. Any other exit 1,
+and any output that is not a check list, is unresolved: the command exits 1 with
+`status: "error"` and records no check state for that wait, so an unresolved
+read never reads as a pass. Never record a check you could not read as passed.
+
+A `bucket` of `pending` marks a pending check, and `fail` marks a failed one. A
+check that has not started is absent from `checks`, because the command omits it,
+so an empty list means no required check has reported yet and the wait
+continues.
 
 A required check still pending after a wait, whether it failed or the bound
 elapsed, is not a finish condition. The `--require-ci` gate refuses a finish

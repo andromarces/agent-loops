@@ -1,4 +1,6 @@
-import { access } from "node:fs/promises";
+import { access, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { executeRoleCommand } from "../src/role.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
@@ -8,12 +10,13 @@ import { createTempRepo } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
-// Reads `--required` checks: pending until the scripted read count reaches one.
+// Reads `--required` checks: each entry is `{ status, checks }`, and the last
+// entry repeats, so a wait that polls more times than the script holds answers.
 function scriptedGh(reads) {
   let n = 0;
   return async () => {
-    const checks = reads[Math.min(n++, reads.length - 1)];
-    return { status: 8, stdout: JSON.stringify(checks), stderr: "" };
+    const read = reads[Math.min(n++, reads.length - 1)];
+    return { status: read.status, stdout: JSON.stringify(read.checks), stderr: "" };
   };
 }
 
@@ -28,8 +31,8 @@ function fakeClock() {
   };
 }
 
-const PENDING = [{ name: "ci", state: "IN_PROGRESS", bucket: "pending" }];
-const SETTLED = [{ name: "ci", state: "SUCCESS", bucket: "pass" }];
+const PENDING = { status: 8, checks: [{ name: "ci", state: "IN_PROGRESS", bucket: "pending" }] };
+const SETTLED = { status: 0, checks: [{ name: "ci", state: "SUCCESS", bucket: "pass" }] };
 
 // Usefulness: verifies `role wait-checks` prints one bounded envelope with the
 // check states and creates no run state, so a parent can wait for the required
@@ -44,7 +47,12 @@ test("wait-checks returns the check envelope and writes no run state", async () 
     { gh: scriptedGh([PENDING, SETTLED]), ...fakeClock() },
   );
   expect(result.exitCode).toBe(0);
-  expect(result.payload).toEqual({ status: "ok", pr: 42, timedOut: false, checks: SETTLED });
+  expect(result.payload).toEqual({
+    status: "ok",
+    pr: 42,
+    timedOut: false,
+    checks: SETTLED.checks,
+  });
   await expect(access(statePaths({ cwd: repo }).stateFile)).rejects.toThrow();
 });
 
@@ -61,7 +69,7 @@ test("wait-checks reports the bound as reached when a required check is still pe
     { gh: scriptedGh([PENDING]), ...fakeClock() },
   );
   expect(result.exitCode).toBe(0);
-  expect(result.payload).toEqual({ status: "ok", pr: 42, timedOut: true, checks: PENDING });
+  expect(result.payload).toEqual({ status: "ok", pr: 42, timedOut: true, checks: PENDING.checks });
 });
 
 // Usefulness: verifies `--timeout 0` is refused, because the wait the issue adds
@@ -94,4 +102,29 @@ test("wait-checks refuses a call with no --pr", async () => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.payload.error).toMatch(/--pr/);
+});
+
+// Usefulness: verifies a `--cwd` outside a Git work tree is refused before any
+// read, with the same message `dispatch` uses, so an invalid work tree cannot
+// read checks (issue #329).
+test("wait-checks refuses a --cwd outside a Git work tree", async () => {
+  await setup();
+  const outside = await mkdtemp(join(tmpdir(), "wait-checks-outside-"));
+  repos.push(outside);
+  let read = false;
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", outside, "--pr", "42", "--timeout", "60"]),
+    {
+      gh: async () => {
+        read = true;
+        return { status: 8, stdout: JSON.stringify(PENDING), stderr: "" };
+      },
+      ...fakeClock(),
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toMatch(/must be inside a Git work tree/);
+  // A refused work tree is refused before the read, not after it.
+  expect(read).toBe(false);
 });

@@ -198,13 +198,16 @@ Role operations:
   abort                         End the run with --reason.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
-                                timedOut flag. Reads status only, so it needs no run
-                                state and changes nothing.
+                                timedOut flag. Every read is bounded by the time
+                                left, and a read that reaches the bound is stopped.
+                                Reads status only, so it needs no run state and
+                                changes nothing.
 
 Role flags:
 
   --role worker|reviewer        Role to dispatch. Required for dispatch.
-  --cwd <directory>             Target work tree. Defaults to the current directory.
+  --cwd <directory>             Target work tree. Must be inside a Git work tree.
+                                Defaults to the current directory.
   --parent-session <id>         Required on the init call. The harness session id the
                                 parent-edit guard matches; later calls reject a changed
                                 value. The headless form (no subcommand) is the explicit

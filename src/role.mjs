@@ -833,9 +833,11 @@ async function abort(args) {
 /**
  * `wait-checks`: polls the required checks of `--pr` until none is pending or
  * the bound elapses, then prints the last check states with a `timedOut` flag.
- * It reads status only, so it touches no run state and needs no init. The bound
- * defaults to 300 seconds; `--timeout 0` is refused, because an unbounded wait
- * is the outcome this operation exists to prevent (#329).
+ * It reads status only, so it touches no run state and needs no init, but it
+ * applies the same `--cwd` rule as `dispatch`, because the read runs in that
+ * work tree. The bound defaults to 300 seconds; `--timeout 0` is refused,
+ * because an unbounded wait is the outcome this operation exists to prevent
+ * (#329).
  */
 async function waitChecksOperation(args, { gh, signal, now, sleep } = {}) {
   if (args.role !== null) {
@@ -851,6 +853,7 @@ async function waitChecksOperation(args, { gh, signal, now, sleep } = {}) {
   if (args.timeoutProvided && args.timeout === null) {
     throw new RoleError("wait-checks refuses --timeout 0: the wait must stay bounded.");
   }
+  await assertGitWorkTree(args.cwd);
   const result = await waitChecks({
     pr: args.pr,
     cwd: args.cwd,
