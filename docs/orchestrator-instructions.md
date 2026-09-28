@@ -195,6 +195,11 @@ head. The command reads status only, so the reviewer stays read-only:
 - A failing required check is a blocker.
 - Exit code 8 means a check is pending. The pending check goes in `Checks`, not
   into the blockers.
+- Exit code 1 covers a failing check, a repository with no required check, and a
+  read error. A blocker is reported only when the output lists a failing
+  required check. Any other exit 1 is unresolved and goes in `Checks`.
+- The command omits a check that has not started, so a read pass covers only the
+  listed checks.
 - The read reflects the PR head on GitHub. When that head differs from the local
   reviewed head, the mismatch goes in `Checks`.
 - When the repository has no required check, that goes in `Checks`.

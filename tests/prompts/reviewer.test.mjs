@@ -64,14 +64,33 @@ test("reviewer prompt reports an unresolved check status instead of assuming a p
   expect(prompt).toMatch(/pass only when the read shows one/i);
 });
 
-// Usefulness: verifies the guard rules of issue #216 keep their own scope, so
-// the required-check rule cannot narrow a rule that applies to every task
-// (issue #313).
-test("required-check rule does not narrow the guard rules that apply to every task", () => {
+// Usefulness: verifies the pull-request condition lives in the required-check
+// bullet alone, so a scoping bullet cannot read as limiting the guard rules
+// that follow it (issue #313).
+test("only the required-check rule bullet limits itself to a task that names a pull request", () => {
   const prompt = reviewerPrompt("review the change");
-  for (const line of prompt.split("\n").filter((text) => text.startsWith("- "))) {
-    if (/guard|contract/i.test(line)) {
-      expect(line).not.toMatch(/pull request/i);
-    }
-  }
+  const scoped = prompt
+    .split("\n")
+    .filter((text) => text.startsWith("- ") && /pull request/i.test(text));
+  expect(scoped).toHaveLength(1);
+  expect(scoped[0]).toMatch(/gh pr checks/);
+});
+
+// Usefulness: verifies a read pass is reported as covering only the listed
+// checks, because the command omits a check that has not started, so a partial
+// read never reads as the whole required set (issue #313).
+test("reviewer prompt limits a read pass to the checks the command listed", () => {
+  const prompt = reviewerPrompt("review PR 313");
+  expect(prompt).toMatch(/has not started/i);
+  expect(prompt).toMatch(/only the listed checks/i);
+});
+
+// Usefulness: verifies a blocker needs a listed failing required check, so an
+// exit code 1 that carries no such line is reported as unresolved instead
+// (issue #313).
+test("reviewer prompt requires a listed failing check before it reports a blocker", () => {
+  const prompt = reviewerPrompt("review PR 313");
+  expect(prompt).toMatch(/exit (code )?1/i);
+  expect(prompt).toMatch(/blocker only when the output lists a failing required check/i);
+  expect(prompt).toMatch(/any other exit (code )?1.*unresolved/i);
 });
