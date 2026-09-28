@@ -1,6 +1,6 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
-import { checkCi } from "./lib/ci-gate.mjs";
+import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
@@ -41,9 +41,10 @@ async function invoke(agents, state, roleName, prompt, opts, onEvent, stepsUsed)
  * `{ role, status: "error", error }` on a handled failure. Throws on fatal
  * errors: detected mutation, snapshot failure, or cancel.
  * A reviewer result also carries `reviewed`, the runtime-owned identity of the
- * work tree the reviewer saw.
+ * work tree the reviewer saw, and `prChecks`, the required-check status the
+ * runtime read for a declared PR (#320).
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object } | { role: string, status: "error", error: string }>}
+ * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object } | { role: string, status: "error", error: string }>}
  */
 export async function runChild(options) {
   const {
@@ -55,16 +56,16 @@ export async function runChild(options) {
     timeout,
     signal,
     stepsUsed = 0,
+    pr = null,
+    gh,
+    readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
   } = options;
 
   const isWorker = roleName === "worker";
   const readOnly = !isWorker;
-  const finalPrompt = isWorker
-    ? workerPrompt(prompt, role.sessionId === null)
-    : reviewerPrompt(prompt);
 
-  const runFn = () =>
+  const runFn = (finalPrompt) =>
     invoke(
       agents,
       role,
@@ -75,19 +76,53 @@ export async function runChild(options) {
       stepsUsed,
     );
 
+  // The worker prompt needs no runtime read, so it is built once here. The
+  // reviewer prompt is built inside the mutation check, where the pre-turn
+  // snapshot gives the local head the status read compares against (#320).
+  const workerFinalPrompt = isWorker ? workerPrompt(prompt, role.sessionId === null) : null;
+
+  /**
+   * Reads the required-check status a declared-PR run supplies to the reviewer,
+   * using the pre-turn snapshot head as the local head. A failed read, a
+   * mismatched head, and a stalled read are all an unresolved status rather than
+   * a turn failure, and the reviewer keeps its own read as the fallback
+   * (issue #320). The status covers the PR head on GitHub, so it is evidence
+   * for the reviewer, not a gate.
+   *
+   * known-limit: a headless run that takes only `--require-ci` and declares no
+   * `--pr` reads no status, because `pr` is the PR input both paths know at
+   * dispatch. The reviewer's own read stays the source there.
+   */
+  const readStatus = async (head) => {
+    if (roleName !== "reviewer" || pr === null) {
+      return null;
+    }
+    const status = await readRequiredChecks({ pr, cwd, head, gh, timeoutMs: readTimeoutMs });
+    logInfo(`runtime read the required checks for PR ${pr}: ${status.summary}`);
+    return status;
+  };
+
   try {
     let reviewed = null;
+    let prChecks = null;
     const response = readOnly
-      ? await withMutationCheck(cwd, roleName, (before) => {
+      ? await withMutationCheck(cwd, roleName, async (before) => {
           // The reviewed state comes from the runtime snapshot, never from the
           // child response, so the child cannot misreport it.
           if (roleName === "reviewer") {
             reviewed = reviewedState(before);
+            prChecks = await readStatus(reviewed.head);
           }
-          return runFn();
+          return runFn(isWorker ? workerFinalPrompt : reviewerPrompt(prompt, prChecks));
         })
-      : await runFn();
-    return { role: roleName, status: "ok", response, ...(reviewed ? { reviewed } : {}) };
+      : await runFn(workerFinalPrompt);
+    return {
+      role: roleName,
+      status: "ok",
+      response,
+      ...(reviewed ? { reviewed } : {}),
+      ...(prChecks ? { prChecks } : {}),
+    };
   } catch (err) {
     if (err?.name === "MutationError" || err?.name === "SnapshotError" || err?.isCanceled) {
       if (err?.isCanceled) {
@@ -172,6 +207,7 @@ export async function runLoop(options) {
     pr = null,
     requireCi = null,
     gh,
+    readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
   } = options;
 
@@ -364,6 +400,12 @@ export async function runLoop(options) {
       timeout,
       signal,
       stepsUsed,
+      // The declared PR is the run's PR input, so it is known before the turn and
+      // supplies the reviewer with the required-check status (#320). A run with no
+      // declaration reads nothing, and the reviewer keeps its own read.
+      pr,
+      gh,
+      readTimeoutMs,
       onEvent,
     });
     onEvent({ type: "result", role: roleName, result, stepsUsed });

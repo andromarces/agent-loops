@@ -271,6 +271,77 @@ The `--require-ci` finish gate stays the enforcement point. The rule only lets
 the reviewer see a failure before the gate refuses, so the run needs no extra
 worker turn and no extra reviewer turn for that failure.
 
+## The runtime supplies the required-check status
+
+A reviewer turn that cannot reach the network, for example a sandboxed Codex
+reviewer, could only report the status as unresolved before. A run that declares
+its PR with `--pr <pr>` knows the pull request before the first turn, so the
+runtime reads the required-check status for that PR head and supplies it to every
+reviewer prompt. The prompt adds two lines inside the required-check group, so
+they apply only under the pull request condition:
+
+- This run read the required checks for PR <pr> before this turn: <summary>. That
+  status is advisory evidence for this turn, in place of the read above: report
+  it, and treat it as a report rather than a verdict. The `--require-ci` finish
+  gate re-reads GitHub and enforces the condition.
+- Your own read is the fallback. Read the required checks yourself when the
+  supplied status is unresolved, or when the reviewed head is not the head the
+  supplied status names. Report any difference between your read and the supplied
+  status in `Checks`.
+
+The runtime reads the status for that PR head and supplies it to every reviewer
+prompt. That status is advisory evidence, in place of the reviewer reading the
+checks: the reviewer reports it, keeps its own read as the fallback, and reads
+the checks itself when the supplied status is unresolved. The `--require-ci`
+finish gate re-reads GitHub and enforces the condition. The runtime reports the
+status it read beside the reviewer result, so compare it with the reviewer Checks
+line.
+
+The reviewer's own read is never removed, and the head matters. A supplied status
+is evidence for that turn, not a gate: `gh pr checks` lists only the checks that
+already reported, so a supplied pass covers the listed checks only, and a failed
+read is an unresolved status rather than a turn failure. The runtime reports the
+status it read beside the reviewer result, in the dispatch envelope and in the
+state file, so compare it with the reviewer Checks line and act on a
+disagreement. A headless run renders the same status in the result prompt the
+orchestrator receives after a reviewer turn, as `prChecks` beside the response and
+the reviewed state, so the orchestrator holds the status and the reviewer Checks
+line in one prompt. A turn that made no read carries no `prChecks` field.
+
+The runtime reads the PR head first and compares it with the local reviewed head,
+so a status is reported only for the head it describes. A read whose PR head
+differs from the local head, and a read with no local head to compare, are
+unresolved, and the prompt never reports a pass for a head the reviewer is not
+looking at. Every supplied status states the head it describes.
+
+The head and the checks are two separate reads, and the pull request can advance
+between them. `gh pr checks` reports no commit and cannot be asked for one, so
+the runtime reads the head again after the checks. A head that moved is
+unresolved, because the checks belong to a commit other than the one the status
+would name.
+
+One window survives that re-read and is an accepted gap: a head that advances to
+another commit and returns between the two head reads leaves both reads naming
+the same commit while the checks describe the other one. No re-read separates
+that, and `gh api repos/{owner}/{repo}/commits/{sha}/check-runs` reports every
+check run on a commit rather than the required ones, so it would have to rebuild
+the required-name source from repository rulesets and classic protection. Every
+supplied status therefore carries `advisory: true` and is a report, not a
+verdict: the reviewer treats it as evidence, and the `--require-ci` finish gate
+re-reads GitHub and refuses the finish on the real condition. A status never
+replaces the gate.
+
+The status comes from the exit code the rule above names: 0 is a pass, 8 is a
+pending check, and 1 is a failing check, a pull request with no required check,
+or a read error. Exit 1 reports a failing check only when the reply lists a
+failing required check, the same evidence the rule requires before a blocker. A
+reply that is not a well-formed list, and any other exit code, are unresolved.
+
+A run that declares no PR reads no status, and the reviewer keeps its own read.
+The read follows `--pr`, which is the PR input both paths know at dispatch. A
+headless run that takes only `--require-ci` and declares no `--pr` reads no
+status.
+
 ## Waiting for required checks
 
 When a run will end with `--require-ci`, wait for the required checks on the new
@@ -357,12 +428,16 @@ probe.
   turn read them. Each further reviewer dispatch costs a step, so the step budget
   has to cover those dispatches.
 - Both CLIs block network: no turn in the run can read the required checks, so
-  the headless loop cannot wait. The `--require-ci` finish gate is the only check
-  read, because the runtime applies it outside every read-only turn. The gate
-  refuses a finish while a required check is pending. A refusal itself charges no
-  step, and the reviewer dispatch that corrects it charges one, so the step budget
-  has to cover those dispatches. Dispatch the reviewer when the gate refuses, or
-  `abort` with the pending check named in the reason.
+  the headless loop cannot wait. A run that declares its PR with `--pr <pr>` still
+  supplies the status to each reviewer turn, because the runtime reads it outside
+  every read-only turn, so the reviewer does not have to. A run that declares no
+  PR gets no supplied status, because the runtime reads one only for `--pr`. That
+  supplied status is advisory: it reports to the reviewer and never enforces.
+- The `--require-ci` finish gate is the only check read here that enforces; a declared PR's advisory status read does not. The gate refuses a
+  finish while a required check is pending. A refusal itself charges no step, and
+  the reviewer dispatch that corrects it charges one, so the step budget has to
+  cover those dispatches. Dispatch the reviewer when the gate refuses, or `abort`
+  with the pending check named in the reason.
 
 A headless status read spends no step, because a step is charged only to
 `run_worker` and `run_reviewer`. It is not free of other cost. The turn is

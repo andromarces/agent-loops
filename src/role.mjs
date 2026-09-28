@@ -427,7 +427,7 @@ function createEventSink(transcriptFile) {
  * Dispatch operation: initialize on the first call, then charge the step,
  * mark `dispatched`, run exactly one child turn, and record the result.
  */
-async function dispatch(args, { agents, stdin = readStdin, signal }) {
+async function dispatch(args, { agents, stdin = readStdin, signal, gh }) {
   if (!args.role) {
     throw new RoleError("dispatch requires --role worker or reviewer.");
   }
@@ -444,14 +444,14 @@ async function dispatch(args, { agents, stdin = readStdin, signal }) {
 
   try {
     return await withStateLock(paths.lockFile, () =>
-      dispatchLocked(args, { agents, stdin, signal, paths, onEvent }),
+      dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh }),
     );
   } finally {
     await onEvent.flush();
   }
 }
 
-async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
+async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh }) {
   const existing = await readState(paths.stateFile);
   const init = isInitCall(args);
   let state;
@@ -549,6 +549,11 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
       timeout: state.timeout,
       signal,
       stepsUsed: state.stepsUsed,
+      // The declared PR is the run's PR input, so a reviewer turn supplies the
+      // required-check status the runtime read (#320). A run that declares no PR
+      // reads nothing, and the reviewer keeps its own read.
+      pr: state.pr ?? null,
+      gh,
       onEvent,
     });
   } catch (err) {
@@ -628,6 +633,13 @@ function dispatchPayload(roleName, result) {
     payload.verdict = parseVerdict(result.response);
     if (result.reviewed) {
       payload.reviewed = result.reviewed;
+    }
+    // The required-check status the runtime read for a declared PR, so the
+    // parent can compare it with the reviewer Checks line (#320). The state file
+    // keeps it beside the response in `lastResult`. The turn history entry keeps
+    // its fixed shape (ADR 0008), so the status is not recorded there.
+    if (result.prChecks) {
+      payload.prChecks = result.prChecks;
     }
   }
   if (!report) {

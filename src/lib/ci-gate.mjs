@@ -404,3 +404,248 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
 
   return { ok: true, commit };
 }
+
+// The buckets `gh pr checks --required --json name,bucket` reports. `pass` and
+// `skipping` read as a pass, the same conclusions the gate accepts; `fail` and
+// `cancel` are failures; `pending` is neither. A bucket outside this set is not
+// a status this read knows, so it is unresolved rather than a guess.
+const PASS_BUCKETS = new Set(["pass", "skipping"]);
+const FAILING_BUCKETS = new Set(["fail", "cancel"]);
+const KNOWN_BUCKETS = new Set([...PASS_BUCKETS, ...FAILING_BUCKETS, "pending"]);
+
+/**
+ * The default bound on a status read. The read sits in front of a child turn
+ * that has its own much longer `--timeout`, so it needs its own bound: a `gh`
+ * that hangs must not hold the dispatch open (#320).
+ */
+export const DEFAULT_READ_TIMEOUT_MS = 60_000;
+
+/** One line of text for a prompt line or a report field. */
+function oneLine(text) {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * The listed checks, or null when the reply is not a wholly well-formed list.
+ * Every entry must be an object with a non-empty string `name` and a known
+ * string `bucket`. A lenient parse that drops the malformed entries would read
+ * as a pass whenever a pass entry sits beside a malformed one, so any malformed
+ * entry rejects the whole reply (#320 review).
+ */
+function parseListedChecks(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return null;
+  }
+  for (const check of parsed) {
+    if (typeof check !== "object" || check === null || Array.isArray(check)) {
+      return null;
+    }
+    if (typeof check.name !== "string" || oneLine(check.name) === "") {
+      return null;
+    }
+    if (typeof check.bucket !== "string" || !KNOWN_BUCKETS.has(check.bucket)) {
+      return null;
+    }
+  }
+  return parsed;
+}
+
+const names = (checks) => checks.map((check) => check.name).join(", ");
+
+/**
+ * Resolves the PR head, the commit GitHub evaluates the required checks for. A
+ * separate read from the check list, because `gh pr checks --json` reports no
+ * commit: the status is meaningless without the head it describes, and the
+ * reviewer must be able to compare it with the local head.
+ * @param {{ pr: number, cwd: string, gh: Function, signal: AbortSignal }} context
+ * @returns {Promise<string | null>} the head, or null when it cannot be read
+ */
+async function readPrHead({ pr, cwd, gh, signal }) {
+  try {
+    const { status, stdout } = await gh(["pr", "view", String(pr), "--json", "headRefOid"], cwd, {
+      signal,
+    });
+    if (status !== 0) {
+      return null;
+    }
+    const head = JSON.parse(stdout)?.headRefOid;
+    return typeof head === "string" && head !== "" ? head : null;
+  } catch (err) {
+    // An aborted read stopped on the time bound, which is a different condition
+    // from a head that cannot be read, and the summary must name it.
+    if (signal.aborted) {
+      throw err;
+    }
+    return null;
+  }
+}
+
+/**
+ * Reads the required-check status for the PR head, which a declared-PR run
+ * supplies to each reviewer prompt (issue #320). The read is evidence for the
+ * reviewer, not a gate: `gh pr checks` lists only the checks that already
+ * reported, so a pass here covers the listed checks only.
+ *
+ * It never throws. A failed read is `unresolved`, because the reviewer keeps its
+ * own read as the fallback and a turn must not fail over supplied evidence.
+ *
+ * The status comes from the exit code, which is the contract the reviewer rules
+ * and `docs/orchestrator-instructions.md` already state: 0 is a pass, 8 is a
+ * pending check, and 1 covers a failing check, a pull request with no required
+ * check, and a read error. Exit 1 reports failing only when the reply lists a
+ * failing required check, which is the same evidence the reviewer rule requires
+ * before it calls a blocker. Every other exit code, and any reply that is not a
+ * wholly well-formed list, is unresolved.
+ *
+ * A status is reported only for the head it describes. `head` is the local
+ * reviewed head, and a read whose PR head differs from it, or a read with no
+ * local head to compare, is unresolved, because a status on one head says
+ * nothing about the other. The head is read again after the checks, because the
+ * two reads are separate calls and the PR can advance between them: `gh pr
+ * checks` reports no commit, so a head that moved is the only signal that the
+ * checks belong to a different commit, and it is unresolved.
+ *
+ * known-limit: every status carries `advisory: true`, because one window survives
+ * the re-read. A head that advances to another commit and returns between the
+ * two head reads leaves both reads naming the same commit while the checks
+ * describe the other one, and no re-read separates that. The alternative,
+ * reading check runs for the exact commit, needs `gh api
+ * repos/{owner}/{repo}/commits/{sha}/check-runs`, which reports every check run
+ * on that commit rather than the required ones, so it would have to rebuild the
+ * required-name source from repository rulesets and classic protection. That is
+ * the gate's own resolution and duplicating it here would drift from the gate,
+ * which is the one read that enforces. The supplied status is therefore advisory
+ * evidence: the reviewer treats it as a report, and `--require-ci` re-reads
+ * GitHub and refuses the finish on the real condition. Ceiling: one reviewer
+ * turn whose `Checks` line reports a pass for a commit other than the reviewed
+ * head, in a run where the PR head moved away and back within the read. Upgrade
+ * path: read the required contexts and the check runs for the exact commit, and
+ * share that resolution with `checkCi` so the two cannot drift.
+ * @param {{ pr: number, cwd: string, head?: string | null, gh?: Function, timeoutMs?: number }} options
+ * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string, advisory: true }>}
+ */
+export async function readRequiredChecks({
+  pr,
+  cwd,
+  head = null,
+  gh = runGh,
+  timeoutMs = DEFAULT_READ_TIMEOUT_MS,
+}) {
+  const unresolved = (summary, prHead = null) => ({
+    pr,
+    head: prHead,
+    status: "unresolved",
+    checks: [],
+    summary,
+    advisory: true,
+  });
+
+  // The read is bounded, and the signal terminates the child, so a hung `gh`
+  // cannot stall the dispatch or outlive it. An external abort is reported as a
+  // timeout here, because from the read's side the call simply stopped.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const call = (args) => gh(args, cwd, { signal: controller.signal, timeoutMs });
+  let reply;
+  let prHead;
+  try {
+    prHead = await readPrHead({ pr, cwd, gh, signal: controller.signal });
+    if (prHead === null) {
+      return unresolved(`unread: the PR head for PR ${pr} could not be resolved`);
+    }
+    if (head === null) {
+      return unresolved(
+        `unread: PR ${pr} head ${prHead} cannot be compared with a local reviewed head`,
+        prHead,
+      );
+    }
+    if (prHead !== head) {
+      return unresolved(
+        `unread: PR ${pr} head ${prHead} differs from the local reviewed head ${head}`,
+        prHead,
+      );
+    }
+    reply = await call(["pr", "checks", String(pr), "--required", "--json", "name,bucket"]);
+    // The check read is a second call, so the PR can advance between the two.
+    // `gh pr checks` reports no commit, so the only way to bind the checks to a
+    // commit is to read the head again and refuse a head that moved. Without
+    // this the checks describe the new head while the summary names the old one,
+    // and a pass would describe a commit the reviewer is not looking at.
+    const after = await readPrHead({ pr, cwd, gh, signal: controller.signal });
+    if (after === null) {
+      return unresolved(
+        `unread: the PR head for PR ${pr} could not be re-read after the checks`,
+        prHead,
+      );
+    }
+    if (after !== prHead) {
+      return unresolved(
+        `unread: PR ${pr} head moved from ${prHead} to ${after} while the checks were read`,
+        after,
+      );
+    }
+  } catch (err) {
+    const detail = controller.signal.aborted
+      ? `the read timed out after ${timeoutMs}ms`
+      : oneLine(err?.message ?? err);
+    return unresolved(`unread: ${detail}`, prHead ?? null);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const { status, stdout, stderr } = reply;
+  const failure = oneLine(stderr) || `exit ${status}`;
+  const on = (head) => `on PR head ${head}`;
+  const listed = parseListedChecks(stdout);
+  if (listed === null) {
+    return unresolved(`unread: ${failure} ${on(prHead)}`, prHead);
+  }
+  const failing = listed.filter((check) => FAILING_BUCKETS.has(check.bucket));
+  const pending = listed.filter((check) => check.bucket === "pending");
+  const pass = listed.filter((check) => PASS_BUCKETS.has(check.bucket));
+
+  if (status === 0 && failing.length === 0 && pending.length === 0) {
+    return {
+      pr,
+      head: prHead,
+      status: "pass",
+      checks: pass.map((check) => check.name),
+      summary: `all ${pass.length} listed required checks passed ${on(prHead)}`,
+      advisory: true,
+    };
+  }
+  // Exit 8 is a pending check whatever the buckets say. The list names the
+  // pending checks when it has them; the exit code is what makes the status
+  // pending, so a list whose buckets disagree does not change the status.
+  if (status === 8 && failing.length === 0) {
+    return {
+      pr,
+      head: prHead,
+      status: "pending",
+      checks: pending.map((check) => check.name),
+      summary: `a required check is pending ${on(prHead)}${
+        pending.length > 0 ? `: ${names(pending)}` : ""
+      }`,
+      advisory: true,
+    };
+  }
+  if (status === 1 && failing.length > 0) {
+    return {
+      pr,
+      head: prHead,
+      status: "failing",
+      checks: failing.map((check) => check.name),
+      summary: `failing required checks ${on(prHead)}: ${names(failing)}`,
+      advisory: true,
+    };
+  }
+  return unresolved(`unread: ${failure} ${on(prHead)}`, prHead);
+}

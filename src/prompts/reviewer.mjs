@@ -21,11 +21,23 @@ const reviewerRules = `Review scope, in addition to the task below:
   - The read reflects the PR head on GitHub. When that head differs from the local reviewed head, report the mismatch in Checks.
   - When gh cannot read the checks, report the status as unresolved in Checks. Report a pass only when the read shows one.`;
 
-export function reviewerPrompt(prompt) {
+// The status a declared-PR run read for the PR head, as two lines inside the
+// required-check group. These lines replace the group's own read for this turn
+// rather than sitting beside it, so the prompt never orders a read and a
+// not-read at once (issue #320).
+function runtimeReadLines(prChecks) {
+  return [
+    `  - This run read the required checks for PR ${prChecks.pr} before this turn: ${prChecks.summary}. That status is advisory evidence for this turn, in place of the read above: report it, and treat it as a report rather than a verdict. The --require-ci finish gate re-reads GitHub and enforces the condition.`,
+    "  - Your own read is the fallback. Read the required checks yourself when the supplied status is unresolved, or when the reviewed head is not the head the supplied status names. Report any difference between your read and the supplied status in Checks.",
+  ];
+}
+
+export function reviewerPrompt(prompt, prChecks = null) {
+  const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   return `
 Do not implement, fix, edit, or change any file. Review, assess, and verify only. Live probes and read-only queries are authorized.
 
-${reviewerRules}
+${reviewerRules}${supplied}
 
 ${reviewerReportBlock}
 

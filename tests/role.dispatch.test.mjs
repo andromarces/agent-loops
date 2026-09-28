@@ -820,3 +820,43 @@ test("main prints exactly one JSON object on stdout on success and error paths",
     process.exitCode = origExitCode;
   }
 });
+
+// Usefulness: verifies acceptance — a run that declared a PR supplies the
+// required-check status the runtime read to the reviewer turn and reports that
+// read in the envelope and in the state file, so the parent can compare it with
+// the reviewer Checks line (issue #320).
+test("a declared PR supplies the runtime-read required-check status to the reviewer", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const reviewer = recordingAdapter([]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+  const init = dispatchArgv([...INIT_OVERRIDES, "--pr", "42"], "worker");
+  await executeRoleCommand(withRepo(init, repo), { agents, stdin: stdinPrompt });
+
+  // The status read resolves the PR head first and compares it with the local
+  // reviewed head, then lists the required checks. `gh` reports a failing check
+  // with exit 1.
+  const localHead = (await snapshot(repo)).head;
+  const gh = async (args) => {
+    const key = args.join(" ");
+    if (key === "pr view 42 --json headRefOid") {
+      return { status: 0, stdout: JSON.stringify({ headRefOid: localHead }), stderr: "" };
+    }
+    return {
+      status: 1,
+      stdout: JSON.stringify([{ name: "ci (macos-latest)", bucket: "fail" }]),
+      stderr: "",
+    };
+  };
+  const turn = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents,
+    stdin: stdinPrompt,
+    gh,
+  });
+
+  expect(reviewer.recorded[0].prompt).toContain("ci (macos-latest)");
+  expect(turn.payload).toMatchObject({ role: "reviewer", prChecks: { pr: 42, status: "failing" } });
+  const state = await readRepoState(repo);
+  expect(state.lastResult.prChecks).toMatchObject({ pr: 42, status: "failing" });
+});

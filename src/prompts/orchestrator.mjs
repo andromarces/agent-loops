@@ -29,12 +29,12 @@ export function requiredCheckWait({ requireCi, orchestratorKind, reviewerKind })
  * excepts. Each statement names the role whose CLI performs the read, because
  * the orchestrator and reviewer CLIs are chosen independently.
  */
-function prGateBlock({ requireCi, orchestratorKind, reviewerKind }) {
+function prGateBlock({ pr = null, requireCi, orchestratorKind, reviewerKind }) {
   if (requireCi === null) return "";
-  return `\n${prGateLines({ requireCi, orchestratorKind, reviewerKind }).join("\n")}`;
+  return `\n${prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }).join("\n")}`;
 }
 
-function prGateLines({ requireCi, orchestratorKind, reviewerKind }) {
+function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
   const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
   const rule = requiredCheckWait({ requireCi, orchestratorKind, reviewerKind });
 
@@ -58,11 +58,59 @@ function prGateLines({ requireCi, orchestratorKind, reviewerKind }) {
     ];
   }
 
+  // A run that declares a PR gets reworded lines, because the runtime supplies
+  // the status and the reviewer's own read is only a fallback. A run that declares
+  // none gets the origin/main lines unchanged: it makes no supplied read, so the
+  // rewording would describe one, and it would change a run this block does not
+  // otherwise touch (#320).
+  if (pr === null) {
+    return [
+      gate,
+      `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can read the required checks and the headless loop cannot wait. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.`,
+      "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
+    ];
+  }
+
   return [
     gate,
-    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can read the required checks and the headless loop cannot wait. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.`,
-    "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
+    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself and the headless loop cannot wait. Do not run gh pr checks.${suppliedRead(pr)}`,
+    // The advisory clause is rendered only for a declared PR, because the runtime
+    // reads the status only for a declared PR. A gated run that declares none
+    // gets the origin/main gate claim, which already calls the gate the only read.
+    `- The --require-ci finish gate is the only check read in this run that enforces anything, because the runtime applies it outside every read-only turn.${advisoryQualifier(pr)} A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.`,
   ];
+}
+
+/**
+ * The clause that keeps the gate claim and the supplied read consistent. A run
+ * that declares a PR gets the advisory read, so the gate line names it as the
+ * one read that does not enforce. A run that declares none gets no clause at
+ * all, because the runtime makes no supplied read without `--pr` and the prompt
+ * must not describe a read the runtime never makes (#320). The wording is the
+ * same rule `docs/orchestrator-instructions.md` states, so the two paths do not
+ * drift.
+ * @param {number | null} pr
+ * @returns {string}
+ */
+function advisoryQualifier(pr) {
+  if (pr === null) return "";
+  return " The advisory status read above reports to the reviewer and never enforces.";
+}
+
+/**
+ * The clause a run that declares its PR adds to the line that says no turn in
+ * the run can read the checks. The runtime reads the status outside every
+ * read-only turn and supplies it to the reviewer prompt as advisory evidence in
+ * place of the reviewer reading the checks; the reviewer keeps its own read as
+ * the fallback, and the `--require-ci` finish gate enforces the condition
+ * (#320). The wording is the same rule `docs/orchestrator-instructions.md`
+ * states, so the two paths do not drift.
+ * @param {number | null} pr
+ * @returns {string}
+ */
+function suppliedRead(pr) {
+  if (pr === null) return "";
+  return ` This run declares PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. That status is advisory evidence, in place of the reviewer reading the checks: the reviewer reports it, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The --require-ci finish gate re-reads GitHub and enforces the condition. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.`;
 }
 
 /**
@@ -123,7 +171,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${prGateBlock({ requireCi, orchestratorKind, reviewerKind })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.
@@ -158,6 +206,11 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
     status: result.status,
     ...(result.status === "ok" ? { response: result.response } : { error: result.error }),
     ...(result.reviewed ? { reviewed: result.reviewed } : {}),
+    // The status the runtime read for a declared PR, so the orchestrator holds
+    // both it and the reviewer `Checks` line in one prompt and can compare them
+    // (#320). A result with no read carries no field, so a turn that made no
+    // read cannot be read as one that did.
+    ...(result.prChecks ? { prChecks: result.prChecks } : {}),
     stepsUsed,
     stepsRemaining,
   };
