@@ -199,11 +199,13 @@ Role operations:
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
                                 timedOut flag. The bound starts at command entry
-                                and covers every read; a read that reaches it is
-                                stopped and given five seconds to exit, so the
-                                total bound is --timeout plus five seconds. Reads
-                                status only, so it needs no run state and changes
-                                nothing.
+                                and covers work-tree validation and every read;
+                                a read that reaches it is stopped and given five
+                                seconds to exit, and an exit the command could
+                                not observe is reported as
+                                childExitUnconfirmed. The total bound is
+                                --timeout plus five seconds. Reads status only,
+                                so it needs no run state and changes nothing.
 
 Role flags:
 

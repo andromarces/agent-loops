@@ -861,11 +861,21 @@ async function waitChecksOperation(
   if (args.timeoutProvided && args.timeout === null) {
     throw new RoleError("wait-checks refuses --timeout 0: the wait must stay bounded.");
   }
-  // Taken at command entry, so work-tree validation spends the same bound as
-  // the reads, and the whole command stays inside `--timeout` plus the
-  // child-exit ceiling the wait adds on a bound it reached (#329).
+  // Taken at command entry, so no step of the command pushes it past the stated
+  // bound: work-tree validation, every read, and the pauses between reads all
+  // come out of it (#329).
   const deadline = now() + (args.timeout ?? DEFAULT_WAIT_SECONDS) * 1000;
-  await assertWorkTree(args.cwd);
+  const remaining = deadline - now();
+  if (remaining > 0) {
+    // The validation runs inside the same bound, so a hung `git` cannot add its
+    // own time to the command. It refuses on the bound, because a work tree the
+    // probe never confirmed is not one this command may read.
+    await withinBound(
+      remaining,
+      () => assertWorkTree(args.cwd, { timeoutMs: remaining }),
+      "--cwd validation did not complete within the wait bound, so the work tree was not confirmed.",
+    );
+  }
   const result = await waitChecks({
     pr: args.pr,
     cwd: args.cwd,
@@ -876,6 +886,34 @@ async function waitChecksOperation(
     signal,
   });
   return { exitCode: 0, payload: { status: "ok", pr: args.pr, ...result } };
+}
+
+/**
+ * Runs `work` and rejects when it has not settled within `ms`, so a step that
+ * hangs cannot outlive the bound the caller owns. The work promise is consumed
+ * either way, so a late failure after the bound is not an unhandled rejection.
+ */
+async function withinBound(ms, work, message) {
+  let timer;
+  try {
+    const guarded = Promise.resolve(work()).then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    const expired = new Promise((resolve) => {
+      timer = setTimeout(() => resolve({ expired: true }), ms);
+    });
+    const outcome = await Promise.race([guarded, expired]);
+    if (outcome.expired) {
+      throw new RoleError(message);
+    }
+    if (outcome.error) {
+      throw outcome.error;
+    }
+    return outcome.value;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

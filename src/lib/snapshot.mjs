@@ -23,12 +23,25 @@ export class SnapshotError extends Error {
   }
 }
 
-export async function assertGitWorkTree(cwd) {
-  const result = await execa("git", ["rev-parse", "--is-inside-work-tree"], {
-    cwd,
-    reject: false,
-  });
+/**
+ * Refuses unless `cwd` is inside a Git work tree. `timeoutMs` bounds the probe
+ * and terminates the `git` child on expiry, so a caller that owns a total
+ * limit keeps that limit even when the probe hangs. A probe cut short by the
+ * bound refuses, because a work tree it never confirmed is not a verified one.
+ */
+export async function assertGitWorkTree(cwd, { timeoutMs = 0 } = {}) {
+  const options = { cwd, reject: false, cleanup: true, killDescendants: true };
+  if (timeoutMs > 0) {
+    options.timeout = timeoutMs;
+    options.forceKillAfterDelay = 1000;
+  }
+  const result = await execa("git", ["rev-parse", "--is-inside-work-tree"], options);
 
+  if (result.timedOut) {
+    throw new SnapshotError(
+      `--cwd validation did not complete within its bound, so the work tree was not confirmed: ${cwd}`,
+    );
+  }
   if (result.exitCode !== 0 || result.stdout.trim() !== "true") {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
   }

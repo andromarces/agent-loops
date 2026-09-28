@@ -209,6 +209,20 @@ test("waitChecks performs no read when the caller deadline has passed", async ()
   expect(reads).toBe(0);
 });
 
+// Usefulness: verifies the child-exit claim. When the ceiling expires with the
+// read still unaccounted for, the envelope says so, because the command cannot
+// claim an exit it did not observe (issue #329).
+test("waitChecks reports an unconfirmed child exit when the ceiling expires", async () => {
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 0.2,
+    // Never settles, so the exit of this read is never observed.
+    gh: () => new Promise(() => {}),
+  });
+  expect(result).toEqual({ timedOut: true, checks: [], childExitUnconfirmed: true });
+}, 20000);
+
 // Usefulness: verifies a read abandoned on the bound is not reported before the
 // `gh` child exits. The command waits for the child, so a parent that runs the
 // command again does not stack a second read on top of a live one (issue #329).
@@ -226,6 +240,9 @@ test("waitChecks waits for an abandoned gh read to exit before it returns", asyn
   });
   expect(result.timedOut).toBe(true);
   expect(Date.now() - started).toBeGreaterThanOrEqual(850);
+  // The read settled, so its exit was observed and the envelope does not claim
+  // otherwise.
+  expect(result.childExitUnconfirmed).toBeUndefined();
 });
 
 // Usefulness: verifies the child-exit ceiling. A read that never answers cannot

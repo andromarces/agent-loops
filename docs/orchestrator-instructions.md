@@ -253,16 +253,23 @@ be inside a Git work tree, as it is for `dispatch`, because the read runs there:
 `--timeout` is in seconds and defaults to 300. Set it below the command timeout
 your harness applies when that timeout is smaller. `--timeout 0` is refused.
 
-The bound starts at command entry, so work-tree validation and every read share
-it. The bound covers the reads, not only the pauses between them. Every read is
+The bound starts at command entry, so no step of the command adds time to it.
+Work-tree validation runs inside the bound, so a slow or hung `git` cannot push
+the command past it; a validation that reaches the bound refuses, because a work
+tree the probe never confirmed is not one this command may read. Every read is
 limited to the time the command has left, and a read that reaches the limit is
-stopped and then given five seconds to exit, so the command confirms the `gh`
-child is gone. The total bound of the command is `--timeout` plus those five
-seconds, so set `--timeout` at least five seconds below your harness command
-timeout. A wait that ends on the bound reports `timedOut: true` with the last
-check states it read. It is a completed read, not a read failure. An empty
-`checks` with `timedOut: true` means no check state was ever read, so it never
-reads as a pass.
+stopped and then given five seconds to exit. The total bound of the command is
+`--timeout` plus those five seconds, so set `--timeout` at least five seconds
+below your harness command timeout. A wait that ends on the bound reports
+`timedOut: true` with the last check states it read. It is a completed read, not
+a read failure. An empty `checks` with `timedOut: true` means no check state was
+ever read, so it never reads as a pass.
+
+`childExitUnconfirmed: true` appears only when those five seconds expired with the
+`gh` child still unaccounted for. The command does not claim an exit it did not
+observe, so a `gh` process from an earlier wait may still be running; a parent
+that sees it should settle the outstanding `gh` process before starting another
+wait.
 
 The `gh pr checks` exit codes decide the outcome, as the reviewer read states:
 exit 0 with no pending check listed is settled, exit 8 is pending, and exit 1 is

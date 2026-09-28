@@ -167,6 +167,37 @@ test("wait-checks reports the bound when validation left none for the wait", asy
   expect(read).toBe(false);
 });
 
+// Usefulness: verifies work-tree validation is inside the same total limit. A
+// validation that never answers must not let the command run past its stated
+// bound, and it must refuse rather than read from a work tree it never
+// verified (issue #329).
+test("wait-checks refuses when work-tree validation outlasts the bound", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  let read = false;
+  const started = Date.now();
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
+    {
+      // Never answers, as a hung `git` call does.
+      assertWorkTree: () => new Promise(() => {}),
+      gh: async () => {
+        read = true;
+        return { status: 0, stdout: JSON.stringify(SETTLED.checks), stderr: "" };
+      },
+    },
+  );
+  const elapsed = Date.now() - started;
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.status).toBe("error");
+  expect(result.payload.error).toMatch(/validation/);
+  // The command stops on its own bound, not on the harness command timeout.
+  expect(elapsed).toBeLessThan(6000);
+  expect(read).toBe(false);
+});
+
 // Usefulness: verifies a `--cwd` outside a Git work tree is refused before any
 // read, with the same message `dispatch` uses, so an invalid work tree cannot
 // read checks (issue #329).

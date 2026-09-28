@@ -143,9 +143,10 @@ function readOutcome(pr, { status, stdout, stderr, timedOut = false }) {
 /**
  * Runs one read bounded by `remainingMs` and signals `gh` to stop when the bound
  * elapses. A read the bound beat is then given `CHILD_EXIT_CEILING_MS` to exit,
- * so the command confirms the `gh` child is gone before it returns; a child
- * that outlives the ceiling is left to the kill already sent. Returns `null`
- * when the bound beat the read.
+ * so the command can confirm the `gh` child is gone. Returns the read result, or
+ * `{ timedOut: true, childExitUnconfirmed: true }` when that ceiling expired
+ * with the read still unaccounted for, which is a claim the command does not
+ * make on the parent's behalf (#329).
  */
 async function readWithin(gh, pr, cwd, remainingMs, signal) {
   const controller = new AbortController();
@@ -170,13 +171,13 @@ async function readWithin(gh, pr, cwd, remainingMs, signal) {
       // Stop the child, then wait for it to exit. `read` never rejects, so the
       // wait costs nothing and reports nothing about the abandoned read.
       controller.abort();
-      await Promise.race([
-        read,
+      const settled = await Promise.race([
+        read.then(() => true),
         new Promise((resolve) => {
-          ceiling = setTimeout(resolve, CHILD_EXIT_CEILING_MS);
+          ceiling = setTimeout(() => resolve(false), CHILD_EXIT_CEILING_MS);
         }),
       ]);
-      return null;
+      return settled ? { timedOut: true } : { timedOut: true, childExitUnconfirmed: true };
     }
     if (outcome.error) {
       throw outcome.error;
@@ -196,7 +197,9 @@ async function readWithin(gh, pr, cwd, remainingMs, signal) {
  * elapses. Every read is bounded by the time left, and a read that reaches the
  * bound is signaled to stop and given the child-exit ceiling. `timedOut` marks a
  * wait that ended on the bound; it is a completed read, and the envelope still
- * carries the last check states.
+ * carries the last check states. `childExitUnconfirmed` rides on the envelope
+ * only when that ceiling expired with the read still unaccounted for, because a
+ * child exit the command did not observe is not a claim it may make.
  *
  * `deadline` is an absolute time on the `now` clock. A caller passes it to bound
  * the whole command, including the work that runs before the first read; a
@@ -223,8 +226,14 @@ export async function waitChecks({
       return { timedOut: true, checks: last };
     }
     const result = await readWithin(gh, pr, cwd, remaining, signal);
-    if (result === null || result.timedOut) {
-      return { timedOut: true, checks: last };
+    if (result.timedOut) {
+      // `childExitUnconfirmed` rides only on the read whose exit the command
+      // could not observe, so an absent field is an observed exit.
+      return {
+        timedOut: true,
+        checks: last,
+        ...(result.childExitUnconfirmed ? { childExitUnconfirmed: true } : {}),
+      };
     }
     const outcome = readOutcome(pr, result);
     // An empty list is not a settled read: `gh pr checks --required` omits a
