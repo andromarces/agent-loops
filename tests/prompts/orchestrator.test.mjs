@@ -168,15 +168,22 @@ const REQUIRE_CLEAN_TRUE = /require[^.!?]{0,40}reviewed\.clean[^.!?]{0,20}\btrue
 const ACCEPT_WITHOUT_CHECKS =
   /treat[^.!?]{0,60}accept[^.!?]{0,40}without[^.!?]{0,20}Checks[^.!?]{0,20}not accepted/i;
 // The unresolved-compare rule, clause by clause. `do not finish as verified` is
-// the prohibition, and the clause that follows must name both permitted actions,
-// `abort` and `record`, beside the unresolved compare. The order is not the
-// contract, so `abort, or record the unresolved compare` and `record the
-// unresolved compare or abort` each pass, and a clause that drops either action
-// fails. `expectRule` puts the three terms in one clause, so the check covers the
-// order-agnostic form without an alternation per order (issue #351).
+// the prohibition, and the clause that follows must offer both permitted actions as
+// alternatives of one choice. Each action binds to the unresolved compare through the
+// join between them, so `abort, or record the unresolved compare` and `record the
+// unresolved compare or abort` each pass, while an `abort` that belongs to another part
+// of the clause, or a clause that drops either action, fails. The order and the join are
+// not the contract, so the check is one alternation over the two orders (issue #351).
 const UNRESOLVED_HEAD_CONDITION = /PR head cannot be resolved/i;
 const DO_NOT_FINISH_AS_VERIFIED = /do not finish as verified/i;
-const BOTH_ACTIONS_ON_UNRESOLVED = [/\babort\b/i, /\brecord\b/i, /unresolved compare/i];
+const ALTERNATIVE_JOIN = /\b(?:instead of|rather than|or)\b/i;
+const BOTH_ACTIONS_ON_UNRESOLVED = new RegExp(
+  [
+    `\\babort\\b[^.!?]{0,40}${ALTERNATIVE_JOIN.source}[^.!?]{0,40}\\brecord\\b[^.!?]{0,40}unresolved compare`,
+    `\\brecord\\b[^.!?]{0,40}unresolved compare[^.!?]{0,40}${ALTERNATIVE_JOIN.source}[^.!?]{0,40}\\babort\\b`,
+  ].join("|"),
+  "i",
+);
 const RECORD_UNDER_NOT_DONE_AND_OPEN =
   /record[^.!?]{0,40}unresolved compare[^.!?]{0,40}notDone[^.!?]{0,20}\bopen\b/i;
 
@@ -198,7 +205,7 @@ test("initialPrompt states the reviewed-state parent rules", () => {
   // uses.
   expectRule(prompt, UNRESOLVED_HEAD_CONDITION);
   expectRule(prompt, DO_NOT_FINISH_AS_VERIFIED);
-  expectRule(prompt, ...BOTH_ACTIONS_ON_UNRESOLVED);
+  expectRule(prompt, BOTH_ACTIONS_ON_UNRESOLVED);
   expectRule(prompt, RECORD_UNDER_NOT_DONE_AND_OPEN);
 });
 
@@ -240,7 +247,7 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, ACCEPT_WITHOUT_CHECKS),
   (text) => expectRule(text, UNRESOLVED_HEAD_CONDITION),
   (text) => expectRule(text, DO_NOT_FINISH_AS_VERIFIED),
-  (text) => expectRule(text, ...BOTH_ACTIONS_ON_UNRESOLVED),
+  (text) => expectRule(text, BOTH_ACTIONS_ON_UNRESOLVED),
   (text) => expectRule(text, RECORD_UNDER_NOT_DONE_AND_OPEN),
 ];
 
