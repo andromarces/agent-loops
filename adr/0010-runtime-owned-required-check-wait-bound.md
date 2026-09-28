@@ -39,35 +39,49 @@ ships no GNU coreutils, so a bound needs a second installation there.
 3. The bound is in seconds, defaults to 300, and refuses 0, because an unbounded
    wait is the outcome the operation exists to prevent. A parent whose harness
    command timeout is smaller sets a smaller bound.
-4. The bound covers the reads, not only the pauses. Each read is limited to the
-   time the wait has left, and a read that reaches the limit is signaled to stop.
-   `runGh` carries that limit to `execa` as `timeout`, with `cleanup` and
-   `killDescendants`, so the `gh` child is terminated rather than left running:
-   `SIGTERM` then `SIGKILL` after one second on macOS, and `taskkill /T /F` over
-   the process tree on Windows.
-5. The `gh pr checks` exit codes decide the outcome, as the reviewer read states
+4. The bound starts at command entry, so work-tree validation and every read
+   share it. The total bound of the command is the bound plus
+   `CHILD_EXIT_CEILING_MS`, five seconds: after the bound, a read that was cut
+   short is given that ceiling to exit, so the command confirms the `gh` child is
+   gone before it returns, and a child that outlives the ceiling is left to the
+   kill already sent. A parent sets a bound at least five seconds below its
+   harness command timeout.
+5. Each read is limited to the time the wait has left, and a read that reaches
+   the limit is signaled to stop. `runGh` carries that limit to `execa` as
+   `timeout`, with `cleanup` and `killDescendants`, so the `gh` child is
+   terminated rather than left running: `SIGTERM` then `SIGKILL` after one second
+   on macOS, and `taskkill /T /F` over the process tree on Windows.
+6. The `gh pr checks` exit codes decide the outcome, as the reviewer read states
    them: exit 0 with no pending check listed is settled, exit 8 is pending, and
    exit 1 is settled only when the output lists a failing required check, because
    exit 1 also covers a repository with no required check and a read error. Any
    other exit 1, and any output that is not a check list, refuses with a reason,
    so an unresolved read never reads as a pass.
-6. The operation reads status only. It writes no run state, needs no init, and
+7. Every check item is validated: it must carry a non-empty `name` and at least
+   one of `state` or `bucket`, and every value it carries must be one the CLI
+   documents. An item that fails any of those checks is unresolved, so an item
+   the runtime cannot read can never settle the list as a pass.
+8. The operation reads status only. It writes no run state, needs no init, and
    changes nothing, so it is not a lifecycle operation and is absent from the
    `turns` history. It refuses `--role`, `--reason`, `--require-accept`, and
    `--require-ci`, which belong to the other operations.
-7. `--cwd` must be inside a Git work tree, by the same `assertGitWorkTree` rule
-   `dispatch` applies, because the read runs in that work tree.
-8. A required check that has not started is absent from `gh pr checks
+9. `--cwd` must be inside a Git work tree, by the same `assertGitWorkTree` rule
+   `dispatch` applies, because the read runs in that work tree. The rule is
+   injected into the operation, so a test can spend clock time on validation and
+   check that the time comes out of the bound.
+10. A required check that has not started is absent from `gh pr checks
 --required`, so an empty list is not a settled read. The wait keeps polling an
-   empty list on exit 0 or exit 8, and returns it on the bound. The same empty
-   list on exit 1 is a different case, and refuses.
-9. The interactive instructions name `agent-loop role wait-checks` as the only
-   command the check status read covers, in place of the bare `gh` watch.
+    empty list on exit 0 or exit 8, and returns it on the bound. The same empty
+    list on exit 1 is a different case, and refuses.
+11. The interactive instructions name `agent-loop role wait-checks` as the only
+    command the check status read covers, in place of the bare `gh` watch.
 
 ## Consequences
 
 - A parent learns the bound from the CLI instead of from its harness, and a wait
   that outlasts the harness command timeout returns before it is killed.
+- The total bound is the bound plus the five-second child-exit ceiling, so the
+  parent sets a bound five seconds below its harness command timeout, not at it.
 - The wait ends when the checks settle, on the bound, or on an unresolved read
   that exits 1. It does not fail on a pending check, so the parent still applies
   the rule that a pending check is not a finish condition.
@@ -102,7 +116,16 @@ ships no GNU coreutils, so a bound needs a second installation there.
 6. **Leave the child to the harness**: the first review rejected it too. A wait
    that abandons a read still leaves a `gh` process behind, and a parent that
    waits repeatedly accumulates one per wait, so the read is bounded and stopped
-   inside the runtime.
+   inside the runtime, and the command then waits for the child to exit up to a
+   stated ceiling.
+7. **Return at once on a bound that elapsed**: the second review rejected it. A
+   command that returns while its `gh` child is still alive hands the next wait a
+   second live read, and a parent that waits repeatedly accumulates them, so the
+   command confirms the child exit up to a ceiling it states.
+8. **Bound only the reads, starting the clock at the first read**: the second
+   review rejected it. Work-tree validation runs inside the command, so a bound
+   that starts after it lets the command run for validation time plus the bound,
+   which is the overage the bound exists to prevent.
 
 ## Authors
 

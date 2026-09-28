@@ -2,10 +2,10 @@ import { expect, test } from "vitest";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
 
 // A scripted `gh` for the required-check read. Each entry is `{ status, checks,
-// stdout }` and the last entry repeats, so a wait that polls more times than the
-// script holds still answers. A `stdout` value is used verbatim, which covers a
-// read whose output is not a check list. An unmatched call is an error, so a test
-// never passes on a missing fixture.
+// stdout, stderr }` and the last entry repeats, so a wait that polls more times
+// than the script holds still answers. A `stdout` value is used verbatim, which
+// covers a read whose output is not a check list. An unmatched call is an error,
+// so a test never passes on a missing fixture.
 function scriptedGh(reads) {
   let n = 0;
   return async (args, cwd) => {
@@ -36,13 +36,26 @@ function fakeClock() {
   };
 }
 
-function check(name, bucket, state = "PENDING") {
+function check(name, bucket, state) {
   return { name, state, bucket };
 }
 
-const PENDING = { status: 8, checks: [check("ci", "pending", "IN_PROGRESS")] };
-const PASSED = { status: 0, checks: [check("ci", "pass", "SUCCESS")] };
-const FAILED = { status: 1, checks: [check("ci", "fail", "FAILURE")] };
+const PENDING_ITEM = check("ci", "pending", "IN_PROGRESS");
+const PASSED_ITEM = check("ci", "pass", "SUCCESS");
+const FAILED_ITEM = check("ci", "fail", "FAILURE");
+
+/** Runs one wait against a single scripted read, on a fake clock. */
+function once(read, timeoutSeconds = 60) {
+  const clock = fakeClock();
+  return waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds,
+    gh: scriptedGh([read]),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+}
 
 // Usefulness: verifies the wait returns the required check states and no timeout
 // once nothing is pending, and that it keeps polling past a read that reported no
@@ -54,15 +67,106 @@ test("waitChecks returns the check states and no timeout once nothing is pending
     pr: 42,
     cwd: ".",
     timeoutSeconds: 300,
-    gh: scriptedGh([{ status: 0, checks: [] }, PENDING, PASSED]),
+    gh: scriptedGh([
+      { status: 0, checks: [] },
+      { status: 8, checks: [PENDING_ITEM] },
+      {
+        status: 0,
+        checks: [PASSED_ITEM],
+      },
+    ]),
     now: clock.now,
     sleep: clock.sleep,
   });
-  expect(result).toEqual({
-    timedOut: false,
-    checks: [{ name: "ci", state: "SUCCESS", bucket: "pass" }],
-  });
+  expect(result).toEqual({ timedOut: false, checks: [PASSED_ITEM] });
   expect(clock.elapsed()).toBeLessThan(300_000);
+});
+
+// Usefulness: verifies exit 0: every listed required check passed, so the wait is
+// settled and reports no timeout (issue #329).
+test("waitChecks settles on exit 0 with every required check passed", async () => {
+  expect(
+    await once({ status: 0, checks: [PASSED_ITEM, check("lint", "pass", "SUCCESS")] }),
+  ).toEqual({
+    timedOut: false,
+    checks: [PASSED_ITEM, check("lint", "pass", "SUCCESS")],
+  });
+});
+
+// Usefulness: verifies exit 8: a required check is pending, so the wait runs to
+// its bound and reports the pending check as the last state it read (issue #329).
+test("waitChecks keeps waiting on exit 8 and reports the bound", async () => {
+  expect(await once({ status: 8, checks: [PENDING_ITEM] })).toEqual({
+    timedOut: true,
+    checks: [PENDING_ITEM],
+  });
+});
+
+// Usefulness: verifies exit 1 with a failing required check listed: the wait is
+// settled and reports the failure instead of waiting it out to the bound
+// (issue #329).
+test("waitChecks settles on exit 1 when a failing required check is listed", async () => {
+  expect(await once({ status: 1, checks: [FAILED_ITEM] })).toEqual({
+    timedOut: false,
+    checks: [FAILED_ITEM],
+  });
+});
+
+// Usefulness: verifies exit 1 on a base branch with no required check refuses
+// instead of reading as a pass, because an empty list and a read error share that
+// exit code (issue #329).
+test("waitChecks refuses exit 1 when the base branch has no required check", async () => {
+  await expect(
+    once({
+      status: 1,
+      checks: [],
+      stderr: "no required checks found on the 'main' branch",
+    }),
+  ).rejects.toThrow(/gh pr checks 42 --required/);
+});
+
+// Usefulness: verifies exit 1 as a read error refuses instead of reading as a
+// pass (issue #329).
+test("waitChecks refuses exit 1 when the read itself failed", async () => {
+  await expect(
+    once({
+      status: 1,
+      checks: [],
+      stderr: "could not resolve to a PullRequest with the number of 999999",
+    }),
+  ).rejects.toThrow(/gh pr checks 42 --required/);
+});
+
+// Usefulness: verifies unparseable output refuses instead of reading as a pass,
+// so a `gh` that answers with anything other than a check list is unresolved
+// (issue #329).
+test("waitChecks refuses output that is not a check list", async () => {
+  await expect(once({ status: 0, stdout: "no checks here" })).rejects.toThrow(
+    /gh pr checks 42 --required/,
+  );
+});
+
+// Usefulness: verifies every check item is validated. A malformed item carries
+// no state to read, and must be unresolved rather than a settled pass (issue #329).
+test("waitChecks refuses a check item that is not well formed", async () => {
+  const malformed = [
+    [{}],
+    [{ name: "ci" }],
+    [{ state: "SUCCESS", bucket: "pass" }],
+    [{ name: "", state: "SUCCESS", bucket: "pass" }],
+    [{ name: "ci", bucket: "unknown" }],
+    [{ name: "ci", state: "MADE_UP" }],
+    ["pass"],
+    [null],
+  ];
+  for (const checks of malformed) {
+    await expect(once({ status: 0, checks })).rejects.toThrow(/gh pr checks 42 --required/);
+  }
+  // A well-formed item beside a malformed one is still unresolved, so one bad
+  // item cannot hide behind a passing one.
+  await expect(once({ status: 0, checks: [PASSED_ITEM, {}] })).rejects.toThrow(
+    /gh pr checks 42 --required/,
+  );
 });
 
 // Usefulness: verifies the timeout outcome: a check still pending when the bound
@@ -74,110 +178,79 @@ test("waitChecks reports the bound as reached when a required check is still pen
     pr: 42,
     cwd: ".",
     timeoutSeconds: 60,
-    gh: scriptedGh([PENDING]),
+    gh: scriptedGh([{ status: 8, checks: [PENDING_ITEM] }]),
     now: clock.now,
     sleep: clock.sleep,
   });
-  expect(result).toEqual({
-    timedOut: true,
-    checks: [{ name: "ci", state: "IN_PROGRESS", bucket: "pending" }],
-  });
+  expect(result).toEqual({ timedOut: true, checks: [PENDING_ITEM] });
   // The wait never runs past the bound it was given.
   expect(clock.elapsed()).toBeGreaterThanOrEqual(60_000);
-  expect(clock.elapsed()).toBeLessThan(60_000 + 60_000);
+  expect(clock.elapsed()).toBeLessThan(120_000);
 });
 
-// Usefulness: verifies the bound holds when a `gh` read never answers. The
-// read is abandoned on the bound, the wait reports the bound as reached, and the
-// read is signaled to stop, so a hung `gh` cannot outlast the bound or leave its
-// child running (issue #329). A real short bound on the real clock, because the
-// contract is wall-clock time against a hung child.
-test("waitChecks returns inside the bound when a gh read never answers", async () => {
+// Usefulness: verifies a bound already spent before the first read performs no
+// read at all. The caller owns that bound, which is how the work that runs before
+// the first read, such as work-tree validation, stays inside it (#329).
+test("waitChecks performs no read when the caller deadline has passed", async () => {
+  const clock = fakeClock();
+  let reads = 0;
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    deadline: 1000,
+    gh: async () => {
+      reads += 1;
+      return { status: 0, stdout: JSON.stringify([PASSED_ITEM]), stderr: "" };
+    },
+    now: () => 1000,
+    sleep: clock.sleep,
+  });
+  expect(result).toEqual({ timedOut: true, checks: [] });
+  expect(reads).toBe(0);
+});
+
+// Usefulness: verifies a read abandoned on the bound is not reported before the
+// `gh` child exits. The command waits for the child, so a parent that runs the
+// command again does not stack a second read on top of a live one (issue #329).
+test("waitChecks waits for an abandoned gh read to exit before it returns", async () => {
+  const started = Date.now();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 0.2,
+    // Answers only after the bound, as a slow child does.
+    gh: () =>
+      new Promise((resolve) => {
+        setTimeout(() => resolve({ status: 0, stdout: "[]", stderr: "" }), 900);
+      }),
+  });
+  expect(result.timedOut).toBe(true);
+  expect(Date.now() - started).toBeGreaterThanOrEqual(850);
+});
+
+// Usefulness: verifies the child-exit ceiling. A read that never answers cannot
+// hold the command open forever, so the command returns within the bound plus
+// the ceiling and reports the bound (issue #329).
+test("waitChecks returns within the bound plus the child-exit ceiling", async () => {
   const signals = [];
   const started = Date.now();
   const result = await waitChecks({
     pr: 42,
     cwd: ".",
     timeoutSeconds: 0.2,
-    // Never settles on its own, and records the signal that must stop it.
+    // Never settles, and records the signal that must stop it.
     gh: async (args, cwd, { signal } = {}) => {
       signals.push(signal);
       return new Promise(() => {});
     },
   });
   expect(result.timedOut).toBe(true);
-  expect(Date.now() - started).toBeLessThan(5000);
+  const elapsed = Date.now() - started;
+  // The ceiling is spent, and the total stays inside the stated bound.
+  expect(elapsed).toBeGreaterThanOrEqual(5000);
+  expect(elapsed).toBeLessThan(10_000);
   // Every read is bounded by the time left and is signaled to stop when the
   // bound is reached, which is what terminates the `gh` child.
   expect(signals).toHaveLength(1);
   expect(signals[0].aborted).toBe(true);
-});
-
-// Usefulness: verifies the `gh pr checks` exit codes map as the instructions
-// state, so a pass is reported only from a settled read (issue #329).
-test("waitChecks maps the gh pr checks exit codes to the wait outcome", async () => {
-  const run = async (read) => {
-    const clock = fakeClock();
-    return waitChecks({
-      pr: 42,
-      cwd: ".",
-      timeoutSeconds: 60,
-      gh: scriptedGh([read]),
-      now: clock.now,
-      sleep: clock.sleep,
-    });
-  };
-
-  // Exit 0: every listed required check passed, so the wait is settled.
-  expect(await run(PASSED)).toEqual({
-    timedOut: false,
-    checks: [{ name: "ci", state: "SUCCESS", bucket: "pass" }],
-  });
-  // Exit 8: a check is pending, so the wait runs to its bound.
-  expect(await run(PENDING)).toMatchObject({ timedOut: true });
-  // Exit 1 with a listed failing required check: settled, and the failure is
-  // reported instead of being waited out.
-  expect(await run(FAILED)).toEqual({
-    timedOut: false,
-    checks: [{ name: "ci", state: "FAILURE", bucket: "fail" }],
-  });
-});
-
-// Usefulness: verifies an exit 1 that lists no failing required check is
-// unresolved rather than a pass. Exit 1 covers a repository with no required
-// check and a read error, so neither may read as a clean result (issue #329).
-test("waitChecks refuses an exit 1 that lists no failing required check", async () => {
-  for (const read of [
-    { status: 1, checks: [], stderr: "no required checks found on the 'main' branch" },
-    { status: 1, stdout: "not a check list", stderr: "gh: could not resolve to a PullRequest" },
-  ]) {
-    const clock = fakeClock();
-    await expect(
-      waitChecks({
-        pr: 42,
-        cwd: ".",
-        timeoutSeconds: 300,
-        gh: scriptedGh([read]),
-        now: clock.now,
-        sleep: clock.sleep,
-      }),
-    ).rejects.toThrow(/gh pr checks 42 --required/);
-  }
-});
-
-// Usefulness: verifies a read whose output is not a check list refuses with a
-// reason instead of reporting an empty settled wait, so an unresolved read never
-// reads as a clean result (issue #329).
-test("waitChecks refuses a required-check read it cannot parse", async () => {
-  const clock = fakeClock();
-  await expect(
-    waitChecks({
-      pr: 42,
-      cwd: ".",
-      timeoutSeconds: 300,
-      gh: async () => ({ status: 0, stdout: "no checks here", stderr: "" }),
-      now: clock.now,
-      sleep: clock.sleep,
-    }),
-  ).rejects.toThrow(/gh pr checks 42 --required/);
-});
+}, 20000);

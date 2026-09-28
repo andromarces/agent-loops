@@ -198,10 +198,12 @@ Role operations:
   abort                         End the run with --reason.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
-                                timedOut flag. Every read is bounded by the time
-                                left, and a read that reaches the bound is stopped.
-                                Reads status only, so it needs no run state and
-                                changes nothing.
+                                timedOut flag. The bound starts at command entry
+                                and covers every read; a read that reaches it is
+                                stopped and given five seconds to exit, so the
+                                total bound is --timeout plus five seconds. Reads
+                                status only, so it needs no run state and changes
+                                nothing.
 
 Role flags:
 

@@ -104,6 +104,69 @@ test("wait-checks refuses a call with no --pr", async () => {
   expect(result.payload.error).toMatch(/--pr/);
 });
 
+// Usefulness: verifies the bound starts at command entry, not at the first
+// check read. Work-tree validation runs inside the command, so the read is
+// bounded by what is left of the command bound rather than by a fresh full
+// bound (issue #329).
+test("wait-checks spends work-tree validation inside the bound", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const clock = { now: 0 };
+  const bounds = [];
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
+    {
+      now: () => clock.now,
+      // Validation spends 400ms of the one-second command bound.
+      assertWorkTree: async () => {
+        clock.now += 400;
+      },
+      gh: async (args, cwd, { timeoutMs } = {}) => {
+        bounds.push(timeoutMs);
+        return { status: 0, stdout: JSON.stringify(SETTLED.checks), stderr: "" };
+      },
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({
+    status: "ok",
+    pr: 42,
+    timedOut: false,
+    checks: SETTLED.checks,
+  });
+  // 1000ms of bound minus the 400ms validation, not a fresh 1000ms.
+  expect(bounds).toEqual([600]);
+});
+
+// Usefulness: verifies a bound spent before the first read reports the bound
+// without reading, so a parent sees the bound it ran out of (issue #329).
+test("wait-checks reports the bound when validation left none for the wait", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const clock = { now: 0 };
+  let read = false;
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
+    {
+      now: () => clock.now,
+      assertWorkTree: async () => {
+        clock.now += 5000;
+      },
+      gh: async () => {
+        read = true;
+        return { status: 8, stdout: JSON.stringify(PENDING.checks), stderr: "" };
+      },
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({ status: "ok", pr: 42, timedOut: true, checks: [] });
+  expect(read).toBe(false);
+});
+
 // Usefulness: verifies a `--cwd` outside a Git work tree is refused before any
 // read, with the same message `dispatch` uses, so an invalid work tree cannot
 // read checks (issue #329).

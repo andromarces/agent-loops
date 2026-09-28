@@ -835,11 +835,19 @@ async function abort(args) {
  * the bound elapses, then prints the last check states with a `timedOut` flag.
  * It reads status only, so it touches no run state and needs no init, but it
  * applies the same `--cwd` rule as `dispatch`, because the read runs in that
- * work tree. The bound defaults to 300 seconds; `--timeout 0` is refused,
- * because an unbounded wait is the outcome this operation exists to prevent
- * (#329).
+ * work tree. The bound starts at command entry, so validation and every read
+ * share it, and the command returns within the bound plus the child-exit ceiling
+ * the wait adds on a bound it reached. The bound defaults to 300 seconds;
+ * `--timeout 0` is refused, because an unbounded wait is the outcome this
+ * operation exists to prevent (#329).
  */
-async function waitChecksOperation(args, { gh, signal, now, sleep } = {}) {
+// `assertWorkTree` is the real `assertGitWorkTree` unless a caller injects it,
+// so a test can spend clock time on work-tree validation and check that the time
+// comes out of the wait bound.
+async function waitChecksOperation(
+  args,
+  { gh, signal, now = Date.now, sleep, assertWorkTree = assertGitWorkTree } = {},
+) {
   if (args.role !== null) {
     throw new RoleError("--role is only valid for dispatch.");
   }
@@ -853,11 +861,15 @@ async function waitChecksOperation(args, { gh, signal, now, sleep } = {}) {
   if (args.timeoutProvided && args.timeout === null) {
     throw new RoleError("wait-checks refuses --timeout 0: the wait must stay bounded.");
   }
-  await assertGitWorkTree(args.cwd);
+  // Taken at command entry, so work-tree validation spends the same bound as
+  // the reads, and the whole command stays inside `--timeout` plus the
+  // child-exit ceiling the wait adds on a bound it reached (#329).
+  const deadline = now() + (args.timeout ?? DEFAULT_WAIT_SECONDS) * 1000;
+  await assertWorkTree(args.cwd);
   const result = await waitChecks({
     pr: args.pr,
     cwd: args.cwd,
-    timeoutSeconds: args.timeout ?? DEFAULT_WAIT_SECONDS,
+    deadline,
     gh,
     now,
     sleep,
