@@ -59,16 +59,28 @@ test("a worker response written to the prompt block parses a Checks value", () =
   expect(report.checks).toBe("pnpm test passed");
 });
 
-// Usefulness: verifies the first worker turn commits and pushes on the named PR
-// branch for PR work, so the reviewer sees a committed head, the PR head matches
-// that commit, and reviewed.clean can be true (issue #252).
+// The role bullet that carries the PR-branch rule. The bullet is located by the
+// branch term and checked for the terms that carry the rule, not against a whole
+// sentence, so a same-meaning reword keeps the assertion and a dropped bullet
+// fails the lookup (issue #252, issue #328).
+function prBranchBullet(prompt) {
+  const bullet = prompt
+    .split(/\n\s*-\s/)
+    .map((entry) => entry.replace(/\s+/g, " "))
+    .find((entry) => /PR branch/i.test(entry));
+  expect(bullet, "the worker prompt states no PR-branch rule").toBeTruthy();
+  return bullet;
+}
+
+// Usefulness: verifies the first worker turn tells the worker to commit and push
+// on the branch the dispatcher names, and what counts as PR work, so the
+// reviewer sees a committed head, the PR head matches that commit, and
+// reviewed.clean can be true (issue #252, issue #328).
 test("first worker turn commits and pushes on the named PR branch for PR work", () => {
-  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
-  expect(prompt).toContain("For PR work, the dispatcher names the PR branch.");
-  expect(prompt).toContain(
-    "Commit your change on that branch and push it, so the reviewer sees a committed head and the PR head matches that commit.",
-  );
-  expect(prompt).toContain("A task is PR work when its change is delivered on a pull request.");
+  const bullet = prBranchBullet(workerPrompt("do the task", true));
+  for (const term of [/\bPR branch\b/i, /\bcommit\b/i, /\bpush\b/i, /pull request/i]) {
+    expect(bullet, String(term)).toMatch(term);
+  }
 });
 
 // Usefulness: verifies later worker turns stay raw; the session already holds the instructions.

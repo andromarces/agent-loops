@@ -15,41 +15,59 @@ const instructionsPath = join(
   "../../docs/orchestrator-instructions.md",
 );
 
-// Usefulness: verifies initialPrompt produces exact expected string structure.
+/** The sentences of a prompt or instruction text, whitespace collapsed. */
+const sentences = (text) => text.replace(/\s+/g, " ").split(/(?<=[.!?])\s+/);
+
+// A rule is asserted as the terms its own sentence carries, never as a whole
+// prompt sentence, so a same-meaning reword in either parent text keeps the
+// assertion and a dropped rule breaks it. The split needs a mark plus
+// whitespace, so a period inside `reviewed.head` does not end a sentence.
+function expectRule(text, ...terms) {
+  const stated = sentences(text).some((sentence) => terms.every((term) => term.test(sentence)));
+  expect(stated, `no sentence carries ${terms.map(String).join(" ")}`).toBe(true);
+}
+
+// Usefulness: verifies initialPrompt states the role, the step budget, the task
+// it completes, and the action format it answers with, so a headless turn runs
+// the loop instead of answering prose (issue #328).
 test("initialPrompt produces expected orchestrator prompt", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain("You are the orchestrator in an automated multi-agent coding loop.");
-  expect(prompt).toContain("maximum step budget of 10 steps");
+  expectRule(prompt, /orchestrator/i, /automated/i, /\bagent/i, /\bloop\b/i);
+  expectRule(prompt, /step budget/i, /\b10 steps\b/i);
   expect(prompt).toContain("Implement feature X");
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<instructions for worker>"}');
 });
 
 // Usefulness: verifies the headless prompt states the notes and deferred finish
 // mapping that the interactive instructions also carry: carry deferred items
-// forward, record resolved ones in changed, map unaddressed notes to open, and
-// split review-only findings between open and deferred (issue #214).
+// forward, record resolved ones in changed, map unaddressed notes to open, re-
+// review a change made for a note, and split review-only findings between open
+// and deferred (issue #214, issue #328).
 test("initialPrompt states the notes and deferred finish mapping", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain("Each child turn ends with a closing report block");
-  expect(prompt).toContain("Carry each Deferred item forward");
-  expect(prompt).toContain("record it in changed");
-  expect(prompt).toContain("Reviewer Notes that no later turn addressed go into open");
-  expect(prompt).toContain("obtain another reviewer accept on the new state before finish");
-  expect(prompt).toContain("In review-only mode, Blockers and Notes go into open");
-  expect(prompt).toContain("deferred holds out-of-scope items in every mode");
+  // The closing block: every child turn carries it, and conclusion, why, and
+  // blockers are required while checks, notes, and deferred are optional.
+  expectRule(prompt, /report block/i, /child turn/i);
+  expectRule(prompt, /conclusion/i, /\bwhy\b/i, /\bblockers\b/i, /required/i);
+  expectRule(prompt, /\bchecks\b/i, /\bnotes\b/i, /\bdeferred\b/i, /optional/i);
+  // Deferred items persist, leave the list on a later worker turn and a later
+  // reviewer accept, and the rest go into deferred at finish.
+  expectRule(prompt, /\bdeferred\b/i, /forward/i, /\bcarry\b/i);
+  expectRule(prompt, /\bchanged\b/i, /\baccept\b/i, /worker/i);
+  expectRule(prompt, /\bdeferred\b/i, /\bfinish\b/i, /\bitem/i);
+  expectRule(prompt, /\bnotes\b/i, /addressed/i, /\bopen\b/i);
+  expectRule(prompt, /note/i, /worker/i, /\baccept\b/i, /new state/i, /\bfinish\b/i);
+  expectRule(prompt, /review-only/i, /\bblockers\b/i, /\bnotes\b/i, /\bopen\b/i, /\bdeferred\b/i);
+  expectRule(prompt, /out-of-scope/i, /every mode/i, /unresolved/i, /\bopen\b/i);
 });
 
 // Usefulness: verifies the headless parent names the guards and contracts at risk
 // in a reviewer prompt and does not restate the spec as the pass condition,
-// matching the interactive reviewer-prompt rule (issue #228).
+// matching the interactive reviewer-prompt rule (issue #228, issue #328).
 test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain(
-    "name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them",
-  );
-  expect(prompt).toContain(
-    "Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it",
-  );
+  expectRule(prompt, /reviewer/i, /guards/i, /contracts/i, /at risk/i, /trace/i);
+  expectRule(prompt, /restate/i, /spec/i, /pass condition/i, /reviewer/i);
 });
 
 // The reviewer-Checks gate rule, checked for presence only: one sentence names
@@ -83,31 +101,23 @@ test("initialPrompt states that only the reviewer Checks line gates", () => {
 
 // Usefulness: verifies the headless parent states the same reviewed-state rules
 // as the interactive instructions: compare head, require clean, and treat an
-// accept without a Checks line as not accepted (issue #217).
+// accept without a Checks line as not accepted (issue #217, issue #328).
 test("initialPrompt states the reviewed-state parent rules", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain(
-    "Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.",
-  );
-  expect(prompt).toContain("Require reviewed.clean: true for PR work.");
-  expect(prompt).toContain("Treat an accept without a Checks line as not accepted.");
-  expect(prompt).toContain(
-    "When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.",
-  );
+  expectRule(prompt, /reviewed\.head/i, /PR head/i, /resolve/i, /\bfinish\b/i);
+  expectRule(prompt, /reviewed\.clean/i, /\btrue\b/i, /PR work/i);
+  expectRule(prompt, /\baccept\b/i, /Checks/i, /not accepted/i);
+  expectRule(prompt, /PR head/i, /resolved/i, /verified/i, /abort/i, /notDone/i, /\bopen\b/i);
 });
 
 // Usefulness: verifies the headless prompt names the machine-readable marker the
 // parent sets when it records an unresolved PR-head compare, and shows it inside
 // the finish action object, so the runtime can turn it into a distinct
-// unresolved-compare event (issue #266).
+// unresolved-compare event (issue #266, issue #328).
 test("initialPrompt names the unresolvedCompare marker", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain(
-    'When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action.',
-  );
-  expect(prompt).toContain(
-    "For an unresolved PR-head compare, add the marker inside the same action object:",
-  );
+  expectRule(prompt, /unresolvedCompare/i, /abort/i, /\btrue\b/i);
+  expectRule(prompt, /marker/i, /action object/i);
   expect(prompt).toContain(
     '{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}, "unresolvedCompare": true}',
   );
@@ -116,31 +126,36 @@ test("initialPrompt names the unresolvedCompare marker", () => {
   // The marker is the only machine-readable record of the compare, so the prompt
   // must state that consequence and the instruction to set it, or the parent has
   // no reason to comply beyond the rule (#286).
-  expect(prompt).toContain(
-    "nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.",
-  );
+  expectRule(prompt, /marker/i, /machine-readable/i, /\bopen\b|omitted/i, /verified/i);
 });
+
+// The parent rules the interactive instructions and the headless prompt share,
+// each as the terms one sentence of both texts must carry. Term presence, not an
+// exact sentence, so a same-meaning reword of either text keeps the parity check
+// and a rule dropped from either text breaks it (issue #217, issue #252, issue
+// #328).
+const SHARED_PARENT_RULES = [
+  [/PR work/i, /pull request/i],
+  [/PR branch/i, /worker/i, /commit/i, /push/i, /reviewed head/i],
+  [/PR number/i, /head commit/i],
+  [/headless/i, /task/i, /PR number/i],
+  [/reviewed\.head/i, /PR head/i, /resolve/i, /\bfinish\b/i],
+  [/reviewed\.clean/i, /\btrue\b/i, /PR work/i],
+  [/\baccept\b/i, /Checks/i, /not accepted/i],
+  [/PR head/i, /resolved/i, /verified/i, /abort/i, /notDone/i, /\bopen\b/i],
+];
 
 // Usefulness: verifies the interactive instructions and the headless prompt
 // state the same reviewed-state parent rules, so the two parent paths never
-// diverge (issue #217, issue #252). The reviewer-Checks gate rule is compared by
-// the same presence check the gate test uses, so a reword keeps the parity check
-// and a removal breaks it (issue #318).
+// diverge (issue #217, issue #252, issue #328). The reviewer-Checks gate rule is
+// compared by the same presence check the gate test uses, so a reword keeps the
+// parity check and a removal breaks it (issue #318).
 test("interactive instructions and headless prompt share the reviewed-state rules", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
-  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  for (const rule of [
-    "A task is PR work when its change is delivered on a pull request.",
-    "For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head.",
-    "The run supplies the PR number, and the head commit comes from that PR.",
-    "In a headless run, the task names the PR number.",
-    "Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.",
-    "Require reviewed.clean: true for PR work.",
-    "Treat an accept without a Checks line as not accepted.",
-    "When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.",
-  ]) {
-    expect(instructions).toContain(rule);
-    expect(prompt).toContain(rule);
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
+  for (const rule of SHARED_PARENT_RULES) {
+    expectRule(instructions, ...rule);
+    expectRule(prompt, ...rule);
   }
   expectReviewerGateRule(instructions);
   expectReviewerGateRule(prompt);
@@ -163,12 +178,15 @@ test("resultPrompt carries the reviewed state for a reviewer result", () => {
 // Usefulness: verifies the headless prompt states the completion rule and its
 // mode mapping: a worker change needs a later reviewer accept, a run with no
 // worker turn finishes on the report, and the loop policy stays interactive
-// (issue #234).
+// (issue #234, issue #328). The gate the rule describes is covered where it runs,
+// in `--require-accept refuses a finish after a worker turn with no later review`
+// and `--require-accept refuses a finish that relies on a worker Checks line` in
+// tests/role.finish-abort.test.mjs, so this check covers the prompt text.
 test("initialPrompt states the completion rule and its mode mapping", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain("Do not finish while the latest changed state lacks a reviewer accept");
-  expect(prompt).toContain("a later reviewer turn returns Verdict: accept on that state");
-  expect(prompt).toContain("When no worker turn has run");
+  expectRule(prompt, /\bfinish\b/i, /reviewer accept/i, /changed state/i);
+  expectRule(prompt, /reviewer/i, /Verdict: accept/i, /state/i);
+  expectRule(prompt, /worker/i, /review-only/i, /\bfinish\b/i);
   expect(prompt).toContain("loop policy");
 });
 
