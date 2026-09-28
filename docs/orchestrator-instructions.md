@@ -226,19 +226,29 @@ The wait is a read of check status, so it stays inside the parent rules:
 `gh pr checks <pr> --required --watch` blocks until the checks report, and it
 returns the same exit codes as one read. Add `--fail-fast` to stop on the first
 failure, and `--interval <seconds>` to set the refresh. The command changes
-nothing, so the wait costs no dispatch.
+nothing, so the wait costs no dispatch. A required check that never reports
+leaves the wait unfinished: record it under `notDone` and `open` in the finish
+summary, or abort. Never record a check you could not read as passed.
 
 Keep the wait inside the command timeout your harness applies to a shell command.
-A required check that never reports leaves the wait unfinished: record it under
-`notDone` and `open` in the finish summary, or abort.
 
-The headless orchestrator waits the same way, inside its own turn, for the same
-reason: its turn is read-only, the watch changes nothing, and a step is charged
-only to `run_worker` and `run_reviewer`, so the wait costs no step
-(`src/prompts/orchestrator.mjs`). One difference remains. A parent waits under
-the timeout its harness applies to a command, while a headless turn waits under
-the per-invocation timeout `--timeout`, which defaults to 3600 seconds and is
-unbounded at 0.
+## Waiting in the headless loop
+
+The headless orchestrator turn is read-only, and whether it can wait for the
+required checks depends on the orchestrator CLI. A read-only invocation keeps
+shell network access for `claude`, `agy`, `opencode`, and `copilot`, so those
+turns can run the watch. The `codex` read-only sandbox blocks network, so a
+`codex` turn cannot read the checks at all and must not wait for them: the
+runtime applies the gate instead, so dispatch the reviewer and let the gate
+decide. See "Codex read-only network limit" in the README for the probe.
+
+A headless wait costs no step, because a step is charged only to
+`run_worker` and `run_reviewer`. It is not free of other cost. The turn is
+bounded by the per-invocation `--timeout`, which defaults to 3600 seconds and is
+unbounded at 0, and a turn that outlasts that bound ends the run on exit 1
+before it returns an action, so a long watch can end a run that would otherwise
+have finished. Bound the watch to a few minutes so it returns inside the turn,
+and record a check still pending after the wait under `notDone` and `open`.
 
 ## Several runs at once
 

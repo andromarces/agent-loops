@@ -6,6 +6,7 @@ import {
   initialPrompt,
   refusalPrompt,
   repairPrompt,
+  requiredCheckWait,
   resultPrompt,
 } from "../../src/prompts/orchestrator.mjs";
 
@@ -168,14 +169,54 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
   );
 });
 
-// Usefulness: verifies a --require-ci run is told to wait for the required checks
-// on the new PR head inside its own turn, so a pending check costs no reviewer
-// step, and the rule is absent without the flag (issue #319).
-test("initialPrompt states the required-check wait in a --require-ci run", () => {
-  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10, requireCi: 42 });
-  expect(prompt).toContain("gh pr checks <pr> --required --watch");
-  expect(prompt).toContain("costs no step");
-  expect(initialPrompt({ task: "Implement feature X", maxSteps: 10 })).not.toContain("--watch");
+// Usefulness: verifies the wait rule depends on the orchestrator CLI's read-only
+// network access, so a run that cannot read the checks is never told to wait for
+// them, and an ungated run is unaffected (issue #319).
+test("requiredCheckWait reports whether the orchestrator CLI can wait", () => {
+  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
+    expect(requiredCheckWait({ requireCi: 42, orchestratorKind: kind })).toBe("wait");
+  }
+  // The codex read-only sandbox blocks network, so its turn cannot read the checks.
+  expect(requiredCheckWait({ requireCi: 42, orchestratorKind: "codex" })).toBe("unavailable");
+  expect(requiredCheckWait({ requireCi: null, orchestratorKind: "claude" })).toBeNull();
+});
+
+// Usefulness: verifies a --require-ci run states the required-check wait rule, and
+// states why it cannot wait when the orchestrator CLI cannot read the checks
+// (issue #319).
+test("initialPrompt states the required-check wait rule for the orchestrator CLI", () => {
+  const prompt = (kind) =>
+    initialPrompt({
+      task: "Implement feature X",
+      maxSteps: 10,
+      requireCi: 42,
+      orchestratorKind: kind,
+    });
+  const wait = prompt("claude");
+  expect(wait).toContain("gh pr checks <pr> --required --watch");
+  expect(wait).toMatch(/wait for the required checks/i);
+
+  const unavailable = prompt("codex");
+  expect(unavailable).not.toContain("--watch");
+  expect(unavailable).toMatch(/cannot read the required checks/i);
+
+  expect(
+    initialPrompt({ task: "Implement feature X", maxSteps: 10, orchestratorKind: "claude" }),
+  ).not.toContain("--watch");
+});
+
+// Usefulness: verifies the wait rule states the turn cost, because a headless
+// orchestrator turn that outlasts the per-invocation timeout ends the run instead
+// of returning an action (issue #319).
+test("initialPrompt states that a wait can end the run at the turn timeout", () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    requireCi: 42,
+    orchestratorKind: "claude",
+  });
+  expect(prompt).toMatch(/--timeout/);
+  expect(prompt).toMatch(/exit 1/);
 });
 
 // Usefulness: verifies refusalPrompt carries the refusal reason and the supported

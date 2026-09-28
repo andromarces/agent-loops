@@ -2,7 +2,28 @@
 // for interactive parents (#56); this headless prompt states the same rules in
 // JSON-action form, including the completion rule. Keep the two consistent when
 // either changes.
-export function initialPrompt({ task, maxSteps, requireAccept = false, requireCi = null }) {
+// Orchestrator CLIs whose read-only turn keeps shell network access, so the turn
+// itself can read the required checks. The `codex` read-only sandbox blocks
+// network, so its turn cannot; an unknown CLI is treated the same as `codex`,
+// because a wait it cannot perform costs a run.
+const NETWORKED_READ_ONLY_ORCHESTRATORS = new Set(["claude", "agy", "opencode", "copilot"]);
+
+/**
+ * Reports whether a headless orchestrator can wait for the required checks itself.
+ * @returns {"wait" | "unavailable" | null} null when the run takes no PR gate.
+ */
+export function requiredCheckWait({ requireCi, orchestratorKind }) {
+  if (requireCi === null) return null;
+  return NETWORKED_READ_ONLY_ORCHESTRATORS.has(orchestratorKind) ? "wait" : "unavailable";
+}
+
+export function initialPrompt({
+  task,
+  maxSteps,
+  requireAccept = false,
+  requireCi = null,
+  orchestratorKind = null,
+}) {
   return `
 You are the orchestrator in an automated multi-agent coding loop.
 Your role is to direct the workflow to complete the user task.
@@ -40,7 +61,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${requireCi === null ? "" : `\n- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare. Before you dispatch the reviewer on a new PR head, wait for the required checks on that head to complete, and when a reviewer turn reports a pending required check, wait for it to complete before you finish. Wait inside your own turn with gh pr checks <pr> --required --watch, adding --fail-fast to stop on the first failure: the watch reads check status and changes nothing, so it costs no step, while a reviewer turn spent on a pending check costs one. Keep the watch inside the per-invocation timeout (--timeout, 3600 seconds by default). A check that never reports leaves the wait unfinished, so record that under notDone and open instead of waiting longer.`}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${requireCi === null ? "" : `\n- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare. ${requiredCheckWait({ requireCi, orchestratorKind }) === "wait" ? "Before you dispatch the reviewer on a new PR head, wait for the required checks on that head to complete, and when a reviewer turn reports a pending required check, wait for it to complete before you finish. Wait inside your own turn with gh pr checks <pr> --required --watch, adding --fail-fast to stop on the first failure: the watch reads check status and changes nothing, so it costs no step, while a reviewer turn spent on a pending check costs one. The wait is not free of risk, because this turn is bounded by --timeout (3600 seconds by default): a turn that outlasts it ends the run on exit 1 with no finish summary, so bound the watch to a few minutes and return inside the turn. A check that never reports leaves the wait unfinished, so record that under notDone and open instead of waiting longer." : `This run orchestrates through ${orchestratorKind}, whose read-only turn cannot read the required checks, so you cannot wait for them: do not spend a turn on gh pr checks. The runtime applies the gate, so dispatch the reviewer and record a pending check under notDone and open.`}`}
 
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
