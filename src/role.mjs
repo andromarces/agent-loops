@@ -198,7 +198,24 @@ function requireState(state, cwd) {
       `No run state for ${cwd}. Start one with: agent-loop role --task "..." --worker ... --reviewer ...`,
     );
   }
+  assertStateMaxSteps(state);
   return state;
+}
+
+/**
+ * A stored `maxSteps` is re-checked on every load, because a state file written
+ * by an earlier version, or hand-edited, reaches the step-budget guard without
+ * passing through `--max-steps` validation. Outside the safe integer range the
+ * step counter cannot advance by one, so the bound on `turns` would hold for no
+ * accepted value. The refusal names the state file field, which is what a
+ * maintainer must correct (#312).
+ */
+function assertStateMaxSteps(state) {
+  if (!Number.isSafeInteger(state.maxSteps) || state.maxSteps < 1) {
+    throw new RoleError(
+      `State file field maxSteps must be a positive safe integer, got: ${JSON.stringify(state.maxSteps ?? null)}.`,
+    );
+  }
 }
 
 function validateInitFlags(args, agents = {}) {

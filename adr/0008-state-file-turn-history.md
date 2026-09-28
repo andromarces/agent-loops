@@ -55,10 +55,17 @@ following the instructions records nothing.
    values. Above that range an integer double has no room for `value + 1`: a
    step counter would stop advancing and the bound above would hold for no
    accepted value.
-7. `verdict` is parsed from a reviewer turn's own closing block, so it cannot be
+7. The flag check alone does not cover every run. A non-init `dispatch`,
+   `finish`, or `abort` loads the stored state, and a `maxSteps` written by an
+   earlier version or hand-edited reaches the step-budget guard without passing
+   through `--max-steps` validation. `requireState` therefore re-checks the
+   stored `maxSteps` against the same safe-integer range on every load and
+   refuses with an error that names the state file field. Every budget a run can
+   act on is a safe integer.
+8. `verdict` is parsed from a reviewer turn's own closing block, so it cannot be
    inferred from process success. The state file is the only place the history
    lives; `--transcript` stays a per-call per-event log and is not the history.
-8. A state file written before this field starts with an empty history, so a run
+9. A state file written before this field starts with an empty history, so a run
    that began on an earlier version keeps working.
 
 ## Consequences
@@ -70,6 +77,11 @@ following the instructions records nothing.
   the headless CLI and the role subcommand, where it was previously accepted.
   Any caller that passed such a value must lower it; no realistic run needs more
   than `Number.MAX_SAFE_INTEGER` steps.
+- A run whose stored `maxSteps` is outside the range is refused on its next
+  `dispatch`, `finish`, or `abort`, naming the state file field. A run already
+  carrying such a value cannot be continued; the state file must be corrected or
+  the run replaced by a new init call. `abort` is refused too, so a maintainer
+  cannot end such a run through the subcommand.
 - `docs/orchestrator-instructions.md` documents the history, so an orchestrator
   following the instructions reads it after compaction or restart.
 - A turn's response text is still only in `lastResult` and, with

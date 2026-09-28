@@ -135,6 +135,46 @@ test("a turn whose child fails records an error turn", async () => {
   expect(state.turns[0].at).toEqual(expect.any(String));
 });
 
+// Usefulness: verifies the size bound on the resume path — a stored `maxSteps`
+// outside the safe integer range is refused before the step-budget guard reads
+// it. A state file written by an earlier version, or hand-edited, carries the
+// value straight to `stepsUsed >= maxSteps`, where an unsafe integer makes the
+// step counter stop advancing and the bound hold for no value (issue #312).
+// `finish` and `abort` load the same stored state, so they are refused too.
+test("a state file with a maxSteps outside the safe integer range is refused", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const stateFile = statePaths({ cwd: repo }).stateFile;
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const state = await readState(stateFile);
+  state.maxSteps = 1000000000000000000000;
+  await writeState(stateFile, state);
+
+  const worker = recordingAdapter([]);
+  const refused = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("maxSteps");
+  expect(worker.recorded.length).toBe(0);
+  expect((await readState(stateFile)).stepsUsed).toBe(1);
+
+  for (const argv of [
+    ["finish", "--cwd", "<repo>"],
+    ["abort", "--cwd", "<repo>", "--reason", "stop"],
+  ]) {
+    const other = await executeRoleCommand(withRepo(argv, repo), { stdin: stdinPrompt });
+    expect(other.exitCode).toBe(1);
+    expect(other.payload.error).toContain("maxSteps");
+  }
+  // The run is left as it was, so the refusal is a load-time check and not a
+  // lifecycle change.
+  expect((await readState(stateFile)).lifecycle).toBe("active");
+});
+
 /**
  * Puts the state file in the state a crash leaves: the step is charged, the
  * lifecycle is `dispatched`, and no result was recorded for that turn, so
