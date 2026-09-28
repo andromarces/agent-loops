@@ -428,15 +428,16 @@ clear error.
   for a fine-grained PAT without the Administration permission. A rate-limit or
   SSO 403 also fails the run, by design. The exception to ruleset readability is
   a private repository on the GitHub Free plan, where the plan does not allow the
-  rule at all. The two API sources, the branch rules and the classic protection,
-  answer 403 with `Upgrade to GitHub Pro or make this repository public to
-enable this feature.`, and that reply leaves each of them with no required
-  contexts. `gh pr checks --required` reads stdout only and never reads the
-  reply, so it contributes no names from that 403 either. All three sources are
-  then empty and the gate reaches the empty-union refusal instead of throwing. It
-  was measured with an admin classic PAT and an admin fine-grained PAT, and a
-  read-capable collaborator was not tested, so whether a non-admin sees the same
-  403 is unverified. And `gh pr checks
+  rule at all. The Free-plan 403, `Upgrade to GitHub Pro or make this repository
+public to enable this feature.`, was measured on the classic protection,
+  branch rules, and rulesets endpoints with an admin classic PAT and an admin
+  fine-grained PAT, and a read-capable collaborator was not tested, so whether a
+  non-admin sees the same 403 is unverified. That reply leaves each measured
+  endpoint with no required contexts. `gh pr checks --required` is an independent
+  source, its Free-plan reply was not measured, and the gate reads only its
+  stdout, so any failure from it contributes no names. On a private Free-plan
+  repository all three sources are then empty and the gate reaches the
+  empty-union refusal instead of throwing. And `gh pr checks
 --required` lists only checks that already reported on the commit. A
   blocked merge state refuses after the per-check pass, so a named check refusal
   keeps its name and a required check that never started cannot escape the gate,

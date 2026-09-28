@@ -37,22 +37,21 @@ function fail(reason) {
 // permission problem: the branch simply has no classic protection, and a
 // ruleset-only repository answers it for an admin.
 //
-// A private repository on the GitHub Free plan answers 403 on the two API
-// required-context sources, the branch rules and the classic protection, with a
-// message that names the plan instead of the credential (#301, measured on two
-// private Free-plan repositories with an admin classic PAT and an admin
-// fine-grained PAT):
+// A private repository on the GitHub Free plan answers 403 on the classic
+// protection, branch rules, and rulesets endpoints with a message that names the
+// plan instead of the credential (#301, measured on two private Free-plan
+// repositories with an admin classic PAT and an admin fine-grained PAT):
 //
 //   `Upgrade to GitHub Pro or make this repository public
 //    to enable this feature.`                     403  a private repository on
 //                                                     the Free plan
 //
 // The credential is not the problem, so the reasoning above does not carry over
-// and this alternative has its own argument. The plan does not allow the rule
-// that would require a check, so no required context can exist on that
-// repository and the source is empty by the same outcome the caller refuses on.
-// The reply is the same on a branch that exists and on one that does not, so it
-// carries nothing about the branch.
+// and this reply has its own argument. The plan does not allow the rule that
+// would require a check, so no required context can exist on that repository and
+// the source is empty by the same outcome the caller refuses on. The reply is
+// the same on a branch that exists and on one that does not, so it carries
+// nothing about the branch.
 //
 // Match the message, not the status. `gh` renders every failure as
 // `gh: <message> (HTTP <status>)`, so a rate-limit or SSO 403 carries the same
@@ -62,14 +61,12 @@ function fail(reason) {
 // anything unrecognized throws instead. A narrower match only costs a thrown
 // error, which still fails closed.
 //
-// Match the whole stderr, not one line of it, and take one trailing LF or CRLF
-// first so the line `gh` writes still matches. Without that a multiline flag or
-// an unanchored match reads any stderr that merely contains an alternative, so a
-// Free-plan line printed beside another error line would be swallowed as an
-// unreadable source and the real error lost. Every alternative is the whole
-// message `gh` received, so a reply that carries extra text before or after it,
-// or any other line with it, is a different reply and must throw. The `gh: `
-// prefix is optional because it is `gh`'s own rendering, not part of the message.
+// The Free-plan reply is compared as a whole string rather than added to
+// `UNREADABLE`. That pattern is an unanchored search, so an alternative added to
+// it matches any stderr that contains the message anywhere, including a reply
+// with extra text around it or another error line beside it. Comparing the whole
+// stderr, after dropping one trailing LF or CRLF, keeps the Free-plan reply exact
+// and leaves every input `UNREADABLE` treats a certain way untouched.
 //
 // `Not Found` and the 403s are safe to read as unreadable on these two calls: the
 // slug comes from `gh repo view` and the base branch from the pull request, both of
@@ -83,17 +80,22 @@ function fail(reason) {
 // is. The already-read values are what make a typo impossible here, not the
 // message.
 const UNREADABLE =
-  /^(?:gh: )?(?:(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)|Upgrade to GitHub Pro or make this repository public to enable this feature\. \(HTTP 403\))$/;
+  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)/;
 
-/** Whether `stderr` is one allowed unreadable-source reply, ignoring one trailing LF or CRLF. */
-function isUnreadable(stderr) {
-  return UNREADABLE.test(stderr.replace(/\r?\n$/, ""));
+// The exact reply a private Free-plan repository writes, compared whole so no
+// surrounding text or second line can pass as it.
+const FREE_PLAN_403 =
+  "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
+
+/** Whether `stderr` is the exact Free-plan 403, ignoring one trailing LF or CRLF. */
+function isFreePlan403(stderr) {
+  return stderr.replace(/\r?\n$/, "") === FREE_PLAN_403;
 }
 
 async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    if (allowUnreadable && isUnreadable(stderr)) {
+    if (allowUnreadable && (UNREADABLE.test(stderr) || isFreePlan403(stderr))) {
       return null;
     }
     throw new Error(`gh api ${args[0]} failed: ${stderr.trim() || `exit ${status}`}`);

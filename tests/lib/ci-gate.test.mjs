@@ -40,10 +40,9 @@ function run(name, conclusion) {
 // with the 404 a token without repository admin receives, a `forbidden` value
 // with the 403 a `GITHUB_TOKEN` receives, a `pat forbidden` value with the 403 a
 // fine-grained PAT without the Administration permission receives, a
-// `free plan` value with the 403 a private repository on the GitHub Free plan
-// returns for every required-context source, and a `rate limited` value with a
-// 403 that is not an unreadable-source answer. A `stderr: <text>` value fails
-// with that exact stderr, for a reply shape no name covers. An unmatched call is
+// `rate limited` value with a 403 that is not an unreadable-source answer. A
+// `stderr: <text>` value fails with that exact stderr, which covers the Free-plan
+// 403 and every other reply shape a named value does not. An unmatched call is
 // an error so a test never passes on a missing fixture. `null` is the admin
 // reply for a branch with no classic protection, which is also unreadable but
 // says so differently.
@@ -70,14 +69,6 @@ function fakeGh(routes) {
             status: 1,
             stdout: "",
             stderr: "gh: Resource not accessible by personal access token (HTTP 403)",
-          };
-        }
-        if (value === "free plan") {
-          return {
-            status: 1,
-            stdout: "",
-            stderr:
-              "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)",
           };
         }
         if (value === "rate limited") {
@@ -582,12 +573,13 @@ test("passes for a fine-grained PAT caller when every required check passed", as
   expect(result).toEqual({ ok: true, commit: HEAD });
 });
 
-// Usefulness: verifies the Free-plan 403 leaves the source unreadable rather
-// than failing the run, so an admin on a private Free-plan repository reaches
-// the named empty-union refusal instead of a raw throw. The plan does not allow
-// the rule that would require a check, so the source holds no required contexts.
-// `gh pr checks --required` reads stdout only, so it contributes no names from
-// the same 403 without reading the message (issue #301).
+// Usefulness: verifies the exact Free-plan 403 leaves the API sources unreadable
+// rather than failing the run, so an admin on a private Free-plan repository
+// reaches the named empty-union refusal instead of a raw throw. The plan does
+// not allow the rule that would require a check, so the source holds no required
+// contexts. `gh pr checks --required` is a separate source whose reply is not
+// measured; the fixture fails it so the union is empty the way an unmeasured
+// failure would leave it (issue #301).
 test("refuses on the empty union when the required-context sources answer the Free-plan 403", async () => {
   const result = await checkCi({
     pr: 42,
@@ -596,9 +588,9 @@ test("refuses on the empty union when the required-context sources answer the Fr
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: "free plan",
-        protection: "free plan",
-        prChecks: "free plan",
+        required: `stderr: ${FREE_PLAN}`,
+        protection: `stderr: ${FREE_PLAN}`,
+        prChecks: "rate limited",
         headRuns: [run("ci (ubuntu-latest)", "success")],
       }),
     ),
@@ -609,27 +601,54 @@ test("refuses on the empty union when the required-context sources answer the Fr
   });
 });
 
-// The reply shapes that carry the Free-plan message but are not the whole reply
-// `gh` writes. Each must throw, because reading one as an unreadable source would
-// drop every required context and downgrade a named check refusal (issue #301).
-// The rendered line a private repository on the GitHub Free plan answers every
-// required-context source with (#301).
+// The exact reply a private repository on the GitHub Free plan writes to the
+// required-context API endpoints (#301).
 const FREE_PLAN =
   "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
 
+const ENDINGS = { "no line ending": "", LF: "\n", CRLF: "\r\n" };
+
+for (const [ending, suffix] of Object.entries(ENDINGS)) {
+  // Usefulness: verifies the exact Free-plan 403 is read as an unreadable source
+  // with ${ending}, the one trailing line break `gh` may add included, so a
+  // caller on a private Free-plan repository reaches a named refusal (issue #301).
+  test(`reads the exact Free-plan 403 with ${ending} as an unreadable source`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          info: prInfo({ mergeStateStatus: "BLOCKED" }),
+          required: [],
+          protection: `stderr: ${FREE_PLAN}${suffix}`,
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+        }),
+      ),
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "no required checks were found for the base branch",
+    });
+  });
+}
+
+// Reply shapes that carry the Free-plan message but are not the whole reply
+// `gh` writes. Each must throw, because reading one as an unreadable source
+// would drop every required context and downgrade a named check refusal
+// (issue #301).
 const NOT_THE_WHOLE_REPLY = {
   "text before the message": `gh: failed to fetch: ${FREE_PLAN}`,
   "text after the status": `${FREE_PLAN}: retry later`,
-  "another line beside it": `${FREE_PLAN}\ngh: Not Found (HTTP 404)`,
-  "another line after it": `${FREE_PLAN}\ngh: some hint\n`,
+  "another line beside it": `${FREE_PLAN}\ngh: failed to fetch: no such host`,
   "two trailing line breaks": `${FREE_PLAN}\n\n`,
 };
 
 for (const [shape, reply] of Object.entries(NOT_THE_WHOLE_REPLY)) {
-  // Usefulness: verifies the Free-plan 403 is read as an unreadable source only
-  // when it is the whole reply, so a ${shape} throws instead of silently
-  // emptying the source (issue #301).
-  test(`throws on a Free-plan 403 with ${shape}`, async () => {
+  // Usefulness: verifies a Free-plan 403 carrying ${shape} throws instead of
+  // silently emptying the source (issue #301).
+  test(`throws on a Free-plan 403 carrying ${shape}`, async () => {
     await expect(
       checkCi({
         pr: 42,
@@ -646,64 +665,6 @@ for (const [shape, reply] of Object.entries(NOT_THE_WHOLE_REPLY)) {
       }),
     ).rejects.toThrow(/HTTP 403/);
   });
-}
-
-// Every allowed reply, in the exact form `gh` writes it, with each of the three
-// line endings a caller can observe. Each must reach the named empty-union
-// refusal, so anchoring the match to the whole reply cannot drop a reply the
-// unanchored pattern on main read (issue #301).
-const WHOLE_REPLY = {
-  "Not Found (HTTP 404)": "gh: Not Found (HTTP 404)",
-  "Branch not protected (HTTP 404)": "gh: Branch not protected (HTTP 404)",
-  "Resource not accessible by integration (HTTP 403)":
-    "gh: Resource not accessible by integration (HTTP 403)",
-  "Resource not accessible by personal access token (HTTP 403)":
-    "gh: Resource not accessible by personal access token (HTTP 403)",
-  "Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)":
-    FREE_PLAN,
-};
-
-// The same replies without the `gh: ` prefix, which main's unanchored pattern
-// also read. The prefix is `gh`'s own rendering, not part of the message, so
-// dropping it must not stop the match.
-const WHOLE_REPLY_WITHOUT_PREFIX = {
-  "Not Found (HTTP 404)": "Not Found (HTTP 404)",
-  "Branch not protected (HTTP 404)": "Branch not protected (HTTP 404)",
-  "Resource not accessible by personal access token (HTTP 403)":
-    "Resource not accessible by personal access token (HTTP 403)",
-  "Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)":
-    FREE_PLAN.slice("gh: ".length),
-};
-
-for (const [message, reply] of [
-  ...Object.entries(WHOLE_REPLY),
-  ...Object.entries(WHOLE_REPLY_WITHOUT_PREFIX),
-]) {
-  for (const [ending, suffix] of Object.entries({ "no line ending": "", LF: "\n", CRLF: "\r\n" })) {
-    // Usefulness: verifies `${message}` stays an unreadable source in its exact
-    // rendered form with ${ending}, which the unanchored pattern on main read and
-    // the whole-reply match must not drop (issue #301).
-    test(`reads \`${message}\` with ${ending} as an unreadable source`, async () => {
-      const result = await checkCi({
-        pr: 42,
-        reviewed: REVIEWED,
-        cwd: ".",
-        gh: fakeGh(
-          routes({
-            info: prInfo({ mergeStateStatus: "BLOCKED" }),
-            required: [],
-            protection: `stderr: ${reply}${suffix}`,
-            prChecks: "",
-            headRuns: [run("ci (ubuntu-latest)", "success")],
-          }),
-        ),
-      });
-      expect(result).toEqual({
-        ok: false,
-        reason: "no required checks were found for the base branch",
-      });
-    });
-  }
 }
 
 // Usefulness: verifies an app-qualified context from classic branch protection
