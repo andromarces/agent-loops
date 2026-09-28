@@ -20,6 +20,7 @@ import {
   splitInlineFlag,
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
+import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
@@ -34,7 +35,7 @@ import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
-const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
+const OPERATIONS = new Set(["dispatch", "finish", "abort", "wait-checks"]);
 const MODES = new Set(["work-first", "review-first", "review-only"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
@@ -842,6 +843,92 @@ async function abort(args) {
 }
 
 /**
+ * `wait-checks`: polls the required checks of `--pr` until none is pending or
+ * the bound elapses, then prints the last check states with a `timedOut` flag.
+ * It reads status only, so it touches no run state and needs no init, but it
+ * applies the same `--cwd` rule as `dispatch`, because the read runs in that
+ * work tree. The bound starts at command entry, so validation and every read
+ * share it, and the command returns within the bound plus the child-exit ceiling
+ * the wait adds on a bound it reached. The bound defaults to 300 seconds;
+ * `--timeout 0` is refused, because an unbounded wait is the outcome this
+ * operation exists to prevent (#329).
+ */
+// `assertWorkTree` is the real `assertGitWorkTree` unless a caller injects it,
+// so a test can spend clock time on work-tree validation and check that the time
+// comes out of the wait bound.
+async function waitChecksOperation(
+  args,
+  { gh, signal, now = Date.now, sleep, assertWorkTree = assertGitWorkTree } = {},
+) {
+  if (args.role !== null) {
+    throw new RoleError("--role is only valid for dispatch.");
+  }
+  if (args.reason !== null) {
+    throw new RoleError("--reason is only valid for abort.");
+  }
+  rejectFinishOnlyFlags(args, "wait-checks");
+  if (args.pr === null) {
+    throw new RoleError("wait-checks requires --pr <pr>.");
+  }
+  if (args.timeoutProvided && args.timeout === null) {
+    throw new RoleError("wait-checks refuses --timeout 0: the wait must stay bounded.");
+  }
+  // Taken at command entry, so no step of the command pushes it past the stated
+  // bound: work-tree validation, every read, and the pauses between reads all
+  // come out of it (#329).
+  const deadline = now() + (args.timeout ?? DEFAULT_WAIT_SECONDS) * 1000;
+  const remaining = deadline - now();
+  if (remaining > 0) {
+    // The validation runs inside the same bound, so a hung `git` cannot add its
+    // own time to the command. It refuses on the bound, because a work tree the
+    // probe never confirmed is not one this command may read.
+    await withinBound(
+      remaining,
+      () => assertWorkTree(args.cwd, { timeoutMs: remaining }),
+      "--cwd validation did not complete within the wait bound, so the work tree was not confirmed.",
+    );
+  }
+  const result = await waitChecks({
+    pr: args.pr,
+    cwd: args.cwd,
+    deadline,
+    gh,
+    now,
+    sleep,
+    signal,
+  });
+  return { exitCode: 0, payload: { status: "ok", pr: args.pr, ...result } };
+}
+
+/**
+ * Runs `work` and rejects when it has not settled within `ms`, so a step that
+ * hangs cannot outlive the bound the caller owns. The work promise is consumed
+ * either way, so a late failure after the bound is not an unhandled rejection.
+ */
+async function withinBound(ms, work, message) {
+  let timer;
+  try {
+    const guarded = Promise.resolve(work()).then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    const expired = new Promise((resolve) => {
+      timer = setTimeout(() => resolve({ expired: true }), ms);
+    });
+    const outcome = await Promise.race([guarded, expired]);
+    if (outcome.expired) {
+      throw new RoleError(message);
+    }
+    if (outcome.error) {
+      throw outcome.error;
+    }
+    return outcome.value;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Executes one parsed role command. Returns `{ exitCode, payload }`; the
  * payload is the JSON envelope. Unexpected failures become `status: "error"`
  * envelopes instead of stack traces on stdout.
@@ -855,6 +942,8 @@ export async function executeRoleCommand(args, deps = {}) {
         return await finish(args, deps);
       case "abort":
         return await abort(args, deps);
+      case "wait-checks":
+        return await waitChecksOperation(args, deps);
       default:
         throw new RoleError(`Unsupported operation: ${args.operation}`);
     }

@@ -12,24 +12,29 @@ import { execa } from "execa";
 const PASS_CHECK_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 
 /**
- * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr }`; a
- * non-zero exit is data, not a throw.
- *
- * `options.signal` bounds the call and terminates the child: the caller supplies
- * it so a `gh` that hangs cannot outlive the read (#320). The default runner
- * passes it to `execa`, which kills the child and reports a timeout.
+ * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr, timedOut }`;
+ * a non-zero exit is data, not a throw. `timeoutMs` bounds the call and
+ * terminates the `gh` child when it expires, so a hung `gh` cannot outlast a
+ * caller bound. The kill is `SIGTERM` then `SIGKILL` after
+ * `forceKillAfterDelay` on macOS, and `taskkill /T /F` over the process tree on
+ * Windows, so no platform keeps a child the bound has given up on (#329).
  */
-export async function runGh(args, cwd, options = {}) {
-  // `cancelSignal` is the execa 10 name for the abort signal, the same one
-  // `src/lib/exec.mjs` passes. The old `signal` name throws before the child
-  // starts, so every real read failed and read as unresolved.
-  const result = await execa("gh", args, {
-    cwd,
-    reject: false,
-    cancelSignal: options.signal,
-    timeout: options.timeoutMs,
-  });
-  return { status: result.exitCode, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
+  const options = { cwd, reject: false, cleanup: true, killDescendants: true };
+  if (timeoutMs > 0) {
+    options.timeout = timeoutMs;
+    options.forceKillAfterDelay = 1000;
+  }
+  if (signal) {
+    options.cancelSignal = signal;
+  }
+  const result = await execa("gh", args, options);
+  return {
+    status: result.exitCode,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    timedOut: Boolean(result.timedOut),
+  };
 }
 
 function fail(reason) {

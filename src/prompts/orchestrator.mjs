@@ -189,6 +189,11 @@ Map the report fields into the finish summary:
 - Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.
 - In review-only mode, Blockers and Notes go into open, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode; open holds unresolved in-scope findings.
 
+A refused \`--cwd\` is not the parent's to repair: end the run, name the path and the refusal in the reason, and leave the work tree to a maintainer, who decides whether to recreate it and start a new run.
+Abort only when a non-terminal run exists at the refused \`--cwd\`. With no run state there, from a refused init or a path that was never this run's, no run started, so report the refusal and do not abort. A run that is already terminal needs no abort.
+One rule covers every refused \`--cwd\`: a path that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost all report \`--cwd must be inside a Git work tree: <path>\`, so the reason names that path and that message.
+A headless run cannot act on a refused \`--cwd\`: the runtime snapshots its \`--cwd\` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure, and no turn of yours runs after it. A maintainer decides whether to recreate the work tree and start a new run.
+
 User Task:
 ${task}
 `.trim();

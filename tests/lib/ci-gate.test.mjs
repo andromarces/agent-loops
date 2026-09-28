@@ -1,5 +1,10 @@
+import { access, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { expect, test } from "vitest";
-import { checkCi, readRequiredChecks } from "../../src/lib/ci-gate.mjs";
+import { checkCi, readRequiredChecks, runGh } from "../../src/lib/ci-gate.mjs";
+import { removePath } from "../runtime-helpers.mjs";
 
 const HEAD = "1111111111111111111111111111111111111111";
 const MERGE = "2222222222222222222222222222222222222222";
@@ -1205,3 +1210,47 @@ test("a status read through the A-to-B-to-A window is still marked advisory", as
   // report a status; what it must never do is report one as verified.
   expect(read.advisory).toBe(true);
 });
+
+// A real `gh` on PATH that hangs, so the bound is exercised against a real child
+// process. The shim writes a marker file after a delay that outlasts the bound:
+// a marker means the child outlived the bound, and no marker means the bound
+// terminated it. The shim is a `.cmd` on Windows and an executable shell script
+// on macOS, which is what `gh` resolves to on each platform.
+async function hangingGh(dir, marker, afterMs) {
+  const path = marker.split("\\").join("/");
+  if (process.platform === "win32") {
+    await writeFile(
+      join(dir, "gh.cmd"),
+      `@echo off\r\nnode -e "setTimeout(function(){require('fs').writeFileSync('${path}','x')},${afterMs})"\r\n`,
+    );
+    return;
+  }
+  await writeFile(join(dir, "gh"), `#!/bin/sh\nsleep ${afterMs / 1000}\ntouch '${marker}'\n`, {
+    mode: 0o755,
+  });
+}
+
+// Usefulness: verifies the `gh` runner terminates the child when its bound
+// expires, on Windows and on macOS. A real process is the only way to check that
+// the kill reaches the child, because an injected runner never spawns one
+// (issue #329).
+test("runGh terminates the gh child when its bound expires", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gh-timeout-"));
+  const marker = join(dir, "alive.txt");
+  await hangingGh(dir, marker, 2000);
+  const path = process.env.PATH;
+
+  try {
+    process.env.PATH = `${dir}${delimiter}${path}`;
+    const started = Date.now();
+    const result = await runGh(["pr", "checks", "42", "--required"], dir, { timeoutMs: 300 });
+    expect(result.timedOut).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2000);
+    // The child was terminated, not abandoned: it never reaches its marker.
+    await delay(2500);
+    await expect(access(marker)).rejects.toThrow();
+  } finally {
+    process.env.PATH = path;
+    await removePath(dir);
+  }
+}, 15000);
