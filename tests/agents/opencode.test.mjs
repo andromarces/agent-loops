@@ -811,9 +811,10 @@ test("opencode joins a mid-sentence split without a line break", async () => {
 // the structured fields. The join tests above cover the string; this one covers the seam (issue #316).
 test("an opencode stream split before the closing block reaches the dispatch envelope", async () => {
   const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
+  dispatchPaths.push(runsRoot);
   const repo = await createTempRepo();
+  dispatchPaths.push(repo);
   process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
-  dispatchPaths = [runsRoot, repo];
 
   const init = parseRoleArgs([
     "dispatch",
