@@ -72,55 +72,54 @@ export function isEphemeralPackageRoot(packageRoot) {
   return false;
 }
 
-// pnpm 12 installs a global package into an install directory
-// (`<global>/v11/<id>/node_modules/.pnpm/<name>@<version>/node_modules/<name>`)
-// and links the package into that directory's `node_modules` and that whole
-// directory into `<global>/v11/<hash>`, the path the bin shim calls. Node
-// resolves a module to the store path, and an upgrade replaces both the store
-// entry and the install directory, so neither can be written into installed
-// files (#305).
+// pnpm resolves a global package into a version-named virtual store entry
+// (`.pnpm/<name>@<version>/node_modules/<name>`) and links it to a
+// version-independent path, which a global upgrade repoints. pnpm 12 puts the
+// store entry in an install directory and links that whole directory to
+// `<global>/v11/<hash>`, the path the bin shim calls; pnpm 10 holds `.pnpm`
+// directly in the global root and links the package beside it. Node resolves a
+// module to the store entry, which the upgrade replaces, so the store entry must
+// not be written into installed files (#305).
 const VIRTUAL_STORE_DIR = ".pnpm";
 
 /**
  * The symlink in `dir` that resolves to `target`, or `null`. pnpm 12 keeps one
  * hash-named symlink per install directory beside it, and a global upgrade
- * repoints that symlink at the new install directory.
+ * repoints that symlink at the new install directory. Returns `null` rather than
+ * throwing when the target or the directory cannot be read, so a caller can fall
+ * back to the next candidate.
  */
 function symlinkResolvingTo(dir, target) {
-  let entries;
   try {
-    entries = readdirSync(dir);
-  } catch {
-    // An unreadable directory yields no candidate, so the caller falls back.
-    return null;
-  }
-  const resolved = realpathSync(target);
-  for (const name of entries) {
-    const candidate = join(dir, name);
-    try {
-      if (lstatSync(candidate).isSymbolicLink() && realpathSync(candidate) === resolved) {
-        return candidate;
+    const resolved = realpathSync(target);
+    for (const name of readdirSync(dir)) {
+      const candidate = join(dir, name);
+      try {
+        if (lstatSync(candidate).isSymbolicLink() && realpathSync(candidate) === resolved) {
+          return candidate;
+        }
+      } catch {
+        // A broken or unreadable entry is not the link being looked for.
       }
-    } catch {
-      // A broken or unreadable entry is not the link being looked for.
     }
+  } catch {
+    // A missing target or an unreadable directory yields no candidate.
   }
   return null;
 }
 
 /**
  * The version-independent package root to render into installed files. A pnpm 12
- * global layout yields the hash-named symlink the bin shim calls, which the
- * upgrade repoints. An older pnpm global layout yields the `node_modules` link
- * beside the store entry, which such a global upgrade leaves in place. Every
- * other layout (an npm global install, a clone, a linked package) has no version
- * in its root and returns `packageRoot` unchanged, as does a layout with no link
- * that resolves to this same package.
+ * global layout yields the hash-named symlink the bin shim calls. A pnpm 10
+ * global layout yields the link beside the virtual store entry. Both are
+ * repointed by a global upgrade. Every other layout (an npm global install, a
+ * clone, a linked package) has no version in its root and returns `packageRoot`
+ * unchanged, as does a layout with no link that resolves to this same package.
  */
 export function stablePackageRoot(packageRoot) {
   // Two levels up is the store entry's `node_modules`, whose parent holds
-  // `.pnpm`; two more is the install directory pnpm 12 links from the global
-  // directory.
+  // `.pnpm`; two more is the directory holding that `node_modules`, which is the
+  // pnpm 12 install directory or the pnpm 10 global root.
   const store = dirname(dirname(packageRoot));
   const installDir = dirname(dirname(dirname(dirname(store))));
   if (
@@ -134,11 +133,11 @@ export function stablePackageRoot(packageRoot) {
     const resolved = realpathSync(packageRoot);
     for (const candidate of [
       // pnpm 12: the hash-named symlink beside the install directory, which
-      // reaches the same `node_modules` the install directory does.
+      // reaches the same `node_modules`.
       hashLink && join(hashLink, basename(store), relative(store, packageRoot)),
-      // An older pnpm global layout, and a pnpm project install: the link beside
-      // the store entry.
-      join(installDir, relative(store, packageRoot)),
+      // pnpm 10, and a pnpm project install: the link beside the virtual store
+      // entry, under the `node_modules` holding that `.pnpm`.
+      join(installDir, basename(store), relative(store, packageRoot)),
     ]) {
       if (candidate && realpathSync(candidate) === resolved) {
         return candidate;

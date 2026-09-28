@@ -47,12 +47,14 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
   _repository_ `.claude/settings.json`, not a user one, so Copilot gets its own
   user hook file.
 - Every installed guard path is the package root that survives an upgrade. Node
-  resolves the package into the version-named virtual store entry inside the
-  install directory, and a `pnpm add -g` upgrade replaces that whole install
-  directory, so `install` writes the hash-named symlink pnpm keeps beside it,
-  which the upgrade repoints and which the `agent-loop` bin shim calls. An older
-  pnpm global layout has no such symlink, so `install` writes the `node_modules`
-  link beside the store entry, which such an upgrade leaves in place. An install
+  resolves the package into a version-named virtual store entry, and a pnpm
+  upgrade replaces that entry, so `install` writes a version-independent path
+  instead. pnpm 12 keeps a hash-named symlink beside the install directory that
+  holds the package, and the `agent-loop` bin shim calls that path, so `install`
+  writes it and the upgrade repoints it. pnpm 10 has no such symlink: its global
+  root holds `.pnpm` directly and links the package beside it, so `install` writes
+  that link, which the upgrade also repoints. An npm global install, a clone, and
+  a linked package carry no version in their root and render unchanged. An install
   written by a version that recorded a replaced path still names the deleted
   directory until `agent-loop install` runs again.
 - On OpenCode, `~/.config/opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session-run entries, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.

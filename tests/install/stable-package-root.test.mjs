@@ -21,10 +21,11 @@ afterEach(async () => {
 });
 
 /**
- * Builds the pnpm 12 global layout, verified against a real `pnpm add -g` with a
- * temp PNPM_HOME: an install directory `<global>/v11/<id>` holding the virtual
- * store, and a hash-named symlink `<global>/v11/<hash>` pointing at it. The
- * symlink is the path the bin shim calls.
+ * Builds a pnpm global install directory, verified against a real `pnpm add -g`
+ * with a temp PNPM_HOME: `<global>/v11/<id>` holds the virtual store, links the
+ * package into its own `node_modules`, and pnpm 12 also links that whole
+ * directory to `<global>/v11/<hash>`, the path the bin shim calls. An older pnpm
+ * global layout has no such hash link, so `hash` is optional.
  */
 async function pnpmGlobal(v11, { id, hash, version }) {
   const installDir = join(v11, id);
@@ -49,8 +50,10 @@ async function pnpmGlobal(v11, { id, hash, version }) {
   const linked = join(installDir, "node_modules", "@andromarces", "agent-loops");
   await mkdir(dirname(linked), { recursive: true });
   await symlink(store, linked, LINK_TYPE);
-  const hashLink = join(v11, hash);
-  await symlink(installDir, hashLink, LINK_TYPE);
+  const hashLink = hash && join(v11, hash);
+  if (hashLink) {
+    await symlink(installDir, hashLink, LINK_TYPE);
+  }
   return { hashLink, installDir, linked, store };
 }
 
@@ -98,38 +101,65 @@ test("hooks installed under a pnpm 12 global layout survive an upgrade", async (
   expect(existsSync(cliPath)).toBe(true);
 });
 
-// Usefulness: verifies the negative of the pnpm 12 case. An npm global root, a
-// clone, and a store layout with no `node_modules` link carry no version in their
-// path, so the rendered root stays the resolved one instead of a path that does
-// not exist.
-test("a root without a pnpm store link is rendered unchanged", async () => {
-  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm-nolink-"));
-  paths.push(globalHome);
-  const v11 = join(globalHome, "global", "v11");
-  const { hashLink, installDir, linked } = await pnpmGlobal(v11, {
-    id: "637c-18d963de1bc57d7c-0",
-    hash: "b796b151e5ddf3298f8c49f2312abd59",
-    version: "0.3.0",
-  });
-  // No hash symlink, so pnpm 12's stable path does not exist. The install
-  // directory link is the older pnpm global layout, which a global upgrade
-  // leaves in place.
-  await rm(hashLink, { force: true });
-  expect(
-    stablePackageRoot(join(installDir, "node_modules", ".pnpm", "x@0.3.0", "node_modules", "x")),
-  ).toBe(join(installDir, "node_modules", ".pnpm", "x@0.3.0", "node_modules", "x"));
-
-  // A store with no `node_modules` link at all falls back to the resolved path.
-  await rm(linked, { force: true });
+/**
+ * Builds an older pnpm global layout, verified against a real pnpm 10 `pnpm
+ * add -g` with a temp PNPM_HOME: the global root is `<global>/<n>/node_modules`,
+ * `.pnpm` sits directly in it, and the package is linked at the root beside
+ * `.pnpm`. An upgrade adds a new store entry and repoints that link. There is no
+ * install directory and no hash link, which is what separates it from pnpm 12.
+ */
+async function pnpmGlobalLegacy(globalHome, version) {
+  const root = join(globalHome, "global", "5", "node_modules");
   const store = join(
-    installDir,
-    "node_modules",
+    root,
     ".pnpm",
-    "@andromarces+agent-loops@0.3.0",
+    `@andromarces+agent-loops@${version}`,
     "node_modules",
     "@andromarces",
     "agent-loops",
   );
+  await mkdir(store, { recursive: true });
+  const linked = join(root, "@andromarces", "agent-loops");
+  await mkdir(dirname(linked), { recursive: true });
+  await symlink(store, linked, LINK_TYPE);
+  return { linked, root, store };
+}
+
+// Usefulness: verifies the older-pnpm fallback of #305. Its store path still names
+// the package by version, so install must render the link beside the virtual store
+// entry, which carries no version and which an upgrade repoints. The package is
+// scoped, so the rendered path has to keep the scope directory.
+test("an older pnpm global layout renders its version-independent link", async () => {
+  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm-legacy-"));
+  paths.push(globalHome);
+  const { linked, store } = await pnpmGlobalLegacy(globalHome, "0.3.0");
+
+  expect(stablePackageRoot(store)).toBe(linked);
+  expect(existsSync(linked)).toBe(true);
+
+  // The upgrade: a new store entry takes the new version, the link is repointed
+  // at it, and pnpm deletes the old one.
+  await rm(linked, { force: true });
+  const after = await pnpmGlobalLegacy(globalHome, "0.4.0");
+  await removePath(store);
+  expect(existsSync(store)).toBe(false);
+  expect(existsSync(stablePackageRoot(after.store))).toBe(true);
+});
+
+// Usefulness: verifies the negative of both pnpm cases. A store with no link to
+// the package, an npm global root, and a clone have no path that survives an
+// upgrade, so the rendered root stays the resolved one rather than a path that
+// does not exist.
+test("a root with no resolvable link is rendered unchanged", async () => {
+  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm-nolink-"));
+  paths.push(globalHome);
+  const v11 = join(globalHome, "global", "v11");
+  const { linked, store } = await pnpmGlobal(v11, {
+    id: "637c-18d963de1bc57d7c-0",
+    version: "0.3.0",
+  });
+  await rm(linked, { force: true });
+
   expect(stablePackageRoot(store)).toBe(store);
   // An npm global root, and a clone, carry no version and no `.pnpm`.
   expect(stablePackageRoot(join(globalHome, "lib", "node_modules", "agent-loops"))).toBe(
