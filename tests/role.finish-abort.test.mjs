@@ -128,6 +128,7 @@ const GATE_SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d",
 const ACCEPT =
   "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test\nVerdict: accept";
 const ACCEPT_NO_CHECKS = "Conclusion: done\nWhy: tests pass\nBlockers: none\nVerdict: accept";
+const WORKER_WITH_CHECKS = "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test";
 const REJECT =
   "Conclusion: no\nWhy: broken\nBlockers: missing test\nChecks: npm test\nVerdict: reject";
 const REVIEW_ONLY_OVERRIDES = [
@@ -161,6 +162,13 @@ async function initWorkerRun(repo) {
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
 }
 
+async function dispatchWorker(repo, reply) {
+  return executeRoleCommand(withRepo(dispatchArgv([]), repo), {
+    agents: { fake1: recordingAdapter([reply]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+}
+
 // Usefulness: verifies --require-accept refuses a finish after a worker turn
 // with no later reviewer turn, and keeps the run active (issue #218).
 test("--require-accept refuses a finish after a worker turn with no later review", async () => {
@@ -187,6 +195,27 @@ test("--require-accept follows the latest reviewer verdict", async () => {
   const rejected = await finishCall(repo, ["--require-accept"]);
   expect(rejected.exitCode).toBe(1);
   expect(rejected.payload.error).toContain("Verdict: accept");
+
+  await dispatchReviewer(repo, ACCEPT);
+  const accepted = await finishCall(repo, ["--require-accept"]);
+  expect(accepted.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
+// Usefulness: verifies a worker Checks line is reported evidence and never a
+// gate input: a finish that follows a worker turn carrying a Checks line is
+// refused until a reviewer accept covers the state (issue #310, issue #318).
+test("--require-accept refuses a finish that relies on a worker Checks line", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  await dispatchWorker(repo, WORKER_WITH_CHECKS);
+  const refused = await finishCall(repo, ["--require-accept"]);
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("no reviewer turn");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
 
   await dispatchReviewer(repo, ACCEPT);
   const accepted = await finishCall(repo, ["--require-accept"]);
