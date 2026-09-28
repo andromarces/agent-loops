@@ -529,6 +529,32 @@ test("finish refuses unresolvedCompare together with --require-ci", async () => 
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 
+// Usefulness: pins the exact error text an undeclared run gets. The collect-then-
+// report rule added a `Finish refused:` prefix to every collected reason, which
+// changed the error an undeclared run returns for the one refusal it had before.
+// Collect-then-report was for the declared-PR rule, so an undeclared run keeps the
+// text origin/main returned (#302).
+test("an undeclared run keeps the marker refusal text it had before", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initWorkerRun(repo);
+
+  const result = await executeRoleCommand(
+    withRepo(["finish", "--cwd", "<repo>", "--require-ci", "42"], repo),
+    {
+      stdin: async () => JSON.stringify(UNRESOLVED_SUMMARY),
+      gh: async () => {
+        throw new Error("gh must not run: the marker and the gate are contradictory.");
+      },
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toBe(
+    "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved.",
+  );
+});
+
 async function initPrRun(repo, pr) {
   await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", String(pr)]), repo), {
     ...basicDeps(),

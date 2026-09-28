@@ -2184,6 +2184,71 @@ test("the missing-gate refusal prompt names the gate the run needs", async () =>
   }
 });
 
+// 58. Usefulness: verifies the marked-finish prompt names a missing gate only when
+// the gate is missing. A declared run whose gate matches loses the gate condition
+// once the marker is removed, so a prompt that names a missing gate there tells
+// the orchestrator to abort a run it can finish. A declared run with no gate keeps
+// both conditions and the gate is named (#302).
+test("the marked-finish prompt names a missing gate only when the gate is missing", async () => {
+  const repo = await createTempRepo();
+  try {
+    const markerSummary = {
+      changed: "none",
+      verified: "not verified: PR head unresolved",
+      deferred: "none",
+      notDone: "PR head unresolved",
+      open: "PR head unresolved",
+    };
+    const markedFinish = JSON.stringify({
+      action: "finish",
+      summary: markerSummary,
+      unresolvedCompare: true,
+    });
+
+    // The gate matches the declaration, so removing the marker is the whole
+    // recovery and the run reaches exit 0. The reviewer turn comes first, so the
+    // gate has the reviewed state it reads and the marker is the only refusal.
+    const withGate = scripted([
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      markedFinish,
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ]);
+    const withGateResult = await runLoop({
+      task: "PR work: address issue 58 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      gh: ciGateGh((await snapshot(repo)).head),
+      roles: gateRoles(),
+      agents: { orch: withGate, work: scripted([]), rev: scripted([REVIEW_ACCEPT]) },
+    });
+    const withGatePrompt = withGate.recorded[2].prompt;
+    expect(withGatePrompt).toContain("remove unresolvedCompare from the finish");
+    expect(withGatePrompt).toContain("needs no child turn");
+    expect(withGatePrompt).not.toContain("missing --require-ci 42 gate");
+    expect(withGateResult.exitCode).toBe(0);
+
+    // The gate is absent, so removing the marker leaves the missing gate, and the
+    // prompt must name it rather than send the orchestrator back to finish.
+    const noGate = scripted([markedFinish, JSON.stringify({ action: "abort", reason: "no gate" })]);
+    await runLoop({
+      task: "PR work: address issue 58 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      roles: gateRoles(),
+      agents: { orch: noGate, work: scripted([]), rev: scripted([]) },
+    });
+    const noGatePrompt = noGate.recorded[1].prompt;
+    expect(noGatePrompt).toContain("remove unresolvedCompare from the finish");
+    expect(noGatePrompt).toContain("missing --require-ci 42 gate");
+    expect(noGatePrompt).toContain("abort");
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 58. Usefulness: verifies a run that declares no PR keeps the marker-only
 // behavior it has today, so the new declaration changes nothing for an ungated
 // run that is not PR work (#302).

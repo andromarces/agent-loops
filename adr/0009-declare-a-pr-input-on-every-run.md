@@ -53,27 +53,35 @@ refusal.
    order marker condition, `--require-accept`, declared-PR gate condition,
    `--require-ci`. The interactive `role finish` applies the same rule and the
    same order, so a finish that breaks two rules names both on either path and a
-   parent learns every condition from one call.
-5. The `--require-ci` gate runs only when nothing above it refused on the
+   parent learns every condition from one call. An undeclared run keeps the error
+   text it had before, so the collect-then-report rule changes only the runs that
+   declare a PR.
+5. What the marker refusal says depends on the gate. With a matching
+   `--require-ci <pr>` the marker is the only broken condition, so the prompt and
+   the recovery name only the marker and a re-finish recovers the finish. With no
+   matching gate the marker and the missing gate are both broken, so both are
+   named and the recovery is `abort`. One wording for both would tell a run that
+   can finish to give up.
+6. The `--require-ci` gate runs only when nothing above it refused on the
    interactive path, so a refused `finish` never reads GitHub. The headless loop
    evaluates every gate it owns, as it did before, because it can report all of
    them and a `gh` failure is already a refusal there.
-6. The gate flag is a run input, so no child turn can supply it. That refusal
+7. The gate flag is a run input, so no child turn can supply it. That refusal
    therefore needs no child turn, and its recovery names `abort` with the
    missing gate as the only outcome the orchestrator owns. The refusal prompt
    gets its own ending text, because the marker ending would tell the
    orchestrator to re-finish without a marker it does not carry.
-7. The interactive path applies the same rule at `finish`, reading the declared
+8. The interactive path applies the same rule at `finish`, reading the declared
    PR from the state file. `--pr` is an init field, so a later call that changes
    it is refused like `--task` or `--mode`. A state file written before this
    field has no `pr` and keeps the marker-only behavior.
-8. `review-only` refuses `--pr` at init. That mode rejects `--require-ci` at
+9. `review-only` refuses `--pr` at init. That mode rejects `--require-ci` at
    finish, so a declared run there would refuse every finish and could never
    end. The refusal moves to init, where the parent can still correct it.
-9. A run that declares no PR behaves exactly as before: the marker is recorded,
-   the exit code is `UNRESOLVED_COMPARE_EXIT` for a recorded compare, and a
-   finish that omits the marker still reads as a verified one.
-10. The headless orchestrator prompt states the declaration and the gate it
+10. A run that declares no PR behaves exactly as before: the marker is recorded,
+    the exit code is `UNRESOLVED_COMPARE_EXIT` for a recorded compare, and a
+    finish that omits the marker still reads as a verified one.
+11. The headless orchestrator prompt states the declaration and the gate it
     requires, so the orchestrator knows a declared run cannot finish without the
     gate and cannot record the marker.
 

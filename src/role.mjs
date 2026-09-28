@@ -704,7 +704,8 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
       pr: state.pr ?? null,
       requireCi: args.requireCi,
     });
-    if (markerReason !== null && validated.value.unresolvedCompare) {
+    const markerRefused = markerReason !== null && validated.value.unresolvedCompare;
+    if (markerRefused) {
       refusals.push(markerReason);
     }
     if (args.requireAccept) {
@@ -721,6 +722,12 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
       refusals.push(missingGateRefusal(declaredPr, args.requireCi).reason);
     }
     if (refusals.length > 0) {
+      // The marker contradiction against a gate was its own error text before
+      // collect-then-report, and a run that declares no PR still returns that text
+      // on its own, because it has the same single refusal it always had (#302).
+      if (refusals.length === 1 && markerRefused && declaredPr === null) {
+        throw new RoleError(`${markerReason}.`);
+      }
       throw new RoleError(`Finish refused: ${refusals.join("; ")}.`);
     }
     if (args.requireCi !== null) {

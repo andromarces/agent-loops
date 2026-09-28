@@ -202,6 +202,30 @@ test("initialPrompt states the --pr declaration when enabled", () => {
   expect(initialPrompt({ task: "T", maxSteps: 10 })).not.toContain("--pr");
 });
 
+// Usefulness: pins the two marked-finish cases apart in the prompt. A declared run
+// whose gate matches the declaration is told the marker is the only broken
+// condition, so it removes the marker and finishes. A declared run with no
+// matching gate is told the marker and the missing gate are reported together and
+// that no turn supplies the gate, so it aborts. One wording for both sends a
+// run that could finish to abort (#302).
+test("initialPrompt tells the two marked-finish cases apart", () => {
+  const withGate = initialPrompt({ task: "T", maxSteps: 10, pr: 42, requireCi: 42 });
+  expect(withGate).toContain(
+    "A finish that carries the marker breaks only that condition: remove the marker and finish again, which needs no child turn.",
+  );
+  expect(withGate).not.toContain("the gate is still missing");
+  expect(withGate).not.toContain("cannot finish: abort with the missing gate named in the reason");
+
+  for (const requireCi of [null, 7]) {
+    const noGate = initialPrompt({ task: "T", maxSteps: 10, pr: 42, requireCi });
+    expect(noGate).toContain(
+      "A finish that carries the marker breaks both conditions, and one refusal names both, so remove the marker and note that the gate is still missing.",
+    );
+    expect(noGate).toContain("cannot finish: abort with the missing gate named in the reason");
+    expect(noGate).not.toContain("breaks only that condition");
+  }
+});
+
 // Usefulness: verifies the rule is keyed on the CLI of the role that reads the
 // checks, because the orchestrator and reviewer CLIs are chosen independently,
 // so a mixed run is never told that no turn can read them (issue #319).
