@@ -52,13 +52,33 @@ test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
   );
 });
 
+// The reviewer-Checks gate rule, checked for presence only: one sentence names
+// the reviewer Checks line and a gate input. A reword that keeps those two nouns
+// passes, and a removed rule fails. Reading an inversion out of prose is out of
+// scope here, so the behavior the rule describes is covered where it runs, in
+// `--require-accept refuses a finish that relies on a worker Checks line` in
+// tests/role.finish-abort.test.mjs.
+const REVIEWER_GATE_SENTENCE =
+  /[^.!?]*(?:reviewer'?s? checks line[^.!?]*gate input|gate input[^.!?]*reviewer'?s? checks line)[^.!?]*[.!?]/i;
+
+/** Asserts the text states the reviewer-Checks gate rule. */
+function expectReviewerGateRule(text) {
+  expect(text).toMatch(REVIEWER_GATE_SENTENCE);
+}
+
+// The headless prompt also states that every child turn reports the line. The
+// interactive instructions state that rule on `report.checks` instead, so this
+// pattern guards the headless prompt only. The subject stays open (`every`,
+// `each`) so a reword of the subject does not break the rule.
+const EVERY_CHILD_TURN_CHECKS = /child turn[^.]*checks line/i;
+
 // Usefulness: verifies the headless parent knows every child turn reports its
-// commands, and that only the reviewer Checks line is a gate input, so a
-// reported worker Checks line never reads as an accept (issue #310).
+// commands, and that only the reviewer Checks line gates, so a reported worker
+// Checks line never reads as an accept (issue #310).
 test("initialPrompt states that only the reviewer Checks line gates", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toContain("Every child turn reports a Checks line");
-  expect(prompt).toContain("Only the reviewer Checks line is a gate input");
+  expect(prompt).toMatch(EVERY_CHILD_TURN_CHECKS);
+  expectReviewerGateRule(prompt);
 });
 
 // Usefulness: verifies the headless parent states the same reviewed-state rules
@@ -103,7 +123,9 @@ test("initialPrompt names the unresolvedCompare marker", () => {
 
 // Usefulness: verifies the interactive instructions and the headless prompt
 // state the same reviewed-state parent rules, so the two parent paths never
-// diverge (issue #217, issue #252).
+// diverge (issue #217, issue #252). The reviewer-Checks gate rule is compared by
+// the same presence check the gate test uses, so a reword keeps the parity check
+// and a removal breaks it (issue #318).
 test("interactive instructions and headless prompt share the reviewed-state rules", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
@@ -115,12 +137,13 @@ test("interactive instructions and headless prompt share the reviewed-state rule
     "Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.",
     "Require reviewed.clean: true for PR work.",
     "Treat an accept without a Checks line as not accepted.",
-    "Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.",
     "When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.",
   ]) {
     expect(instructions).toContain(rule);
     expect(prompt).toContain(rule);
   }
+  expectReviewerGateRule(instructions);
+  expectReviewerGateRule(prompt);
 });
 
 // Usefulness: verifies the headless result payload carries the reviewer reviewed

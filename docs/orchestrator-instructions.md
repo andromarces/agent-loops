@@ -198,22 +198,25 @@ confirm it, not to test it.
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
 then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed
-head. The command reads status only, so the reviewer stays read-only:
+head. The command reads status only, so the reviewer stays read-only. Every
+rule below belongs to that one condition, so the prompt nests them under it:
 
-- A failing required check is a blocker.
-- Exit code 8 means a check is pending. The pending check goes in `Checks`, not
-  into the blockers.
-- Exit code 1 covers a failing check, a repository with no required check, and a
-  read error. A blocker is reported only when the output lists a failing
-  required check. Any other exit 1 is unresolved and goes in `Checks`.
-- The command omits a check that has not started, so a read pass covers only the
-  listed checks.
-- The read reflects the PR head on GitHub. When that head differs from the local
-  reviewed head, the mismatch goes in `Checks`.
-- When the repository has no required check, that goes in `Checks`.
-- When `gh` cannot read the checks, for example no `gh` or no network, the
-  status is unresolved and goes in `Checks`. A pass is reported only when the
-  read shows one.
+- When the task names a pull request, read the required checks for the reviewed
+  head with `gh pr checks <pr> --required`. The command reads status only. It
+  changes nothing. The rules below it apply only then.
+  - A failing required check is a blocker.
+  - Exit code 8 means a check is pending. The pending check goes in `Checks`, not
+    into the blockers.
+  - Exit code 1 covers a failing check, a repository with no required check, and
+    a read error. A blocker is reported only when the output lists a failing
+    required check. Any other exit 1 is unresolved and goes in `Checks`.
+  - The command omits a check that has not started, so a read pass covers only
+    the listed checks.
+  - The read reflects the PR head on GitHub. When that head differs from the
+    local reviewed head, the mismatch goes in `Checks`.
+  - When `gh` cannot read the checks, for example no `gh` or no network, the
+    status is unresolved and goes in `Checks`. A pass is reported only when the
+    read shows one.
 
 The `--require-ci` finish gate stays the enforcement point. The rule only lets
 the reviewer see a failure before the gate refuses, so the run needs no extra
