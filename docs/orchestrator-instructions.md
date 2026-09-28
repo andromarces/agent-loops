@@ -403,3 +403,42 @@ the state file's `mode` and `lifecycle`, and continue from `stepsUsed` and
 `lastResult`. A resumed review-only task keeps its prohibition on worker
 dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
 to resume with `dispatch --resume-interrupted`.
+
+## Turn history
+
+Every `agent-loop role` run keeps its own turn history. No `--transcript` flag is
+needed: the subcommand records each dispatched turn itself.
+
+- The state file's `turns` array holds one entry per charged step, in order, and
+  each entry survives every later dispatch that overwrites `lastDispatch` and
+  `lastResult`.
+- Each entry holds `role`, `status`, `verdict`, `head`, and `at`: the role that
+  ran, the turn `status`, the reviewer verdict for a reviewer turn (`null`
+  otherwise), the head the reviewer turn reviewed (`null` otherwise), and the
+  turn time. Report and response text stay out of the entries.
+- `status` is `ok`, `error`, or `interrupted`. An `interrupted` entry is a turn
+  whose step was charged but whose outcome is unknown: no child result was ever
+  recorded for it, so its verdict and head are `null`. The call that marks the
+  run `interrupted` records it, so the history stays complete across recovery.
+- Size bound: exactly one entry per charged step, and a dispatch past `maxSteps`
+  is refused before it runs, so `turns` holds at most `maxSteps` entries. The
+  recovery call records an already-charged step and charges none of its own, so
+  it does not push the history past that bound. The entries are fixed-shape, so
+  the history cannot grow with the text a child returns.
+- Accepted `--max-steps` range: 1 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
+  The CLI refuses a `--max-steps` outside it, and `dispatch` and `finish`
+  re-check the stored `maxSteps` against the same range before reading the
+  budget, because a state file written by an earlier version or hand-edited
+  carries the value past the flag check. A refusal names the state file field to
+  correct. Every budget a run reads is therefore a safe integer, so the step
+  count always advances by exactly one per charged step.
+- `abort` is not subject to that check. It charges no step and reads no budget,
+  so it proceeds and ends the run. Use it to close a run whose stored `maxSteps`
+  is out of range: `dispatch` and `finish` are refused, and a new init refuses
+  over a non-terminal run, so `abort` is the only route to a terminal lifecycle
+  for such a run. A new init then starts normally and archives the old state
+  file. No field has to be hand-corrected.
+- Read `turns` after compaction or restart to rebuild which turns ran, which
+  verdicts they returned, and which head each reviewer turn saw.
+- `--transcript <file>` still appends one JSON line per `invocation` and
+  `result` event. It stays a per-call flag and is not the turn history.

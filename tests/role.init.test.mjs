@@ -99,6 +99,30 @@ test("role finish gate flags parse", async () => {
   );
 });
 
+// Usefulness: verifies the documented turn-history bound — a `--max-steps`
+// above `Number.MAX_SAFE_INTEGER` is refused, so every accepted budget is a safe
+// integer and `stepsUsed + 1` always advances (issue #312).
+test("init with a max-steps above the safe integer range is rejected", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+
+  expect(() => parseRoleArgs([...INIT_OVERRIDES, "--max-steps", "1000000000000000000000"])).toThrow(
+    "--max-steps must be a positive integer.",
+  );
+
+  // The largest safe integer is still accepted, so the refusal is the range and
+  // not a lower cap on the budget.
+  const worker = recordingAdapter([]);
+  const accepted = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "9007199254740991"]), repo),
+    { agents: { fake1: worker, fake2: recordingAdapter([]) }, stdin: stdinPrompt },
+  );
+  expect(accepted.exitCode).toBe(0);
+  expect((await readState(paths.stateFile)).maxSteps).toBe(9007199254740991);
+});
+
 // Usefulness: verifies acceptance (#149) — an init without --parent-session is
 // refused before any state file is written, so no interactive run starts
 // unguarded by default.

@@ -13,6 +13,7 @@ import {
   assertOpenCodeOptions,
   readArgValue,
   readInlineValue,
+  readMaxSteps,
   readNonNegativeInt,
   readPositiveInt,
   roleFlags,
@@ -125,7 +126,7 @@ export function parseRoleArgs(argv) {
         break;
 
       case "--max-steps":
-        args.maxSteps = readPositiveInt(arg, readInline(arg));
+        args.maxSteps = readMaxSteps(readInline(arg));
         break;
 
       case "--timeout": {
@@ -190,14 +191,41 @@ function isInitCall(args) {
   return args.task !== null;
 }
 
-/** Rejects a non-init call when no state file exists for the work tree. */
-function requireState(state, cwd) {
+/**
+ * Rejects a non-init call when no state file exists for the work tree.
+ *
+ * `needsBudget` is set by the operations that read the step budget, so an unsafe
+ * stored `maxSteps` is refused before the step-budget guard. `abort` leaves it
+ * unset: abort charges no step and reads no budget, and refusing it would block
+ * the only route to a terminal lifecycle, because a new init refuses over a
+ * non-terminal run (#312).
+ */
+function requireState(state, cwd, { needsBudget = false } = {}) {
   if (!state) {
     throw new RoleError(
       `No run state for ${cwd}. Start one with: agent-loop role --task "..." --worker ... --reviewer ...`,
     );
   }
+  if (needsBudget) {
+    assertStateMaxSteps(state);
+  }
   return state;
+}
+
+/**
+ * A stored `maxSteps` is re-checked wherever the budget is read, because a state
+ * file written by an earlier version, or hand-edited, reaches the step-budget
+ * guard without passing through `--max-steps` validation. Outside the safe
+ * integer range the step counter cannot advance by one, so the bound on `turns`
+ * would hold for no accepted value. The refusal names the state file field,
+ * which is what a maintainer must correct (#312).
+ */
+function assertStateMaxSteps(state) {
+  if (!Number.isSafeInteger(state.maxSteps) || state.maxSteps < 1) {
+    throw new RoleError(
+      `State file field maxSteps must be a positive safe integer, got: ${JSON.stringify(state.maxSteps ?? null)}.`,
+    );
+  }
 }
 
 function validateInitFlags(args, agents = {}) {
@@ -255,6 +283,7 @@ function initialState(args) {
     },
     lastDispatch: null,
     lastResult: null,
+    turns: [],
   };
 }
 
@@ -425,7 +454,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     }
     state = initialState(args);
   } else {
-    state = requireState(existing, args.cwd);
+    state = requireState(existing, args.cwd, { needsBudget: true });
     rejectInitFlagChanges(args, state);
   }
 
@@ -453,6 +482,17 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     // `interrupted`, exits non-zero, and spawns no child; a maintainer can
     // resume from `interrupted` on a later call.
     state.lifecycle = "interrupted";
+    // The previous call charged a step and recorded no result for it, so the
+    // history is missing that turn. Record it here, marked `interrupted`: no
+    // child ran, so there is no verdict and no reviewed head to record. Role
+    // and time come from that turn's `lastDispatch`, because this call's
+    // `--role` need not be the role that ended uncertainly (#312).
+    recordTurn(
+      state,
+      state.lastDispatch?.role ?? roleName,
+      { status: "interrupted" },
+      state.lastDispatch?.at ?? new Date().toISOString(),
+    );
     await writeState(paths.stateFile, state);
     throw new RoleError(
       "Previous turn ended uncertainly; state marked interrupted. Use abort, or dispatch --resume-interrupted to continue.",
@@ -500,14 +540,18 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     const canceled = Boolean(err?.isCanceled);
     const payload = { role: roleName, status: "error", error: errorMessage(err) };
     state.lifecycle = canceled ? "interrupted" : "halted";
-    state.lastResult = { ...payload, at: new Date().toISOString() };
+    const at = new Date().toISOString();
+    state.lastResult = { ...payload, at };
+    recordTurn(state, roleName, payload, at);
     await writeState(paths.stateFile, state);
     onEvent({ type: "result", role: roleName, result: payload, stepsUsed: state.stepsUsed });
     return { exitCode: canceled ? 130 : 1, payload };
   }
 
   state.lifecycle = "active";
-  state.lastResult = { ...result, at: new Date().toISOString() };
+  const at = new Date().toISOString();
+  state.lastResult = { ...result, at };
+  recordTurn(state, roleName, result, at);
   if (role.sessionId) {
     state.roles[roleName].sessionId = role.sessionId;
   }
@@ -522,6 +566,38 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
 
 function errorMessage(err) {
   return err?.message ?? String(err);
+}
+
+/**
+ * Appends one turn entry to `turns`, which survives every later overwrite of
+ * `lastDispatch` and `lastResult`. The entry records the turn's identity, not
+ * its text: `role`, `status`, `verdict`, the reviewed `head`, and `at`. Report
+ * and response text stay out of it, so the state file cannot grow with the text
+ * a child returns (#312).
+ *
+ * Exactly one entry exists per charged step: an entry is written when a
+ * dispatch records its result, when a child fails, and when the recovery call
+ * records the turn a crash left uncertain. A dispatch past `maxSteps` is refused
+ * before it runs, so the array holds at most `maxSteps` entries. A state file
+ * written before this field exists starts with an empty history.
+ *
+ * `status` is `ok`, `error`, or `interrupted`. `interrupted` marks a charged
+ * turn whose outcome is unknown, so it carries no verdict and no reviewed head.
+ */
+function recordTurn(state, roleName, result, at) {
+  if (!Array.isArray(state.turns)) {
+    state.turns = [];
+  }
+  const ok = result.status === "ok";
+  state.turns.push({
+    role: roleName,
+    status: result.status,
+    // Only a reviewer turn carries a verdict; the word never comes from a
+    // worker response.
+    verdict: ok && roleName === "reviewer" ? parseVerdict(result.response) : null,
+    head: ok ? (result.reviewed?.head ?? null) : null,
+    at,
+  });
 }
 
 // Builds the envelope for one dispatched turn. When the closing block does not
@@ -562,7 +638,7 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
 
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
-    const state = requireState(await readState(paths.stateFile), args.cwd);
+    const state = requireState(await readState(paths.stateFile), args.cwd, { needsBudget: true });
     rejectInitFlagChanges(args, state);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
