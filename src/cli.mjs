@@ -196,6 +196,10 @@ Role operations:
                                 keys to record an unresolved PR-head compare. Exits 0 for
                                 that marker, where the headless loop exits 4.
   abort                         End the run with --reason.
+  wait-checks                   Wait for the required checks on --pr to settle, inside
+                                --timeout seconds, and print their states with a
+                                timedOut flag. Reads status only, so it needs no run
+                                state and changes nothing.
 
 Role flags:
 
@@ -220,6 +224,8 @@ Role flags:
                                 finish with no such gate and a finish that sets
                                 unresolvedCompare. Later calls read it from the
                                 state file and reject any attempt to change it.
+  --timeout <seconds>           wait-checks: bound on the wait. Defaults to 300. 0 is
+                                refused, because the wait must stay bounded.
   --require-ci <pr>             finish only: refuse unless the PR head matches the
                                 reviewed commit, the reviewed tree is clean, the PR is
                                 not behind its base under a strict rule, has no merge

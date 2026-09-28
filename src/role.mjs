@@ -20,6 +20,7 @@ import {
   splitInlineFlag,
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
+import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
@@ -34,7 +35,7 @@ import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
-const OPERATIONS = new Set(["dispatch", "finish", "abort"]);
+const OPERATIONS = new Set(["dispatch", "finish", "abort", "wait-checks"]);
 const MODES = new Set(["work-first", "review-first", "review-only"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
@@ -830,6 +831,39 @@ async function abort(args) {
 }
 
 /**
+ * `wait-checks`: polls the required checks of `--pr` until none is pending or
+ * the bound elapses, then prints the last check states with a `timedOut` flag.
+ * It reads status only, so it touches no run state and needs no init. The bound
+ * defaults to 300 seconds; `--timeout 0` is refused, because an unbounded wait
+ * is the outcome this operation exists to prevent (#329).
+ */
+async function waitChecksOperation(args, { gh, signal, now, sleep } = {}) {
+  if (args.role !== null) {
+    throw new RoleError("--role is only valid for dispatch.");
+  }
+  if (args.reason !== null) {
+    throw new RoleError("--reason is only valid for abort.");
+  }
+  rejectFinishOnlyFlags(args, "wait-checks");
+  if (args.pr === null) {
+    throw new RoleError("wait-checks requires --pr <pr>.");
+  }
+  if (args.timeoutProvided && args.timeout === null) {
+    throw new RoleError("wait-checks refuses --timeout 0: the wait must stay bounded.");
+  }
+  const result = await waitChecks({
+    pr: args.pr,
+    cwd: args.cwd,
+    timeoutSeconds: args.timeout ?? DEFAULT_WAIT_SECONDS,
+    gh,
+    now,
+    sleep,
+    signal,
+  });
+  return { exitCode: 0, payload: { status: "ok", pr: args.pr, ...result } };
+}
+
+/**
  * Executes one parsed role command. Returns `{ exitCode, payload }`; the
  * payload is the JSON envelope. Unexpected failures become `status: "error"`
  * envelopes instead of stack traces on stdout.
@@ -843,6 +877,8 @@ export async function executeRoleCommand(args, deps = {}) {
         return await finish(args, deps);
       case "abort":
         return await abort(args, deps);
+      case "wait-checks":
+        return await waitChecksOperation(args, deps);
       default:
         throw new RoleError(`Unsupported operation: ${args.operation}`);
     }

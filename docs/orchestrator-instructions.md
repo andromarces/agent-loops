@@ -13,8 +13,8 @@ rules in JSON-action form; this file is the source for shared rules.
   open child transcripts.
 - The one exception is a pull request check status read, which a run that ends
   with `--require-ci` allows, as the waiting rules below state. A status read is
-  not a review, not a test, and not an edit, and `gh pr checks` is the only
-  command it covers.
+  not a review, not a test, and not an edit, and `agent-loop role wait-checks` is
+  the only command it covers.
 - Read only the JSON envelope the subcommand prints on stdout. Child stderr
   logs and child response text beyond the envelope are not input.
 
@@ -229,18 +229,42 @@ PR head to complete before you dispatch the reviewer. When a reviewer turn
 reports a pending required check in `Checks`, wait for those checks to complete
 before you call `finish`.
 
-The wait is the status read the role rule excepts, and it changes nothing:
-`gh pr checks <pr> --required --watch` blocks until the checks report, and it
-returns the same exit codes as one read. Add `--fail-fast` to stop on the first
-failure, and `--interval <seconds>` to set the refresh. Never record a check you
-could not read as passed.
+The wait is the status read the role rule excepts, and it changes nothing. The
+runtime owns the bound, because `gh pr checks --watch` takes no timeout and a
+shell `timeout` exists on neither Windows nor macOS by default:
 
-Keep the wait inside the command timeout your harness applies to a shell command.
+```bash
+agent-loop role wait-checks --cwd <dir> --pr <n> --timeout <seconds>
+```
 
-A required check still pending after a wait is not a finish condition. The
-`--require-ci` gate refuses a finish while a required check is pending, so a
-finish summary cannot carry it. Wait again, dispatch the reviewer again, or
-`abort` with the pending check named in the reason.
+The command returns inside its own bound, before the command timeout your harness
+applies to a shell command, and prints one JSON envelope on stdout:
+
+```json
+{
+  "status": "ok",
+  "pr": 42,
+  "timedOut": false,
+  "checks": [{ "name": "ci", "state": "SUCCESS", "bucket": "pass" }]
+}
+```
+
+`--timeout` is in seconds and defaults to 300. Set it below the command timeout
+your harness applies when that timeout is smaller. `--timeout 0` is refused.
+
+`timedOut: true` means the bound elapsed with a required check still pending. It
+is a completed read, not a read failure: the envelope still carries the last
+check states. A `bucket` of `pending` marks a pending check, and `fail` marks a
+failed one. A check that has not started is absent from `checks`, so an empty
+list means no required check has reported yet. `status: "error"` means the read
+itself failed, for example no `gh` or no network, and no check state is recorded
+for that wait. Never record a check you could not read as passed.
+
+A required check still pending after a wait, whether it failed or the bound
+elapsed, is not a finish condition. The `--require-ci` gate refuses a finish
+while a required check is pending, so a finish summary cannot carry it. Wait
+again, dispatch the reviewer again, or `abort` with the pending check named in
+the reason.
 
 ## Waiting in the headless loop
 
