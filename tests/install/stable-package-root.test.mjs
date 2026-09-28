@@ -102,16 +102,19 @@ test("hooks installed under a pnpm 12 global layout survive an upgrade", async (
 });
 
 /**
- * Builds an older pnpm global layout, verified against a real pnpm 10 `pnpm
- * add -g` with a temp PNPM_HOME: the global root is `<global>/<n>/node_modules`,
- * `.pnpm` sits directly in it, and the package is linked at the root beside
- * `.pnpm`. An upgrade adds a new store entry and repoints that link. There is no
- * install directory and no hash link, which is what separates it from pnpm 12.
+ * Builds a pnpm 10 global layout, verified end to end against a real pnpm 10.34.5
+ * `pnpm add -g` with a temp PNPM_HOME and a temp AGENT_LOOP_HOME: `pnpm root -g`
+ * reports `<global>/5/node_modules`, the virtual store is `<global>/5/.pnpm`
+ * beside it, and the package is linked under that `node_modules`. An upgrade adds
+ * a store entry and repoints the link. There is no install directory and no hash
+ * link, which is what separates it from pnpm 12.
  */
 async function pnpmGlobalLegacy(globalHome, version) {
   const root = join(globalHome, "global", "5", "node_modules");
   const store = join(
-    root,
+    globalHome,
+    "global",
+    "5",
     ".pnpm",
     `@andromarces+agent-loops@${version}`,
     "node_modules",
@@ -125,11 +128,12 @@ async function pnpmGlobalLegacy(globalHome, version) {
   return { linked, root, store };
 }
 
-// Usefulness: verifies the older-pnpm fallback of #305. Its store path still names
-// the package by version, so install must render the link beside the virtual store
-// entry, which carries no version and which an upgrade repoints. The package is
-// scoped, so the rendered path has to keep the scope directory.
-test("an older pnpm global layout renders its version-independent link", async () => {
+// Usefulness: verifies the pnpm 10 fallback of #305. Its store path still names the
+// package by version, so install must render the link under the `node_modules`
+// that `pnpm root -g` reports, which carries no version and which an upgrade
+// repoints. The package is scoped, so the rendered path has to keep the scope
+// directory.
+test("a pnpm 10 global layout renders its version-independent link", async () => {
   const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm-legacy-"));
   paths.push(globalHome);
   const { linked, store } = await pnpmGlobalLegacy(globalHome, "0.3.0");
@@ -138,12 +142,13 @@ test("an older pnpm global layout renders its version-independent link", async (
   expect(existsSync(linked)).toBe(true);
 
   // The upgrade: a new store entry takes the new version, the link is repointed
-  // at it, and pnpm deletes the old one.
+  // at it, and pnpm deletes the old one. The rendered path must still be the
+  // link, not the store entry, or the install is stale again.
   await rm(linked, { force: true });
   const after = await pnpmGlobalLegacy(globalHome, "0.4.0");
   await removePath(store);
   expect(existsSync(store)).toBe(false);
-  expect(existsSync(stablePackageRoot(after.store))).toBe(true);
+  expect(stablePackageRoot(after.store)).toBe(after.linked);
 });
 
 // Usefulness: verifies the negative of both pnpm cases. A store with no link to

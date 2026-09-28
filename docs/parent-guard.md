@@ -49,14 +49,16 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
 - Every installed guard path is the package root that survives an upgrade. Node
   resolves the package into a version-named virtual store entry, and a pnpm
   upgrade replaces that entry, so `install` writes a version-independent path
-  instead. pnpm 12 keeps a hash-named symlink beside the install directory that
-  holds the package, and the `agent-loop` bin shim calls that path, so `install`
-  writes it and the upgrade repoints it. pnpm 10 has no such symlink: its global
-  root holds `.pnpm` directly and links the package beside it, so `install` writes
-  that link, which the upgrade also repoints. An npm global install, a clone, and
-  a linked package carry no version in their root and render unchanged. An install
-  written by a version that recorded a replaced path still names the deleted
-  directory until `agent-loop install` runs again.
+  instead, and checks that the path resolves to the installed package before
+  using it. pnpm 12 puts the store entry in an install directory and keeps a
+  hash-named symlink beside that directory, which the `agent-loop` bin shim calls,
+  so `install` writes it. pnpm 10 puts its store directory beside the global
+  `node_modules` and links the package under that `node_modules`, which
+  `pnpm root -g` reports, so `install` writes that link. An upgrade repoints both.
+  An npm global install, a clone, and a linked package carry no version in their
+  root and render unchanged, and so does any layout with no link that resolves to
+  the package. An install written by a version that recorded a replaced path still
+  names the deleted directory until `agent-loop install` runs again.
 - On OpenCode, `~/.config/opencode/plugins/parent-guard.ts` registers a `permission` `evaluate` hook. It reads `PermissionEvaluation.sessionID`, resolves the state through the same session-run entries, and sets `effect: "deny"` with the same reason under the same rule. A live probe against OpenCode v0.0.0-dev-19933 showed the `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the guard's action set (one set entry, `edit`) covers every built-in file-edit tool; a tool served by an MCP server raises its own action name and passes the guard. `shell` raises a different action and stays allowed, as `Bash` does on Claude Code. The guard exists only while the plugin is loaded, so a session that disables it stays unguarded.
 - The plugin runs inside the OpenCode server process, so it resolves `AGENT_LOOP_RUNS_ROOT` from that process's environment; the Claude Code hook inherits the parent shell's environment instead. The override is test-only, but using it outside tests would point the plugin and the `agent-loop` CLI at different roots and disable the guard silently.
 - On Antigravity CLI, `src/hook/antigravity-parent-guard.mjs` reads `conversationId` and `toolCall.name`, reuses `decideParentGuard`, and prints `{"decision":"deny","reason":...}` only for a guarded tool call from the registered parent. Antigravity blocks a tool call when a hook prints `{}`, prints an empty decision, or exits non-zero, so every allow path prints nothing and exits 0 and keeps the normal permission flow. The global `~/.gemini/config/hooks.json` group runs a shim in that folder by a flat relative path, and the shim imports the guard by `file:///` URL, because a quoted or spaced absolute script path fails in every quoting form tested. A stale or unreachable guard URL is swallowed, so a moved package or deleted file does not fail closed. The parent learns its id from the undocumented `ANTIGRAVITY_CONVERSATION_ID`, which child processes inherit.
