@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { afterEach, expect, test } from "vitest";
 import { executeRoleCommand } from "../src/role.mjs";
-import { statePaths } from "../src/lib/runstate.mjs";
+import { readState, statePaths } from "../src/lib/runstate.mjs";
 import { snapshot } from "../src/lib/snapshot.mjs";
 import {
   basicDeps,
@@ -17,9 +17,83 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
+
+// Usefulness: verifies abort ends a run whose `--cwd` no longer exists or is no
+// longer a Git work tree. A refused dispatch leaves that run active, and the
+// parent rule for it is to abort rather than repair, so abort has to be the one
+// command that works without a usable work tree (issue #327).
+test("abort ends a run whose --cwd is missing or not a Git work tree", async () => {
+  await setup();
+  const goneRepo = await createTempRepo();
+  repos.push(goneRepo);
+  const plainRepo = await createTempRepo();
+  repos.push(plainRepo);
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+
+  for (const repo of [goneRepo, plainRepo]) {
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+      agents,
+      stdin: stdinPrompt,
+    });
+  }
+  await removePath(goneRepo);
+  await removePath(join(plainRepo, ".git"));
+
+  for (const repo of [goneRepo, plainRepo]) {
+    const result = await executeRoleCommand(
+      withRepo(["abort", "--cwd", "<repo>", "--reason", "work tree unusable"], repo),
+      { agents },
+    );
+    expect(result.exitCode, repo).toBe(0);
+    expect(result.payload, repo).toMatchObject({ status: "ok", lifecycle: "aborted" });
+    const state = await readRepoState(repo);
+    expect(state.lifecycle, repo).toBe("aborted");
+    expect(state.reason, repo).toBe("work tree unusable");
+  }
+});
+
+// Usefulness: verifies abort refuses a path that holds no run state, so a parent
+// that never started a run there cannot end one. The refused-`--cwd` rule tells
+// that case apart from a live run, and this pins the command side of it (issue
+// #327).
+test("abort refuses a path with no run state", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const result = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "work tree unusable"], repo),
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.status).toBe("error");
+  expect(result.payload.error).toContain("No run state for");
+  expect(await readState(statePaths({ cwd: repo }).stateFile)).toBeNull();
+});
+
+// Usefulness: verifies abort refuses a run that is already terminal and leaves its
+// recorded reason alone, so a run the runtime already ended needs no abort and no
+// second one can rewrite why it ended (issue #327).
+test("abort refuses a run that is already terminal", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  await executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", "--reason", "stop"], repo));
+  expect((await readRepoState(repo)).lifecycle).toBe("aborted");
+
+  const again = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "work tree unusable"], repo),
+  );
+  expect(again.exitCode).toBe(1);
+  expect(again.payload.status).toBe("error");
+  expect(again.payload.error).toContain("already aborted");
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("aborted");
+  expect(state.reason).toBe("stop");
+});
 
 // Usefulness: verifies acceptance — finish from active in review-only mode
 // succeeds with verdict: reject recorded in the summary.

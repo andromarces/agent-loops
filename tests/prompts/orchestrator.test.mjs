@@ -493,6 +493,39 @@ test("initialPrompt states that a wait can end the run at the turn timeout", () 
   expect(prompt).toMatch(/exit 1/);
 });
 
+// The refused-`--cwd` rule both parent paths state the same way. It is the
+// decision, not a repair procedure: a parent ends the run and a maintainer
+// decides what happens to the work tree. The mechanism behind it differs by
+// parent, so only the decision, the qualification, and the three refused cases
+// are pinned here, and the test fails when either side drops them (issue #327).
+const REFUSED_CWD_RULE = [
+  "A refused `--cwd` is not the parent's to repair: end the run, name the path and the refusal in the reason, and leave the work tree to a maintainer, who decides whether to recreate it and start a new run.",
+  "Abort only when a non-terminal run exists at the refused `--cwd`. With no run state there, from a refused init or a path that was never this run's, no run started, so report the refusal and do not abort. A run that is already terminal needs no abort.",
+  "One rule covers every refused `--cwd`: a path that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason names that path and that message.",
+];
+
+// Usefulness: verifies the interactive instructions and the headless prompt state
+// the same refused-`--cwd` rule, so neither parent path sends a maintainer
+// through a work tree repair that the runtime never asked for (issue #327).
+test("interactive instructions and headless prompt share the refused --cwd rule", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
+  for (const rule of REFUSED_CWD_RULE) {
+    expect(instructions).toContain(rule);
+    expect(prompt).toContain(rule);
+  }
+  // Neither text keeps the repair procedure or the unrecoverable claim.
+  for (const gone of [
+    "git worktree add",
+    "git worktree prune",
+    "not recoverable",
+    "unrecoverable",
+  ]) {
+    expect(instructions).not.toContain(gone);
+    expect(prompt).not.toContain(gone);
+  }
+});
+
 // Usefulness: verifies refusalPrompt carries the refusal reason and the supported
 // actions, so the orchestrator can recover with a reviewer turn (issue #234).
 test("refusalPrompt states the reason and the supported actions", () => {
