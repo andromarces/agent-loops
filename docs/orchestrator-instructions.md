@@ -15,8 +15,8 @@ rule.
   open child transcripts.
 - The one exception is a pull request check status read, which a run that ends
   with `--require-ci` allows, as the waiting rules below state. A status read is
-  not a review, not a test, and not an edit, and `gh pr checks` is the only
-  command it covers.
+  not a review, not a test, and not an edit, and `agent-loop role wait-checks` is
+  the only command it covers.
 - Read only the JSON envelope the subcommand prints on stdout. Child stderr
   logs and child response text beyond the envelope are not input.
 
@@ -278,18 +278,68 @@ PR head to complete before you dispatch the reviewer. When a reviewer turn
 reports a pending required check in `Checks`, wait for those checks to complete
 before you call `finish`.
 
-The wait is the status read the role rule excepts, and it changes nothing:
-`gh pr checks <pr> --required --watch` blocks until the checks report, and it
-returns the same exit codes as one read. Add `--fail-fast` to stop on the first
-failure, and `--interval <seconds>` to set the refresh. Never record a check you
-could not read as passed.
+The wait is the status read the role rule excepts, and it changes nothing. The
+runtime owns the bound, because `gh pr checks --watch` takes no timeout and a
+shell `timeout` exists on neither Windows nor macOS by default:
 
-Keep the wait inside the command timeout your harness applies to a shell command.
+```bash
+agent-loop role wait-checks --cwd <dir> --pr <n> --timeout <seconds>
+```
 
-A required check still pending after a wait is not a finish condition. The
-`--require-ci` gate refuses a finish while a required check is pending, so a
-finish summary cannot carry it. Wait again, dispatch the reviewer again, or
-`abort` with the pending check named in the reason.
+The command returns inside its own bound, before the command timeout your harness
+applies to a shell command, and prints one JSON envelope on stdout. `--cwd` must
+be inside a Git work tree, as it is for `dispatch`, because the read runs there:
+
+```json
+{
+  "status": "ok",
+  "pr": 42,
+  "timedOut": false,
+  "checks": [{ "name": "ci", "state": "SUCCESS", "bucket": "pass" }]
+}
+```
+
+`--timeout` is in seconds and defaults to 300. Set it below the command timeout
+your harness applies when that timeout is smaller. `--timeout 0` is refused.
+
+The bound starts at command entry, so no step of the command adds time to it.
+Work-tree validation runs inside the bound, so a slow or hung `git` cannot push
+the command past it; a validation that reaches the bound refuses, because a work
+tree the probe never confirmed is not one this command may read. Every read is
+limited to the time the command has left, and a read that reaches the limit is
+stopped and then given five seconds to exit. The total bound of the command is
+`--timeout` plus those five seconds, so set `--timeout` at least five seconds
+below your harness command timeout. A wait that ends on the bound reports
+`timedOut: true` with the last check states it read. It is a completed read, not
+a read failure. An empty `checks` with `timedOut: true` means no check state was
+ever read, so it never reads as a pass.
+
+`childExitUnconfirmed: true` appears only when those five seconds expired with the
+`gh` child still unaccounted for. The command does not claim an exit it did not
+observe, so a `gh` process from an earlier wait may still be running; a parent
+that sees it should settle the outstanding `gh` process before starting another
+wait.
+
+The `gh pr checks` exit codes decide the outcome, as the reviewer read states:
+exit 0 with no pending check listed is settled, exit 8 is pending, and exit 1 is
+settled only when the output lists a failing required check. Any other exit 1,
+and any output that is not a check list, is unresolved: the command exits 1 with
+`status: "error"` and records no check state for that wait, so an unresolved
+read never reads as a pass. Every check item is read as a name plus a `state` or
+a `bucket` the CLI knows; an item that carries no readable state is unresolved
+too, so one item the CLI cannot read cannot settle the wait as a pass. Never
+record a check you could not read as passed.
+
+A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
+failed one. A check that has not started is absent from `checks`, because the
+command omits it, so an empty list means no required check has reported yet and
+the wait continues.
+
+A required check still pending after a wait, whether it failed or the bound
+elapsed, is not a finish condition. The `--require-ci` gate refuses a finish
+while a required check is pending, so a finish summary cannot carry it. Wait
+again, dispatch the reviewer again, or `abort` with the pending check named in
+the reason.
 
 ## Waiting in the headless loop
 

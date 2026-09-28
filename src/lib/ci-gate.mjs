@@ -11,10 +11,30 @@ import { execa } from "execa";
 // every non-completed status fails the gate.
 const PASS_CHECK_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 
-/** Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr }`; a non-zero exit is data, not a throw. */
-export async function runGh(args, cwd) {
-  const result = await execa("gh", args, { cwd, reject: false });
-  return { status: result.exitCode, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+/**
+ * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr, timedOut }`;
+ * a non-zero exit is data, not a throw. `timeoutMs` bounds the call and
+ * terminates the `gh` child when it expires, so a hung `gh` cannot outlast a
+ * caller bound. The kill is `SIGTERM` then `SIGKILL` after
+ * `forceKillAfterDelay` on macOS, and `taskkill /T /F` over the process tree on
+ * Windows, so no platform keeps a child the bound has given up on (#329).
+ */
+export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
+  const options = { cwd, reject: false, cleanup: true, killDescendants: true };
+  if (timeoutMs > 0) {
+    options.timeout = timeoutMs;
+    options.forceKillAfterDelay = 1000;
+  }
+  if (signal) {
+    options.cancelSignal = signal;
+  }
+  const result = await execa("gh", args, options);
+  return {
+    status: result.exitCode,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    timedOut: Boolean(result.timedOut),
+  };
 }
 
 function fail(reason) {

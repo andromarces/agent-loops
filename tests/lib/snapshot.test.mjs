@@ -1,6 +1,6 @@
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { expect, test } from "vitest";
 import { execa } from "execa";
 import {
@@ -38,6 +38,51 @@ test("assertGitWorkTree validates git directory", async () => {
     await removePath(nonRepo);
   }
 });
+
+// A real `git` on PATH that hangs, so the probe bound is exercised against a real
+// child process. The shim writes a marker file after a delay that outlasts the
+// bound: a marker means the child outlived the bound, and no marker means the
+// bound terminated it. The shim is a `.cmd` on Windows and an executable shell
+// script on macOS, which is what `git` resolves to on each platform.
+async function hangingGit(dir, marker, afterMs) {
+  const path = marker.split("\\").join("/");
+  if (process.platform === "win32") {
+    await writeFile(
+      join(dir, "git.cmd"),
+      `@echo off\r\nnode -e "setTimeout(function(){require('fs').writeFileSync('${path}','x')},${afterMs})"\r\n`,
+    );
+    return;
+  }
+  await writeFile(join(dir, "git"), `#!/bin/sh\nsleep ${afterMs / 1000}\ntouch '${marker}'\n`, {
+    mode: 0o755,
+  });
+}
+
+// Usefulness: verifies the work-tree probe is bounded and terminates its child
+// when the bound expires, on Windows and on macOS. A real process is the only way
+// to check that a slow `git` cannot add its own time to a caller's total limit,
+// because every other test uses a real fast `git` (issue #329).
+test("assertGitWorkTree refuses a probe that outlasts its bound", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "git-probe-bound-"));
+  const marker = join(dir, "alive.txt");
+  await hangingGit(dir, marker, 2000);
+  const path = process.env.PATH;
+
+  try {
+    process.env.PATH = `${dir}${delimiter}${path}`;
+    const started = Date.now();
+    await expect(assertGitWorkTree(dir, { timeoutMs: 300 })).rejects.toThrow(
+      /validation did not complete within its bound/,
+    );
+    expect(Date.now() - started).toBeLessThan(2000);
+    // The child was terminated, not abandoned: it never reaches its marker.
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await expect(access(marker)).rejects.toThrow();
+  } finally {
+    process.env.PATH = path;
+    await removePath(dir);
+  }
+}, 15000);
 
 // Usefulness: verifies diffSnapshots detects when nothing changes.
 test("diffSnapshots returns empty list when no change occurred", async () => {

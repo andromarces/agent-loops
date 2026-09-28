@@ -196,11 +196,22 @@ Role operations:
                                 keys to record an unresolved PR-head compare. Exits 0 for
                                 that marker, where the headless loop exits 4.
   abort                         End the run with --reason.
+  wait-checks                   Wait for the required checks on --pr to settle, inside
+                                --timeout seconds, and print their states with a
+                                timedOut flag. The bound starts at command entry
+                                and covers work-tree validation and every read;
+                                a read that reaches it is stopped and given five
+                                seconds to exit, and an exit the command could
+                                not observe is reported as
+                                childExitUnconfirmed. The total bound is
+                                --timeout plus five seconds. Reads status only,
+                                so it needs no run state and changes nothing.
 
 Role flags:
 
   --role worker|reviewer        Role to dispatch. Required for dispatch.
-  --cwd <directory>             Target work tree. Defaults to the current directory.
+  --cwd <directory>             Target work tree. Must be inside a Git work tree.
+                                Defaults to the current directory.
   --parent-session <id>         Required on the init call. The harness session id the
                                 parent-edit guard matches; later calls reject a changed
                                 value. The headless form (no subcommand) is the explicit
@@ -220,6 +231,8 @@ Role flags:
                                 finish with no such gate and a finish that sets
                                 unresolvedCompare. Later calls read it from the
                                 state file and reject any attempt to change it.
+  --timeout <seconds>           wait-checks: bound on the wait. Defaults to 300. 0 is
+                                refused, because the wait must stay bounded.
   --require-ci <pr>             finish only: refuse unless the PR head matches the
                                 reviewed commit, the reviewed tree is clean, the PR is
                                 not behind its base under a strict rule, has no merge
