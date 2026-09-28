@@ -1,16 +1,40 @@
-import { expect, test, vi } from "vitest";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, test, vi } from "vitest";
 import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
+import { createTempRepo, removePath } from "../runtime-helpers.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
 }));
 
+// The dispatch path logs through several entry points, so the mock names them all
+// rather than leaving the role and snapshot modules with undefined imports.
 vi.mock("../../src/lib/log.mjs", () => ({
+  logDebug: vi.fn(),
   logInfo: vi.fn(),
+  logInfoFull: vi.fn(),
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+  setVerbose: vi.fn(),
+  setLogsToStderr: vi.fn(),
 }));
+
+/** Runs root and temp repo for the dispatch test, removed after it. */
+let dispatchPaths = [];
+
+afterEach(async () => {
+  delete process.env.AGENT_LOOP_RUNS_ROOT;
+  for (const path of dispatchPaths) {
+    await removePath(path);
+  }
+  dispatchPaths = [];
+});
 
 function textEvent(text) {
   return JSON.stringify({
@@ -413,6 +437,57 @@ test("opencode joins a mid-sentence split without a line break", async () => {
     notes: "none",
     deferred: "none",
   });
+});
+
+// Usefulness: verifies the caller-visible envelope for a two-event opencode stream, so the join is
+// covered where a caller reads it. A narration part then the part that opens the closing block must
+// reach the caller as a parsed `report` with no `raw`, which is the field the parent loop reads for
+// the structured fields. The join tests above cover the string; this one covers the seam (issue #316).
+test("an opencode stream split before the closing block reaches the dispatch envelope", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
+  const repo = await createTempRepo();
+  process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+  dispatchPaths = [runsRoot, repo];
+
+  const init = parseRoleArgs([
+    "dispatch",
+    "--role",
+    "worker",
+    "--cwd",
+    repo,
+    "--task",
+    "Fix the part join.",
+    "--parent-session",
+    "sess-parent-1",
+    "--worker",
+    "opencode",
+    "--reviewer",
+    "opencode",
+  ]);
+  const stdin = async () => "continue working";
+  vi.mocked(exec).mockResolvedValue({ stdout: "", stderr: "" });
+  await executeRoleCommand(init, { agents: { opencode: { run: runOpenCode } }, stdin });
+
+  vi.mocked(exec).mockResolvedValue({
+    stdout: [textEvent("The narration ends here."), textEvent(CLOSING_BLOCK)].join("\n"),
+    stderr: "",
+  });
+  const result = await executeRoleCommand(
+    parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo]),
+    { agents: { opencode: { run: runOpenCode } }, stdin },
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.status).toBe("ok");
+  expect(result.payload.report).toEqual({
+    conclusion: "PR #314 fixes the part join.",
+    why: "the narration and the block arrived as two text parts.",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
+  expect(result.payload.raw).toBeUndefined();
 });
 
 // Usefulness: verifies a part boundary inside a sentence does not promote mid-line text to a
