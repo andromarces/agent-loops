@@ -32,6 +32,33 @@ function expectRule(text, ...terms) {
   expect(stated, `no clause carries ${terms.map(String).join(" ")}`).toBe(true);
 }
 
+// The target of every commit or push instruction in the text: the phrase after the
+// preposition, up to the next clause mark. A commit and a push in one clause each
+// yield a target, so a second target naming another branch is caught.
+const BRANCH_TARGET =
+  /\b(?:commit|push)(?:s|es)?\b[^.;]{0,40}?\b(?:on|onto|to)\s+([^,.;]{1,40}?)(?=\s+(?:and|so|but)\b|[,.;]|$)/gi;
+
+// A target that names a branch instead of pointing at the one the dispatcher
+// supplied. A back-reference is a determiner and the word "branch" and nothing
+// else, so `main` and `the main branch` each name a branch of their own.
+const NAMED_TARGET = /^(?!\s*(?:the|that|this|your|its)\s+branch(?:es)?\s*$)\S/i;
+
+// Asserts no commit or push in the text targets a branch of the rule's own, so a
+// target such as `main` or `origin/main` fails.
+function expectNoNamedBranchTarget(text) {
+  for (const target of commitTargets(text)) {
+    expect(NAMED_TARGET.test(target), `the rule commits on ${target}, a branch of its own`).toBe(
+      false,
+    );
+  }
+}
+
+/** Every commit or push target in the text, whitespace collapsed. */
+function commitTargets(text) {
+  const flat = text.replace(/\s+/g, " ");
+  return [...flat.matchAll(new RegExp(BRANCH_TARGET.source, "gi"))].map((match) => match[1].trim());
+}
+
 // Usefulness: verifies initialPrompt states the role, the step budget, the task
 // it completes, and the action format it answers with, so a headless turn runs
 // the loop instead of answering prose (issue #328).
@@ -140,8 +167,15 @@ const RESOLVE_PR_HEAD = /resolve[^.!?]{0,40}PR head[^.!?]{0,40}PR number/i;
 const REQUIRE_CLEAN_TRUE = /require[^.!?]{0,40}reviewed\.clean[^.!?]{0,20}\btrue\b/i;
 const ACCEPT_WITHOUT_CHECKS =
   /treat[^.!?]{0,60}accept[^.!?]{0,40}without[^.!?]{0,20}Checks[^.!?]{0,20}not accepted/i;
-const DO_NOT_FINISH_AS_VERIFIED =
-  /PR head cannot be resolved[^.!?]{0,120}do not finish as verified[^.!?]{0,20}abort[^.!?]{0,60}record[^.!?]{0,40}unresolved compare[^.!?]{0,40}notDone[^.!?]{0,20}\bopen\b/i;
+// The unresolved-compare rule, clause by clause. `do not finish as verified` is
+// the prohibition, and `abort, or record` joins its two options: that joined pair
+// is the contract, so it is asserted as a retained literal. Splitting the two
+// options apart, or softening one to "avoid abort", fails.
+const UNRESOLVED_HEAD_CONDITION = /PR head cannot be resolved/i;
+const DO_NOT_FINISH_AS_VERIFIED = /do not finish as verified/i;
+const ABORT_OR_RECORD = /abort, or record the unresolved compare/i;
+const RECORD_UNDER_NOT_DONE_AND_OPEN =
+  /record[^.!?]{0,40}unresolved compare[^.!?]{0,40}notDone[^.!?]{0,20}\bopen\b/i;
 
 // Usefulness: verifies the headless parent states the same reviewed-state rules
 // as the interactive instructions: compare head, require clean, treat an accept
@@ -156,9 +190,12 @@ test("initialPrompt states the reviewed-state parent rules", () => {
   expectRule(prompt, RESOLVE_PR_HEAD);
   expectRule(prompt, REQUIRE_CLEAN_TRUE);
   expectRule(prompt, ACCEPT_WITHOUT_CHECKS);
-  // The unresolved-compare rule, in one clause: do not finish as verified, abort,
-  // or record it under notDone and open. A reversal fails each of its halves.
+  // The unresolved-compare rule, clause by clause: the condition, the prohibition,
+  // the two options joined as "abort, or record", and the fields the record uses.
+  expectRule(prompt, UNRESOLVED_HEAD_CONDITION);
   expectRule(prompt, DO_NOT_FINISH_AS_VERIFIED);
+  expectRule(prompt, ABORT_OR_RECORD);
+  expectRule(prompt, RECORD_UNDER_NOT_DONE_AND_OPEN);
 });
 
 // Usefulness: verifies the headless prompt names the machine-readable marker the
@@ -188,13 +225,19 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /PR work/i, /pull request/i),
   (text) =>
     expectRule(text, /name[^.!?]{0,40}PR branch/i, /worker/i, /commit/i, /push/i, /reviewed head/i),
+  // Every commit or push the parent rule names must target the branch it just
+  // named, never a branch of its own, so `on main` and `origin/main` fail.
+  (text) => expectNoNamedBranchTarget(text),
   (text) => expectRule(text, /PR number/i, /head commit/i),
   (text) => expectRule(text, /headless/i, /task/i, /PR number/i),
   (text) => expectRule(text, COMPARE_BEFORE_FINISH),
   (text) => expectRule(text, RESOLVE_PR_HEAD),
   (text) => expectRule(text, REQUIRE_CLEAN_TRUE),
   (text) => expectRule(text, ACCEPT_WITHOUT_CHECKS),
+  (text) => expectRule(text, UNRESOLVED_HEAD_CONDITION),
   (text) => expectRule(text, DO_NOT_FINISH_AS_VERIFIED),
+  (text) => expectRule(text, ABORT_OR_RECORD),
+  (text) => expectRule(text, RECORD_UNDER_NOT_DONE_AND_OPEN),
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt
