@@ -58,15 +58,21 @@ following the instructions records nothing.
 7. The flag check alone does not cover every run. A non-init `dispatch`,
    `finish`, or `abort` loads the stored state, and a `maxSteps` written by an
    earlier version or hand-edited reaches the step-budget guard without passing
-   through `--max-steps` validation. `requireState` therefore re-checks the
-   stored `maxSteps` against the same safe-integer range on every load and
-   refuses with an error that names the state file field. Every budget a run can
-   act on is a safe integer.
-8. `verdict` is parsed from a reviewer turn's own closing block, so it cannot be
+   through `--max-steps` validation. `dispatch` and `finish` therefore re-check
+   the stored `maxSteps` against the same safe-integer range before reading the
+   budget, and refuse with an error that names the state file field. Every budget
+   a run reads is a safe integer.
+8. `abort` is exempt from that check. It charges no step and reads no budget, so
+   the check would buy nothing there, and refusing it would remove the only route
+   to a terminal lifecycle: `dispatch` and `finish` are refused, and a new init
+   refuses over a non-terminal run, so the run and its parent-edit guard would
+   stay stuck. `abort` proceeds and ends the run; the invalid stored value stays
+   in the state file for the maintainer to correct.
+9. `verdict` is parsed from a reviewer turn's own closing block, so it cannot be
    inferred from process success. The state file is the only place the history
    lives; `--transcript` stays a per-call per-event log and is not the history.
-9. A state file written before this field starts with an empty history, so a run
-   that began on an earlier version keeps working.
+10. A state file written before this field starts with an empty history, so a run
+    that began on an earlier version keeps working.
 
 ## Consequences
 
@@ -78,10 +84,10 @@ following the instructions records nothing.
   Any caller that passed such a value must lower it; no realistic run needs more
   than `Number.MAX_SAFE_INTEGER` steps.
 - A run whose stored `maxSteps` is outside the range is refused on its next
-  `dispatch`, `finish`, or `abort`, naming the state file field. A run already
-  carrying such a value cannot be continued; the state file must be corrected or
-  the run replaced by a new init call. `abort` is refused too, so a maintainer
-  cannot end such a run through the subcommand.
+  `dispatch` or `finish`, naming the state file field. Such a run cannot
+  continue, but `abort` still ends it, so the parent-edit guard releases. The
+  invalid value stays in the state file, so the maintainer corrects the field
+  before a new init, which would otherwise refuse over the non-terminal run.
 - `docs/orchestrator-instructions.md` documents the history, so an orchestrator
   following the instructions reads it after compaction or restart.
 - A turn's response text is still only in `lastResult` and, with

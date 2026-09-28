@@ -140,8 +140,7 @@ test("a turn whose child fails records an error turn", async () => {
 // it. A state file written by an earlier version, or hand-edited, carries the
 // value straight to `stepsUsed >= maxSteps`, where an unsafe integer makes the
 // step counter stop advancing and the bound hold for no value (issue #312).
-// `finish` and `abort` load the same stored state, so they are refused too.
-test("a state file with a maxSteps outside the safe integer range is refused", async () => {
+test("dispatch and finish refuse a state file with a maxSteps outside the safe integer range", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
@@ -162,17 +161,44 @@ test("a state file with a maxSteps outside the safe integer range is refused", a
   expect(worker.recorded.length).toBe(0);
   expect((await readState(stateFile)).stepsUsed).toBe(1);
 
-  for (const argv of [
-    ["finish", "--cwd", "<repo>"],
-    ["abort", "--cwd", "<repo>", "--reason", "stop"],
-  ]) {
-    const other = await executeRoleCommand(withRepo(argv, repo), { stdin: stdinPrompt });
-    expect(other.exitCode).toBe(1);
-    expect(other.payload.error).toContain("maxSteps");
-  }
+  const finished = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+    stdin: stdinPrompt,
+  });
+  expect(finished.exitCode).toBe(1);
+  expect(finished.payload.error).toContain("maxSteps");
   // The run is left as it was, so the refusal is a load-time check and not a
   // lifecycle change.
   expect((await readState(stateFile)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies the run can still end — `abort` charges no step and reads
+// no budget, so it is not refused by the stored-`maxSteps` check. Without this,
+// an unsafe stored value would block every route to a terminal lifecycle: abort
+// would refuse, and a new init refuses over a non-terminal run, so the run and
+// its parent-edit guard would stay stuck (issue #312).
+test("abort still ends a run whose stored maxSteps is outside the safe integer range", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const stateFile = statePaths({ cwd: repo }).stateFile;
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const state = await readState(stateFile);
+  state.maxSteps = 1000000000000000000000;
+  await writeState(stateFile, state);
+
+  const aborted = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "unsafe stored budget"], repo),
+  );
+  expect(aborted.exitCode).toBe(0);
+  expect(aborted.payload).toMatchObject({ status: "ok", lifecycle: "aborted" });
+
+  const after = await readState(stateFile);
+  expect(after.lifecycle).toBe("aborted");
+  expect(after.reason).toBe("unsafe stored budget");
+  // Abort charges no step, so the history and the step count are untouched.
+  expect(after.stepsUsed).toBe(1);
+  expect(after.turns).toHaveLength(1);
 });
 
 /**

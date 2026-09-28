@@ -191,24 +191,34 @@ function isInitCall(args) {
   return args.task !== null;
 }
 
-/** Rejects a non-init call when no state file exists for the work tree. */
-function requireState(state, cwd) {
+/**
+ * Rejects a non-init call when no state file exists for the work tree.
+ *
+ * `needsBudget` is set by the operations that read the step budget, so an unsafe
+ * stored `maxSteps` is refused before the step-budget guard. `abort` leaves it
+ * unset: abort charges no step and reads no budget, and refusing it would block
+ * the only route to a terminal lifecycle, because a new init refuses over a
+ * non-terminal run (#312).
+ */
+function requireState(state, cwd, { needsBudget = false } = {}) {
   if (!state) {
     throw new RoleError(
       `No run state for ${cwd}. Start one with: agent-loop role --task "..." --worker ... --reviewer ...`,
     );
   }
-  assertStateMaxSteps(state);
+  if (needsBudget) {
+    assertStateMaxSteps(state);
+  }
   return state;
 }
 
 /**
- * A stored `maxSteps` is re-checked on every load, because a state file written
- * by an earlier version, or hand-edited, reaches the step-budget guard without
- * passing through `--max-steps` validation. Outside the safe integer range the
- * step counter cannot advance by one, so the bound on `turns` would hold for no
- * accepted value. The refusal names the state file field, which is what a
- * maintainer must correct (#312).
+ * A stored `maxSteps` is re-checked wherever the budget is read, because a state
+ * file written by an earlier version, or hand-edited, reaches the step-budget
+ * guard without passing through `--max-steps` validation. Outside the safe
+ * integer range the step counter cannot advance by one, so the bound on `turns`
+ * would hold for no accepted value. The refusal names the state file field,
+ * which is what a maintainer must correct (#312).
  */
 function assertStateMaxSteps(state) {
   if (!Number.isSafeInteger(state.maxSteps) || state.maxSteps < 1) {
@@ -444,7 +454,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent }) {
     }
     state = initialState(args);
   } else {
-    state = requireState(existing, args.cwd);
+    state = requireState(existing, args.cwd, { needsBudget: true });
     rejectInitFlagChanges(args, state);
   }
 
@@ -628,7 +638,7 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
 
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
-    const state = requireState(await readState(paths.stateFile), args.cwd);
+    const state = requireState(await readState(paths.stateFile), args.cwd, { needsBudget: true });
     rejectInitFlagChanges(args, state);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
