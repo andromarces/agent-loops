@@ -1,9 +1,10 @@
 import { reportBlock } from "./report.mjs";
 
 // Same closing block as reportBlock, with the verdict line inside it so the
-// model treats it as part of the mandatory block, not an optional extra.
+// model treats it as part of the mandatory block, not an optional extra. The
+// block already carries the Checks line since issue #310, so the reviewer does
+// not repeat it, and the reviewer Checks line stays the only one a gate reads.
 const reviewerReportBlock = `${reportBlock}
-Checks: the commands that ran and their results, or "none". One line.
 Verdict: accept or reject. One word, nothing else on the line.`;
 
 // Fixed review scope every reviewer turn carries, so a parent prompt that

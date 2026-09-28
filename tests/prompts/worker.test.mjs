@@ -15,6 +15,14 @@ test("first worker turn requires the closing report block", () => {
   expect(prompt).toContain("Deferred:");
 });
 
+// Usefulness: verifies the first worker turn asks for a Checks line, so a
+// worker reports the commands it ran and their results instead of leaving the
+// orchestrator with a null checks field (issue #310).
+test("first worker turn requires a Checks line", () => {
+  const prompt = workerPrompt("do the task", true);
+  expect(prompt).toContain('Checks: the commands that ran and their results, or "none". One line.');
+});
+
 // Usefulness: verifies the first worker turn commits and pushes on the named PR
 // branch for PR work, so the reviewer sees a committed head, the PR head matches
 // that commit, and reviewed.clean can be true (issue #252).
