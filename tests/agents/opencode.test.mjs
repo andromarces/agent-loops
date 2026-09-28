@@ -375,9 +375,14 @@ test("opencode exposes usage from stdout when the CLI exits non-zero", async () 
 
 /**
  * Rejects the turn with a real ExecError carrying `fields`, and returns the error the adapter threw.
- * `fields` sets the ExecError operational fields, `options` the adapter options for the turn.
+ * `fields` sets the ExecError operational fields, `options` the adapter options for the turn, and
+ * `state` the state the turn records usage on.
  */
-async function rejectTurnWith({ stdout = "", stderr = "", exitCode, ...fields }, options = {}) {
+async function rejectTurnWith(
+  { stdout = "", stderr = "", exitCode, ...fields },
+  options = {},
+  state = { kind: "opencode", sessionId: null, model: null, effort: null },
+) {
   const { ExecError } = await vi.importActual("../../src/lib/exec.mjs");
   vi.mocked(exec).mockRejectedValueOnce(
     new ExecError(`opencode exited with code ${exitCode}.`, {
@@ -388,7 +393,6 @@ async function rejectTurnWith({ stdout = "", stderr = "", exitCode, ...fields },
       ...fields,
     }),
   );
-  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
   return runOpenCode(state, "oc prompt", { cwd: "/dir", ...options }).catch((err) => err);
 }
 
@@ -602,6 +606,46 @@ test("opencode caps the described detail at 500 characters", async () => {
     `opencode exited with code 1: ${prefix}${"D".repeat(500 - prefix.length)}...`,
   );
   expect(error.message.length).toBeLessThan(600);
+});
+
+// A stream cannot carry NaN: JSON.parse rejects the literal, so the stream-reachable non-finite
+// number is an overflow to Infinity. Every entry is the raw JSON of one malformed usage value, and
+// `output` and `cost` stay valid so a dropped value is not confused with a whole-part loss.
+const MALFORMED_NUMBERS = ['"1200"', '{"count":1200}', "null", "-1200", "1e999", "true"];
+
+// Usefulness: verifies a malformed token value is dropped instead of summed or stringified into the
+// recorded usage, and that the exit-code message still reaches the envelope, because the usage is
+// read before the message is built (issue #326).
+test.each(MALFORMED_NUMBERS)(
+  "opencode drops the token value %s on a non-zero exit",
+  async (raw) => {
+    const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+    const stdout = `{"type":"step_finish","sessionID":"sess-oc","part":{"tokens":{"input":${raw},"output":3},"cost":0.01}}`;
+
+    const error = await rejectTurnWith({ exitCode: 1, stdout }, {}, state);
+
+    expect(error.message).toBe(NO_DETAIL);
+    expect(state.usage).toEqual({
+      mainLoop: { input: 0, output: 3, reasoning: 0, cache: { read: 0, write: 0 } },
+      totalCostUsd: 0.01,
+    });
+  },
+);
+
+// Usefulness: verifies a malformed cost leaves `totalCostUsd` unset rather than recording a string, a
+// negative, or an infinite total, so the usage a transcript reads stays a number the caller can sum
+// (issue #326).
+test.each(MALFORMED_NUMBERS)("opencode drops the cost value %s on a non-zero exit", async (raw) => {
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const stdout = `{"type":"step_finish","sessionID":"sess-oc","part":{"tokens":{"input":5},"cost":${raw}}}`;
+
+  const error = await rejectTurnWith({ exitCode: 1, stdout }, {}, state);
+
+  expect(error.message).toBe(NO_DETAIL);
+  expect(state.usage).toEqual({
+    mainLoop: { input: 5, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  });
+  expect(state.usage.totalCostUsd).toBeUndefined();
 });
 
 const CLOSING_BLOCK = [

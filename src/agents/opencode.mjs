@@ -131,7 +131,9 @@ function joinTextParts(events) {
 /**
  * Sets `state.usage` from the `step_finish` parts of the stream, or removes it when the stream
  * carries none. Each completed step emits one `step_finish` part with `tokens` and `cost`, so
- * both fields sum across steps. No event names the model, so `models` is omitted.
+ * both fields sum across steps. No event names the model, so `models` is omitted. The read runs
+ * before the failure message on the non-zero path, so it drops any value that is not a count
+ * rather than letting a malformed one throw and cost the caller its exit code (issue #326).
  */
 function setUsage(state, events) {
   const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
@@ -150,14 +152,14 @@ function setUsage(state, events) {
 
     if (part.tokens && typeof part.tokens === "object") {
       hasTokens = true;
-      tokens.input += part.tokens.input ?? 0;
-      tokens.output += part.tokens.output ?? 0;
-      tokens.reasoning += part.tokens.reasoning ?? 0;
-      tokens.cache.read += part.tokens.cache?.read ?? 0;
-      tokens.cache.write += part.tokens.cache?.write ?? 0;
+      tokens.input += usageNumber(part.tokens.input);
+      tokens.output += usageNumber(part.tokens.output);
+      tokens.reasoning += usageNumber(part.tokens.reasoning);
+      tokens.cache.read += usageNumber(part.tokens.cache?.read);
+      tokens.cache.write += usageNumber(part.tokens.cache?.write);
     }
 
-    if (typeof part.cost === "number") {
+    if (isUsageNumber(part.cost)) {
       hasCost = true;
       cost += part.cost;
     }
@@ -214,6 +216,16 @@ function failureCause(err, timeout) {
   }
 
   return "";
+}
+
+/** Returns whether a stream value is a token count or a cost: a finite, non-negative number. */
+function isUsageNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/** Returns a stream usage value, or 0 for anything that is not a count, so a sum stays a number. */
+function usageNumber(value) {
+  return isUsageNumber(value) ? value : 0;
 }
 
 /**
