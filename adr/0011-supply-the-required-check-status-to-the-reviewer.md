@@ -40,7 +40,10 @@ the reviewer `Checks` line.
 2. The read is keyed on `--pr`, which is the PR input both paths know at
    dispatch. A run that declares no PR reads nothing. A headless run that takes
    only `--require-ci` and declares no `--pr` reads nothing, because the gate
-   flag is not the declared PR input.
+   flag is not the declared PR input. Every prompt statement about the supplied
+   read is therefore conditional on `--pr`: a gated run that declares no PR gets
+   the gate claim without any statement about a status read, because the runtime
+   makes none and the prompt must not describe a read that never happens.
 3. A status is reported only for the head it describes. The read compares the
    resolved PR head with the local reviewed head, which the runtime already has
    from the pre-turn snapshot. A read whose PR head differs, and a read with no

@@ -61,8 +61,27 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
   return [
     gate,
     `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself and the headless loop cannot wait. Do not run gh pr checks.${suppliedRead(pr)}`,
-    "- The --require-ci finish gate is the only check read in this run that enforces anything, because the runtime applies it outside every read-only turn. The advisory status read above reports to the reviewer and never enforces. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
+    // The advisory clause is rendered only when the run declared a PR, because
+    // the runtime reads the status only for a declared PR. A gated run that
+    // declares none gets the gate claim without a read that never happens.
+    `- The --require-ci finish gate is the only check read in this run that enforces anything, because the runtime applies it outside every read-only turn.${advisoryQualifier(pr)} A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.`,
   ];
+}
+
+/**
+ * The clause that keeps the gate claim and the supplied read consistent. A run
+ * that declares a PR gets the advisory read, so the gate line names it as the
+ * one read that does not enforce. A run that declares none gets no clause at
+ * all, because the runtime makes no supplied read without `--pr` and the prompt
+ * must not describe a read the runtime never makes (#320). The wording is the
+ * same rule `docs/orchestrator-instructions.md` states, so the two paths do not
+ * drift.
+ * @param {number | null} pr
+ * @returns {string}
+ */
+function advisoryQualifier(pr) {
+  if (pr === null) return "";
+  return " The advisory status read above reports to the reviewer and never enforces.";
 }
 
 /**

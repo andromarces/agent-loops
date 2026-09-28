@@ -328,9 +328,10 @@ probe.
 - Both CLIs block network: no turn in the run can read the required checks, so
   the headless loop cannot wait. A run that declares its PR with `--pr <pr>` still
   supplies the status to each reviewer turn, because the runtime reads it outside
-  every read-only turn, so the reviewer does not have to. That supplied status is
-  advisory: it reports to the reviewer and never enforces.
-- The `--require-ci` finish gate is the only check read here that enforces; the advisory status read does not. The gate refuses a
+  every read-only turn, so the reviewer does not have to. A run that declares no
+  PR gets no supplied status, because the runtime reads one only for `--pr`. That
+  supplied status is advisory: it reports to the reviewer and never enforces.
+- The `--require-ci` finish gate is the only check read here that enforces; a declared PR's advisory status read does not. The gate refuses a
   finish while a required check is pending. A refusal itself charges no step, and
   the reviewer dispatch that corrects it charges one, so the step budget has to
   cover those dispatches. Dispatch the reviewer when the gate refuses, or `abort`
