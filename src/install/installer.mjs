@@ -11,7 +11,7 @@
 // the manifest cannot drop a record (#193).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { logWarn } from "../lib/log.mjs";
 import { withStateLock } from "../lib/runstate.mjs";
 import {
@@ -114,13 +114,31 @@ function symlinkResolvingTo(dir, target) {
 }
 
 /**
+ * `path` with its drive letter upper cased, which is the only case difference
+ * Windows ignores in a path. `realpathSync` returns the drive letter spelled as the
+ * caller spelled it, so a link reached through a lower-case drive letter would
+ * otherwise never compare equal to the same path. Every other character keeps its
+ * case on both platforms, and POSIX returns `path` unchanged.
+ */
+function normalizeDrive(path) {
+  return process.platform === "win32"
+    ? path.replace(/^([a-z]):/, (_, drive) => `${drive.toUpperCase()}:`)
+    : path;
+}
+
+/** True when the two paths name the same location, ignoring only drive letter case. */
+function samePath(left, right) {
+  return normalizeDrive(left) === normalizeDrive(right);
+}
+
+/**
  * The candidate when it resolves to `target`, or `null`. A candidate that does
  * not exist is a normal outcome, since which link a pnpm layout writes differs by
  * version, so each one is checked on its own.
  */
 function linkResolvingTo(candidate, target) {
   try {
-    return realpathSync(candidate) === realpathSync(target) ? candidate : null;
+    return samePath(realpathSync(candidate), realpathSync(target)) ? candidate : null;
   } catch {
     return null;
   }
@@ -145,14 +163,26 @@ function isVirtualStoreLinkEntry(hashDir) {
 }
 
 /**
- * The `<project>/node_modules/<name>` link the script path names, or `null`. A pnpm
- * bin shim calls the package through that link, so the innermost `node_modules`
- * above the script is the project one, and a nested dependency names its own. A
- * candidate counts only when it links to this same package, so a script path that
- * reaches the store itself yields nothing.
+ * The `<project>/node_modules/<name>` link the script path names, or `null`.
+ *
+ * A pnpm bin shim calls the package through the project link, so the innermost
+ * `node_modules` above the script is the project one, and a nested dependency names
+ * its own. That only holds when the script is this package's own CLI, so the
+ * resolved script must sit inside the resolved package root: a path that names some
+ * other package, or any path that does not resolve into this one, yields nothing and
+ * the caller falls back to the resolved package root.
  */
 function projectLinkFor(scriptPath, packageRoot, name) {
   if (typeof scriptPath !== "string" || scriptPath === "") {
+    return null;
+  }
+  try {
+    const script = realpathSync(scriptPath);
+    const root = realpathSync(packageRoot);
+    if (!samePath(script, root) && !startsWithPath(script, root)) {
+      return null;
+    }
+  } catch {
     return null;
   }
   let dir = dirname(resolve(scriptPath));
@@ -160,7 +190,9 @@ function projectLinkFor(scriptPath, packageRoot, name) {
     if (basename(dir) === "node_modules") {
       const linked = linkResolvingTo(join(dir, name), packageRoot);
       if (linked && linked !== packageRoot) {
-        return linked;
+        // Normalized so the rendered path does not depend on the drive letter case
+        // the caller happened to use to reach the project.
+        return normalizeDrive(linked);
       }
     }
     const parent = dirname(dir);
@@ -169,6 +201,12 @@ function projectLinkFor(scriptPath, packageRoot, name) {
     }
     dir = parent;
   }
+}
+
+/** True when `path` is inside `parent`, ignoring only drive letter case. */
+function startsWithPath(path, parent) {
+  const rest = relative(normalizeDrive(parent), normalizeDrive(path));
+  return rest !== "" && !rest.startsWith("..") && !isAbsolute(rest);
 }
 
 /**
