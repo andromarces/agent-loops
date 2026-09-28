@@ -61,7 +61,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
   return [
     gate,
     `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself and the headless loop cannot wait. Do not run gh pr checks.${suppliedRead(pr)}`,
-    "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
+    "- The --require-ci finish gate is the only check read in this run that enforces anything, because the runtime applies it outside every read-only turn. The advisory status read above reports to the reviewer and never enforces. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
   ];
 }
 

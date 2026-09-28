@@ -32,10 +32,11 @@ the reviewer `Checks` line.
 
 1. A run that declares a PR reads the required-check status for that PR head
    before each reviewer turn and supplies it in the reviewer prompt. The read is
-   two `gh` calls in the run's work tree, through the same injected `gh` runner
+   three `gh` calls in the run's work tree, through the same injected `gh` runner
    the `--require-ci` gate uses: `gh pr view <pr> --json headRefOid` to resolve
-   the head, then `gh pr checks <pr> --required --json name,bucket` to list the
-   required checks.
+   the head, `gh pr checks <pr> --required --json name,bucket` to list the
+   required checks, and `gh pr view <pr> --json headRefOid` again to confirm the
+   head did not move while the checks were read (item 4).
 2. The read is keyed on `--pr`, which is the PR input both paths know at
    dispatch. A run that declares no PR reads nothing. A headless run that takes
    only `--require-ci` and declares no `--pr` reads nothing, because the gate

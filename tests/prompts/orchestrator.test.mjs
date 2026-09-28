@@ -539,3 +539,50 @@ test("the supplied-status rule states the same conditions in both surfaces", asy
   const movedMentions = instructions.match(/separate reads, and the pull request can advance/g);
   expect(movedMentions).toHaveLength(1);
 });
+
+// Usefulness: verifies a line that calls the finish gate the only check read is
+// qualified for the advisory runtime read, because the same prompt states that
+// the runtime supplies the status to the reviewer. Without the qualification the
+// two statements contradict each other: one says the runtime reads the checks
+// and supplies the status, the other says nothing else reads them
+// (issue #320 review, fourth round).
+test("a line calling the gate the only check read names the advisory runtime read", () => {
+  for (const [label, text] of [
+    ["headless prompt", declaredBothBlocked()],
+    ["interactive instructions", null],
+  ]) {
+    if (text === null) continue;
+    for (const line of text.split("\n")) {
+      if (!/only check read/i.test(line)) continue;
+      // The line must scope the claim to the reads that enforce, and must not
+      // leave the advisory read unmentioned.
+      expect(line, label).toMatch(/enforc/i);
+      expect(line, label).toMatch(/advisory/i);
+    }
+  }
+});
+
+// Usefulness: verifies the qualification is checked on the interactive
+// instructions too, since the two surfaces must state the same rule
+// (issue #320 review, fourth round).
+test("the instructions qualify the only-check-read claim the same way", async () => {
+  const instructions = await readFile(instructionsPath, "utf8");
+  const lines = instructions.split("\n").filter((line) => /only check read/i.test(line));
+  expect(lines.length).toBeGreaterThan(0);
+  for (const line of lines) {
+    expect(line).toMatch(/enforc/i);
+    expect(line).toMatch(/advisory/i);
+  }
+});
+
+// A declared-PR, gated run in which neither role CLI reaches the network: the
+// case where the prompt both supplies the status and names the gate.
+const declaredBothBlocked = () =>
+  initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "codex",
+    reviewerKind: "codex",
+  });
