@@ -11,6 +11,10 @@ rules in JSON-action form; this file is the source for shared rules.
 - Delegate the task, track results, handle blockers, and report completion.
 - Never implement changes, never review code yourself, never run tests, never
   open child transcripts.
+- The one exception is a pull request check status read, which a run that ends
+  with `--require-ci` allows, as the waiting rules below state. A status read is
+  not a review, not a test, and not an edit, and `gh pr checks` is the only
+  command it covers.
 - Read only the JSON envelope the subcommand prints on stdout. Child stderr
   logs and child response text beyond the envelope are not input.
 
@@ -222,33 +226,42 @@ PR head to complete before you dispatch the reviewer. When a reviewer turn
 reports a pending required check in `Checks`, wait for those checks to complete
 before you call `finish`.
 
-The wait is a read of check status, so it stays inside the parent rules:
+The wait is the status read the role rule excepts, and it changes nothing:
 `gh pr checks <pr> --required --watch` blocks until the checks report, and it
 returns the same exit codes as one read. Add `--fail-fast` to stop on the first
-failure, and `--interval <seconds>` to set the refresh. The command changes
-nothing, so the wait costs no dispatch. A required check that never reports
-leaves the wait unfinished: record it under `notDone` and `open` in the finish
-summary, or abort. Never record a check you could not read as passed.
+failure, and `--interval <seconds>` to set the refresh. Never record a check you
+could not read as passed.
 
 Keep the wait inside the command timeout your harness applies to a shell command.
 
+A required check still pending after a wait is not a finish condition. The
+`--require-ci` gate refuses a finish while a required check is pending, so a
+finish summary cannot carry it. Wait again, dispatch the reviewer again, or
+`abort` with the pending check named in the reason.
+
 ## Waiting in the headless loop
 
-The headless orchestrator turn is read-only, and whether it can wait for the
-required checks depends on the orchestrator CLI. A read-only invocation keeps
-shell network access for `claude`, `agy`, `opencode`, and `copilot`, so those
-turns can run the watch. The `codex` read-only sandbox blocks network, so a
-`codex` turn cannot read the checks at all and must not wait for them: the
-runtime applies the gate instead, so dispatch the reviewer and let the gate
-decide. See "Codex read-only network limit" in the README for the probe.
+The headless orchestrator turn is read-only, and whether it can run the status
+read depends on the orchestrator CLI. A read-only invocation keeps shell
+network access for `claude`, `agy`, `opencode`, and `copilot`, so those turns
+can run the watch. The `codex` read-only sandbox blocks network, so a `codex`
+turn cannot read the checks at all, and the status-read exception does not apply
+there: name the required checks in the reviewer prompt instead, because the
+reviewer reads them in its own turn. See "Codex read-only network limit" in the
+README for the probe.
 
-A headless wait costs no step, because a step is charged only to
+A headless status read spends no step, because a step is charged only to
 `run_worker` and `run_reviewer`. It is not free of other cost. The turn is
 bounded by the per-invocation `--timeout`, which defaults to 3600 seconds and is
 unbounded at 0, and a turn that outlasts that bound ends the run on exit 1
 before it returns an action, so a long watch can end a run that would otherwise
-have finished. Bound the watch to a few minutes so it returns inside the turn,
-and record a check still pending after the wait under `notDone` and `open`.
+have finished. Bound the watch to a few minutes so it returns inside the turn.
+
+Both wait points hold in the headless loop: the wait before the reviewer
+dispatch, and the wait before `finish` when a reviewer turn reported a pending
+check. A check still pending after a wait is not a finish condition there
+either, because the gate refuses the finish. Wait again, dispatch the reviewer
+again, or `abort` with the pending check named in the reason.
 
 ## Several runs at once
 
