@@ -9,10 +9,11 @@ import { resumeMismatchError } from "./shared.mjs";
 // than becoming a verdict the model never wrote on its own line (issue #316).
 const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 
-// Bounds for a non-zero-exit message, so no part of a stream or a stderr dump can reach the
-// dispatch envelope or the state file (issue #326).
+// Bounds for a failure message, so a long provider message cannot reach the dispatch envelope or
+// the state file (issue #326). No part of stdout or stderr is allowed into the message: a stream
+// carries model output, and stderr can carry a secret.
 const DETAIL_LIMIT = 300;
-const STDERR_LIMIT = 200;
+const NO_DETAIL = "no provider error event in the output";
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
@@ -60,13 +61,13 @@ export async function runOpenCode(state, prompt, options = {}) {
     const events = parseJsonLines(err?.stdout ?? "");
     // A non-zero exit can still carry completed-step usage. Expose it, then rethrow.
     setUsage(state, events);
-    logDebug(`opencode stream on non-zero exit: ${err?.stdout ?? ""}`);
+    // A stream carries model output and stderr can carry a secret, so both stay on the debug
+    // channel and out of the envelope and the state file (issue #326).
+    logDebug(`opencode stdout on non-zero exit: ${err?.stdout ?? ""}`);
+    logDebug(`opencode stderr on non-zero exit: ${err?.stderr ?? ""}`);
 
-    // exec builds its message from the whole stream, so the adapter always replaces it with one
-    // bounded line. The stream stays on the error for debug and stays out of the envelope and the
-    // state file, which a turn can otherwise make hundreds of kilobytes (issue #326).
     const failure = err instanceof Error ? err : new Error(String(err));
-    failure.message = failureMessage(err, lastErrorDetail(events));
+    failure.message = failureMessage(err, events, timeout);
     throw failure;
   }
 
@@ -136,7 +137,9 @@ function setUsage(state, events) {
   let hasCost = false;
 
   for (const event of events) {
-    if (event.type !== "step_finish") {
+    // A line can parse to a non-event value, such as the `null` of a diagnostic line, so the type
+    // read must survive it (issue #326).
+    if (event?.type !== "step_finish") {
       continue;
     }
 
@@ -169,25 +172,51 @@ function setUsage(state, events) {
 }
 
 /**
- * Builds the message for a non-zero exit: the child exit code, the described detail of the last
- * well-formed error event when the stream names one, then a bounded stderr tail. No part of the
- * stream reaches the message, so the dispatch envelope and the state file stay readable (#326).
+ * Builds the message for a failed turn. Only an ordinary non-zero exit reads the stream: a signal,
+ * a timeout, and a spawn failure are reported as themselves, because the output a killed process
+ * left behind names a provider error that is not why the turn died (#326).
  */
-function failureMessage(err, detail) {
-  const status =
-    err?.exitCode == null
-      ? "opencode exited without an exit code"
-      : `opencode exited with code ${err.exitCode}`;
+function failureMessage(err, events, timeout) {
+  const cause = failureCause(err, timeout);
 
-  return [status, detail, boundedLine(err?.stderr, STDERR_LIMIT, "tail")]
-    .filter(Boolean)
-    .join(": ");
+  if (cause) {
+    return cause;
+  }
+
+  return `opencode exited with code ${err.exitCode}: ${lastErrorDetail(events) || NO_DETAIL}`;
+}
+
+/**
+ * Returns the cause `exec` names for a timeout, a cancel, a signal, or a spawn failure, or an empty
+ * string for an ordinary non-zero exit. The wording matches the message `exec` itself builds, so a
+ * caller reads the same cause as it read before the adapter took the message over.
+ */
+function failureCause(err, timeout) {
+  if (err?.timedOut) {
+    return typeof timeout === "number"
+      ? `opencode timed out after ${timeout} seconds.`
+      : "opencode timed out.";
+  }
+
+  if (err?.isCanceled) {
+    return "opencode was canceled.";
+  }
+
+  if (err?.isTerminated) {
+    return `opencode was killed by ${err.signal ?? "a signal"}.`;
+  }
+
+  if (err?.exitCode == null) {
+    return "opencode failed to start.";
+  }
+
+  return "";
 }
 
 /**
  * Returns the described detail of the last well-formed `error` event, or an empty string when the
- * stream names none. `describeError` reports `unknown error` for a payload it cannot read, so a
- * malformed event contributes no detail and the message falls back to the stderr tail.
+ * stream names none. `describeError` reports `unknown error` for a payload it cannot read, and a
+ * non-object line is not an event at all, so neither contributes detail.
  */
 function lastErrorDetail(events) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -208,19 +237,15 @@ function lastErrorDetail(events) {
 }
 
 /**
- * Flattens `text` to one line and keeps `limit` characters of it, the head by default and the tail
- * when `keep` is `tail`. The bound is what stops a long stream line from reaching the envelope.
+ * Flattens `text` to one line and keeps at most `limit` characters of it. The bound is what stops a
+ * long provider message from reaching the envelope.
  */
-function boundedLine(text, limit, keep = "head") {
+function boundedLine(text, limit) {
   const flat = String(text ?? "")
     .replace(/\s+/g, " ")
     .trim();
 
-  if (flat.length <= limit) {
-    return flat;
-  }
-
-  return keep === "tail" ? `...${flat.slice(-limit)}` : `${flat.slice(0, limit)}...`;
+  return flat.length > limit ? `${flat.slice(0, limit)}...` : flat;
 }
 
 /**
