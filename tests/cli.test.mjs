@@ -91,6 +91,17 @@ test("--max-reviews is rejected", () => {
   ).toThrow("Unknown argument: --max-reviews");
 });
 
+const BASE_FOR_MAX_STEPS = [
+  "--orchestrator",
+  "codex",
+  "--worker",
+  "claude",
+  "--reviewer",
+  "agy",
+  "--task",
+  "t",
+];
+
 // Usefulness: verifies invalid --max-steps values are rejected.
 test("invalid --max-steps is rejected", () => {
   expect(() =>
@@ -121,6 +132,14 @@ test("invalid --max-steps is rejected", () => {
       "abc",
     ]),
   ).toThrow("--max-steps must be a positive integer.");
+  // A value above the safe integer range is refused, so `stepsUsed + 1` always
+  // advances and the documented step budget holds (issue #312).
+  expect(() => parseArgs([...BASE_FOR_MAX_STEPS, "--max-steps", "1000000000000000000000"])).toThrow(
+    "--max-steps must be a positive integer.",
+  );
+  expect(parseArgs([...BASE_FOR_MAX_STEPS, "--max-steps", "9007199254740991"]).maxSteps).toBe(
+    9007199254740991,
+  );
 });
 
 const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];

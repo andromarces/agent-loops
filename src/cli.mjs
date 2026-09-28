@@ -10,6 +10,7 @@ import {
   assertOpenCodeOptions,
   readArgValue,
   readInlineValue,
+  readMaxSteps,
   readNonNegativeInt,
   readPositiveInt,
   roleFlags,
@@ -75,7 +76,7 @@ export function parseArgs(argv) {
         break;
 
       case "--max-steps":
-        options.maxSteps = readPositiveInt("--max-steps", readInline("--max-steps"));
+        options.maxSteps = readMaxSteps(readInline("--max-steps"));
         break;
 
       case "--timeout": {
@@ -226,7 +227,7 @@ Options:
 
   --cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
   --task <text>                 Task description. Required.
-  --max-steps <count>           Maximum child steps. Defaults to 20.
+  --max-steps <count>           Maximum child steps. Defaults to 20. 1 to 9007199254740991.
   --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
   --transcript <file>           Record execution transcript to a JSON file.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.

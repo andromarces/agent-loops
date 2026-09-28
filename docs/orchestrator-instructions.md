@@ -422,6 +422,9 @@ needed: the subcommand records each dispatched turn itself.
   recovery call records an already-charged step and charges none of its own, so
   it does not push the history past that bound. The entries are fixed-shape, so
   the history cannot grow with the text a child returns.
+- Accepted `--max-steps` range: 1 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
+  The CLI refuses anything outside it, so every accepted budget is a safe integer
+  and the step count always advances by exactly one per charged step.
 - Read `turns` after compaction or restart to rebuild which turns ran, which
   verdicts they returned, and which head each reviewer turn saw.
 - `--transcript <file>` still appends one JSON line per `invocation` and

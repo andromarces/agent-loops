@@ -13,6 +13,7 @@ import {
   assertOpenCodeOptions,
   readArgValue,
   readInlineValue,
+  readMaxSteps,
   readNonNegativeInt,
   readPositiveInt,
   roleFlags,
@@ -125,7 +126,7 @@ export function parseRoleArgs(argv) {
         break;
 
       case "--max-steps":
-        args.maxSteps = readPositiveInt(arg, readInline(arg));
+        args.maxSteps = readMaxSteps(readInline(arg));
         break;
 
       case "--timeout": {

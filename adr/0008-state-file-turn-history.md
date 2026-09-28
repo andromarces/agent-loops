@@ -49,10 +49,16 @@ following the instructions records nothing.
    for the step the crashed call already charged, so the bound still holds.
    No truncation or pruning rule is needed because the step budget already caps
    the count.
-6. `verdict` is parsed from a reviewer turn's own closing block, so it cannot be
+6. The accepted `--max-steps` range is 1 to `Number.MAX_SAFE_INTEGER`
+   (9007199254740991). The shared integer readers in `src/lib/args.mjs` accept a
+   safe integer only, so the headless CLI and the role subcommand refuse the same
+   values. Above that range an integer double has no room for `value + 1`: a
+   step counter would stop advancing and the bound above would hold for no
+   accepted value.
+7. `verdict` is parsed from a reviewer turn's own closing block, so it cannot be
    inferred from process success. The state file is the only place the history
    lives; `--transcript` stays a per-call per-event log and is not the history.
-7. A state file written before this field starts with an empty history, so a run
+8. A state file written before this field starts with an empty history, so a run
    that began on an earlier version keeps working.
 
 ## Consequences
@@ -60,6 +66,10 @@ following the instructions records nothing.
 - A finished, aborted, or halted run shows every turn on disk, so a later review
   reads the run instead of the parent conversation log.
 - The state file grows by one small entry per turn, bounded by `maxSteps`.
+- A `--max-steps` value above `Number.MAX_SAFE_INTEGER` is now refused by both
+  the headless CLI and the role subcommand, where it was previously accepted.
+  Any caller that passed such a value must lower it; no realistic run needs more
+  than `Number.MAX_SAFE_INTEGER` steps.
 - `docs/orchestrator-instructions.md` documents the history, so an orchestrator
   following the instructions reads it after compaction or restart.
 - A turn's response text is still only in `lastResult` and, with

@@ -45,9 +45,12 @@ export function splitInlineFlag(arg) {
   return { flag, value: arg.slice(eq + 1) };
 }
 
+// Both readers accept a safe integer only. Above `Number.MAX_SAFE_INTEGER`, an
+// integer double has no room for `value + 1`, so a step counter built from it
+// stops advancing and `--max-steps` stops bounding anything (#312).
 export function readPositiveInt(flag, value) {
   const val = Number(value);
-  if (!Number.isInteger(val) || val < 1) {
+  if (!Number.isSafeInteger(val) || val < 1) {
     throw new Error(`${flag} must be a positive integer.`);
   }
   return val;
@@ -55,10 +58,19 @@ export function readPositiveInt(flag, value) {
 
 export function readNonNegativeInt(flag, value) {
   const val = Number(value);
-  if (!Number.isInteger(val) || val < 0) {
+  if (!Number.isSafeInteger(val) || val < 0) {
     throw new Error(`${flag} must be a non-negative integer.`);
   }
   return val;
+}
+
+/**
+ * The step budget, as `readPositiveInt` reads it, named so `--max-steps` can
+ * state its accepted range where the budget is documented. The value is a step
+ * count and a loop bound, so it must stay a safe integer.
+ */
+export function readMaxSteps(value) {
+  return readPositiveInt("--max-steps", value);
 }
 
 // Defaults shared by the headless CLI, the role subcommand, and the loop runtime.
