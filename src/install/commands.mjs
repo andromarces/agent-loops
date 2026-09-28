@@ -171,7 +171,10 @@ export async function runInstallCommand(argv) {
     reports = await install({
       harnesses,
       home: resolveHome(),
-      packageRoot: stablePackageRoot(PACKAGE_ROOT),
+      // Node resolves the script into the pnpm virtual store, while
+      // `process.argv[1]` keeps the path it was called with, which a pnpm 12
+      // project bin shim points at the project link.
+      packageRoot: stablePackageRoot(PACKAGE_ROOT, process.argv[1]),
       dryRun: options.dryRun,
     });
   } catch (err) {

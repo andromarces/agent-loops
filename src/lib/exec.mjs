@@ -4,7 +4,7 @@ import { logDebug, logInfo } from "./log.mjs";
 export class ExecError extends Error {
   constructor(
     message,
-    { command, exitCode, stdout, stderr, timedOut, isCanceled, isTerminated } = {},
+    { command, exitCode, stdout, stderr, timedOut, isCanceled, isTerminated, signal } = {},
   ) {
     super(message);
     this.name = "ExecError";
@@ -15,6 +15,9 @@ export class ExecError extends Error {
     this.timedOut = Boolean(timedOut);
     this.isCanceled = Boolean(isCanceled);
     this.isTerminated = Boolean(isTerminated);
+    // The signal name or description, for a caller that reports the termination cause. It travels as
+    // a field, not in the message, so every adapter keeps the message `exec` has always built.
+    this.signal = signal ?? null;
   }
 }
 
@@ -53,6 +56,7 @@ export async function exec(command, args = [], options = {}) {
   const isTerminated = Boolean(result.isTerminated);
 
   if (result.exitCode !== 0 || timedOut || isCanceled || isTerminated) {
+    const signal = result.signalDescription ?? result.signal;
     let cause;
     if (timedOut) {
       cause = `${command} timed out after ${timeout} seconds.`;
@@ -60,8 +64,7 @@ export async function exec(command, args = [], options = {}) {
       cause = `${command} was canceled.`;
     } else if (isTerminated) {
       // POSIX-only: execa cannot detect signal termination on Windows.
-      const description = result.signalDescription ?? result.signal ?? "a signal";
-      cause = `${command} was killed by ${description}.`;
+      cause = `${command} was killed by ${signal ?? "a signal"}.`;
     } else if (result.exitCode === undefined) {
       // POSIX-only: execa leaves exitCode undefined when the subprocess
       // could not be spawned (Windows reports exit code 1 instead).
@@ -86,6 +89,7 @@ export async function exec(command, args = [], options = {}) {
       timedOut,
       isCanceled,
       isTerminated,
+      signal,
     });
   }
 
