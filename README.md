@@ -100,7 +100,8 @@ if a write fails part way through it records the writes that completed, so
 `uninstall` still removes or restores them. It leaves a target in place when it
 cannot remove or restore it safely; see [Uninstall skips](#uninstall-skips).
 
-`install` must run from a global install or a linked clone. It writes the package
+`install` must run from an install whose package location survives an upgrade: a
+global install, a project install, or a linked clone. It writes the package
 location as an absolute path into every entry point and guard, and `npx` and
 `pnpm dlx` place the package in a cache directory that npm or pnpm can delete.
 When it detects its own package root inside that cache, `install` refuses with a
@@ -108,19 +109,25 @@ message that asks for a global install first, so it never writes a path that can
 disappear. `uninstall` reads only the manifest and the harness files, so it still
 removes them after the package is gone.
 
-A pnpm global install resolves the package into a version-named virtual store
-entry, so the resolved path does not survive an upgrade. `install` writes the
+A pnpm install resolves the package into a version-named virtual store entry, so
+the resolved path does not survive an upgrade. `install` writes the
 version-independent path instead, and checks that the path it writes resolves to
-the installed package before using it. pnpm 12 puts the store entry in an install
-directory and keeps a hash-named symlink beside that directory, which the
-`agent-loop` bin shim calls, so `install` writes it. pnpm 10 puts its store
-directory beside the global `node_modules` and links the package under that
-`node_modules`, which `pnpm root -g` reports, so `install` writes that link. An
-upgrade repoints both. An npm global install, a clone, and a linked package have
-no version in their root and render unchanged, and so does any layout with no
-link that resolves to the package. One `agent-loop install` per upgrade is still
-needed after an upgrade from a version that wrote a replaced path, because those
-installed files keep naming the deleted directory until it runs again.
+the installed package before using it.
+
+- A pnpm 12 global install puts the store entry in an install directory and keeps a
+  hash-named symlink beside that directory, which the `agent-loop` bin shim calls, so
+  `install` writes it.
+- A pnpm 10 install puts its store directory beside the `node_modules` it links the
+  package under, which `pnpm root -g` reports, so `install` writes that link.
+- A pnpm 12 project install links the package from a global store whose path names
+  no project, so `install` writes the project link instead, which the bin shim calls.
+  The project `node_modules/.pnpm` directory holds no store entry there.
+
+An upgrade repoints every one of them. An npm global install, a clone, and a linked
+package have no version in their root and render unchanged, and so does any layout
+with no link that resolves to the package. One `agent-loop install` per upgrade is
+still needed after an upgrade from a version that wrote a replaced path, because
+those installed files keep naming the deleted directory until it runs again.
 
 ```bash
 agent-loop install --harness claude,codex --yes
