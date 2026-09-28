@@ -18,7 +18,7 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -121,12 +121,10 @@ test("review-only mode rejects a worker dispatch without spawning a CLI", async 
   expect((await readRepoState(repo)).stepsUsed).toBe(state.stepsUsed);
 });
 
-// Usefulness: verifies a dispatch whose `--cwd` no longer exists, or is outside a
-// Git work tree, is refused before the command touches the run: the init call
-// writes no state, and a later dispatch after a live run charges no step, changes
-// no lifecycle, and spawns no child, so a work tree a worker removed cannot cost
-// the run a step or leave it half dispatched (issue #327).
-test("dispatch refuses a missing or non-git --cwd before it touches the run", async () => {
+// Usefulness: verifies an init dispatch against a `--cwd` that does not exist, or
+// that is not inside a Git work tree, is refused before it writes a run state, so
+// a refused init leaves nothing behind that a later call could resume (issue #327).
+test("an init dispatch on a refused --cwd writes no run state", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
@@ -147,24 +145,52 @@ test("dispatch refuses a missing or non-git --cwd before it touches the run", as
     expect(await readState(statePaths({ cwd }).stateFile), cwd).toBeNull();
   }
   expect(worker.recorded.length).toBe(0);
+});
 
-  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-    agents,
-    stdin: stdinPrompt,
-  });
-  const before = await readRepoState(repo);
-  for (const cwd of [removed, notARepo]) {
-    const result = await executeRoleCommand(withRepo(dispatchArgv(), cwd), {
+// Usefulness: verifies a later dispatch at a live run's own `--cwd` is refused
+// when that work tree stops being usable, once because the directory is gone and
+// once because the Git metadata at an existing path is, so the turn neither
+// charges a step nor changes the lifecycle of the run it belongs to. The refusal
+// must reach the initialized run: the state file is named after the resolved
+// `--cwd`, so a check against another path would read no state at all and prove
+// nothing (issue #327).
+test("a later dispatch at the live run's own --cwd is refused and changes no run state", async () => {
+  await setup();
+  const goneRepo = await createTempRepo();
+  repos.push(goneRepo);
+  const brokenRepo = await createTempRepo();
+  repos.push(brokenRepo);
+  const worker = recordingAdapter([]);
+  const agents = { fake1: worker, fake2: recordingAdapter([]) };
+
+  for (const repo of [goneRepo, brokenRepo]) {
+    const init = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
       agents,
       stdin: stdinPrompt,
     });
-    expect(result.exitCode, cwd).toBe(1);
-    expect(result.payload.error, cwd).toContain("--cwd must be inside a Git work tree");
+    expect(init.exitCode, repo).toBe(0);
   }
-  expect(worker.recorded.length).toBe(1);
-  const after = await readRepoState(repo);
-  expect(after.stepsUsed).toBe(before.stepsUsed);
-  expect(after.lifecycle).toBe(before.lifecycle);
+  // The worker's turn removed its work tree in one run, and in the other left the
+  // path in place with no Git metadata at it, which a linked work tree with a
+  // pruned gitdir also looks like.
+  await removePath(goneRepo);
+  await removePath(join(brokenRepo, ".git"));
+  const before = [await readRepoState(goneRepo), await readRepoState(brokenRepo)];
+
+  for (const [index, repo] of [goneRepo, brokenRepo].entries()) {
+    const result = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(result.exitCode, repo).toBe(1);
+    expect(result.payload, repo).toMatchObject({ status: "error" });
+    expect(result.payload.error, repo).toContain("--cwd must be inside a Git work tree");
+    const after = await readRepoState(repo);
+    expect(after.stepsUsed, repo).toBe(before[index].stepsUsed);
+    expect(after.lifecycle, repo).toBe(before[index].lifecycle);
+  }
+  // The two init turns ran, and no later dispatch reached a child.
+  expect(worker.recorded.length).toBe(2);
 });
 
 // Usefulness: verifies acceptance — a later call that supplies --worker against

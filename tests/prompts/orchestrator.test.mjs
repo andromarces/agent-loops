@@ -365,6 +365,32 @@ test("initialPrompt states that a wait can end the run at the turn timeout", () 
   expect(prompt).toMatch(/exit 1/);
 });
 
+// The work tree diagnosis both parent paths state the same way, so a parent on
+// either path reads the same recovery for a `--cwd` the runtime refuses. The
+// third case is the one a single message hides: an existing work tree path whose
+// Git metadata is lost or broken, which a linked work tree with a pruned gitdir
+// looks like, and which is neither a removed path nor a path that was never a
+// work tree (issue #327).
+const WORK_TREE_DIAGNOSIS = [
+  "A `--cwd` that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost or broken, for example a linked work tree whose `.git` file points at a pruned gitdir, are three cases the runtime refuses the same way:",
+  "A path that no longer exists was removed. Recreate it at the same path on the branch the run pushed.",
+  "A path that is not inside a work tree was never this run's work tree, or the repository moved. Dispatch with the run's real `--cwd`.",
+  "An existing work tree path whose Git metadata is lost or broken needs that metadata back before any dispatch: re-add a linked work tree with `git worktree add <path> <branch>` from its repository, and restore `.git` in a main checkout from a clone.",
+];
+
+// Usefulness: verifies the interactive instructions and the headless prompt state
+// the same work tree diagnosis, including the existing path whose Git metadata is
+// lost, so neither parent path tells a maintainer a wrong recovery for the one
+// message the runtime sends for all three cases (issue #327).
+test("interactive instructions and headless prompt share the work tree diagnosis", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
+  for (const rule of WORK_TREE_DIAGNOSIS) {
+    expect(instructions).toContain(rule);
+    expect(prompt).toContain(rule);
+  }
+});
+
 // Usefulness: verifies refusalPrompt carries the refusal reason and the supported
 // actions, so the orchestrator can recover with a reviewer turn (issue #234).
 test("refusalPrompt states the reason and the supported actions", () => {

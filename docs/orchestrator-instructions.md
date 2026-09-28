@@ -5,8 +5,8 @@ points (the Claude Code, Codex CLI, and Antigravity CLI skills, the OpenCode
 plugin command, and the Copilot launcher) include this file instead of copying
 it. The headless prompt in `src/prompts/orchestrator.mjs` states the same role
 rules in JSON-action form; this file is the source for shared rules. Work tree
-ownership below is the one rule the headless prompt does not carry, and it says
-why.
+ownership below is stated in that prompt as well, and the two state the same
+diagnosis.
 
 ## Role
 
@@ -202,29 +202,35 @@ writes no state file, and a later dispatch charges no step, changes no lifecycle
 and spawns no child. The envelope carries `status: "error"` with
 `--cwd must be inside a Git work tree: <path>`.
 
-That one message covers both refusals, a path that no longer exists and a path
-that is not inside a work tree, so read the path before acting:
+A `--cwd` that no longer exists, a path that is not inside a Git work tree, and
+an existing work tree path whose Git metadata is lost or broken, for example a
+linked work tree whose `.git` file points at a pruned gitdir, are three cases the
+runtime refuses the same way:
 
 - A path that no longer exists was removed. Recreate it at the same path on the
-  branch the run named in the worker prompt, then dispatch again: the pushed
-  branch holds the commits the worker made, and the state file sits in the runs
-  root under the resolved `--cwd`, so it still describes the run. When that branch
-  is gone, or the run pushed nothing, the work is not recoverable: call `abort`
-  with the missing work tree named in the reason.
-- A path that exists but is not a work tree was never this run's work tree, or the
-  repository moved. Recreating a work tree there is not the recovery above.
-  Dispatch with the run's real `--cwd`, whose state file the refused call never
-  touched, or call `abort` with the wrong path named in the reason.
+  branch the run pushed. The state file sits in the runs root under the resolved
+  `--cwd`, so the run survives: dispatch again once that tree is back. When the
+  branch is gone, or the run pushed nothing, the work is not recoverable: call
+  `abort` with the missing work tree named in the reason.
+- A path that is not inside a work tree was never this run's work tree, or the
+  repository moved. Dispatch with the run's real `--cwd`. Its state file is one
+  the refused call never touched, so the run is intact there; call `abort` with
+  the wrong path in the reason when that is not the tree you want.
+- An existing work tree path whose Git metadata is lost or broken needs that
+  metadata back before any dispatch: re-add a linked work tree with
+  `git worktree add <path> <branch>` from its repository, and restore `.git` in a
+  main checkout from a clone. The directory and the work tree files can be intact
+  while the repository they belong to is not, so read the metadata before
+  concluding the path was removed.
 
-`abort` reads only the state file, so it works over a missing work tree.
+`abort` reads only the state file, so it works over a missing or broken work tree.
 
-This is the one parent rule the headless prompt does not carry, and a headless
-run needs no copy of it: `agent-loop` snapshots its `--cwd` before and after
-every orchestrator turn, so a work tree removed mid-run ends the run on that
-snapshot failure before the orchestrator can act, and the headless loop keeps no
-run state outside its own process. A headless worker turn gets the ownership rule
-from the same file, because `runChild` builds the worker prompt there for both
-paths.
+The headless loop takes the same diagnosis and has no in-run recovery for it:
+`agent-loop` snapshots its `--cwd` before and after every orchestrator turn, so a
+work tree that is gone or has lost its metadata ends the run on that snapshot
+failure before the orchestrator can act, and the headless loop keeps no run state
+outside its own process. A headless worker turn gets the ownership rule from the
+same file, because `runChild` builds the worker prompt there for both paths.
 
 ## Reviewer prompts
 

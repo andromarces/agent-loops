@@ -141,6 +141,12 @@ Map the report fields into the finish summary:
 - Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.
 - In review-only mode, Blockers and Notes go into open, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode; open holds unresolved in-scope findings.
 
+A \`--cwd\` that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost or broken, for example a linked work tree whose \`.git\` file points at a pruned gitdir, are three cases the runtime refuses the same way:
+- A path that no longer exists was removed. Recreate it at the same path on the branch the run pushed.
+- A path that is not inside a work tree was never this run's work tree, or the repository moved. Dispatch with the run's real \`--cwd\`.
+- An existing work tree path whose Git metadata is lost or broken needs that metadata back before any dispatch: re-add a linked work tree with \`git worktree add <path> <branch>\` from its repository, and restore \`.git\` in a main checkout from a clone.
+A headless run cannot recover from any of the three inside itself: the runtime snapshots its \`--cwd\` before and after every orchestrator turn, so a work tree that is gone or has lost its metadata ends the run on that snapshot failure, and no turn of yours runs after it. Each restoration above is work outside the run.
+
 User Task:
 ${task}
 `.trim();
