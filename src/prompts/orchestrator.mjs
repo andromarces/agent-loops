@@ -58,12 +58,25 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
     ];
   }
 
+  // A run that declares a PR gets reworded lines, because the runtime supplies
+  // the status and the reviewer's own read is only a fallback. A run that declares
+  // none gets the origin/main lines unchanged: it makes no supplied read, so the
+  // rewording would describe one, and it would change a run this block does not
+  // otherwise touch (#320).
+  if (pr === null) {
+    return [
+      gate,
+      `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can read the required checks and the headless loop cannot wait. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.`,
+      "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
+    ];
+  }
+
   return [
     gate,
     `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself and the headless loop cannot wait. Do not run gh pr checks.${suppliedRead(pr)}`,
-    // The advisory clause is rendered only when the run declared a PR, because
-    // the runtime reads the status only for a declared PR. A gated run that
-    // declares none gets the gate claim without a read that never happens.
+    // The advisory clause is rendered only for a declared PR, because the runtime
+    // reads the status only for a declared PR. A gated run that declares none
+    // gets the origin/main gate claim, which already calls the gate the only read.
     `- The --require-ci finish gate is the only check read in this run that enforces anything, because the runtime applies it outside every read-only turn.${advisoryQualifier(pr)} A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.`,
   ];
 }
@@ -188,6 +201,11 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
     status: result.status,
     ...(result.status === "ok" ? { response: result.response } : { error: result.error }),
     ...(result.reviewed ? { reviewed: result.reviewed } : {}),
+    // The status the runtime read for a declared PR, so the orchestrator holds
+    // both it and the reviewer `Checks` line in one prompt and can compare them
+    // (#320). A result with no read carries no field, so a turn that made no
+    // read cannot be read as one that did.
+    ...(result.prChecks ? { prChecks: result.prChecks } : {}),
     stepsUsed,
     stepsRemaining,
   };

@@ -254,7 +254,10 @@ already reported, so a supplied pass covers the listed checks only, and a failed
 read is an unresolved status rather than a turn failure. The runtime reports the
 status it read beside the reviewer result, in the dispatch envelope and in the
 state file, so compare it with the reviewer Checks line and act on a
-disagreement.
+disagreement. A headless run renders the same status in the result prompt the
+orchestrator receives after a reviewer turn, as `prChecks` beside the response and
+the reviewed state, so the orchestrator holds the status and the reviewer Checks
+line in one prompt. A turn that made no read carries no `prChecks` field.
 
 The runtime reads the PR head first and compares it with the local reviewed head,
 so a status is reported only for the head it describes. A read whose PR head

@@ -94,12 +94,20 @@ checks` reports no commit and accepts no commit argument, so a re-read is the
     head, a moved head, a malformed reply, an unexpected exit code, and a
     stalled call are all `unresolved`, which the prompt rule already sends back
     to the reviewer's own read.
-12. The status is reported with the reviewer result: as `prChecks` in the
-    dispatch envelope and beside the response in the state file's `lastResult`,
-    so a parent can compare it with the reviewer `Checks` line. The `turns`
-    entry keeps the fixed shape ADR 0008 defines, so the status is not recorded
-    there.
-13. `--require-ci` stays the enforcement point. The supplied status changes no
+12. The status is reported with the reviewer result in three places, so a parent
+    can compare it with the reviewer `Checks` line on either path: as `prChecks`
+    in the dispatch envelope, beside the response in the state file's
+    `lastResult`, and in the headless result prompt the orchestrator receives
+    after a reviewer turn, rendered beside the response and the reviewed state.
+    A result with no read carries no `prChecks` field, so a turn that made no
+    read cannot be read as one that did. The `turns` entry keeps the fixed shape
+    ADR 0008 defines, so the status is not recorded there.
+13. The prompt wording a run does not need stays unchanged. A run that declares
+    no PR gets the `origin/main` lines verbatim, including the gate line that
+    calls the gate the only check read, because that run makes no supplied read
+    and the qualification would describe one. Only a declared run's lines are
+    reworded, so the rewording cannot reach a run this decision does not touch.
+14. `--require-ci` stays the enforcement point. The supplied status changes no
     gate condition and no refusal.
 
 ## Consequences

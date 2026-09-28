@@ -195,12 +195,14 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
 // Usefulness: pins the exact text the headless prompt adds for a declared run, in
 // the two combinations the headless CLI accepts: `--pr` alone, and `--pr` with a
 // matching gate. A mismatched gate is a usage error before the prompt is built, so
-// the prompt never has to describe a gate the runtime skips. Removing the block
-// must restore the prompt a run without `--pr` gets, which is what keeps the
-// undeclared prompt byte-identical to the one before the declaration (#302). The
-// supplied-status clause is the one addition beyond that block, and only on the
-// gated combination, because the runtime reads the status for a declared PR (#320).
-test("the headless prompt adds exactly the declaration rule and nothing else", () => {
+// the prompt never has to describe a gate the runtime skips. With `--pr` alone the
+// declaration block is the only addition, so removing it restores the prompt a run
+// without `--pr` gets, which is what keeps that undeclared prompt byte-identical to
+// the one before the declaration (#302). With `--pr` and a gate the block is joined
+// by the supplied-read clause, the advisory clause, and a reworded gate line, because
+// the runtime supplies the status and the reviewer's own read is only a fallback;
+// the undeclared gated prompt keeps the origin/main lines unchanged (#320).
+test("the headless prompt adds the declaration rule and nothing else", () => {
   const block =
     "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.";
   const supplied =
@@ -216,11 +218,24 @@ test("the headless prompt adds exactly the declaration rule and nothing else", (
 
   const gated = initialPrompt({ task: "T", maxSteps: 10, requireCi: 42 });
   const withPrAndGate = initialPrompt({ task: "T", maxSteps: 10, pr: 42, requireCi: 42 });
-  expect(withPrAndGate.replace(`\n${block}`, "").replace(supplied, "").replace(advisory, "")).toBe(
-    gated,
-  );
+  // A declared run's gate line is reworded, because it now has an advisory read
+  // to distinguish from the enforcing one. Matched as a prefix: the line also
+  // carries the advisory clause and the pending-check rule that follow it.
+  const reworded =
+    "- The --require-ci finish gate is the only check read in this run that enforces anything,";
+  const undeclaredGate = gated.split("\n").find((line) => /only check read/.test(line));
+  // The declared prompt carries the block, the supplied-read clause, and the
+  // reworded gate line.
+  expect(withPrAndGate.split("\n")).toContain(block);
+  expect(withPrAndGate.split("\n").some((line) => line.startsWith(reworded))).toBe(true);
+  expect(withPrAndGate).toContain(supplied.trim());
+  // The undeclared run carries none of them, so the rewording cannot reach a run
+  // that makes no supplied read.
+  expect(gated.split("\n").some((line) => line.startsWith(reworded))).toBe(false);
   expect(gated).not.toContain(supplied);
   expect(gated).not.toContain(advisory);
+  expect(undeclaredGate).toBeTruthy();
+  expect(withPrAndGate).not.toContain(undeclaredGate);
   // The origin/main gate line is still what follows, naming the declared PR.
   expect(withPrAndGate).toContain(
     `${block}\n- This run enforces the PR gate (--require-ci 42): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit`,
@@ -609,8 +624,9 @@ test("a gated run with no declared PR claims no supplied status read", () => {
   // run must carry no statement about a supplied read at all.
   expect(prompt).not.toMatch(/supplies it to every reviewer prompt/);
   expect(prompt).not.toMatch(/advisory status read/);
-  // The gate claim stays, qualified as the enforcing read, which is what it is.
-  expect(prompt).toMatch(/only check read in this run that enforces/);
+  // The gate claim stays, and needs no qualification here: with no supplied read
+  // it really is the only check read, so it keeps the origin/main wording.
+  expect(prompt).toMatch(/only check read in this run,/);
 });
 
 // Usefulness: verifies the declared-PR prompt keeps its supplied-read statement,
@@ -620,4 +636,81 @@ test("a declared PR keeps its supplied status read statement", () => {
   const prompt = declaredBothBlocked();
   expect(prompt).toMatch(/supplies it to every reviewer prompt/);
   expect(prompt).toMatch(/advisory status read/);
+});
+
+// A reviewer result as `runLoop` hands it to `resultPrompt`, with the
+// runtime-read status a declared-PR run attaches.
+const REVIEWER_RESULT_WITH_CHECKS = {
+  role: "reviewer",
+  status: "ok",
+  response: "Conclusion: ok\nWhy: tests\nBlockers: none\nChecks: npm test",
+  reviewed: { head: "abc", clean: true, exact: true, digest: "d" },
+  prChecks: {
+    pr: 42,
+    head: "abc",
+    status: "failing",
+    checks: ["ci (macos-latest)"],
+    summary: "failing required checks on PR head abc: ci (macos-latest)",
+    advisory: true,
+  },
+};
+
+// Usefulness: verifies the headless orchestrator receives the runtime-read status
+// in the rendered reviewer result, because the comparison the parent makes between
+// that status and the reviewer Checks line needs both in the same prompt, and
+// `resultPrompt` was the only place the result was rendered
+// (issue #320 review, sixth round).
+test("the result prompt carries the runtime-read required-check status", () => {
+  const prompt = resultPrompt({
+    result: REVIEWER_RESULT_WITH_CHECKS,
+    stepsUsed: 1,
+    maxSteps: 5,
+  });
+  expect(prompt).toMatch(/"prChecks"/);
+  expect(prompt).toMatch(/"failing"/);
+  // The head the status describes, so a parent can tell which commit it covers.
+  expect(prompt).toMatch(/"head": "abc"/);
+});
+
+// Usefulness: verifies a worker result carries no status field, because only a
+// reviewer turn reads the checks and an invented field on a worker result would
+// read as a check status that was never read (issue #320 review, sixth round).
+test("the result prompt carries no check status without one on the result", () => {
+  const prompt = resultPrompt({
+    result: { role: "worker", status: "ok", response: "done" },
+    stepsUsed: 1,
+    maxSteps: 5,
+  });
+  expect(prompt).not.toMatch(/prChecks/);
+});
+
+// The two lines origin/main renders for a gated run that declares no PR, pinned
+// verbatim. A run with no `--pr` gets no supplied read, so the qualification the
+// declared-PR prompt needs does not apply and must not be applied there: the
+// undeclared gated prompt stays byte-identical to the one origin/main sends
+// (issue #320 review, sixth round).
+const MAIN_NO_NETWORK_LINE =
+  "- You orchestrate through codex, whose read-only turn cannot reach the network, and your reviewer codex, so no turn in this run can read the required checks and the headless loop cannot wait. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.";
+const MAIN_GATE_LINE =
+  "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.";
+
+// Usefulness: verifies a gated run that declares no PR renders exactly the two
+// lines origin/main renders, because a run with no `--pr` makes no supplied
+// read and must not carry wording about one, and a reworded line there changes a
+// run this PR does not otherwise touch (issue #320 review, sixth round).
+test("an undeclared gated prompt renders the origin/main lines unchanged", () => {
+  const lines = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    requireCi: 42,
+    orchestratorKind: "codex",
+    reviewerKind: "codex",
+  }).split("\n");
+  expect(lines).toContain(MAIN_NO_NETWORK_LINE);
+  expect(lines).toContain(MAIN_GATE_LINE);
+  // And no variant of either line, so a reword cannot slip in unnoticed.
+  const variants = lines.filter((line) =>
+    /no turn in this run can (read|reach) the (required )?checks|only check read/.test(line),
+  );
+  expect(variants).toEqual([MAIN_NO_NETWORK_LINE, MAIN_GATE_LINE]);
 });
