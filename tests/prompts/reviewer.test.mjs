@@ -50,3 +50,63 @@ test("reviewer prompt challenges a spec that weakens a guard and limits approval
     "Name the affected guard or contract in the report, and check that the docs and tests change with it.",
   );
 });
+
+// Usefulness: verifies the required-check rule is present in a task that names a
+// pull request, so the reviewer reads the check status on the reviewed head
+// instead of learning about a failure only at the finish gate (issue #313).
+test("reviewer prompt carries the required-check rule for a task that names a pull request", () => {
+  const prompt = reviewerPrompt("review PR 313");
+  expect(prompt).toMatch(/gh pr checks .*--required/);
+  expect(prompt).toMatch(/failing required check.*blocker/i);
+  expect(prompt).toMatch(/pending/i);
+  expect(prompt).toMatch(/no required check/i);
+});
+
+// Usefulness: verifies the required-check rule never lets an unread or
+// mismatched check status read as a pass, so a missing `gh` or a PR head that
+// differs from the local head is reported instead of assumed (issue #313).
+test("reviewer prompt reports an unresolved check status instead of assuming a pass", () => {
+  const prompt = reviewerPrompt("review PR 313");
+  expect(prompt).toMatch(/cannot read the checks.*unresolved/i);
+  expect(prompt).toMatch(/differs from the local reviewed head/i);
+  expect(prompt).toMatch(/pass only when the read shows one/i);
+});
+
+// Usefulness: verifies only the required-check rule mentions a pull request, in
+// any spelling, so a standalone scoping bullet cannot read as limiting the
+// guard rules that follow it (issue #313). The required-check rule runs from the
+// gh pr checks bullet to the end of the rules, so every matching bullet has to
+// sit at or after that first bullet.
+test("only the required-check rule mentions a pull request", () => {
+  const prompt = reviewerPrompt("review the change");
+  const bullets = prompt.split("\n").filter((text) => text.startsWith("- "));
+  const namesPullRequest = (text) => /\bPRs?\b/.test(text) || /pull[ -]requests?/i.test(text);
+  const requiredCheckStart = bullets.findIndex((text) => /gh pr checks/.test(text));
+  expect(requiredCheckStart).toBeGreaterThanOrEqual(0);
+  const matching = bullets.filter(namesPullRequest);
+  expect(matching.length).toBeGreaterThan(0);
+  for (const [index, text] of bullets.entries()) {
+    if (namesPullRequest(text)) {
+      expect(index).toBeGreaterThanOrEqual(requiredCheckStart);
+    }
+  }
+});
+
+// Usefulness: verifies a read pass is reported as covering only the listed
+// checks, because the command omits a check that has not started, so a partial
+// read never reads as the whole required set (issue #313).
+test("reviewer prompt limits a read pass to the checks the command listed", () => {
+  const prompt = reviewerPrompt("review PR 313");
+  expect(prompt).toMatch(/has not started/i);
+  expect(prompt).toMatch(/only the listed checks/i);
+});
+
+// Usefulness: verifies a blocker needs a listed failing required check, so an
+// exit code 1 that carries no such line is reported as unresolved instead
+// (issue #313).
+test("reviewer prompt requires a listed failing check before it reports a blocker", () => {
+  const prompt = reviewerPrompt("review PR 313");
+  expect(prompt).toMatch(/exit (code )?1/i);
+  expect(prompt).toMatch(/blocker only when the output lists a failing required check/i);
+  expect(prompt).toMatch(/any other exit (code )?1.*unresolved/i);
+});
