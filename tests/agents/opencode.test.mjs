@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
+import { parseReportBlock } from "../../src/lib/report.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
@@ -344,4 +345,52 @@ test("opencode exposes usage from stdout when the CLI exits non-zero", async () 
     mainLoop: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
     totalCostUsd: 0.001,
   });
+});
+
+const CLOSING_BLOCK = [
+  "Conclusion: PR #314 fixes the part join.",
+  "Why: the narration and the block arrived as two text parts.",
+  "Blockers: none",
+  "Checks: pnpm test",
+  "Notes: none",
+  "Deferred: none",
+].join("\n");
+
+/** Streams `text` as the response of an opencode turn and returns the response text. */
+async function runWithText(...text) {
+  const stdout = text.map(textEvent).join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  return runOpenCode(state, "oc prompt", { cwd: "/dir" });
+}
+
+// Usefulness: verifies a part that opens a closing-block label starts its own line, so the label
+// sits at column 0 and the block parses instead of falling through to `raw` (issue #316). A single
+// part carries the block unchanged, so the same test also covers the no-separator case.
+test("opencode keeps a closing-block label at the start of its own line", async () => {
+  const single = await runWithText(CLOSING_BLOCK);
+
+  expect(single).toBe(CLOSING_BLOCK);
+  expect(parseReportBlock(single)?.conclusion).toBe("PR #314 fixes the part join.");
+
+  const split = await runWithText("The narration ends here.", CLOSING_BLOCK);
+
+  expect(split).toBe("The narration ends here.\n" + CLOSING_BLOCK);
+  expect(parseReportBlock(split)).toMatchObject({
+    conclusion: "PR #314 fixes the part join.",
+    why: "the narration and the block arrived as two text parts.",
+    blockers: "none",
+  });
+});
+
+// Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence
+// split keeps the prose intact and an unconditional newline join cannot pass (issue #316).
+test("opencode joins a mid-sentence split without a line break", async () => {
+  const response = await runWithText(
+    "The fix changes the join so the",
+    " block parses.\n" + CLOSING_BLOCK,
+  );
+
+  expect(response).toBe("The fix changes the join so the block parses.\n" + CLOSING_BLOCK);
+  expect(parseReportBlock(response)?.conclusion).toBe("PR #314 fixes the part join.");
 });

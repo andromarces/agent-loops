@@ -55,6 +55,8 @@ Each adapter manages its own persistent session across turns. Model and effort a
 
 The OpenCode adapter passes `--standalone` on every turn. The turn runs against a private server instead of the shared background service, so the run does not depend on a background `opencode` service. Provider variables set on the shared service with `opencode service set env` do not apply to a standalone turn; provide them in the process environment. See [Background service](https://opencode.ai/v2/docs/cli#background-service) in the OpenCode CLI docs.
 
+The stream splits one response across several `text` parts, and the adapter concatenates them. A part that opens a closing-block label or the reviewer `Verdict:` line starts its own line, because each label is matched plain at column 0 and a glued label makes the whole block unparseable, so `raw` carries the response instead (issue #316). A part that continues a sentence gains no line break, so the prose reads as the model wrote it.
+
 ### OpenCode model default
 
 With `opencode` and no `--<role>-model`, the adapter passes no `--model` argument. OpenCode uses the configured `model` when it is enabled and its provider is available in the project; otherwise it falls back to the newest available supported model. A model already selected for a session takes precedence over the configured default. The resolved model is machine- and project-dependent, so it varies by configuration, authentication, and session history. `opencode session export <id>` names the model that ran.

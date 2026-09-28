@@ -12,7 +12,7 @@ const REPORT_LABELS = [
   ["deferred", "Deferred", true],
 ];
 
-const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
+export const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 
 // A report label that indentation or markdown decoration hides from the strict
 // match, for example `**Deferred**: x`, `*Deferred:* x`, `### Deferred: x`,

@@ -1,7 +1,12 @@
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logInfo } from "../lib/log.mjs";
+import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
 import { resumeMismatchError } from "./shared.mjs";
+
+// A part that opens a closing-block label, plus the reviewer Verdict line, which the block parser
+// reads with the same column-0 match.
+const LABEL_LINE = new RegExp(`^(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")}):`, "i");
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
@@ -77,16 +82,31 @@ export async function runOpenCode(state, prompt, options = {}) {
     throw new Error(`opencode returned an error event: ${describeError(errorEvent.error)}`);
   }
 
-  const text = events
-    .filter((event) => event.type === "text" && typeof event.part?.text === "string")
-    .map((event) => event.part.text)
-    .join("");
+  const text = joinTextParts(
+    events.filter((event) => event.type === "text" && typeof event.part?.text === "string"),
+  );
 
   if (!text.trim()) {
     throw new Error("opencode did not return response text.");
   }
 
   return text.trim();
+}
+
+/**
+ * Concatenates the text parts of a turn. The stream splits one response across parts at token
+ * boundaries, so a part glues to the one before it. A part that opens a closing-block label
+ * instead starts its own line, because parseReportBlock (src/lib/report.mjs) matches each label
+ * plain at column 0 and otherwise reads the whole block as `raw` (issue #316). A part that
+ * continues a sentence gains no line break, so the prose reads as the model wrote it.
+ * @param {{ part?: { text?: string } }[]} events
+ * @returns {string}
+ */
+function joinTextParts(events) {
+  return events.reduce((text, event) => {
+    const part = event.part.text;
+    return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
+  }, "");
 }
 
 /**
