@@ -187,6 +187,21 @@ at risk, so the reviewer can trace each changed input through them. Do not
 restate the spec as the pass condition: a restated spec asks the reviewer to
 confirm it, not to test it.
 
+The fixed review scope also carries the required-check rule. For a task that
+names a pull request, every reviewer turn reads `gh pr checks <pr> --required`
+for the reviewed head. The command reads status only, so the reviewer stays
+read-only:
+
+- A failing required check is a blocker.
+- A pending required check goes in `Checks`.
+- When `gh` cannot read the checks, for example no `gh` or no network, that
+  failure goes in `Checks`. The reviewer never reports that the checks passed.
+- A task that names no pull request has no rule to apply.
+
+The `--require-ci` finish gate stays the enforcement point. The rule only lets
+the reviewer see a failure before the gate refuses, so the run needs no extra
+worker turn and no extra reviewer turn for that failure.
+
 ## Several runs at once
 
 One parent session can drive several runs, one per work tree. Each run registers

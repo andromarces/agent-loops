@@ -42,3 +42,31 @@ test("reviewer prompt challenges a spec that weakens a guard and limits approval
     "Name the affected guard or contract in the report, and check that the docs and tests change with it.",
   );
 });
+
+// Usefulness: verifies every reviewer prompt asks for the required-check status on
+// the reviewed head when the task names a pull request, so a failing required
+// check surfaces in the review instead of only at the finish gate (issue #313).
+test("reviewer prompt reads the required checks for a task that names a pull request", () => {
+  const prompt = reviewerPrompt("review PR 313");
+  expect(prompt).toContain("When the task names a pull request");
+  expect(prompt).toContain("gh pr checks <pr> --required");
+  expect(prompt).toContain("Report a failing required check as a blocker");
+  expect(prompt).toContain("Report a pending required check in Checks");
+});
+
+// Usefulness: verifies the required-check rule tells the reviewer what to report
+// when gh cannot read the checks, so an unread check status never reads as a
+// pass (issue #313).
+test("reviewer prompt reports an unread required-check status instead of a pass", () => {
+  const prompt = reviewerPrompt("review PR 313");
+  expect(prompt).toContain("When gh cannot read the checks, report that in Checks");
+  expect(prompt).toContain("Never report that the checks passed");
+});
+
+// Usefulness: verifies the required-check rule is scoped to a task that names a
+// pull request, so a task without one is not asked for a check status
+// (issue #313).
+test("reviewer prompt limits the required-check rule to a task that names a pull request", () => {
+  const prompt = reviewerPrompt("review the change");
+  expect(prompt).toContain("This rule does not apply when the task names no pull request");
+});

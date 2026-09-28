@@ -12,7 +12,11 @@ const reviewerRules = `Review scope, in addition to the task below:
 - Trace each changed input, flag, or code path through the existing validators and guards that consume it.
 - Report a change that weakens an existing guard or documented contract as a blocker, unless the task explicitly approves that change.
 - Explicit approval names the guard or the contract. A general requirement that weakens a guard as a side effect is not approval.
-- For an approved contract change, do not reject for the change itself. Name the affected guard or contract in the report, and check that the docs and tests change with it.`;
+- For an approved contract change, do not reject for the change itself. Name the affected guard or contract in the report, and check that the docs and tests change with it.
+- This rule does not apply when the task names no pull request.
+- When the task names a pull request, read the required checks for the reviewed head with gh pr checks <pr> --required. The command reads status only. It changes nothing.
+- Report a failing required check as a blocker. Report a pending required check in Checks.
+- When gh cannot read the checks, report that in Checks. Never report that the checks passed.`;
 
 export function reviewerPrompt(prompt) {
   return `
