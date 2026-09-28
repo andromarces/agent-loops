@@ -43,30 +43,35 @@ test("reviewer prompt challenges a spec that weakens a guard and limits approval
   );
 });
 
-// Usefulness: verifies every reviewer prompt asks for the required-check status on
-// the reviewed head when the task names a pull request, so a failing required
-// check surfaces in the review instead of only at the finish gate (issue #313).
-test("reviewer prompt reads the required checks for a task that names a pull request", () => {
+// Usefulness: verifies the required-check rule is present in a task that names a
+// pull request, so the reviewer reads the check status on the reviewed head
+// instead of learning about a failure only at the finish gate (issue #313).
+test("reviewer prompt carries the required-check rule for a task that names a pull request", () => {
   const prompt = reviewerPrompt("review PR 313");
-  expect(prompt).toContain("When the task names a pull request");
-  expect(prompt).toContain("gh pr checks <pr> --required");
-  expect(prompt).toContain("Report a failing required check as a blocker");
-  expect(prompt).toContain("Report a pending required check in Checks");
+  expect(prompt).toMatch(/gh pr checks .*--required/);
+  expect(prompt).toMatch(/failing required check.*blocker/i);
+  expect(prompt).toMatch(/pending/i);
+  expect(prompt).toMatch(/no required check/i);
 });
 
-// Usefulness: verifies the required-check rule tells the reviewer what to report
-// when gh cannot read the checks, so an unread check status never reads as a
-// pass (issue #313).
-test("reviewer prompt reports an unread required-check status instead of a pass", () => {
+// Usefulness: verifies the required-check rule never lets an unread or
+// mismatched check status read as a pass, so a missing `gh` or a PR head that
+// differs from the local head is reported instead of assumed (issue #313).
+test("reviewer prompt reports an unresolved check status instead of assuming a pass", () => {
   const prompt = reviewerPrompt("review PR 313");
-  expect(prompt).toContain("When gh cannot read the checks, report that in Checks");
-  expect(prompt).toContain("Never report that the checks passed");
+  expect(prompt).toMatch(/cannot read the checks.*unresolved/i);
+  expect(prompt).toMatch(/differs from the local reviewed head/i);
+  expect(prompt).toMatch(/pass only when the read shows one/i);
 });
 
-// Usefulness: verifies the required-check rule is scoped to a task that names a
-// pull request, so a task without one is not asked for a check status
+// Usefulness: verifies the guard rules of issue #216 keep their own scope, so
+// the required-check rule cannot narrow a rule that applies to every task
 // (issue #313).
-test("reviewer prompt limits the required-check rule to a task that names a pull request", () => {
+test("required-check rule does not narrow the guard rules that apply to every task", () => {
   const prompt = reviewerPrompt("review the change");
-  expect(prompt).toContain("This rule does not apply when the task names no pull request");
+  for (const line of prompt.split("\n").filter((text) => text.startsWith("- "))) {
+    if (/guard|contract/i.test(line)) {
+      expect(line).not.toMatch(/pull request/i);
+    }
+  }
 });

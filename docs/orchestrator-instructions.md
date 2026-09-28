@@ -187,16 +187,20 @@ at risk, so the reviewer can trace each changed input through them. Do not
 restate the spec as the pass condition: a restated spec asks the reviewer to
 confirm it, not to test it.
 
-The fixed review scope also carries the required-check rule. For a task that
-names a pull request, every reviewer turn reads `gh pr checks <pr> --required`
-for the reviewed head. The command reads status only, so the reviewer stays
-read-only:
+The fixed review scope also carries the required-check rule. The rule text is in
+every reviewer prompt. It applies only when the task names a pull request, and
+then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed
+head. The command reads status only, so the reviewer stays read-only:
 
 - A failing required check is a blocker.
-- A pending required check goes in `Checks`.
-- When `gh` cannot read the checks, for example no `gh` or no network, that
-  failure goes in `Checks`. The reviewer never reports that the checks passed.
-- A task that names no pull request has no rule to apply.
+- Exit code 8 means a check is pending. The pending check goes in `Checks`, not
+  into the blockers.
+- The read reflects the PR head on GitHub. When that head differs from the local
+  reviewed head, the mismatch goes in `Checks`.
+- When the repository has no required check, that goes in `Checks`.
+- When `gh` cannot read the checks, for example no `gh` or no network, the
+  status is unresolved and goes in `Checks`. A pass is reported only when the
+  read shows one.
 
 The `--require-ci` finish gate stays the enforcement point. The rule only lets
 the reviewer see a failure before the gate refuses, so the run needs no extra
