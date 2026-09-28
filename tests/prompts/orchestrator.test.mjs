@@ -51,16 +51,37 @@ test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
   );
 });
 
+// The reviewer-Checks gate rule as a meaning check, not a sentence match: the
+// reviewer Checks line is the gate input, and a worker Checks line never is.
+// Each pattern stays inside one sentence, so a mention of a gate in another
+// rule cannot stand in for this one, and a rule that drops or inverts the rule
+// fails. A reword that keeps the subject, the label, and the denial passes
+// (issue #318).
+const REVIEWER_GATE_RULE = [
+  /reviewer'?s? checks line[^.]*gate/i,
+  /worker'?s? checks line[^.]*\b(never|not)\b/i,
+];
+
+// The headless prompt also states that every child turn reports the line. The
+// interactive instructions state that rule on `report.checks` instead, so this
+// pattern guards the headless prompt only. The subject stays open (`every`,
+// `each`) so a reword of the subject does not break the rule.
+const EVERY_CHILD_TURN_CHECKS = /child turn[^.]*checks line/i;
+
+/** Asserts the text states the reviewer-Checks gate rule. */
+function expectReviewerGateRule(text) {
+  for (const pattern of REVIEWER_GATE_RULE) {
+    expect(text, pattern.source).toMatch(pattern);
+  }
+}
+
 // Usefulness: verifies the headless parent knows every child turn reports its
 // commands, and that only the reviewer Checks line gates, so a reported worker
-// Checks line never reads as an accept (issue #310). Matched as rule fragments
-// instead of a full sentence, so a reword that keeps the rule keeps the
-// assertion (issue #318).
+// Checks line never reads as an accept (issue #310).
 test("initialPrompt states that only the reviewer Checks line gates", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expect(prompt).toMatch(/every child turn reports a checks line/i);
-  expect(prompt).toMatch(/only the reviewer checks line is a gate input/i);
-  expect(prompt).toMatch(/worker checks line .*never an accept/i);
+  expect(prompt).toMatch(EVERY_CHILD_TURN_CHECKS);
+  expectReviewerGateRule(prompt);
 });
 
 // Usefulness: verifies the headless parent states the same reviewed-state rules
@@ -105,15 +126,12 @@ test("initialPrompt names the unresolvedCompare marker", () => {
 
 // Usefulness: verifies the interactive instructions and the headless prompt
 // state the same reviewed-state parent rules, so the two parent paths never
-// diverge (issue #217, issue #252). A rule that needs more than a literal match
-// is listed as a pattern, so both texts are still compared for it (issue #318).
+// diverge (issue #217, issue #252). The reviewer-Checks gate rule is compared by
+// its meaning, so a reword that keeps the rule keeps the parity check and a
+// removal or an inversion breaks it (issue #318).
 test("interactive instructions and headless prompt share the reviewed-state rules", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  const patterns = [
-    /only the reviewer checks line is a gate input/i,
-    /worker checks line .*never an accept/i,
-  ];
   for (const rule of [
     "A task is PR work when its change is delivered on a pull request.",
     "For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head.",
@@ -127,10 +145,8 @@ test("interactive instructions and headless prompt share the reviewed-state rule
     expect(instructions).toContain(rule);
     expect(prompt).toContain(rule);
   }
-  for (const pattern of patterns) {
-    expect(instructions).toMatch(pattern);
-    expect(prompt).toMatch(pattern);
-  }
+  expectReviewerGateRule(instructions);
+  expectReviewerGateRule(prompt);
 });
 
 // Usefulness: verifies the headless result payload carries the reviewer reviewed
