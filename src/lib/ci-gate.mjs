@@ -37,6 +37,22 @@ function fail(reason) {
 // permission problem: the branch simply has no classic protection, and a
 // ruleset-only repository answers it for an admin.
 //
+// A private repository on the GitHub Free plan answers 403 on every
+// required-context source with a message that names the plan instead of the
+// credential (#301, measured on two private Free-plan repositories with an admin
+// classic PAT and an admin fine-grained PAT):
+//
+//   `Upgrade to GitHub Pro or make this repository public
+//    to enable this feature.`                     403  a private repository on
+//                                                     the Free plan
+//
+// The credential is not the problem, so the reasoning above does not carry over
+// and this alternative has its own argument. The plan does not allow the rule
+// that would require a check, so no required context can exist on that
+// repository and the source is empty by the same outcome the caller refuses on.
+// The reply is the same on a branch that exists and on one that does not, so it
+// carries nothing about the branch.
+//
 // Match the message, not the status. `gh` renders every failure as
 // `gh: <message> (HTTP <status>)`, so a rate-limit or SSO 403 carries the same
 // suffix as the `GITHUB_TOKEN` 403 and the status cannot tell them apart. Reading
@@ -57,7 +73,7 @@ function fail(reason) {
 // is. The already-read values are what make a typo impossible here, not the
 // message.
 const UNREADABLE =
-  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)/;
+  /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)|Upgrade to GitHub Pro or make this repository public to enable this feature\. \(HTTP 403\)/;
 
 async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);

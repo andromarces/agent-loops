@@ -39,11 +39,13 @@ function run(name, conclusion) {
 // Routes a `gh` call by a substring of its arguments. A `hidden` value answers
 // with the 404 a token without repository admin receives, a `forbidden` value
 // with the 403 a `GITHUB_TOKEN` receives, a `pat forbidden` value with the 403 a
-// fine-grained PAT without the Administration permission receives, and a
-// `rate limited` value with a 403 that is not an unreadable-source answer; an
-// unmatched call is an error so a test never passes on a missing fixture. `null`
-// is the admin reply for a branch with no classic protection, which is also
-// unreadable but says so differently.
+// fine-grained PAT without the Administration permission receives, a
+// `free plan` value with the 403 a private repository on the GitHub Free plan
+// returns for every required-context source, and a `rate limited` value with a
+// 403 that is not an unreadable-source answer; an unmatched call is an error so
+// a test never passes on a missing fixture. `null` is the admin reply for a
+// branch with no classic protection, which is also unreadable but says so
+// differently.
 function fakeGh(routes) {
   return async (args) => {
     const key = args.join(" ");
@@ -67,6 +69,14 @@ function fakeGh(routes) {
             status: 1,
             stdout: "",
             stderr: "gh: Resource not accessible by personal access token (HTTP 403)",
+          };
+        }
+        if (value === "free plan") {
+          return {
+            status: 1,
+            stdout: "",
+            stderr:
+              "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)",
           };
         }
         if (value === "rate limited") {
@@ -566,6 +576,32 @@ test("passes for a fine-grained PAT caller when every required check passed", as
     ),
   });
   expect(result).toEqual({ ok: true, commit: HEAD });
+});
+
+// Usefulness: verifies the Free-plan 403 leaves every required-context source
+// unreadable rather than failing the run, so an admin on a private Free-plan
+// repository reaches the named empty-union refusal instead of a raw throw. The
+// plan does not allow the rule that would require a check, so the source holds
+// no required contexts (issue #301).
+test("refuses on the empty union when every required-context source answers the Free-plan 403", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        info: prInfo({ mergeStateStatus: "BLOCKED" }),
+        required: "free plan",
+        protection: "free plan",
+        prChecks: "free plan",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result).toEqual({
+    ok: false,
+    reason: "no required checks were found for the base branch",
+  });
 });
 
 // Usefulness: verifies an app-qualified context from classic branch protection
