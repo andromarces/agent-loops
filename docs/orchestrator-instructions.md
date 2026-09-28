@@ -126,9 +126,11 @@ Read the JSON envelope on stdout. Example reviewer envelope:
 - When the closing block cannot be parsed, `report` is null and `raw` carries
   the whole response, so no text the block held is lost. Treat a missing report
   as not accepted.
-- `report.checks` names the commands that ran in the reviewer turn and their
-  results. It is reported evidence from the child, not proof that a command ran,
-  so it never replaces the runtime `reviewed` fields.
+- `report.checks` names the commands that ran in that child turn and their
+  results, for a worker turn and for a reviewer turn alike. It is reported
+  evidence from the child, not proof that a command ran, so it never replaces
+  the runtime `reviewed` fields. The label is optional, so a child that omits it
+  yields `null` and the block still parses.
 - `report.notes` holds non-blocking findings the next turn does not need to act
   on. `report.deferred` holds items found but left out of scope. Both are
   optional: a child that omits the label yields `null` for that field, and the
@@ -170,7 +172,9 @@ Apply these parent rules:
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the
   PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
-- Treat an accept without a Checks line as not accepted.
+- Treat an accept without a Checks line as not accepted. Only the reviewer
+  Checks line is a gate input, so a worker Checks line is reported evidence and
+  never an accept.
 - When the PR head cannot be resolved, for example a read-only turn with no
   network access, do not finish as verified: abort, or record the unresolved
   compare under notDone and open in the finish summary. A recorded compare also

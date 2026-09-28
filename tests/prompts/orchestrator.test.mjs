@@ -51,6 +51,15 @@ test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
   );
 });
 
+// Usefulness: verifies the headless parent knows every child turn reports its
+// commands, and that only the reviewer Checks line is a gate input, so a
+// reported worker Checks line never reads as an accept (issue #310).
+test("initialPrompt states that only the reviewer Checks line gates", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).toContain("Every child turn reports a Checks line");
+  expect(prompt).toContain("Only the reviewer Checks line is a gate input");
+});
+
 // Usefulness: verifies the headless parent states the same reviewed-state rules
 // as the interactive instructions: compare head, require clean, and treat an
 // accept without a Checks line as not accepted (issue #217).
@@ -105,6 +114,7 @@ test("interactive instructions and headless prompt share the reviewed-state rule
     "Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.",
     "Require reviewed.clean: true for PR work.",
     "Treat an accept without a Checks line as not accepted.",
+    "Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.",
     "When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.",
   ]) {
     expect(instructions).toContain(rule);

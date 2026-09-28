@@ -7,6 +7,7 @@ End your response with this block, kept short. Each label takes one line, plain 
 Conclusion: one or two sentences.
 Why: the decisive evidence behind the conclusion.
 Blockers: anything unresolved that the next turn must know, or "none".
+Checks: the commands that ran and their results, or "none". One line.
 Notes: non-blocking findings the next turn does not need to act on, or "none".
 Deferred: items found but left out of scope, or "none".
 `.trim();

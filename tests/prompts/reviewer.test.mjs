@@ -17,6 +17,14 @@ test("reviewer prompt keeps the read-only guard and requires the closing report 
   expect(prompt).toContain("Deferred:");
 });
 
+// Usefulness: verifies the reviewer block carries exactly one Checks line, so
+// the shared closing block and the reviewer block do not duplicate the label
+// after the worker block gained one (issue #310).
+test("reviewer prompt carries one Checks line", () => {
+  const prompt = reviewerPrompt("check the tests");
+  expect(prompt.split("Checks:")).toHaveLength(2);
+});
+
 // Usefulness: verifies every reviewer prompt traces a changed input, flag, or code path through
 // the guards that consume it, so a weakened guard surfaces as a blocker (issue #216).
 test("reviewer prompt traces changed inputs through existing guards", () => {
