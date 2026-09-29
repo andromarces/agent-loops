@@ -142,7 +142,7 @@ function modeBlock(mode) {
     "review-first": "the reviewer goes first, then the worker if the findings call for it.",
     // The same mapping the interactive path states, and the summary rule below.
     "review-only":
-      "do not dispatch the worker at all. The runtime refuses a run_worker action and ends the run, the same guard the interactive path applies to --role worker. The runtime also refuses a finish until a reviewer turn has completed, because this run owns its own action order and the report is the only thing the finish records. Finish after the reviewer report, whatever the verdict, and record the verdict in verified. Blockers and Notes go into open, and reviewer Deferred items go into deferred.",
+      "do not dispatch the worker at all. The runtime refuses a run_worker action and ends the run, the same guard the interactive path applies to --role worker. The runtime also refuses a finish until a reviewer turn has run, because this run owns its own action order and the report is the only thing the finish records. The turn is what it waits for, not its outcome: a reviewer turn that ended in an error still satisfies it, and that error is what the finish records. Finish after the reviewer report, whatever the verdict, and record the verdict in verified. Blockers and Notes go into open, and reviewer Deferred items go into deferred.",
   };
   return `\n- This run is ${mode}: ${rules[mode]}`;
 }

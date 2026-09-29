@@ -241,6 +241,13 @@ export async function runLoop(options) {
   // review-only and needs at least one reviewer report.
   let workerRan = false;
   let reviewerRan = false;
+  // A reviewer turn that was dispatched, whatever it returned. `reviewerRan`
+  // counts only a turn that ended `ok`, because `--require-accept` reads that
+  // one. A `review-only` run needs the turn itself, not a successful one: the
+  // interactive path accepts its finish from `active` after any reviewer turn,
+  // including one that ended in a handled error, and the summary records what
+  // the turn returned (#337).
+  let reviewerTurnDispatched = false;
   let acceptedSinceWorker = false;
   let finishRefused = false;
   // The reviewed state the `--require-ci` gate reads: the runtime-owned identity
@@ -314,17 +321,20 @@ export async function runLoop(options) {
         });
       }
       // A review-only run's whole outcome is the reviewer report, so a finish
-      // before one is a finish with nothing behind it. The interactive path gets
-      // that for free, because its init dispatch is itself the reviewer turn,
-      // and a headless run owns its whole order, so the runtime refuses it here.
-      // It is the completion rule, so it sits where `--require-accept` sits and
-      // needs the same reviewer turn to satisfy it (#337).
-      if (mode === "review-only" && !reviewerRan) {
+      // before any reviewer turn is a finish with nothing behind it. The
+      // interactive path reaches that state for free, because its init dispatch
+      // is itself the reviewer turn, and a headless run owns its whole order, so
+      // the runtime refuses it here. The condition is the turn, not its outcome:
+      // the interactive finish is accepted after any reviewer turn, including one
+      // that ended in a handled error, because the summary records what that turn
+      // returned. It sits where `--require-accept` sits, so it takes the same
+      // corrective turn and repeated-refusal rule (#337).
+      if (mode === "review-only" && !reviewerTurnDispatched) {
         needsChildTurn = true;
         refusals.push({
-          reason: "no reviewer report on the state, and a review-only run dispatches no worker",
+          reason: "no reviewer turn has run, and a review-only run dispatches no worker",
           recovery:
-            "Dispatch the reviewer, obtain a reviewer report on that state, then finish. The verdict does not matter in this mode; the report is what the finish records.",
+            "Dispatch the reviewer, then finish once that turn has returned. What the turn returned is what the finish records: the verdict, or the error, goes in verified, and neither blocks the finish.",
         });
       }
       if (requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan)) {
@@ -452,6 +462,9 @@ export async function runLoop(options) {
       workerRan = true;
       acceptedSinceWorker = false;
     } else {
+      // Set whatever the turn returned: a turn that ended in a handled error is
+      // still the report a `review-only` finish records.
+      reviewerTurnDispatched = true;
       reviewerRan = reviewerRan || result.status === "ok";
       acceptedSinceWorker = result.status === "ok" && isAcceptedReview(result.response);
     }

@@ -524,13 +524,27 @@ Completion is completion of the requested work, not code acceptance.
 
 The two paths reach that reviewer report differently, and the difference is the
 rule, not the wording. `agent-loop role finish` in `review-only` applies no
-reviewer-report rule of its own: it accepts a finish from `active` whatever the
-verdict. Every reachable interactive run already has a reviewer turn, because the
-init dispatch is itself that turn, so the report is there without a gate. A
-headless `--mode review-only` run owns its own action order and can reach a finish
-before any reviewer turn, so the runtime refuses that finish until a reviewer
-turn has completed, with the same corrective-turn and repeated-refusal rules the
-other finish gates use. The report is what the mode records either way, so call
+reviewer-report rule of its own: it accepts a finish from `active` once any
+reviewer turn has run, whatever that turn returned, including a turn that ended
+in a handled error. Every reachable interactive run already has a reviewer turn,
+because the init dispatch is itself that turn, so the report is there without a
+gate. A headless `--mode review-only` run owns its own action order and can reach
+a finish before any reviewer turn, so the runtime refuses that finish until a
+reviewer turn has run, with the same corrective-turn and repeated-refusal rules
+the other finish gates use. That condition is the turn, not its outcome, so a
+headless reviewer turn that ended in a handled error, or returned no verdict,
+still satisfies it: the summary is what records what the turn returned, and the
+error or the absent verdict belongs in `verified`, not in a refusal.
+
+Neither path takes `--require-accept` in this mode, and both say so differently.
+`agent-loop role finish` refuses the flag at `finish`, with
+`--require-accept and --require-ci apply only to work-first and review-first;
+review-only accepts any verdict.` `agent-loop --mode review-only` refuses the
+flag before the run starts, with the same sentence, because the headless command
+takes every flag on one command line. A review-only headless run therefore
+applies the reviewer report with no flag of its own.
+
+The report is what the mode records either way, so call
 `finish` after it, whatever the verdict, and record what the run did not cover in
 `notDone` and `open`.
 

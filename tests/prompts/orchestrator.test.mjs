@@ -304,9 +304,12 @@ test("a review-only run states the review-only mapping", () => {
   const reviewOnly = initialPrompt({ task: "T", maxSteps: 10, mode: "review-only" });
   expectRule(reviewOnly, /review-only/i, /do not dispatch[^.!?]{0,40}worker/i);
   expectRule(reviewOnly, /runtime/i, /refuses[^.!?]{0,40}run_worker/i);
-  // The finish the mode records needs a reviewer report, so the prompt states
-  // that gate rather than leaving the orchestrator to guess (issue #337).
+  // The finish the mode records needs a reviewer turn, so the prompt states that
+  // gate rather than leaving the orchestrator to guess (issue #337).
   expectRule(reviewOnly, /runtime/i, /refuses[^.!?]{0,40}finish/i, /reviewer turn/i);
+  // The gate waits for the turn, not for a clean outcome, so the prompt does not
+  // tell the orchestrator that an erroring review blocks the finish.
+  expectRule(reviewOnly, /turn[^.!?]{0,40}not its outcome/i, /error/i, /finish/i);
   expectRule(reviewOnly, /reviewer/i, /\bfinish\b/i, /verdict/i);
   expectRule(reviewOnly, /Blockers/i, /open/i);
   // The mode-free prompt carries none of it, so an ordinary run is untouched.
