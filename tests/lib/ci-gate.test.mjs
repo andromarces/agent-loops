@@ -358,7 +358,7 @@ for (const [shape, { protection, why }] of Object.entries(UNKNOWN_SHAPES)) {
       cwd: ".",
       gh: fakeGh(
         routes({
-          required: [{ type: "deletion" }],
+          required: [],
           protection,
           prChecks: "",
           headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -456,6 +456,8 @@ for (const [ending, suffix] of Object.entries(ENDINGS)) {
       cwd: ".",
       gh: fakeGh(
         routes({
+          // Both sources must state the absence, so the ruleset read is a non-empty
+          // array of well-formed rules with no required-status-check rule.
           required: [{ type: "deletion" }],
           protection: `stderr: gh: Branch not protected (HTTP 404)${suffix}`,
           prChecks: "",
@@ -754,6 +756,54 @@ test("accepts every documented rule type that requires no check", async () => {
   expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
 });
 
+// A successful empty ruleset read contributes no contexts and leaves the per-check
+// path to the other sources, which is what origin/main did for every unreadable
+// ruleset reply. A classic-only repository must keep finishing (issue #336 review).
+const CLASSIC_ONLY_REPOSITORIES = {
+  "classic required contexts that passed": {
+    protection: { required_status_checks: { contexts: ["ci (ubuntu-latest)"] } },
+    headRuns: [run("ci (ubuntu-latest)", "success")],
+  },
+  "`gh pr checks --required` names that passed": {
+    protection: "hidden",
+    prChecks: [{ name: "ci (ubuntu-latest)" }],
+    headRuns: [run("ci (ubuntu-latest)", "success")],
+  },
+};
+
+for (const [shape, override] of Object.entries(CLASSIC_ONLY_REPOSITORIES)) {
+  // Usefulness: verifies an empty ruleset read beside ${shape} still finishes, so
+  // the strict unknown-ruleset refusal did not refuse a repository that needs no
+  // ruleset to say what it requires (issue #336 review).
+  test(`finishes on a classic-only repository with ${shape}`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(routes({ required: [], ...override })),
+    });
+    expect(result.ok, `an empty ruleset read must not refuse ${shape}`).toBe(true);
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+}
+
+// Usefulness: verifies an empty ruleset read is still not a positive absence, so a
+// repository whose other source states no required check keeps the empty-union
+// refusal, which is the accepted limit for a branch with no ruleset (issue #336
+// review).
+test("an empty ruleset read is not a positive absence", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(routes({ required: [], protection: null, prChecks: "" })),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("no required checks were found");
+  expect(result.reason).toContain("repository rulesets");
+  expect(result.noRequiredChecks).toBeUndefined();
+});
+
 // The malformed successful replies that must keep the empty-union refusal. The
 // allowlist admits one ruleset shape, an array of well-formed rules with no
 // required-status-check rule, so each of these is one step away from it and none
@@ -833,7 +883,7 @@ for (const [shape, override] of Object.entries(MALFORMED_PROTECTION_READS)) {
       cwd: ".",
       gh: fakeGh(
         routes({
-          required: [{ type: "deletion" }],
+          required: [],
           prChecks: "",
           headRuns: [run("ci (ubuntu-latest)", "success")],
           ...override,
@@ -907,7 +957,7 @@ for (const [shape, overrides] of Object.entries(UNREADABLE_MERGE_STATES)) {
       gh: fakeGh(
         routes({
           info: unreadableMergeState(overrides),
-          required: [{ type: "deletion" }],
+          required: [],
           protection: null,
           prChecks: "",
           headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -949,7 +999,7 @@ test("ignores a gh pr checks --required reply that carries no JSON", async () =>
     pr: 42,
     reviewed: REVIEWED,
     cwd: ".",
-    gh: fakeGh(routes({ required: [{ type: "deletion" }], protection: "hidden", prChecks: "" })),
+    gh: fakeGh(routes({ required: [], protection: "hidden", prChecks: "" })),
   });
   expect(result.ok).toBe(false);
   expect(result.reason).toContain("no required checks were found");
@@ -966,7 +1016,7 @@ test("falls back to gh pr checks --required for required names", async () => {
     cwd: ".",
     gh: fakeGh(
       routes({
-        required: [{ type: "deletion" }],
+        required: [],
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
       }),
@@ -987,7 +1037,7 @@ test("refuses a blocked merge state when a required check never reported", async
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [{ type: "deletion" }],
+        required: [],
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
       }),
@@ -1057,7 +1107,7 @@ test("treats a 403 from classic protection as an unreadable source", async () =>
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [{ type: "deletion" }],
+        required: [],
         protection: "forbidden",
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1079,7 +1129,7 @@ test("refuses on the empty union when classic protection answers 403", async () 
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [{ type: "deletion" }],
+        required: [],
         protection: "forbidden",
         prChecks: "",
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1103,7 +1153,7 @@ test("treats a non-admin 404 from classic protection as an unreadable source", a
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [{ type: "deletion" }],
+        required: [],
         protection: "hidden",
         prChecks: [{ name: "build (ubuntu-latest)" }],
         headRuns: [run("build (ubuntu-latest)", "success")],
@@ -1125,7 +1175,7 @@ test("passes for a non-admin caller when every required check passed", async () 
     cwd: ".",
     gh: fakeGh(
       routes({
-        required: [{ type: "deletion" }],
+        required: [],
         protection: "hidden",
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1147,7 +1197,7 @@ test("does not read a rate-limit 403 from classic protection as no contexts", as
       cwd: ".",
       gh: fakeGh(
         routes({
-          required: [{ type: "deletion" }],
+          required: [],
           protection: "rate limited",
           prChecks: [{ name: "ci (ubuntu-latest)" }],
           headRuns: [run("ci (ubuntu-latest)", "failure")],
@@ -1169,7 +1219,7 @@ test("treats a fine-grained PAT 403 from classic protection as an unreadable sou
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [{ type: "deletion" }],
+        required: [],
         protection: "pat forbidden",
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1191,7 +1241,7 @@ test("refuses on the empty union when classic protection answers a PAT 403", asy
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [{ type: "deletion" }],
+        required: [],
         protection: "pat forbidden",
         prChecks: "",
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1213,7 +1263,7 @@ test("passes for a fine-grained PAT caller when every required check passed", as
     cwd: ".",
     gh: fakeGh(
       routes({
-        required: [{ type: "deletion" }],
+        required: [],
         protection: "pat forbidden",
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1262,7 +1312,7 @@ for (const [ending, suffix] of Object.entries(ENDINGS)) {
       cwd: ".",
       gh: fakeGh(
         routes({
-          required: [{ type: "deletion" }],
+          required: [],
           protection: `stderr: ${FREE_PLAN}${suffix}`,
           prChecks: "",
           headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1297,7 +1347,7 @@ for (const [shape, reply] of Object.entries(NOT_THE_WHOLE_REPLY)) {
         cwd: ".",
         gh: fakeGh(
           routes({
-            required: [{ type: "deletion" }],
+            required: [],
             protection: `stderr: ${reply}`,
             prChecks: [{ name: "ci (ubuntu-latest)" }],
             headRuns: [run("ci (ubuntu-latest)", "failure")],
@@ -1317,7 +1367,7 @@ test("matches an app-qualified classic-protection context to that app", async ()
     cwd: ".",
     gh: fakeGh(
       routes({
-        required: [{ type: "deletion" }],
+        required: [],
         protection: {
           required_status_checks: { contexts: [], checks: [{ context: "ci", app_id: 15368 }] },
         },

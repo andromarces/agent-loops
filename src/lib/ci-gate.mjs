@@ -201,12 +201,17 @@ async function readRequiredSource(gh, args, cwd, { absentOnError, classify }) {
   return { state, contexts };
 }
 
-// The three classifications a required-check configuration source reply can
-// carry. A source that settles nothing is `UNKNOWN`; only the two that state an
-// outcome are definitive (issue #336).
+// The classifications a required-check configuration source reply can carry.
+// `ABSENT` is a reply that states the source holds no required check, `HAS_CONTEXTS`
+// a reply that names at least one, and `UNKNOWN` a reply that settles nothing.
+// `EMPTY` is the one outcome the ruleset source alone carries: a successful read
+// that found no rule. It is not a positive absence, and it does not refuse the
+// per-check path, so a classic-only repository keeps the behavior origin/main gave
+// it (issue #336 review).
 const ABSENT = "absent";
 const HAS_CONTEXTS = "contexts";
 const UNKNOWN = "unknown";
+const EMPTY = "empty";
 
 // Every rule type GitHub documents for a repository ruleset, from the create and
 // update ruleset schemas. A rule entry whose `type` is missing, is not a string, or
@@ -286,14 +291,21 @@ function classifyRulesets(data) {
     return { state: UNKNOWN, contexts: [] };
   }
   const rules = data.flat();
-  // An empty page beside a page that holds rules settles nothing. GitHub stops
-  // paginating when there is no next page, so an empty page in the middle of a
-  // read is a read the gate cannot account for every page of, and a partial read
-  // must not be classified from the pages that did arrive (issue #336 review). An
-  // entirely empty result is the same case, and states nothing about the branch:
-  // it is the same reply for a branch no ruleset applies to and for a caller or
-  // endpoint that enumerates no rule for that branch.
-  if (rules.length === 0 || data.some((page) => page.length === 0)) {
+  if (rules.length === 0) {
+    // A successful read that found no rule is `EMPTY`, not `UNKNOWN` and not
+    // `ABSENT`. It contributes no contexts, exactly as a failed read did on
+    // origin/main, so a classic-only repository whose required checks passed still
+    // finishes. It is not a positive absence either: an empty read is the same
+    // reply for a branch no ruleset applies to and for a caller or endpoint that
+    // enumerates no rule for this branch, so it states nothing about the branch and
+    // the relaxed path still refuses (issue #336 review).
+    return { state: EMPTY, contexts: [] };
+  }
+  if (data.some((page) => page.length === 0)) {
+    // An empty page beside a page that holds rules settles nothing. GitHub stops
+    // paginating when there is no next page, so an empty page inside a read is a
+    // read the gate cannot account for every page of, and a partial read must not
+    // be classified from the pages that did arrive (issue #336 review).
     return { state: UNKNOWN, contexts: [] };
   }
   const contexts = [];
@@ -466,7 +478,6 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   for (const context of rules.contexts) {
     addContext(contexts, context.name, context.appId);
   }
-
   const protection = await readRequiredSource(
     gh,
     [`repos/${slug}/branches/${base}/protection`],
@@ -494,6 +505,12 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   );
   return {
     unknown,
+    // The ruleset state is carried separately from `unknown`, because an empty read
+    // is neither an absence nor a refusal: it contributes no contexts and leaves the
+    // per-check path to the other sources, exactly as origin/main did (issue #336
+    // review).
+    rulesetState: rules.state,
+    protectionState: protection.state,
     contexts: values
       .filter((context) => context.appId !== null || !qualifiedNames.has(context.name))
       .sort((a, b) => {
@@ -656,33 +673,45 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   }
 
   const slug = await repoSlug(gh, cwd);
-  const { unknown, contexts: required } = await requiredContexts(
-    gh,
-    slug,
-    info.baseRefName,
-    pr,
-    cwd,
-  );
+  const {
+    unknown,
+    rulesetState,
+    protectionState,
+    contexts: required,
+  } = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
   // An unknown ruleset read refuses the finish whatever the rest of the union
   // holds. Its own reply may carry a required-status rule this caller never saw,
   // and a non-empty union from another source would otherwise let the per-check
-  // pass judge only the names it saw, so a ruleset-required check could be skipped.
-  // origin/main treated a failed ruleset read as an empty source and refused only
-  // on an unrecognized message, so this is stricter than that (issue #336 review).
-  if (unknown.includes(RULESETS)) {
+  // pass judge only the names it saw, so a ruleset-required check could be skipped
+  // (issue #336 review).
+  //
+  // A successful read that found no rule is not in this branch. It contributes no
+  // contexts and the per-check pass runs on the other sources, which is what
+  // origin/main did for every unreadable ruleset reply, so a classic-only
+  // repository whose required checks passed still finishes. It is still not a
+  // positive absence, so the empty-union refusal below names it.
+  if (rulesetState === UNKNOWN) {
     return fail(
       "the repository rulesets could not be read, so the gate cannot tell which required checks the base branch requires",
     );
   }
-  // No required check exists only when no source named one and every remaining
-  // configuration source stated that it holds none. A source that settled nothing
-  // is named in the refusal, because a parent can only fix the source it can see
-  // (issue #336). A blocked merge state still refuses below, so an absent check
-  // set cannot pass a pull request another required rule blocks.
-  const noRequiredChecks = required.length === 0 && unknown.length === 0;
-  if (required.length === 0 && unknown.length > 0) {
+  // No required check exists only when both sources stated they hold none. A source
+  // that settled nothing, and a ruleset read that found no rule, are both named in
+  // the refusal, because a parent can only fix a source it can see (issue #336). A
+  // blocked merge state still refuses below, so an absent check set cannot pass a
+  // pull request another required rule blocks.
+  const noRequiredChecks =
+    required.length === 0 && rulesetState === ABSENT && protectionState === ABSENT;
+  if (required.length === 0 && !noRequiredChecks) {
+    const unproven = [...unknown];
+    if (rulesetState === EMPTY) {
+      unproven.push(RULESETS);
+    }
+    if (protectionState === EMPTY) {
+      unproven.push(PROTECTION);
+    }
     return fail(
-      `no required checks were found for the base branch, and ${unknown.join(" and ")} could not be read, so the gate cannot tell a base branch with no required check from one whose check it never saw`,
+      `no required checks were found for the base branch, and ${unproven.join(" and ")} did not state that it holds no required check, so the gate cannot tell a base branch with no required check from one whose check it never saw`,
     );
   }
   if (noRequiredChecks) {
