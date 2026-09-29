@@ -366,10 +366,10 @@ test("the headless prompt adds the declaration rule and nothing else", () => {
 });
 
 // Usefulness: verifies the headless prompt states that a gate on a base branch
-// with no required check passes on the PR head, the clean reviewed tree, and the
-// merge state, and records that no required check exists, so an orchestrator on
-// such a branch knows the gate can pass and knows what it did not verify
-// (issue #336).
+// whose required-check sources each state it holds none passes on the PR head, the
+// clean reviewed tree, and the merge state, and records the absence, so an
+// orchestrator on such a branch knows the gate can pass and knows what it did not
+// verify (issue #336).
 test("the headless prompt states the no-required-check gate outcome", async () => {
   const prompt = initialPrompt({
     task: "Implement feature X",
@@ -381,14 +381,13 @@ test("the headless prompt states the no-required-check gate outcome", async () =
   expectRule(prompt, /no required check/i, /record/i);
   // The rule names the condition the pass rests on, so an orchestrator whose
   // credential cannot read a source does not expect the gate to pass.
-  expectRule(prompt, /every required-check source/i, /stated/i);
+  expectRule(prompt, /required-check sources/i, /state/i);
   expectRule(prompt, /cannot read/i, /refus/i);
   // The same rule on the interactive surface, so the two parent paths do not
   // diverge on it.
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = await readFile(instructionsPath, "utf8");
   expectRule(instructions, /no required check/i, /pass/i, /PR head/i, /reviewed/i, /merge state/i);
   expectRule(instructions, /no required check/i, /record/i);
-  expectRule(instructions, /every required-check source/i, /stated/i);
   expectRule(instructions, /cannot read/i, /refus/i);
 });
 
@@ -403,18 +402,27 @@ const RULE_SURFACES = [
 ];
 
 for (const [name, path] of RULE_SURFACES) {
-  // Usefulness: verifies ${name} states that only an allowlisted reply proves an
-  // absence, so it cannot describe a malformed or unreadable read as a pass
-  // (#336 review).
+  // Usefulness: verifies ${name} states the allowlist rule, the one absence per
+  // source, and the empty-array unknown, so it cannot describe a malformed,
+  // unreadable, or empty read as a pass (#336 review).
   test(`${name} states the allowlisted absence rule`, async () => {
     const text = await readFile(path, "utf8");
-    expectRule(text, /classification is an allowlist/i, /fails closed/i);
-    // The one per-source absence each. For repository rulesets it is the array
-    // read with no required-status-check rule; for classic protection it is the
-    // exact 404, and no successful body proves one.
-    expectRule(text, /repository rulesets/i, /JSON array/i, /well-formed rule/i, /no entry/i);
+    expectRule(text, /allowlist/i, /fails closed/i);
+    // The one per-source absence each. For repository rulesets it is the non-empty
+    // array read with no required-status-check rule; for classic protection it is
+    // the exact 404, and no successful body proves one.
+    expectRule(text, /repository rulesets/i, /non-empty/i, /JSON array/i, /well-formed rule/i);
     expectRule(text, /classic branch protection/i, /Branch not protected/);
-    expectRule(text, /No successful body proves an absence/i);
+    expectRule(text, /No successful classic-protection body proves an absence/i);
+    // The empty ruleset array states nothing, so it is unknown.
+    expectRule(text, /empty ruleset array/i, /unknown/i);
+  });
+
+  // Usefulness: verifies ${name} states that a ruleset-only branch reaches the
+  // absence path, the case an earlier claim got backwards (#336 review).
+  test(`${name} states that a ruleset-only branch reaches the absence path`, async () => {
+    const text = await readFile(path, "utf8");
+    expectRule(text, /ruleset-only branch/i, /reaches|does/i);
   });
 
   // Usefulness: verifies ${name} states that a private Free-plan repository still

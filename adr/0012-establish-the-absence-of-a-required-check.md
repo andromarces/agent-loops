@@ -77,8 +77,52 @@ issue, is not among the branches the declaration reaches.
 
 `Branch not protected` (404) is the one unreadable reply that states the outcome.
 The classic endpoint writes it only to a caller that can read protection, and it
-names an unprotected branch (#280, #295). A ruleset read that is an array of
-well-formed rules carrying no required-status-check rule is the other.
+names an unprotected branch (#280, #295). A ruleset read that is a non-empty array
+of well-formed rules carrying no required-status-check rule is the other.
+
+Two more replies were accepted as an absence and are not. An empty ruleset array
+is the same reply for a branch no ruleset applies to and for a caller or endpoint
+that enumerates no rule for that branch, and the reply carries nothing that tells
+those apart. And `Branch not protected` was matched as an unanchored search, so
+the same text inside another error, or beside a second line, read as an absence;
+it is now compared as a whole reply.
+
+Two shapes were examined and left as they are, because the reply cannot tell them
+apart and the ambiguity only makes the gate over-refuse:
+
+- A ruleset whose `enforcement` is `disabled` or `evaluate`. The branch-rules
+  reply carries no enforcement field; that field is on the rulesets endpoint. A
+  read-only probe on 2026-09-29 against `andromarces/agent-loops` confirms the
+  branch-rules entries carry `type`, `parameters` where a rule has them,
+  `ruleset_source_type`, `ruleset_source`, and `ruleset_id`, and nothing else. A
+  rule from a non-enforced ruleset is therefore read as a required context, which
+  refuses a pull request the branch does not actually require, and never passes
+  one it does.
+- A rule that applies to the branch by a name pattern or by `~DEFAULT_BRANCH`.
+  Branch conditions live on the rulesets endpoint too, so the branch-rules reply
+  is already the list GitHub filtered for that branch, and a rule that reaches it
+  applies. The same over-refuse follows if it does not.
+
+## Reply shapes and their class
+
+One list, so a review can check the code against it.
+
+| Source                    | Reply shape                                                                                                                                                                | Class                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Repository rulesets       | A non-empty JSON array whose entries are all well-formed rules, an object with a string `type`, and none a `required_status_checks` rule                                   | absent                                              |
+| Repository rulesets       | A non-empty JSON array carrying a `required_status_checks` rule whose `required_status_checks` is a non-empty array of entries with a non-empty string `context`           | has-contexts                                        |
+| Repository rulesets       | An empty JSON array, which is unknown because it is the same reply for a branch no ruleset applies to and for a caller or endpoint that enumerates no rule for that branch | unknown                                             |
+| Repository rulesets       | An entry that is not an object, is null, is an array, has no `type`, or has a `type` that is not a string                                                                  | unknown                                             |
+| Repository rulesets       | A `required_status_checks` rule whose `required_status_checks` is missing, is not an array, is empty, or holds an entry with no string `context`                           | unknown                                             |
+| Repository rulesets       | A body that is empty, is not JSON, or is JSON that is not an array                                                                                                         | unknown                                             |
+| Repository rulesets       | Any non-zero exit                                                                                                                                                          | unknown, except an unrecognized shape, which throws |
+| Classic branch protection | Exactly `gh: Branch not protected (HTTP 404)`, allowing one trailing LF or CRLF                                                                                            | absent                                              |
+| Classic branch protection | A non-empty JSON object whose `required_status_checks` is an object whose `contexts` and `checks` entries all name a context, and which names at least one                 | has-contexts                                        |
+| Classic branch protection | A body that is empty, is not JSON, is JSON that is not an object, has no `required_status_checks`, has it as null or of the wrong type, or names no check                  | unknown                                             |
+| Classic branch protection | `Not Found` (404), either `Resource not accessible` 403, the Free-plan 403, and `Branch not protected` carrying any surrounding or extra text                              | unknown                                             |
+| Classic branch protection | Any other non-zero exit                                                                                                                                                    | unknown, except an unrecognized shape, which throws |
+| `gh pr checks --required` | A JSON array of named checks                                                                                                                                               | has-contexts for those names                        |
+| `gh pr checks --required` | An empty array, output that is not a JSON array, and a failed read                                                                                                         | never classified, and never an absence              |
 
 ## Decision
 
@@ -86,15 +130,17 @@ well-formed rules carrying no required-status-check rule is the other.
    branch protection, is classified by what its reply proved. The classification
    is an allowlist, so it fails closed, and `ABSENT`, the only answer that lets a
    finish pass, has exactly one reply per source:
-   - Repository rulesets: a successful reply whose body is a JSON array in which
-     every entry is a well-formed rule, an object carrying a string `type`, and no
-     entry is a `required_status_checks` rule. That is the read of a branch that
-     has no required-status-check rule.
-   - Classic branch protection: the exact `Branch not protected` (404), which the
-     endpoint writes only to a caller that can read protection. No successful
-     body proves an absence for this source, because a classic-protected branch
-     can require reviews without requiring a check, so a readable body that names
-     no check is unknown.
+   - Repository rulesets: a successful reply whose body is a non-empty JSON array
+     in which every entry is a well-formed rule, an object carrying a string
+     `type`, and no entry is a `required_status_checks` rule. That is the read of
+     a branch that has no required-status-check rule. An empty array is excluded,
+     because it states nothing about the branch.
+   - Classic branch protection: exactly `gh: Branch not protected` (404), which
+     the endpoint writes only to a caller that can read protection, compared as a
+     whole reply so no surrounding text can pass as it. No successful body proves
+     an absence for this source, because a classic-protected branch can require
+     reviews without requiring a check, so a readable body that names no check is
+     unknown.
    - `CONTEXTS` is a reply that named at least one required check, so the
      per-check pass runs.
    - `UNKNOWN` is every other reply. That is any non-zero exit other than the
@@ -161,12 +207,14 @@ well-formed rules carrying no required-status-check rule is the other.
   that exists and one that does not, so no source there states an absence. This is
   the repository the issue was raised for, and the allowlist is why the
   declaration does not reach it.
-- A branch can reach the absence path only where both configuration sources state
-  the outcome, which means an admin token on a branch with no required check: the
-  rulesets read is an array of well-formed rules with no required-status-check
-  rule, and classic protection answers the exact `Branch not protected` 404. A
-  branch protected only by rulesets, or only by classic protection that names no
-  check, does not reach it.
+- A branch reaches the absence path where both configuration sources state the
+  outcome. A branch whose rulesets carry rules but no required-status-check rule,
+  and whose classic protection answers exactly `Branch not protected`, is one such
+  branch, and a ruleset-only branch is the common case: its ruleset read is a
+  non-empty array of well-formed rules with no required-status-check rule, and it
+  has no classic protection to report. A branch with no ruleset at all does not
+  reach it, because an empty array states nothing about the branch, and neither
+  does a classic-protected branch that requires reviews but names no check.
 - A declared run on such a base branch ends through `finish` and never keeps the
   #286 gap, because the runtime resolves the PR head and verifies the clean tree
   and the merge state. The gate is the one place the finish is judged, so the run
