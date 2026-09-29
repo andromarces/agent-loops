@@ -159,7 +159,12 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * removes it. It deletes the lock only if the lock still holds the content read
  * as stale. Each acquisition writes a unique nonce, so a lock that a new owner
  * created in between never matches and survives, and the retry reports it as
- * busy. A contender that finds a live claim exits as busy. A claim
+ * busy. This guarantee holds only when every contender runs this version or
+ * later: a contender on an older version removes a stale lock with a bare rm and
+ * keeps the original race with any other contender. A lock written without a
+ * nonce by an older version is matched by content alone, so an older-version
+ * owner with the same pid and start time in the same millisecond is taken for
+ * it. A contender that finds a live claim exits as busy. A claim
  * left by a crashed process is removed the same way, under a claim keyed by its
  * own content. Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
@@ -247,11 +252,12 @@ async function acquireLock(
 }
 
 // Path of the claim that guards the removal of the file that holds `staleText`.
-// The name is keyed by that content, so it is exclusive to one stale file. The
-// content is JSON-encoded first so an unreadable file (null) and the literal
-// text "null" get different names.
+// The name is the full SHA-256 digest of the JSON-encoded content, so distinct
+// contents get distinct names up to SHA-256 collision resistance, not by a strict
+// injective mapping. The JSON encoding keeps an unreadable file (null) and the
+// literal text "null" apart.
 function claimFileFor(file, staleText) {
-  const id = createHash("sha256").update(JSON.stringify(staleText)).digest("hex").slice(0, 16);
+  const id = createHash("sha256").update(JSON.stringify(staleText)).digest("hex");
   return `${file}.reap.${id}`;
 }
 
@@ -270,6 +276,9 @@ function claimFileFor(file, staleText) {
 // (MAX_CLAIM_DEPTH). A lock written without a nonce by an older version is
 // matched by content alone, so an older-version owner with the same pid and
 // start time in the same millisecond would be taken for it.
+// Mixed versions: a contender that runs an older version removes a stale lock
+// with a bare rm, so it can still remove a new live lock exactly as before this
+// fix. The guarantee holds only when every contender runs this version or later.
 async function removeStaleFile(file, staleText, { label, depth }) {
   const claimFile = claimFileFor(file, staleText);
   await acquireLock(claimFile, { label, noun: "stale-removal claim", depth: depth + 1 });
