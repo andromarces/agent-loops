@@ -11,7 +11,7 @@
 // non-terminal run owned by the hook session. The reader also unions the legacy
 // single-file index at `<root>/sessions/<parent-session>`; init never writes it,
 // and the directory name avoids a file-versus-directory clash at that path.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -157,8 +157,9 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * (removed with a warning, then retried once). The removal runs under a claim
  * file `<lock>.reap.<id>` keyed by the stale content, so at most one contender
  * removes it. It deletes the lock only if the lock still holds the content read
- * as stale; a lock that a new owner created in between survives, and the retry
- * reports it as busy. A contender that finds a live claim exits as busy. A claim
+ * as stale. Each acquisition writes a unique nonce, so a lock that a new owner
+ * created in between never matches and survives, and the retry reports it as
+ * busy. A contender that finds a live claim exits as busy. A claim
  * left by a crashed process is removed the same way, under a claim keyed by its
  * own content. Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
@@ -246,9 +247,11 @@ async function acquireLock(
 }
 
 // Path of the claim that guards the removal of the file that holds `staleText`.
-// The name is keyed by that content, so it is exclusive to one stale file.
+// The name is keyed by that content, so it is exclusive to one stale file. The
+// content is JSON-encoded first so an unreadable file (null) and the literal
+// text "null" get different names.
 function claimFileFor(file, staleText) {
-  const id = createHash("sha256").update(String(staleText)).digest("hex").slice(0, 16);
+  const id = createHash("sha256").update(JSON.stringify(staleText)).digest("hex").slice(0, 16);
   return `${file}.reap.${id}`;
 }
 
@@ -257,13 +260,16 @@ function claimFileFor(file, staleText) {
 // with the exclusive link, so exactly one contender wins it, and it is removed
 // only by its winner. While a winner holds it, the stale file cannot change: its
 // owner is dead, nobody else removes it, and nobody creates a file at a path
-// that exists. So a file that reads as the stale content under the claim is the
-// file that was read as stale, and removing it cannot delete a new owner's file
-// (#363). Nothing is renamed, and no path is bare-removed unclaimed. A loser
+// that exists. Every acquisition writes unique content (a nonce), so a file that
+// reads as the stale content under the claim is the file that was read as stale,
+// and removing it cannot delete a new owner's file (#363). Nothing is renamed, and no path is bare-removed unclaimed. A loser
 // finds a live claim and exits as busy; a file that reads differently or cannot
 // be read is kept, and the caller's retry reports it as busy.
 // known-limit: a claim left by a crashed process stays until a contender hits
-// its stale file, and a chain of more than two crashed claims fails closed (MAX_CLAIM_DEPTH).
+// its stale file, and a chain of more than two crashed claims fails closed
+// (MAX_CLAIM_DEPTH). A lock written without a nonce by an older version is
+// matched by content alone, so an older-version owner with the same pid and
+// start time in the same millisecond would be taken for it.
 async function removeStaleFile(file, staleText, { label, depth }) {
   const claimFile = claimFileFor(file, staleText);
   await acquireLock(claimFile, { label, noun: "stale-removal claim", depth: depth + 1 });
@@ -292,7 +298,14 @@ async function stillStale(lockFile, staleText) {
 // and write keeps the lock usable at the cost of that window. Returns false
 // only when another owner already holds the lock.
 async function createLock(lockFile) {
-  const owner = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+  // The nonce makes every acquisition's content unique, so a re-read that matches
+  // the stale content can only be the same file, never a later owner (#363). A
+  // lock written without one by an older version parses the same way.
+  const owner = JSON.stringify({
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    nonce: randomUUID(),
+  });
   const tempFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
   // The write is inside the guard because it creates the temp file: a write cut
   // short leaves a partial temp behind, and the prune never removes a temp owned

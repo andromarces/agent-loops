@@ -1,8 +1,8 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { withStateLock } from "../../src/lib/runstate.mjs";
+import { STALE_LOCK_GRACE_MS, withStateLock } from "../../src/lib/runstate.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // The stale-lock race needs a second process to act between the owner read and
@@ -58,19 +58,28 @@ function afterLockRead(lockFile, interleave) {
   });
 }
 
+/** Ages a file past the grace window, so an unparseable lock counts as stale. */
+async function ageFile(file) {
+  const past = new Date(Date.now() - 5 * STALE_LOCK_GRACE_MS);
+  await utimes(file, past, past);
+}
+
 /**
  * Learns, by watching the hard links a takeover attempts, the path of the first
  * claim it takes that is not already `planted` (a list of `[path, text]`). The
  * claim name is keyed by the stale content, so the same stale lock always yields
  * the same path. Leaves the directory empty.
  */
-async function learnNextClaim(lockFile, stale, planted) {
+async function learnNextClaim(lockFile, stale, planted, { aged = false } = {}) {
   const attempted = [];
   vi.mocked(link).mockImplementation(async (from, to) => {
     attempted.push(to);
     return await realFs.link(from, to);
   });
   await writeFile(lockFile, stale, "utf8");
+  if (aged) {
+    await ageFile(lockFile);
+  }
   for (const [path, text] of planted) {
     await writeFile(path, text, "utf8");
   }
@@ -249,4 +258,63 @@ test("a chain of dead claims deeper than the bound fails closed", async () => {
 
   expect(fn).not.toHaveBeenCalled();
   expect(await readdir(dir)).toEqual(before);
+});
+
+// Usefulness: verifies a new owner whose pid and start time equal the stale owner's is not mistaken for the stale lock and removed, because each acquisition writes distinct content (#363).
+test("a new owner with the stale owner's pid and start time survives the takeover", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const startedAt = new Date().toISOString();
+  const stale = JSON.stringify({ pid: process.pid, startedAt });
+  await writeFile(lockFile, stale, "utf8");
+  // The stale owner's pid reads dead once, then belongs to a live process again.
+  const kill = vi.spyOn(process, "kill");
+  kill.mockImplementationOnce(() => {
+    throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+  });
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  let holder;
+  afterLockRead(lockFile, async () => {
+    await rm(lockFile);
+    holder = withStateLock(lockFile, async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    await entered.promise;
+  });
+  const fn = vi.fn(async () => "ran");
+
+  try {
+    await expect(withStateLock(lockFile, fn)).rejects.toThrow(/locked by a live process/);
+
+    expect(fn).not.toHaveBeenCalled();
+    const held = await realFs.readFile(lockFile, "utf8");
+    expect(JSON.parse(held)).toMatchObject({ pid: process.pid, startedAt });
+    expect(held).not.toBe(stale);
+  } finally {
+    release.resolve();
+    await holder;
+    kill.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+// Usefulness: verifies a stale lock whose content is the text "null" and a stale lock that cannot be read are guarded by different claims, so a live claim on one never blocks the takeover of the other (#363).
+test("stale locks with distinct content do not share a claim", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const nullClaim = await learnNextClaim(lockFile, "null", [], { aged: true });
+  await writeFile(lockFile, "unreadable", "utf8");
+  await ageFile(lockFile);
+  await writeFile(nullClaim, LIVE_OWNER, "utf8");
+  vi.mocked(readFile).mockImplementation(async (file, ...rest) => {
+    if (file === lockFile) {
+      throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    }
+    return await realFs.readFile(file, ...rest);
+  });
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 });
