@@ -47,6 +47,11 @@ memory in `runLoop`.
   already reviewed the current state.
 - A continuation never accepts a finish on a saved verdict for a tree that may
   have changed.
+- **Accepted gap:** a change of a CLI's own default model between the two runs is
+  not detected. The transcript records the model the caller requested, not the
+  model a CLI resolved, so an omitted model matches only an omitted model and no
+  check can compare the defaults. Pass an explicit `--<role>-model` in both runs
+  to pin it.
 - A transcript from an earlier version, written before this change, continues
   without change, because it already holds `roles` and `cwd`.
 

@@ -1246,3 +1246,40 @@ test("--continue-from keeps a large earlier event whole", async () => {
     expect(kept.result.response === big).toBe(true);
   });
 });
+
+// Usefulness: verifies a same-path continuation carries a transcript of several
+// hundred thousand events, more than an argument spread can pass, and keeps them
+// all in order (#362 review).
+test("--continue-from keeps a transcript with many events", async () => {
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      sessionAgents([work, work], { codex: [], claude: [], agy: [] }),
+    );
+    const earlier = JSON.parse(await readFile(transcriptPath, "utf8"));
+    const count = 400_000;
+    earlier.events = Array.from({ length: count }, (_, index) => ({ type: "e", index }));
+    await writeFile(transcriptPath, JSON.stringify(earlier), "utf8");
+
+    await main(
+      [
+        ...CONTINUE_BASE,
+        "--cwd",
+        repo,
+        "--continue-from",
+        transcriptPath,
+        "--transcript",
+        transcriptPath,
+      ],
+      sessionAgents([FINISH], { codex: [], claude: [], agy: [] }),
+    );
+
+    expect(process.exitCode).toBe(0);
+    const after = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(after.events[0].index).toBe(0);
+    expect(after.events[count - 1].index).toBe(count - 1);
+    expect(after.events[count].type).toBe("continued");
+    expect(after.events.length).toBeGreaterThan(count + 1);
+  });
+}, 60_000);
