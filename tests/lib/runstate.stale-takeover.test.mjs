@@ -1,8 +1,8 @@
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { withStateLock } from "../../src/lib/runstate.mjs";
+import { claimFileFor, withStateLock } from "../../src/lib/runstate.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // The stale-lock race needs a second process to act between the owner read and
@@ -64,9 +64,7 @@ async function replaceWithLiveLock(lockFile) {
   await writeFile(lockFile, LIVE_OWNER, "utf8");
 }
 
-// Usefulness: verifies a stale takeover never removes a lock that another
-// process created after the stale owner was read. Removing it would let two
-// processes run inside the state lock at once (#363).
+// Usefulness: verifies a stale takeover never removes a lock that another process created after the stale owner was read. Removing it would let two processes run inside the state lock at once (#363).
 test("stale removal leaves a lock that a new owner created after the read", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
@@ -81,8 +79,7 @@ test("stale removal leaves a lock that a new owner created after the read", asyn
   expect(await readdir(dir)).toEqual(["state.lock"]);
 });
 
-// Usefulness: verifies the stale removal still succeeds when another contender
-// already removed the same stale lock, so the single retry acquires it (#363).
+// Usefulness: verifies the stale removal still succeeds when another contender already removed the same stale lock, so the single retry acquires it (#363).
 test("stale removal proceeds when another contender already removed the lock", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
@@ -94,10 +91,7 @@ test("stale removal proceeds when another contender already removed the lock", a
   expect(await readdir(dir)).toEqual([]);
 });
 
-// Usefulness: verifies a new owner that releases its lock while the stale
-// removal is under way leaves no phantom lock: the contender acquires the
-// released lock, and the lock path is never restored for an owner that is gone
-// (#363).
+// Usefulness: verifies a new owner that releases its lock while the stale removal is under way leaves no phantom lock: the contender acquires the released lock, and the lock path is never restored for an owner that is gone (#363).
 test("a new owner that releases during the stale removal leaves no lock behind", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
@@ -117,9 +111,7 @@ test("a new owner that releases during the stale removal leaves no lock behind",
   expect(await readdir(dir)).toEqual([]);
 });
 
-// Usefulness: verifies a failed re-read of the lock during the stale removal
-// keeps a new owner's live lock and leaks no file: an unreadable lock is never
-// treated as the stale one (#363).
+// Usefulness: verifies a failed re-read of the lock during the stale removal keeps a new owner's live lock and leaks no file: an unreadable lock is never treated as the stale one (#363).
 test("a lock that cannot be re-read during stale removal is kept", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
@@ -139,31 +131,100 @@ test("a lock that cannot be re-read during stale removal is kept", async () => {
   expect(await readdir(dir)).toEqual(["state.lock"]);
 });
 
-// Usefulness: verifies a stale-removal claim left by a crashed process (dead
-// pid) does not block later takeovers of a stale lock (#363).
+// Usefulness: verifies a stale-removal claim left by a crashed process (dead pid) does not block later takeovers of a stale lock (#363).
 test("a dead process's stale-removal claim is taken over", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
-  await writeFile(lockFile, await staleOwner(), "utf8");
-  await writeFile(`${lockFile}.reap`, await staleOwner(), "utf8");
+  const stale = await staleOwner();
+  await writeFile(lockFile, stale, "utf8");
+  await writeFile(claimFileFor(lockFile, stale), await staleOwner(), "utf8");
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 
   expect(await readdir(dir)).toEqual([]);
 });
 
-// Usefulness: verifies a stale lock is left in place while a live process holds
-// the stale-removal claim, so two contenders never remove it at once (#363).
+// Usefulness: verifies a stale lock is left in place while a live process holds the stale-removal claim, so two contenders never remove it at once (#363).
 test("a live process's stale-removal claim blocks the takeover", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
   const stale = await staleOwner();
   await writeFile(lockFile, stale, "utf8");
-  await writeFile(`${lockFile}.reap`, LIVE_OWNER, "utf8");
+  await writeFile(claimFileFor(lockFile, stale), LIVE_OWNER, "utf8");
   const fn = vi.fn(async () => "ran");
 
   await expect(withStateLock(lockFile, fn)).rejects.toThrow(/locked by a live process/);
 
   expect(fn).not.toHaveBeenCalled();
   expect(await realFs.readFile(lockFile, "utf8")).toBe(stale);
+});
+
+// Usefulness: verifies two contenders never both act as reaper after a dead claim: the one that loses the takeover exits as busy and never removes the live lock a new owner creates (#363).
+test("a dead claim that another contender took over is not taken over again", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const stale = await staleOwner();
+  const claimFile = claimFileFor(lockFile, stale);
+  await writeFile(lockFile, stale, "utf8");
+  await writeFile(claimFile, await staleOwner(), "utf8");
+  let claimTaken = false;
+  let lockReplaced = false;
+  vi.mocked(readFile).mockImplementation(async (file, ...rest) => {
+    const text = await realFs.readFile(file, ...rest);
+    if (file === claimFile && !claimTaken) {
+      // Another contender takes over the dead claim right after this one read it.
+      claimTaken = true;
+      await rm(claimFile);
+      await writeFile(claimFile, LIVE_OWNER, "utf8");
+    } else if (file === lockFile && claimTaken && !lockReplaced) {
+      // That contender finishes: the stale lock goes and a new owner takes its place.
+      lockReplaced = true;
+      await replaceWithLiveLock(lockFile);
+    }
+    return text;
+  });
+  const fn = vi.fn(async () => "ran");
+
+  await expect(withStateLock(lockFile, fn)).rejects.toThrow(/locked by a live process/);
+
+  expect(fn).not.toHaveBeenCalled();
+  expect([stale, LIVE_OWNER]).toContain(await realFs.readFile(lockFile, "utf8"));
+  expect((await readdir(dir)).sort()).toEqual(["state.lock", basename(claimFile)]);
+});
+
+/** Writes a stale lock guarded by a chain of `length` dead claims, each guarding the one before. */
+async function writeDeadClaimChain(lockFile, length) {
+  let path = lockFile;
+  let text = await staleOwner();
+  await writeFile(path, text, "utf8");
+  for (let i = 0; i < length; i += 1) {
+    path = claimFileFor(path, text);
+    text = await staleOwner();
+    await writeFile(path, text, "utf8");
+  }
+}
+
+// Usefulness: verifies a dead claim that guards another dead claim is removed through its own claim, so a takeover still succeeds after two crashed processes (#363).
+test("a chain of dead claims is removed and the lock is acquired", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeDeadClaimChain(lockFile, 2);
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+
+  expect(await readdir(dir)).toEqual([]);
+});
+
+// Usefulness: verifies a chain of dead claims deeper than the bound fails closed and leaves the stale lock in place instead of looping (#363).
+test("a chain of dead claims deeper than the bound fails closed", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeDeadClaimChain(lockFile, 5);
+  const before = await readdir(dir);
+  const fn = vi.fn(async () => "ran");
+
+  await expect(withStateLock(lockFile, fn)).rejects.toThrow(/nested too deep/);
+
+  expect(fn).not.toHaveBeenCalled();
+  expect(await readdir(dir)).toEqual(before);
 });

@@ -154,10 +154,13 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * Exclusive access around one state-file operation. Creates `state.lock` (an
  * atomic hard link where supported, otherwise an exclusive create), treats an
  * existing lock with a live owner pid as busy and a dead one as stale
- * (removed with a warning, then retried once). The removal runs under a
- * `<lock>.reap` claim and deletes the lock only if it still holds the content
- * read as stale, so a lock that a new owner created in between survives and the
- * retry reports it as busy. Returns the result of `fn`. `label`
+ * (removed with a warning, then retried once). The removal runs under a claim
+ * file `<lock>.reap.<id>` keyed by the stale content, so at most one contender
+ * removes it. It deletes the lock only if the lock still holds the content read
+ * as stale; a lock that a new owner created in between survives, and the retry
+ * reports it as busy. A contender that finds a live claim exits as busy. A claim
+ * left by a crashed process is removed the same way, under a claim keyed by its
+ * own content. Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
  * is locked instead of the generic default; `noun` is the same resource as a
  * lowercase phrase for the stale-removal warning.
@@ -193,12 +196,15 @@ const LINK_UNSUPPORTED = new Set([
   "EISDIR",
 ]);
 
+// Nesting bound for dead stale-removal claims; a deeper chain fails closed.
+const MAX_CLAIM_DEPTH = 3;
+
 // Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
 const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
 
 async function acquireLock(
   lockFile,
-  { retry = true, label = "State", noun = "state", claim = false } = {},
+  { retry = true, label = "State", noun = "state", depth = 0 } = {},
 ) {
   if (await createLock(lockFile)) {
     // Best-effort removal of temp files left by a crash between the temp write
@@ -228,32 +234,44 @@ async function acquireLock(
     throw new Error(`${label} lock could not be acquired after stale removal.`);
   }
 
-  logWarn(`removing stale ${noun} lock (dead pid ${owner?.pid ?? "unknown"})`);
-  if (claim) {
-    await rm(lockFile, { force: true });
-  } else {
-    await removeStaleLock(lockFile, lockText, { label, noun });
+  if (depth >= MAX_CLAIM_DEPTH) {
+    throw new Error(
+      `${label} is locked (stale-removal claims from crashed processes are nested too deep).`,
+    );
   }
-  return acquireLock(lockFile, { retry: false, label, noun, claim });
+
+  logWarn(`removing stale ${noun} lock (dead pid ${owner?.pid ?? "unknown"})`);
+  await removeStaleFile(lockFile, lockText, { label, depth });
+  return acquireLock(lockFile, { retry: false, label, noun, depth });
 }
 
-// Removes the stale lock under the stale-removal claim `<lock>.reap`, a lock
-// of the same kind that only one contender holds at a time. While the claim is
-// held nobody else removes the stale lock, its dead owner cannot release it, and
-// nobody can create a lock at that path, so a lock that reads as the stale one
-// under the claim is the one that was read as stale, and removing it cannot
-// delete a new owner's lock (#363). The lock path is never renamed away, so a
-// live lock is never out of place. A lock that reads differently or cannot be
-// read is kept; the caller's retry then reports it as busy.
-// known-limit: a claim left by a crashed process is removed by a bare rm, so two
-// contenders that both find that dead claim can both take it. Closing that needs
-// another lock around the claim, which can itself go stale.
-async function removeStaleLock(lockFile, staleText, { label, noun }) {
-  const claimFile = `${lockFile}.reap`;
-  await acquireLock(claimFile, { label, noun: `${noun} stale-removal claim`, claim: true });
+/**
+ * Path of the claim that guards the removal of the file that holds `staleText`.
+ * The name is keyed by that content, so it is exclusive to one stale file.
+ */
+export function claimFileFor(file, staleText) {
+  const id = createHash("sha256").update(String(staleText)).digest("hex").slice(0, 16);
+  return `${file}.reap.${id}`;
+}
+
+// A claim guards the removal of one stale file, and a dead claim is itself
+// removed under a claim keyed by its own content. Each level's claim is created
+// with the exclusive link, so exactly one contender wins it, and it is removed
+// only by its winner. While a winner holds it, the stale file cannot change: its
+// owner is dead, nobody else removes it, and nobody creates a file at a path
+// that exists. So a file that reads as the stale content under the claim is the
+// file that was read as stale, and removing it cannot delete a new owner's file
+// (#363). Nothing is renamed, and no path is bare-removed unclaimed. A loser
+// finds a live claim and exits as busy; a file that reads differently or cannot
+// be read is kept, and the caller's retry reports it as busy.
+// known-limit: a claim left by a crashed process stays until a contender hits
+// its stale file, and a chain of more than two crashed claims fails closed (MAX_CLAIM_DEPTH).
+async function removeStaleFile(file, staleText, { label, depth }) {
+  const claimFile = claimFileFor(file, staleText);
+  await acquireLock(claimFile, { label, noun: "stale-removal claim", depth: depth + 1 });
   try {
-    if (await stillStale(lockFile, staleText)) {
-      await rm(lockFile, { force: true });
+    if (await stillStale(file, staleText)) {
+      await rm(file, { force: true });
     }
   } finally {
     await rm(claimFile, { force: true });
