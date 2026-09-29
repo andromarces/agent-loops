@@ -129,6 +129,25 @@ package have no version in their root and render unchanged, and so does any layo
 with no link that resolves to the package. See [Upgrade](#upgrade) for the step
 after an upgrade.
 
+The pnpm 12 project layout was checked end to end on Windows 11 with pnpm 12.8.1 and
+a temporary `AGENT_LOOP_HOME` and store (#340):
+
+- `pnpm add <0.5.0 tarball>`, then `pnpm exec agent-loop install --harness claude --yes`,
+  rendered `node "<project>\node_modules\@andromarces\agent-loops\src\hook\parent-guard.mjs"`.
+  No store path appears in it.
+- `pnpm add <0.5.1 tarball>` replaced the store entry, and `pnpm store prune` removed
+  the old one. The rendered hook path still existed and ran with exit code 0, and a
+  second `install` reported `noop` for every file.
+
+Not verified:
+
+- macOS and Linux: the check host had no Linux environment (no WSL distribution, no
+  Docker). The POSIX bin shim `process.argv[1]` prefix is reasoned, not executed.
+- A project on a UNC share: `pnpm add` fails there before `install` can run.
+  Over `\\localhost\C$`, pnpm 12.8.1 reports `Failed to create symlink ... Access is
+denied. (os error 5)` for the project link and for a store on the share. The
+  render on a UNC share stays covered by the fallback test only.
+
 ```bash
 agent-loop install --harness claude,codex --yes
 agent-loop uninstall
