@@ -106,10 +106,10 @@ const UNREADABLE =
 
 // The 404 the classic protection endpoint writes only to a caller that can read
 // it, on a branch with no classic protection. It is matched before `UNREADABLE`
-// and names the absence, so a base branch with no classic protection is a known
-// source rather than an unreadable one (issue #336). A non-admin answers the same
-// endpoint with `Not Found`, which stays unreadable: that caller cannot tell an
-// unprotected branch from a protected one it may not read.
+// and names the absence, so it is the one unreadable reply that proves the source
+// holds no required check (issue #336). A non-admin answers the same endpoint with
+// `Not Found`, which proves nothing: that caller cannot tell an unprotected
+// branch from a protected one it may not read.
 const NOT_PROTECTED = /Branch not protected \(HTTP 404\)/;
 
 // The exact reply a private Free-plan repository writes, compared whole so no
@@ -132,28 +132,115 @@ async function ghApi(gh, args, cwd) {
 }
 
 /**
- * One required-check configuration source, with whether the caller can tell what
- * it holds. `known: false` is a source this caller cannot read, which may hide a
- * required check, so an empty union over one is a refusal and not an established
- * absence. `known: true` is a read the caller completed, or a reply that states
- * the source holds no required check: the Free-plan 403, where the plan does not
- * allow the rule that would require one, and `Branch not protected`, which the
- * classic endpoint writes only to a caller that can read it (#301, #336).
- * @returns {Promise<{ known: boolean, data: object | null }>}
+ * One required-check configuration source, classified by what its reply proved.
+ *
+ * `ABSENT` is a definitive answer that the source holds no required check: the
+ * reply was read and named none. `HAS_CONTEXTS` is a definitive answer that it
+ * holds at least one. `UNKNOWN` is every other reply, which settles nothing, so
+ * an empty union that rests on one is the empty-union refusal rather than an
+ * absence (issue #336).
+ *
+ * Only two replies establish absence, because only two state it. A read that
+ * completes and names no required check is definitive for its own source. The
+ * classic endpoint's `Branch not protected` is the other, because it is written
+ * only to a caller that can read protection, and it names an unprotected branch
+ * (issue #336). Every other unreadable reply is `UNKNOWN`: `Not Found` (404),
+ * which a token without repository admin receives for a protected branch as well
+ * as an unprotected one, and both `Resource not accessible` 403s. The Free-plan
+ * 403 is `UNKNOWN` too, because it names the plan and not the branch, and it is
+ * written the same way for a branch that exists and one that does not. A reply
+ * whose body is empty or is not the shape this source returns is `UNKNOWN`, so a
+ * read error can never read as an absence. Only a reply that is neither an
+ * unreadable shape nor a parseable body throws, which fails the run rather than
+ * reaching the gate.
+ * @param {object} options
+ * @param {boolean} options.notProtectedIsAbsent whether this endpoint's
+ *   `Branch not protected` 404 proves the source holds no required check. True for
+ *   classic protection, false for repository rulesets, which do not write it.
+ * @param {(data: unknown) => ({ name: string, appId: number | null }[] | null)} options.extract
+ *   the contexts the body names, or null when the body is not this source's shape.
+ * @returns {Promise<{ state: string, contexts: { name: string, appId: number | null }[] }>}
  */
-async function readRequiredSource(gh, args, cwd) {
+async function readRequiredSource(gh, args, cwd, { notProtectedIsAbsent, extract }) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    if (isFreePlan403(stderr) || NOT_PROTECTED.test(stderr)) {
-      return { known: true, data: null };
+    if (notProtectedIsAbsent && NOT_PROTECTED.test(stderr)) {
+      return { state: ABSENT, contexts: [] };
     }
-    if (UNREADABLE.test(stderr)) {
-      return { known: false, data: null };
+    if (UNREADABLE.test(stderr) || isFreePlan403(stderr)) {
+      return { state: UNKNOWN, contexts: [] };
     }
     throw new Error(`gh api ${args[0]} failed: ${stderr.trim() || `exit ${status}`}`);
   }
   const text = stdout.trim();
-  return { known: true, data: text === "" ? null : JSON.parse(text) };
+  const contexts = text === "" ? null : extract(JSON.parse(text));
+  if (contexts === null) {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  return { state: contexts.length > 0 ? HAS_CONTEXTS : ABSENT, contexts };
+}
+
+// The three classifications a required-check configuration source reply can
+// carry. A source that settles nothing is `UNKNOWN`; only the two that state an
+// outcome are definitive (issue #336).
+const ABSENT = "absent";
+const HAS_CONTEXTS = "contexts";
+const UNKNOWN = "unknown";
+
+// The names used in the refusal when a source settles nothing, so a parent can
+// tell which source it must fix.
+const RULESETS = "repository rulesets";
+const PROTECTION = "classic branch protection";
+
+/**
+ * The contexts a repository ruleset branch rule names, or null when the body is
+ * not the array `repos/{slug}/rules/branches/{base}` returns.
+ * @param {unknown} data
+ * @returns {{ name: string, appId: number | null }[] | null}
+ */
+function rulesetContexts(data) {
+  if (!Array.isArray(data)) {
+    return null;
+  }
+  const contexts = [];
+  for (const rule of data) {
+    if (rule?.type !== "required_status_checks") {
+      continue;
+    }
+    for (const check of rule.parameters?.required_status_checks ?? []) {
+      if (check?.context) {
+        contexts.push({ name: check.context, appId: check.integration_id });
+      }
+    }
+  }
+  return contexts;
+}
+
+/**
+ * The contexts a classic branch-protection body names, or null when the body is
+ * not the object `repos/{slug}/branches/{base}/protection` returns. A body that
+ * was read and carries no `required_status_checks` names none, so it is an
+ * absence for a caller that could read it (#336).
+ * @param {unknown} data
+ * @returns {{ name: string, appId: number | null }[] | null}
+ */
+function protectionContexts(data) {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    return null;
+  }
+  const required = data.required_status_checks;
+  const contexts = [];
+  for (const context of required?.contexts ?? []) {
+    if (context) {
+      contexts.push({ name: context, appId: null });
+    }
+  }
+  for (const check of required?.checks ?? []) {
+    if (check?.context) {
+      contexts.push({ name: check.context, appId: check.app_id });
+    }
+  }
+  return contexts;
 }
 
 async function prInfo(gh, pr, cwd) {
@@ -221,40 +308,40 @@ function addContext(contexts, name, appId = null) {
 // rulesets, classic branch protection, and `gh pr checks --required`.
 // Deduplicated by name and app qualifier. `known` is false when a configuration
 // source could not be read, because such a source may hold a required check this
-// caller never saw. An empty union is then a refusal; an empty union over known
-// sources is an established absence the gate records (issue #336).
-// `gh pr checks --required` never affects `known`: it lists only the checks that
-// already reported, so it can name a required check and prove none, and a failed
-// read of it neither establishes nor hides one.
+// caller never saw. An empty union is then a refusal, naming each source that
+// settled nothing; an empty union over sources that each stated they hold no
+// required check is an established absence the gate records (issue #336).
+// `gh pr checks --required` contributes names and nothing else, so it never
+// appears among the sources that settled nothing and never establishes an
+// absence. It lists only the checks that already reported, so it can name a
+// required check and it cannot prove one is absent: on a base branch with no
+// required check it prints nothing, which is the same silence as a read failure.
 async function requiredContexts(gh, slug, base, pr, cwd) {
   const contexts = new Map();
-  let known = true;
+  const unknown = [];
 
-  const rules = await readRequiredSource(gh, [`repos/${slug}/rules/branches/${base}`], cwd);
-  known &&= rules.known;
-  if (Array.isArray(rules.data)) {
-    for (const rule of rules.data) {
-      if (rule?.type !== "required_status_checks") {
-        continue;
-      }
-      for (const check of rule.parameters?.required_status_checks ?? []) {
-        addContext(contexts, check?.context, check?.integration_id);
-      }
-    }
+  const rules = await readRequiredSource(gh, [`repos/${slug}/rules/branches/${base}`], cwd, {
+    notProtectedIsAbsent: false,
+    extract: rulesetContexts,
+  });
+  if (rules.state === UNKNOWN) {
+    unknown.push(RULESETS);
+  }
+  for (const context of rules.contexts) {
+    addContext(contexts, context.name, context.appId);
   }
 
   const protection = await readRequiredSource(
     gh,
     [`repos/${slug}/branches/${base}/protection`],
     cwd,
+    { notProtectedIsAbsent: true, extract: protectionContexts },
   );
-  known &&= protection.known;
-  const required = protection.data?.required_status_checks;
-  for (const context of required?.contexts ?? []) {
-    addContext(contexts, context);
+  if (protection.state === UNKNOWN) {
+    unknown.push(PROTECTION);
   }
-  for (const check of required?.checks ?? []) {
-    addContext(contexts, check?.context, check?.app_id);
+  for (const context of protection.contexts) {
+    addContext(contexts, context.name, context.appId);
   }
 
   for (const name of await ghRequiredNames(gh, pr, cwd)) {
@@ -270,7 +357,7 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
     values.filter((context) => context.appId !== null).map((context) => context.name),
   );
   return {
-    known,
+    unknown,
     contexts: values
       .filter((context) => context.appId !== null || !qualifiedNames.has(context.name))
       .sort((a, b) => {
@@ -388,11 +475,12 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
  * (a required check that never reported, a required review, or another required
  * rule) fails closed.
  *
- * An empty union of required checks refuses when a configuration source could
- * not be read, so an unreadable source fails closed. An empty union over sources
- * that were all read is an established absence, which passes and reports
- * `noRequiredChecks: true` so a caller can tell it apart from a gated pass on a
- * branch that required a check (issue #336).
+ * An empty union of required checks refuses when a configuration source settled
+ * nothing, so a source this caller cannot read fails closed and the reason names
+ * it. An empty union over sources that each stated they hold no required check is
+ * an established absence, which passes and reports `noRequiredChecks: true` so a
+ * caller can tell it apart from a gated pass on a branch that required a check
+ * (issue #336).
  * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
  * @returns {Promise<{ ok: true, commit: string, noRequiredChecks?: true } | { ok: false, reason: string }>}
  */
@@ -419,13 +507,23 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   }
 
   const slug = await repoSlug(gh, cwd);
-  const { known, contexts: required } = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
-  // No required check exists only when every configuration source was read and
-  // none named one. A blocked merge state still refuses below, so an absent check
+  const { unknown, contexts: required } = await requiredContexts(
+    gh,
+    slug,
+    info.baseRefName,
+    pr,
+    cwd,
+  );
+  // No required check exists only when no source named one and every
+  // configuration source stated that it holds none. A source that settled nothing
+  // is named in the refusal, because a parent can only fix the source it can see
+  // (issue #336). A blocked merge state still refuses below, so an absent check
   // set cannot pass a pull request another required rule blocks.
-  const noRequiredChecks = required.length === 0 && known;
-  if (required.length === 0 && !known) {
-    return fail("no required checks were found for the base branch");
+  const noRequiredChecks = required.length === 0 && unknown.length === 0;
+  if (required.length === 0 && unknown.length > 0) {
+    return fail(
+      `no required checks were found for the base branch, and ${unknown.join(" and ")} could not be read, so the gate cannot tell a base branch with no required check from one whose check it never saw`,
+    );
   }
   if (noRequiredChecks) {
     if (info.mergeStateStatus === "BLOCKED") {

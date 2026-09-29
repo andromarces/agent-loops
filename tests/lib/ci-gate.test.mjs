@@ -117,6 +117,11 @@ function routes({
 
 const REVIEWED = { head: HEAD, clean: true, exact: true, digest: "d" };
 
+// The exact reply a private repository on the GitHub Free plan writes to the
+// required-context API endpoints (#301).
+const FREE_PLAN =
+  "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
+
 // Usefulness: verifies the gate passes when every required check run passed on
 // the head commit and the PR matches the reviewed state (issue #218).
 test("passes when every required check passed on the head commit", async () => {
@@ -302,11 +307,107 @@ test("refuses a blocked merge state when no required check exists", async () => 
   expect(result.reason).toContain("blocked");
 });
 
-// Usefulness: verifies an empty union that rests on a source the caller cannot
-// read still refuses, because an unreadable source may hold a required check
-// this caller never saw. Absence must be established, not inferred from an empty
-// list (issue #336).
-test("refuses the empty union when a required-check source is unreadable", async () => {
+// The reply shapes that leave a required-check configuration source empty
+// without proving it holds no required check. Each must keep the empty-union
+// refusal and name the source, because each is a reply this caller cannot read
+// rather than a statement about the branch (issue #336 review). The read-only
+// probe behind each is recorded in the ADR.
+//
+// A rate-limit or SSO 403 is deliberately not in this list. That reply matches no
+// unreadable shape, so the gate throws on it and fails the run, which is stricter
+// than a refusal and cannot reach the relaxed path (issue #280).
+const UNKNOWN_SHAPES = {
+  "a 404 Not Found for a token without admin": {
+    protection: "hidden",
+    why: "a non-admin answers the same endpoint for an unprotected branch and for a protected one it may not read",
+  },
+  "a 403 from a GITHUB_TOKEN": {
+    protection: "forbidden",
+    why: "the integration credential is refused before the branch is read",
+  },
+  "a 403 from a fine-grained PAT without Administration": {
+    protection: "pat forbidden",
+    why: "the PAT reads the repository but not its protection settings",
+  },
+  "the Free-plan 403": {
+    protection: `stderr: ${FREE_PLAN}`,
+    why: "it names the plan, and it is written the same way for a branch that exists and one that does not",
+  },
+};
+
+for (const [shape, { protection, why }] of Object.entries(UNKNOWN_SHAPES)) {
+  // Usefulness: verifies an empty union resting on ${shape} still refuses and
+  // names ${why}, so a read-only probe cannot be read as a base branch with no
+  // required check and a parent learns which source to fix (issue #336 review).
+  test(`refuses the empty union and names the source on ${shape}`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required: [],
+          protection,
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+        }),
+      ),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("no required checks were found");
+    expect(result.reason).toContain("classic branch protection");
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+}
+
+// Usefulness: verifies the same on the ruleset source, so a caller that cannot
+// read repository rulesets is named too and the refusal is not attributed to the
+// wrong endpoint (issue #336 review).
+test("refuses the empty union and names the source when repository rulesets cannot be read", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: `stderr: ${FREE_PLAN}`,
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("no required checks were found");
+  expect(result.reason).toContain("repository rulesets");
+});
+
+// Usefulness: verifies a ruleset body that is not the array the endpoint returns
+// settles nothing and keeps the empty-union refusal, so a read error cannot reach
+// the relaxed path as an absence (issue #336 review).
+test("refuses the empty union when a ruleset read is not the shape that endpoint returns", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: { message: "unexpected" },
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("repository rulesets");
+});
+
+// Usefulness: verifies an empty ruleset read is an absence for that source, since
+// a read that completed and named no required check states the outcome, so the
+// relaxed path stays reachable for a caller that can read both sources
+// (issue #336 review).
+test("passes and records the absence when both sources were read and named no check", async () => {
   const result = await checkCi({
     pr: 42,
     reviewed: REVIEWED,
@@ -314,16 +415,13 @@ test("refuses the empty union when a required-check source is unreadable", async
     gh: fakeGh(
       routes({
         required: [],
-        protection: "hidden",
+        protection: { required_status_checks: null },
         prChecks: "",
         headRuns: [run("ci (ubuntu-latest)", "success")],
       }),
     ),
   });
-  expect(result).toEqual({
-    ok: false,
-    reason: "no required checks were found for the base branch",
-  });
+  expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
 });
 
 // Usefulness: verifies a `gh pr checks --required` reply that carries no JSON
@@ -339,10 +437,9 @@ test("ignores a gh pr checks --required reply that carries no JSON", async () =>
     cwd: ".",
     gh: fakeGh(routes({ required: [], protection: "hidden", prChecks: "" })),
   });
-  expect(result).toEqual({
-    ok: false,
-    reason: "no required checks were found for the base branch",
-  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("no required checks were found");
+  expect(result.reason).toContain("classic branch protection");
 });
 
 // Usefulness: verifies the gate takes required names from `gh pr checks
@@ -475,10 +572,9 @@ test("refuses on the empty union when classic protection answers 403", async () 
       }),
     ),
   });
-  expect(result).toEqual({
-    ok: false,
-    reason: "no required checks were found for the base branch",
-  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("no required checks were found");
+  expect(result.reason).toContain("classic branch protection");
 });
 
 // Usefulness: verifies the 404 a token without repository admin receives leaves
@@ -588,10 +684,9 @@ test("refuses on the empty union when classic protection answers a PAT 403", asy
       }),
     ),
   });
-  expect(result).toEqual({
-    ok: false,
-    reason: "no required checks were found for the base branch",
-  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("no required checks were found");
+  expect(result.reason).toContain("classic branch protection");
 });
 
 // Usefulness: verifies a fine-grained PAT caller passes when every required
@@ -614,14 +709,13 @@ test("passes for a fine-grained PAT caller when every required check passed", as
   expect(result).toEqual({ ok: true, commit: HEAD });
 });
 
-// Usefulness: verifies the exact Free-plan 403 leaves the API sources unreadable
-// rather than failing the run, and that the reply establishes that no required
-// check exists: the plan does not allow the rule that would require one. An admin
-// on a private Free-plan repository therefore reaches a pass that records the
-// absence, where it used to reach the named empty-union refusal (#301, #336).
-// `gh pr checks --required` is a separate source whose reply is not measured; the
-// fixture fails it, which contributes no names either way.
-test("passes and records the absence when the required-context sources answer the Free-plan 403", async () => {
+// Usefulness: verifies the exact Free-plan 403 leaves both API sources settling
+// nothing rather than failing the run, so a private Free-plan repository reaches
+// the named empty-union refusal and not the relaxed path. The reply names the
+// plan, not the branch, and it is written the same way for a branch that exists
+// and one that does not, so it cannot establish that no required check exists
+// (#301, #336 review).
+test("refuses and names both sources when the required-context sources answer the Free-plan 403", async () => {
   const result = await checkCi({
     pr: 42,
     reviewed: REVIEWED,
@@ -635,22 +729,20 @@ test("passes and records the absence when the required-context sources answer th
       }),
     ),
   });
-  expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("no required checks were found");
+  expect(result.reason).toContain("repository rulesets");
+  expect(result.reason).toContain("classic branch protection");
 });
-
-// The exact reply a private repository on the GitHub Free plan writes to the
-// required-context API endpoints (#301).
-const FREE_PLAN =
-  "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
 
 const ENDINGS = { "no line ending": "", LF: "\n", CRLF: "\r\n" };
 
 for (const [ending, suffix] of Object.entries(ENDINGS)) {
-  // Usefulness: verifies the exact Free-plan 403 is read as a source that
-  // establishes no required check with ${ending}, the one trailing line break
-  // `gh` may add included, so a caller on a private Free-plan repository passes
-  // and the absence is recorded (issue #301, #336).
-  test(`reads the exact Free-plan 403 with ${ending} as an absent source`, async () => {
+  // Usefulness: verifies the exact Free-plan 403 is read as a source that settles
+  // nothing with ${ending}, the one trailing line break `gh` may add included, so
+  // a caller on a private Free-plan repository keeps the empty-union refusal
+  // whatever that trailing break is (issue #301, #336 review).
+  test(`reads the exact Free-plan 403 with ${ending} as an unknown source`, async () => {
     const result = await checkCi({
       pr: 42,
       reviewed: REVIEWED,
@@ -664,7 +756,9 @@ for (const [ending, suffix] of Object.entries(ENDINGS)) {
         }),
       ),
     });
-    expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("no required checks were found");
+    expect(result.reason).toContain("classic branch protection");
   });
 }
 

@@ -789,9 +789,11 @@ test("a declared PR with a matching gate finishes as the gate allows", async () 
 });
 
 // A `gh` runner for a base branch with no required check: the ruleset endpoint
-// reads and names none, and classic protection answers the 404 that only a
-// caller able to read it receives on an unprotected branch. Both sources are
-// known, so the gate establishes the absence rather than inferring it (#336).
+// reads and names none, and classic protection answers the 404 that only a caller
+// able to read it receives on an unprotected branch. Each source stated that it
+// holds no required check, so the gate establishes the absence rather than
+// inferring it (#336). `gh pr checks --required` prints nothing there, which is
+// not a statement about the branch and is not read as one.
 function noRequiredCheckGh(head) {
   const read = cleanPrGh(head);
   return async (args) => {

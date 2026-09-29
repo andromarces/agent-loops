@@ -2220,6 +2220,44 @@ test("a declared PR finishes on a base branch with no required check", async () 
   }
 });
 
+// Usefulness: verifies a refused finish emits no absence event, so the event
+// cannot report that a run verified no check when the run did not finish at all
+// (issue #336 review).
+test("a refused finish emits no absence event", async () => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const result = await runLoop({
+      task: "PR work: address issue #336 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      // The gate passes on the absence, and the completion rule still refuses the
+      // same finish, so the finish is not accepted.
+      gh: noRequiredCheckGh("1111111111111111111111111111111111111111"),
+      roles: gateRoles(),
+      requireAccept: true,
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_worker", prompt: "work" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(events.filter((e) => e.type === "no-required-checks")).toEqual([]);
+    expect(events.filter((e) => e.type === "refusal")).not.toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a headless gated run on a base branch that does require a
 // check emits no absence event, so the field on the event cannot read as a
 // statement about every gated run (issue #336).

@@ -294,6 +294,11 @@ export async function runLoop(options) {
       // refusal needs one, and forcing it on the marker would spend a step and
       // start a review cycle the run did not need (#293).
       let needsChildTurn = false;
+      // The absence the gate established on a base branch with no required check.
+      // It is recorded on the accepted finish only, because another refusal in
+      // this same decision means the run did not finish, and a finish that never
+      // happened verified nothing (#336 review).
+      let noRequiredChecks = false;
       // The marker condition applies to a run that carries the gate and to a run
       // that declares its PR, because both require the gate that resolves the
       // compare. A run that declares neither keeps the marker (#302).
@@ -334,15 +339,18 @@ export async function runLoop(options) {
           // establishes, so a gate refusal always needs a child turn (#293).
           needsChildTurn = true;
           refusals.push(gate.refusal);
-        } else if (gate.noRequiredChecks) {
-          // A base branch with no required check leaves the gate verifying the
-          // PR head, the clean reviewed tree, and the merge state only. The
-          // recorded finish says so, so a run that verified no check never reads
-          // as a pass on a checked branch (#336).
-          onEvent({ type: "no-required-checks", pr: requireCi, stepsUsed });
+        } else {
+          noRequiredChecks = gate.noRequiredChecks;
         }
       }
       if (refusals.length === 0) {
+        if (noRequiredChecks) {
+          // A base branch with no required check leaves the gate verifying the PR
+          // head, the clean reviewed tree, and the merge state only. The event is
+          // emitted here, on the accepted finish, so a refused finish never
+          // reports an absence for a run that did not finish (#336 review).
+          onEvent({ type: "no-required-checks", pr: requireCi, stepsUsed });
+        }
         // A finish the parent marks as an unresolved PR-head compare stays on
         // the loop's own recorded-finish code 0, but it emits a
         // machine-readable event and reports the marker, so it never reads the
