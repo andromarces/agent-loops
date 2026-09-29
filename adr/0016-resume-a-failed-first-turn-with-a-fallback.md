@@ -25,9 +25,12 @@ step budget runs out.
    and keeps it on the role state, for a first turn only. A resumed turn never changes
    its id, and the Claude adapter refuses a different id from a resumed turn with
    `resumeMismatchError`, as the other adapters do. The Copilot adapter keeps the id that the result event of a failed first turn
-   reports. It never keeps the pre-assigned id: on Copilot CLI 1.0.90-4, a resume of a
-   pre-assigned id whose first turn failed on a bad model returned another session id,
-   and the adapter would refuse that as a mismatch.
+   reports. It does not keep the pre-assigned id: a failed turn that reports no id does not show
+   that the CLI created a session under it, and a kept id would send the next worker turn
+   to a session that may not exist, without the preamble. On Copilot CLI 1.0.90-4, a first
+   turn that failed on a bad model printed no result event, and a later call with the same
+   pre-assigned id ran as a new session and echoed that id. Whether the failed turn saved
+   a session is not verified.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
    stderr is the one verified line for the requested id, byte for byte, plus at most one
