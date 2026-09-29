@@ -488,10 +488,11 @@ the same wording the interactive path uses. It also refuses a `run_worker`
 action at runtime, which ends the run on exit 1 with the reason
 `mode review-only rejects a run_worker action`, the same hard guard this mode
 applies to `--role worker` on the interactive path. It also refuses a `finish`
-until a reviewer turn has completed, which the interactive path reaches without
-a rule because its init dispatch is itself that turn. Its prompt states the
-completion rule and the `review-only` mapping instead, and
-`agent-loop --require-accept` enforces that rule.
+until a reviewer turn has run, whatever that turn returned, which the
+interactive path reaches without a rule because its init dispatch is itself that
+turn. Its prompt states the completion rule and the `review-only` mapping
+instead, and `agent-loop --require-accept` enforces that rule on every other
+mode, because a review-only run refuses that flag.
 
 The headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
@@ -519,8 +520,9 @@ Completion is completion of the requested work, not code acceptance.
   `verdict: accept` on the latest changed state and the report names the
   checks that passed.
 - `review-only`: call `finish` after the reviewer report, whatever the
-  verdict. The summary records the verdict in `verified` and the findings in
-  `open`.
+  verdict. Write the verdict in `verified` and the findings in `open` yourself.
+  No runtime check reads those keys, so this is a rule for the parent, not a
+  guarantee the loop enforces.
 
 The two paths reach that reviewer report differently, and the difference is the
 rule, not the wording. `agent-loop role finish` in `review-only` applies no
@@ -533,8 +535,10 @@ a finish before any reviewer turn, so the runtime refuses that finish until a
 reviewer turn has run, with the same corrective-turn and repeated-refusal rules
 the other finish gates use. That condition is the turn, not its outcome, so a
 headless reviewer turn that ended in a handled error, or returned no verdict,
-still satisfies it: the summary is what records what the turn returned, and the
-error or the absent verdict belongs in `verified`, not in a refusal.
+still satisfies it. Nothing in the runtime reads `verified`: the gate is on the
+turn, and what the summary says about it is the parent's to write. Put the
+verdict, or the error, or the absent verdict in `verified` yourself, because no
+gate checks that you did.
 
 Neither path takes `--require-accept` in this mode, and both say so differently.
 `agent-loop role finish` refuses the flag at `finish`, with

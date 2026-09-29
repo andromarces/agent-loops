@@ -292,10 +292,10 @@ Options:
                                 --require-accept, nor --require-ci, each refused with the
                                 wording the role path uses. At runtime it refuses a
                                 run_worker action, and refuses a finish until a reviewer
-                                turn has completed. Off by default, so a run without the
-                                flag keeps the current behavior. A repeated --mode takes
-                                the last value, as every other repeated value flag here
-                                does.
+                                turn has run, whatever that turn returned. Off by
+                                default, so a run without the flag keeps the current
+                                behavior. A repeated --mode takes the last value, as
+                                every other repeated value flag here does.
   --max-steps <count>           Maximum child steps. Defaults to 20. 1 to 9007199254740991.
   --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
   --transcript <file>           Record execution transcript to a JSON file.
