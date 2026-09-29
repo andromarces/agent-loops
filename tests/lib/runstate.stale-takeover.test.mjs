@@ -1,8 +1,8 @@
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { claimFileFor, withStateLock } from "../../src/lib/runstate.mjs";
+import { withStateLock } from "../../src/lib/runstate.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // The stale-lock race needs a second process to act between the owner read and
@@ -56,6 +56,43 @@ function afterLockRead(lockFile, interleave) {
     }
     return text;
   });
+}
+
+/**
+ * Learns, by watching the hard links a takeover attempts, the path of the first
+ * claim it takes that is not already `planted` (a list of `[path, text]`). The
+ * claim name is keyed by the stale content, so the same stale lock always yields
+ * the same path. Leaves the directory empty.
+ */
+async function learnNextClaim(lockFile, stale, planted) {
+  const attempted = [];
+  vi.mocked(link).mockImplementation(async (from, to) => {
+    attempted.push(to);
+    return await realFs.link(from, to);
+  });
+  await writeFile(lockFile, stale, "utf8");
+  for (const [path, text] of planted) {
+    await writeFile(path, text, "utf8");
+  }
+  await withStateLock(lockFile, async () => "ran").catch(() => {});
+  vi.mocked(link).mockImplementation(async (...a) => await realFs.link(...a));
+  for (const name of await readdir(dirname(lockFile))) {
+    await rm(join(dirname(lockFile), name), { force: true });
+  }
+  return attempted.find((to) => to !== lockFile && !planted.some(([path]) => path === to));
+}
+
+/** Writes `stale` as the lock, guarded by `length` dead claims, and returns the first claim path. */
+async function writeDeadClaims(lockFile, stale, length) {
+  const planted = [];
+  for (let i = 0; i < length; i += 1) {
+    planted.push([await learnNextClaim(lockFile, stale, planted), await staleOwner()]);
+  }
+  await writeFile(lockFile, stale, "utf8");
+  for (const [path, text] of planted) {
+    await writeFile(path, text, "utf8");
+  }
+  return planted[0][0];
 }
 
 /** The lock a second process creates once the stale owner was read. */
@@ -135,9 +172,7 @@ test("a lock that cannot be re-read during stale removal is kept", async () => {
 test("a dead process's stale-removal claim is taken over", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
-  const stale = await staleOwner();
-  await writeFile(lockFile, stale, "utf8");
-  await writeFile(claimFileFor(lockFile, stale), await staleOwner(), "utf8");
+  await writeDeadClaims(lockFile, await staleOwner(), 1);
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 
@@ -149,8 +184,9 @@ test("a live process's stale-removal claim blocks the takeover", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
   const stale = await staleOwner();
+  const claimFile = await learnNextClaim(lockFile, stale, []);
   await writeFile(lockFile, stale, "utf8");
-  await writeFile(claimFileFor(lockFile, stale), LIVE_OWNER, "utf8");
+  await writeFile(claimFile, LIVE_OWNER, "utf8");
   const fn = vi.fn(async () => "ran");
 
   await expect(withStateLock(lockFile, fn)).rejects.toThrow(/locked by a live process/);
@@ -164,9 +200,7 @@ test("a dead claim that another contender took over is not taken over again", as
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
   const stale = await staleOwner();
-  const claimFile = claimFileFor(lockFile, stale);
-  await writeFile(lockFile, stale, "utf8");
-  await writeFile(claimFile, await staleOwner(), "utf8");
+  const claimFile = await writeDeadClaims(lockFile, stale, 1);
   let claimTaken = false;
   let lockReplaced = false;
   vi.mocked(readFile).mockImplementation(async (file, ...rest) => {
@@ -192,23 +226,11 @@ test("a dead claim that another contender took over is not taken over again", as
   expect((await readdir(dir)).sort()).toEqual(["state.lock", basename(claimFile)]);
 });
 
-/** Writes a stale lock guarded by a chain of `length` dead claims, each guarding the one before. */
-async function writeDeadClaimChain(lockFile, length) {
-  let path = lockFile;
-  let text = await staleOwner();
-  await writeFile(path, text, "utf8");
-  for (let i = 0; i < length; i += 1) {
-    path = claimFileFor(path, text);
-    text = await staleOwner();
-    await writeFile(path, text, "utf8");
-  }
-}
-
 // Usefulness: verifies a dead claim that guards another dead claim is removed through its own claim, so a takeover still succeeds after two crashed processes (#363).
 test("a chain of dead claims is removed and the lock is acquired", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
-  await writeDeadClaimChain(lockFile, 2);
+  await writeDeadClaims(lockFile, await staleOwner(), 2);
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 
@@ -219,7 +241,7 @@ test("a chain of dead claims is removed and the lock is acquired", async () => {
 test("a chain of dead claims deeper than the bound fails closed", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
-  await writeDeadClaimChain(lockFile, 5);
+  await writeDeadClaims(lockFile, await staleOwner(), 3);
   const before = await readdir(dir);
   const fn = vi.fn(async () => "ran");
 

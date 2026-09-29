@@ -245,11 +245,9 @@ async function acquireLock(
   return acquireLock(lockFile, { retry: false, label, noun, depth });
 }
 
-/**
- * Path of the claim that guards the removal of the file that holds `staleText`.
- * The name is keyed by that content, so it is exclusive to one stale file.
- */
-export function claimFileFor(file, staleText) {
+// Path of the claim that guards the removal of the file that holds `staleText`.
+// The name is keyed by that content, so it is exclusive to one stale file.
+function claimFileFor(file, staleText) {
   const id = createHash("sha256").update(String(staleText)).digest("hex").slice(0, 16);
   return `${file}.reap.${id}`;
 }
