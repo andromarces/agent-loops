@@ -290,24 +290,27 @@ function classifyRulesets(data) {
   if (!Array.isArray(data) || data.some((page) => !Array.isArray(page))) {
     return { state: UNKNOWN, contexts: [] };
   }
-  const rules = data.flat();
-  if (rules.length === 0) {
-    // A successful read that found no rule is `EMPTY`, not `UNKNOWN` and not
-    // `ABSENT`. It contributes no contexts, exactly as a failed read did on
-    // origin/main, so a classic-only repository whose required checks passed still
-    // finishes. It is not a positive absence either: an empty read is the same
-    // reply for a branch no ruleset applies to and for a caller or endpoint that
-    // enumerates no rule for this branch, so it states nothing about the branch and
-    // the relaxed path still refuses (issue #336 review).
-    return { state: EMPTY, contexts: [] };
-  }
-  if (data.some((page) => page.length === 0)) {
-    // An empty page beside a page that holds rules settles nothing. GitHub stops
-    // paginating when there is no next page, so an empty page inside a read is a
-    // read the gate cannot account for every page of, and a partial read must not
-    // be classified from the pages that did arrive (issue #336 review).
+  if (data.length === 0) {
+    // A read that returned no page at all is not a read that found no rule. An
+    // empty body from the paginated call is the same reply whether the branch has
+    // no rule or the read returned nothing, and only the single empty page says
+    // the first (issue #336 review).
     return { state: UNKNOWN, contexts: [] };
   }
+  if (data.every((page) => page.length === 0)) {
+    // Exactly one empty page is the reply that says the branch has no rule, so it
+    // is `EMPTY`. More than one empty page is an anomalous sequence: GitHub stops
+    // paginating when there is no next page, so a second empty page means the read
+    // is not the complete result it claims to be (issue #336 review).
+    return { state: data.length === 1 ? EMPTY : UNKNOWN, contexts: [] };
+  }
+  if (data.some((page) => page.length === 0)) {
+    // An empty page beside a page that holds rules settles nothing, for the same
+    // reason: a partial read must not be classified from the pages that did arrive
+    // (issue #336 review).
+    return { state: UNKNOWN, contexts: [] };
+  }
+  const rules = data.flat();
   const contexts = [];
   for (const rule of rules) {
     if (typeof rule !== "object" || rule === null || Array.isArray(rule)) {

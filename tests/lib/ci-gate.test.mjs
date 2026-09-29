@@ -804,6 +804,86 @@ test("an empty ruleset read is not a positive absence", async () => {
   expect(result.noRequiredChecks).toBeUndefined();
 });
 
+// Only exactly one successful empty page says the branch has no rule. Every other
+// empty pagination shape is an anomalous sequence or a read that returned nothing,
+// so it is unknown and refuses (issue #336 review).
+const ANOMALOUS_EMPTY_READS = {
+  "a zero-page reply": { requiredPages: [] },
+  "an empty body from the paginated read": { required: "" },
+  "two empty pages": { requiredPages: [[], []] },
+  "three empty pages": { requiredPages: [[], [], []] },
+};
+
+for (const [shape, override] of Object.entries(ANOMALOUS_EMPTY_READS)) {
+  // Usefulness: verifies ${shape} is unknown rather than a successful empty read.
+  // The fixture is a classic-only repository whose required check passed, so only
+  // the ruleset outcome decides it: a single empty page finishes, and every other
+  // empty shape refuses (issue #336 review).
+  test(`refuses a classic-only repository on ${shape}`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          protection: { required_status_checks: { contexts: ["ci (ubuntu-latest)"] } },
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+          ...override,
+        }),
+      ),
+    });
+    expect(result.ok, `${shape} must not be read as a successful empty read`).toBe(false);
+    expect(result.reason).toContain("repository rulesets");
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+}
+
+// Usefulness: verifies a single empty page beside a page that holds rules is still
+// unknown, so the anomalous rule is about the sequence and not only the count
+// (issue #336 review).
+test("refuses the empty union when a page holding rules is followed by an empty page", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        requiredPages: [[{ type: "deletion" }], []],
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("repository rulesets");
+  expect(result.noRequiredChecks).toBeUndefined();
+});
+
+// Usefulness: verifies a single empty page beside a page that holds a required
+// status rule still enforces that rule, so the anomalous rule does not refuse a
+// read that named a check (issue #336 review).
+test("enforces a required-status rule on a later page after an empty page", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        requiredPages: [[], SECOND_PAGE_RULE],
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "failure")],
+      }),
+    ),
+  });
+  // The empty page makes the read unknown, so the gate refuses on the source
+  // rather than judging the rule it never fully read.
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("repository rulesets");
+});
+
 // The malformed successful replies that must keep the empty-union refusal. The
 // allowlist admits one ruleset shape, an array of well-formed rules with no
 // required-status-check rule, so each of these is one step away from it and none
