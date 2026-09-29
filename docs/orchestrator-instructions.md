@@ -666,16 +666,21 @@ ends when two refusals land with no child turn between them. The marker is
 satisfied on a re-finish, with no child turn; the `review-only` condition and
 `--require-accept` take the same corrective turn, which costs a step, and the
 missing gate of a declared PR run is the one condition no child turn can supply.
-The two paths differ in when the `--require-ci` gate reads GitHub, and the
-difference is the code's. The `role finish` command throws as soon as any
-condition above the gate refused, so on that path a refused `finish` never reads
-GitHub. The headless loop does not: it evaluates every gate it owns, so the
-`--require-ci` gate runs whenever the run carries it and the declared-PR condition
-did not refuse, and a finish that the marker, the `review-only` condition, or
-`--require-accept` already refused still reads GitHub. Only the declared-PR gate
-condition skips it, because that condition means no gate for this run's PR. In
-`review-only`, a `finish` without them keeps the
-current behavior, and each flag fails with a clear error.
+Two things decide whether a refused `finish` reads GitHub, and they are separate.
+The interactive `role finish` command throws as soon as any condition above the
+gate refused, so on that path a refused `finish` never reaches the gate and never
+reads GitHub. The headless loop evaluates every gate it owns, as origin/main did,
+so the `--require-ci` gate runs whenever the run carries it and the declared-PR
+condition did not refuse, and a finish the marker, the `review-only` condition, or
+`--require-accept` already refused still runs the gate. Only the declared-PR gate
+condition skips it, because that condition means no gate for this run's PR.
+Running the gate is not the same as reading GitHub: the gate checks its own local
+conditions first, and only then reads. Those local conditions are exactly two. The
+gate refuses with no GitHub call when the latest reviewer turn has no reviewed
+state, and when the reviewed work tree is not clean. Every other condition it
+checks needs a read to settle it, the PR head comparison included, because it reads
+the PR first. In `review-only`, a `finish` without them keeps the current behavior,
+and each flag fails with a clear error.
 
 - `--require-accept`: refuse unless the latest turn is a reviewer accept with a
   `Checks` line, the reviewed snapshot is exact, and the current snapshot is

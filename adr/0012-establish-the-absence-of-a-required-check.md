@@ -159,11 +159,12 @@ nothing else.
      empty result is excluded, because a read of exactly one empty page states
      nothing about the branch, and so is a read of no page at all, and so is a
      second empty page, because that sequence is not the complete result it claims
-     to be. Those three are not one outcome, and the distinction is the code's:
-     exactly one empty page is `EMPTY`, which contributes no contexts and does not
-     refuse, while a read of no page at all, two or more empty pages, and an empty
-     page beside a page that holds rules are `UNKNOWN`, which refuses before the
-     per-check pass. A rule
+     to be. Those three are not one outcome, and the reply-shape table above gives
+     each its class. A read of exactly one empty page is `empty`, which contributes
+     no contexts and does not refuse, so the per-check pass runs on the other
+     sources. A read of no page at all, two or more empty pages, and an empty page
+     beside a page that holds rules are each `unknown`, and an unknown ruleset read
+     refuses before the per-check pass, whatever the rest of the union holds. A rule
      type outside the documented list is excluded, because a type the list does not
      carry may be a required-status rule under a name the gate has not seen; the list
      is the documented one, so a future GitHub rule type makes such a read unknown,
@@ -316,6 +317,20 @@ nothing else.
 - A base branch that has no required check yields no check runs to read, so the
   absence path skips the check-run and commit-status reads the per-check pass
   needs. The gate makes fewer GitHub calls on that path.
+- **Whether a refused finish reads GitHub is two separate facts, and the paths
+  differ on the first one only.** The interactive `role finish` throws as soon as
+  any condition above the gate refused, so a refused `finish` never reaches the
+  gate. The headless loop evaluates every gate it owns, as origin/main did, so it
+  calls the gate whenever the run carries `--require-ci` and the declared-PR
+  condition did not refuse, and a finish the marker, the `review-only` condition,
+  or `--require-accept` already refused still calls it. The second fact is the
+  gate's own order and it is the same on both paths: `checkCi` evaluates its two
+  local conditions before it reads anything, and refuses with no GitHub call when
+  the latest reviewer turn has no reviewed state and when the reviewed work tree
+  is not clean. Every other condition it checks needs a read to settle it, the PR
+  head comparison included, because it reads the PR first. So a headless refused
+  finish reads GitHub or does not depending on which gate condition it reached,
+  not on the earlier conditions in its own list.
 
 ## Alternatives
 
