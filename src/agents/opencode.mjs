@@ -82,8 +82,8 @@ export async function runOpenCode(state, prompt, options = {}) {
   // replaces the adapter error (issue #335).
   const events = parseJsonLines(stdout).filter(isEvent);
 
-  // Select the first id-bearing event, then validate it: a later valid id never rescues an
-  // invalid or mismatched first one.
+  // Select the first truthy id, so an empty id is skipped, then require it to be a non-empty
+  // string: a later valid id never rescues a truthy invalid or mismatched first one.
   const sessionId = asSessionId(events.map((event) => event.sessionID).find(Boolean));
 
   if (!sessionId) {

@@ -23,7 +23,13 @@ step budget runs out.
 
 1. Each adapter reads the session id from the output when the CLI printed one and keeps
    it on the role state on every failure path, including a non-zero exit, a timeout, and
-   a response-validation failure after the id was read, for a first turn only. A resumed turn never changes
+   a response-validation failure after the id was read, for a first turn only. Claude and
+   opencode select the first truthy id in the output, Codex the `thread_id` of its first
+   `thread.started` event, Copilot the id of its last result event, and agy the
+   `conversation_id` of its one result object. Each then requires the selected id to be a
+   non-empty string, so an empty id is skipped only where the selection takes the first
+   truthy id (Claude and opencode), and a selected number, object, or empty value fails the
+   turn. A resumed turn never changes
    its id, and the Claude adapter refuses a different id from a resumed turn with
    `resumeMismatchError`, as the other adapters do. The Copilot adapter keeps the id that the result event of a failed first turn
    reports. It does not keep the pre-assigned id: a failed turn that reports no id does not show

@@ -282,7 +282,7 @@ test.each([
   expect(resumed.sessionId).toBe("stored");
 });
 
-// Usefulness: verifies the adapter selects the id from the first id-bearing event, then validates
+// Usefulness: verifies the adapter selects the first truthy id (an empty id is skipped), then validates
 // that selected id, so a later valid id never rescues an invalid or mismatched selected one. A
 // resumed turn keeps its stored id on every failure (issue #360).
 test.each([
