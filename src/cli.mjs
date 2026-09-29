@@ -290,8 +290,9 @@ Options:
                                 same values the role subcommand takes. review-only
                                 dispatches no worker, so it takes neither --pr, nor
                                 --require-accept, nor --require-ci, each refused with the
-                                wording the role path uses, and a run_worker action is
-                                refused at runtime. Off by default, so a run without the
+                                wording the role path uses. At runtime it refuses a
+                                run_worker action, and refuses a finish until a reviewer
+                                turn has completed. Off by default, so a run without the
                                 flag keeps the current behavior. A repeated --mode takes
                                 the last value, as every other repeated value flag here
                                 does.

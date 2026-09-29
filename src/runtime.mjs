@@ -189,7 +189,11 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * `review-only` mode is a run that dispatches no worker, so the CLI refuses
  * `pr`, `requireAccept`, and `requireCi` before the run starts, and the loop
  * refuses a `run_worker` action at runtime, the guard the interactive path
- * applies to `--role worker` (#337).
+ * applies to `--role worker`. That mode also refuses a `finish` until a reviewer
+ * turn has completed, which is the outcome the mode exists to record. The
+ * interactive path reaches that state without a rule, because its init dispatch
+ * is itself the reviewer turn, so the headless loop supplies the one condition
+ * the interactive path gets for free (#337).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -307,6 +311,20 @@ export async function runLoop(options) {
         refusals.push({
           reason: markerReason,
           recovery: "The gate resolves that PR head, so remove unresolvedCompare from the finish.",
+        });
+      }
+      // A review-only run's whole outcome is the reviewer report, so a finish
+      // before one is a finish with nothing behind it. The interactive path gets
+      // that for free, because its init dispatch is itself the reviewer turn,
+      // and a headless run owns its whole order, so the runtime refuses it here.
+      // It is the completion rule, so it sits where `--require-accept` sits and
+      // needs the same reviewer turn to satisfy it (#337).
+      if (mode === "review-only" && !reviewerRan) {
+        needsChildTurn = true;
+        refusals.push({
+          reason: "no reviewer report on the state, and a review-only run dispatches no worker",
+          recovery:
+            "Dispatch the reviewer, obtain a reviewer report on that state, then finish. The verdict does not matter in this mode; the report is what the finish records.",
         });
       }
       if (requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan)) {

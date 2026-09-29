@@ -487,7 +487,9 @@ dispatches no worker, so it takes neither `--pr`, nor `--require-accept`, nor
 the same wording the interactive path uses. It also refuses a `run_worker`
 action at runtime, which ends the run on exit 1 with the reason
 `mode review-only rejects a run_worker action`, the same hard guard this mode
-applies to `--role worker` on the interactive path. Its prompt states the
+applies to `--role worker` on the interactive path. It also refuses a `finish`
+until a reviewer turn has completed, which the interactive path reaches without
+a rule because its init dispatch is itself that turn. Its prompt states the
 completion rule and the `review-only` mapping instead, and
 `agent-loop --require-accept` enforces that rule.
 
@@ -520,16 +522,17 @@ Completion is completion of the requested work, not code acceptance.
   verdict. The summary records the verdict in `verified` and the findings in
   `open`.
 
-A `review-only` finish carries no completion rule of its own on either path, and
-both behave the same way: `agent-loop role finish` in that mode accepts a finish
-from `active` with no reviewer turn at all, and a headless `--mode review-only`
-run accepts a finish with no reviewer report. The rule that mode states is the
-parent's, not a gate: call `finish` after the reviewer report, and record what
-the run did not cover in `notDone` and `open`. The interactive run always has a
-reviewer turn before its finish, because the init dispatch is itself a turn, and
-a headless review-only run is refused `--require-accept`, so neither mode
-enforces that report. Do not read the absence of a gate as a guarantee that a
-reviewer ran.
+The two paths reach that reviewer report differently, and the difference is the
+rule, not the wording. `agent-loop role finish` in `review-only` applies no
+reviewer-report rule of its own: it accepts a finish from `active` whatever the
+verdict. Every reachable interactive run already has a reviewer turn, because the
+init dispatch is itself that turn, so the report is there without a gate. A
+headless `--mode review-only` run owns its own action order and can reach a finish
+before any reviewer turn, so the runtime refuses that finish until a reviewer
+turn has completed, with the same corrective-turn and repeated-refusal rules the
+other finish gates use. The report is what the mode records either way, so call
+`finish` after it, whatever the verdict, and record what the run did not cover in
+`notDone` and `open`.
 
 Map the child report fields into the finish summary:
 
