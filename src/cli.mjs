@@ -224,8 +224,9 @@ Role operations:
   extend                        Raise the step budget of a non-terminal run to
                                 --max-steps, on the same state file, so the stored
                                 role session ids stay. The value must exceed both
-                                stepsUsed and the current budget. Parent only:
-                                requires the run's --parent-session.
+                                stepsUsed and the current budget. The caller
+                                must pass the run's stored --parent-session id; the
+                                check compares that id only.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
                                 timedOut flag. The bound starts at command entry

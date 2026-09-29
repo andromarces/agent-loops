@@ -185,12 +185,13 @@ test("extend refuses a missing value and flags that belong to other operations",
   expect(state.budgetChanges).toBeUndefined();
 });
 
-// Usefulness: verifies the budget-raise authority rule is enforced — only the
-// parent, which holds the stored parent session id, can raise the budget. A
-// child role runs in its own harness session, or reads no parent id at all, so
-// a call with another id or none is refused with no state change and no leak of
-// the stored id (issue #361).
-test("extend accepts the parent session and refuses a child context", async () => {
+// Usefulness: verifies what the parent-session check enforces — a call must
+// pass the run's stored parent session id. A call with another id or none is
+// refused with no state change and no leak of the stored id; a call with the
+// stored id is accepted. The check compares the id only, so it does not
+// identify the caller: a caller that read the id from the state file passes
+// (issue #361).
+test("extend accepts the stored parent session id and refuses another id or none", async () => {
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
   const repo = await startRun(1, agents);
 

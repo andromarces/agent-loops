@@ -19,7 +19,7 @@ history and provider prompt cache. `archiveState` keeps the old ids in
 
 ## Decision
 
-1. `agent-loop role extend --cwd <dir> --max-steps <count>` raises `maxSteps` of a
+1. `agent-loop role extend --cwd <dir> --parent-session <id> --max-steps <count>` raises `maxSteps` of a
    non-terminal run in place. The state file stays, so the stored role session ids
    and the first-turn tracking keep working.
 2. `--max-steps` uses the parse-time check that init uses (`readMaxSteps`, 1 to
@@ -38,17 +38,18 @@ history and provider prompt cache. `archiveState` keeps the old ids in
    A run never extended has no `budgetChanges`.
 6. Raising the budget is the user's decision. The orchestrator instructions tell the
    parent to run `extend` only when the user authorized more steps, and to `abort`
-   otherwise.
-7. `extend` enforces that the caller is the parent. It requires `--parent-session`
-   and refuses a value that differs from the stored `parentSession`, the identity
-   the parent-edit guard matches (ADR 0006). A child role runs in its own harness
-   session, so it cannot raise its own limit by calling `extend` after `dispatch`
-   releases the lock. The refusal does not name the stored id. No child
-   environment marker exists at spawn, and the other operations rely on the
-   prompt rule alone, so this is the only operation with a session check.
-   Limit: a child that reads the state file learns the id. The boundary holds
-   against a child that follows the rules, as the guard does, not against one
-   that reads the file.
+   otherwise. Point 7 states what the command enforces.
+7. `extend` requires `--parent-session` and refuses a value that differs from the
+   stored `parentSession`, the id the parent-edit guard matches (ADR 0006). The
+   refusal does not name the stored id. The check compares the id only. It does
+   not identify the calling harness session, so any caller that passes the stored
+   id is accepted, and a caller that read the id from the state file can pass it,
+   a child role included. No child environment marker exists at spawn, and the
+   other operations have no session check. The check stops a call that omits the
+   id or carries another one, for example a child in its own session that never
+   read the state file. The rule that a child never calls `extend` rests on the
+   orchestrator instructions. A boundary that identifies the caller is not part of
+   this decision.
 
 ## Consequences
 
