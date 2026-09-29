@@ -358,7 +358,7 @@ for (const [shape, { protection, why }] of Object.entries(UNKNOWN_SHAPES)) {
       cwd: ".",
       gh: fakeGh(
         routes({
-          required: [],
+          required: [{ type: "deletion" }],
           protection,
           prChecks: "",
           headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -390,7 +390,8 @@ test("refuses the empty union and names the source when repository rulesets cann
     ),
   });
   expect(result.ok).toBe(false);
-  expect(result.reason).toContain("no required checks were found");
+  // A ruleset-unknown refusal names the source and does not claim that no required
+  // checks were found, because the union may be non-empty.
   expect(result.reason).toContain("repository rulesets");
 });
 
@@ -435,7 +436,6 @@ for (const [shape, { required, protection, why }] of Object.entries(AMBIGUOUS_AB
       ),
     });
     expect(result.ok, `${shape} must not reach the absence path`).toBe(false);
-    expect(result.reason, why).toContain("no required checks were found");
     expect(result.reason, why).toMatch(
       required === undefined ? /classic branch protection/ : /repository rulesets/,
     );
@@ -518,22 +518,40 @@ const SECOND_PAGE_RULE = [
   },
 ];
 
+// A `gh` double for the ruleset read that serves every page only when the caller
+// actually asks for them. A caller that reads one page receives the first page
+// alone, so a missing `--paginate --slurp` cannot be hidden by a double that always
+// returns every page (issue #336 review).
+function rulesetPages(pages) {
+  return async (args) => {
+    const key = args.join(" ");
+    const paginated = key.includes("--paginate") && key.includes("--slurp");
+    return {
+      status: 0,
+      stdout: JSON.stringify(paginated ? pages : [pages[0]]),
+      stderr: "",
+    };
+  };
+}
+
 // Usefulness: verifies a required-status-check rule that appears only on the second
-// page is still enforced, so a paginated read cannot stop early and pass a branch
-// that requires a check (issue #336 review).
+// page is still enforced, so a read that stops at the first page cannot pass a
+// branch that requires a check. The double serves the second page only to a caller
+// that requested pagination, so this fails when `--paginate --slurp` is removed
+// (issue #336 review).
 test("reads every ruleset page before classifying the absence", async () => {
+  const read = rulesetPages([[{ type: "deletion" }], SECOND_PAGE_RULE]);
   const result = await checkCi({
     pr: 42,
     reviewed: REVIEWED,
     cwd: ".",
-    gh: fakeGh(
-      routes({
-        requiredPages: [[{ type: "deletion" }], SECOND_PAGE_RULE],
-        protection: null,
-        prChecks: "",
-        headRuns: [run("ci (ubuntu-latest)", "failure")],
-      }),
-    ),
+    gh: async (args) => {
+      const key = args.join(" ");
+      if (key.includes("rules/branches/main")) {
+        return read(args);
+      }
+      return fakeGh(routes({ required: [{ type: "deletion" }] }))(args);
+    },
   });
   expect(result.ok).toBe(false);
   expect(result.reason).toContain("ci (ubuntu-latest)");
@@ -559,6 +577,69 @@ test("records the absence when no page names a required-status rule", async () =
   });
   expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
 });
+
+// An empty page beside a page that holds rules settles nothing, because GitHub
+// stops paginating when there is no next page, so a partial read must not be
+// classified from the pages that did arrive (issue #336 review).
+test("refuses the empty union when a ruleset page is empty beside a page with rules", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        requiredPages: [[{ type: "deletion" }], []],
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("repository rulesets");
+  expect(result.noRequiredChecks).toBeUndefined();
+});
+
+// An unknown ruleset read must refuse whatever the rest of the union holds, because
+// that reply may carry a required-status rule this caller never saw, and a
+// non-empty union from another source would otherwise let the per-check pass judge
+// only the names it saw (issue #336 review). origin/main treated a failed ruleset
+// read as an empty source, so both of these passed there.
+const UNKNOWN_RULESET_WITH_OTHER_NAMES = {
+  "a failed ruleset page": { requiredPages: [{ message: "unexpected" }, SECOND_PAGE_RULE] },
+  "an unlisted rule type": {
+    required: [{ type: "deletion" }, { type: "required_checks_v2" }],
+  },
+};
+
+for (const [shape, override] of Object.entries(UNKNOWN_RULESET_WITH_OTHER_NAMES)) {
+  // Usefulness: verifies ${shape} refuses even though classic protection and
+  // `gh pr checks --required` both named a required check, so a ruleset-required
+  // check the gate never read cannot be skipped (issue #336 review).
+  test(`refuses ${shape} even when another source names a required check`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          // Both other sources name a required check, and both checks pass, so
+          // only the unknown ruleset read stands between this finish and a pass.
+          protection: { required_status_checks: { contexts: ["legacy"] } },
+          prChecks: [{ name: "ci (ubuntu-latest)" }],
+          headStatuses: [
+            { context: "legacy", state: "success", updated_at: "2026-01-01T00:00:00Z" },
+          ],
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+          ...override,
+        }),
+      ),
+    });
+    expect(result.ok, `${shape} must refuse whatever the union holds`).toBe(false);
+    expect(result.reason).toContain("repository rulesets");
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+}
 
 // The paginated bodies the gate cannot account for every page of. Each is unknown
 // rather than classified from the pages that arrived (issue #336 review).
@@ -587,7 +668,6 @@ for (const [shape, { requiredPages }] of Object.entries(PARTIAL_PAGE_READS)) {
       ),
     });
     expect(result.ok, `${shape} must not reach the absence path`).toBe(false);
-    expect(result.reason).toContain("no required checks were found");
     expect(result.reason).toContain("repository rulesets");
     expect(result.noRequiredChecks).toBeUndefined();
   });
@@ -623,7 +703,6 @@ for (const [shape, rule] of Object.entries(MALFORMED_RULE_TYPES)) {
       ),
     });
     expect(result.ok, `${shape} must not reach the absence path`).toBe(false);
-    expect(result.reason).toContain("no required checks were found");
     expect(result.reason).toContain("repository rulesets");
     expect(result.noRequiredChecks).toBeUndefined();
   });
@@ -718,7 +797,6 @@ for (const [shape, { required }] of Object.entries(MALFORMED_RULESET_READS)) {
       ),
     });
     expect(result.ok, "a malformed ruleset read must not reach the absence path").toBe(false);
-    expect(result.reason).toContain("no required checks were found");
     expect(result.reason).toContain("repository rulesets");
     expect(result.noRequiredChecks).toBeUndefined();
   });
@@ -755,7 +833,7 @@ for (const [shape, override] of Object.entries(MALFORMED_PROTECTION_READS)) {
       cwd: ".",
       gh: fakeGh(
         routes({
-          required: [],
+          required: [{ type: "deletion" }],
           prChecks: "",
           headRuns: [run("ci (ubuntu-latest)", "success")],
           ...override,
@@ -829,7 +907,7 @@ for (const [shape, overrides] of Object.entries(UNREADABLE_MERGE_STATES)) {
       gh: fakeGh(
         routes({
           info: unreadableMergeState(overrides),
-          required: [],
+          required: [{ type: "deletion" }],
           protection: null,
           prChecks: "",
           headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -871,7 +949,7 @@ test("ignores a gh pr checks --required reply that carries no JSON", async () =>
     pr: 42,
     reviewed: REVIEWED,
     cwd: ".",
-    gh: fakeGh(routes({ required: [], protection: "hidden", prChecks: "" })),
+    gh: fakeGh(routes({ required: [{ type: "deletion" }], protection: "hidden", prChecks: "" })),
   });
   expect(result.ok).toBe(false);
   expect(result.reason).toContain("no required checks were found");
@@ -888,7 +966,7 @@ test("falls back to gh pr checks --required for required names", async () => {
     cwd: ".",
     gh: fakeGh(
       routes({
-        required: [],
+        required: [{ type: "deletion" }],
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
       }),
@@ -909,7 +987,7 @@ test("refuses a blocked merge state when a required check never reported", async
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [],
+        required: [{ type: "deletion" }],
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
       }),
@@ -979,7 +1057,7 @@ test("treats a 403 from classic protection as an unreadable source", async () =>
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [],
+        required: [{ type: "deletion" }],
         protection: "forbidden",
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1001,7 +1079,7 @@ test("refuses on the empty union when classic protection answers 403", async () 
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [],
+        required: [{ type: "deletion" }],
         protection: "forbidden",
         prChecks: "",
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1025,7 +1103,7 @@ test("treats a non-admin 404 from classic protection as an unreadable source", a
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [],
+        required: [{ type: "deletion" }],
         protection: "hidden",
         prChecks: [{ name: "build (ubuntu-latest)" }],
         headRuns: [run("build (ubuntu-latest)", "success")],
@@ -1047,7 +1125,7 @@ test("passes for a non-admin caller when every required check passed", async () 
     cwd: ".",
     gh: fakeGh(
       routes({
-        required: [],
+        required: [{ type: "deletion" }],
         protection: "hidden",
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1069,7 +1147,7 @@ test("does not read a rate-limit 403 from classic protection as no contexts", as
       cwd: ".",
       gh: fakeGh(
         routes({
-          required: [],
+          required: [{ type: "deletion" }],
           protection: "rate limited",
           prChecks: [{ name: "ci (ubuntu-latest)" }],
           headRuns: [run("ci (ubuntu-latest)", "failure")],
@@ -1091,7 +1169,7 @@ test("treats a fine-grained PAT 403 from classic protection as an unreadable sou
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [],
+        required: [{ type: "deletion" }],
         protection: "pat forbidden",
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1113,7 +1191,7 @@ test("refuses on the empty union when classic protection answers a PAT 403", asy
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [],
+        required: [{ type: "deletion" }],
         protection: "pat forbidden",
         prChecks: "",
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1135,7 +1213,7 @@ test("passes for a fine-grained PAT caller when every required check passed", as
     cwd: ".",
     gh: fakeGh(
       routes({
-        required: [],
+        required: [{ type: "deletion" }],
         protection: "pat forbidden",
         prChecks: [{ name: "ci (ubuntu-latest)" }],
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1166,9 +1244,10 @@ test("refuses and names both sources when the required-context sources answer th
     ),
   });
   expect(result.ok).toBe(false);
-  expect(result.reason).toContain("no required checks were found");
+  // The ruleset source settles nothing, so the gate refuses on it first and never
+  // reaches the classic-protection source. Both are unknown; only the one that
+  // refuses is named, which is the source a fix must target first.
   expect(result.reason).toContain("repository rulesets");
-  expect(result.reason).toContain("classic branch protection");
 });
 
 for (const [ending, suffix] of Object.entries(ENDINGS)) {
@@ -1183,7 +1262,7 @@ for (const [ending, suffix] of Object.entries(ENDINGS)) {
       cwd: ".",
       gh: fakeGh(
         routes({
-          required: [],
+          required: [{ type: "deletion" }],
           protection: `stderr: ${FREE_PLAN}${suffix}`,
           prChecks: "",
           headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -1218,7 +1297,7 @@ for (const [shape, reply] of Object.entries(NOT_THE_WHOLE_REPLY)) {
         cwd: ".",
         gh: fakeGh(
           routes({
-            required: [],
+            required: [{ type: "deletion" }],
             protection: `stderr: ${reply}`,
             prChecks: [{ name: "ci (ubuntu-latest)" }],
             headRuns: [run("ci (ubuntu-latest)", "failure")],
@@ -1238,7 +1317,7 @@ test("matches an app-qualified classic-protection context to that app", async ()
     cwd: ".",
     gh: fakeGh(
       routes({
-        required: [],
+        required: [{ type: "deletion" }],
         protection: {
           required_status_checks: { contexts: [], checks: [{ context: "ci", app_id: 15368 }] },
         },
