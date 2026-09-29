@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
-import { resumeMismatchError, setMainLoopUsage } from "./shared.mjs";
+import { keepFailedSessionId, resumeMismatchError, setMainLoopUsage } from "./shared.mjs";
 
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
-  // A new session id reaches the role state only after Copilot reports it, so a failed
-  // first turn leaves `state.sessionId` null and the next worker turn keeps its preamble.
+  // A new session id reaches the role state only after Copilot reports it: on success, or in the
+  // result event of a failed first turn. A failure with no reported id leaves `state.sessionId`
+  // null and the next worker turn keeps its preamble.
   const requestedSessionId = state.sessionId;
   const sessionId = requestedSessionId ?? randomUUID();
 
@@ -29,8 +30,11 @@ export async function runCopilot(state, prompt, options = {}) {
   try {
     ({ stdout } = await exec("copilot", args, { cwd, input: prompt, timeout, signal, role }));
   } catch (error) {
-    const failed = parseJsonLines(error?.stdout ?? "");
-    setMainLoopUsage(state, objectUsage(findResultEvent(failed)));
+    const failedResult = findResultEvent(parseJsonLines(error?.stdout ?? ""));
+    setMainLoopUsage(state, objectUsage(failedResult));
+    // Keep only an id the CLI reported. The pre-assigned id names no session when the turn failed
+    // before the CLI created one, and a resume of it returned another id (Copilot CLI 1.0.90-4).
+    keepFailedSessionId(state, failedResult?.sessionId ?? failedResult?.session_id);
     throw error;
   }
 

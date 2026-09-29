@@ -174,13 +174,12 @@ const missingFailure = (overrides = {}) =>
   });
 
 // Usefulness: verifies the exact Codex stderr for the requested thread marks the error (issue #360).
-test("codex flags a resume of a missing thread", async () => {
-  vi.mocked(exec).mockRejectedValueOnce(
-    missingFailure({
-      stderr: `${MISSING}
-`,
-    }),
-  );
+test.each([
+  ["the bare line", MISSING],
+  ["one LF", `${MISSING}\n`],
+  ["one CRLF", `${MISSING}\r\n`],
+])("codex flags a resume of a missing thread with %s", async (_name, stderr) => {
+  vi.mocked(exec).mockRejectedValueOnce(missingFailure({ stderr }));
 
   const state = { kind: "codex", sessionId: "gone", model: null, effort: null };
   const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
@@ -207,6 +206,15 @@ ${MISSING}`,
   ["a cancel", "gone", { isCanceled: true }],
   ["a signal", "gone", { isTerminated: true }],
   ["another exit code", "gone", { exitCode: 2 }],
+  ["leading spaces", "gone", { stderr: ` ${MISSING}` }],
+  ["trailing spaces", "gone", { stderr: `${MISSING} ` }],
+  ["trailing spaces before the line ending", "gone", { stderr: `${MISSING} \n` }],
+  ["a leading blank line", "gone", { stderr: `\n${MISSING}` }],
+  ["a trailing blank line", "gone", { stderr: `${MISSING}\n\n` }],
+  ["two CRLF line endings", "gone", { stderr: `${MISSING}\r\n\r\n` }],
+  ["a bare carriage return", "gone", { stderr: `${MISSING}\r` }],
+  ["a tab", "gone", { stderr: `${MISSING}\t` }],
+  ["whitespace on stdout", "gone", { stdout: "\n" }],
   ["a model error", "gone", { stderr: "The 'x' model is not supported" }],
 ])("codex does not flag %s", async (_name, sessionId, overrides) => {
   vi.mocked(exec).mockRejectedValueOnce(missingFailure(overrides));

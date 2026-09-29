@@ -320,3 +320,34 @@ test("a first copilot worker turn that reports an id then fails leaves sessionId
     "You are the implementation agent (worker)",
   );
 });
+
+// Usefulness: verifies a failed first turn keeps the session id the CLI reported in its result
+// event, so the next turn resumes it, and keeps none when the failed output reports none. The
+// pre-assigned id is never kept: it can name no session (issue #360).
+test("copilot keeps the reported session id of a failed first turn", async () => {
+  const error = new Error("Copilot failed");
+  error.stdout = '{"type":"result","sessionId":"copilot-reported","exitCode":1}';
+  vi.mocked(exec).mockRejectedValueOnce(error);
+
+  const state = { kind: "copilot", sessionId: null, model: null, effort: null };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toBe(error);
+  expect(state.sessionId).toBe("copilot-reported");
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("Copilot failed"), { stdout: '{"type":"session.tools_updated"}' }),
+  );
+  const silent = { kind: "copilot", sessionId: null, model: null, effort: null };
+  await expect(runCopilot(silent, "p", { cwd: "/dir" })).rejects.toThrow("Copilot failed");
+  expect(silent.sessionId).toBeNull();
+});
+
+// Usefulness: verifies a failed resumed turn never changes its id, whatever the result reports.
+test("copilot keeps the stored session id when a resumed turn fails", async () => {
+  const error = new Error("Copilot failed");
+  error.stdout = '{"type":"result","sessionId":"copilot-other","exitCode":1}';
+  vi.mocked(exec).mockRejectedValueOnce(error);
+
+  const state = { kind: "copilot", sessionId: "copilot-stored", model: null, effort: null };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toBe(error);
+  expect(state.sessionId).toBe("copilot-stored");
+});

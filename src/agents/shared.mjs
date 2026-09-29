@@ -41,24 +41,23 @@ export function keepFailedSessionId(state, id) {
 /**
  * Marks a failed resume whose session the CLI does not have, so the runtime can rerun the turn
  * as a first turn. The mark is narrow because a wrong mark reruns a real failure and can repeat
- * its edits: the process must exit 1 without a timeout, cancel, or signal, stdout must be empty,
- * and stderr must be exactly the one line the CLI prints for the requested id. Any other text,
- * including that line inside a longer message or for another id, leaves the error unmarked.
+ * its edits: the process must exit 1 without a timeout, cancel, or signal, stdout must be the
+ * empty string, and stderr must be the one line the CLI prints for the requested id, byte for
+ * byte, followed by at most one line ending (LF or CRLF). That single line ending is the only
+ * normalization. Leading or trailing spaces, blank lines, a second line, other text, or another
+ * id leave the error unmarked.
  * Nothing is marked for a first turn, which has no session to lose.
  * @param {unknown} err the error `exec` threw
  * @param {string | null} requestedId session id the failed call asked the CLI to resume
- * @param {(id: string) => string} missingLine the CLI's full stderr for a missing session
+ * @param {(id: string) => string} missingLine the CLI's stderr line for a missing session
  */
 export function flagMissingSession(err, requestedId, missingLine) {
   if (!requestedId || !err || typeof err !== "object") {
     return;
   }
   const exited = err.exitCode === 1 && !err.timedOut && !err.isCanceled && !err.isTerminated;
-  if (
-    exited &&
-    !(err.stdout ?? "").trim() &&
-    (err.stderr ?? "").trim() === missingLine(requestedId)
-  ) {
+  const stderr = typeof err.stderr === "string" ? err.stderr.replace(/\r?\n$/, "") : null;
+  if (exited && err.stdout === "" && stderr === missingLine(requestedId)) {
     err.sessionMissing = true;
   }
 }

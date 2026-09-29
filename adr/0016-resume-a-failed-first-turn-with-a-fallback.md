@@ -24,14 +24,18 @@ step budget runs out.
 1. Each adapter reads the session id from the failed output when the CLI printed one
    and keeps it on the role state, for a first turn only. A resumed turn never changes
    its id, and the Claude adapter refuses a different id from a resumed turn with
-   `resumeMismatchError`, as the other adapters do. The Copilot adapter is unchanged: it stores the id only after a successful
-   turn, so a failed Copilot first turn keeps none.
+   `resumeMismatchError`, as the other adapters do. The Copilot adapter keeps the id that the result event of a failed first turn
+   reports. It never keeps the pre-assigned id: on Copilot CLI 1.0.90-4, a resume of a
+   pre-assigned id whose first turn failed on a bad model returned another session id,
+   and the adapter would refuse that as a mismatch.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
-   process exited 1 with no timeout, cancel, or signal, stdout is empty, and stderr is
-   exactly the one verified line for the requested id: Claude Code
+   process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
+   stderr is the one verified line for the requested id, byte for byte, plus at most one
+   line ending (LF or CRLF): Claude Code
    `No conversation found with session ID: <id>`, Codex
    `Error: thread/resume: thread/resume failed: no rollout found for thread id <id> (code -32600)`.
-   Any other text, including that line inside a longer message, leaves the error unmarked.
+   That line ending is the only normalization. Leading or trailing spaces, blank lines,
+   a second line, or any other text leave the error unmarked.
    A wrong mark would rerun a real failure as a first turn and repeat its edits. A CLI
    that changes the wording loses the fallback and fails as before.
 3. `runChild` handles the mark. It clears the role session id, then reruns the turn

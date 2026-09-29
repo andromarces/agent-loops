@@ -181,13 +181,12 @@ const missingFailure = (overrides = {}) =>
 
 // Usefulness: verifies the exact Claude Code stderr for the requested id marks the error, so the
 // runtime reruns the turn as a first turn (issue #360).
-test("claude flags a resume of a missing session", async () => {
-  vi.mocked(exec).mockRejectedValueOnce(
-    missingFailure({
-      stderr: `${MISSING}
-`,
-    }),
-  );
+test.each([
+  ["the bare line", MISSING],
+  ["one LF", `${MISSING}\n`],
+  ["one CRLF", `${MISSING}\r\n`],
+])("claude flags a resume of a missing session with %s", async (_name, stderr) => {
+  vi.mocked(exec).mockRejectedValueOnce(missingFailure({ stderr }));
 
   const state = { kind: "claude", sessionId: "gone", model: null, effort: null };
   const caught = await runClaude(state, "p", { cwd: "/path" }).catch((e) => e);
@@ -213,6 +212,15 @@ ${MISSING}`,
   ["a cancel", "gone", { isCanceled: true }],
   ["a signal", "gone", { isTerminated: true }],
   ["another exit code", "gone", { exitCode: 2 }],
+  ["leading spaces", "gone", { stderr: ` ${MISSING}` }],
+  ["trailing spaces", "gone", { stderr: `${MISSING} ` }],
+  ["trailing spaces before the line ending", "gone", { stderr: `${MISSING} \n` }],
+  ["a leading blank line", "gone", { stderr: `\n${MISSING}` }],
+  ["a trailing blank line", "gone", { stderr: `${MISSING}\n\n` }],
+  ["two CRLF line endings", "gone", { stderr: `${MISSING}\r\n\r\n` }],
+  ["a bare carriage return", "gone", { stderr: `${MISSING}\r` }],
+  ["a tab", "gone", { stderr: `${MISSING}\t` }],
+  ["whitespace on stdout", "gone", { stdout: "\n" }],
   ["an auth failure", "gone", { stderr: "Invalid API key" }],
 ])("claude does not flag %s", async (_name, sessionId, overrides) => {
   vi.mocked(exec).mockRejectedValueOnce(missingFailure(overrides));
