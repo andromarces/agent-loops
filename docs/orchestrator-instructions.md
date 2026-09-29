@@ -344,16 +344,18 @@ status.
 
 ## Test evidence when the reviewer cannot run tests
 
-A Codex reviewer on Windows under `sandbox_mode="read-only"` cannot spawn the
-test runner: Vitest fails with `spawn EPERM` and `pnpm` fails on its store lock.
-Its `Checks` line then excludes the test suite. macOS, Linux, and the elevated
-Windows sandbox are not verified.
+Observed on Windows 11 with codex-cli 0.159.0-alpha.12 and
+`sandbox_mode="read-only"`: a Codex reviewer turn could not spawn the test
+runner. Vitest failed with `spawn EPERM` and `pnpm` failed on its store lock.
+That reviewer `Checks` line excluded the test suite. Other platforms, other
+Codex versions, and the elevated Windows sandbox are not verified.
 
-When the reviewer `Checks` line shows that tests did not run, rely on the
-required CI checks for test evidence. Start the run with `--pr` or `--require-ci`
-so CI status reaches the gate. Do not read a reviewer accept as a passing test
-suite. A worker `Checks` line that shows a passing local test run is reported
-evidence, not a gate input.
+When a reviewer `Checks` line shows that tests did not run, for any reason, the
+reviewer accept is not test evidence. Use the required CI checks for test
+evidence instead. The `--require-ci` finish gate and the status rules above
+already govern how a run reads them, so this rule adds no flag and no sequence.
+A worker `Checks` line that shows a passing local test run is reported evidence,
+not a gate input.
 
 ## Waiting for required checks
 
