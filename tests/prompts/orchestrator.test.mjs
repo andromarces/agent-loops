@@ -311,9 +311,12 @@ test("a review-only run states the review-only mapping", () => {
   // tell the orchestrator that an erroring review blocks the finish.
   expectRule(reviewOnly, /turn[^.!?]{0,40}not its outcome/i, /error/i);
   expectRule(reviewOnly, /still satisfies it/i);
-  // Recording the verdict is the orchestrator's work: the prompt says no runtime
-  // check reads the key, so the summary is not presented as a guarantee.
-  expectRule(reviewOnly, /No runtime check reads that key/i);
+  // The summary is checked for shape only: the prompt states what the runtime
+  // validates and that it never compares the content with the verdict.
+  expectRule(reviewOnly, /five summary keys[^.!?]{0,40}non-empty strings/i);
+  expectRule(reviewOnly, /never compares[^.!?]{0,60}verdict/i);
+  // The refusal is not the end of the run: it costs one corrective turn.
+  expectRule(reviewOnly, /not the end of the run/i, /corrective turn/i);
   expectRule(reviewOnly, /reviewer/i, /\bfinish\b/i, /verdict/i);
   expectRule(reviewOnly, /Blockers/i, /open/i);
   // The mode-free prompt carries none of it, so an ordinary run is untouched.
