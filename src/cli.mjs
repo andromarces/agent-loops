@@ -224,7 +224,8 @@ Role operations:
   extend                        Raise the step budget of a non-terminal run to
                                 --max-steps, on the same state file, so the stored
                                 role session ids stay. The value must exceed both
-                                stepsUsed and the current budget.
+                                stepsUsed and the current budget. Parent only:
+                                requires the run's --parent-session.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
                                 timedOut flag. The bound starts at command entry
@@ -241,9 +242,9 @@ Role flags:
   --role worker|reviewer        Role to dispatch. Required for dispatch.
   --cwd <directory>             Target work tree. Must be inside a Git work tree.
                                 Defaults to the current directory.
-  --parent-session <id>         Required on the init call. The harness session id the
-                                parent-edit guard matches; later calls reject a changed
-                                value. The headless form (no subcommand) is the explicit
+  --parent-session <id>         Required on the init call and on extend. The harness
+                                session id the parent-edit guard matches; later calls
+                                reject a changed value, and extend refuses a mismatch. The headless form (no subcommand) is the explicit
                                 unguarded path.
   --task / --mode / --worker* / --reviewer* / --max-steps / --timeout
                                 First (init) call only. Later calls read these from the

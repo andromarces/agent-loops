@@ -871,9 +871,11 @@ to GitHub Pro or make this repository public to enable this feature.`, was measu
   maintainer decision.
 - Step limit with work remaining (`Step budget exhausted`): if the user
   authorized more steps, raise the budget with
-  `agent-loop role extend --cwd "<work tree>" --max-steps <count>`, then
+  `agent-loop role extend --cwd "<work tree>" --parent-session "<parent session id>" --max-steps <count>`, then
   dispatch again. Otherwise call `abort` and report the unresolved condition.
-  Never raise the budget on your own to avoid a stop the user set.
+  Never raise the budget on your own to avoid a stop the user set. A child
+  role never runs `extend`: the subcommand refuses a call whose
+  `--parent-session` is missing or differs from the run's parent session.
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not
   abort and start a new run to gain steps: that starts every role on a new

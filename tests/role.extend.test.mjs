@@ -16,7 +16,9 @@ import { createTempRepo } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
+const PARENT = ["--parent-session", "parent-sess-1"];
 const extendArgv = (...flags) => ["extend", "--cwd", "<repo>", ...flags];
+const parentExtendArgv = (...flags) => extendArgv(...PARENT, ...flags);
 
 async function startRun(maxSteps, agents) {
   await setup();
@@ -43,7 +45,7 @@ test("extend lets an exhausted run continue with its stored role session", async
   });
   expect(refused.payload.error).toContain("Step budget exhausted (1/1)");
 
-  const extended = await executeRoleCommand(withRepo(extendArgv("--max-steps", "3"), repo));
+  const extended = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "3"), repo));
   expect(extended.exitCode).toBe(0);
   expect(extended.payload).toEqual({
     status: "ok",
@@ -70,9 +72,9 @@ test("extend records the change in budgetChanges beside an intact turn history",
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
   const repo = await startRun(1, agents);
 
-  await executeRoleCommand(withRepo(extendArgv("--max-steps", "2"), repo));
+  await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "2"), repo));
   await executeRoleCommand(withRepo(dispatchArgv(), repo), { agents, stdin: stdinPrompt });
-  await executeRoleCommand(withRepo(extendArgv("--max-steps", "5"), repo));
+  await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "5"), repo));
 
   const state = await readRepoState(repo);
   expect(state.maxSteps).toBe(5);
@@ -97,15 +99,15 @@ test("extend refuses a value that is not larger than stepsUsed or the current bu
   expect(before.stepsUsed).toBe(2);
 
   for (const value of ["1", "2", "3"]) {
-    const result = await executeRoleCommand(withRepo(extendArgv("--max-steps", value), repo));
+    const result = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", value), repo));
     expect(result.exitCode, value).toBe(1);
     expect(result.payload.error, value).toContain("--max-steps");
   }
   expect(
-    (await executeRoleCommand(withRepo(extendArgv("--max-steps", "2"), repo))).payload.error,
+    (await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "2"), repo))).payload.error,
   ).toContain("stepsUsed (2)");
   expect(
-    (await executeRoleCommand(withRepo(extendArgv("--max-steps", "3"), repo))).payload.error,
+    (await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "3"), repo))).payload.error,
   ).toContain("current maxSteps (3)");
   expect(await readRepoState(repo)).toEqual(before);
 });
@@ -116,9 +118,11 @@ test("extend refuses a value that is not larger than stepsUsed or the current bu
 test("extend applies the init --max-steps validation", async () => {
   await setup();
   for (const value of ["0", "-1", "1.5", "abc", "9007199254740992"]) {
-    expect(() => parseRoleArgs(extendArgv("--max-steps", value)), value).toThrow("--max-steps");
+    expect(() => parseRoleArgs(parentExtendArgv("--max-steps", value)), value).toThrow(
+      "--max-steps",
+    );
   }
-  expect(parseRoleArgs(extendArgv("--max-steps", "9007199254740991")).maxSteps).toBe(
+  expect(parseRoleArgs(parentExtendArgv("--max-steps", "9007199254740991")).maxSteps).toBe(
     Number.MAX_SAFE_INTEGER,
   );
 });
@@ -130,14 +134,14 @@ test("extend refuses a terminal run and a path with no run state", async () => {
   const repo = await startRun(1, agents);
   await executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", "--reason", "stop"], repo));
 
-  const ended = await executeRoleCommand(withRepo(extendArgv("--max-steps", "9"), repo));
+  const ended = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "9"), repo));
   expect(ended.exitCode).toBe(1);
   expect(ended.payload.error).toBe("Run is already aborted.");
   expect((await readRepoState(repo)).maxSteps).toBe(1);
 
   const other = await createTempRepo();
   repos.push(other);
-  const none = await executeRoleCommand(withRepo(extendArgv("--max-steps", "9"), other));
+  const none = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "9"), other));
   expect(none.exitCode).toBe(1);
   expect(none.payload.error).toContain("No run state");
 });
@@ -151,7 +155,7 @@ test("extend leaves an interrupted lifecycle unchanged", async () => {
   state.lifecycle = "interrupted";
   await writeState(statePaths({ cwd: repo }).stateFile, state);
 
-  const result = await executeRoleCommand(withRepo(extendArgv("--max-steps", "4"), repo));
+  const result = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "4"), repo));
   expect(result.payload).toMatchObject({ status: "ok", lifecycle: "interrupted", maxSteps: 4 });
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
 });
@@ -172,11 +176,39 @@ test("extend refuses a missing value and flags that belong to other operations",
     [["--max-steps", "4", "--worker", "fake2"], "--worker cannot be changed after init"],
   ];
   for (const [flags, message] of cases) {
-    const result = await executeRoleCommand(withRepo(extendArgv(...flags), repo));
+    const result = await executeRoleCommand(withRepo(parentExtendArgv(...flags), repo));
     expect(result.exitCode, message).toBe(1);
     expect(result.payload.error, message).toContain(message);
   }
   const state = await readRepoState(repo);
   expect(state.maxSteps).toBe(1);
   expect(state.budgetChanges).toBeUndefined();
+});
+
+// Usefulness: verifies the budget-raise authority rule is enforced — only the
+// parent, which holds the stored parent session id, can raise the budget. A
+// child role runs in its own harness session, or reads no parent id at all, so
+// a call with another id or none is refused with no state change and no leak of
+// the stored id (issue #361).
+test("extend accepts the parent session and refuses a child context", async () => {
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+  const repo = await startRun(1, agents);
+
+  const childCalls = [
+    [["--parent-session", "child-sess-9", "--max-steps", "9"], "does not match"],
+    [["--max-steps", "9"], "extend requires --parent-session"],
+  ];
+  for (const [flags, message] of childCalls) {
+    const result = await executeRoleCommand(withRepo(extendArgv(...flags), repo));
+    expect(result.exitCode, message).toBe(1);
+    expect(result.payload.error, message).toContain(message);
+    expect(JSON.stringify(result.payload), message).not.toContain("parent-sess-1");
+  }
+  const refused = await readRepoState(repo);
+  expect(refused.maxSteps).toBe(1);
+  expect(refused.budgetChanges).toBeUndefined();
+
+  const parent = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "9"), repo));
+  expect(parent.exitCode).toBe(0);
+  expect((await readRepoState(repo)).maxSteps).toBe(9);
 });

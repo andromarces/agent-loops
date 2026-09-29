@@ -864,7 +864,7 @@ async function abort(args) {
 }
 
 /**
- * `extend`: raises `maxSteps` of a non-terminal run in place, so the stored role
+ * `extend`: raises `maxSteps` of a non-terminal run in place, for the parent only, so the stored role
  * session ids and first-turn tracking keep working where a new run would start
  * every role on a new session (#361). The new value must exceed both `stepsUsed`
  * and the current `maxSteps`; `--max-steps` already passed the init range check
@@ -883,10 +883,27 @@ async function extend(args) {
   if (args.maxSteps === null) {
     throw new RoleError("extend requires --max-steps <count>.");
   }
+  if (args.parentSession === null) {
+    throw new RoleError(
+      "extend requires --parent-session (the harness session id the run was started with).",
+    );
+  }
 
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
     const state = requireState(await readState(paths.stateFile), args.cwd, { needsBudget: true });
+    // Raising the budget is the parent's decision, on the user's authorization.
+    // The stored parent session is the identity the parent-edit guard already
+    // matches, and a child role runs in its own harness session, so a call
+    // without that id is refused. The refusal does not name the stored id.
+    // known-limit: a child that reads the state file learns the id; the run
+    // state holds no secret, so this is a boundary against a child that follows
+    // the rules, like the guard, not against one that reads the file.
+    if (args.parentSession !== state.parentSession) {
+      throw new RoleError(
+        "--parent-session does not match the run's parent session; only the parent can raise the step budget.",
+      );
+    }
     rejectInitFlagChanges(args, state, ["maxSteps"]);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
