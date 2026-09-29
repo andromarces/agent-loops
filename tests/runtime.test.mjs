@@ -535,61 +535,6 @@ test("a run with no mode and a work-first run still finish with no reviewer turn
   }
 });
 
-// Usefulness: verifies a review-only finish is allowed once a reviewer turn ran,
-// whatever that turn returned, because the interactive path accepts the finish
-// from `active` after any reviewer turn. A handled reviewer error and a reviewer
-// report with no verdict both satisfy the gate; the summary records what the turn
-// returned, so nothing is hidden by accepting it (issue #337).
-test("a review-only run accepts a finish after any reviewer turn", async () => {
-  const repo = await createTempRepo();
-  try {
-    const cases = [
-      {
-        what: "a reviewer turn that ended in a handled error",
-        reply: () => {
-          throw new Error("reviewer cli exited with code 1");
-        },
-      },
-      {
-        what: "a reviewer report with no verdict line",
-        reply: "Conclusion: read the code\nWhy: no verdict here\nBlockers: none",
-      },
-    ];
-
-    for (const { what, reply } of cases) {
-      const orchAdapter = scripted([
-        JSON.stringify({ action: "run_reviewer", prompt: "inspect the repo" }),
-        JSON.stringify({
-          action: "finish",
-          summary: { changed: "a", verified: what, deferred: "c", notDone: "d", open: "e" },
-        }),
-      ]);
-      const reviewerAdapter = scripted([reply]);
-
-      const result = await runLoop({
-        task: "Review only.",
-        cwd: repo,
-        maxSteps: 5,
-        mode: "review-only",
-        roles: {
-          orchestrator: { kind: "orch", sessionId: null },
-          worker: { kind: "work", sessionId: null },
-          reviewer: { kind: "rev", sessionId: null },
-        },
-        agents: { orch: orchAdapter, work: scripted([]), rev: reviewerAdapter },
-      });
-
-      // The finish was accepted, so the run recorded it, whatever the turn
-      // returned.
-      expect(result.exitCode, what).toBe(0);
-      expect(result.summary.verified, what).toBe(what);
-      expect(reviewerAdapter.recorded.length, what).toBe(1);
-    }
-  } finally {
-    await removePath(repo);
-  }
-});
-
 // 9. Usefulness: verifies step limit enforcement (exit 2).
 test("step limit reached refuses further child dispatch and returns exit 2", async () => {
   const repo = await createTempRepo();

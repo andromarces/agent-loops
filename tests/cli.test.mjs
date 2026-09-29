@@ -234,10 +234,12 @@ test("a review-only run refuses the PR flags before any child turn", async () =>
     ],
   ];
   const origExitCode = process.exitCode;
+  // One repo serves every run: creating a repo spawns six `git` processes, which
+  // is most of the cost of a run on Windows, and a refusal changes nothing in it.
+  const repo = await createTempRepo();
 
   try {
     for (const [flags, message] of refusals) {
-      const repo = await createTempRepo();
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const agents = {
         codex: {
@@ -263,11 +265,11 @@ test("a review-only run refuses the PR flags before any child turn", async () =>
       } finally {
         process.exitCode = origExitCode;
         errorSpy.mockRestore();
-        await removePath(repo);
       }
     }
   } finally {
     process.exitCode = origExitCode;
+    await removePath(repo);
   }
 });
 
