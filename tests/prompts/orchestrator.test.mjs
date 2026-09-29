@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execa } from "execa";
 import { expect, test } from "vitest";
 import {
   initialPrompt,
@@ -8,6 +9,7 @@ import {
   repairPrompt,
   requiredCheckWait,
   resultPrompt,
+  waitChecksCommand,
 } from "../../src/prompts/orchestrator.mjs";
 
 const instructionsPath = join(
@@ -673,6 +675,19 @@ test("initialPrompt states that a wait can end the run at the turn timeout", () 
   expect(prompt).toMatch(/exit 1/);
 });
 
+const WAIT_COMMAND = '"/opt/node" "/opt/agent-loops/src/cli.mjs" role wait-checks';
+const waitPrompt = (timeout, extra = {}) =>
+  initialPrompt({
+    task: "T",
+    maxSteps: 10,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    timeout,
+    waitCommand: WAIT_COMMAND,
+    ...extra,
+  });
+
 // Usefulness: verifies the headless wait runs through the runtime-owned command
 // with a stated bound below the turn timeout, and never through an unbounded
 // `gh` watch, so a wait cannot end the run on the turn timeout (issue #348).
@@ -682,21 +697,111 @@ test.each([
   [3600, 300],
   [100, 45],
   [30, 10],
+  [12, 1],
 ])("the headless wait states a bound below the turn timeout %s", (timeout, bound) => {
+  const prompt = waitPrompt(timeout);
+  expect(prompt).toContain(`${WAIT_COMMAND} --pr 42 --timeout ${bound}`);
+  expect(prompt).not.toContain("--watch");
+  expect(prompt).not.toContain("few minutes");
+  if (typeof timeout === "number") {
+    expect(bound + 5).toBeLessThan(timeout);
+  }
+});
+
+// Usefulness: verifies no turn timeout gets a wait that can outlast it: every
+// timeout either gets a positive bound whose wait and five-second child-exit
+// window end inside the turn, or gets no wait command at all (issue #348).
+test("no turn timeout gets a wait that outlasts the turn", () => {
+  for (let timeout = 1; timeout <= 700; timeout += 1) {
+    const prompt = waitPrompt(timeout);
+    const stated = prompt.match(/wait-checks --pr 42 --timeout (\d+)/);
+    if (stated === null) {
+      expect(timeout, "a turn that fits a wait names none").toBeLessThan(12);
+      expect(prompt).toMatch(/cannot wait for the required checks/i);
+      expect(prompt).toMatch(/do not run agent-loop role wait-checks/i);
+      continue;
+    }
+    const bound = Number(stated[1]);
+    expect(bound).toBeGreaterThanOrEqual(1);
+    expect(bound + 5).toBeLessThan(timeout);
+  }
+});
+
+// Usefulness: verifies a run whose turn is too short for any wait tells the
+// orchestrator to rely on the gate instead of running a wait that ends the run
+// (issue #348).
+test.each([1, 2, 5, 10, 11])("a %s second turn names no wait", (timeout) => {
+  const prompt = waitPrompt(timeout);
+  expect(prompt).not.toContain("--pr 42 --timeout");
+  expect(prompt).not.toContain("Wait for the required checks at two points");
+  expect(prompt).toMatch(/too short/i);
+  expect(prompt).toMatch(/abort with the pending check/i);
+});
+
+// Usefulness: verifies the ADR 0010 child-exit rule reaches the headless
+// orchestrator, so an unobserved exit is not read as a clean machine (issue #348).
+test("the headless wait states the childExitUnconfirmed rule", () => {
+  const prompt = waitPrompt(3600).replace(/\s+/g, " ");
+  expect(prompt).toMatch(/"childExitUnconfirmed": true[^.]*unaccounted/i);
+  expect(prompt).toMatch(/settle that process before you start another wait/i);
+});
+
+// Usefulness: verifies the prompt names a command that runs in this install, not
+// a bare `agent-loop` that a clone run has no PATH entry for: the rendered Node
+// binary and CLI script exist and the script answers a wait-checks call
+// (issue #348).
+test("the default wait command resolves to the CLI of this run", async () => {
   const prompt = initialPrompt({
     task: "T",
     maxSteps: 10,
     requireCi: 42,
     orchestratorKind: "claude",
     reviewerKind: "claude",
-    timeout,
+    timeout: 3600,
   });
-  expect(prompt).toContain(`agent-loop role wait-checks --pr 42 --timeout ${bound}`);
-  expect(prompt).not.toContain("--watch");
-  expect(prompt).not.toContain("few minutes");
-  if (typeof timeout === "number") {
-    expect(bound + 5).toBeLessThan(timeout);
+  const match = prompt.match(/"([^"]+)" "([^"]+)" role wait-checks --pr 42 --timeout 300/);
+  expect(match).not.toBeNull();
+  const [, node, cli] = match;
+  expect(node).toBe(process.execPath.replaceAll("\\", "/"));
+  expect(prompt).not.toMatch(/agent-loop role wait-checks --pr/);
+  await access(cli);
+  // No --pr: the operation refuses before it reads anything, so nothing is sent.
+  const run = await execa(node, [cli, "role", "wait-checks"], { reject: false });
+  expect(run.exitCode).not.toBe(0);
+  expect(`${run.stdout}${run.stderr}`).toMatch(/wait-checks requires --pr/);
+});
+
+// Usefulness: verifies a path that a double-quoted argument does not carry the
+// same way in every shell gets no wait command, and a path with a space or a
+// Windows separator is rendered quoted with forward slashes (issue #348).
+test("the wait command quotes safe paths and refuses unsafe ones", () => {
+  expect(
+    waitChecksCommand({
+      execPath: "C:\\Program Files\\nodejs\\node.exe",
+      cliPath: "D:\\a b\\cli.mjs",
+    }),
+  ).toBe('"C:/Program Files/nodejs/node.exe" "D:/a b/cli.mjs" role wait-checks');
+  const unsafe = [
+    '/a"b/cli.mjs',
+    "/a$HOME/cli.mjs",
+    "/a`b/cli.mjs",
+    "/100%/cli.mjs",
+    "/a\nb/cli.mjs",
+  ];
+  for (const bad of unsafe) {
+    expect(waitChecksCommand({ execPath: "/opt/node", cliPath: bad }), bad).toBeNull();
   }
+  const prompt = initialPrompt({
+    task: "T",
+    maxSteps: 10,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    timeout: 3600,
+    waitCommand: null,
+  });
+  expect(prompt).not.toContain("--pr 42 --timeout");
+  expect(prompt).toMatch(/cannot wait for the required checks/i);
 });
 
 // Usefulness: verifies the prompt names the timeout outcome: a wait that reached

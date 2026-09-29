@@ -3102,8 +3102,38 @@ test("the orchestrator prompt states a wait bound below the run's turn timeout",
     });
 
     const prompt = orch.recorded[0].prompt;
-    expect(prompt).toContain("agent-loop role wait-checks --pr 42 --timeout 25");
+    expect(prompt).toContain("role wait-checks --pr 42 --timeout 25");
     expect(prompt).not.toContain("--watch");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a run whose turn --timeout is too short for any bounded
+// wait tells the orchestrator not to wait, instead of a wait the turn cannot
+// hold (issue #348).
+test("the orchestrator prompt names no wait when the turn timeout is too short", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orch = scripted([JSON.stringify({ action: "abort", reason: "stop" })]);
+    await runLoop({
+      task: "PR work: address issue 43 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      timeout: 8,
+      requireCi: 42,
+      gh: ciGateGh("0".repeat(40)),
+      roles: {
+        orchestrator: { kind: "claude", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { claude: orch, work: scripted([]), rev: scripted([]) },
+    });
+
+    const prompt = orch.recorded[0].prompt;
+    expect(prompt).not.toContain("role wait-checks --pr");
+    expect(prompt).toMatch(/cannot wait for the required checks/i);
   } finally {
     await removePath(repo);
   }

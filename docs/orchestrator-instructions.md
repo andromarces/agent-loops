@@ -445,13 +445,29 @@ bounded by the per-invocation `--timeout`, which defaults to 3600 seconds and is
 unbounded at 0, and a turn that outlasts that bound ends the run on exit 1
 before it returns an action.
 
-The headless orchestrator runs each wait as `agent-loop role wait-checks --pr
-<pr> --timeout <seconds>` in the run's work tree, the same command the
-interactive parent uses, and never as a `gh pr checks --watch`, which has no
-timeout. The runtime states the `--timeout` in the prompt, below the turn
-`--timeout`: 300 seconds, or half the turn `--timeout` less the five-second
-child-exit ceiling when that is smaller, and at least 1. The command returns
-inside that bound plus the ceiling, so a wait cannot outlast the turn.
+The headless orchestrator runs each wait as `role wait-checks --pr <pr>
+--timeout <seconds>` in the run's work tree, the same operation the interactive
+parent uses, and never as a `gh pr checks --watch`, which has no timeout. The
+prompt renders the whole command, for example `"<node>" "<repo>/src/cli.mjs"
+role wait-checks`, with the Node binary and the CLI script that the run itself
+uses. That form resolves for a global install, an `npm link`, and a clone run
+through `node <repo>/src/cli.mjs` or `pnpm agent-loop`, none of which promise
+`agent-loop` on `PATH`. The orchestrator runs it as written. When a path holds a
+character that the shells quote differently (`"`, `$`, a backtick, `%`, or a line
+break), the runtime renders no command and the prompt names no wait.
+
+The runtime states the `--timeout` in the prompt, below the turn `--timeout`:
+300 seconds, or half the turn `--timeout` less the five-second child-exit
+ceiling when that is smaller. The command returns inside that bound plus the
+ceiling, so a wait cannot outlast the turn. A turn `--timeout` under 12 seconds
+fits no positive bound, so the prompt names no wait: the orchestrator does not
+run `gh pr checks` or `role wait-checks`, and the `--require-ci` gate is the only
+check read. A finish refused for a pending check is corrected by a reviewer
+dispatch, or by an `abort` with the pending check named.
+
+`childExitUnconfirmed: true` in the envelope means the five-second window expired
+with the `gh` child still unaccounted for. The orchestrator settles that process
+before it starts another wait, and does not wait again when it cannot.
 
 A wait that ends on the bound reports `"timedOut": true`. The orchestrator
 treats it as a completed read that left the check pending: it is not a pass and
