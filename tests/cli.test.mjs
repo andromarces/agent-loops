@@ -1247,14 +1247,15 @@ test("--continue-from keeps a large earlier event whole", async () => {
   });
 });
 
-const EARLIER_EVENTS = 50;
+// Well above the default V8 argument limit (about 125,000 on Node 22 and 26), so an
+// argument spread over the earlier events anywhere on this path throws RangeError.
+const EARLIER_EVENTS = 500_000;
 
-// Usefulness: verifies a same-path continuation reads a written transcript and
-// rewrites it with every earlier event in order, then the boundary event. The
-// many-event limit is covered in memory by carryEarlierEvents in
-// tests/lib/continuation.test.mjs. The earlier transcript is written directly,
-// so one run of the real read-and-write path is all the test pays for.
-test("--continue-from rewrites a written transcript with every earlier event", async () => {
+// Usefulness: verifies a same-path continuation reads a written transcript with
+// more events than an argument spread can pass, and rewrites it with every earlier
+// event in order, then the boundary event. The earlier transcript is written
+// directly, so one run of the real read-and-write path is all the test pays for.
+test("--continue-from rewrites a large written transcript with every earlier event", async () => {
   await withContinueRepo(async (repo, transcriptPath) => {
     const role = (kind) => ({ kind, model: null, effort: null, sessionId: "s" });
     const events = Array.from({ length: EARLIER_EVENTS }, (_, index) => ({
