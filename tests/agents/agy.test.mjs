@@ -144,8 +144,9 @@ test("agy rethrows a failure with no parseable stdout", async () => {
   expect(state.sessionId).toBe("conv-1");
 });
 
-// Usefulness: verifies agy's behavior for a missing conversation: exit 0 with a warning and a new
-// conversation. The adapter adopts the new id (issue #360).
+// Usefulness: verifies that a resumed turn whose stderr reports a missing conversation, with exit 0
+// and a new conversation id in the result, stores the new id (issue #360). The adapter has no
+// mismatch check; the warning log is not asserted here.
 test("agy adopts the new conversation when the resumed one is missing", async () => {
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: JSON.stringify({ conversation_id: "conv-new", response: "ok" }),

@@ -32,8 +32,11 @@ step budget runs out.
    turn. A failed turn never changes
    the id of a resumed session. Every adapter except agy keeps the resumed id or raises
    `resumeMismatchError` on a different one, and the Claude adapter now does so like
-   Codex, Copilot, and opencode. agy adopts the new id it reports when its conversation
-   is missing and logs a warning, and that turn runs without the role preamble. The Copilot adapter keeps the id that the result event of a failed first turn
+   Codex, Copilot, and opencode. agy adopts the `conversation_id` that its successful
+   result carries, even when it differs from the resumed id, and logs a warning only when
+   it resumed an id and stderr matches `conversation "<name>" not found`. A resumed agy
+   turn is sent without the role preamble, so a new conversation that agy started has not
+   received it. The Copilot adapter keeps the id that the result event of a failed first turn
    reports. It does not keep the pre-assigned id: a failed turn that reports no id does not show
    that the CLI created a session under it, and a kept id would send the next worker turn
    to a session that may not exist, without the preamble. On Copilot CLI 1.0.90-4, a first
@@ -65,11 +68,14 @@ step budget runs out.
 
 - A failed first turn resumes its own session, edits included, and reuses its prompt cache.
 - opencode and agy give no failure for a missing session. opencode accepts the id and
-  creates that session. agy warns on stderr and starts a new conversation with a new
-  id. Neither can trigger the fallback. The agy adapter adopts the new id and logs a
-  warning, and the turn runs without the role preamble.
-- Claude and agy print no session id on a timeout or a cancel, so a first turn that
-  ends that way keeps a null id.
+  creates that session. In the probe, agy warned on stderr, exited 0, and started a
+  new conversation with a new id. Neither can trigger the fallback. The agy adapter has
+  no mismatch check: it stores the valid id the result carries and logs a warning only
+  when stderr matches `conversation "<name>" not found`. A resumed turn carries no
+  preamble, so a new conversation lacks it. A new id without that stderr text is adopted
+  without a warning and was not seen in the probe.
+- In the probe, Claude and agy printed no session id when killed at 20 to 25 s, so a
+  first turn that ends that way keeps a null id.
 - A worker resumed after a failed first turn receives no second preamble. The failed turn
   carried it, and the CLI saved it with the session.
 

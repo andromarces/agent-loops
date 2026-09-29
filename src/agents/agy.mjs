@@ -3,8 +3,9 @@ import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 import { asSessionId, keepFailedSessionId, setMainLoopUsage } from "./shared.mjs";
 
-// agy warns on stderr, exit 0, and starts a new conversation when `--conversation` names one it
-// does not have. The run succeeds, so no error reaches the runtime.
+// In the probe (agy 1.2.13), agy warned on stderr with this text, exited 0, and started a new
+// conversation when `--conversation` named one it does not have. The run succeeds, so no error
+// reaches the runtime. The pattern matches any quoted conversation name, not only the requested id.
 const MISSING_SESSION = /conversation "[^"]*" not found/i;
 
 export async function runAgy(state, prompt, options = {}) {
@@ -34,7 +35,8 @@ export async function runAgy(state, prompt, options = {}) {
   try {
     ({ stdout, stderr } = await exec("agy", args, { cwd, input: prompt, timeout, signal, role }));
   } catch (err) {
-    // A failed turn can print a result object with an empty `conversation_id`. Keep a non-empty one.
+    // A failed turn can print a result object with an empty `conversation_id`. Keep a non-empty one on a
+    // first turn; keepFailedSessionId never replaces an id already on the state.
     try {
       keepFailedSessionId(state, JSON.parse(err?.stdout ?? "")?.conversation_id);
     } catch {
@@ -49,9 +51,10 @@ export async function runAgy(state, prompt, options = {}) {
     throw new Error("Antigravity did not return a conversation_id.");
   }
 
-  // known-limit: the new conversation has no role preamble, and the turn already ran, so a rerun
-  // would repeat its edits. Warn and adopt the new id; a rerun as a first turn needs a decision on
-  // duplicate work.
+  // known-limit: there is no mismatch check, so any valid id the result carries replaces the
+  // resumed one. A resumed turn carries no preamble, so a new conversation lacks it, and the turn
+  // already ran, so a rerun would repeat its edits. The warning is logged only when stderr matches
+  // MISSING_SESSION; a different id without that text is adopted silently.
   if (requestedSessionId && MISSING_SESSION.test(stderr ?? "")) {
     logWarn(
       `agy did not find conversation ${requestedSessionId}; the turn ran in new conversation ${conversationId} without the role preamble`,
