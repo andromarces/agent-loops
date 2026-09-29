@@ -1,10 +1,7 @@
-import { access, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { expect, test } from "vitest";
 import { checkCi, readRequiredChecks, runGh } from "../../src/lib/ci-gate.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { expectAbortKillsShim, expectBoundKillsShim } from "../runtime-helpers.mjs";
 
 const HEAD = "1111111111111111111111111111111111111111";
 const MERGE = "2222222222222222222222222222222222222222";
@@ -1971,74 +1968,27 @@ test("a status read through the A-to-B-to-A window is still marked advisory", as
   expect(read.advisory).toBe(true);
 });
 
-// A real `gh` on PATH that hangs, so the bound is exercised against a real child
-// process. The shim writes a marker file after a delay that outlasts the bound:
-// a marker means the child outlived the bound, and no marker means the bound
-// terminated it. The shim is a `.cmd` on Windows and an executable shell script
-// on macOS, which is what `gh` resolves to on each platform.
-async function hangingGh(dir, marker, afterMs) {
-  const path = marker.split("\\").join("/");
-  if (process.platform === "win32") {
-    await writeFile(
-      join(dir, "gh.cmd"),
-      `@echo off\r\nnode -e "setTimeout(function(){require('fs').writeFileSync('${path}','x')},${afterMs})"\r\n`,
-    );
-    return;
-  }
-  await writeFile(join(dir, "gh"), `#!/bin/sh\nsleep ${afterMs / 1000}\ntouch '${marker}'\n`, {
-    mode: 0o755,
-  });
-}
-
-// The shim outlasts the bound by 4.7 s. A loaded Windows runner spent 2.3 s past
-// the bound starting and killing the shim (issue #373), so the margin stays wide
-// of that: a runner that waits for the child lands at `HANG_MS` or later and
-// fails the elapsed assertion, while start and kill overhead cannot reach it.
-const HANG_MS = 5000;
-
-// Runs `runGh` against the hanging shim and checks the child died with the
-// call: the call returns before the child could finish, and the child never
-// writes its marker. The marker wait runs to the child's own deadline, so load
-// cannot shorten it.
-async function expectHungGhTerminated(dirPrefix, run) {
-  const dir = await mkdtemp(join(tmpdir(), dirPrefix));
-  const marker = join(dir, "alive.txt");
-  await hangingGh(dir, marker, HANG_MS);
-  const path = process.env.PATH;
-
-  try {
-    process.env.PATH = `${dir}${delimiter}${path}`;
-    const started = Date.now();
-    const result = await run(dir);
-    expect(Date.now() - started).toBeLessThan(HANG_MS);
-    // The child was terminated, not abandoned: it never reaches its marker.
-    await delay(Math.max(0, started + HANG_MS + 500 - Date.now()));
-    await expect(access(marker)).rejects.toThrow();
-    return result;
-  } finally {
-    process.env.PATH = path;
-    await removePath(dir);
-  }
-}
-
 // Usefulness: verifies the `gh` runner terminates the child when its bound
 // expires, on Windows and on macOS. A real process is the only way to check that
 // the kill reaches the child, because an injected runner never spawns one
-// (issue #329).
+// (issue #329). The verdict rests on the child's recorded pid, so a shim that
+// starts late under load cannot slip past a fixed wait (issue #373). The timeout
+// covers the three bounds the helper may try in turn.
 test("runGh terminates the gh child when its bound expires", async () => {
-  const result = await expectHungGhTerminated("gh-timeout-", (dir) =>
-    runGh(["pr", "checks", "42", "--required"], dir, { timeoutMs: 300 }),
+  const result = await expectBoundKillsShim("gh", (timeoutMs) =>
+    runGh(["pr", "checks", "42", "--required"], tmpdir(), { timeoutMs }),
   );
   expect(result.timedOut).toBe(true);
-}, 15000);
+}, 30_000);
 
 // Usefulness: verifies the `gh` runner terminates the child when the abort
 // signal fires, which is how the read cancels a call it no longer waits for.
-// The bound is off, so only the signal can stop the child (issue #320 review).
+// The bound is off and the abort follows the shim's start, so only the signal
+// can stop the child (issue #320 review).
 test("runGh terminates the gh child when its abort signal fires", async () => {
-  const result = await expectHungGhTerminated("gh-abort-", (dir) =>
-    runGh(["pr", "checks", "42", "--required"], dir, { signal: AbortSignal.timeout(300) }),
+  const result = await expectAbortKillsShim("gh", (signal) =>
+    runGh(["pr", "checks", "42", "--required"], tmpdir(), { signal }),
   );
   expect(result.status).not.toBe(0);
   expect(result.timedOut).toBe(false);
-}, 15000);
+}, 30_000);
