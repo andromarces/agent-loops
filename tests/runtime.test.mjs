@@ -2161,18 +2161,27 @@ test("a declared PR with a matching gate runs the gate and nothing else", async 
   }
 });
 
-// The `gh` state of a base branch with no required check, as the gate reads it:
-// the ruleset endpoint reads and names none, classic protection answers the 404
-// only a caller able to read it receives on an unprotected branch, and the
-// required-names read carries no list. Both configuration sources are known, so
-// the gate establishes the absence (issue #336).
+// The `gh` state of a ruleset-only base branch with no required check, as the gate
+// reads it: the ruleset read returns a non-empty array of well-formed rules with no
+// required-status-check rule, classic protection answers the exact 404 only a
+// caller able to read it receives on an unprotected branch, and the required-names
+// read carries no list. Both configuration sources stated the outcome, so the gate
+// establishes the absence (issue #336).
 function noRequiredCheckGh(headRefOid, calls = []) {
   const read = ciGateGh(headRefOid, calls);
   return async (args) => {
     const key = args.join(" ");
     if (key.includes("rules/branches/main")) {
       calls.push(key);
-      return { status: 0, stdout: "[]", stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify([
+          { type: "deletion" },
+          { type: "non_fast_forward" },
+          { type: "pull_request", parameters: { required_approving_review_count: 0 } },
+        ]),
+        stderr: "",
+      };
     }
     if (key === "pr checks 42 --required --json name") {
       calls.push(key);

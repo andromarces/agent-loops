@@ -104,18 +104,24 @@ function fail(reason) {
 const UNREADABLE =
   /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)/;
 
-// The 404 the classic protection endpoint writes only to a caller that can read
-// it, on a branch with no classic protection. It is matched before `UNREADABLE`
-// and names the absence, so it is the one unreadable reply that proves the source
-// holds no required check (issue #336). A non-admin answers the same endpoint with
-// `Not Found`, which proves nothing: that caller cannot tell an unprotected
-// branch from a protected one it may not read.
-const NOT_PROTECTED = /Branch not protected \(HTTP 404\)/;
+// The exact 404 the classic protection endpoint writes only to a caller that can
+// read it, on a branch with no classic protection. It is the one unreadable reply
+// that proves the source holds no required check (issue #336). It is compared
+// whole, like the Free-plan 403 below, because an unanchored search also matches
+// the same text inside another error: a reply that merely quotes it, or carries
+// it beside a second line, says nothing about the branch and must not read as an
+// absence (issue #336 review).
+const NOT_PROTECTED_404 = "gh: Branch not protected (HTTP 404)";
 
 // The exact reply a private Free-plan repository writes, compared whole so no
 // surrounding text or second line can pass as it.
 const FREE_PLAN_403 =
   "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
+
+/** Whether `stderr` is the exact `Branch not protected` 404, one trailing break aside. */
+function isNotProtected404(stderr) {
+  return stderr.replace(/\r?\n$/, "") === NOT_PROTECTED_404;
+}
 
 /** Whether `stderr` is the exact Free-plan 403, ignoring one trailing LF or CRLF. */
 function isFreePlan403(stderr) {
@@ -162,10 +168,10 @@ async function ghApi(gh, args, cwd) {
  * A non-zero reply that is not an unreadable shape still throws, which fails the
  * run rather than reaching the gate (issue #280).
  * @param {object} options
- * @param {RegExp} options.absentOnError the one non-zero reply that proves this
- *   source holds no required check. `NOT_PROTECTED` for classic protection, and a
- *   pattern that never matches for repository rulesets, whose endpoint does not
- *   write it.
+ * @param {(stderr: string) => boolean} options.absentOnError the one non-zero
+ *   reply that proves this source holds no required check, compared whole.
+ *   `isNotProtected404` for classic protection, and a predicate that never matches
+ *   for repository rulesets, whose endpoint does not write it.
  * @param {(data: unknown) => ({ state: string, contexts: object[] })} options.classify
  *   the classification of a successful reply body.
  * @returns {Promise<{ state: string, contexts: { name: string, appId: number | null }[] }>}
@@ -173,7 +179,7 @@ async function ghApi(gh, args, cwd) {
 async function readRequiredSource(gh, args, cwd, { absentOnError, classify }) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    if (absentOnError.test(stderr)) {
+    if (absentOnError(stderr)) {
       return { state: ABSENT, contexts: [] };
     }
     if (UNREADABLE.test(stderr) || isFreePlan403(stderr)) {
@@ -201,11 +207,6 @@ async function readRequiredSource(gh, args, cwd, { absentOnError, classify }) {
 const ABSENT = "absent";
 const HAS_CONTEXTS = "contexts";
 const UNKNOWN = "unknown";
-
-// A non-zero reply that never proves an absence, so the repository rulesets read
-// cannot reach `ABSENT` on an error. The endpoint does not write
-// `Branch not protected`, so it has no error reply that states an outcome.
-const NEVER_ABSENT = /$^/;
 
 // The names used in the refusal when a source settles nothing, so a parent can
 // tell which source it must fix.
@@ -242,6 +243,13 @@ const MERGE_STATES = new Set([
  */
 function classifyRulesets(data) {
   if (!Array.isArray(data)) {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  if (data.length === 0) {
+    // An empty array does not state that no required check exists. It is the same
+    // reply for a branch no ruleset applies to and for a caller or endpoint that
+    // enumerates no rule for this branch, and the reply carries nothing that tells
+    // those apart, so it settles nothing (issue #336 review).
     return { state: UNKNOWN, contexts: [] };
   }
   const contexts = [];
@@ -396,7 +404,7 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   const unknown = [];
 
   const rules = await readRequiredSource(gh, [`repos/${slug}/rules/branches/${base}`], cwd, {
-    absentOnError: NEVER_ABSENT,
+    absentOnError: () => false,
     classify: classifyRulesets,
   });
   if (rules.state === UNKNOWN) {
@@ -410,7 +418,7 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
     gh,
     [`repos/${slug}/branches/${base}/protection`],
     cwd,
-    { absentOnError: NOT_PROTECTED, classify: classifyProtection },
+    { absentOnError: isNotProtected404, classify: classifyProtection },
   );
   if (protection.state === UNKNOWN) {
     unknown.push(PROTECTION);

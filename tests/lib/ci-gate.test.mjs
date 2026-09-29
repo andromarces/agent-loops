@@ -122,6 +122,10 @@ const REVIEWED = { head: HEAD, clean: true, exact: true, digest: "d" };
 const FREE_PLAN =
   "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
 
+// The one trailing line break `gh` may add to a reply, and the shapes it may add
+// that are not the whole reply.
+const ENDINGS = { "no line ending": "", LF: "\n", CRLF: "\r\n" };
+
 // Usefulness: verifies the gate passes when every required check run passed on
 // the head commit and the PR matches the reviewed state (issue #218).
 test("passes when every required check passed on the head commit", async () => {
@@ -273,16 +277,19 @@ test("refuses an unknown merge state", async () => {
   expect(result.reason).toContain("merge state as unknown");
 });
 
-// Usefulness: verifies the gate passes on a base branch that has no required
-// check, once every source that could hold one has established that absence, and
-// records the absence in the result so a finish on such a branch stays distinct
-// from a gated pass on a branch that required a check (issue #336).
+// Usefulness: verifies the gate passes on a base branch whose two configuration
+// sources stated it holds no required check, and records the absence so a finish
+// on such a branch stays distinct from a gated pass on a branch that required a
+// check (issue #336). The ruleset reply is a non-empty array of well-formed rules
+// with no required-status-check rule, which is the shape that states the outcome.
 test("passes and records the absence when no required check exists", async () => {
   const result = await checkCi({
     pr: 42,
     reviewed: REVIEWED,
     cwd: ".",
-    gh: fakeGh(routes({ required: [], headRuns: [run("reported-pass", "success")] })),
+    gh: fakeGh(
+      routes({ required: [{ type: "deletion" }], headRuns: [run("reported-pass", "success")] }),
+    ),
   });
   expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
 });
@@ -298,7 +305,7 @@ test("refuses a blocked merge state when no required check exists", async () => 
     gh: fakeGh(
       routes({
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
-        required: [],
+        required: [{ type: "deletion" }],
         headRuns: [run("ci (ubuntu-latest)", "failure")],
       }),
     ),
@@ -380,6 +387,120 @@ test("refuses the empty union and names the source when repository rulesets cann
   expect(result.ok).toBe(false);
   expect(result.reason).toContain("no required checks were found");
   expect(result.reason).toContain("repository rulesets");
+});
+
+// The replies the code accepted as a positive absence that do not prove one, so
+// each is reclassified to unknown. Each entry records why the reply settles
+// nothing about the branch (issue #336 review).
+const AMBIGUOUS_ABSENCE_SHAPES = {
+  "an empty ruleset array": {
+    required: [],
+    why: "it is the same reply for a branch no ruleset applies to and for a caller or endpoint that enumerates no rule for this branch",
+  },
+  "a `Branch not protected` message inside another error": {
+    protection: "stderr: gh: failed to fetch: gh: Branch not protected (HTTP 404)",
+    why: "the same text quoted inside a larger error says nothing about the branch",
+  },
+  "a `Branch not protected` message beside a second line": {
+    protection: "stderr: gh: Branch not protected (HTTP 404)\ngh: failed to fetch: no such host",
+    why: "a second error beside it means the reply is not the endpoint's own",
+  },
+  "a `Branch not protected` message with text after the status": {
+    protection: "stderr: gh: Branch not protected (HTTP 404): retry later",
+    why: "trailing text is not the reply the endpoint writes",
+  },
+};
+
+for (const [shape, { required, protection, why }] of Object.entries(AMBIGUOUS_ABSENCE_SHAPES)) {
+  // Usefulness: verifies ${shape} is unknown rather than an absence, so a reply
+  // that ${why} cannot pass a finish, and the refusal names the source
+  // (issue #336 review).
+  test(`refuses the empty union and names the source on ${shape}`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required: required ?? [{ type: "deletion" }],
+          protection: protection ?? null,
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+        }),
+      ),
+    });
+    expect(result.ok, `${shape} must not reach the absence path`).toBe(false);
+    expect(result.reason, why).toContain("no required checks were found");
+    expect(result.reason, why).toMatch(
+      required === undefined ? /classic branch protection/ : /repository rulesets/,
+    );
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+}
+
+// Usefulness: verifies the exact `Branch not protected` 404 still proves the
+// absence, one trailing line break aside, so anchoring the match to the whole
+// reply did not cost the one reply that states the outcome (issue #336 review).
+for (const [ending, suffix] of Object.entries(ENDINGS)) {
+  // Usefulness: verifies the exact 404 with ${ending} is still an absence, the one
+  // trailing break `gh` may add included (issue #336 review).
+  test(`reads the exact Branch not protected 404 with ${ending} as an absence`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required: [{ type: "deletion" }],
+          protection: `stderr: gh: Branch not protected (HTTP 404)${suffix}`,
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+        }),
+      ),
+    });
+    expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
+  });
+}
+
+// Usefulness: verifies an empty `gh pr checks --required` output never establishes
+// the absence on its own: it lists only the checks that already reported, so its
+// silence is the same silence as a read failure, and a source that settles nothing
+// still refuses (issue #336 review).
+test("an empty gh pr checks reply does not establish the absence on its own", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: [{ type: "deletion" }],
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  // The two configuration sources stated the outcome, so this passes, and the
+  // absence rests on them rather than on the empty required-names read.
+  expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
+
+  // The same empty required-names read beside a source that settles nothing
+  // refuses, which is what shows the emptiness establishes nothing.
+  const refused = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: [],
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(refused.ok).toBe(false);
+  expect(refused.reason).toContain("repository rulesets");
 });
 
 // The malformed successful replies that must keep the empty-union refusal. The
@@ -877,8 +998,6 @@ test("refuses and names both sources when the required-context sources answer th
   expect(result.reason).toContain("repository rulesets");
   expect(result.reason).toContain("classic branch protection");
 });
-
-const ENDINGS = { "no line ending": "", LF: "\n", CRLF: "\r\n" };
 
 for (const [ending, suffix] of Object.entries(ENDINGS)) {
   // Usefulness: verifies the exact Free-plan 403 is read as a source that settles
