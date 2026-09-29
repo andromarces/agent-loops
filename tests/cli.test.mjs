@@ -279,10 +279,12 @@ test("a review-only run refuses the PR flags before any child turn", async () =>
 test("the other modes and a mode-free run still take the PR flags", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  // One repo serves every run: creating a repo spawns six `git` processes, which
+  // is most of the cost of a run on Windows, and no run here changes the repo.
+  const repo = await createTempRepo();
 
   try {
     for (const flags of [["--mode", "work-first"], ["--mode", "review-first"], []]) {
-      const repo = await createTempRepo();
       let orchestratorCalls = 0;
       const agents = {
         codex: {
@@ -316,12 +318,12 @@ test("the other modes and a mode-free run still take the PR flags", async () => 
         expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("review-only"));
       } finally {
         process.exitCode = origExitCode;
-        await removePath(repo);
       }
     }
   } finally {
     process.exitCode = origExitCode;
     errorSpy.mockRestore();
+    await removePath(repo);
   }
 });
 
@@ -332,10 +334,11 @@ test("the other modes and a mode-free run still take the PR flags", async () => 
 test("--mode takes the interactive mode values", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  // One repo serves every run: see the PR flags test above.
+  const repo = await createTempRepo();
 
   try {
     for (const mode of ["work-first", "review-first", "review-only"]) {
-      const repo = await createTempRepo();
       let orchestratorCalls = 0;
       const agents = {
         codex: {
@@ -360,26 +363,20 @@ test("--mode takes the interactive mode values", async () => {
         expect(orchestratorCalls).toBe(1);
       } finally {
         process.exitCode = origExitCode;
-        await removePath(repo);
       }
     }
 
-    const repo = await createTempRepo();
-    try {
-      await main([...BASE, "--mode", "nope", "--cwd", repo]);
-      expect(process.exitCode).toBe(1);
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "--mode must be one of work-first, review-first, review-only, got: nope",
-        ),
-      );
-    } finally {
-      process.exitCode = origExitCode;
-      await removePath(repo);
-    }
+    await main([...BASE, "--mode", "nope", "--cwd", repo]);
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "--mode must be one of work-first, review-first, review-only, got: nope",
+      ),
+    );
   } finally {
     process.exitCode = origExitCode;
     errorSpy.mockRestore();
+    await removePath(repo);
   }
 });
 
