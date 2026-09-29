@@ -622,9 +622,11 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
 - A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
   resolves that compare. The recorded marker is the accepted gap above, and a
   declared run does not have it. One refusal names every condition the finish
-  broke, so read all of it rather than the first reason. A matching gate applies
-  its own conditions on top of the declaration, and a gate for another PR is never
-  read.
+  broke above the `--require-ci` gate, so read all of it rather than the first
+  reason. The interactive `finish` reads the gate only after those conditions
+  pass, so a later `finish` can report a `--require-ci` condition that the first
+  refusal did not name. A matching gate applies its own conditions on top of the
+  declaration, and a gate for another PR is never read.
 - The gate flag is a run input, so no `dispatch` supplies it and a repeat
   `finish` is refused the same way. A declared run with no gate can only end
   through `abort` with the missing gate named in the reason.
@@ -653,15 +655,17 @@ A marked `role finish` still exits `0`, unlike the headless finish that exits
 subcommand: `abort` exits `0` too, and the parent guard reads the state
 lifecycle, not the code. Read the marker in the envelope or the state file.
 
-Two opt-in gates apply to `work-first` and `review-first` only. One refusal
-names every condition the finish breaks. The headless loop collects them in this
-order: the marker condition, then the `review-only` reviewer-turn condition, then
+Two opt-in gates apply to `work-first` and `review-first` only. In the headless
+loop, one refusal names every condition the finish breaks. The interactive `role
+finish` names every condition above the `--require-ci` gate, and a later `finish`
+can report a `--require-ci` condition that the first refusal did not name. The
+headless loop collects them in this order: the marker condition, then the `review-only` reviewer-turn condition, then
 `--require-accept`, then the declared-PR gate condition, then `--require-ci`. The
 `role finish` command applies the same rule and the same order except the
 `review-only` condition, which it cannot reach, because its init dispatch is
 itself a reviewer turn. The headless loop grants one corrective turn, so a refusal
 that named a single condition would spend it on the condition the next refusal
-names instead, so a parent learns every condition from one call. A headless run
+names instead, so a headless parent learns every condition from one call. A headless run
 ends when two refusals land with no child turn between them. The marker is
 satisfied on a re-finish, with no child turn; the `review-only` condition and
 `--require-accept` take the same corrective turn, which costs a step, and the
