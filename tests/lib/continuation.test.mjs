@@ -23,7 +23,7 @@ function transcript(overrides = {}) {
 function roles(overrides = {}) {
   return {
     orchestrator: { kind: "codex", model: null, effort: null, sessionId: null },
-    worker: { kind: "claude", model: "opus", effort: null, sessionId: null },
+    worker: { kind: "claude", model: "opus", effort: "high", sessionId: null },
     reviewer: { kind: "agy", model: null, effort: null, sessionId: null },
     ...overrides,
   };
@@ -74,7 +74,7 @@ test("restoreSessions rejects a changed model", () => {
     'worker model was "opus" in the earlier run, not "sonnet"',
   );
   const unset = roles({ worker: { kind: "claude", model: null, sessionId: null } });
-  expect(() => restoreSessions(unset, transcript(), CWD)).toThrow("not (default)");
+  expect(() => restoreSessions(unset, transcript(), CWD)).toThrow("not (omitted)");
 });
 
 // Usefulness: a provider keeps a session per project directory, so another
@@ -111,58 +111,54 @@ test("readContinuation returns the transcript", async () => {
   expect(await readJson(value)).toEqual(value);
 });
 
-const OPENCODE_CWD = CWD;
+// One rule for every adapter: model and effort compare exactly, and an omitted
+// value matches only an omitted value.
+const ADAPTERS = ["claude", "codex", "agy", "opencode", "copilot"];
 
-function opencodeTranscript(worker) {
+function pair(kind, before, now) {
   const earlier = transcript();
-  earlier.roles.worker = { kind: "opencode", sessionId: "w-1", ...worker };
-  return earlier;
+  earlier.roles.worker = { kind, sessionId: "w-1", ...before };
+  return [roles({ worker: { kind, sessionId: null, ...now } }), earlier];
 }
 
-function opencodeRoles(worker) {
-  return roles({ worker: { kind: "opencode", sessionId: null, ...worker } });
+for (const kind of ADAPTERS) {
+  // Usefulness: a changed effort refuses on every adapter, so the rule does not
+  // depend on how an adapter passes effort (OpenCode joins it to the model).
+  test(`restoreSessions rejects a changed effort for ${kind}`, () => {
+    const [next, earlier] = pair(
+      kind,
+      { model: "m", effort: "high" },
+      { model: "m", effort: "low" },
+    );
+    expect(() => restoreSessions(next, earlier, CWD)).toThrow(
+      'worker effort was "high" in the earlier run, not "low"',
+    );
+    const [omitted, earlierSet] = pair(kind, { model: "m", effort: "high" }, { model: "m" });
+    expect(() => restoreSessions(omitted, earlierSet, CWD)).toThrow("not (omitted)");
+  });
+
+  // Usefulness: an omitted model matches only an omitted model on every adapter.
+  test(`restoreSessions treats an omitted model alike for ${kind}`, () => {
+    const [same, earlierSame] = pair(kind, { model: null, effort: null }, { model: null });
+    restoreSessions(same, earlierSame, CWD);
+    expect(same.worker.sessionId).toBe("w-1");
+    const [added, earlierNone] = pair(kind, { model: null }, { model: "m" });
+    expect(() => restoreSessions(added, earlierNone, CWD)).toThrow(
+      'worker model was (omitted) in the earlier run, not "m"',
+    );
+    const [dropped, earlierSet] = pair(kind, { model: "m" }, { model: null });
+    expect(() => restoreSessions(dropped, earlierSet, CWD)).toThrow("not (omitted)");
+  });
 }
-
-// Usefulness: an OpenCode effort is passed as <model>#<effort>, so the same model
-// with another effort is another effective model and the session cannot resume.
-test("restoreSessions rejects a changed OpenCode effort on the same model", () => {
-  const earlier = opencodeTranscript({ model: "p/m", effort: "high" });
-  expect(() =>
-    restoreSessions(opencodeRoles({ model: "p/m", effort: null }), earlier, OPENCODE_CWD),
-  ).toThrow('worker model was "p/m#high" in the earlier run, not "p/m"');
-  expect(() =>
-    restoreSessions(opencodeRoles({ model: "p/m", effort: "low" }), earlier, OPENCODE_CWD),
-  ).toThrow('"p/m#high" in the earlier run, not "p/m#low"');
-});
-
-// Usefulness: an OpenCode role with no model runs OpenCode's own default, which the
-// transcript does not record and which varies by machine, so the check refuses it
-// rather than assume it matches. An explicit model resumes.
-test("restoreSessions refuses an OpenCode role whose effective model is a default", () => {
-  const earlier = opencodeTranscript({ model: null, effort: null });
-  expect(() =>
-    restoreSessions(opencodeRoles({ model: null, effort: null }), earlier, OPENCODE_CWD),
-  ).toThrow("worker uses opencode with no --worker-model");
-  const explicit = opencodeTranscript({ model: "p/m", effort: "high" });
-  const next = opencodeRoles({ model: "p/m", effort: "high" });
-  restoreSessions(next, explicit, OPENCODE_CWD);
-  expect(next.worker.sessionId).toBe("w-1");
-});
 
 // Usefulness: the orchestrator is checked like every other role.
-test("restoreSessions checks the orchestrator's OpenCode effective model", () => {
+test("restoreSessions checks the orchestrator model and effort", () => {
   const earlier = transcript();
   earlier.roles.orchestrator = { kind: "opencode", model: "p/m", effort: "high", sessionId: "o-1" };
   const next = roles({ orchestrator: { kind: "opencode", model: "p/m", effort: null } });
-  expect(() => restoreSessions(next, earlier, OPENCODE_CWD)).toThrow(
-    'orchestrator model was "p/m#high" in the earlier run, not "p/m"',
+  expect(() => restoreSessions(next, earlier, CWD)).toThrow(
+    'orchestrator effort was "high" in the earlier run, not (omitted)',
   );
-});
-
-// Usefulness: effort is a separate flag for the other adapters, so it stays uncompared there.
-test("restoreSessions ignores effort for a non-OpenCode role", () => {
-  const next = roles({ worker: { kind: "claude", model: "opus", effort: "low", sessionId: null } });
-  expect(() => restoreSessions(next, transcript(), CWD)).not.toThrow();
 });
 
 // Usefulness: a transcript whose events are not a list is rejected, because the

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -1114,7 +1114,7 @@ test("--continue-from refuses a changed role and keeps the transcript", async ()
       ],
       [
         [...CONTINUE_ROLES, "--worker-model", "opus"],
-        'worker model was (default) in the earlier run, not "opus"',
+        'worker model was (omitted) in the earlier run, not "opus"',
       ],
     ];
     for (const [roleArgs, message] of changed) {
@@ -1210,5 +1210,39 @@ test("--continue-from with another --transcript path records only the new events
     );
     const after = JSON.parse(await readFile(next, "utf8"));
     expect(after.events.some((event) => event.type === "continued")).toBe(false);
+  });
+});
+
+// Usefulness: verifies a large earlier event is read and kept whole by a same-path
+// continuation: no size limit, truncation, or split (#362 review).
+test("--continue-from keeps a large earlier event whole", async () => {
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      sessionAgents([work, work], { codex: [], claude: [], agy: [] }),
+    );
+    const earlier = JSON.parse(await readFile(transcriptPath, "utf8"));
+    const big = `${"x".repeat(8 * 1024 * 1024)}\n${"é😀".repeat(1000)}end`;
+    earlier.events.push({ type: "result", role: "worker", result: { response: big }, at: "t" });
+    await writeFile(transcriptPath, JSON.stringify(earlier, null, 2), "utf8");
+
+    await main(
+      [
+        ...CONTINUE_BASE,
+        "--cwd",
+        repo,
+        "--continue-from",
+        transcriptPath,
+        "--transcript",
+        transcriptPath,
+      ],
+      sessionAgents([FINISH], { codex: [], claude: [], agy: [] }),
+    );
+
+    const after = JSON.parse(await readFile(transcriptPath, "utf8"));
+    const kept = after.events[earlier.events.length - 1];
+    expect(kept.result.response.length).toBe(big.length);
+    expect(kept.result.response === big).toBe(true);
   });
 });

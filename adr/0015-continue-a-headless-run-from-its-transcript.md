@@ -22,13 +22,16 @@ memory in `runLoop`.
 
 1. `--continue-from <transcript>` reads the session ids from the `roles` of an
    earlier transcript and gives the run a new `--max-steps` budget.
-2. The run is refused before any turn when a role kind, a role model, or `--cwd`
-   differs from the earlier run. The model is the effective model the adapter
-   passes: for OpenCode `<model>#<effort>`, and a role with no model is refused
-   because the default is not recorded; for the other CLIs the model alone, with
-   effort uncompared. A refusal writes no transcript. When `--transcript` names
-   the same file, the rewrite keeps the earlier events and adds a `continued`
-   event with the earlier outcome.
+2. The run is refused before any turn when a role kind, a role's recorded model,
+   a role's recorded effort, or `--cwd` differs from the earlier run. One rule
+   covers every CLI: model and effort compare exactly, so an omitted value
+   matches only an omitted value. A change of a CLI's own default model between
+   the two runs is not detected, because the transcript records what the caller
+   requested. A refusal writes no transcript.
+   The transcript write is atomic (a temporary file in the same directory, then a
+   rename), so a failed write keeps the earlier file. When `--transcript` names
+   the same file, the rewrite keeps the earlier events, read whole with no size
+   limit, and adds a `continued` event with the earlier outcome.
 3. The gate state is reset, not restored. `runLoop` takes `continued`, which
    starts `workerRan` true. The other gate inputs already start empty, so a
    finish needs reviewer evidence from the continued run. The orchestrator
@@ -56,6 +59,9 @@ memory in `runLoop`.
    already holds the ids, and a second file adds a second source of truth.
 3. **Restore only when the tree digest matches**: rejected for the same reason as
    1, at the cost of a second snapshot read.
+4. **Compare an effective model per adapter**: rejected. It needs adapter
+   knowledge in the check, cannot name a CLI default, and treated an omitted model
+   differently across CLIs. The exact-value rule is the same for all.
 
 ## Authors
 

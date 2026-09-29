@@ -487,7 +487,7 @@ async function removeTemp(path) {
 // destination on Windows and POSIX. A failed write or rename leaves the temp
 // behind, and it sits in the state directory beside the lock temp, so the guard
 // removes it and keeps the original error as the one that surfaces (#353).
-async function writeFileAtomic(file, text) {
+export async function writeFileAtomic(file, text) {
   const temp = `${file}.${process.pid}.${stateTempCounter++}.tmp`;
   try {
     await writeFile(temp, text, "utf8");

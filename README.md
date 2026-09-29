@@ -291,11 +291,14 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --transcript <file>           Record execution transcript to a JSON file.
 --continue-from <file>        Continue the earlier headless run whose --transcript file this is,
                               with the new --max-steps budget and the earlier orchestrator,
-                              worker, and reviewer sessions. The role kinds, role models, and
-                              --cwd must equal the earlier run's, or the run is refused before
-                              any turn. The completion gate is reset, not restored (see
-                              Continue a run). The file is read once at start, so
-                              --transcript can name the same file.
+                              worker, and reviewer sessions. The role kinds, recorded role models
+                              and efforts, and --cwd must equal the earlier run's, or the run
+                              is refused before any turn. An omitted model or effort matches
+                              only an omitted one, and a change of a CLI's own default model
+                              between the two runs is not detected. The completion gate is
+                              reset, not restored (see Continue a run). The file is read once
+                              at start and the transcript write is atomic, so --transcript can
+                              name the same file and a failed write keeps the earlier file.
 --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
 --require-accept              Refuse finish until a reviewer turn reports on the state, and
                               after a worker turn that reviewer turn accepts with a Checks
@@ -614,8 +617,8 @@ agent-loop --orchestrator codex --worker claude --reviewer agy   --task "Add a R
 ```
 
 - The session ids come from the `roles` object of the earlier `--transcript` file, which holds each role's final session id. A role that never ran has a null id and starts a new session. The flag takes any earlier transcript, whatever its exit code.
-- The run is refused with exit 1, before any turn and without a transcript write, when a role kind or a role's effective model differs from the earlier run, or when `--cwd` differs. A session id is valid only for the CLI that created it, and a provider keeps sessions per project directory. The effective model is the model the adapter passes to its CLI, for every role including the orchestrator. For `opencode` it is `<model>#<effort>`, so the same model with another `--<role>-effort` is refused, and a role with no `--<role>-model` is refused because OpenCode then picks a default that the transcript does not record: pass the same explicit `--<role>-model` in both runs. For every other CLI effort is a separate flag and is not compared. The refusal writes no transcript, so `--transcript` can name the `--continue-from` file without a refusal overwriting the sessions it holds.
-- `--transcript` rewrites its file at exit. When it names the `--continue-from` file, the new file keeps every earlier event in order, then one `continued` event that records the earlier `exitCode`, `error`, and `maxSteps`, then the events of the continued run. The top-level `exitCode`, `error`, `options`, and `roles` describe the continued run. A different `--transcript` path holds only the continued run's events.
+- The run is refused with exit 1, before any turn and without a transcript write, when a role kind, a role's recorded model, a role's recorded effort, or `--cwd` differs from the earlier run. A session id is valid only for the CLI that created it, and a provider keeps sessions per project directory. One rule covers every CLI, including `opencode` and the orchestrator: the recorded model and effort flag values compare exactly, so an omitted value matches only an omitted value. A change of a CLI's own default model between the two runs is not detected, because the transcript records what the caller requested. Pass an explicit `--<role>-model` in both runs to pin it. The refusal writes no transcript, so `--transcript` can name the `--continue-from` file without a refusal overwriting the sessions it holds.
+- `--transcript` rewrites its file at exit through a temporary file in the same directory and a rename, so a failed write leaves the earlier file whole, and the earlier file is read whole with no size limit. When it names the `--continue-from` file, the new file keeps every earlier event in order, then one `continued` event that records the earlier `exitCode`, `error`, and `maxSteps`, then the events of the continued run. The top-level `exitCode`, `error`, `options`, and `roles` describe the continued run. A different `--transcript` path holds only the continued run's events.
 - The completion gate state is reset, not restored. The transcript does not record it, and the work tree can change between the two runs, so a saved accept could describe a state that no longer exists. The continued run counts as work that no reviewer has accepted: under `--require-accept` a finish needs a reviewer `Verdict: accept` with a Checks line in this run, a `--require-ci` gate reads only a reviewer turn from this run, and a `--mode review-only` finish needs a reviewer turn from this run. The cost is one reviewer turn when the earlier run had already reviewed the state, so leave a step for it. The orchestrator prompt states the new budget and the reset.
 - The new transcript records `options.continueFrom`, and its `roles` hold the session ids at the end of the continued run, so a run can be continued again.
 - This flag shares no code path with the interactive `agent-loop role` design of issue #361. That path already keeps the session ids and gate state in its state file, so it needs only a raised budget. The headless path keeps neither, so it reads the transcript.

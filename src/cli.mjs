@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
@@ -28,6 +27,7 @@ import {
   runUninstallCommand,
 } from "./install/commands.mjs";
 import { setVerbose } from "./lib/log.mjs";
+import { writeFileAtomic } from "./lib/runstate.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
@@ -319,12 +319,16 @@ Options:
   --transcript <file>           Record execution transcript to a JSON file.
   --continue-from <file>        Continue the earlier headless run whose --transcript file this is, with
                                 the new --max-steps budget and the earlier orchestrator, worker, and
-                                reviewer sessions. The role kinds, the role models, and --cwd must
-                                equal the earlier run's, or the run is refused before any turn. The
+                                reviewer sessions. The role kinds, the recorded role models and
+                                efforts, and --cwd must equal the earlier run's, or the run is
+                                refused before any turn. An omitted model or effort matches only
+                                an omitted one, and a change of a CLI's own default model between
+                                the two runs is not detected. The
                                 completion gate is reset, not restored: no reviewer accept carries
                                 over, so a finish after work needs a reviewer turn in this run. The
                                 earlier transcript is read once at start, so --transcript can name
-                                the same file.
+                                the same file, and the transcript write is atomic, so a failed write
+                                keeps the earlier file.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   --require-accept              Refuse finish until a reviewer turn reports on the state, and
                                 after a worker turn that reviewer turn accepts with a Checks
@@ -475,7 +479,9 @@ ${err.message}`);
   const writeTranscript = async () => {
     if (!options.transcript) return;
     try {
-      await writeFile(options.transcript, JSON.stringify(transcriptData, null, 2), "utf8");
+      // Atomic, because the file can be the --continue-from source: a crash or a
+      // failed write must leave the earlier record whole.
+      await writeFileAtomic(options.transcript, JSON.stringify(transcriptData, null, 2));
     } catch (err) {
       console.error(`Warning: Failed to write transcript to ${options.transcript}: ${err.message}`);
     }
