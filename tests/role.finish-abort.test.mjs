@@ -1,7 +1,23 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+// Answers `git` from memory for the tests that switch it on (see `cleanRepoGit`
+// below); every other test reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { execa } from "execa";
-import { afterEach, expect, test } from "vitest";
 import { executeRoleCommand } from "../src/role.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
 import { snapshot } from "../src/lib/snapshot.mjs";
@@ -824,43 +840,78 @@ function noRequiredCheckGh(head) {
   };
 }
 
-// Usefulness: verifies a declared run finishes on a base branch with no required
-// check, and records the absence in the envelope and the state file, so a finish
-// that verified no check stays distinguishable from one that verified a check
-// (issue #336).
-test("a declared PR finishes on a base branch with no required check", async () => {
-  await setup();
-  const repo = await createTempRepo();
+// The two finishes below run on a repo whose `git` is answered from memory. A
+// declared run with one accepted reviewer turn takes about twenty `git`
+// processes to reach the finish (a repo, then a snapshot around each turn), and a
+// loaded Windows runner outlasted a test limit on that before the finish under
+// test started (issue #385). The `role` code is real: the double replaces only
+// the `git` child, so the dispatches, the snapshots, and the finish gate all run
+// over the answers. Snapshot behavior against a real repo keeps its own tests.
+const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
+
+function cleanRepoGit(command, args, options) {
+  expect(command).toBe("git");
+  const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
+  if (args[0] === "rev-parse") {
+    if (args.includes("--is-inside-work-tree")) {
+      return answer("true\n");
+    }
+    return answer(args.includes("--show-toplevel") ? options.cwd : `${CLEAN_REPO_HEAD}\n`);
+  }
+  if (args[0] === "status" || args[0] === "ls-files") {
+    return answer("");
+  }
+  throw new Error(`unexpected git call: ${args.join(" ")}`);
+}
+
+// A directory stands in for the repo: the double answers for it, so it needs no
+// `git` setup.
+async function useAcceptedPrRun() {
+  const repo = await mkdtemp(join(tmpdir(), "role-test-clean-repo-"));
   repos.push(repo);
   await initPrRun(repo, 42);
   await dispatchReviewer(repo, ACCEPT);
-  const head = (await snapshot(repo)).head;
+  return { repo, head: CLEAN_REPO_HEAD };
+}
 
-  const result = await finishCall(repo, ["--require-ci", "42"], {
-    gh: noRequiredCheckGh(head),
+describe("a declared PR whose reviewer turn was accepted", () => {
+  beforeEach(() => {
+    gitDouble.answer = cleanRepoGit;
   });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload).toMatchObject({ noRequiredChecks: true });
-  const state = await readRepoState(repo);
-  expect(state.lifecycle).toBe("finished");
-  expect(state.noRequiredChecks).toBe(true);
-});
+  afterEach(() => {
+    gitDouble.answer = null;
+  });
 
-// Usefulness: verifies a gated finish on a base branch that does require a check
-// records no absence, so the field means the branch had none rather than that the
-// gate ran (issue #336).
-test("a gated finish records no absence when the base branch requires a check", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-  await initPrRun(repo, 42);
-  await dispatchReviewer(repo, ACCEPT);
-  const head = (await snapshot(repo)).head;
+  // Usefulness: verifies a declared run finishes on a base branch with no required
+  // check, and records the absence in the envelope and the state file, so a finish
+  // that verified no check stays distinguishable from one that verified a check
+  // (issue #336).
+  test("a declared PR finishes on a base branch with no required check", async () => {
+    await setup();
+    const { repo, head } = await useAcceptedPrRun();
 
-  const result = await finishCall(repo, ["--require-ci", "42"], { gh: cleanPrGh(head) });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload.noRequiredChecks).toBeUndefined();
-  expect((await readRepoState(repo)).noRequiredChecks).toBeUndefined();
+    const result = await finishCall(repo, ["--require-ci", "42"], {
+      gh: noRequiredCheckGh(head),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.payload).toMatchObject({ noRequiredChecks: true });
+    const state = await readRepoState(repo);
+    expect(state.lifecycle).toBe("finished");
+    expect(state.noRequiredChecks).toBe(true);
+  });
+
+  // Usefulness: verifies a gated finish on a base branch that does require a check
+  // records no absence, so the field means the branch had none rather than that the
+  // gate ran (issue #336).
+  test("a gated finish records no absence when the base branch requires a check", async () => {
+    await setup();
+    const { repo, head } = await useAcceptedPrRun();
+
+    const result = await finishCall(repo, ["--require-ci", "42"], { gh: cleanPrGh(head) });
+    expect(result.exitCode).toBe(0);
+    expect(result.payload.noRequiredChecks).toBeUndefined();
+    expect((await readRepoState(repo)).noRequiredChecks).toBeUndefined();
+  });
 });
 
 // Usefulness: verifies a run that declares a PR refuses a gate for a different

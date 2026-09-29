@@ -243,6 +243,17 @@ function prDeclarationBlock(pr) {
 }
 
 /**
+ * The `--continue-from` line. A continued run resumes the earlier sessions, so
+ * the orchestrator holds the earlier conversation and needs the two facts that
+ * changed: the budget is new, and no reviewer accept carries over. Empty for a
+ * fresh run, so that prompt stays byte for byte as before (#362).
+ */
+function continuedBlock(continued) {
+  if (!continued) return "";
+  return "\n- This run continues an earlier run in the same work tree, with the same role sessions. The step budget above is new, and the earlier steps do not count against it. The last action you chose in the earlier run may not have run, so re-check the state before you rely on it. The runtime carries over no reviewer accept: treat the current state as unreviewed, and dispatch the reviewer on it before you finish. Under --require-accept the runtime refuses a finish until you do.";
+}
+
+/**
  * The `--mode` line. The headless loop names its mode with the same flag and the
  * same values as the interactive path, and review-only takes no PR flag and
  * refuses a worker dispatch, so the prompt states the mode the run was started
@@ -271,6 +282,7 @@ export function initialPrompt({
   pr = null,
   requireCi = null,
   mode = null,
+  continued = false,
   orchestratorKind = null,
   reviewerKind = null,
   timeout = null,
@@ -314,7 +326,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${continuedBlock(continued)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.

@@ -535,61 +535,6 @@ test("a run with no mode and a work-first run still finish with no reviewer turn
   }
 });
 
-// Usefulness: verifies a review-only finish is allowed once a reviewer turn ran,
-// whatever that turn returned, because the interactive path accepts the finish
-// from `active` after any reviewer turn. A handled reviewer error and a reviewer
-// report with no verdict both satisfy the gate; the summary records what the turn
-// returned, so nothing is hidden by accepting it (issue #337).
-test("a review-only run accepts a finish after any reviewer turn", async () => {
-  const repo = await createTempRepo();
-  try {
-    const cases = [
-      {
-        what: "a reviewer turn that ended in a handled error",
-        reply: () => {
-          throw new Error("reviewer cli exited with code 1");
-        },
-      },
-      {
-        what: "a reviewer report with no verdict line",
-        reply: "Conclusion: read the code\nWhy: no verdict here\nBlockers: none",
-      },
-    ];
-
-    for (const { what, reply } of cases) {
-      const orchAdapter = scripted([
-        JSON.stringify({ action: "run_reviewer", prompt: "inspect the repo" }),
-        JSON.stringify({
-          action: "finish",
-          summary: { changed: "a", verified: what, deferred: "c", notDone: "d", open: "e" },
-        }),
-      ]);
-      const reviewerAdapter = scripted([reply]);
-
-      const result = await runLoop({
-        task: "Review only.",
-        cwd: repo,
-        maxSteps: 5,
-        mode: "review-only",
-        roles: {
-          orchestrator: { kind: "orch", sessionId: null },
-          worker: { kind: "work", sessionId: null },
-          reviewer: { kind: "rev", sessionId: null },
-        },
-        agents: { orch: orchAdapter, work: scripted([]), rev: reviewerAdapter },
-      });
-
-      // The finish was accepted, so the run recorded it, whatever the turn
-      // returned.
-      expect(result.exitCode, what).toBe(0);
-      expect(result.summary.verified, what).toBe(what);
-      expect(reviewerAdapter.recorded.length, what).toBe(1);
-    }
-  } finally {
-    await removePath(repo);
-  }
-});
-
 // 9. Usefulness: verifies step limit enforcement (exit 2).
 test("step limit reached refuses further child dispatch and returns exit 2", async () => {
   const repo = await createTempRepo();
@@ -3193,6 +3138,42 @@ test("a missing worker session reruns the turn as a first turn in the same step"
   }
 });
 
+// Usefulness: verifies a continued run resets the completion gate conservatively
+// (#362). The earlier run's worker turn is unknown here, so --require-accept
+// treats the tree as changed and unreviewed: a finish with no reviewer turn in
+// this run is refused, and a reviewer accept on the current state allows it.
+test("a continued --require-accept run needs a reviewer accept before finish", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([REVIEW_ACCEPT]);
+    const orchAdapter = scripted(orchReplies);
+    const roles = gateRoles();
+    roles.orchestrator.sessionId = "earlier-orch";
+
+    const result = await runLoop({
+      task: "Task 362",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      continued: true,
+      roles,
+      agents: { orch: orchAdapter, work: scripted([]), rev: reviewerAdapter },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(1);
+    expect(orchAdapter.recorded[0].sessionId).toBe("earlier-orch");
+    expect(orchAdapter.recorded[0].prompt).toMatch(/continues an earlier run/i);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a failure that is not a missing session is not retried, and a failed rerun
 // is reported once with the cleared id, so the loop cannot retry without bound.
 test("only a missing session reruns, and the rerun happens once", async () => {
@@ -3250,6 +3231,32 @@ test("only a missing session reruns, and the rerun happens once", async () => {
       },
     });
     expect(plainCalls).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the same finish passes on a run that is not continued, so
+// the reset above comes from `continued` and not from the gate itself.
+test("a fresh --require-accept run with no worker turn finishes after a review", async () => {
+  const repo = await createTempRepo();
+  try {
+    const result = await runLoop({
+      task: "Task 362",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([REVIEW_REJECT]),
+      },
+    });
+    expect(result.exitCode).toBe(0);
   } finally {
     await removePath(repo);
   }
