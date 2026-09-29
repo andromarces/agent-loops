@@ -445,11 +445,14 @@ test("--require-ci refuses an unknown merge state and passes a clean PR", async 
       return { status: 0, stdout: "owner/repo", stderr: "" };
     }
     if (key.includes("rules/branches/main")) {
+      // The ruleset read is paginated, so its body is an array of pages.
       return json([
-        {
-          type: "required_status_checks",
-          parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
-        },
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
+          },
+        ],
       ]);
     }
     if (key.includes("branches/main/protection")) {
@@ -652,11 +655,14 @@ function cleanPrGh(head) {
       return { status: 0, stdout: "owner/repo", stderr: "" };
     }
     if (key.includes("rules/branches/main")) {
+      // The ruleset read is paginated, so its body is an array of pages.
       return json([
-        {
-          type: "required_status_checks",
-          parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
-        },
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
+          },
+        ],
       ]);
     }
     if (key.includes("branches/main/protection")) {
@@ -802,9 +808,11 @@ function noRequiredCheckGh(head) {
       return {
         status: 0,
         stdout: JSON.stringify([
-          { type: "deletion" },
-          { type: "non_fast_forward" },
-          { type: "pull_request", parameters: { required_approving_review_count: 0 } },
+          [
+            { type: "deletion" },
+            { type: "non_fast_forward" },
+            { type: "pull_request", parameters: { required_approving_review_count: 0 } },
+          ],
         ]),
         stderr: "",
       };

@@ -208,6 +208,41 @@ const ABSENT = "absent";
 const HAS_CONTEXTS = "contexts";
 const UNKNOWN = "unknown";
 
+// Every rule type GitHub documents for a repository ruleset, from the create and
+// update ruleset schemas. A rule entry whose `type` is missing, is not a string, or
+// is outside this list is unknown rather than skipped, because a type this list does
+// not carry may be a required-status-check rule under a name the gate has not seen
+// (issue #336 review). The list is the documented one, not an observed one: a
+// future GitHub rule type makes such a read unknown, which refuses, and that is the
+// safe direction.
+const RULE_TYPES = new Set([
+  "branch_name_pattern",
+  "code_coverage",
+  "code_quality",
+  "code_scanning",
+  "commit_author_email_pattern",
+  "commit_message_pattern",
+  "committer_email_pattern",
+  "copilot_code_review",
+  "creation",
+  "deletion",
+  "file_extension_restriction",
+  "file_path_restriction",
+  "license_compliance_scanning",
+  "max_file_path_length",
+  "max_file_size",
+  "merge_queue",
+  "non_fast_forward",
+  "pull_request",
+  "required_deployments",
+  "required_linear_history",
+  "required_signatures",
+  "required_status_checks",
+  "tag_name_pattern",
+  "update",
+  "workflows",
+]);
+
 // The names used in the refusal when a source settles nothing, so a parent can
 // tell which source it must fix.
 const RULESETS = "repository rulesets";
@@ -242,22 +277,31 @@ const MERGE_STATES = new Set([
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
 function classifyRulesets(data) {
-  if (!Array.isArray(data)) {
+  // `--slurp` wraps every page in an outer array, so a complete read is an array
+  // of arrays. A body that is not that shape, or that holds a page which is not an
+  // array, is a read the gate cannot account for every page of, so it settles
+  // nothing rather than being classified from the pages that arrived (issue #336
+  // review).
+  if (!Array.isArray(data) || data.some((page) => !Array.isArray(page))) {
     return { state: UNKNOWN, contexts: [] };
   }
-  if (data.length === 0) {
-    // An empty array does not state that no required check exists. It is the same
+  const rules = data.flat();
+  if (rules.length === 0) {
+    // An empty result does not state that no required check exists. It is the same
     // reply for a branch no ruleset applies to and for a caller or endpoint that
     // enumerates no rule for this branch, and the reply carries nothing that tells
     // those apart, so it settles nothing (issue #336 review).
     return { state: UNKNOWN, contexts: [] };
   }
   const contexts = [];
-  for (const rule of data) {
+  for (const rule of rules) {
     if (typeof rule !== "object" || rule === null || Array.isArray(rule)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    if (typeof rule.type !== "string") {
+    if (typeof rule.type !== "string" || !RULE_TYPES.has(rule.type)) {
+      // A type the gate does not know may be a required-status-check rule under a
+      // name this list does not carry, so it is unknown rather than skipped
+      // (issue #336 review).
       return { state: UNKNOWN, contexts: [] };
     }
     if (rule.type !== "required_status_checks") {
@@ -403,10 +447,16 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   const contexts = new Map();
   const unknown = [];
 
-  const rules = await readRequiredSource(gh, [`repos/${slug}/rules/branches/${base}`], cwd, {
-    absentOnError: () => false,
-    classify: classifyRulesets,
-  });
+  const rules = await readRequiredSource(
+    gh,
+    // The endpoint paginates at 30 rules per page by default, so a single read can
+    // stop before a required-status-check rule and report an absence for a branch
+    // that requires one. Every page is fetched, and a body the gate cannot account
+    // for every page of is unknown (issue #336 review).
+    [`repos/${slug}/rules/branches/${base}`, "--paginate", "--slurp"],
+    cwd,
+    { absentOnError: () => false, classify: classifyRulesets },
+  );
   if (rules.state === UNKNOWN) {
     unknown.push(RULESETS);
   }

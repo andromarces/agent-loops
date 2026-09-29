@@ -99,6 +99,10 @@ function routes({
   headRuns = [],
   headStatuses = [],
   required = REQUIRED,
+  // The paginated ruleset body verbatim, for a read that spans pages. `required`
+  // is wrapped in one page, so a test that needs a rule on a later page passes
+  // `requiredPages` instead of nesting arrays by hand.
+  requiredPages = null,
   protection = null,
   prChecks = [],
 } = {}) {
@@ -106,7 +110,8 @@ function routes({
     ["pr view 42", info],
     ["pr checks 42", prChecks],
     ["repo view", "andromarces/agent-loops"],
-    ["rules/branches/main", required],
+    // The ruleset read is paginated, so its body is an array of pages.
+    ["rules/branches/main", requiredPages ?? (Array.isArray(required) ? [required] : required)],
     ["branches/main/protection", protection],
     [`commits/${MERGE}/check-runs`, [{ check_runs: mergeRuns }]],
     [`commits/${MERGE}/status`, { statuses: mergeStatuses }],
@@ -501,6 +506,173 @@ test("an empty gh pr checks reply does not establish the absence on its own", as
   });
   expect(refused.ok).toBe(false);
   expect(refused.reason).toContain("repository rulesets");
+});
+
+// The ruleset read paginates, so a required-status-check rule can sit on a page the
+// gate would not see if it read one. This is the read every page fixes (issue #336
+// review).
+const SECOND_PAGE_RULE = [
+  {
+    type: "required_status_checks",
+    parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
+  },
+];
+
+// Usefulness: verifies a required-status-check rule that appears only on the second
+// page is still enforced, so a paginated read cannot stop early and pass a branch
+// that requires a check (issue #336 review).
+test("reads every ruleset page before classifying the absence", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        requiredPages: [[{ type: "deletion" }], SECOND_PAGE_RULE],
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "failure")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("ci (ubuntu-latest)");
+  expect(result.noRequiredChecks).toBeUndefined();
+});
+
+// Usefulness: verifies the absence still holds when every page is read and no page
+// names a required-status-check rule, so pagination did not turn the read into an
+// unknown (issue #336 review).
+test("records the absence when no page names a required-status rule", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        requiredPages: [[{ type: "deletion" }], [{ type: "non_fast_forward" }]],
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
+});
+
+// The paginated bodies the gate cannot account for every page of. Each is unknown
+// rather than classified from the pages that arrived (issue #336 review).
+const PARTIAL_PAGE_READS = {
+  "a body that is not the array of pages": { requiredPages: { rules: [] } },
+  "a page that is not an array": { requiredPages: [{ type: "deletion" }, { oops: true }] },
+  "a nested page that is not an array": { requiredPages: [[{ type: "deletion" }], null] },
+};
+
+for (const [shape, { requiredPages }] of Object.entries(PARTIAL_PAGE_READS)) {
+  // Usefulness: verifies ${shape} settles nothing, so a read the gate cannot
+  // account for every page of keeps the empty-union refusal and names the source
+  // (issue #336 review).
+  test(`refuses the empty union and names the source on ${shape}`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          requiredPages,
+          protection: null,
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+        }),
+      ),
+    });
+    expect(result.ok, `${shape} must not reach the absence path`).toBe(false);
+    expect(result.reason).toContain("no required checks were found");
+    expect(result.reason).toContain("repository rulesets");
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+}
+
+// The malformed rule types the classifier used to skip. A type it does not know may
+// be a required-status-check rule under a name it has not seen, so each is unknown
+// (issue #336 review).
+const MALFORMED_RULE_TYPES = {
+  "a rule with no type": { parameters: { required_status_checks: [{ context: "ci" }] } },
+  "a rule whose type is not a string": { type: 7 },
+  "a rule whose type is a known name in the wrong case": { type: "Required_Status_Checks" },
+  "a rule whose type GitHub does not document": { type: "required_checks_v2" },
+  "a rule whose type is empty": { type: "" },
+};
+
+for (const [shape, rule] of Object.entries(MALFORMED_RULE_TYPES)) {
+  // Usefulness: verifies a ruleset entry that is ${shape} settles nothing, so a
+  // rule the gate cannot read cannot be skipped past as if it required nothing
+  // (issue #336 review).
+  test(`refuses the empty union and names the source on ${shape}`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required: [{ type: "deletion" }, rule],
+          protection: null,
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+        }),
+      ),
+    });
+    expect(result.ok, `${shape} must not reach the absence path`).toBe(false);
+    expect(result.reason).toContain("no required checks were found");
+    expect(result.reason).toContain("repository rulesets");
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+}
+
+// Usefulness: verifies every documented rule type other than
+// `required_status_checks` still yields the absence, so the known-type list did not
+// close the relaxed path on a real ruleset-only branch (issue #336 review).
+test("accepts every documented rule type that requires no check", async () => {
+  const documented = [
+    "branch_name_pattern",
+    "code_coverage",
+    "code_quality",
+    "code_scanning",
+    "commit_author_email_pattern",
+    "commit_message_pattern",
+    "committer_email_pattern",
+    "copilot_code_review",
+    "creation",
+    "deletion",
+    "file_extension_restriction",
+    "file_path_restriction",
+    "license_compliance_scanning",
+    "max_file_path_length",
+    "max_file_size",
+    "merge_queue",
+    "non_fast_forward",
+    "pull_request",
+    "required_deployments",
+    "required_linear_history",
+    "required_signatures",
+    "tag_name_pattern",
+    "update",
+    "workflows",
+  ];
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: documented.map((type) => ({ type })),
+        protection: null,
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+      }),
+    ),
+  });
+  expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
 });
 
 // The malformed successful replies that must keep the empty-union refusal. The
