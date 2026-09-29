@@ -29,9 +29,11 @@ step budget runs out.
    `conversation_id` of its one result object. Each then requires the selected id to be a
    non-empty string, so an empty id is skipped only where the selection takes the first
    truthy id (Claude and opencode), and a selected number, object, or empty value fails the
-   turn. A resumed turn never changes
-   its id, and the Claude adapter refuses a different id from a resumed turn with
-   `resumeMismatchError`, as the other adapters do. The Copilot adapter keeps the id that the result event of a failed first turn
+   turn. A failed turn never changes
+   the id of a resumed session. Every adapter except agy keeps the resumed id or raises
+   `resumeMismatchError` on a different one, and the Claude adapter now does so like
+   Codex, Copilot, and opencode. agy adopts the new id it reports when its conversation
+   is missing and logs a warning, and that turn runs without the role preamble. The Copilot adapter keeps the id that the result event of a failed first turn
    reports. It does not keep the pre-assigned id: a failed turn that reports no id does not show
    that the CLI created a session under it, and a kept id would send the next worker turn
    to a session that may not exist, without the preamble. On Copilot CLI 1.0.90-4, a first

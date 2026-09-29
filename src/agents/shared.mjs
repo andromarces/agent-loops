@@ -30,7 +30,8 @@ export function resumeMismatchError(agent, idLabel, expected, received) {
 
 /**
  * Keeps the session id a failed first turn reported, so the next turn resumes that session
- * and its edits instead of starting a new one. A turn that resumed an id never changes it.
+ * and its edits instead of starting a new one. An id already on the state is never replaced
+ * here, so a failed turn never changes a resumed session.
  */
 export function keepFailedSessionId(state, id) {
   if (!state.sessionId && typeof id === "string" && id) {
