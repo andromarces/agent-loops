@@ -342,6 +342,27 @@ The read follows `--pr`, which is the PR input both paths know at dispatch. A
 headless run that takes only `--require-ci` and declares no `--pr` reads no
 status.
 
+## Test evidence when the reviewer cannot run tests
+
+Direct probe: on 2026-09-29, a `codex exec` run on Windows 11 with codex-cli
+0.159.0-alpha.12 and `sandbox_mode="read-only"` observed two results. A child
+`node` spawn from a Node.js process returned an error. `pnpm test --version`
+exited 1 with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` (`Access is denied`).
+That probe did not start Vitest.
+
+Reports recorded in issue #342, not re-observed: the reviewer turns of the
+#301, #302, #311, and #326 runs, on the same CLI version, mode, and OS, each
+reported `Vitest failed at startup (spawn EPERM)`. Their `Checks` lines
+therefore excluded the test suite. Other platforms, other Codex versions, and
+the elevated Windows sandbox are not verified.
+
+When a reviewer `Checks` line shows that tests did not run, for any reason, the
+reviewer accept is not test evidence. Use the required CI checks for test
+evidence instead. The `--require-ci` finish gate and the status rules above
+already govern how a run reads them, so this rule adds no flag and no sequence.
+A worker `Checks` line that shows a passing local test run is reported evidence,
+not a gate input.
+
 ## Waiting for required checks
 
 When a run will end with `--require-ci`, wait for the required checks on the new

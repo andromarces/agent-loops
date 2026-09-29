@@ -552,6 +552,26 @@ protection stays in place on every adapter: the Codex sandbox flag remains, and
 the pre/post mutation check still aborts on a detected change. The other
 adapters' read-only invocations keep shell network access.
 
+#### Codex read-only child-spawn limit
+
+Direct probe: on 2026-09-29, a `codex exec` run on Windows 11 with codex-cli
+0.159.0-alpha.12 and `-c sandbox_mode="read-only"` observed two results. A child
+`node` spawn from a Node.js process returned an error. `pnpm test --version`
+exited 1 with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` (`Access is denied`).
+That probe did not start Vitest.
+
+Reports recorded in issue #342, not re-observed: the reviewer turns of the #301,
+#302, #311, and #326 runs, on the same CLI version, mode, and OS, each reported
+`Vitest failed at startup (spawn EPERM)`. Some also reported `pnpm` blocked by a
+store lock and `oxfmt` failing with `spawn EPERM`. Their reviewer `Checks` lines
+therefore excluded the test suite, and the accepts rested on `git diff`, static
+checks, and in-process probes. `docs/parent-guard.md` records the same class on
+the `workspace-write` path: the unelevated Windows sandbox blocks a child spawn
+with `EPERM`.
+
+Not verified: a Codex read-only reviewer on macOS or Linux, and a Codex reviewer
+under the elevated Windows sandbox. Do not assume the test suite runs on either.
+
 #### Read-only subagent fan-out
 
 Every adapter can fan out from a read-only turn to child subagents. Probes on 2026-09-23 measured each installed CLI.
