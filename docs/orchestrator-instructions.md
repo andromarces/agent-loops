@@ -477,10 +477,24 @@ Every command for a run passes that run's `--cwd`. Each run ends with its own
 - `review-only`: reviewer, then report. Findings alone never authorize edits;
   the subcommand rejects worker dispatch in this mode.
 
-This section governs the interactive `role` mode. The headless loop chooses its
-own action order; its prompt states the completion rule and the `review-only`
-mapping instead, and `agent-loop --require-accept` enforces that rule. The
-headless gate follows turn order only; an edit made outside the loop after a
+Both paths name the mode with the same flag and the same three values:
+`agent-loop --mode <mode>` on the headless command and `--mode <mode>` on the
+`role` init call. The headless loop chooses its own action order, and its
+`--mode` is off by default, so a run without the flag keeps the current
+behavior. `--mode review-only` changes what a run accepts on either path: it
+dispatches no worker, so it takes neither `--pr`, nor `--require-accept`, nor
+`--require-ci`, and the headless command refuses each of them at parse time with
+the same wording the interactive path uses. It also refuses a `run_worker`
+action at runtime, which ends the run on exit 1 with the reason
+`mode review-only rejects a run_worker action`, the same hard guard this mode
+applies to `--role worker` on the interactive path. It also refuses a `finish`
+until a reviewer turn has run, whatever that turn returned, which the
+interactive path reaches without a rule because its init dispatch is itself that
+turn. Its prompt states the completion rule and the `review-only` mapping
+instead, and `agent-loop --require-accept` enforces that rule on every other
+mode, because a review-only run refuses that flag.
+
+The headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
 PR gate headlessly, so the runtime resolves the PR head there too (#293), and
 `--pr <pr>` on either path declares the run PR work, so that run can only end
@@ -505,9 +519,36 @@ Completion is completion of the requested work, not code acceptance.
 - `work-first` and `review-first`: call `finish` after the reviewer returns
   `verdict: accept` on the latest changed state and the report names the
   checks that passed.
-- `review-only`: call `finish` after the reviewer report, whatever the
-  verdict. The summary records the verdict in `verified` and the findings in
-  `open`.
+- `review-only`: call `finish` after the reviewer turn, whatever it returned. The
+  gate is on the turn, not on a report: a turn that ended in an error satisfies
+  it, so the finish can carry no report. The runtime checks only that all five
+  summary keys are non-empty strings, and it never compares their content with
+  what the reviewer returned.
+
+The two paths reach that reviewer turn differently, and the difference is the
+rule, not the wording. `agent-loop role finish` in `review-only` applies no
+reviewer-turn rule of its own: it accepts a finish from `active` once any
+reviewer turn has run, whatever that turn returned, including a turn that ended
+in a handled error. Every reachable interactive run already has a reviewer turn,
+because the init dispatch is itself that turn. A headless `--mode review-only`
+run owns its own action order and can reach a finish before any reviewer turn, so
+the runtime refuses that finish until a reviewer turn has run. That gate
+requires that a reviewer turn was dispatched, and that turn can end in an error.
+The runtime does not compare the summary with the reviewer result; record the
+reviewer status and verdict in `verified`, including an error or a missing
+report.
+
+Neither path takes `--require-accept` in this mode, and both say so differently.
+`agent-loop role finish` refuses the flag at `finish`, with
+`--require-accept and --require-ci apply only to work-first and review-first;
+review-only accepts any verdict.` `agent-loop --mode review-only` refuses the
+flag before the run starts, with the same sentence, because the headless command
+takes every flag on one command line. A review-only headless run therefore
+applies the reviewer turn with no flag of its own.
+
+The turn is what the mode records either way, so call
+`finish` after it, whatever it returned, and record what the run did not cover in
+`notDone` and `open`.
 
 Map the child report fields into the finish summary:
 
@@ -591,7 +632,10 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   other init field. A state file written before this field has no `pr`, and that
   run keeps the marker-only behavior.
 - `review-only` refuses `--pr` at init, because that mode rejects `--require-ci`
-  at finish and the run would refuse every finish.
+  at finish and the run would refuse every finish. On the headless path every
+  flag arrives on one command line, so `--mode review-only` with `--pr`,
+  `--require-accept`, or `--require-ci` is a usage error before the run starts,
+  with the same two wordings this section states.
 - A base branch with no required check does not refuse `--pr` when every
   required-check source stated that it holds none. The gate passes on the PR head,
   the clean reviewed tree, and the merge state, and the run records it, so a
@@ -610,15 +654,18 @@ subcommand: `abort` exits `0` too, and the parent guard reads the state
 lifecycle, not the code. Read the marker in the envelope or the state file.
 
 Two opt-in gates apply to `work-first` and `review-first` only. One refusal
-names every condition the finish breaks, in the order the marker condition, then
+names every condition the finish breaks. The headless loop collects them in this
+order: the marker condition, then the `review-only` reviewer-turn condition, then
 `--require-accept`, then the declared-PR gate condition, then `--require-ci`. The
-headless loop grants one corrective turn, so a refusal that named a single
-condition would spend it on the condition the next refusal names instead. The
-`role finish` command applies the same rule and order, so a parent learns every
-condition from one call. A headless run ends when two refusals land with no child
-turn between them. The marker is satisfied on a re-finish, with no child
-turn; every other condition needs a child turn to satisfy it, which costs a step,
-except the missing gate of a declared PR run, which no child turn can supply.
+`role finish` command applies the same rule and the same order except the
+`review-only` condition, which it cannot reach, because its init dispatch is
+itself a reviewer turn. The headless loop grants one corrective turn, so a refusal
+that named a single condition would spend it on the condition the next refusal
+names instead, so a parent learns every condition from one call. A headless run
+ends when two refusals land with no child turn between them. The marker is
+satisfied on a re-finish, with no child turn; the `review-only` condition and
+`--require-accept` take the same corrective turn, which costs a step, and the
+missing gate of a declared PR run is the one condition no child turn can supply.
 The `--require-ci` gate runs only when nothing above it refused, so a refused
 `finish` never reads GitHub. In `review-only`, a `finish` without them keeps the
 current behavior, and each flag fails with a clear error.
@@ -630,7 +677,16 @@ current behavior, and each flag fails with a clear error.
 - `--require-ci <pr>`: refuse unless the PR head equals the reviewed `head`, the
   reviewed tree is clean, the PR is not behind its base under a strict rule, has no
   merge conflicts, the merge state is one the gate can read and is not blocked, and
-  every required check passed on the commit GitHub evaluates. A base branch whose
+  every required check passed on the commit GitHub evaluates. GitHub evaluates the
+  test merge commit when that commit has a check run or a commit status, and the
+  head commit otherwise. A required check run passes with the conclusion
+  `success`, `skipped`, or `neutral`; a required commit status passes with the
+  state `success`. When a check run and a commit status share a required name,
+  both must pass, and a pending or missing check fails. A context qualified by
+  an app (a ruleset `integration_id` or a classic-protection `app_id`) is
+  satisfied only by a check run from that app, and an unqualified copy of that
+  name is dropped.
+  A base branch whose
   required-check sources each state that it holds no required check has no check to
   wait for: the gate then passes on the PR head, the clean reviewed tree, and the
   merge state, and records that no required check exists, in a
@@ -690,8 +746,8 @@ current behavior, and each flag fails with a clear error.
   prints nothing, which is the same silence as a read failure. The gate takes
   required names from its stdout whatever the exit status, so a non-zero exit whose
   stdout holds that JSON still contributes names, and only a stdout that is not a
-  JSON array of named checks contributes none. Its reply on a Free-plan repository
-  was not measured.
+  JSON array of named checks contributes none. It is an independent source and its
+  Free-plan reply was not measured.
   The observed replies for the two configuration sources are `Not Found` (404) for a
   token without repository admin, `Branch not protected` (404) for an admin on a
   branch with no classic protection,

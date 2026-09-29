@@ -235,7 +235,24 @@ async function acquireLock(lockFile, { retry = true, label = "State", noun = "st
 async function createLock(lockFile) {
   const owner = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
   const tempFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
-  await writeFile(tempFile, owner, "utf8");
+  // The write is inside the guard because it creates the temp file: a write cut
+  // short leaves a partial temp behind, and the prune never removes a temp owned
+  // by the running process, so nothing else would clean it (#353).
+  try {
+    await writeFile(tempFile, owner, "utf8");
+    const created = await linkLock(tempFile, lockFile, owner);
+    await removeTemp(tempFile);
+    return created;
+  } catch (err) {
+    // The body already failed, so a temp that will not delete is the lesser
+    // problem: swallow the cleanup error and surface the one the caller must
+    // act on (#353).
+    await removeTemp(tempFile);
+    throw err;
+  }
+}
+
+async function linkLock(tempFile, lockFile, owner) {
   try {
     await link(tempFile, lockFile);
     return true;
@@ -255,8 +272,6 @@ async function createLock(lockFile) {
       }
       throw openErr;
     }
-  } finally {
-    await rm(tempFile, { force: true });
   }
 }
 
@@ -341,14 +356,45 @@ export async function writeState(stateFile, state) {
   await writeFileAtomic(stateFile, `${JSON.stringify(state, null, 2)}\n`);
 }
 
+// Monotonic suffix for state temp files, for the same reason as the lock temp
+// counter: one pid writes several temps concurrently, and a cleanup must remove
+// only the file its own call created (#353).
+let stateTempCounter = 0;
+
+// A transient unlink failure clears once the holder lets go, so a failed removal
+// is retried once. A persistent failure is swallowed: this runs on the way out
+// of an already-failed operation, and the leftover temp is a lesser problem than
+// replacing the error the caller must act on (#353).
+const UNLINK_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+async function removeTemp(path) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await rm(path, { force: true });
+    } catch (err) {
+      if (!UNLINK_RETRY_CODES.has(err.code) || attempt >= 1) {
+        return;
+      }
+      await delay(10);
+    }
+  }
+}
+
 // Writes `text` to `file` atomically: a private temp file in the same directory
 // is renamed over the destination, so a concurrent reader sees the old content
 // or the new content, never a partial write. Node rename replaces an existing
-// destination on Windows and POSIX.
+// destination on Windows and POSIX. A failed write or rename leaves the temp
+// behind, and it sits in the state directory beside the lock temp, so the guard
+// removes it and keeps the original error as the one that surfaces (#353).
 async function writeFileAtomic(file, text) {
-  const temp = `${file}.${process.pid}.tmp`;
-  await writeFile(temp, text, "utf8");
-  await renameWithRetry(temp, file);
+  const temp = `${file}.${process.pid}.${stateTempCounter++}.tmp`;
+  try {
+    await writeFile(temp, text, "utf8");
+    await renameWithRetry(temp, file);
+  } catch (err) {
+    await removeTemp(temp);
+    throw err;
+  }
 }
 
 // Rename is the atomic replace step, but on Windows it fails while another

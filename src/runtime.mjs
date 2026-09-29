@@ -188,6 +188,17 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * event, so a finish that verified no check never reads as one whose checks
  * passed (#336).
  *
+ * With `mode`, the headless run names its loop policy with the same flag and the
+ * same values the interactive path takes, and the prompt states that mode. A
+ * `review-only` mode is a run that dispatches no worker, so the CLI refuses
+ * `pr`, `requireAccept`, and `requireCi` before the run starts, and the loop
+ * refuses a `run_worker` action at runtime, the guard the interactive path
+ * applies to `--role worker`. That mode also refuses a `finish` until a reviewer
+ * turn has completed, which is the outcome the mode exists to record. The
+ * interactive path reaches that state without a rule, because its init dispatch
+ * is itself the reviewer turn, so the headless loop supplies the one condition
+ * the interactive path gets for free (#337).
+ *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
  * a Checks line, and with no worker turn it needs at least one reviewer report.
@@ -210,6 +221,7 @@ export async function runLoop(options) {
     requireAccept = false,
     pr = null,
     requireCi = null,
+    mode = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -233,6 +245,13 @@ export async function runLoop(options) {
   // review-only and needs at least one reviewer report.
   let workerRan = false;
   let reviewerRan = false;
+  // A reviewer turn that was dispatched, whatever it returned. `reviewerRan`
+  // counts only a turn that ended `ok`, because `--require-accept` reads that
+  // one. A `review-only` run needs the turn itself, not a successful one: the
+  // interactive path accepts its finish from `active` after any reviewer turn,
+  // including one that ended in a handled error, and the summary records what
+  // the turn returned (#337).
+  let reviewerTurnDispatched = false;
   let acceptedSinceWorker = false;
   let finishRefused = false;
   // The reviewed state the `--require-ci` gate reads: the runtime-owned identity
@@ -255,6 +274,7 @@ export async function runLoop(options) {
     requireAccept,
     pr,
     requireCi,
+    mode,
     orchestratorKind: orchestrator?.kind ?? null,
     reviewerKind: reviewer?.kind ?? null,
   });
@@ -283,9 +303,12 @@ export async function runLoop(options) {
       // prompt, because the run grants a single corrective turn and a second
       // refused finish ends it. Reporting one condition at a time would spend
       // that turn on a condition the next refusal names instead, which is how a
-      // prompt that says "finish again" becomes an exit 1 (#293). The order
-      // matches the interactive `role finish`: the marker condition, the
-      // completion rule, the declared-PR gate condition, then the PR gate. The
+      // prompt that says "finish again" becomes an exit 1 (#293). The order is
+      // the marker condition, the `review-only` reviewer-turn condition, the
+      // completion rule, the declared-PR gate condition, then the PR gate. It
+      // matches the interactive `role finish` except for the `review-only`
+      // condition, which that path cannot reach because its init dispatch is
+      // itself a reviewer turn (#337). The
       // `--pr` declaration is the PR input, so its refusal sits where the gate
       // sits (#302).
       const refusals = [];
@@ -307,6 +330,23 @@ export async function runLoop(options) {
         refusals.push({
           reason: markerReason,
           recovery: "The gate resolves that PR head, so remove unresolvedCompare from the finish.",
+        });
+      }
+      // A review-only run's whole outcome is the reviewer report, so a finish
+      // before any reviewer turn is a finish with nothing behind it. The
+      // interactive path reaches that state for free, because its init dispatch
+      // is itself the reviewer turn, and a headless run owns its whole order, so
+      // the runtime refuses it here. The condition is the turn, not its outcome:
+      // the interactive finish is accepted after any reviewer turn, including one
+      // that ended in a handled error, because the summary records what that turn
+      // returned. It sits where `--require-accept` sits, so it takes the same
+      // corrective turn and repeated-refusal rule (#337).
+      if (mode === "review-only" && !reviewerTurnDispatched) {
+        needsChildTurn = true;
+        refusals.push({
+          reason: "no reviewer turn has run, and a review-only run dispatches no worker",
+          recovery:
+            "Dispatch the reviewer, then finish once that turn has returned. What the turn returned is what the finish records: the verdict, or the error, goes in verified, and neither blocks the finish.",
         });
       }
       if (requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan)) {
@@ -400,6 +440,15 @@ export async function runLoop(options) {
       return stopLoop(1, { reason: action.reason });
     }
 
+    // review-only dispatches no worker, the same hard guard the interactive path
+    // applies to `--role worker`. The run ends rather than retrying the action,
+    // because a corrective turn would cost a step to reach the state the run
+    // started in (#337).
+    if (mode === "review-only" && action.action === "run_worker") {
+      onEvent({ type: "refusal", reason: REVIEW_ONLY_WORKER_REFUSAL, stepsUsed });
+      return stopLoop(1, { reason: REVIEW_ONLY_WORKER_REFUSAL });
+    }
+
     if (stepsUsed >= maxSteps) {
       return stopLoop(2, { reason: "Step limit reached with work remaining." });
     }
@@ -434,6 +483,9 @@ export async function runLoop(options) {
       workerRan = true;
       acceptedSinceWorker = false;
     } else {
+      // Set whatever the turn returned: a turn that ended in a handled error is
+      // still the report a `review-only` finish records.
+      reviewerTurnDispatched = true;
       reviewerRan = reviewerRan || result.status === "ok";
       acceptedSinceWorker = result.status === "ok" && isAcceptedReview(result.response);
     }
@@ -442,6 +494,10 @@ export async function runLoop(options) {
     prompt = resultPrompt({ result, stepsUsed, maxSteps });
   }
 }
+
+// The review-only worker refusal, worded after the interactive `--role worker`
+// guard it mirrors, so a parent reads one rule on both paths.
+const REVIEW_ONLY_WORKER_REFUSAL = "mode review-only rejects a run_worker action";
 
 // The marker refusal a gated run gets, kept as a constant so the shared reason
 // function cannot drift apart on the wording.

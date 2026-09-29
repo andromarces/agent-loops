@@ -331,6 +331,265 @@ test("abort returns exit 1 and reason", async () => {
   }
 });
 
+// Usefulness: verifies a review-only headless run refuses a run_worker action,
+// because that mode dispatches no worker, the same hard guard the interactive
+// path applies to --role worker. The check is observable: the run ends on exit 1,
+// the emitted events carry the refusal, no worker turn runs, and the
+// orchestrator is not asked again (issue #337).
+test("a review-only run refuses a run_worker action", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "edit the file" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const workerAdapter = scripted(["worker did task"]);
+    const events = [];
+
+    const result = await runLoop({
+      task: "Review only.",
+      cwd: repo,
+      maxSteps: 5,
+      mode: "review-only",
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(1);
+    // The refused action is recorded, then the refusal, then the run ends.
+    expect(events.map((event) => event.type)).toEqual(["invocation", "action", "refusal"]);
+    const refusal = events.find((event) => event.type === "refusal");
+    expect(refusal.reason).toContain("mode review-only rejects a run_worker action");
+    // No worker turn ran, so no step was charged and the run did not recover by
+    // asking the orchestrator again.
+    expect(workerAdapter.recorded.length).toBe(0);
+    expect(orchAdapter.recorded.length).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a run with no --mode still dispatches the worker, so the
+// review-only refusal reaches only the runs that asked for it (issue #337).
+test("a run with no mode still dispatches the worker", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "edit the file" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const workerAdapter = scripted(["worker did task"]);
+
+    const result = await runLoop({
+      task: "Implement.",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(workerAdapter.recorded.length).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a review-only headless run refuses a finish until a
+// reviewer turn has completed, the parity the interactive path gets for free
+// because its init dispatch is itself the reviewer turn. The check is
+// observable: the first finish is refused with the missing report named, the
+// refusal prompt tells the orchestrator what to do, and the run then finishes
+// once the reviewer has run (issue #337).
+test("a review-only run refuses a finish with no reviewer report", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+      JSON.stringify({ action: "run_reviewer", prompt: "inspect the repo" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const reviewerAdapter = scripted([
+      "Conclusion: done\nWhy: read the code\nBlockers: none\nVerdict: reject",
+    ]);
+    const events = [];
+
+    const result = await runLoop({
+      task: "Review only.",
+      cwd: repo,
+      maxSteps: 5,
+      mode: "review-only",
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: scripted([]), rev: reviewerAdapter },
+      onEvent: (event) => events.push(event),
+    });
+
+    // The first finish was refused, the reviewer ran, and the second finished.
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(1);
+    expect(events.filter((event) => event.type === "refusal").length).toBe(1);
+    // The refusal reached the orchestrator and named the missing report.
+    const refusalPrompt = orchAdapter.recorded[1].prompt;
+    expect(refusalPrompt).toContain("Finish refused");
+    expect(refusalPrompt).toContain("no reviewer turn has run");
+    expect(refusalPrompt).toContain("run_reviewer");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the reviewer-report refusal ends a review-only run that
+// keeps finishing without one, by the same repeated-refusal rule every other
+// finish gate uses: a second refusal with no child turn in between ends the run
+// on exit 1 (issue #337).
+test("a review-only run ends on a repeated finish with no reviewer report", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orchAdapter = scripted([finish, finish]);
+    const events = [];
+
+    const result = await runLoop({
+      task: "Review only.",
+      cwd: repo,
+      maxSteps: 5,
+      mode: "review-only",
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: scripted([]), rev: scripted([]) },
+      onEvent: (event) => events.push(event),
+    });
+
+    // No reviewer turn ran, so the second refusal had no child turn to clear the
+    // prior-refusal flag and the run ended on exit 1.
+    expect(result.exitCode).toBe(1);
+    expect(events.filter((event) => event.type === "refusal").length).toBe(2);
+    expect(orchAdapter.recorded.length).toBe(2);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the reviewer-report refusal reaches only a review-only
+// run, so a run with no --mode keeps finishing with no reviewer turn, and so
+// does a work-first run (issue #337).
+test("a run with no mode and a work-first run still finish with no reviewer turn", async () => {
+  const repo = await createTempRepo();
+  try {
+    for (const mode of [undefined, "work-first"]) {
+      const orchAdapter = scripted([
+        JSON.stringify({
+          action: "finish",
+          summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+        }),
+      ]);
+
+      const result = await runLoop({
+        task: "Implement.",
+        cwd: repo,
+        maxSteps: 5,
+        ...(mode === undefined ? {} : { mode }),
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: { orch: orchAdapter, work: scripted([]), rev: scripted([]) },
+      });
+
+      expect(result.exitCode).toBe(0);
+    }
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a review-only finish is allowed once a reviewer turn ran,
+// whatever that turn returned, because the interactive path accepts the finish
+// from `active` after any reviewer turn. A handled reviewer error and a reviewer
+// report with no verdict both satisfy the gate; the summary records what the turn
+// returned, so nothing is hidden by accepting it (issue #337).
+test("a review-only run accepts a finish after any reviewer turn", async () => {
+  const repo = await createTempRepo();
+  try {
+    const cases = [
+      {
+        what: "a reviewer turn that ended in a handled error",
+        reply: () => {
+          throw new Error("reviewer cli exited with code 1");
+        },
+      },
+      {
+        what: "a reviewer report with no verdict line",
+        reply: "Conclusion: read the code\nWhy: no verdict here\nBlockers: none",
+      },
+    ];
+
+    for (const { what, reply } of cases) {
+      const orchAdapter = scripted([
+        JSON.stringify({ action: "run_reviewer", prompt: "inspect the repo" }),
+        JSON.stringify({
+          action: "finish",
+          summary: { changed: "a", verified: what, deferred: "c", notDone: "d", open: "e" },
+        }),
+      ]);
+      const reviewerAdapter = scripted([reply]);
+
+      const result = await runLoop({
+        task: "Review only.",
+        cwd: repo,
+        maxSteps: 5,
+        mode: "review-only",
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: { orch: orchAdapter, work: scripted([]), rev: reviewerAdapter },
+      });
+
+      // The finish was accepted, so the run recorded it, whatever the turn
+      // returned.
+      expect(result.exitCode, what).toBe(0);
+      expect(result.summary.verified, what).toBe(what);
+      expect(reviewerAdapter.recorded.length, what).toBe(1);
+    }
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 9. Usefulness: verifies step limit enforcement (exit 2).
 test("step limit reached refuses further child dispatch and returns exit 2", async () => {
   const repo = await createTempRepo();
