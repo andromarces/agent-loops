@@ -131,6 +131,13 @@ const RECORD_VISIBLE_MS = 500;
 // The most the cleanup after a test can take: killing a leftover child is
 // instant, and `removePath` costs at most its full retry backoff.
 const CLEANUP_MS = REMOVE_MAX_WAIT_MS + REMOVE_SYSCALL_SLACK_MS;
+// The most the fixture setup before a test can take: `mkdtemp`, then writing the
+// hang script and the wrapper, are three file system calls. A call is
+// milliseconds unless an antivirus scan or an indexer holds the file, so each
+// gets one second.
+const SETUP_STEPS = 3;
+const SETUP_STEP_MS = 1000;
+const SETUP_MS = SETUP_STEPS * SETUP_STEP_MS;
 const BOUND_MS = 2000;
 
 /**
@@ -139,6 +146,7 @@ const BOUND_MS = 2000;
  * timeout, and a test that exceeds a limit fails on that limit's own message.
  */
 export const BOUND_KILL_TEST_TIMEOUT_MS =
+  SETUP_MS +
   BOUND_MS +
   CALL_CEILING_MS +
   RECORD_VISIBLE_MS +
@@ -146,6 +154,7 @@ export const BOUND_KILL_TEST_TIMEOUT_MS =
   TEARDOWN_MARGIN_MS +
   CLEANUP_MS;
 export const ABORT_KILL_TEST_TIMEOUT_MS =
+  SETUP_MS +
   START_WAIT_MS +
   CALL_CEILING_MS +
   ABORT_FORCE_KILL_AFTER_DELAY_MS +
@@ -236,7 +245,9 @@ async function returnsWithin(call, limitMs, message) {
 
 // A child that survived a failed test would hold its directory open and keep
 // running for SHIM_HANG_MS. Killing it is instant, so it adds nothing to the
-// cleanup budget, and it lets `removePath` succeed on its first try.
+// cleanup budget, and it lets `removePath` succeed on its first try. Callers use
+// it only while the test still owns the pid: once the gone check passed, the OS
+// may have handed the pid to another process, which must never be signalled.
 function killLeftover(pid) {
   if (pid !== null && processExists(pid)) {
     try {
@@ -272,6 +283,7 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
   let pid = null;
   let record = null;
+  let gone = false;
   try {
     const shim = await writeHangingShim(dir, command);
     record = shim.started;
@@ -286,10 +298,13 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
       pid = await waitForPid(shim.started, RECORD_VISIBLE_MS);
       assert.notEqual(pid, null, `the shim did not start within the ${boundMs} ms bound`);
       await assertGone(pid, FORCE_KILL_AFTER_DELAY_MS);
+      gone = true;
       return result;
     });
   } finally {
-    killLeftover(pid ?? (record && (await waitForPid(record, 0))));
+    if (!gone) {
+      killLeftover(pid ?? (record && (await waitForPid(record, 0))));
+    }
     await removePath(dir);
   }
 }
@@ -306,6 +321,7 @@ export async function expectAbortKillsShim(command, start) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
   let pid = null;
   let record = null;
+  let gone = false;
   try {
     const shim = await writeHangingShim(dir, command);
     record = shim.started;
@@ -321,10 +337,13 @@ export async function expectAbortKillsShim(command, start) {
         "the call did not return after the abort",
       );
       await assertGone(pid, ABORT_FORCE_KILL_AFTER_DELAY_MS);
+      gone = true;
       return result;
     });
   } finally {
-    killLeftover(pid ?? (record && (await waitForPid(record, 0))));
+    if (!gone) {
+      killLeftover(pid ?? (record && (await waitForPid(record, 0))));
+    }
     await removePath(dir);
   }
 }
