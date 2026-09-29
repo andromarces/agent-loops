@@ -710,9 +710,9 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
     if (rulesetState === EMPTY) {
       unproven.push(RULESETS);
     }
-    if (protectionState === EMPTY) {
-      unproven.push(PROTECTION);
-    }
+    // The protection source cannot be `EMPTY`: `classifyProtection` returns
+    // `ABSENT`, `HAS_CONTEXTS`, or `UNKNOWN` and nothing else, so an unreadable
+    // protection reply is already in `unknown` and needs no second push (#336).
     return fail(
       `no required checks were found for the base branch, and ${unproven.join(" and ")} did not state that it holds no required check, so the gate cannot tell a base branch with no required check from one whose check it never saw`,
     );
