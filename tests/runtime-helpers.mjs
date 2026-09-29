@@ -31,8 +31,24 @@ export async function createTempRepo() {
  * keeps plain `rm`.
  */
 export async function removePath(path) {
-  await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  await rm(path, {
+    recursive: true,
+    force: true,
+    maxRetries: REMOVE_MAX_RETRIES,
+    retryDelay: REMOVE_RETRY_DELAY_MS,
+  });
 }
+
+const REMOVE_MAX_RETRIES = 10;
+const REMOVE_RETRY_DELAY_MS = 100;
+// `fs.rm` backs off linearly: retry n waits n * retryDelay. A path that stays
+// locked therefore costs 100 + 200 + ... + 1000 = 5500 ms before `removePath`
+// throws (measured at 5573 ms on Windows with a child holding the directory).
+// Test timeouts that include a `removePath` add this, not the delay alone.
+const REMOVE_MAX_WAIT_MS =
+  (REMOVE_RETRY_DELAY_MS * REMOVE_MAX_RETRIES * (REMOVE_MAX_RETRIES + 1)) / 2;
+// Slack over the retry waits for the removal calls themselves.
+const REMOVE_SYSCALL_SLACK_MS = 500;
 
 // Captured at import, before any test overrides the runs root.
 const originalRunsRoot = process.env.AGENT_LOOP_RUNS_ROOT;
@@ -112,9 +128,9 @@ const CALL_CEILING_MS = 10_000;
 // The longest the shim may take to record its pid, and to make the record visible.
 const START_WAIT_MS = 10_000;
 const RECORD_VISIBLE_MS = 500;
-// The most the fixture removal after a test can take: `removePath` retries 10
-// times, 100 ms apart.
-const CLEANUP_MS = 2000;
+// The most the cleanup after a test can take: killing a leftover child is
+// instant, and `removePath` costs at most its full retry backoff.
+const CLEANUP_MS = REMOVE_MAX_WAIT_MS + REMOVE_SYSCALL_SLACK_MS;
 const BOUND_MS = 2000;
 
 /**
@@ -218,6 +234,19 @@ async function returnsWithin(call, limitMs, message) {
   }
 }
 
+// A child that survived a failed test would hold its directory open and keep
+// running for SHIM_HANG_MS. Killing it is instant, so it adds nothing to the
+// cleanup budget, and it lets `removePath` succeed on its first try.
+function killLeftover(pid) {
+  if (pid !== null && processExists(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The child exited between the check and the kill.
+    }
+  }
+}
+
 async function withShimOnPath(dir, body) {
   const path = process.env.PATH;
   try {
@@ -241,8 +270,11 @@ async function withShimOnPath(dir, body) {
  */
 export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
+  let pid = null;
+  let record = null;
   try {
     const shim = await writeHangingShim(dir, command);
+    record = shim.started;
     return await withShimOnPath(dir, async () => {
       const result = await returnsWithin(
         run(boundMs),
@@ -251,12 +283,13 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
       );
       // The record was written before the bound expired, so a short wait only
       // covers file visibility.
-      const pid = await waitForPid(shim.started, RECORD_VISIBLE_MS);
+      pid = await waitForPid(shim.started, RECORD_VISIBLE_MS);
       assert.notEqual(pid, null, `the shim did not start within the ${boundMs} ms bound`);
       await assertGone(pid, FORCE_KILL_AFTER_DELAY_MS);
       return result;
     });
   } finally {
+    killLeftover(pid ?? (record && (await waitForPid(record, 0))));
     await removePath(dir);
   }
 }
@@ -271,12 +304,15 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
  */
 export async function expectAbortKillsShim(command, start) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
+  let pid = null;
+  let record = null;
   try {
     const shim = await writeHangingShim(dir, command);
+    record = shim.started;
     return await withShimOnPath(dir, async () => {
       const controller = new AbortController();
       const pending = start(controller.signal);
-      const pid = await waitForPid(shim.started, START_WAIT_MS);
+      pid = await waitForPid(shim.started, START_WAIT_MS);
       assert.notEqual(pid, null, "the shim never started");
       controller.abort();
       const result = await returnsWithin(
@@ -288,6 +324,7 @@ export async function expectAbortKillsShim(command, start) {
       return result;
     });
   } finally {
+    killLeftover(pid ?? (record && (await waitForPid(record, 0))));
     await removePath(dir);
   }
 }
