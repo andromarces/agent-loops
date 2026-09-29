@@ -1,8 +1,23 @@
-import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+// Answers `git` from memory for the tests that switch it on (see `cleanRepoGit`
+// below); every other test reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { execa } from "execa";
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { executeRoleCommand } from "../src/role.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
 import { snapshot } from "../src/lib/snapshot.mjs";
@@ -18,7 +33,7 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo, removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -825,38 +840,46 @@ function noRequiredCheckGh(head) {
   };
 }
 
-// The two finishes below start from the same run: a declared PR 42 with one
-// accepted reviewer turn. Building it costs about twenty `git` processes (a repo,
-// then a snapshot around each turn), which a loaded Windows runner runs slowly
-// enough to outlast a test limit before the finish under test starts (issue
-// #385). It is built once. Each test gets its own copy of the runs root, and no
-// finish changes the repo, so the copies cannot affect one another. The ceiling
-// on the hook is the one-time build, which no test waits on.
-const ACCEPTED_PR_RUN_BUILD_TIMEOUT_MS = 60_000;
-let acceptedPrRun;
+// The two finishes below run on a repo whose `git` is answered from memory. A
+// declared run with one accepted reviewer turn takes about twenty `git`
+// processes to reach the finish (a repo, then a snapshot around each turn), and a
+// loaded Windows runner outlasted a test limit on that before the finish under
+// test started (issue #385). The `role` code is real: the double replaces only
+// the `git` child, so the dispatches, the snapshots, and the finish gate all run
+// over the answers. Snapshot behavior against a real repo keeps its own tests.
+const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
 
+function cleanRepoGit(command, args, options) {
+  expect(command).toBe("git");
+  const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
+  if (args[0] === "rev-parse") {
+    if (args.includes("--is-inside-work-tree")) {
+      return answer("true\n");
+    }
+    return answer(args.includes("--show-toplevel") ? options.cwd : `${CLEAN_REPO_HEAD}\n`);
+  }
+  if (args[0] === "status" || args[0] === "ls-files") {
+    return answer("");
+  }
+  throw new Error(`unexpected git call: ${args.join(" ")}`);
+}
+
+// A directory stands in for the repo: the double answers for it, so it needs no
+// `git` setup.
 async function useAcceptedPrRun() {
-  await cp(acceptedPrRun.runsRoot, process.env.AGENT_LOOP_RUNS_ROOT, { recursive: true });
-  return acceptedPrRun;
+  const repo = await mkdtemp(join(tmpdir(), "role-test-clean-repo-"));
+  repos.push(repo);
+  await initPrRun(repo, 42);
+  await dispatchReviewer(repo, ACCEPT);
+  return { repo, head: CLEAN_REPO_HEAD };
 }
 
 describe("a declared PR whose reviewer turn was accepted", () => {
-  beforeAll(async () => {
-    const runsRoot = await mkdtemp(join(tmpdir(), "role-test-accepted-runs-"));
-    const repo = await createTempRepo();
-    process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
-    try {
-      await initPrRun(repo, 42);
-      await dispatchReviewer(repo, ACCEPT);
-    } finally {
-      restoreRunsRoot();
-    }
-    acceptedPrRun = { repo, runsRoot, head: (await snapshot(repo)).head };
-  }, ACCEPTED_PR_RUN_BUILD_TIMEOUT_MS);
-
-  afterAll(async () => {
-    await removePath(acceptedPrRun.repo);
-    await removePath(acceptedPrRun.runsRoot);
+  beforeEach(() => {
+    gitDouble.answer = cleanRepoGit;
+  });
+  afterEach(() => {
+    gitDouble.answer = null;
   });
 
   // Usefulness: verifies a declared run finishes on a base branch with no required
