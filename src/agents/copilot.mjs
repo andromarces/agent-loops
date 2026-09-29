@@ -43,17 +43,10 @@ export async function runCopilot(state, prompt, options = {}) {
     throw new Error("Copilot did not return a session ID.");
   }
 
-  // A resumed id must come back unchanged. The repository holds no recorded Copilot output
-  // showing that a pre-assigned id is echoed, so a first turn stores the id Copilot reports,
-  // which is the session the next turn can resume.
-  if (returnedId !== sessionId) {
-    if (requestedSessionId) {
-      throw resumeMismatchError("Copilot", "session", requestedSessionId, returnedId);
-    }
-    logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
+  // A resumed id must come back unchanged.
+  if (requestedSessionId && returnedId !== requestedSessionId) {
+    throw resumeMismatchError("Copilot", "session", requestedSessionId, returnedId);
   }
-
-  state.sessionId = returnedId;
 
   const message = events
     .filter((event) => event.type === "assistant.message")
@@ -64,6 +57,14 @@ export async function runCopilot(state, prompt, options = {}) {
   if (!message) {
     throw new Error("Copilot did not return response text.");
   }
+
+  // Every check that can fail the turn has passed, so the id is safe to keep. The repository
+  // holds no recorded Copilot output showing that a pre-assigned id is echoed, so a first turn
+  // stores the id Copilot reports, which is the session the next turn can resume.
+  if (returnedId !== sessionId) {
+    logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
+  }
+  state.sessionId = returnedId;
 
   return String(message).trim();
 }
