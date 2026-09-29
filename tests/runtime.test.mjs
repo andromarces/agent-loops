@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
@@ -3102,7 +3102,7 @@ test("the orchestrator prompt states a wait bound below the run's turn timeout",
     });
 
     const prompt = orch.recorded[0].prompt;
-    expect(prompt).toContain("role wait-checks --pr 42 --timeout 25");
+    expect(prompt).toContain(`--cwd "${resolve(repo).replaceAll("\\", "/")}" --pr 42 --timeout 25`);
     expect(prompt).not.toContain("--watch");
   } finally {
     await removePath(repo);
@@ -3132,7 +3132,7 @@ test("the orchestrator prompt names no wait when the turn timeout is too short",
     });
 
     const prompt = orch.recorded[0].prompt;
-    expect(prompt).not.toContain("role wait-checks --pr");
+    expect(prompt).not.toContain("--pr 42 --timeout");
     expect(prompt).toMatch(/cannot wait for the required checks/i);
   } finally {
     await removePath(repo);

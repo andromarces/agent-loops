@@ -445,16 +445,27 @@ bounded by the per-invocation `--timeout`, which defaults to 3600 seconds and is
 unbounded at 0, and a turn that outlasts that bound ends the run on exit 1
 before it returns an action.
 
-The headless orchestrator runs each wait as `role wait-checks --pr <pr>
---timeout <seconds>` in the run's work tree, the same operation the interactive
-parent uses, and never as a `gh pr checks --watch`, which has no timeout. The
-prompt renders the whole command, for example `"<node>" "<repo>/src/cli.mjs"
-role wait-checks`, with the Node binary and the CLI script that the run itself
-uses. That form resolves for a global install, an `npm link`, and a clone run
-through `node <repo>/src/cli.mjs` or `pnpm agent-loop`, none of which promise
-`agent-loop` on `PATH`. The orchestrator runs it as written. When a path holds a
-character that the shells quote differently (`"`, `$`, a backtick, `%`, or a line
-break), the runtime renders no command and the prompt names no wait.
+The headless orchestrator runs each wait as `role wait-checks --cwd <work tree>
+--pr <pr> --timeout <seconds>`, the same operation the interactive parent uses,
+and never as a `gh pr checks --watch`, which has no timeout. The prompt renders
+the whole command with the Node binary, the CLI script, and the work tree of the
+run itself. That form resolves for a global install, an `npm link`, and a clone
+run through `node <repo>/src/cli.mjs` or `pnpm agent-loop`, none of which promise
+`agent-loop` on `PATH`, and `--cwd` makes the wait read the run's repository
+whatever directory the shell starts in. The orchestrator runs it as written.
+
+A quoted executable path is a string expression in PowerShell, so it needs the
+call operator, while bash and cmd reject that operator. On Windows the prompt
+therefore gives two forms and the orchestrator uses the one for the shell that its
+shell tool runs: `& "<node>" "<cli>" role wait-checks ...` for PowerShell, and
+`"<node>" "<cli>" role wait-checks ...` for bash or cmd. Other platforms get the
+plain form. Paths use forward slashes, which Node accepts on Windows.
+
+The runtime renders no command, and the prompt names no wait, when the Node path,
+the CLI path, or the work tree path holds a character that bash, PowerShell, or
+cmd expands or reinterprets inside double quotes: `"`, `$`, a backtick, `%`,
+`!`, the typographic double quotes U+201C, U+201D, and U+201E, or a control
+character such as a line break.
 
 The runtime states the `--timeout` in the prompt, below the turn `--timeout`:
 300 seconds, or half the turn `--timeout` less the five-second child-exit

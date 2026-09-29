@@ -1,8 +1,9 @@
-import { access, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
   initialPrompt,
   refusalPrompt,
@@ -666,6 +667,22 @@ test("interactive instructions and headless prompt share the status-read excepti
   }
 });
 
+// Usefulness: verifies the interactive instructions, the headless prompt, and the
+// README state the status-read exception with the same scope: one command,
+// `agent-loop role wait-checks`, so no text widens the role rule beyond what the
+// others allow (issue #348).
+test("instructions, prompt, and README share the status-read exception scope", async () => {
+  const scope = "and agent-loop role wait-checks is the only command it covers";
+  const flat = (text) => text.replace(/`/g, "").replace(/\s+/g, " ");
+  const readme = await readFile(join(dirname(instructionsPath), "../README.md"), "utf8");
+  expect(flat(await readFile(instructionsPath, "utf8"))).toContain(scope);
+  expect(flat(gatedPrompt("claude"))).toContain(scope);
+  expect(flat(readme)).toContain(scope);
+  for (const text of [gatedPrompt("claude"), readme]) {
+    expect(flat(text)).not.toMatch(/gh pr checks (?:and|or) [^.]*are the only commands/);
+  }
+});
+
 // Usefulness: verifies the wait rule states the turn cost, because a headless
 // orchestrator turn that outlasts the per-invocation timeout ends the run instead
 // of returning an action (issue #319).
@@ -675,7 +692,11 @@ test("initialPrompt states that a wait can end the run at the turn timeout", () 
   expect(prompt).toMatch(/exit 1/);
 });
 
-const WAIT_COMMAND = '"/opt/node" "/opt/agent-loops/src/cli.mjs" role wait-checks';
+const WAIT_PREFIX = 'role wait-checks --cwd "/work tree"';
+const WAIT_COMMAND = [
+  { shell: "PowerShell", command: `& "/opt/node" "/opt/agent-loops/src/cli.mjs" ${WAIT_PREFIX}` },
+  { shell: "bash or cmd", command: `"/opt/node" "/opt/agent-loops/src/cli.mjs" ${WAIT_PREFIX}` },
+];
 const waitPrompt = (timeout, extra = {}) =>
   initialPrompt({
     task: "T",
@@ -700,7 +721,9 @@ test.each([
   [12, 1],
 ])("the headless wait states a bound below the turn timeout %s", (timeout, bound) => {
   const prompt = waitPrompt(timeout);
-  expect(prompt).toContain(`${WAIT_COMMAND} --pr 42 --timeout ${bound}`);
+  for (const { command } of WAIT_COMMAND) {
+    expect(prompt).toContain(`${command} --pr 42 --timeout ${bound}`);
+  }
   expect(prompt).not.toContain("--watch");
   expect(prompt).not.toContain("few minutes");
   if (typeof timeout === "number") {
@@ -714,7 +737,7 @@ test.each([
 test("no turn timeout gets a wait that outlasts the turn", () => {
   for (let timeout = 1; timeout <= 700; timeout += 1) {
     const prompt = waitPrompt(timeout);
-    const stated = prompt.match(/wait-checks --pr 42 --timeout (\d+)/);
+    const stated = prompt.match(/role wait-checks --cwd "[^"]*" --pr 42 --timeout (\d+)/);
     if (stated === null) {
       expect(timeout, "a turn that fits a wait names none").toBeLessThan(12);
       expect(prompt).toMatch(/cannot wait for the required checks/i);
@@ -746,11 +769,205 @@ test("the headless wait states the childExitUnconfirmed rule", () => {
   expect(prompt).toMatch(/settle that process before you start another wait/i);
 });
 
-// Usefulness: verifies the prompt names a command that runs in this install, not
-// a bare `agent-loop` that a clone run has no PATH entry for: the rendered Node
-// binary and CLI script exist and the script answers a wait-checks call
-// (issue #348).
-test("the default wait command resolves to the CLI of this run", async () => {
+// Usefulness: verifies the platform decides the shell forms: a Windows run gets
+// a PowerShell form with the call operator and a bash-or-cmd form without it,
+// and any other platform gets one plain form (issue #348).
+test("the wait command renders the shell forms of the platform", () => {
+  const input = {
+    execPath: "C:\\Program Files\\nodejs\\node.exe",
+    cliPath: "D:\\a b\\cli.mjs",
+    cwd: "E:\\work tree",
+  };
+  const plain = '"C:/Program Files/nodejs/node.exe" "D:/a b/cli.mjs" role wait-checks --cwd "';
+  const win = waitChecksCommand({ ...input, platform: "win32" });
+  expect(win.map((form) => form.shell)).toEqual(["PowerShell", "bash or cmd"]);
+  expect(win[0].command.startsWith(`& ${plain}`)).toBe(true);
+  expect(win[1].command.startsWith(plain)).toBe(true);
+  expect(win[1].command.endsWith('work tree"')).toBe(true);
+
+  const tree = resolve("/srv/work tree").replaceAll("\\", "/");
+  const posix = waitChecksCommand({
+    execPath: "/opt/node",
+    cliPath: "/opt/a b/cli.mjs",
+    cwd: "/srv/work tree",
+    platform: "linux",
+  });
+  expect(posix).toEqual([
+    {
+      shell: "sh",
+      command: `"/opt/node" "/opt/a b/cli.mjs" role wait-checks --cwd "${tree}"`,
+    },
+  ]);
+});
+
+// Usefulness: verifies the command carries the run's resolved work tree, so the
+// wait reads the right repository whatever directory the shell starts in, and the
+// prompt passes the run's `cwd` through (issue #348).
+test("the wait command and the prompt carry the resolved work tree", () => {
+  const forms = waitChecksCommand({ cwd: "relative/tree", platform: "linux" });
+  expect(forms[0].command).toContain(`--cwd "${resolve("relative/tree").replaceAll("\\", "/")}"`);
+  const prompt = initialPrompt({
+    task: "T",
+    maxSteps: 10,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    timeout: 3600,
+    cwd: "/srv/run tree",
+  });
+  expect(prompt).toContain(`--cwd "${resolve("/srv/run tree").replaceAll("\\", "/")}" --pr 42`);
+});
+
+// Every character that bash, PowerShell, or cmd expands or reinterprets inside a
+// double-quoted argument. ADR 0013 lists the same set.
+const UNSAFE_CHARACTERS = [
+  ['"', "double quote"],
+  ["$", "dollar"],
+  ["`", "backtick"],
+  ["%", "percent (cmd)"],
+  ["!", "exclamation (cmd delayed expansion, bash history)"],
+  ["\u201C", "left double quotation mark (PowerShell quote)"],
+  ["\u201D", "right double quotation mark (PowerShell quote)"],
+  ["\u201E", "low double quotation mark (PowerShell quote)"],
+  ["\n", "line feed"],
+  ["\r", "carriage return"],
+  ["\t", "tab"],
+  ["\u0000", "NUL"],
+];
+
+// Usefulness: verifies a Node path, a CLI path, or a work tree path that holds a
+// character a shell expands inside double quotes gets no command, so the prompt
+// never renders a command that runs something else (issue #348).
+test.each(UNSAFE_CHARACTERS)("the wait command refuses a path holding %j (%s)", (char) => {
+  const safe = { execPath: "/opt/node", cliPath: "/opt/cli.mjs", cwd: "/srv/tree" };
+  expect(waitChecksCommand({ ...safe, platform: "linux" })).not.toBeNull();
+  for (const key of ["execPath", "cliPath", "cwd"]) {
+    const input = { ...safe, [key]: `${safe[key]}${char}x`, platform: "linux" };
+    expect(waitChecksCommand(input), key).toBeNull();
+    expect(waitChecksCommand({ ...input, platform: "win32" }), key).toBeNull();
+  }
+});
+
+// Usefulness: verifies a run with no renderable command names no wait, and says
+// why, instead of a wait command the shell would misread (issue #348).
+test("a run with no renderable command names no wait", () => {
+  const prompt = waitPrompt(3600, { waitCommand: null });
+  expect(prompt).not.toContain("--pr 42 --timeout");
+  expect(prompt).toMatch(/cannot wait for the required checks/i);
+  expect(prompt).toMatch(/work tree that every shell reads the same way/i);
+});
+
+const isWindows = process.platform === "win32";
+
+// Resolves true when `command` starts, whatever its exit code.
+async function canRun(command, args) {
+  const run = await execa(command, args, { reject: false });
+  return !run.failed || run.exitCode !== undefined;
+}
+const hasBash = await canRun("bash", ["-c", "exit 0"]);
+const hasPowerShell =
+  isWindows && (await canRun("powershell", ["-NoProfile", "-Command", "exit 0"]));
+
+// Runs one rendered form in a real shell and returns the combined output. The
+// script goes through a file so the shell parses exactly the text the prompt
+// carries. No --pr is given, so the CLI refuses before it reads anything.
+async function runForm(shell, command, dir) {
+  if (shell === "bash") {
+    return execa("bash", ["-c", command], { reject: false, all: true });
+  }
+  if (shell === "powershell") {
+    const script = join(dir, "form.ps1");
+    await writeFile(script, `${command}\n`);
+    return execa("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script], {
+      reject: false,
+      all: true,
+    });
+  }
+  const script = join(dir, "form.cmd");
+  await writeFile(script, `@echo off\r\n${command}\r\n`);
+  return execa("cmd", ["/d", "/c", script], { reject: false, all: true });
+}
+
+// Usefulness: verifies each rendered form starts the CLI in a real shell, with a
+// Node path and a work tree path that hold spaces, since a form that a shell
+// rejects would leave the orchestrator with no wait. PowerShell needs the call
+// operator and bash and cmd reject it (issue #348).
+describe("the rendered wait forms run in a real shell", () => {
+  const withDir = async (run) => {
+    const dir = await mkdtemp(join(tmpdir(), "wait form "));
+    try {
+      const scripts = await mkdtemp(join(tmpdir(), "waitform-"));
+      try {
+        return await run(dir, scripts);
+      } finally {
+        await rm(scripts, { recursive: true, force: true });
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+  const REFUSED = /wait-checks requires --pr/;
+
+  test.skipIf(isWindows || !hasBash)("the sh form runs in bash", async () => {
+    await withDir(async (cwd, scripts) => {
+      const [form] = waitChecksCommand({ cwd });
+      const run = await runForm("bash", form.command, scripts);
+      expect(run.all).toMatch(REFUSED);
+    });
+  });
+
+  test.skipIf(!isWindows || !hasBash)("the bash-or-cmd form runs in bash", async () => {
+    await withDir(async (cwd, scripts) => {
+      const form = waitChecksCommand({ cwd }).find((f) => f.shell === "bash or cmd");
+      const run = await runForm("bash", form.command, scripts);
+      expect(run.all).toMatch(REFUSED);
+    });
+  });
+
+  test.skipIf(!isWindows)(
+    "the bash-or-cmd form runs in cmd, and the call operator does not",
+    async () => {
+      await withDir(async (cwd, scripts) => {
+        const forms = waitChecksCommand({ cwd });
+        const plain = forms.find((f) => f.shell === "bash or cmd");
+        const ok = await runForm("cmd", plain.command, scripts);
+        expect(ok.all).toMatch(REFUSED);
+        const rejected = await runForm(
+          "cmd",
+          forms.find((f) => f.shell === "PowerShell").command,
+          scripts,
+        );
+        expect(rejected.all).not.toMatch(REFUSED);
+      });
+    },
+  );
+
+  test.skipIf(!hasPowerShell)(
+    "the PowerShell form runs in PowerShell, and the plain form does not",
+    async () => {
+      await withDir(async (cwd, scripts) => {
+        const forms = waitChecksCommand({ cwd });
+        const ok = await runForm(
+          "powershell",
+          forms.find((f) => f.shell === "PowerShell").command,
+          scripts,
+        );
+        expect(ok.all).toMatch(REFUSED);
+        const rejected = await runForm(
+          "powershell",
+          forms.find((f) => f.shell === "bash or cmd").command,
+          scripts,
+        );
+        expect(rejected.all).not.toMatch(REFUSED);
+      });
+    },
+  );
+});
+
+// Usefulness: verifies the default prompt names a command built from this
+// install, not a bare `agent-loop` that a clone run has no PATH entry for: the
+// rendered Node binary and CLI script exist (issue #348).
+test("the default wait command names the Node binary and CLI script of this run", async () => {
   const prompt = initialPrompt({
     task: "T",
     maxSteps: 10,
@@ -759,49 +976,14 @@ test("the default wait command resolves to the CLI of this run", async () => {
     reviewerKind: "claude",
     timeout: 3600,
   });
-  const match = prompt.match(/"([^"]+)" "([^"]+)" role wait-checks --pr 42 --timeout 300/);
+  const match = prompt.match(
+    /"([^"]+)" "([^"]+)" role wait-checks --cwd "[^"]+" --pr 42 --timeout 300/,
+  );
   expect(match).not.toBeNull();
   const [, node, cli] = match;
   expect(node).toBe(process.execPath.replaceAll("\\", "/"));
   expect(prompt).not.toMatch(/agent-loop role wait-checks --pr/);
   await access(cli);
-  // No --pr: the operation refuses before it reads anything, so nothing is sent.
-  const run = await execa(node, [cli, "role", "wait-checks"], { reject: false });
-  expect(run.exitCode).not.toBe(0);
-  expect(`${run.stdout}${run.stderr}`).toMatch(/wait-checks requires --pr/);
-});
-
-// Usefulness: verifies a path that a double-quoted argument does not carry the
-// same way in every shell gets no wait command, and a path with a space or a
-// Windows separator is rendered quoted with forward slashes (issue #348).
-test("the wait command quotes safe paths and refuses unsafe ones", () => {
-  expect(
-    waitChecksCommand({
-      execPath: "C:\\Program Files\\nodejs\\node.exe",
-      cliPath: "D:\\a b\\cli.mjs",
-    }),
-  ).toBe('"C:/Program Files/nodejs/node.exe" "D:/a b/cli.mjs" role wait-checks');
-  const unsafe = [
-    '/a"b/cli.mjs',
-    "/a$HOME/cli.mjs",
-    "/a`b/cli.mjs",
-    "/100%/cli.mjs",
-    "/a\nb/cli.mjs",
-  ];
-  for (const bad of unsafe) {
-    expect(waitChecksCommand({ execPath: "/opt/node", cliPath: bad }), bad).toBeNull();
-  }
-  const prompt = initialPrompt({
-    task: "T",
-    maxSteps: 10,
-    requireCi: 42,
-    orchestratorKind: "claude",
-    reviewerKind: "claude",
-    timeout: 3600,
-    waitCommand: null,
-  });
-  expect(prompt).not.toContain("--pr 42 --timeout");
-  expect(prompt).toMatch(/cannot wait for the required checks/i);
 });
 
 // Usefulness: verifies the prompt names the timeout outcome: a wait that reached

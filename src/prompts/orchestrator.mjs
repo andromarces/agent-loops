@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
 
@@ -44,22 +45,52 @@ export function headlessWaitSeconds(timeout) {
 
 const CLI_PATH = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 
-// Characters that a double-quoted argument does not carry the same way in bash,
-// PowerShell, and cmd, so a path holding one is not rendered.
-const UNSAFE_IN_QUOTES = /["$`%\r\n]/;
+// Characters that one of bash, PowerShell, and cmd expands or reinterprets inside
+// a double-quoted argument, so a path holding one is not rendered:
+// - `"` ends the string in all three, and PowerShell also ends it on the
+//   typographic quotes U+201C, U+201D, and U+201E;
+// - `$` and a backtick expand in bash and PowerShell;
+// - `%` expands in cmd, and `!` expands in cmd with delayed expansion and in
+//   interactive bash history;
+// - a control character (Unicode category Cc), a line break included, ends or
+//   corrupts the line.
+// A backslash is not listed because it is rewritten to a slash first.
+// known-limit: a non-ASCII path is rendered as is, and cmd reads it through its
+// active code page.
+const UNSAFE_IN_QUOTES = /["$`%!\u201C\u201D\u201E\p{Cc}]/u;
 
 /**
- * The command that runs `role wait-checks` for this run, or null when a path
- * cannot be quoted the same way in every shell. It names the Node binary and the
- * CLI script that this process runs, so it resolves for a global install, an
- * `npm link`, and a clone run through `node <repo>/src/cli.mjs` or
- * `pnpm agent-loop`, none of which promise `agent-loop` on PATH (#348).
- * Backslashes become slashes, which Node accepts on Windows.
+ * The commands that run `role wait-checks` in the work tree `cwd`, one per shell
+ * form, or null when a path cannot be quoted the same way in every shell. The
+ * commands name the Node binary and the CLI script that this process runs, so
+ * they resolve for a global install, an `npm link`, and a clone run through
+ * `node <repo>/src/cli.mjs` or `pnpm agent-loop`, none of which promise
+ * `agent-loop` on PATH. `--cwd` carries the run's work tree, so the wait reads
+ * that repository whatever directory the shell starts in (#348).
+ *
+ * A quoted executable path is a string expression in PowerShell and needs the
+ * call operator `&`, while bash and cmd reject that operator, so Windows gets
+ * two forms. Probed on Windows: bash and cmd run the plain form, PowerShell 5.1
+ * and 7 run the `&` form, and each rejects the other's form. Backslashes become
+ * slashes, which Node accepts on Windows.
+ * @returns {Array<{ shell: string, command: string }> | null}
  */
-export function waitChecksCommand({ execPath = process.execPath, cliPath = CLI_PATH } = {}) {
-  const parts = [execPath, cliPath].map((path) => path.replaceAll("\\", "/"));
-  if (parts.some((path) => UNSAFE_IN_QUOTES.test(path))) return null;
-  return `"${parts[0]}" "${parts[1]}" role wait-checks`;
+export function waitChecksCommand({
+  execPath = process.execPath,
+  cliPath = CLI_PATH,
+  cwd = process.cwd(),
+  platform = process.platform,
+} = {}) {
+  const [node, cli, tree] = [execPath, cliPath, resolve(cwd)].map((path) =>
+    path.replaceAll("\\", "/"),
+  );
+  if ([node, cli, tree].some((path) => UNSAFE_IN_QUOTES.test(path))) return null;
+  const plain = `"${node}" "${cli}" role wait-checks --cwd "${tree}"`;
+  if (platform !== "win32") return [{ shell: "sh", command: plain }];
+  return [
+    { shell: "PowerShell", command: `& ${plain}` },
+    { shell: "bash or cmd", command: plain },
+  ];
 }
 
 /**
@@ -89,7 +120,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
     const why =
       bound === null
         ? `the turn --timeout (${timeout} seconds) is too short for a wait that ends, with its five-second child-exit window, inside the turn`
-        : "the runtime cannot render a command for this install that every shell reads the same way";
+        : "the runtime cannot render a command for this install and work tree that every shell reads the same way";
     return [
       gate,
       `- You cannot wait for the required checks in this run, because ${why}. Do not run gh pr checks, and do not run agent-loop role wait-checks.`,
@@ -100,11 +131,11 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
   if (rule === "wait") {
     return [
       gate,
-      "- This run excepts one read from the role rule above: you may read the pull request check status yourself. A status read is not a review, not a test, and not an edit, and gh pr checks and agent-loop role wait-checks are the only commands it covers.",
+      "- This run excepts one read from the role rule above: you may read the pull request check status yourself. A status read is not a review, not a test, and not an edit, and agent-loop role wait-checks is the only command it covers.",
       "- Wait for the required checks at two points:",
       "  - Before you dispatch the reviewer on a new PR head, wait for the required checks on that head to complete.",
       "  - When a reviewer turn reports a pending required check, wait for that check to complete before you finish. A check still pending after a wait is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check, so dispatch the reviewer again, or wait again on a later turn, or abort with the pending check named in the reason.",
-      `- Run each wait as ${waitCommand} --pr ${requireCi} --timeout ${bound} from this work tree. The runtime owns the bound, so the command returns within ${bound} seconds plus five, before this turn ends. Run the command exactly as written, because it names the Node binary and the CLI script of this run. Do not watch the checks with gh directly, because gh has no timeout for a watch. The command prints one JSON envelope with "timedOut" and the last "checks" it read. The status read changes nothing and spends no step, because a step is charged only to run_worker and run_reviewer. This turn is bounded by the turn --timeout (${typeof timeout === "number" ? `${timeout} seconds` : "3600 seconds by default"}), and a turn that outlasts it ends the run on exit 1 before it returns an action.`,
+      `- Run each wait with the command for the shell that your shell tool runs, exactly as written, from any directory: ${waitCommand.map(({ shell, command }) => `${shell}: ${command} --pr ${requireCi} --timeout ${bound}`).join(" ; ")}. The command names the Node binary, the CLI script, and the work tree of this run. The runtime owns the bound, so the command returns within ${bound} seconds plus five, before this turn ends. Do not watch the checks with gh directly, because gh has no timeout for a watch. The command prints one JSON envelope with "timedOut" and the last "checks" it read. The status read changes nothing and spends no step, because a step is charged only to run_worker and run_reviewer. This turn is bounded by the turn --timeout (${typeof timeout === "number" ? `${timeout} seconds` : "3600 seconds by default"}), and a turn that outlasts it ends the run on exit 1 before it returns an action.`,
       '- Read the wait result as follows. A failing required check is settled, so act on the failure. "timedOut": true means the bound was reached with a required check still pending, or with no check state read: it is a completed read and not a pass, so the pending check is not a finish condition. Do not wait again in the same turn: dispatch the reviewer, or abort with the pending check named in the reason. An exit 1 with "status": "error" is an unresolved read, so never record its checks as passed.',
       '- "childExitUnconfirmed": true appears only when the five-second window expired with the gh child still unaccounted for. The command does not claim an exit it did not observe, so a gh process from this wait may still run. Settle that process before you start another wait, and if you cannot, do not wait again.',
     ];
@@ -234,7 +265,8 @@ export function initialPrompt({
   orchestratorKind = null,
   reviewerKind = null,
   timeout = null,
-  waitCommand = waitChecksCommand(),
+  cwd = process.cwd(),
+  waitCommand = waitChecksCommand({ cwd }),
 }) {
   return `
 You are the orchestrator in an automated multi-agent coding loop.
