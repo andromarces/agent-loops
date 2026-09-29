@@ -154,8 +154,10 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * Exclusive access around one state-file operation. Creates `state.lock` (an
  * atomic hard link where supported, otherwise an exclusive create), treats an
  * existing lock with a live owner pid as busy and a dead one as stale
- * (removed with a warning only if it still holds the content read as stale, then
- * retried once). Returns the result of `fn`. `label`
+ * (removed with a warning, then retried once). The removal runs under a
+ * `<lock>.reap` claim and deletes the lock only if it still holds the content
+ * read as stale, so a lock that a new owner created in between survives and the
+ * retry reports it as busy. Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
  * is locked instead of the generic default; `noun` is the same resource as a
  * lowercase phrase for the stale-removal warning.
@@ -194,7 +196,10 @@ const LINK_UNSUPPORTED = new Set([
 // Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
 const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
 
-async function acquireLock(lockFile, { retry = true, label = "State", noun = "state" } = {}) {
+async function acquireLock(
+  lockFile,
+  { retry = true, label = "State", noun = "state", claim = false } = {},
+) {
   if (await createLock(lockFile)) {
     // Best-effort removal of temp files left by a crash between the temp write
     // and the link (#178). Runs while the lock is held and never touches a live
@@ -224,39 +229,44 @@ async function acquireLock(lockFile, { retry = true, label = "State", noun = "st
   }
 
   logWarn(`removing stale ${noun} lock (dead pid ${owner?.pid ?? "unknown"})`);
-  await removeStaleLock(lockFile, lockText);
-  return acquireLock(lockFile, { retry: false, label, noun });
+  if (claim) {
+    await rm(lockFile, { force: true });
+  } else {
+    await removeStaleLock(lockFile, lockText, { label, noun });
+  }
+  return acquireLock(lockFile, { retry: false, label, noun, claim });
 }
 
-// Removes the lock only if it still holds `staleText`, the content that was read
-// as stale. A bare `rm` after the read would delete a live lock that another
-// process created in between (#363). The lock is renamed to a private path
-// first, so the content that is checked is the content that is removed. A
-// different lock is put back with the no-overwrite link that lock creation uses.
-// known-limit: the lock path is briefly absent while a displaced live lock is
-// out. A third contender that creates the lock in that window wins, and the
-// displaced owner is dropped with a warning. A separate reaper lock would close
-// the window but is itself a lock that can go stale.
-async function removeStaleLock(lockFile, staleText) {
-  const claimFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
+// Removes the stale lock under the stale-removal claim `<lock>.reap`, a lock
+// of the same kind that only one contender holds at a time. While the claim is
+// held nobody else removes the stale lock, its dead owner cannot release it, and
+// nobody can create a lock at that path, so a lock that reads as the stale one
+// under the claim is the one that was read as stale, and removing it cannot
+// delete a new owner's lock (#363). The lock path is never renamed away, so a
+// live lock is never out of place. A lock that reads differently or cannot be
+// read is kept; the caller's retry then reports it as busy.
+// known-limit: a claim left by a crashed process is removed by a bare rm, so two
+// contenders that both find that dead claim can both take it. Closing that needs
+// another lock around the claim, which can itself go stale.
+async function removeStaleLock(lockFile, staleText, { label, noun }) {
+  const claimFile = `${lockFile}.reap`;
+  await acquireLock(claimFile, { label, noun: `${noun} stale-removal claim`, claim: true });
   try {
-    await rename(lockFile, claimFile);
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      return;
-    }
-    throw err;
-  }
-  try {
-    const claimedText = await readLockText(claimFile);
-    if (claimedText !== null && claimedText !== staleText) {
-      if (!(await linkLock(claimFile, lockFile, claimedText))) {
-        logWarn("a newer lock took the lock path while a displaced lock was restored; dropped");
-      }
+    if (await stillStale(lockFile, staleText)) {
+      await rm(lockFile, { force: true });
     }
   } finally {
-    await removeTemp(claimFile);
+    await rm(claimFile, { force: true });
   }
+}
+
+// True when the lock still holds the content read as stale. An unparseable
+// lock must also still be older than the grace window.
+async function stillStale(lockFile, staleText) {
+  if ((await readLockText(lockFile)) !== staleText) {
+    return false;
+  }
+  return parseLockOwner(staleText) !== null || (await lockAgeMs(lockFile)) >= STALE_LOCK_GRACE_MS;
 }
 
 // Create the lock and its owner content. The owner JSON goes to a private temp
