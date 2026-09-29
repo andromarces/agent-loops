@@ -30,10 +30,24 @@ let dispatchPaths = [];
 
 afterEach(async () => {
   delete process.env.AGENT_LOOP_RUNS_ROOT;
-  for (const path of dispatchPaths) {
-    await removePath(path);
-  }
+  const paths = dispatchPaths;
   dispatchPaths = [];
+  // Every registered path is attempted so one failure cannot strand the rest, and the first
+  // failure is rethrown so a real cleanup failure still fails the run.
+  let firstError;
+  for (const path of paths) {
+    if (typeof path !== "string") {
+      continue;
+    }
+    try {
+      await removePath(path);
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  if (firstError) {
+    throw firstError;
+  }
 });
 
 function textEvent(text) {
@@ -811,9 +825,10 @@ test("opencode joins a mid-sentence split without a line break", async () => {
 // the structured fields. The join tests above cover the string; this one covers the seam (issue #316).
 test("an opencode stream split before the closing block reaches the dispatch envelope", async () => {
   const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
+  dispatchPaths.push(runsRoot);
   const repo = await createTempRepo();
+  dispatchPaths.push(repo);
   process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
-  dispatchPaths = [runsRoot, repo];
 
   const init = parseRoleArgs([
     "dispatch",
