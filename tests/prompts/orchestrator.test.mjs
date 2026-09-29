@@ -413,17 +413,20 @@ for (const [name, path] of RULE_SURFACES) {
     expectRule(text, /repository rulesets/i, /read of every page/i, /documented rule type/i);
     expectRule(text, /classic branch protection/i, /Branch not protected/);
     expectRule(text, /No successful classic-protection body proves an absence/i);
-    // The empty result and the unknown rule type both settle nothing.
-    expectRule(text, /empty ruleset result/i, /unknown/i);
+    // A read of no page at all is unknown, and exactly one empty page is empty: two
+    // different replies, and neither is a positive absence (#336 review).
+    expectRule(text, /no page at all/i, /unknown/i);
+    expectRule(text, /exactly one empty page/i, /empty/i, /positive absence/i);
+    // An unlisted rule type settles nothing either.
     expectRule(text, /not a documented rule type/i, /unknown/i);
     // A rule on a later page is enforced rather than missed.
     expectRule(text, /paginated/i, /later page/i, /enforced/i);
   });
 
-  // Usefulness: verifies ${name} states that an unknown ruleset read refuses whatever
-  // the rest of the union holds, which is the case a non-empty union from another
-  // source used to slip past (#336 review).
-  test(`${name} states the three ruleset outcomes`, async () => {
+  // Usefulness: verifies ${name} states the four ruleset outcomes, so the empty
+  // ruleset read is not described with the name of a reply that refuses (#336
+  // review).
+  test(`${name} states the four ruleset outcomes`, async () => {
     const text = await readFile(path, "utf8");
     // A read the gate cannot interpret refuses whatever the union holds.
     expectRule(text, /ruleset read the gate cannot interpret/i, /refuses the finish/i, /union/i);

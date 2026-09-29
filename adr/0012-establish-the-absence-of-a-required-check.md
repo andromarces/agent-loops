@@ -52,7 +52,9 @@ saw:
 A read-only probe measured all three on `sindresorhus/slugify`, a repository with
 no required check: repository rulesets read `[]`, classic protection answered
 `Not Found` (404), and `gh pr checks --required` printed nothing at all and exited
-non-zero. Every configuration source therefore left the gate empty, and none of
+non-zero. The ruleset reply recorded there is a read of no page at all, so it is
+`unknown` and refuses, while a read of exactly one empty page is `empty` and does
+not. Either way every configuration source left the gate empty, and none of
 them stated that the branch has no required check. A fourth reply behaves the same
 way: `gh pr checks --required` lists only the checks that already reported, so on
 a branch with no required check its silence is the same silence as a read
@@ -108,25 +110,40 @@ the wrong reason for the first, and the correction is recorded here.
 
 ## Reply shapes and their class
 
-One list, so a review can check the code against it.
+One list, so a review can check the code against it. The class column carries the
+outcome the code returns, written in the same lower-case words the code constants
+hold: `absent` is `ABSENT`, `has-contexts` is `HAS_CONTEXTS`, `empty` is `EMPTY`,
+and `unknown` is `UNKNOWN`. The two configuration sources are the only ones that
+carry a class. `gh pr checks --required` is never classified: it contributes names
+and no outcome, so no reply of it names a class.
 
-| Source                    | Class                        | Reply shape and the effect on each path                                                                                                                                                                                                                                                                                                                                   |
-| ------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Repository rulesets       | absent                       | Non-empty: every page holds rules, every entry carries a documented rule type, and none is a `required_status_checks` rule. Normal path: contributes no contexts, the per-check pass runs on the other sources. Relaxed path: a positive absence                                                                                                                          |
-| Repository rulesets       | has-contexts                 | Non-empty: some page carries a `required_status_checks` rule whose check list is a non-empty array of entries with a non-empty string `context`. Normal path: the per-check pass enforces those names. Relaxed path: not reached, the union is non-empty                                                                                                                  |
-| Repository rulesets       | empty                        | Exactly one page, and that page is empty: a successful read that found no rule. Normal path: contributes no contexts, the per-check pass runs on the other sources, so a classic-only repository finishes. Relaxed path: not a positive absence, the empty-union refusal names it                                                                                         |
-| Repository rulesets       | unknown                      | An entry that is not an object, is null, is an array, has no `type`, has a `type` that is not a string, or has a `type` outside the documented rule types. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                    |
-| Repository rulesets       | unknown                      | A `required_status_checks` rule whose check list is missing, is not an array, is empty, or holds an entry with no string `context`. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                           |
-| Repository rulesets       | unknown                      | A body that is empty, is not JSON, or is JSON that is not the array of pages `--slurp` returns, or that holds a page which is not an array. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                   |
-| Repository rulesets       | unknown                      | No page at all, two or more empty pages, or an empty page beside a page that holds rules, because GitHub stops paginating when there is no next page. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                         |
-| Repository rulesets       | unknown                      | Any non-zero exit, except an unrecognized shape, which throws. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                                                                                                |
-| Classic branch protection | absent                       | Exactly `gh: Branch not protected (HTTP 404)`, allowing one trailing LF or CRLF. Normal path: contributes no contexts, the per-check pass runs on the other sources. Relaxed path: a positive absence                                                                                                                                                                     |
-| Classic branch protection | has-contexts                 | A non-empty JSON object whose `required_status_checks` names at least one context and every entry names one. Normal path: the per-check pass enforces those names. Relaxed path: not reached, the union is non-empty                                                                                                                                                      |
-| Classic branch protection | unknown                      | A body that is empty, is not JSON, is JSON that is not an object, has no `required_status_checks`, has it as null or of the wrong type, or names no check, because a classic-protected branch can require reviews without requiring a check. Normal path: keeps the origin/main behavior, so the other sources still gate. Relaxed path: the empty-union refusal names it |
-| Classic branch protection | unknown                      | `Not Found` (404), either `Resource not accessible` 403, the Free-plan 403, and `Branch not protected` carrying any surrounding or extra text. Normal path: keeps the origin/main behavior, so the other sources still gate. Relaxed path: the empty-union refusal names it                                                                                               |
-| Classic branch protection | unknown                      | Any other non-zero exit, except an unrecognized shape, which throws. Normal path: keeps the origin/main behavior, so the other sources still gate. Relaxed path: the empty-union refusal names it                                                                                                                                                                         |
-| `gh pr checks --required` | has-contexts for those names | A JSON array of named checks. Normal path: the per-check pass enforces them. Relaxed path: not reached, the union is non-empty                                                                                                                                                                                                                                            |
-| `gh pr checks --required` | never classified             | An empty array, output that is not a JSON array, and a failed read, because it lists only the checks that already reported. Normal path: contributes no contexts and never decides an outcome. Relaxed path: never establishes an absence                                                                                                                                 |
+Two ruleset replies are both an empty result and only one of them is `empty`. A read
+of exactly one empty page is a successful read that found no rule, so it is `empty`:
+it contributes no contexts and does not refuse. A read of no page at all is a read
+that returned nothing, which is the same reply for a branch no ruleset applies to and
+for a caller or endpoint that enumerates no rule, so it is `unknown` and refuses. A
+second empty page is the same anomalous read, because GitHub stops paginating when
+there is no next page, so `empty` covers the one page that states an outcome and
+nothing else.
+
+| Source                    | Class            | Reply shape and the effect on each path                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository rulesets       | absent           | Every page holds rules, every entry carries a documented rule type, and no entry is a `required_status_checks` rule. Normal path: contributes no contexts, the per-check pass runs on the other sources. Relaxed path: the positive absence                                                                                                                               |
+| Repository rulesets       | has-contexts     | Some page holds a `required_status_checks` rule whose check list is a non-empty array whose entries all name a non-empty string `context`. Normal path: the per-check pass enforces those names. Relaxed path: not reached, the union is non-empty                                                                                                                        |
+| Repository rulesets       | empty            | Exactly one page, and that page is empty: a successful read that found no rule. Normal path: contributes no contexts, the per-check pass runs on the other sources, so a classic-only repository finishes. Relaxed path: not a positive absence, the empty-union refusal names it                                                                                         |
+| Repository rulesets       | unknown          | No page at all. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                                                                                                                                               |
+| Repository rulesets       | unknown          | Two or more empty pages, or an empty page beside a page that holds rules, because GitHub stops paginating when there is no next page. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                         |
+| Repository rulesets       | unknown          | An entry that is not an object, is null, is an array, has no `type`, has a `type` that is not a string, or has a `type` outside the documented rule types. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                    |
+| Repository rulesets       | unknown          | A `required_status_checks` rule whose check list is missing, is not an array, is empty, or holds an entry with no string `context`. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                           |
+| Repository rulesets       | unknown          | A body that is empty, is not JSON, is JSON that is not the array of pages `--slurp` returns, or that holds a page which is not an array. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                      |
+| Repository rulesets       | unknown          | Any non-zero exit, except an unrecognized shape, which throws. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                                                                                                |
+| Classic branch protection | absent           | Exactly `gh: Branch not protected (HTTP 404)`, allowing one trailing LF or CRLF. Normal path: contributes no contexts, the per-check pass runs on the other sources. Relaxed path: the positive absence                                                                                                                                                                   |
+| Classic branch protection | has-contexts     | A JSON object whose `required_status_checks` is an object that names at least one context in `contexts` or in `checks`, and every entry names one. Normal path: the per-check pass enforces those names. Relaxed path: not reached, the union is non-empty                                                                                                                |
+| Classic branch protection | unknown          | A body that is empty, is not JSON, is JSON that is not an object, has no `required_status_checks`, has it as null or of the wrong type, or names no check, because a classic-protected branch can require reviews without requiring a check. Normal path: keeps the origin/main behavior, so the other sources still gate. Relaxed path: the empty-union refusal names it |
+| Classic branch protection | unknown          | `Not Found` (404), either `Resource not accessible` 403, the Free-plan 403, and `Branch not protected` carrying any surrounding or extra text. Normal path: keeps the origin/main behavior, so the other sources still gate. Relaxed path: the empty-union refusal names it                                                                                               |
+| Classic branch protection | unknown          | Any other non-zero exit, except an unrecognized shape, which throws. Normal path: keeps the origin/main behavior, so the other sources still gate. Relaxed path: the empty-union refusal names it                                                                                                                                                                         |
+| `gh pr checks --required` | never classified | A JSON array of named checks, whatever the exit status. Normal path: the per-check pass enforces those names. Relaxed path: not reached, the union is non-empty                                                                                                                                                                                                           |
+| `gh pr checks --required` | never classified | An empty array and output that is not a JSON array, which contribute no names, and a failed read. Normal path: contributes no contexts and decides no outcome. Relaxed path: never establishes an absence                                                                                                                                                                 |
 
 ## Decision
 
@@ -139,7 +156,10 @@ One list, so a review can check the code against it.
      paginates at 30 rules per page, so the read follows every page, and a body the
      gate cannot account for every page of is unknown, or a required-status rule on
      a later page would be missed and a branch that requires a check would pass. An
-     empty result is excluded, because it states nothing about the branch. A rule
+     empty result is excluded, because a read of exactly one empty page states
+     nothing about the branch, and so is a read of no page at all, and so is a
+     second empty page, because that sequence is not the complete result it claims
+     to be. A rule
      type outside the documented list is excluded, because a type the list does not
      carry may be a required-status rule under a name the gate has not seen; the list
      is the documented one, so a future GitHub rule type makes such a read unknown,
@@ -150,7 +170,7 @@ One list, so a review can check the code against it.
      an absence for this source, because a classic-protected branch can require
      reviews without requiring a check, so a readable body that names no check is
      unknown.
-   - `CONTEXTS` is a reply that named at least one required check, so the
+   - `HAS_CONTEXTS` is a reply that named at least one required check, so the
      per-check pass runs.
    - `UNKNOWN` is every other reply. That is any non-zero exit other than the
      exact `Branch not protected` 404, including `Not Found` (404), both
@@ -171,7 +191,7 @@ One list, so a review can check the code against it.
    each unknown source, because a parent can only fix a source it can see. The gate
    cannot tell an empty branch from a protected one this caller may not read.
 4. A required-check configuration source reply is classified as `ABSENT`,
-   `HAS_CONTEXTS`, `EMPTY`, or `UNKNOWN`, and the reply-shape table below gives each
+   `HAS_CONTEXTS`, `EMPTY`, or `UNKNOWN`, and the reply-shape table above gives each
    shape its class and its effect on both paths. The ruleset source carries all
    four:
    - `ABSENT` is a non-empty read whose entries are all documented rule types and
@@ -185,7 +205,10 @@ One list, so a review can check the code against it.
      per-check pass runs on the other sources, which is what origin/main did, so a
      classic-only repository whose required checks passed still finishes. It is not
      a positive absence, so the relaxed path keeps the empty-union refusal and
-     names it, and the limit for a branch with no ruleset stays.
+     names it, and the limit for a branch with no ruleset stays. A read of no page
+     at all is not this outcome: the same reply answers a branch no ruleset applies
+     to and an endpoint that enumerated no rule, so that read is `UNKNOWN`, which
+     refuses on both paths.
    - `UNKNOWN` refuses the finish whatever the rest of the union holds, before the
      per-check pass, with a reason that names the source. It is a failed or
      partial page, a body that is empty, not JSON, not the array of pages, or holds
@@ -259,7 +282,8 @@ One list, so a review can check the code against it.
   branch, and a ruleset-only branch is the common case: its ruleset read is a
   non-empty array of well-formed rules with no required-status-check rule, and it
   has no classic protection to report. A branch with no ruleset at all does not
-  reach it, because an empty array states nothing about the branch, and neither
+  reach it, because its read is one empty page or no page, and `EMPTY` is not a
+  positive absence while `UNKNOWN` refuses, and neither
   does a classic-protected branch that requires reviews but names no check.
 - A declared run on such a base branch ends through `finish` and never keeps the
   #286 gap, because the runtime resolves the PR head and verifies the clean tree
@@ -328,8 +352,8 @@ Andro Marces
 ## Links
 
 - [Issue #336: Decide how a declared PR run finishes on a base branch with no required checks](https://github.com/andromarces/agent-loops/issues/336)
-- Implementation: `readRequiredSource`, `rulesetContexts`, `protectionContexts`,
-  `requiredContexts`, and the empty-union branch of `checkCi` in
+- Implementation: `readRequiredSource`, `classifyRulesets`, `classifyProtection`,
+  `ghRequiredNames`, `requiredContexts`, and the empty-union branch of `checkCi` in
   `src/lib/ci-gate.mjs`, `ciGate` and the accepted-finish branch in
   `src/runtime.mjs`, the `noRequiredChecks` record in `src/role.mjs`, the gate
   line in `src/prompts/orchestrator.mjs`; tests in
@@ -341,7 +365,9 @@ Andro Marces
   read `[]`, classic branch protection answered `Not Found` (HTTP 404), and
   `gh pr checks --required` printed nothing and exited non-zero. No source stated
   that the branch requires no check, so the empty union over that read is a
-  refusal, not an absence.
+  refusal, not an absence. The ruleset reply recorded there is a read of no page at
+  all, so it is `unknown`; a read of exactly one empty page is `empty` and refuses
+  neither path.
 - [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md)
   stays `accepted`: its decision stands, and the ceiling this ADR lifts was a
   Consequence that ADR 0009 deferred to #295 and #301.

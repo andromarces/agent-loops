@@ -638,12 +638,15 @@ current behavior, and each flag fails with a clear error.
   envelope and the state file here. The event appears on an accepted finish only, so
   a refused finish never reports an absence.
   The rule for that pass is one allowlist, and it fails closed. Each required-check
-  configuration source is classified by what its reply proved. A ruleset read the gate cannot interpret refuses the finish whatever the rest of the union
+  configuration source is classified by what its reply proved. A ruleset read the gate
+  cannot interpret has the class unknown, and it refuses the finish whatever the rest of
+  the union
   holds, before the per-check pass, because that reply may carry a required-status rule
   the gate never saw; that is a failed or partial page, a body that is not a readable array
   of pages, an anomalous page sequence, which is no page at all, two or more empty pages,
   or an empty page beside a page that holds rules, and an unlisted or malformed rule type.
-  A ruleset read of exactly one empty page is neither of those: it contributes no contexts
+  A ruleset read of exactly one empty page is neither of those: its class is empty, a
+  successful read that found no rule, so it contributes no contexts
   and the per-check pass runs on the other sources, exactly as origin/main did, so a
   classic-only repository whose required checks passed still finishes.
   Otherwise a finish passes on the absence only when no source named a required
@@ -666,12 +669,17 @@ current behavior, and each flag fails with a clear error.
   classic-protection body proves an absence, because a classic-protected branch can
   require reviews without requiring a check, so a readable body that names no check
   is unknown. Has-contexts is a reply that named at least one required check, so the
-  per-check pass runs and enforces it. Unknown is every other reply, including an
-  empty ruleset result, a ruleset entry whose type is missing or is not a documented
-  rule type, a malformed or unparseable body, and every unreadable reply.
+  per-check pass runs and enforces it. Empty is exactly one empty page: a successful
+  read that found no rule, which contributes no contexts and is not a positive absence,
+  so the empty-union refusal names it on the relaxed path.
+  Unknown is every other reply, including a ruleset read of no page at all,
+  a ruleset entry whose type is missing or is not a documented
+  rule type, a malformed or unparseable body, an empty page inside a longer read,
+  and every unreadable reply.
   A branch reaches the absence path where both sources state the outcome, so a
   ruleset-only branch does, while a branch with no ruleset at all does not, because
-  an empty result, and an empty page inside a longer read, state nothing, and neither does a
+  its read is one empty page, and empty is not absent, and an empty page inside a
+  longer read states nothing, and neither does a
   classic-protected branch that
   requires reviews but names no check. GitHub documents that the ruleset read
   returns active rules only, so a rule in a ruleset whose enforcement is `disabled`
