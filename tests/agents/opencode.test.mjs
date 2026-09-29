@@ -909,3 +909,16 @@ test("opencode keeps the session id from a failed first turn", async () => {
   await expect(runOpenCode(resumed, "p", { cwd: "/dir" })).rejects.toThrow();
   expect(resumed.sessionId).toBe("ses-stored");
 });
+
+// Usefulness: verifies a first turn that reports a session and then fails response validation keeps
+// the session id, as issue #360 requires of every adapter error path.
+test("opencode keeps the session id when a first turn fails response validation", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ type: "step_start", sessionID: "ses-validated", part: {} }),
+    stderr: "",
+  });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  await expect(runOpenCode(state, "p", { cwd: "/dir" })).rejects.toThrow("response text");
+  expect(state.sessionId).toBe("ses-validated");
+});

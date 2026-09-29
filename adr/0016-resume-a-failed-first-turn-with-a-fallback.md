@@ -21,8 +21,9 @@ step budget runs out.
 
 ## Decision
 
-1. Each adapter reads the session id from the failed output when the CLI printed one
-   and keeps it on the role state, for a first turn only. A resumed turn never changes
+1. Each adapter reads the session id from the output when the CLI printed one and keeps
+   it on the role state on every failure path, including a non-zero exit, a timeout, and
+   a response-validation failure after the id was read, for a first turn only. A resumed turn never changes
    its id, and the Claude adapter refuses a different id from a resumed turn with
    `resumeMismatchError`, as the other adapters do. The Copilot adapter keeps the id that the result event of a failed first turn
    reports. It does not keep the pre-assigned id: a failed turn that reports no id does not show

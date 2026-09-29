@@ -224,3 +224,16 @@ ${MISSING}`,
   expect(caught.sessionMissing).toBeUndefined();
   if (sessionId) expect(state.sessionId).toBe(sessionId);
 });
+
+// Usefulness: verifies a first turn that reports a thread and then fails response validation keeps
+// the thread id, as issue #360 requires of every adapter error path.
+test("codex keeps the thread id when a first turn fails response validation", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: '{"type":"thread.started","thread_id":"th-validated"}',
+    stderr: "",
+  });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  await expect(runCodex(state, "p", { cwd: "/dir" })).rejects.toThrow("agent message");
+  expect(state.sessionId).toBe("th-validated");
+});

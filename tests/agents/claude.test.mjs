@@ -244,3 +244,17 @@ test("claude refuses a different session id on a resumed turn", async () => {
   );
   expect(state.sessionId).toBe("s-stored");
 });
+
+// Usefulness: verifies a first turn whose result has no text keeps the reported session id, as
+// issue #360 requires of every adapter error path. Claude has no later validation that fails the
+// turn, so the id and an empty response both reach the caller.
+test("claude keeps the session id of a first turn whose result has no text", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify([{ type: "result", session_id: "s-empty" }]),
+    stderr: "",
+  });
+
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path" })).resolves.toBe("");
+  expect(state.sessionId).toBe("s-empty");
+});

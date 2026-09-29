@@ -6,8 +6,8 @@ import { keepFailedSessionId, resumeMismatchError, setMainLoopUsage } from "./sh
 
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
-  // A new session id reaches the role state only after Copilot reports it: on success, or in the
-  // result event of a failed first turn. A failure with no reported id leaves `state.sessionId`
+  // A new session id reaches the role state only after Copilot reports it in a result event, on
+  // a successful or a failed first turn. A failure with no reported id leaves `state.sessionId`
   // null and the next worker turn keeps its preamble.
   const requestedSessionId = state.sessionId;
   const sessionId = requestedSessionId ?? randomUUID();
@@ -50,6 +50,11 @@ export async function runCopilot(state, prompt, options = {}) {
     throw new Error("Copilot did not return a session ID.");
   }
 
+  // A first turn keeps the reported id before any later check can fail the turn, so the next
+  // turn resumes that session (issue #360). A resumed turn keeps its id, and the check below
+  // refuses a changed one.
+  keepFailedSessionId(state, returnedId);
+
   // A resumed id must come back unchanged.
   if (requestedSessionId && returnedId !== requestedSessionId) {
     throw resumeMismatchError("Copilot", "session", requestedSessionId, returnedId);
@@ -65,13 +70,9 @@ export async function runCopilot(state, prompt, options = {}) {
     throw new Error("Copilot did not return response text.");
   }
 
-  // Every check that can fail the turn has passed, so the id is safe to keep. The repository
-  // holds no recorded Copilot output showing that a pre-assigned id is echoed, so a first turn
-  // stores the id Copilot reports, which is the session the next turn can resume.
   if (returnedId !== sessionId) {
     logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
   }
-  state.sessionId = returnedId;
 
   return String(message).trim();
 }

@@ -285,8 +285,8 @@ test("copilot stores the reported id when it differs from the pre-assigned id on
   expect(state.sessionId).toBe("copilot-other-sess");
 });
 
-// Usefulness: verifies a first turn that reports an id and then fails response validation leaves sessionId null, so the next worker turn keeps its preamble.
-test("a first copilot worker turn that reports an id then fails leaves sessionId null and the next turn carries the preamble", async () => {
+// Usefulness: verifies a first turn that reports an id and then fails response validation keeps that id, as issue #360 requires of every adapter error path, so the next worker turn resumes the reported session without a second preamble.
+test("a first copilot worker turn that reports an id then fails keeps the id and the next turn resumes it", async () => {
   vi.mocked(exec).mockReset();
   vi.mocked(exec)
     .mockResolvedValueOnce({
@@ -296,7 +296,7 @@ test("a first copilot worker turn that reports an id then fails leaves sessionId
     .mockResolvedValueOnce({
       stdout: [
         '{"type":"assistant.message","data":{"content":"done"}}',
-        '{"type":"result","sessionId":"copilot-reported-sess-2","exitCode":0}',
+        '{"type":"result","sessionId":"copilot-reported-sess","exitCode":0}',
       ].join("\n"),
       stderr: "",
     });
@@ -306,7 +306,7 @@ test("a first copilot worker turn that reports an id then fails leaves sessionId
 
   expect(first.status).toBe("error");
   expect(first.error).toContain("Copilot did not return response text.");
-  expect(role.sessionId).toBeNull();
+  expect(role.sessionId).toBe("copilot-reported-sess");
 
   const second = await runChild({
     role,
@@ -316,9 +316,23 @@ test("a first copilot worker turn that reports an id then fails leaves sessionId
   });
 
   expect(second.status).toBe("ok");
-  expect(vi.mocked(exec).mock.calls[1][2].input).toContain(
+  expect(vi.mocked(exec).mock.calls[1][1][1]).toBe("copilot-reported-sess");
+  expect(vi.mocked(exec).mock.calls[1][2].input).not.toContain(
     "You are the implementation agent (worker)",
   );
+  expect(role.sessionId).toBe("copilot-reported-sess");
+});
+
+// Usefulness: verifies a resumed turn that fails response validation never changes its id.
+test("copilot keeps the stored id when a resumed turn fails response validation", async () => {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: '{"type":"result","sessionId":"copilot-stored","exitCode":0}',
+    stderr: "",
+  });
+  const state = { kind: "copilot", sessionId: "copilot-stored", model: null, effort: null };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("response text");
+  expect(state.sessionId).toBe("copilot-stored");
 });
 
 // Usefulness: verifies a failed first turn keeps the session id the CLI reported in its result

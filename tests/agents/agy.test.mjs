@@ -155,3 +155,17 @@ test("agy adopts the new conversation when the resumed one is missing", async ()
   await expect(runAgy(state, "p", { cwd: "/dir" })).resolves.toBe("ok");
   expect(state.sessionId).toBe("conv-new");
 });
+
+// Usefulness: verifies a first turn whose result names a conversation but carries no response keeps
+// the conversation id, as issue #360 requires of every adapter error path. agy has no later
+// validation that fails the turn, so the id and an empty response both reach the caller.
+test("agy keeps the conversation id of a first turn with no response text", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ conversation_id: "conv-empty", status: "SUCCESS" }),
+    stderr: "",
+  });
+
+  const state = { kind: "agy", sessionId: null, model: null, effort: null };
+  await expect(runAgy(state, "p", { cwd: "/dir" })).resolves.toBe("");
+  expect(state.sessionId).toBe("conv-empty");
+});
