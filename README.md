@@ -148,10 +148,12 @@ agent-loop install --harness <list> --yes
 Run the second command after every upgrade. It makes no change when nothing
 changed, so it is safe to run when unsure. It is required when:
 
-- The upgrade starts from 0.4.0 or earlier. Those versions wrote the
-  version-named pnpm store path, which an upgrade deletes. The installed files keep
-  naming that directory until `install` runs again. This includes a pnpm 12 project
-  install (#311).
+- The upgrade starts from 0.4.0 or earlier, and the package sat in a pnpm install
+  listed above (a pnpm 10 or pnpm 12 global or project install). Those versions
+  wrote the resolved, version-named pnpm store path, which an upgrade deletes. The
+  installed files keep naming that directory until `install` runs again, including
+  for a pnpm 12 project install (#311). An npm global install, a clone, and a linked
+  package wrote a path with no version, so this case does not apply to them.
 - A release adds or changes harness files, for example a new hook or a changed entry
   point. Those files reach a harness only through a new `install`.
 
