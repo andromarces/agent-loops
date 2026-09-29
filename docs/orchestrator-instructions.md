@@ -500,11 +500,8 @@ PR gate headlessly, so the runtime resolves the PR head there too (#293), and
 `--pr <pr>` on either path declares the run PR work, so that run can only end
 through the gate for the same PR (#302). A
 headless gate refusal is satisfied by a reviewer turn, and the run ends on exit 1
-when a finish is refused again with no child turn in between, or when the step
-budget is too small for the corrective turn, so budget
-`--max-steps` for a required check that is still pending. A first refusal alone
-does not end the run: it costs one corrective turn, and the run can still finish
-on 0 from that turn. The gate reads the
+when a finish is refused again with no child turn in between, so budget
+`--max-steps` for a required check that is still pending. The gate reads the
 reviewed state, so the reviewer turn is the one that satisfies it; a worker turn
 resets that state to none, so it is needed first only when the condition is about
 the change. A
@@ -522,32 +519,23 @@ Completion is completion of the requested work, not code acceptance.
 - `work-first` and `review-first`: call `finish` after the reviewer returns
   `verdict: accept` on the latest changed state and the report names the
   checks that passed.
-- `review-only`: call `finish` after the reviewer report, whatever the
-  verdict. Write the verdict in `verified` and the findings in `open` yourself.
-  That mapping is the parent's to write: the runtime checks only that all five
-  summary keys are non-empty strings, and it trims them. It never compares what
-  you write in `verified` with the verdict the reviewer returned.
+- `review-only`: call `finish` after the reviewer turn, whatever it returned. The
+  gate is on the turn, not on a report: a turn that ended in an error satisfies
+  it, so the finish can carry no report, and the summary records that in
+  `verified`. The runtime checks only that all five summary keys are non-empty
+  strings, and it never compares their content with what the reviewer returned.
 
-The two paths reach that reviewer report differently, and the difference is the
+The two paths reach that reviewer turn differently, and the difference is the
 rule, not the wording. `agent-loop role finish` in `review-only` applies no
-reviewer-report rule of its own: it accepts a finish from `active` once any
+reviewer-turn rule of its own: it accepts a finish from `active` once any
 reviewer turn has run, whatever that turn returned, including a turn that ended
 in a handled error. Every reachable interactive run already has a reviewer turn,
-because the init dispatch is itself that turn, so the report is there without a
-gate. A headless `--mode review-only` run owns its own action order and can reach
-a finish before any reviewer turn, so the runtime refuses that finish until a
-reviewer turn has run, with the same corrective-turn and repeated-refusal rules
-the other finish gates use. That refusal is not the end of the run: it costs one
-corrective turn, and it ends the run on exit 1 only when a prior refusal is still
-unspent, which any child turn spends, or when the step budget is too small to
-run that corrective turn. From the corrective turn the run can still finish on 0.
-That condition is the turn, not its outcome, so a
-headless reviewer turn that ended in a handled error, or returned no verdict,
-still satisfies it. The gate reads no summary key: what the summary says about
-that turn is the parent's to write. Put the verdict, or the error, or the absent
-verdict in `verified` yourself. The runtime checks only the shape of the summary,
-that all five keys are non-empty strings, and it trims them; it never compares
-their content with the reviewer verdict.
+because the init dispatch is itself that turn. A headless `--mode review-only`
+run owns its own action order and can reach a finish before any reviewer turn, so
+the runtime refuses that finish until a reviewer turn has run. That gate
+requires that a reviewer turn was dispatched; that turn can end in an error, so
+the finish can carry no reviewer report, and the summary records that in
+`verified`.
 
 Neither path takes `--require-accept` in this mode, and both say so differently.
 `agent-loop role finish` refuses the flag at `finish`, with
@@ -555,10 +543,10 @@ Neither path takes `--require-accept` in this mode, and both say so differently.
 review-only accepts any verdict.` `agent-loop --mode review-only` refuses the
 flag before the run starts, with the same sentence, because the headless command
 takes every flag on one command line. A review-only headless run therefore
-applies the reviewer report with no flag of its own.
+applies the reviewer turn with no flag of its own.
 
-The report is what the mode records either way, so call
-`finish` after it, whatever the verdict, and record what the run did not cover in
+The turn is what the mode records either way, so call
+`finish` after it, whatever it returned, and record what the run did not cover in
 `notDone` and `open`.
 
 Map the child report fields into the finish summary:

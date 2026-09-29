@@ -296,10 +296,10 @@ test("initialPrompt states the completion rule and its mode mapping", () => {
 });
 
 // Usefulness: verifies a review-only headless run states the mapping the mode
-// already carries in the interactive path: no worker dispatch, a finish on the
-// reviewer report whatever the verdict, and the review-only summary mapping. A
-// run without `--mode` keeps the mode-free prompt, so the block cannot reach a
-// run that did not ask for it (issue #337).
+// already carries in the interactive path: no worker dispatch, a finish that
+// needs a dispatched reviewer turn, and the review-only summary mapping. A run
+// without `--mode` keeps the mode-free prompt, so the block cannot reach a run
+// that did not ask for it (issue #337).
 test("a review-only run states the review-only mapping", () => {
   const reviewOnly = initialPrompt({ task: "T", maxSteps: 10, mode: "review-only" });
   expectRule(reviewOnly, /review-only/i, /do not dispatch[^.!?]{0,40}worker/i);
@@ -307,17 +307,10 @@ test("a review-only run states the review-only mapping", () => {
   // The finish the mode records needs a reviewer turn, so the prompt states that
   // gate rather than leaving the orchestrator to guess (issue #337).
   expectRule(reviewOnly, /runtime/i, /refuses[^.!?]{0,40}finish/i, /reviewer turn/i);
-  // The gate waits for the turn, not for a clean outcome, so the prompt does not
-  // tell the orchestrator that an erroring review blocks the finish.
-  expectRule(reviewOnly, /turn[^.!?]{0,40}not its outcome/i, /error/i);
-  expectRule(reviewOnly, /still satisfies it/i);
-  // The summary is checked for shape only: the prompt states what the runtime
-  // validates and that it never compares the content with the verdict.
-  expectRule(reviewOnly, /five summary keys[^.!?]{0,40}non-empty strings/i);
-  expectRule(reviewOnly, /never compares[^.!?]{0,60}verdict/i);
-  // The refusal is not the end of the run: it costs one corrective turn.
-  expectRule(reviewOnly, /not the end of the run/i, /corrective turn/i);
-  expectRule(reviewOnly, /reviewer/i, /\bfinish\b/i, /verdict/i);
+  // The gate is on the dispatched turn, and that turn can end in an error, so the
+  // prompt does not promise the finish a reviewer report.
+  expectRule(reviewOnly, /gate requires that a reviewer turn was dispatched/i);
+  expectRule(reviewOnly, /finish can carry no reviewer report/i, /verified/i);
   expectRule(reviewOnly, /Blockers/i, /open/i);
   // The mode-free prompt carries none of it, so an ordinary run is untouched.
   const noMode = initialPrompt({ task: "T", maxSteps: 10 });
