@@ -20,6 +20,7 @@ import {
   roleFlags,
   splitInlineFlag,
 } from "./lib/args.mjs";
+import { readContinuation, restoreSessions } from "./lib/continuation.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import {
   runHarnessCheckCommand,
@@ -45,6 +46,7 @@ export function parseArgs(argv) {
     pr: null,
     requireCi: null,
     mode: null,
+    continueFrom: null,
   };
   for (const role of ROLES) {
     options[role] = null;
@@ -109,6 +111,10 @@ export function parseArgs(argv) {
 
       case "--require-ci":
         options.requireCi = readPositiveInt("--require-ci", readInline("--require-ci"));
+        break;
+
+      case "--continue-from":
+        options.continueFrom = resolve(readInline(arg));
         break;
 
       case "--mode":
@@ -311,6 +317,14 @@ Options:
   --max-steps <count>           Maximum child steps. Defaults to 20. 1 to 9007199254740991.
   --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
   --transcript <file>           Record execution transcript to a JSON file.
+  --continue-from <file>        Continue the earlier headless run whose --transcript file this is, with
+                                the new --max-steps budget and the earlier orchestrator, worker, and
+                                reviewer sessions. The role kinds, the role models, and --cwd must
+                                equal the earlier run's, or the run is refused before any turn. The
+                                completion gate is reset, not restored: no reviewer accept carries
+                                over, so a finish after work needs a reviewer turn in this run. The
+                                earlier transcript is read once at start, so --transcript can name
+                                the same file.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   --require-accept              Refuse finish until a reviewer turn reports on the state, and
                                 after a worker turn that reviewer turn accepts with a Checks
@@ -406,6 +420,18 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       sessionId: null,
     };
   }
+  // A refused continuation writes no transcript: --transcript may name the
+  // --continue-from file, and a refusal must not overwrite the sessions it holds.
+  if (options.continueFrom) {
+    try {
+      restoreSessions(roles, await readContinuation(options.continueFrom), options.cwd);
+    } catch (err) {
+      console.error(`
+${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
   // The mode is recorded only when the run named one, so a mode-free run writes
   // the transcript shape origin/main wrote and a consumer of that file sees no
   // field this flag introduced (#337).
@@ -419,6 +445,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       pr: options.pr,
       requireCi: options.requireCi,
       ...(options.mode === null ? {} : { mode: options.mode }),
+      ...(options.continueFrom ? { continueFrom: options.continueFrom } : {}),
     },
     roles,
     events,
@@ -492,6 +519,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
         pr: options.pr,
         requireCi: options.requireCi,
         mode: options.mode,
+        continued: Boolean(options.continueFrom),
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,

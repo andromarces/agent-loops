@@ -199,6 +199,11 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * is itself the reviewer turn, so the headless loop supplies the one condition
  * the interactive path gets for free (#337).
  *
+ * With `continued`, the run resumes the sessions of an earlier headless run, and
+ * the completion gate state is reset rather than restored: the run counts as
+ * work that no reviewer has accepted, so a finish under `requireAccept` needs a
+ * reviewer accept in this run (#362).
+ *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
  * a Checks line, and with no worker turn it needs at least one reviewer report.
@@ -222,6 +227,7 @@ export async function runLoop(options) {
     pr = null,
     requireCi = null,
     mode = null,
+    continued = false,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -243,7 +249,12 @@ export async function runLoop(options) {
   // Completion gate state (#234). The headless loop has no mode: a worker turn
   // marks work mode and needs a later reviewer accept; no worker turn maps to
   // review-only and needs at least one reviewer report.
-  let workerRan = false;
+  // A continued run resets this state conservatively (#362): the earlier run's
+  // turns are not persisted, so the tree counts as changed and unreviewed. A
+  // reviewer accept on the current state is then what `--require-accept` needs,
+  // and `reviewerRan`, `lastReviewed`, and the review-only turn flag start empty,
+  // so every gate reads only evidence from this run.
+  let workerRan = continued;
   let reviewerRan = false;
   // A reviewer turn that was dispatched, whatever it returned. `reviewerRan`
   // counts only a turn that ended `ok`, because `--require-accept` reads that
@@ -275,6 +286,7 @@ export async function runLoop(options) {
     pr,
     requireCi,
     mode,
+    continued,
     timeout,
     cwd,
     orchestratorKind: orchestrator?.kind ?? null,

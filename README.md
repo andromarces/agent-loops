@@ -289,6 +289,13 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 --max-steps <count>           Maximum child steps. Defaults to 20. 1 to 9007199254740991.
 --timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
 --transcript <file>           Record execution transcript to a JSON file.
+--continue-from <file>        Continue the earlier headless run whose --transcript file this is,
+                              with the new --max-steps budget and the earlier orchestrator,
+                              worker, and reviewer sessions. The role kinds, role models, and
+                              --cwd must equal the earlier run's, or the run is refused before
+                              any turn. The completion gate is reset, not restored (see
+                              Continue a run). The file is read once at start, so
+                              --transcript can name the same file.
 --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
 --require-accept              Refuse finish until a reviewer turn reports on the state, and
                               after a worker turn that reviewer turn accepts with a Checks
@@ -597,6 +604,21 @@ Known limits:
 - Mutations reverted within the same turn are not detected.
 - A change anywhere in the repository that contains `--cwd` aborts a read-only turn, even outside `--cwd`.
 
+## Continue a run
+
+A headless run that ends on exit 2 (step limit) keeps its work tree, but a new invocation starts every role in a new session. `--continue-from <transcript>` resumes the earlier orchestrator, worker, and reviewer sessions instead, so each keeps its conversation history and provider prompt cache, and gives the run a new `--max-steps` budget:
+
+```bash
+agent-loop --orchestrator codex --worker claude --reviewer agy   --task "Add a README line that names the project."   --max-steps 20 --transcript ./run.json          # exit 2: step limit
+agent-loop --orchestrator codex --worker claude --reviewer agy   --task "Add a README line that names the project."   --max-steps 10 --continue-from ./run.json --transcript ./run.json
+```
+
+- The session ids come from the `roles` object of the earlier `--transcript` file, which holds each role's final session id. A role that never ran has a null id and starts a new session. The flag takes any earlier transcript, whatever its exit code.
+- The run is refused with exit 1, before any turn and without a transcript write, when a role kind or a role model differs from the earlier run, or when `--cwd` differs. A session id is valid only for the CLI that created it, and a provider keeps sessions per project directory. `--<role>-effort` is not compared. The refusal writes no transcript, so `--transcript` can name the `--continue-from` file without a refusal overwriting the sessions it holds.
+- The completion gate state is reset, not restored. The transcript does not record it, and the work tree can change between the two runs, so a saved accept could describe a state that no longer exists. The continued run counts as work that no reviewer has accepted: under `--require-accept` a finish needs a reviewer `Verdict: accept` with a Checks line in this run, a `--require-ci` gate reads only a reviewer turn from this run, and a `--mode review-only` finish needs a reviewer turn from this run. The cost is one reviewer turn when the earlier run had already reviewed the state, so leave a step for it. The orchestrator prompt states the new budget and the reset.
+- The new transcript records `options.continueFrom`, and its `roles` hold the session ids at the end of the continued run, so a run can be continued again.
+- This flag shares no code path with the interactive `agent-loop role` design of issue #361. That path already keeps the session ids and gate state in its state file, so it needs only a raised budget. The headless path keeps neither, so it reads the transcript.
+
 ## Transcript
 
 When `--transcript <file>` is specified, a JSON transcript is written upon process exit (except when argv parsing fails).
@@ -672,7 +694,7 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0    | Orchestrator returned `finish` with valid 5-part summary and no `unresolvedCompare` marker.                                                                                                                                                                                                                                                                                                                                                              |
 | 1    | Orchestrator returned `abort`, a `--require-accept` or `--require-ci` finish refused twice or refused with no step budget left, a `--pr` declaration with no matching gate refused the finish, a `--mode review-only` run that refused a `run_worker` action, a usage error, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover. |
-| 2    | Step limit reached (`--max-steps`) with work remaining.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2    | Step limit reached (`--max-steps`) with work remaining. `--continue-from` continues that run.                                                                                                                                                                                                                                                                                                                                                            |
 | 4    | Orchestrator returned a `finish` that set `unresolvedCompare: true`. The run is a recorded finish, not a failure: the summary is printed as for exit 0 and the transcript holds no error. The code is what tells an exit-code-only consumer that the PR-head compare was never verified. A consumer that treats any nonzero code as failure must special-case 4, and so must a consumer that reads the transcript `exitCode`.                            |
 | 130  | Interrupted by `Ctrl+C` (active children killed).                                                                                                                                                                                                                                                                                                                                                                                                        |
 
@@ -739,5 +761,5 @@ Features considered for future development once the hybrid loop stabilizes:
 - Per-role extra CLI arguments and flags
 - GitHub pull request mode
 - Configurable validation commands and automated gates
-- Persistent headless-loop state and session resume across process restarts
+- Persistent headless-loop gate state, so a continued run can restore it instead of resetting it
 - A streamed headless transcript

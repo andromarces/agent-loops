@@ -1395,3 +1395,17 @@ test("an undeclared gated prompt renders the origin/main lines unchanged", () =>
   );
   expect(variants).toEqual([MAIN_NO_NETWORK_LINE, MAIN_GATE_LINE]);
 });
+
+// Usefulness: a continued run tells the orchestrator that its budget is new and
+// that no reviewer accept carries over, and a fresh run's prompt states neither (#362).
+describe("continued run prompt", () => {
+  const base = { task: "t", maxSteps: 3 };
+
+  test("states the reset only when the run is continued", () => {
+    expect(initialPrompt({ ...base, continued: true })).toContain(
+      "The runtime carries over no reviewer accept",
+    );
+    expect(initialPrompt(base)).not.toContain("continues an earlier run");
+    expect(initialPrompt({ ...base, continued: false })).toBe(initialPrompt(base));
+  });
+});

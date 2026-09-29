@@ -996,3 +996,156 @@ test("review-only finish without unresolvedCompare keeps exit 0", async () => {
     await removePath(repo);
   }
 });
+
+const CONTINUE_BASE = [
+  "--orchestrator",
+  "codex",
+  "--worker",
+  "claude",
+  "--reviewer",
+  "agy",
+  "--task",
+  "long task",
+];
+const CONTINUE_ROLES = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy"];
+const FINISH = JSON.stringify({
+  action: "finish",
+  summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+});
+
+// Runs `fn(repo, transcriptPath)` with a temp repo and clean exit-code and error state.
+async function withContinueRepo(fn) {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    await fn(repo, join(repo, "run.json"), errorSpy);
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    logSpy.mockRestore();
+    await removePath(repo);
+  }
+}
+
+// Each fake agent assigns a session id on its first call, as a real adapter does,
+// and records the id it held when the call arrived.
+function sessionAgents(orchReplies, seen) {
+  let orchCall = 0;
+  const adapter = (name, reply) => ({
+    async run(state, prompt) {
+      seen[name].push({ sessionId: state.sessionId, prompt });
+      state.sessionId ??= `${name}-session`;
+      return reply(prompt);
+    },
+  });
+  return {
+    codex: adapter("codex", () => orchReplies[orchCall++]),
+    claude: adapter("claude", () => "worker ok"),
+    agy: adapter("agy", () => "reviewer ok"),
+  };
+}
+
+// Usefulness: verifies --continue-from resumes the earlier orchestrator, worker,
+// and reviewer sessions with a new step budget, and records the source (#362).
+test("--continue-from resumes the earlier role sessions with a new budget", async () => {
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    const review = JSON.stringify({ action: "run_reviewer", prompt: "r" });
+    const seen = { codex: [], claude: [], agy: [] };
+    const first = sessionAgents([work, review, work], seen);
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "2", "--transcript", transcriptPath],
+      first,
+    );
+    expect(process.exitCode).toBe(2);
+    expect(seen.codex.map((call) => call.sessionId)).toEqual([
+      null,
+      "codex-session",
+      "codex-session",
+    ]);
+
+    const second = { codex: [], claude: [], agy: [] };
+    await main(
+      [
+        ...CONTINUE_BASE,
+        "--cwd",
+        repo,
+        "--max-steps",
+        "3",
+        "--continue-from",
+        transcriptPath,
+        "--transcript",
+        transcriptPath,
+      ],
+      sessionAgents([review, FINISH], second),
+    );
+
+    expect(process.exitCode).toBe(0);
+    expect(second.codex[0].sessionId).toBe("codex-session");
+    expect(second.codex[0].prompt).toMatch(/continues an earlier run/i);
+    expect(second.agy[0].sessionId).toBe("agy-session");
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(transcript.options.continueFrom).toBe(transcriptPath);
+    expect(transcript.options.maxSteps).toBe(3);
+    expect(transcript.roles.worker.sessionId).toBe("claude-session");
+  });
+});
+
+// Usefulness: verifies a changed role kind or model is refused before any turn
+// runs, and that the refusal leaves the earlier transcript unchanged even when
+// --transcript names the same file (#362).
+test("--continue-from refuses a changed role and keeps the transcript", async () => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const seen = { codex: [], claude: [], agy: [] };
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      sessionAgents([work, work], seen),
+    );
+    const before = await readFile(transcriptPath, "utf8");
+
+    const calls = { codex: [], claude: [], agy: [] };
+    const changed = [
+      [
+        ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "codex"],
+        "reviewer was agy in the earlier run, not codex",
+      ],
+      [
+        [...CONTINUE_ROLES, "--worker-model", "opus"],
+        'worker model was (default) in the earlier run, not "opus"',
+      ],
+    ];
+    for (const [roleArgs, message] of changed) {
+      errorSpy.mockClear();
+      await main(
+        [
+          ...roleArgs,
+          "--task",
+          "long task",
+          "--cwd",
+          repo,
+          "--continue-from",
+          transcriptPath,
+          "--transcript",
+          transcriptPath,
+        ],
+        sessionAgents([FINISH], calls),
+      );
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy.mock.calls.flat().join("\n")).toContain(message);
+    }
+    expect(calls.codex).toEqual([]);
+    expect(await readFile(transcriptPath, "utf8")).toBe(before);
+  });
+});
+
+// Usefulness: verifies --continue-from takes a value, in both forms.
+test("--continue-from requires a value and accepts the inline form", () => {
+  expect(() => parseArgs([...CONTINUE_BASE, "--continue-from"])).toThrow();
+  expect(parseArgs([...CONTINUE_BASE, "--continue-from=run.json"]).continueFrom).toMatch(
+    /run\.json$/,
+  );
+  expect(parseArgs(CONTINUE_BASE).continueFrom).toBeNull();
+});
