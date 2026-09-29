@@ -28,31 +28,15 @@ function cleanRepoGit(cwd) {
   };
 }
 
-// Usefulness: verifies a review-only finish is allowed once a reviewer turn ran,
-// whatever that turn returned, because the interactive path accepts the finish
-// from `active` after any reviewer turn. A handled reviewer error and a reviewer
-// report with no verdict both satisfy the gate; the summary records what the turn
-// returned, so nothing is hidden by accepting it (issue #337).
+// Runs a review-only loop whose one reviewer turn returns `reply`, then checks
+// that the finish after it was accepted and recorded what the turn returned.
 //
 // `git` is answered from memory, not spawned. A run takes a snapshot of four `git`
-// processes around every turn, so the two cases spent about forty processes in
-// one test, and a loaded Windows runner outlasted the test limit (issue #385).
+// processes around every turn, so two cases in one test spent about forty
+// processes, and a loaded Windows runner outlasted the test limit (issue #385).
 // Nothing here depends on a real repository: the behavior under test is the
 // runtime's finish rule, and the snapshot code has its own tests on real repos.
-const cases = [
-  {
-    what: "a reviewer turn that ended in a handled error",
-    reply: () => {
-      throw new Error("reviewer cli exited with code 1");
-    },
-  },
-  {
-    what: "a reviewer report with no verdict line",
-    reply: "Conclusion: read the code\nWhy: no verdict here\nBlockers: none",
-  },
-];
-
-test.each(cases)("a review-only run accepts a finish after $what", async ({ what, reply }) => {
+async function expectFinishAcceptedAfterReviewerTurn(what, reply) {
   const cwd = tmpdir();
   execa.mockReset().mockImplementation(cleanRepoGit(cwd));
   const orchAdapter = scripted([
@@ -83,4 +67,22 @@ test.each(cases)("a review-only run accepts a finish after $what", async ({ what
   expect(reviewerAdapter.recorded.length, what).toBe(1);
   // The turns were snapshotted, so the answered `git` is on the path under test.
   expect(execa).toHaveBeenCalled();
+}
+
+// Usefulness: verifies a review-only finish is accepted after a reviewer turn that ended in a handled error, because the interactive path accepts a finish after any reviewer turn (issue #337).
+test("a review-only run accepts a finish after a reviewer turn that ended in a handled error", async () => {
+  await expectFinishAcceptedAfterReviewerTurn(
+    "a reviewer turn that ended in a handled error",
+    () => {
+      throw new Error("reviewer cli exited with code 1");
+    },
+  );
+});
+
+// Usefulness: verifies a review-only finish is accepted after a reviewer report with no verdict line, because the interactive path accepts a finish after any reviewer turn (issue #337).
+test("a review-only run accepts a finish after a reviewer report with no verdict line", async () => {
+  await expectFinishAcceptedAfterReviewerTurn(
+    "a reviewer report with no verdict line",
+    "Conclusion: read the code\nWhy: no verdict here\nBlockers: none",
+  );
 });
