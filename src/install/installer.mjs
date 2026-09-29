@@ -868,31 +868,33 @@ function executableCandidates(command) {
   return [command, ...extensions.map((extension) => `${command}${extension.toLowerCase()}`)];
 }
 
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Probes every PATH entry and candidate at once. A serial scan cost one file
+// system round trip per candidate, so a long PATH on a slow or loaded machine
+// took seconds (#365).
 async function onPath(command) {
   const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
-  for (const dir of dirs) {
-    for (const candidate of executableCandidates(command)) {
-      try {
-        await access(join(dir, candidate));
-        return true;
-      } catch {
-        // Try the next candidate.
-      }
-    }
-  }
-  return false;
+  const probes = dirs.flatMap((dir) =>
+    executableCandidates(command).map((candidate) => exists(join(dir, candidate))),
+  );
+  return (await Promise.all(probes)).some(Boolean);
 }
 
 /** Harnesses whose CLI is found on PATH, in registry order. */
 export async function detectHarnesses() {
-  const detected = [];
-  for (const harness of HARNESS_ORDER) {
-    for (const command of HARNESS_META[harness].commands) {
-      if (await onPath(command)) {
-        detected.push(harness);
-        break;
-      }
-    }
-  }
-  return detected;
+  const found = await Promise.all(
+    HARNESS_ORDER.map(async (harness) => {
+      const probes = HARNESS_META[harness].commands.map(onPath);
+      return (await Promise.all(probes)).some(Boolean);
+    }),
+  );
+  return HARNESS_ORDER.filter((_, index) => found[index]);
 }
