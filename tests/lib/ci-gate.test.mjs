@@ -268,10 +268,24 @@ test("refuses an unknown merge state", async () => {
   expect(result.reason).toContain("merge state as unknown");
 });
 
-// Usefulness: verifies the gate refuses when every required-check source is
-// empty even though a check failed and the merge state is blocked, so an
-// unreadable protection endpoint can never pass vacuously (issue #218).
-test("refuses when no required checks are found", async () => {
+// Usefulness: verifies the gate passes on a base branch that has no required
+// check, once every source that could hold one has established that absence, and
+// records the absence in the result so a finish on such a branch stays distinct
+// from a gated pass on a branch that required a check (issue #336).
+test("passes and records the absence when no required check exists", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(routes({ required: [], headRuns: [run("reported-pass", "success")] })),
+  });
+  expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
+});
+
+// Usefulness: verifies an established absence still refuses a blocked merge
+// state, so the relaxed empty union cannot pass a pull request that some other
+// required rule blocks (issue #336).
+test("refuses a blocked merge state when no required check exists", async () => {
   const result = await checkCi({
     pr: 42,
     reviewed: REVIEWED,
@@ -281,6 +295,28 @@ test("refuses when no required checks are found", async () => {
         info: prInfo({ mergeStateStatus: "BLOCKED" }),
         required: [],
         headRuns: [run("ci (ubuntu-latest)", "failure")],
+      }),
+    ),
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("blocked");
+});
+
+// Usefulness: verifies an empty union that rests on a source the caller cannot
+// read still refuses, because an unreadable source may hold a required check
+// this caller never saw. Absence must be established, not inferred from an empty
+// list (issue #336).
+test("refuses the empty union when a required-check source is unreadable", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        required: [],
+        protection: "hidden",
+        prChecks: "",
+        headRuns: [run("ci (ubuntu-latest)", "success")],
       }),
     ),
   });
@@ -301,7 +337,7 @@ test("ignores a gh pr checks --required reply that carries no JSON", async () =>
     pr: 42,
     reviewed: REVIEWED,
     cwd: ".",
-    gh: fakeGh(routes({ required: [], prChecks: "", headRuns: [run("reported-pass", "success")] })),
+    gh: fakeGh(routes({ required: [], protection: "hidden", prChecks: "" })),
   });
   expect(result).toEqual({
     ok: false,
@@ -579,20 +615,19 @@ test("passes for a fine-grained PAT caller when every required check passed", as
 });
 
 // Usefulness: verifies the exact Free-plan 403 leaves the API sources unreadable
-// rather than failing the run, so an admin on a private Free-plan repository
-// reaches the named empty-union refusal instead of a raw throw. The plan does
-// not allow the rule that would require a check, so the source holds no required
-// contexts. `gh pr checks --required` is a separate source whose reply is not
-// measured; the fixture fails it so the union is empty the way an unmeasured
-// failure would leave it (issue #301).
-test("refuses on the empty union when the required-context sources answer the Free-plan 403", async () => {
+// rather than failing the run, and that the reply establishes that no required
+// check exists: the plan does not allow the rule that would require one. An admin
+// on a private Free-plan repository therefore reaches a pass that records the
+// absence, where it used to reach the named empty-union refusal (#301, #336).
+// `gh pr checks --required` is a separate source whose reply is not measured; the
+// fixture fails it, which contributes no names either way.
+test("passes and records the absence when the required-context sources answer the Free-plan 403", async () => {
   const result = await checkCi({
     pr: 42,
     reviewed: REVIEWED,
     cwd: ".",
     gh: fakeGh(
       routes({
-        info: prInfo({ mergeStateStatus: "BLOCKED" }),
         required: `stderr: ${FREE_PLAN}`,
         protection: `stderr: ${FREE_PLAN}`,
         prChecks: "rate limited",
@@ -600,10 +635,7 @@ test("refuses on the empty union when the required-context sources answer the Fr
       }),
     ),
   });
-  expect(result).toEqual({
-    ok: false,
-    reason: "no required checks were found for the base branch",
-  });
+  expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
 });
 
 // The exact reply a private repository on the GitHub Free plan writes to the
@@ -614,17 +646,17 @@ const FREE_PLAN =
 const ENDINGS = { "no line ending": "", LF: "\n", CRLF: "\r\n" };
 
 for (const [ending, suffix] of Object.entries(ENDINGS)) {
-  // Usefulness: verifies the exact Free-plan 403 is read as an unreadable source
-  // with ${ending}, the one trailing line break `gh` may add included, so a
-  // caller on a private Free-plan repository reaches a named refusal (issue #301).
-  test(`reads the exact Free-plan 403 with ${ending} as an unreadable source`, async () => {
+  // Usefulness: verifies the exact Free-plan 403 is read as a source that
+  // establishes no required check with ${ending}, the one trailing line break
+  // `gh` may add included, so a caller on a private Free-plan repository passes
+  // and the absence is recorded (issue #301, #336).
+  test(`reads the exact Free-plan 403 with ${ending} as an absent source`, async () => {
     const result = await checkCi({
       pr: 42,
       reviewed: REVIEWED,
       cwd: ".",
       gh: fakeGh(
         routes({
-          info: prInfo({ mergeStateStatus: "BLOCKED" }),
           required: [],
           protection: `stderr: ${FREE_PLAN}${suffix}`,
           prChecks: "",
@@ -632,10 +664,7 @@ for (const [ending, suffix] of Object.entries(ENDINGS)) {
         }),
       ),
     });
-    expect(result).toEqual({
-      ok: false,
-      reason: "no required checks were found for the base branch",
-    });
+    expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
   });
 }
 

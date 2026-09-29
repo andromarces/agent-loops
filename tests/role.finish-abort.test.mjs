@@ -788,6 +788,62 @@ test("a declared PR with a matching gate finishes as the gate allows", async () 
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
 
+// A `gh` runner for a base branch with no required check: the ruleset endpoint
+// reads and names none, and classic protection answers the 404 that only a
+// caller able to read it receives on an unprotected branch. Both sources are
+// known, so the gate establishes the absence rather than inferring it (#336).
+function noRequiredCheckGh(head) {
+  const read = cleanPrGh(head);
+  return async (args) => {
+    if (args.join(" ").includes("rules/branches/main")) {
+      return { status: 0, stdout: "[]", stderr: "" };
+    }
+    if (args.join(" ").includes("pr checks")) {
+      return { status: 1, stdout: "", stderr: "no required checks reported" };
+    }
+    return read(args);
+  };
+}
+
+// Usefulness: verifies a declared run finishes on a base branch with no required
+// check, and records the absence in the envelope and the state file, so a finish
+// that verified no check stays distinguishable from one that verified a check
+// (issue #336).
+test("a declared PR finishes on a base branch with no required check", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+  await dispatchReviewer(repo, ACCEPT);
+  const head = (await snapshot(repo)).head;
+
+  const result = await finishCall(repo, ["--require-ci", "42"], {
+    gh: noRequiredCheckGh(head),
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toMatchObject({ noRequiredChecks: true });
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("finished");
+  expect(state.noRequiredChecks).toBe(true);
+});
+
+// Usefulness: verifies a gated finish on a base branch that does require a check
+// records no absence, so the field means the branch had none rather than that the
+// gate ran (issue #336).
+test("a gated finish records no absence when the base branch requires a check", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await initPrRun(repo, 42);
+  await dispatchReviewer(repo, ACCEPT);
+  const head = (await snapshot(repo)).head;
+
+  const result = await finishCall(repo, ["--require-ci", "42"], { gh: cleanPrGh(head) });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.noRequiredChecks).toBeUndefined();
+  expect((await readRepoState(repo)).noRequiredChecks).toBeUndefined();
+});
+
 // Usefulness: verifies a run that declares a PR refuses a gate for a different
 // PR without reading GitHub, so a wrong PR never reaches the gate (#302).
 test("a run that declares a PR refuses a gate for a different PR", async () => {

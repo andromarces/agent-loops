@@ -365,6 +365,27 @@ test("the headless prompt adds the declaration rule and nothing else", () => {
   );
 });
 
+// Usefulness: verifies the headless prompt states that a gate on a base branch
+// with no required check passes on the PR head, the clean reviewed tree, and the
+// merge state, and records that no required check exists, so an orchestrator on
+// such a branch knows the gate can pass and knows what it did not verify
+// (issue #336).
+test("the headless prompt states the no-required-check gate outcome", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+  });
+  expectRule(prompt, /no required check/i, /pass/i, /PR head/i, /reviewed/i, /merge state/i);
+  expectRule(prompt, /no required check/i, /record/i);
+  // The same rule on the interactive surface, so the two parent paths do not
+  // diverge on it.
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expectRule(instructions, /no required check/i, /pass/i, /PR head/i, /reviewed/i, /merge state/i);
+  expectRule(instructions, /no required check/i, /record/i);
+});
+
 // Usefulness: verifies a run that declares no PR keeps the prompt origin/main
 // sends, because the declaration block is the only addition and it is empty
 // without `--pr` (#302).

@@ -2161,6 +2161,98 @@ test("a declared PR with a matching gate runs the gate and nothing else", async 
   }
 });
 
+// The `gh` state of a base branch with no required check, as the gate reads it:
+// the ruleset endpoint reads and names none, classic protection answers the 404
+// only a caller able to read it receives on an unprotected branch, and the
+// required-names read carries no list. Both configuration sources are known, so
+// the gate establishes the absence (issue #336).
+function noRequiredCheckGh(headRefOid, calls = []) {
+  const read = ciGateGh(headRefOid, calls);
+  return async (args) => {
+    const key = args.join(" ");
+    if (key.includes("rules/branches/main")) {
+      calls.push(key);
+      return { status: 0, stdout: "[]", stderr: "" };
+    }
+    if (key === "pr checks 42 --required --json name") {
+      calls.push(key);
+      return { status: 1, stdout: "", stderr: "no required checks reported" };
+    }
+    return read(args);
+  };
+}
+
+// Usefulness: verifies a headless declared run finishes on a base branch with no
+// required check and emits a `no-required-checks` event, so the recorded run says
+// it verified no check instead of reading as a pass on a checked branch (issue
+// #336).
+test("a declared PR finishes on a base branch with no required check", async () => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const result = await runLoop({
+      task: "PR work: address issue #336 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      gh: noRequiredCheckGh((await snapshot(repo)).head),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toEqual(SUMMARY);
+    expect(events.filter((e) => e.type === "no-required-checks")).toHaveLength(1);
+    // A finish on a checked branch records no such event, so the event means the
+    // base branch had no required check rather than that the gate ran.
+    expect(events.filter((e) => e.type === "refusal")).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a headless gated run on a base branch that does require a
+// check emits no absence event, so the field on the event cannot read as a
+// statement about every gated run (issue #336).
+test("a gated run on a checked base branch emits no absence event", async () => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const result = await runLoop({
+      task: "PR work: address issue #336 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      gh: ciGateGh((await snapshot(repo)).head),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(events.filter((e) => e.type === "no-required-checks")).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 56. Usefulness: verifies a run that declares PR 42 and gates a different PR is
 // refused, so the gate cannot read one pull request while the run declares
 // another (#302).

@@ -35,7 +35,7 @@ function prGateBlock({ pr = null, requireCi, orchestratorKind, reviewerKind }) {
 }
 
 function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
-  const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
+  const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed.${noRequiredCheckClause()} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
   const rule = requiredCheckWait({ requireCi, orchestratorKind, reviewerKind });
 
   if (rule === "wait") {
@@ -111,6 +111,19 @@ function advisoryQualifier(pr) {
 function suppliedRead(pr) {
   if (pr === null) return "";
   return ` This run declares PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. That status is advisory evidence, in place of the reviewer reading the checks: the reviewer reports it, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The --require-ci finish gate re-reads GitHub and enforces the condition. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.`;
+}
+
+/**
+ * The clause the gate line adds for a base branch that has no required check. The
+ * gate verifies the PR head, the clean reviewed tree, and the merge state on such
+ * a branch, and records the absence, so the finish says it verified no check
+ * (#336). Stated on every gated run because the parent cannot read the base
+ * branch's configuration itself, and it predicts no outcome: it names what the
+ * gate checks, not when the absence holds.
+ * @returns {string}
+ */
+function noRequiredCheckClause() {
+  return " A base branch with no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records that no required check exists.";
 }
 
 /**

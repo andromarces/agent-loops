@@ -105,10 +105,13 @@ refusal.
 - `role finish` no longer returns only the first refusal. A refused `finish`
   that also carries `--require-ci` does not read GitHub, so a parent learns the
   local conditions in one call and reaches the gate only once they pass.
-- A declared run with a base branch that has no required checks cannot be
-  gated, because `checkCi` refuses an empty union of required checks. Such a
-  run must not declare a PR, and the marker stays its only trace. The ceiling
-  of `checkCi` is tracked in #295 and #301 and is not changed here.
+- A declared run with a base branch that has no required checks could not be
+  gated, because `checkCi` refused an empty union of required checks. Such a
+  run had to leave the declaration off, and the marker stayed its only trace.
+  That ceiling is lifted by
+  [ADR 0012](0012-establish-the-absence-of-a-required-check.md), which
+  establishes the absence instead of refusing it, and the ceiling of `checkCi`
+  that ADR 0009 tracked in #295 and #301 is where that decision was made.
 - A run that declares no PR keeps the accepted gap of #286. The declaration
   narrows the gap to the runs that do not state their PR, and the runtime cannot
   detect a PR run that declares nothing.
