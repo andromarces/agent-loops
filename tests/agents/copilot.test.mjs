@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { runCopilot } from "../../src/agents/copilot.mjs";
 import { exec } from "../../src/lib/exec.mjs";
+import { runChild } from "../../src/runtime.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
@@ -225,4 +226,40 @@ test("copilot initializes session and runs with readOnly false", async () => {
       role: undefined,
     },
   );
+});
+
+// Usefulness: verifies a failed first Copilot worker turn leaves no session id, so the next worker turn still carries the preamble.
+test("a failed first copilot worker turn leaves sessionId null and the next turn carries the preamble", async () => {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec)
+    .mockRejectedValueOnce(new Error("copilot auth failure"))
+    .mockImplementationOnce(async (_command, args) => ({
+      stdout: [
+        '{"type":"assistant.message","data":{"content":"done"}}',
+        `{"type":"result","sessionId":${JSON.stringify(String(args[1]))},"exitCode":0}`,
+      ].join("\n"),
+      stderr: "",
+    }));
+
+  const role = { kind: "copilot", sessionId: null, model: null, effort: null };
+  const first = await runChild({ role, roleName: "worker", prompt: "do the task", cwd: "/dir" });
+
+  expect(first.status).toBe("error");
+  expect(role.sessionId).toBeNull();
+  expect(vi.mocked(exec).mock.calls[0][2].input).toContain(
+    "You are the implementation agent (worker)",
+  );
+
+  const second = await runChild({
+    role,
+    roleName: "worker",
+    prompt: "retry the task",
+    cwd: "/dir",
+  });
+
+  expect(second.status).toBe("ok");
+  expect(vi.mocked(exec).mock.calls[1][2].input).toContain(
+    "You are the implementation agent (worker)",
+  );
+  expect(role.sessionId).toBe(vi.mocked(exec).mock.calls[1][1][1]);
 });

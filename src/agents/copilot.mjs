@@ -6,12 +6,11 @@ import { resumeMismatchError, setMainLoopUsage } from "./shared.mjs";
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
   const requestedSessionId = state.sessionId;
+  // A new session id reaches the role state only after Copilot reports it, so a failed
+  // first turn leaves `state.sessionId` null and the next worker turn keeps its preamble.
+  const sessionId = requestedSessionId ?? randomUUID();
 
-  if (!state.sessionId) {
-    state.sessionId = randomUUID();
-  }
-
-  const args = ["--session-id", state.sessionId, "-s", "--no-ask-user", "--output-format", "json"];
+  const args = ["--session-id", sessionId, "-s", "--no-ask-user", "--output-format", "json"];
 
   if (readOnly) {
     args.push("--deny-tool", "write");
