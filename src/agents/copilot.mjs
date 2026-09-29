@@ -34,8 +34,9 @@ export async function runCopilot(state, prompt, options = {}) {
     setMainLoopUsage(state, objectUsage(failedResult));
     // Keep only an id the CLI reported. A failed turn that reports no id does not show that a
     // session holding the turn's content exists, and keeping the pre-assigned id would skip the
-    // role preamble on the next turn. The pre-assigned id is not unusable: in a Copilot CLI
-    // 1.0.90-4 probe, a later call with it ran as a new session and echoed it.
+    // role preamble on the next turn. In a Copilot CLI 1.0.90-4 probe, a later call with the
+    // pre-assigned id of a failed first turn completed and echoed it. Whether it resumed a prior
+    // session or started a new one is not verified.
     keepFailedSessionId(state, failedResult?.sessionId ?? failedResult?.session_id);
     throw error;
   }

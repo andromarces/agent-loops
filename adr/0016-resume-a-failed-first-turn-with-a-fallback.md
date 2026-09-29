@@ -29,8 +29,9 @@ step budget runs out.
    that the CLI created a session under it, and a kept id would send the next worker turn
    to a session that may not exist, without the preamble. On Copilot CLI 1.0.90-4, a first
    turn that failed on a bad model printed no result event, and a later call with the same
-   pre-assigned id ran as a new session and echoed that id. Whether the failed turn saved
-   a session is not verified.
+   pre-assigned id completed and echoed that id. Whether that call resumed a prior
+   session or started a new one is not verified, and neither is whether the failed turn
+   saved a session.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
    stderr is the one verified line for the requested id, byte for byte, plus at most one
