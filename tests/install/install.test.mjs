@@ -431,8 +431,7 @@ test("rendered targets carry absolute package paths and no placeholders", async 
   );
 });
 
-// Usefulness: verifies detection returns harness ids in registry order from a
-// controlled PATH, so the result does not depend on the machine or its load.
+// Usefulness: verifies detection from a controlled PATH, so the result does not depend on machine load.
 test("detectHarnesses returns a subset of the registry", async () => {
   const bin = await makeHome();
   await writeFile(join(bin, "codex"), "");

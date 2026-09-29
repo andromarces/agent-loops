@@ -27,8 +27,7 @@ afterEach(() => {
   present.clear();
 });
 
-// Usefulness: verifies detection returns registry order whatever the PATH order
-// and probe timing, so the result is stable under load.
+// Usefulness: verifies found harnesses come back in registry order, whatever the PATH order.
 test("detectHarnesses returns found harnesses in registry order", async () => {
   present.add(join(dirs[2], "codex"));
   present.add(join(dirs[1], "claude"));
@@ -37,8 +36,7 @@ test("detectHarnesses returns found harnesses in registry order", async () => {
   expect(await detectHarnesses({ path })).toEqual(["claude", "codex", "antigravity"]);
 });
 
-// Usefulness: verifies a command found on PATH stops further probes for that
-// command, so a common install location keeps the scan short (#365).
+// Usefulness: verifies a command found on PATH triggers no further probes for it (#365).
 test("detectHarnesses stops probing a command after the first PATH match", async () => {
   present.add(join(dirs[0], "claude"));
 
@@ -47,8 +45,7 @@ test("detectHarnesses stops probing a command after the first PATH match", async
   expect(probed.filter((p) => p.startsWith(join(dirs[2], "claude")))).toEqual([]);
 });
 
-// Usefulness: verifies a harness with two commands stops at the first command
-// found, and still detects the harness through the second command.
+// Usefulness: verifies a harness is detected through its second command when the first is absent.
 test("detectHarnesses tries the next command of a harness until one is found", async () => {
   present.add(join(dirs[1], "antigravity"));
 
