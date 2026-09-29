@@ -392,6 +392,40 @@ test("the headless prompt states the no-required-check gate outcome", async () =
   expectRule(instructions, /cannot read/i, /refus/i);
 });
 
+// The surfaces that state the gate's empty-union rule. The reviewer found them
+// contradicting each other, so one rule is asserted on each: only an allowlisted
+// reply proves an absence, and a private Free-plan repository must omit `--pr`.
+// Usefulness: verifies every surface states the same rule, so an orchestrator
+// reading one is not told a run passes on a branch the gate refuses (#336 review).
+const RULE_SURFACES = [
+  ["docs/orchestrator-instructions.md", instructionsPath],
+  ["README.md", join(dirname(fileURLToPath(import.meta.url)), "../../README.md")],
+];
+
+for (const [name, path] of RULE_SURFACES) {
+  // Usefulness: verifies ${name} states that only an allowlisted reply proves an
+  // absence, so it cannot describe a malformed or unreadable read as a pass
+  // (#336 review).
+  test(`${name} states the allowlisted absence rule`, async () => {
+    const text = await readFile(path, "utf8");
+    expectRule(text, /classification is an allowlist/i, /fails closed/i);
+    // The one per-source absence each. For repository rulesets it is the array
+    // read with no required-status-check rule; for classic protection it is the
+    // exact 404, and no successful body proves one.
+    expectRule(text, /repository rulesets/i, /JSON array/i, /well-formed rule/i, /no entry/i);
+    expectRule(text, /classic branch protection/i, /Branch not protected/);
+    expectRule(text, /No successful body proves an absence/i);
+  });
+
+  // Usefulness: verifies ${name} states that a private Free-plan repository still
+  // refuses a declared run and must omit `--pr`, so the gap #336 leaves is
+  // visible to whoever reads it (#336 review).
+  test(`${name} states that a private Free-plan repository must omit --pr`, async () => {
+    const text = await readFile(path, "utf8");
+    expectRule(text, /private/i, /Free.plan/i, /omit/i, /--pr/);
+  });
+}
+
 // Usefulness: verifies a run that declares no PR keeps the prompt origin/main
 // sends, because the declaration block is the only addition and it is empty
 // without `--pr` (#302).

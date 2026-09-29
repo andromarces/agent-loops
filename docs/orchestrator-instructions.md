@@ -552,8 +552,9 @@ field absent, or set to `false`, is a verified finish. The marker cannot be
 combined with `--require-ci`: that gate resolves the PR head itself, so a
 compare it verified is not unresolved. A run that cannot use `--require-ci`,
 for example one whose base branch requires a check this credential cannot read,
-records the marker. A base branch with no required check can use the gate, which
-verifies the PR head, the clean reviewed tree, and the merge state.
+records the marker. A base branch whose required-check sources each state that it
+holds no required check can use the gate, which verifies the PR head, the clean
+reviewed tree, and the merge state.
 
 Without the gate, the runtime never resolves the PR head, so it cannot tell an
 absent field from a verified compare. A finish that records the compare under
@@ -629,31 +630,52 @@ current behavior, and each flag fails with a clear error.
 - `--require-ci <pr>`: refuse unless the PR head equals the reviewed `head`, the
   reviewed tree is clean, the PR is not behind its base under a strict rule, has
   no merge conflicts, the merge state is known and not blocked, and every
-  required check passed on the commit GitHub evaluates. A base branch with no
-  required check has no check to wait for: the gate then passes on the PR head,
-  the clean reviewed tree, and the merge state, and the run records that no
-  required check exists, in a `no-required-checks` event in a headless run and in
-  `noRequiredChecks` in the envelope and the state file here. The event appears on
-  an accepted finish only, so a refused finish never reports an absence.
+  required check passed on the commit GitHub evaluates. A base branch that states
+  it has no required check has no check to wait for: the gate then passes on the
+  PR head, the clean reviewed tree, and the merge state, and the run records that
+  no required check exists, in a `no-required-checks` event in a headless run and
+  in `noRequiredChecks` in the envelope and the state file here. The event appears
+  on an accepted finish only, so a refused finish never reports an absence.
   Absence is established, never inferred. Each required-check configuration
   source, repository rulesets and classic branch protection, is classified by what
-  its reply proved:
-  - Absent: a read that completed and named no required check. For repository
-    rulesets that is a read with no applicable `required_status_checks` rule. For
-    classic protection it is a read with no `required_status_checks`, or the
-    `Branch not protected` (404) the endpoint writes only to a caller that can
-    read it.
-  - Contexts: the reply named at least one required check, so the gate runs the
-    per-check pass.
-  - Unknown: every other reply. That is `Not Found` (404), which a token without
-    repository admin receives for a protected branch as well as an unprotected
-    one, both `Resource not accessible` 403s, the Free-plan 403, which names the
-    plan and not the branch, and any read error or malformed body.
-    The gate passes on the absence only when no source named a required check and
-    no source is unknown, so both sources must have stated the outcome. Any unknown
-    source keeps the empty-union refusal, and the reason names it, because a parent
-    can only fix a source it can see. A blocked merge state still refuses on the
-    absence path, so a branch that carries another required rule is not passed.
+  its reply proved, and the classification is an allowlist that fails closed.
+  Absent, the only answer that lets a finish pass, has exactly one reply per
+  source:
+  - Repository rulesets: a successful reply whose body is a JSON array in which
+    every entry is a well-formed rule, an object carrying a string `type`, and no
+    entry is a `required_status_checks` rule. That is the read of a branch that has
+    no required-status-check rule.
+  - Classic branch protection: the exact `Branch not protected` (404), which the
+    endpoint writes only to a caller that can read protection, and which names an
+    unprotected branch. No successful body proves an absence for this source,
+    because a classic-protected branch can require reviews without requiring a
+    check, so a readable body that names no check is unknown.
+    Contexts is a reply that named at least one required check, so the per-check pass
+    runs. Unknown is every other reply, and every one of them keeps the empty-union
+    refusal with the reason naming the source, so a parent can fix one it can see:
+  - any non-zero exit other than the exact `Branch not protected` 404, including
+    `Not Found` (404), which a token without repository admin receives for a
+    protected branch as well as an unprotected one, both
+    `Resource not accessible` 403s, and the Free-plan 403, which names the plan
+    and not the branch;
+  - a body that is empty, is not JSON, is JSON that is not the array or object that
+    endpoint returns, or is an array carrying an entry that is not a well-formed
+    rule, including an entry with no `type` field or a `type` that is not a
+    string;
+  - a `required_status_checks` rule that names no check, which states neither an
+    absence nor a context the gate could enforce.
+    The gate passes on the absence only when no source named a required check and no
+    source is unknown, so both sources must have stated the outcome. The merge state
+    is checked before either path, so a missing, null, empty, or unrecognized state
+    refuses on the absence path exactly as it does on the per-check path, and a
+    blocked merge state still refuses, so a branch that carries another required rule
+    is not passed.
+    A private GitHub Free-plan repository still refuses a declared run under this
+    change, because its Free-plan 403 is unknown on every required-check endpoint,
+    as the reply names the plan rather than the branch and is written the same way
+    for a branch that exists and one that does not, so this does not resolve #336
+    for it, and such a repository must omit `--pr`, which leaves the #286 gap in
+    place. That is the one case the declaration does not reach.
     GitHub evaluates the test merge commit when that commit has a check run or a
     commit status, and the head commit otherwise. A required check run passes with
     the conclusion `success`, `skipped`, or `neutral`; a required commit status

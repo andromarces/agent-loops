@@ -117,14 +117,16 @@ function suppliedRead(pr) {
  * The clause the gate line adds for a base branch that has no required check. The
  * gate verifies the PR head, the clean reviewed tree, and the merge state on such
  * a branch, and records the absence, so the finish says it verified no check
- * (#336). It states the condition the pass rests on, because a source this
- * credential cannot read leaves the gate refusing, and the parent cannot read the
- * base branch's configuration itself. Stated on every gated run, and it predicts
- * no outcome: it names what the gate checks, not when the absence holds.
+ * (#336). It states the condition the pass rests on, because only one exact reply
+ * per source is an absence and a source this credential cannot read, or one that
+ * returns a shape the gate cannot read, leaves the gate refusing. The parent
+ * cannot read the base branch's configuration itself, so it is stated on every
+ * gated run. It predicts no outcome: it names what the gate checks, not when the
+ * absence holds.
  * @returns {string}
  */
 function noRequiredCheckClause() {
-  return " A base branch with no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records that no required check exists, when every required-check source stated that it holds none. A source this credential cannot read leaves the gate refusing instead, and the refusal names it.";
+  return " A base branch that states it has no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records that no required check exists, when every required-check source stated that it holds none. A source this credential cannot read, or one that returns a shape the gate cannot read, leaves the gate refusing instead, and the refusal names that source.";
 }
 
 /**
