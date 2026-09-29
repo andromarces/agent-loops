@@ -285,8 +285,8 @@ test("copilot stores the reported id when it differs from the pre-assigned id on
   expect(state.sessionId).toBe("copilot-other-sess");
 });
 
-// Usefulness: verifies a first turn that reports an id and then fails response validation leaves sessionId null, so the next worker turn keeps its preamble.
-test("a first copilot worker turn that reports an id then fails leaves sessionId null and the next turn carries the preamble", async () => {
+// Usefulness: verifies a first turn that reports an id and then fails response validation keeps that id, as issue #360 requires of every adapter error path, so the next worker turn resumes the reported session without a second preamble.
+test("a first copilot worker turn that reports an id then fails keeps the id and the next turn resumes it", async () => {
   vi.mocked(exec).mockReset();
   vi.mocked(exec)
     .mockResolvedValueOnce({
@@ -296,7 +296,7 @@ test("a first copilot worker turn that reports an id then fails leaves sessionId
     .mockResolvedValueOnce({
       stdout: [
         '{"type":"assistant.message","data":{"content":"done"}}',
-        '{"type":"result","sessionId":"copilot-reported-sess-2","exitCode":0}',
+        '{"type":"result","sessionId":"copilot-reported-sess","exitCode":0}',
       ].join("\n"),
       stderr: "",
     });
@@ -306,7 +306,7 @@ test("a first copilot worker turn that reports an id then fails leaves sessionId
 
   expect(first.status).toBe("error");
   expect(first.error).toContain("Copilot did not return response text.");
-  expect(role.sessionId).toBeNull();
+  expect(role.sessionId).toBe("copilot-reported-sess");
 
   const second = await runChild({
     role,
@@ -316,7 +316,117 @@ test("a first copilot worker turn that reports an id then fails leaves sessionId
   });
 
   expect(second.status).toBe("ok");
-  expect(vi.mocked(exec).mock.calls[1][2].input).toContain(
+  expect(vi.mocked(exec).mock.calls[1][1][1]).toBe("copilot-reported-sess");
+  expect(vi.mocked(exec).mock.calls[1][2].input).not.toContain(
     "You are the implementation agent (worker)",
   );
+  expect(role.sessionId).toBe("copilot-reported-sess");
+});
+
+// Usefulness: verifies a resumed turn that fails response validation never changes its id.
+test("copilot keeps the stored id when a resumed turn fails response validation", async () => {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: '{"type":"result","sessionId":"copilot-stored","exitCode":0}',
+    stderr: "",
+  });
+  const state = { kind: "copilot", sessionId: "copilot-stored", model: null, effort: null };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("response text");
+  expect(state.sessionId).toBe("copilot-stored");
+});
+
+// Usefulness: verifies a failed first turn keeps the session id the CLI reported in its result
+// event, so the next turn resumes it, and keeps none when the failed output reports none. The
+// pre-assigned id is never kept: a failed turn that reports no id does not show that a session
+// exists (issue #360).
+test("copilot keeps the reported session id of a failed first turn", async () => {
+  const error = new Error("Copilot failed");
+  error.stdout = '{"type":"result","sessionId":"copilot-reported","exitCode":1}';
+  vi.mocked(exec).mockRejectedValueOnce(error);
+
+  const state = { kind: "copilot", sessionId: null, model: null, effort: null };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toBe(error);
+  expect(state.sessionId).toBe("copilot-reported");
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("Copilot failed"), { stdout: '{"type":"session.tools_updated"}' }),
+  );
+  const silent = { kind: "copilot", sessionId: null, model: null, effort: null };
+  await expect(runCopilot(silent, "p", { cwd: "/dir" })).rejects.toThrow("Copilot failed");
+  expect(silent.sessionId).toBeNull();
+});
+
+// Usefulness: verifies a failed resumed turn never changes its id, whatever the result reports.
+test("copilot keeps the stored session id when a resumed turn fails", async () => {
+  const error = new Error("Copilot failed");
+  error.stdout = '{"type":"result","sessionId":"copilot-other","exitCode":1}';
+  vi.mocked(exec).mockRejectedValueOnce(error);
+
+  const state = { kind: "copilot", sessionId: "copilot-stored", model: null, effort: null };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toBe(error);
+  expect(state.sessionId).toBe("copilot-stored");
+});
+
+// Usefulness: verifies a successful result whose session id is truthy but not a string, such as a
+// number or an object, fails the turn with a clear error instead of returning success with no
+// stored id. A first turn keeps no id, and a resumed turn keeps its stored id (issue #360).
+test.each([
+  ["a number", 42],
+  ["an object", { id: "x" }],
+])("copilot rejects %s as the reported session id", async (_name, id) => {
+  const stdout = [
+    { type: "assistant.message", data: { content: "ok" } },
+    { type: "result", sessionId: id, exitCode: 0 },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const first = { kind: "copilot", sessionId: null, model: null, effort: null };
+  await expect(runCopilot(first, "p", { cwd: "/dir" })).rejects.toThrow(
+    "Copilot did not return a session ID.",
+  );
+  expect(first.sessionId).toBeNull();
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const resumed = { kind: "copilot", sessionId: "stored", model: null, effort: null };
+  await expect(runCopilot(resumed, "p", { cwd: "/dir" })).rejects.toThrow(
+    "Copilot did not return a session ID.",
+  );
+  expect(resumed.sessionId).toBe("stored");
+});
+
+// Usefulness: verifies the adapter selects the id from the last result event, then validates
+// that selected id, so a later valid id never rescues an invalid or mismatched selected one. A
+// resumed turn keeps its stored id on every failure (issue #360).
+test.each([
+  ["invalid then valid, first turn", [42, "good"], null, "good"],
+  ["valid then invalid, first turn", ["good", 42], null, "ERR_ID"],
+  ["valid then different valid, first turn", ["a", "b"], null, "b"],
+  ["stored then invalid, resumed turn", ["stored", 42], "stored", "ERR_ID"],
+  ["stored then different, resumed turn", ["stored", "other"], "stored", "ERR_MISMATCH"],
+  ["different then stored, resumed turn", ["other", "stored"], "stored", "stored"],
+])("copilot selects then validates the id: %s", async (_name, ids, requested, expected) => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      { type: "assistant.message", data: { content: "ok" } },
+      ...ids.map((id) => ({ type: "result", sessionId: id, exitCode: 0 })),
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n"),
+    stderr: "",
+  });
+  const state = { kind: "copilot", sessionId: requested, model: null, effort: null };
+  const call = runCopilot(state, "p", { cwd: "/dir" });
+
+  if (expected === "ERR_ID" || expected === "ERR_MISMATCH") {
+    await expect(call).rejects.toThrow(
+      expected === "ERR_ID"
+        ? "Copilot did not return a session ID."
+        : "Copilot did not resume the expected session.",
+    );
+    expect(state.sessionId).toBe(requested);
+  } else {
+    await expect(call).resolves.toBe("ok");
+    expect(state.sessionId).toBe(expected);
+  }
 });

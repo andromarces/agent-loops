@@ -890,3 +890,100 @@ test("opencode keeps a mid-line Verdict part out of the closing block", async ()
     deferred: "none",
   });
 });
+
+// Usefulness: verifies a timed-out first turn keeps the session id its partial stream printed, so
+// the next turn resumes it (issue #360). A resumed turn keeps its stored id.
+test("opencode keeps the session id from a failed first turn", async () => {
+  const stdout = JSON.stringify({ type: "step_start", sessionID: "ses-failed", part: {} });
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("opencode timed out."), { stdout, stderr: "", timedOut: true }),
+  );
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  await expect(runOpenCode(state, "p", { cwd: "/dir" })).rejects.toThrow("timed out");
+  expect(state.sessionId).toBe("ses-failed");
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("opencode exited."), { stdout, stderr: "", exitCode: 1 }),
+  );
+  const resumed = { kind: "opencode", sessionId: "ses-stored", model: null, effort: null };
+  await expect(runOpenCode(resumed, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(resumed.sessionId).toBe("ses-stored");
+});
+
+// Usefulness: verifies a first turn that reports a session and then fails response validation keeps
+// the session id, as issue #360 requires of every adapter error path.
+test("opencode keeps the session id when a first turn fails response validation", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ type: "step_start", sessionID: "ses-validated", part: {} }),
+    stderr: "",
+  });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  await expect(runOpenCode(state, "p", { cwd: "/dir" })).rejects.toThrow("response text");
+  expect(state.sessionId).toBe("ses-validated");
+});
+
+// Usefulness: verifies a successful result whose session id is truthy but not a string, such as a
+// number or an object, fails the turn with a clear error instead of returning success with no
+// stored id. A first turn keeps no id, and a resumed turn keeps its stored id (issue #360).
+test.each([
+  ["a number", 42],
+  ["an object", { id: "x" }],
+])("opencode rejects %s as the reported session id", async (_name, id) => {
+  const stdout = [
+    { type: "step_start", sessionID: id, part: {} },
+    { type: "text", sessionID: id, part: { text: "ok" } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const first = { kind: "opencode", sessionId: null, model: null, effort: null };
+  await expect(runOpenCode(first, "p", { cwd: "/dir" })).rejects.toThrow(
+    "opencode did not return a session ID.",
+  );
+  expect(first.sessionId).toBeNull();
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const resumed = { kind: "opencode", sessionId: "stored", model: null, effort: null };
+  await expect(runOpenCode(resumed, "p", { cwd: "/dir" })).rejects.toThrow(
+    "opencode did not return a session ID.",
+  );
+  expect(resumed.sessionId).toBe("stored");
+});
+
+// Usefulness: verifies the adapter selects the first truthy id (an empty id is skipped), then validates
+// that selected id, so a later valid id never rescues an invalid or mismatched selected one. A
+// resumed turn keeps its stored id on every failure (issue #360).
+test.each([
+  ["invalid then valid, first turn", [42, "good"], null, "ERR_ID"],
+  ["empty then valid, first turn", ["", "good"], null, "good"],
+  ["valid then different valid, first turn", ["a", "b"], null, "a"],
+  ["invalid then stored, resumed turn", [42, "stored"], "stored", "ERR_ID"],
+  ["different then stored, resumed turn", ["other", "stored"], "stored", "ERR_MISMATCH"],
+  ["stored then different, resumed turn", ["stored", "other"], "stored", "stored"],
+  ["empty then stored, resumed turn", ["", "stored"], "stored", "stored"],
+])("opencode selects then validates the id: %s", async (_name, ids, requested, expected) => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      ...ids.map((id) => ({ type: "step_start", sessionID: id, part: {} })),
+      { type: "text", part: { text: "ok" } },
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n"),
+    stderr: "",
+  });
+  const state = { kind: "opencode", sessionId: requested, model: null, effort: null };
+  const call = runOpenCode(state, "p", { cwd: "/dir" });
+
+  if (expected === "ERR_ID" || expected === "ERR_MISMATCH") {
+    await expect(call).rejects.toThrow(
+      expected === "ERR_ID"
+        ? "opencode did not return a session ID."
+        : "opencode did not resume the expected session.",
+    );
+    expect(state.sessionId).toBe(requested);
+  } else {
+    await expect(call).resolves.toBe("ok");
+    expect(state.sessionId).toBe(expected);
+  }
+});

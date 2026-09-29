@@ -3084,6 +3084,60 @@ test("the orchestrator prompt names no wait when the turn timeout is too short",
   }
 });
 
+// Usefulness: verifies a resume that fails because the CLI has no such session clears the id and
+// reruns the turn once as a first turn with the worker preamble, inside the one charged step
+// (issue #360, ADR 0016).
+test("a missing worker session reruns the turn as a first turn in the same step", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "do the work" }),
+      finish,
+    ]);
+    const calls = [];
+    const events = [];
+    const worker = {
+      async run(state, prompt) {
+        calls.push({ sessionId: state.sessionId, prompt });
+        if (state.sessionId === "gone") {
+          throw Object.assign(new Error("No conversation found"), { sessionMissing: true });
+        }
+        state.sessionId = "fresh";
+        return "worker done";
+      },
+    };
+
+    const result = await runLoop({
+      task: "Task",
+      cwd: repo,
+      maxSteps: 1,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: "gone" },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch, work: worker, rev: scripted([]) },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(calls.map((call) => call.sessionId)).toEqual(["gone", null]);
+    expect(calls[0].prompt).toBe("do the work");
+    expect(calls[1].prompt).toContain("You are the implementation agent (worker)");
+    expect(calls[1].prompt).toContain("do the work");
+    expect(events.filter((e) => e.type === "invocation" && e.role === "worker")).toMatchObject([
+      { status: "error", stepsUsed: 1 },
+      { status: "ok", stepsUsed: 1 },
+    ]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a continued run resets the completion gate conservatively
 // (#362). The earlier run's worker turn is unknown here, so --require-accept
 // treats the tree as changed and unreviewed: a finish with no reviewer turn in
@@ -3115,6 +3169,68 @@ test("a continued --require-accept run needs a reviewer accept before finish", a
     expect(reviewerAdapter.recorded.length).toBe(1);
     expect(orchAdapter.recorded[0].sessionId).toBe("earlier-orch");
     expect(orchAdapter.recorded[0].prompt).toMatch(/continues an earlier run/i);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a failure that is not a missing session is not retried, and a failed rerun
+// is reported once with the cleared id, so the loop cannot retry without bound.
+test("only a missing session reruns, and the rerun happens once", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orch = scripted([JSON.stringify({ action: "run_worker", prompt: "p" }), finish]);
+    let missingCalls = 0;
+    const worker = {
+      async run() {
+        missingCalls += 1;
+        throw Object.assign(new Error("still missing"), { sessionMissing: true });
+      },
+    };
+    const role = { kind: "work", sessionId: "gone" };
+
+    await runLoop({
+      task: "Task",
+      cwd: repo,
+      maxSteps: 2,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: role,
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch, work: worker, rev: scripted([]) },
+    });
+
+    expect(missingCalls).toBe(2);
+    expect(role.sessionId).toBeNull();
+
+    let plainCalls = 0;
+    const plain = {
+      async run() {
+        plainCalls += 1;
+        throw new Error("boom");
+      },
+    };
+    await runLoop({
+      task: "Task",
+      cwd: repo,
+      maxSteps: 2,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: "keep" },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: {
+        orch: scripted([JSON.stringify({ action: "run_worker", prompt: "p" }), finish]),
+        work: plain,
+        rev: scripted([]),
+      },
+    });
+    expect(plainCalls).toBe(1);
   } finally {
     await removePath(repo);
   }

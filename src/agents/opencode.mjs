@@ -2,7 +2,7 @@ import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
-import { resumeMismatchError } from "./shared.mjs";
+import { asSessionId, keepFailedSessionId, resumeMismatchError } from "./shared.mjs";
 
 // A part that opens a report label. The reviewer `Verdict:` line is excluded: it gates acceptance,
 // so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
@@ -60,8 +60,10 @@ export async function runOpenCode(state, prompt, options = {}) {
     ({ stdout } = await exec("opencode", args, execOptions));
   } catch (err) {
     const events = parseJsonLines(err?.stdout ?? "");
-    // A non-zero exit can still carry completed-step usage. Expose it, then rethrow.
+    // A non-zero exit, a timeout, or a cancel can still carry completed-step usage and the session
+    // id. Expose both, then rethrow.
     setUsage(state, events);
+    keepFailedSessionId(state, events.map((event) => event?.sessionID).find(Boolean));
     // The stream carries model output and stderr can carry a secret, and `logDebug` writes to
     // stdout in the loop CLI, where a caller can persist it. The debug line therefore carries the
     // exit code and the byte counts only, and the full text stays on the error for a caller that
@@ -80,7 +82,9 @@ export async function runOpenCode(state, prompt, options = {}) {
   // replaces the adapter error (issue #335).
   const events = parseJsonLines(stdout).filter(isEvent);
 
-  const sessionId = events.map((event) => event.sessionID).find(Boolean);
+  // Select the first truthy id, so an empty id is skipped, then require it to be a non-empty
+  // string: a later valid id never rescues a truthy invalid or mismatched first one.
+  const sessionId = asSessionId(events.map((event) => event.sessionID).find(Boolean));
 
   if (!sessionId) {
     throw new Error("opencode did not return a session ID.");

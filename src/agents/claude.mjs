@@ -1,10 +1,20 @@
 import { parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import {
+  asSessionId,
+  flagMissingSession,
+  keepFailedSessionId,
+  resumeMismatchError,
+} from "./shared.mjs";
+
+// Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
+const missingSession = (id) => `No conversation found with session ID: ${id}`;
 
 export async function runClaude(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
   const args = ["-p"];
   const execOptions = { cwd, input: prompt, timeout, signal, role };
+  const requestedSessionId = state.sessionId;
 
   if (state.sessionId) {
     args.push("--resume", state.sessionId);
@@ -32,7 +42,8 @@ export async function runClaude(state, prompt, options = {}) {
   try {
     ({ stdout } = await exec("claude", args, execOptions));
   } catch (err) {
-    // A non-zero exit can still carry a result event with usage. Expose it, then rethrow.
+    // A non-zero exit can still carry a result event with usage and the session id. Expose
+    // both, then rethrow.
     let failed;
     try {
       failed = JSON.parse(err?.stdout ?? "");
@@ -40,16 +51,21 @@ export async function runClaude(state, prompt, options = {}) {
       failed = undefined;
     }
     setUsage(state, findResultEvent(failed));
+    keepFailedSessionId(state, findSessionId(failed));
+    flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }
   const parsed = parseJson(stdout, "Claude Code");
 
-  const sessionId = Array.isArray(parsed)
-    ? parsed.map((event) => event?.session_id).find(Boolean)
-    : parsed.session_id;
+  const sessionId = findSessionId(parsed);
 
   if (!sessionId) {
     throw new Error("Claude Code did not return a session_id.");
+  }
+
+  // A resumed id must come back unchanged, as in the Codex, Copilot, and opencode adapters.
+  if (requestedSessionId && sessionId !== requestedSessionId) {
+    throw resumeMismatchError("Claude Code", "session", requestedSessionId, sessionId);
   }
 
   state.sessionId = sessionId;
@@ -57,6 +73,12 @@ export async function runClaude(state, prompt, options = {}) {
   setUsage(state, resultEvent);
 
   return String(resultEvent?.result ?? "").trim();
+}
+
+function findSessionId(parsed) {
+  return Array.isArray(parsed)
+    ? asSessionId(parsed.map((event) => event?.session_id).find(Boolean))
+    : asSessionId(parsed?.session_id);
 }
 
 function findResultEvent(parsed) {

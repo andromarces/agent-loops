@@ -203,6 +203,12 @@ writes no state file, and a later dispatch charges no step, changes no lifecycle
 and spawns no child. The envelope carries `status: "error"` with
 `--cwd must be inside a Git work tree: <path>`.
 
+A failed first turn keeps the session id its output printed, so the next dispatch
+resumes that session and the edits the failed turn left. When a resume fails
+because the CLI has no such session, the runtime clears the id and reruns the turn
+once as a first turn, with the worker preamble. That rerun is part of the step the
+dispatch already charged: it charges no second step and adds no `turns` entry.
+
 A refused `--cwd` is not the parent's to repair: end the run, name the path and
 the refusal in the reason, and leave the work tree to a maintainer, who decides
 whether to recreate it and start a new run.

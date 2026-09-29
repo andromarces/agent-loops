@@ -65,7 +65,7 @@ export async function runChild(options) {
   const isWorker = roleName === "worker";
   const readOnly = !isWorker;
 
-  const runFn = (finalPrompt) =>
+  const invokeRole = (finalPrompt) =>
     invoke(
       agents,
       role,
@@ -75,6 +75,25 @@ export async function runChild(options) {
       onEvent,
       stepsUsed,
     );
+
+  // A resume that fails because the CLI has no such session leaves the stored id useless, and
+  // every later turn would fail the same way. Clear the id and rerun the turn once as a first
+  // turn, so a worker gets its preamble again. The rerun belongs to the step already charged for
+  // this turn: the failed resume ran no model turn, and the single rerun bounds the extra cost
+  // (ADR 0016).
+  const runFn = async (finalPrompt) => {
+    const resumedId = role.sessionId;
+    try {
+      return await invokeRole(finalPrompt);
+    } catch (err) {
+      if (!resumedId || !err?.sessionMissing) {
+        throw err;
+      }
+      logWarn(`${roleName}: session ${resumedId} is missing; rerunning the turn as a first turn`);
+      role.sessionId = null;
+      return invokeRole(isWorker ? workerPrompt(prompt, true) : finalPrompt);
+    }
+  };
 
   // The worker prompt needs no runtime read, so it is built once here. The
   // reviewer prompt is built inside the mutation check, where the pre-turn
