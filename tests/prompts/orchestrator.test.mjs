@@ -408,7 +408,7 @@ for (const [name, path] of RULE_SURFACES) {
   test(`${name} states the allowlisted absence rule`, async () => {
     const text = await readFile(path, "utf8");
     expectRule(text, /allowlist/i, /fails closed/i);
-    expectRule(text, /three classes/i, /absent/i, /has-contexts/i, /unknown/i);
+    expectRule(text, /classes/i, /absent/i, /has-contexts/i, /empty/i, /unknown/i);
     // The one per-source absence each, and the ruleset read is every page.
     expectRule(text, /repository rulesets/i, /read of every page/i, /documented rule type/i);
     expectRule(text, /classic branch protection/i, /Branch not protected/);
@@ -423,9 +423,13 @@ for (const [name, path] of RULE_SURFACES) {
   // Usefulness: verifies ${name} states that an unknown ruleset read refuses whatever
   // the rest of the union holds, which is the case a non-empty union from another
   // source used to slip past (#336 review).
-  test(`${name} states that an unknown ruleset read refuses whatever the union holds`, async () => {
+  test(`${name} states the three ruleset outcomes`, async () => {
     const text = await readFile(path, "utf8");
-    expectRule(text, /unknown ruleset read/i, /refuses the finish/i, /union/i);
+    // A read the gate cannot interpret refuses whatever the union holds.
+    expectRule(text, /ruleset read the gate cannot interpret/i, /refuses the finish/i, /union/i);
+    // A successful read that found no rule is neither, so a classic-only
+    // repository still finishes.
+    expectRule(text, /found no rule/i, /contributes no contexts/i, /origin.main/i);
   });
 
   // Usefulness: verifies ${name} states that an empty page inside a longer read
