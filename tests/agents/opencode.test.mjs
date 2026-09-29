@@ -7,7 +7,7 @@ import { exec } from "../../src/lib/exec.mjs";
 import { logDebug, logInfo } from "../../src/lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import { createTempRepo, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
@@ -29,7 +29,7 @@ vi.mock("../../src/lib/log.mjs", () => ({
 let dispatchPaths = [];
 
 afterEach(async () => {
-  delete process.env.AGENT_LOOP_RUNS_ROOT;
+  restoreRunsRoot();
   const paths = dispatchPaths;
   dispatchPaths = [];
   // Every registered path is attempted so one failure cannot strand the rest, and the first

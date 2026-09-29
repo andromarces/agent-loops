@@ -32,6 +32,21 @@ export async function removePath(path) {
   await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
+// Captured at import, before any test overrides the runs root.
+const originalRunsRoot = process.env.AGENT_LOOP_RUNS_ROOT;
+
+/**
+ * Puts AGENT_LOOP_RUNS_ROOT back to the value it had before the tests overrode
+ * it: set when it existed, deleted only when it did not.
+ */
+export function restoreRunsRoot() {
+  if (originalRunsRoot === undefined) {
+    delete process.env.AGENT_LOOP_RUNS_ROOT;
+  } else {
+    process.env.AGENT_LOOP_RUNS_ROOT = originalRunsRoot;
+  }
+}
+
 /**
  * Runs an ordered list of fake replies and records each call in `recorded`.
  * A reply may be a value or a `(state, prompt, options)` function; values are

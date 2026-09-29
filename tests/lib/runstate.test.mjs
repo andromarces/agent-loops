@@ -9,7 +9,7 @@ import {
   withStateLock,
   writeSessionEntry,
 } from "../../src/lib/runstate.mjs";
-import { deadPid, removePath } from "../runtime-helpers.mjs";
+import { deadPid, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
 
 let dirs = [];
 
@@ -202,6 +202,6 @@ test("readStatesForSession ignores an entry temp file", async () => {
       { parentSession: "ses_tmp", lifecycle: "active" },
     ]);
   } finally {
-    delete process.env.AGENT_LOOP_RUNS_ROOT;
+    restoreRunsRoot();
   }
 });

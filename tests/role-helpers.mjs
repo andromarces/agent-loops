@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import { removePath } from "./runtime-helpers.mjs";
+import { removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
 
 export const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
 export const WORKER_REPLY = `${REPORT}\nContinuing next turn.`;
@@ -75,7 +75,7 @@ export async function setup() {
 }
 
 export async function cleanup() {
-  delete process.env.AGENT_LOOP_RUNS_ROOT;
+  restoreRunsRoot();
   for (const dir of repos) {
     await removePath(dir);
   }
