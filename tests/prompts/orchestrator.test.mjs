@@ -167,21 +167,28 @@ const RESOLVE_PR_HEAD = /resolve[^.!?]{0,40}PR head[^.!?]{0,40}PR number/i;
 const REQUIRE_CLEAN_TRUE = /require[^.!?]{0,40}reviewed\.clean[^.!?]{0,20}\btrue\b/i;
 const ACCEPT_WITHOUT_CHECKS =
   /treat[^.!?]{0,60}accept[^.!?]{0,40}without[^.!?]{0,20}Checks[^.!?]{0,20}not accepted/i;
-// The unresolved-compare rule, clause by clause. `do not finish as verified` is
-// the prohibition, and the clause that follows must offer both permitted actions as
-// alternatives of one choice. Each action binds to the unresolved compare through the
-// join between them, so `abort, or record the unresolved compare` and `record the
-// unresolved compare or abort` each pass, while an `abort` that belongs to another part
-// of the clause, or a clause that drops either action, fails. The order and the join are
-// not the contract, so the check is one alternation over the two orders (issue #351).
+// The unresolved-compare rule, clause by clause. `do not finish as verified` is the
+// prohibition, and the clause that follows must offer both permitted actions as
+// alternatives of one choice. The two actions are joined directly by `or`, and the run
+// from `record` to `unresolved compare` may cross neither punctuation nor a clause, so
+// the words of one option cannot be read out of two separate clauses or two separate
+// choices. The order is not the contract, so both orders pass, and a clause that drops
+// either action fails (issue #351).
 const UNRESOLVED_HEAD_CONDITION = /PR head cannot be resolved/i;
 const DO_NOT_FINISH_AS_VERIFIED = /do not finish as verified/i;
-const ALTERNATIVE_JOIN = /\b(?:instead of|rather than|or)\b/i;
+// Words between an action and the unresolved compare. No `.`, `;`, `:`, `?` or comma, so
+// the gap stays inside one clause and inside one option.
+const SAME_OPTION_GAP = "[^.();:?,]{0,40}";
+const ABORT_THEN_RECORD_THE_COMPARE = new RegExp(
+  `\\babort\\b,?\\s+or\\s+\\brecord\\b${SAME_OPTION_GAP}unresolved compare`,
+  "i",
+);
+const RECORD_THE_COMPARE_THEN_ABORT = new RegExp(
+  `\\brecord\\b${SAME_OPTION_GAP}unresolved compare\\b,?\\s+or\\s+\\babort\\b`,
+  "i",
+);
 const BOTH_ACTIONS_ON_UNRESOLVED = new RegExp(
-  [
-    `\\babort\\b[^.!?]{0,40}${ALTERNATIVE_JOIN.source}[^.!?]{0,40}\\brecord\\b[^.!?]{0,40}unresolved compare`,
-    `\\brecord\\b[^.!?]{0,40}unresolved compare[^.!?]{0,40}${ALTERNATIVE_JOIN.source}[^.!?]{0,40}\\babort\\b`,
-  ].join("|"),
+  `${ABORT_THEN_RECORD_THE_COMPARE.source}|${RECORD_THE_COMPARE_THEN_ABORT.source}`,
   "i",
 );
 const RECORD_UNDER_NOT_DONE_AND_OPEN =
