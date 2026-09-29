@@ -1,3 +1,5 @@
+import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
+
 // Shared rule source: docs/orchestrator-instructions.md states the role rules
 // for interactive parents (#56); this headless prompt states the same rules in
 // JSON-action form, including the completion rule. Keep the two consistent when
@@ -24,28 +26,44 @@ export function requiredCheckWait({ requireCi, orchestratorKind, reviewerKind })
 }
 
 /**
+ * The `--timeout` the headless orchestrator passes to `role wait-checks`, in
+ * seconds. The command runs for its bound plus `CHILD_EXIT_CEILING_MS`, so the
+ * bound leaves that ceiling and half the turn free for the orchestrator's own
+ * work, and a wait that reaches it returns before the turn `timeout` (seconds,
+ * null when unbounded) ends the run (#348).
+ * known-limit: a turn `timeout` under about 12 seconds still gets a one-second
+ * bound, which the ceiling can push past half the turn.
+ */
+export function headlessWaitSeconds(timeout) {
+  if (typeof timeout !== "number" || timeout <= 0) return DEFAULT_WAIT_SECONDS;
+  const ceilingSeconds = CHILD_EXIT_CEILING_MS / 1000;
+  return Math.max(1, Math.min(DEFAULT_WAIT_SECONDS, Math.floor(timeout / 2) - ceilingSeconds));
+}
+
+/**
  * The `--require-ci` block: the runtime gate, then the two points where the run
  * waits for the required checks, and the shell status read that the role rule
  * excepts. Each statement names the role whose CLI performs the read, because
  * the orchestrator and reviewer CLIs are chosen independently.
  */
-function prGateBlock({ pr = null, requireCi, orchestratorKind, reviewerKind }) {
+function prGateBlock({ pr = null, requireCi, orchestratorKind, reviewerKind, timeout = null }) {
   if (requireCi === null) return "";
-  return `\n${prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }).join("\n")}`;
+  return `\n${prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout }).join("\n")}`;
 }
 
-function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind }) {
+function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout }) {
   const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed.${noRequiredCheckClause()} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
   const rule = requiredCheckWait({ requireCi, orchestratorKind, reviewerKind });
 
   if (rule === "wait") {
     return [
       gate,
-      "- This run excepts one read from the role rule above: you may read the pull request check status yourself. A status read is not a review, not a test, and not an edit, and gh pr checks is the only command it covers.",
+      "- This run excepts one read from the role rule above: you may read the pull request check status yourself. A status read is not a review, not a test, and not an edit, and gh pr checks and agent-loop role wait-checks are the only commands it covers.",
       "- Wait for the required checks at two points:",
       "  - Before you dispatch the reviewer on a new PR head, wait for the required checks on that head to complete.",
-      "  - When a reviewer turn reports a pending required check, wait for that check to complete before you finish. A check still pending after a wait is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check, so wait again inside this turn, or dispatch the reviewer again, or abort with the pending check named in the reason.",
-      "- Run each wait as gh pr checks <pr> --required --watch, adding --fail-fast to stop on the first failure. The status read changes nothing and spends no step, because a step is charged only to run_worker and run_reviewer. This turn is bounded by --timeout (3600 seconds by default), and a turn that outlasts it ends the run on exit 1 before it returns an action, so bound the watch to a few minutes and return inside the turn.",
+      "  - When a reviewer turn reports a pending required check, wait for that check to complete before you finish. A check still pending after a wait is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check, so dispatch the reviewer again, or wait again on a later turn, or abort with the pending check named in the reason.",
+      `- Run each wait as agent-loop role wait-checks --pr ${requireCi} --timeout ${headlessWaitSeconds(timeout)} in this work tree. The runtime owns the bound, so the command returns within ${headlessWaitSeconds(timeout)} seconds plus five, before this turn ends. Do not watch the checks with gh directly, because gh has no timeout for a watch. The command prints one JSON envelope with "timedOut" and the last "checks" it read. The status read changes nothing and spends no step, because a step is charged only to run_worker and run_reviewer. This turn is bounded by the turn --timeout (3600 seconds by default), and a turn that outlasts it ends the run on exit 1 before it returns an action.`,
+      '- Read the wait result as follows. A failing required check is settled, so act on the failure. "timedOut": true means the bound was reached with a required check still pending, or with no check state read: it is a completed read and not a pass, so the pending check is not a finish condition. Do not wait again in the same turn: dispatch the reviewer, or abort with the pending check named in the reason. An exit 1 with "status": "error" is an unresolved read, so never record its checks as passed.',
     ];
   }
 
@@ -172,6 +190,7 @@ export function initialPrompt({
   mode = null,
   orchestratorKind = null,
   reviewerKind = null,
+  timeout = null,
 }) {
   return `
 You are the orchestrator in an automated multi-agent coding loop.
@@ -210,7 +229,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.

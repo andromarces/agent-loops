@@ -673,6 +673,50 @@ test("initialPrompt states that a wait can end the run at the turn timeout", () 
   expect(prompt).toMatch(/exit 1/);
 });
 
+// Usefulness: verifies the headless wait runs through the runtime-owned command
+// with a stated bound below the turn timeout, and never through an unbounded
+// `gh` watch, so a wait cannot end the run on the turn timeout (issue #348).
+test.each([
+  [undefined, 300],
+  [null, 300],
+  [3600, 300],
+  [100, 45],
+  [30, 10],
+])("the headless wait states a bound below the turn timeout %s", (timeout, bound) => {
+  const prompt = initialPrompt({
+    task: "T",
+    maxSteps: 10,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    timeout,
+  });
+  expect(prompt).toContain(`agent-loop role wait-checks --pr 42 --timeout ${bound}`);
+  expect(prompt).not.toContain("--watch");
+  expect(prompt).not.toContain("few minutes");
+  if (typeof timeout === "number") {
+    expect(bound + 5).toBeLessThan(timeout);
+  }
+});
+
+// Usefulness: verifies the prompt names the timeout outcome: a wait that reached
+// its bound is a completed read that leaves the check pending, so the run acts on
+// it inside the turn instead of waiting again (issue #348).
+test("the headless wait names the timedOut outcome as a pending check", () => {
+  const prompt = gatedPrompt("claude").replace(/\s+/g, " ");
+  expect(prompt).toMatch(/"timedOut": true[^.]*pending/i);
+  expect(prompt).toMatch(/do not wait again in the same turn/i);
+});
+
+// Usefulness: verifies the status-read exception covers the wait command as well
+// as `gh pr checks`, so the bounded wait is inside the role rule (issue #348).
+test("the status-read exception covers the wait-checks command", () => {
+  const exception = gatedPrompt("claude")
+    .split("\n")
+    .find((line) => /excepts one read/i.test(line));
+  expect(exception).toMatch(/wait-checks/);
+});
+
 // The refused-`--cwd` rule both parent paths state the same way. It is the
 // decision, not a repair procedure: a parent ends the run and a maintainer
 // decides what happens to the work tree. The mechanism behind it differs by

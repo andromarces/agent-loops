@@ -3078,3 +3078,33 @@ test("the refusal assertion covers every endpoint the finish gate reads", async 
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies the headless wait bound follows the turn --timeout the run
+// was started with, so a wait the orchestrator runs ends before the turn does and
+// the run cannot end on exit 1 with no action (issue #348).
+test("the orchestrator prompt states a wait bound below the run's turn timeout", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orch = scripted([JSON.stringify({ action: "abort", reason: "stop" })]);
+    await runLoop({
+      task: "PR work: address issue 43 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      timeout: 60,
+      requireCi: 42,
+      gh: ciGateGh("0".repeat(40)),
+      roles: {
+        orchestrator: { kind: "claude", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { claude: orch, work: scripted([]), rev: scripted([]) },
+    });
+
+    const prompt = orch.recorded[0].prompt;
+    expect(prompt).toContain("agent-loop role wait-checks --pr 42 --timeout 25");
+    expect(prompt).not.toContain("--watch");
+  } finally {
+    await removePath(repo);
+  }
+});

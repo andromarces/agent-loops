@@ -443,8 +443,22 @@ A headless status read spends no step, because a step is charged only to
 `run_worker` and `run_reviewer`. It is not free of other cost. The turn is
 bounded by the per-invocation `--timeout`, which defaults to 3600 seconds and is
 unbounded at 0, and a turn that outlasts that bound ends the run on exit 1
-before it returns an action, so a long watch can end a run that would otherwise
-have finished. Bound the watch to a few minutes so it returns inside the turn.
+before it returns an action.
+
+The headless orchestrator runs each wait as `agent-loop role wait-checks --pr
+<pr> --timeout <seconds>` in the run's work tree, the same command the
+interactive parent uses, and never as a `gh pr checks --watch`, which has no
+timeout. The runtime states the `--timeout` in the prompt, below the turn
+`--timeout`: 300 seconds, or half the turn `--timeout` less the five-second
+child-exit ceiling when that is smaller, and at least 1. The command returns
+inside that bound plus the ceiling, so a wait cannot outlast the turn.
+
+A wait that ends on the bound reports `"timedOut": true`. The orchestrator
+treats it as a completed read that left the check pending: it is not a pass and
+not a finish condition. The orchestrator does not wait again in the same turn.
+It dispatches the reviewer, or `abort`s with the pending check named in the
+reason, and it can wait again on a later turn. An unresolved read exits 1 with
+`status: "error"` and never reads as a pass.
 
 On an orchestrator CLI that can run the status read, both wait points hold in the
 headless loop: the wait before the reviewer dispatch, and the wait before
