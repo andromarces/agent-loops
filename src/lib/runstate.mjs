@@ -155,8 +155,8 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * atomic hard link where supported, otherwise an exclusive create), treats an
  * existing lock with a live owner pid as busy and a dead one as stale
  * (removed with a warning, then retried once). The removal runs under a claim
- * file `<lock>.reap.<id>` keyed by the stale content, so at most one contender
- * removes it. It deletes the lock only if the lock still holds the content read
+ * file `<lock>.reap.<digest>` keyed by the stale content (a fixed-length name at
+ * every depth), so at most one contender removes it. It deletes the lock only if the lock still holds the content read
  * as stale. Each acquisition writes a unique nonce, so a lock that a new owner
  * created in between never matches and survives, and the retry reports it as
  * busy. This guarantee holds only when every contender runs this version or
@@ -210,7 +210,7 @@ const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
 
 async function acquireLock(
   lockFile,
-  { retry = true, label = "State", noun = "state", depth = 0 } = {},
+  { retry = true, label = "State", noun = "state", depth = 0, rootLockFile = lockFile } = {},
 ) {
   if (await createLock(lockFile)) {
     // Best-effort removal of temp files left by a crash between the temp write
@@ -247,18 +247,24 @@ async function acquireLock(
   }
 
   logWarn(`removing stale ${noun} lock (dead pid ${owner?.pid ?? "unknown"})`);
-  await removeStaleFile(lockFile, lockText, { label, depth });
-  return acquireLock(lockFile, { retry: false, label, noun, depth });
+  await removeStaleFile(lockFile, lockText, { label, depth, rootLockFile });
+  return acquireLock(lockFile, { retry: false, label, noun, depth, rootLockFile });
 }
 
 // Path of the claim that guards the removal of the file that holds `staleText`.
-// The name is the full SHA-256 digest of the JSON-encoded content, so distinct
-// contents get distinct names up to SHA-256 collision resistance, not by a strict
-// injective mapping. The JSON encoding keeps an unreadable file (null) and the
-// literal text "null" apart.
-function claimFileFor(file, staleText) {
-  const id = createHash("sha256").update(JSON.stringify(staleText)).digest("hex");
-  return `${file}.reap.${id}`;
+// The name is `<root lock name>.reap.<digest>` beside the lock, so it has the same
+// length at every nesting depth, which keeps a recovery chain within the Windows
+// path limit. The digest is the full SHA-256 of the guarded file's name and its
+// JSON-encoded content: distinct inputs get distinct names up to SHA-256
+// collision resistance, not by a strict injective mapping, and a claim for a
+// claim differs from a first-level claim because the guarded name differs. The
+// JSON encoding keeps an unreadable file (null) and the literal text "null"
+// apart.
+function claimFileFor(rootLockFile, file, staleText) {
+  const id = createHash("sha256")
+    .update(JSON.stringify([basename(file), staleText]))
+    .digest("hex");
+  return `${rootLockFile}.reap.${id}`;
 }
 
 // A claim guards the removal of one stale file, and a dead claim is itself
@@ -279,9 +285,14 @@ function claimFileFor(file, staleText) {
 // Mixed versions: a contender that runs an older version removes a stale lock
 // with a bare rm, so it can still remove a new live lock exactly as before this
 // fix. The guarantee holds only when every contender runs this version or later.
-async function removeStaleFile(file, staleText, { label, depth }) {
-  const claimFile = claimFileFor(file, staleText);
-  await acquireLock(claimFile, { label, noun: "stale-removal claim", depth: depth + 1 });
+async function removeStaleFile(file, staleText, { label, depth, rootLockFile }) {
+  const claimFile = claimFileFor(rootLockFile, file, staleText);
+  await acquireLock(claimFile, {
+    label,
+    noun: "stale-removal claim",
+    depth: depth + 1,
+    rootLockFile,
+  });
   try {
     if (await stillStale(file, staleText)) {
       await rm(file, { force: true });
