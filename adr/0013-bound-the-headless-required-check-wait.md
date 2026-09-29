@@ -78,5 +78,6 @@ Andro Marces
   `src/prompts/orchestrator.mjs`, the `timeout` input from `src/runtime.mjs`;
   tests in `tests/prompts/orchestrator.test.mjs` and `tests/runtime.test.mjs`;
   documented in `docs/orchestrator-instructions.md` and `README.md`
+- [PR #382](https://github.com/andromarces/agent-loops/pull/382)
 - [ADR 0010: A runtime-owned bound on the interactive required-check wait](0010-runtime-owned-required-check-wait-bound.md)
 - [ADR Index](README.md)
