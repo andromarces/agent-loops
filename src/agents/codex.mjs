@@ -7,8 +7,9 @@ import {
   setMainLoopUsage,
 } from "./shared.mjs";
 
-// Codex prints this on stderr, exit 1, when `exec resume` names a thread it has no rollout for.
-const MISSING_SESSION = /no rollout found for thread id/i;
+// Codex prints exactly this on stderr, exit 1, when `exec resume` names a thread it has no rollout for.
+const missingSession = (id) =>
+  `Error: thread/resume: thread/resume failed: no rollout found for thread id ${id} (code -32600)`;
 
 export async function runCodex(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
@@ -44,7 +45,7 @@ export async function runCodex(state, prompt, options = {}) {
       (event) => event?.type === "thread.started",
     );
     keepFailedSessionId(state, started?.thread_id);
-    flagMissingSession(err, requestedSessionId, MISSING_SESSION);
+    flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }
   const events = parseJsonLines(stdout);

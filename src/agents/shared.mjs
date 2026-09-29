@@ -40,14 +40,25 @@ export function keepFailedSessionId(state, id) {
 
 /**
  * Marks a failed resume whose session the CLI does not have, so the runtime can rerun the turn
- * as a first turn. The match reads stderr only, because stdout carries model output that could
- * quote the phrase. Nothing is marked for a first turn, which has no session to lose.
+ * as a first turn. The mark is narrow because a wrong mark reruns a real failure and can repeat
+ * its edits: the process must exit 1 without a timeout, cancel, or signal, stdout must be empty,
+ * and stderr must be exactly the one line the CLI prints for the requested id. Any other text,
+ * including that line inside a longer message or for another id, leaves the error unmarked.
+ * Nothing is marked for a first turn, which has no session to lose.
  * @param {unknown} err the error `exec` threw
  * @param {string | null} requestedId session id the failed call asked the CLI to resume
- * @param {RegExp} pattern the CLI's stderr text for a session it cannot find
+ * @param {(id: string) => string} missingLine the CLI's full stderr for a missing session
  */
-export function flagMissingSession(err, requestedId, pattern) {
-  if (requestedId && err && typeof err === "object" && pattern.test(err.stderr ?? "")) {
+export function flagMissingSession(err, requestedId, missingLine) {
+  if (!requestedId || !err || typeof err !== "object") {
+    return;
+  }
+  const exited = err.exitCode === 1 && !err.timedOut && !err.isCanceled && !err.isTerminated;
+  if (
+    exited &&
+    !(err.stdout ?? "").trim() &&
+    (err.stderr ?? "").trim() === missingLine(requestedId)
+  ) {
     err.sessionMissing = true;
   }
 }

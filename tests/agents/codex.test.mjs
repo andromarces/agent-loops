@@ -162,30 +162,57 @@ test("codex keeps the stored thread id when a resumed turn fails", async () => {
   expect(state.sessionId).toBe("th-stored");
 });
 
-// Usefulness: verifies the Codex stderr for a missing thread marks the error (issue #360).
-test("codex flags a resume of a missing thread", async () => {
-  const err = Object.assign(new Error("codex exited with code 1."), {
-    stdout: "",
-    stderr:
-      "Error: thread/resume: thread/resume failed: no rollout found for thread id abc (code -32600)",
-  });
-  vi.mocked(exec).mockRejectedValueOnce(err);
+const MISSING =
+  "Error: thread/resume: thread/resume failed: no rollout found for thread id gone (code -32600)";
 
-  const state = { kind: "codex", sessionId: "abc", model: null, effort: null };
+const missingFailure = (overrides = {}) =>
+  Object.assign(new Error("codex exited with code 1."), {
+    exitCode: 1,
+    stdout: "",
+    stderr: MISSING,
+    ...overrides,
+  });
+
+// Usefulness: verifies the exact Codex stderr for the requested thread marks the error (issue #360).
+test("codex flags a resume of a missing thread", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    missingFailure({
+      stderr: `${MISSING}
+`,
+    }),
+  );
+
+  const state = { kind: "codex", sessionId: "gone", model: null, effort: null };
   const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
   expect(caught.sessionMissing).toBe(true);
 });
 
-// Usefulness: verifies a timeout is not flagged and the stored id stays.
-test("codex does not flag a timeout", async () => {
-  const err = Object.assign(new Error("codex timed out after 5 seconds."), {
-    stdout: "",
-    stderr: "",
-  });
-  vi.mocked(exec).mockRejectedValueOnce(err);
+// Usefulness: verifies a failure that overlaps the missing-thread text is not marked, because a
+// wrong mark reruns a real failure as a first turn and can repeat its edits (issue #360).
+test.each([
+  ["a first turn", null, {}],
+  ["another thread id", "other", {}],
+  ["a longer message", "gone", { stderr: `stream error: ${MISSING} retrying` }],
+  [
+    "an extra stderr line",
+    "gone",
+    {
+      stderr: `Error: 429 Too Many Requests
+${MISSING}`,
+    },
+  ],
+  ["another error code", "gone", { stderr: MISSING.replace("-32600", "-32603") }],
+  ["stdout events", "gone", { stdout: '{"type":"thread.started","thread_id":"gone"}' }],
+  ["a timeout", "gone", { timedOut: true }],
+  ["a cancel", "gone", { isCanceled: true }],
+  ["a signal", "gone", { isTerminated: true }],
+  ["another exit code", "gone", { exitCode: 2 }],
+  ["a model error", "gone", { stderr: "The 'x' model is not supported" }],
+])("codex does not flag %s", async (_name, sessionId, overrides) => {
+  vi.mocked(exec).mockRejectedValueOnce(missingFailure(overrides));
 
-  const state = { kind: "codex", sessionId: "abc", model: null, effort: null };
+  const state = { kind: "codex", sessionId, model: null, effort: null };
   const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
   expect(caught.sessionMissing).toBeUndefined();
-  expect(state.sessionId).toBe("abc");
+  if (sessionId) expect(state.sessionId).toBe(sessionId);
 });

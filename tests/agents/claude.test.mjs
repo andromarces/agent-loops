@@ -169,38 +169,70 @@ test("claude leaves the session id null when a failed first turn printed nothing
   expect(state.sessionId).toBeNull();
 });
 
-// Usefulness: verifies the Claude Code stderr for a missing session marks the error, so the
+const MISSING = "No conversation found with session ID: gone";
+
+const missingFailure = (overrides = {}) =>
+  Object.assign(new Error("claude exited with code 1."), {
+    exitCode: 1,
+    stdout: "",
+    stderr: MISSING,
+    ...overrides,
+  });
+
+// Usefulness: verifies the exact Claude Code stderr for the requested id marks the error, so the
 // runtime reruns the turn as a first turn (issue #360).
 test("claude flags a resume of a missing session", async () => {
-  const err = Object.assign(new Error("claude exited with code 1."), {
-    stdout: "",
-    stderr: "No conversation found with session ID: 11111111-2222-4333-8444-555555555555",
-  });
-  vi.mocked(exec).mockRejectedValueOnce(err);
+  vi.mocked(exec).mockRejectedValueOnce(
+    missingFailure({
+      stderr: `${MISSING}
+`,
+    }),
+  );
 
   const state = { kind: "claude", sessionId: "gone", model: null, effort: null };
   const caught = await runClaude(state, "p", { cwd: "/path" }).catch((e) => e);
   expect(caught.sessionMissing).toBe(true);
 });
 
-// Usefulness: verifies a first turn and an unrelated stderr are never flagged.
-test("claude does not flag a first turn or an unrelated resume failure", async () => {
-  vi.mocked(exec).mockRejectedValueOnce(
-    Object.assign(new Error("failed"), {
-      stdout: "",
-      stderr: "No conversation found with session ID: x",
-    }),
-  );
-  const first = await runClaude({ kind: "claude", sessionId: null }, "p", { cwd: "/path" }).catch(
-    (e) => e,
-  );
-  expect(first.sessionMissing).toBeUndefined();
+// Usefulness: verifies a failure that overlaps the missing-session text is not marked, because a
+// wrong mark reruns a real failure as a first turn and can repeat its edits (issue #360).
+test.each([
+  ["a first turn", null, {}],
+  ["another session id", "other", {}],
+  ["a longer message", "gone", { stderr: `API Error: 529 overloaded. ${MISSING} upstream` }],
+  [
+    "an extra stderr line",
+    "gone",
+    {
+      stderr: `Error: rate limit
+${MISSING}`,
+    },
+  ],
+  ["stdout output", "gone", { stdout: "partial result" }],
+  ["a timeout", "gone", { timedOut: true }],
+  ["a cancel", "gone", { isCanceled: true }],
+  ["a signal", "gone", { isTerminated: true }],
+  ["another exit code", "gone", { exitCode: 2 }],
+  ["an auth failure", "gone", { stderr: "Invalid API key" }],
+])("claude does not flag %s", async (_name, sessionId, overrides) => {
+  vi.mocked(exec).mockRejectedValueOnce(missingFailure(overrides));
 
-  vi.mocked(exec).mockRejectedValueOnce(
-    Object.assign(new Error("failed"), { stdout: "", stderr: "API Error: 500" }),
+  const state = { kind: "claude", sessionId, model: null, effort: null };
+  const caught = await runClaude(state, "p", { cwd: "/path" }).catch((e) => e);
+  expect(caught.sessionMissing).toBeUndefined();
+});
+
+// Usefulness: verifies a resumed turn never changes its id: a different id in the result is
+// refused and the stored id stays, as in the Codex, Copilot, and opencode adapters (issue #360).
+test("claude refuses a different session id on a resumed turn", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s-other", result: "ok" }),
+    stderr: "",
+  });
+
+  const state = { kind: "claude", sessionId: "s-stored", model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow(
+    "Claude Code did not resume the expected session.",
   );
-  const other = await runClaude({ kind: "claude", sessionId: "s1" }, "p", { cwd: "/path" }).catch(
-    (e) => e,
-  );
-  expect(other.sessionMissing).toBeUndefined();
+  expect(state.sessionId).toBe("s-stored");
 });

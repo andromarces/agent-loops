@@ -23,10 +23,17 @@ step budget runs out.
 
 1. Each adapter reads the session id from the failed output when the CLI printed one
    and keeps it on the role state, for a first turn only. A resumed turn never changes
-   its id. Copilot pre-assigns its id and already keeps it.
-2. An adapter marks a resume error with `sessionMissing` when the CLI's stderr says the
-   session does not exist. The two verified messages are Claude Code
-   `No conversation found with session ID` and Codex `no rollout found for thread id`.
+   its id, and the Claude adapter refuses a different id from a resumed turn with
+   `resumeMismatchError`, as the other adapters do. The Copilot adapter is unchanged: it stores the id only after a successful
+   turn, so a failed Copilot first turn keeps none.
+2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
+   process exited 1 with no timeout, cancel, or signal, stdout is empty, and stderr is
+   exactly the one verified line for the requested id: Claude Code
+   `No conversation found with session ID: <id>`, Codex
+   `Error: thread/resume: thread/resume failed: no rollout found for thread id <id> (code -32600)`.
+   Any other text, including that line inside a longer message, leaves the error unmarked.
+   A wrong mark would rerun a real failure as a first turn and repeat its edits. A CLI
+   that changes the wording loses the fallback and fails as before.
 3. `runChild` handles the mark. It clears the role session id, then reruns the turn
    once as a first turn: a worker gets the preamble again, a reviewer prompt is
    unchanged. The rerun runs inside the same read-only mutation check.
@@ -58,7 +65,7 @@ step budget runs out.
    each adapter owns its pattern and the runtime reads one flag.
 3. **Rerun the agy turn when the conversation is missing**: rejected. The turn already
    ran and can have edited the tree, so a rerun repeats the edits.
-4. **Pre-assign the Claude session id, as Copilot does**: deferred. It would keep the
+4. **Pass a pre-assigned Claude session id with `--session-id`, as the Copilot adapter does**: deferred. It would keep the
    id across a timeout, but it changes the first-turn invocation and needs its own probe.
 
 ## Authors

@@ -1,9 +1,9 @@
 import { parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
-import { flagMissingSession, keepFailedSessionId } from "./shared.mjs";
+import { flagMissingSession, keepFailedSessionId, resumeMismatchError } from "./shared.mjs";
 
-// Claude Code prints this on stderr, exit 1, when `--resume` names a session it does not have.
-const MISSING_SESSION = /No conversation found with session ID/i;
+// Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
+const missingSession = (id) => `No conversation found with session ID: ${id}`;
 
 export async function runClaude(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
@@ -47,7 +47,7 @@ export async function runClaude(state, prompt, options = {}) {
     }
     setUsage(state, findResultEvent(failed));
     keepFailedSessionId(state, findSessionId(failed));
-    flagMissingSession(err, requestedSessionId, MISSING_SESSION);
+    flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }
   const parsed = parseJson(stdout, "Claude Code");
@@ -56,6 +56,11 @@ export async function runClaude(state, prompt, options = {}) {
 
   if (!sessionId) {
     throw new Error("Claude Code did not return a session_id.");
+  }
+
+  // A resumed id must come back unchanged, as in the other adapters.
+  if (requestedSessionId && sessionId !== requestedSessionId) {
+    throw resumeMismatchError("Claude Code", "session", requestedSessionId, sessionId);
   }
 
   state.sessionId = sessionId;
