@@ -521,9 +521,9 @@ Completion is completion of the requested work, not code acceptance.
   checks that passed.
 - `review-only`: call `finish` after the reviewer turn, whatever it returned. The
   gate is on the turn, not on a report: a turn that ended in an error satisfies
-  it, so the finish can carry no report, and the summary records that in
-  `verified`. The runtime checks only that all five summary keys are non-empty
-  strings, and it never compares their content with what the reviewer returned.
+  it, so the finish can carry no report. The runtime checks only that all five
+  summary keys are non-empty strings, and it never compares their content with
+  what the reviewer returned.
 
 The two paths reach that reviewer turn differently, and the difference is the
 rule, not the wording. `agent-loop role finish` in `review-only` applies no
@@ -533,9 +533,10 @@ in a handled error. Every reachable interactive run already has a reviewer turn,
 because the init dispatch is itself that turn. A headless `--mode review-only`
 run owns its own action order and can reach a finish before any reviewer turn, so
 the runtime refuses that finish until a reviewer turn has run. That gate
-requires that a reviewer turn was dispatched; that turn can end in an error, so
-the finish can carry no reviewer report, and the summary records that in
-`verified`.
+requires that a reviewer turn was dispatched, and that turn can end in an error.
+The runtime does not compare the summary with the reviewer result; record the
+reviewer status and verdict in `verified`, including an error or a missing
+report.
 
 Neither path takes `--require-accept` in this mode, and both say so differently.
 `agent-loop role finish` refuses the flag at `finish`, with
