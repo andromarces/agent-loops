@@ -591,12 +591,13 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   run keeps the marker-only behavior.
 - `review-only` refuses `--pr` at init, because that mode rejects `--require-ci`
   at finish and the run would refuse every finish.
-- A base branch with no required check does not refuse `--pr`. The gate
-  establishes that absence, passes on the PR head, the clean reviewed tree, and
-  the merge state, and the run records it, so a declared run on such a branch
-  ends and never keeps the #286 gap. A base branch whose required checks this
-  credential cannot read still refuses every finish, because the gate cannot
-  establish the absence.
+- A base branch with no required check does not refuse `--pr` when every
+  required-check source stated that it holds none. The gate passes on the PR head,
+  the clean reviewed tree, and the merge state, and the run records it, so a
+  declared run on such a branch ends and never keeps the #286 gap. A base branch
+  whose required checks this credential cannot read still refuses every finish,
+  because the gate cannot establish the absence, and the refusal names the source
+  it could not read.
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the
@@ -632,60 +633,72 @@ current behavior, and each flag fails with a clear error.
   required check has no check to wait for: the gate then passes on the PR head,
   the clean reviewed tree, and the merge state, and the run records that no
   required check exists, in a `no-required-checks` event in a headless run and in
-  `noRequiredChecks` in the envelope and the state file here. Absence is
-  established, never inferred: the gate passes only when every configuration
-  source was read and none named a required check, and a blocked merge state
-  still refuses. A configuration source this caller cannot read, such as the 404
-  a token without repository admin receives, leaves the gate unable to tell an
-  empty branch from a protected one, so the gate still refuses. GitHub evaluates the
-  test merge commit when that commit has a check run or a commit status, and the
-  head commit otherwise. A required check run passes with the conclusion
-  `success`, `skipped`, or `neutral`; a required commit status passes with the
-  state `success`. When a check run and a commit status share a required name,
-  both must pass, and a pending or missing check fails. Required contexts come
-  from repository rulesets, classic branch protection, and `gh pr checks
---required`; when all three are empty the gate refuses. A context qualified by
-  an app (a ruleset `integration_id` or a classic-protection `app_id`) is
-  satisfied only by a check run from that app, and an unqualified copy of that
-  name is dropped. `gh pr checks --required` never decides the absence: it lists
-  only the checks that already reported, so it can name a required check and it
-  cannot prove one is absent. `Branch not protected` (404) is the one unreadable
-  reply that names the absence, because the classic endpoint writes it only to a
-  caller that can read it. Repository rulesets are readable with read access on a
-  repository whose plan allows the rule; classic branch protection answers 404 or
-  403 depending on the credential, and each of those replies leaves that source
-  with no required contexts, so a token without repository admin still gates. The
-  observed replies are `Not Found` (404) for a token without repository admin,
-  `Branch not protected` (404) for an admin on a branch with no classic
-  protection, `Resource not accessible by integration` (403) for a
-  `GITHUB_TOKEN`, and `Resource not accessible by personal access token` (403)
-  for a fine-grained PAT without the Administration permission. A rate-limit or
-  SSO 403 also fails the run, by design. The exception to ruleset readability is
-  a private repository on the GitHub Free plan, where the plan does not allow the
-  rule at all. The Free-plan 403, `Upgrade to GitHub Pro or make this repository
-public to enable this feature.`, was measured on the classic protection,
-  branch rules, and rulesets endpoints with an admin classic PAT and an admin
-  fine-grained PAT, and a read-capable collaborator was not tested, so whether a
-  non-admin sees the same 403 is unverified. That reply leaves each measured
-  endpoint with no required contexts, and it names the absence, because the plan
-  does not allow the rule that would require a check. `gh pr checks --required` is an independent
-  source and its Free-plan reply was not measured. The gate ignores its exit code
-  and its stderr and takes required names from its stdout whatever the exit
-  status, so a non-zero exit whose stdout holds that JSON still contributes names
-  and only a stdout that is not a JSON array of named checks contributes none. On a private Free-plan
-  repository all three sources are then empty, the absence is established, and
-  the gate passes on the PR head, the clean reviewed tree, and the merge state
-  instead of throwing. And `gh pr checks
---required` lists only checks that already reported on the commit. A
-  blocked merge state refuses after the per-check pass, so a named check refusal
-  keeps its name and a required check that never started cannot escape the gate,
-  through that refusal or, when no required check reported and a configuration
-  source could not be read, the empty-union
-  refusal; the gate cannot tell a missing check from an unmet review or another
-  required rule, so a repository with required approvals also refuses until they
-  are met.
-  GitHub computes the merge state lazily, so a retry shortly after a push can
-  clear an `unknown` state. This gate needs the `gh` CLI.
+  `noRequiredChecks` in the envelope and the state file here. The event appears on
+  an accepted finish only, so a refused finish never reports an absence.
+  Absence is established, never inferred. Each required-check configuration
+  source, repository rulesets and classic branch protection, is classified by what
+  its reply proved:
+  - Absent: a read that completed and named no required check. For repository
+    rulesets that is a read with no applicable `required_status_checks` rule. For
+    classic protection it is a read with no `required_status_checks`, or the
+    `Branch not protected` (404) the endpoint writes only to a caller that can
+    read it.
+  - Contexts: the reply named at least one required check, so the gate runs the
+    per-check pass.
+  - Unknown: every other reply. That is `Not Found` (404), which a token without
+    repository admin receives for a protected branch as well as an unprotected
+    one, both `Resource not accessible` 403s, the Free-plan 403, which names the
+    plan and not the branch, and any read error or malformed body.
+    The gate passes on the absence only when no source named a required check and
+    no source is unknown, so both sources must have stated the outcome. Any unknown
+    source keeps the empty-union refusal, and the reason names it, because a parent
+    can only fix a source it can see. A blocked merge state still refuses on the
+    absence path, so a branch that carries another required rule is not passed.
+    GitHub evaluates the test merge commit when that commit has a check run or a
+    commit status, and the head commit otherwise. A required check run passes with
+    the conclusion `success`, `skipped`, or `neutral`; a required commit status
+    passes with the state `success`. When a check run and a commit status share a
+    required name, both must pass, and a pending or missing check fails. Required
+    contexts come from repository rulesets, classic branch protection, and `gh pr
+checks --required`; when all three are empty the gate refuses. A context
+    qualified by an app (a ruleset `integration_id` or a classic-protection
+    `app_id`) is satisfied only by a check run from that app, and an unqualified
+    copy of that name is dropped. `gh pr checks --required` contributes names and is
+    never classified, so it never establishes the absence: it lists only the checks
+    that already reported, so it can name a required check and it cannot prove one
+    is absent, and on a base branch with no required check it prints nothing, which
+    is the same silence as a read failure. Repository rulesets are readable with
+    read access on a repository whose plan allows the rule; classic branch
+    protection answers 404 or 403 depending on the credential, so a token without
+    repository admin still gates through repository rulesets and through `gh pr
+checks --required`, and the classic-protection source stays unknown. The
+    observed replies are `Not Found` (404) for a token without repository admin,
+    `Branch not protected` (404) for an admin on a branch with no classic
+    protection, `Resource not accessible by integration` (403) for a `GITHUB_TOKEN`,
+    and `Resource not accessible by personal access token` (403) for a fine-grained
+    PAT without the Administration permission. A rate-limit or SSO 403 fails the run
+    by design, because it matches no unreadable shape and is not read as a source at
+    all. The exception to ruleset readability is a private repository on the GitHub
+    Free plan, where the plan does not allow the rule at all. The Free-plan 403,
+    `Upgrade to GitHub Pro or make this repository public to enable this feature.`,
+    was measured on the classic protection, branch rules, and rulesets endpoints
+    with an admin classic PAT and an admin fine-grained PAT, and a read-capable
+    collaborator was not tested, so whether a non-admin sees the same 403 is
+    unverified. That reply is unknown, because it names the plan rather than the
+    branch and is written the same way for a branch that exists and one that does
+    not, so a private Free-plan repository keeps the empty-union refusal. `gh pr
+checks --required` is an independent source and its Free-plan reply was not
+    measured. The gate ignores its exit code and its stderr and takes required names
+    from its stdout whatever the exit status, so a non-zero exit whose stdout holds
+    that JSON still contributes names, and only a stdout that is not a JSON array of
+    named checks contributes none. A blocked merge state refuses after the per-check
+    pass, so a named check refusal keeps its name and a required check that never
+    started cannot escape the gate, through that refusal or, when no required check
+    reported and a configuration source is unknown, the empty-union refusal; the gate
+    cannot tell a missing check from an unmet review or another required rule, so a
+    repository with required approvals also refuses until they are met.
+    GitHub computes the merge state lazily, so a retry shortly after a push can
+    clear an `unknown` state. This gate needs the `gh` CLI.
 
 ## Blockers and terminal states
 

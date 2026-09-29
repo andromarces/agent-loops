@@ -379,11 +379,17 @@ test("the headless prompt states the no-required-check gate outcome", async () =
   });
   expectRule(prompt, /no required check/i, /pass/i, /PR head/i, /reviewed/i, /merge state/i);
   expectRule(prompt, /no required check/i, /record/i);
+  // The rule names the condition the pass rests on, so an orchestrator whose
+  // credential cannot read a source does not expect the gate to pass.
+  expectRule(prompt, /every required-check source/i, /stated/i);
+  expectRule(prompt, /cannot read/i, /refus/i);
   // The same rule on the interactive surface, so the two parent paths do not
   // diverge on it.
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   expectRule(instructions, /no required check/i, /pass/i, /PR head/i, /reviewed/i, /merge state/i);
   expectRule(instructions, /no required check/i, /record/i);
+  expectRule(instructions, /every required-check source/i, /stated/i);
+  expectRule(instructions, /cannot read/i, /refus/i);
 });
 
 // Usefulness: verifies a run that declares no PR keeps the prompt origin/main

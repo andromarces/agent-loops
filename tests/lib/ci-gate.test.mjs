@@ -354,8 +354,8 @@ for (const [shape, { protection, why }] of Object.entries(UNKNOWN_SHAPES)) {
       ),
     });
     expect(result.ok).toBe(false);
-    expect(result.reason).toContain("no required checks were found");
-    expect(result.reason).toContain("classic branch protection");
+    expect(result.reason, why).toContain("no required checks were found");
+    expect(result.reason, why).toContain("classic branch protection");
     expect(result.noRequiredChecks).toBeUndefined();
   });
 }

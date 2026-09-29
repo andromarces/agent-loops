@@ -71,7 +71,8 @@ export function validateAction(value) {
       // that sets this field is refused with it (#302). That gate resolves the PR
       // head even on a base branch with no required check, where it verifies the
       // head, the clean reviewed tree, and the merge state and records that no
-      // required check exists (#336). A run that declares
+      // required check exists, but only once every required-check source stated
+      // that it holds none (#336). A run that declares
       // neither keeps the gap: the headless loop holds the task text only, and
       // the interactive subcommand gates on the state file. Ceiling: one finish
       // that claims a compare nothing verified, per run that declares no PR.
