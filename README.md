@@ -126,14 +126,39 @@ the installed package before using it.
 
 An upgrade repoints every one of them. An npm global install, a clone, and a linked
 package have no version in their root and render unchanged, and so does any layout
-with no link that resolves to the package. One `agent-loop install` per upgrade is
-still needed after an upgrade from a version that wrote a replaced path, because
-those installed files keep naming the deleted directory until it runs again.
+with no link that resolves to the package. See [Upgrade](#upgrade) for the step
+after an upgrade.
 
 ```bash
 agent-loop install --harness claude,codex --yes
 agent-loop uninstall
 ```
+
+### Upgrade
+
+Upgrade the package, then run `install` again with the same harness list:
+
+```bash
+npm install -g @andromarces/agent-loops@latest
+# or
+pnpm add -g @andromarces/agent-loops@latest
+agent-loop install --harness <list> --yes
+```
+
+Run the second command after every upgrade. It makes no change when nothing
+changed, so it is safe to run when unsure. It is required when:
+
+- The upgrade starts from 0.3.0 or 0.4.0, the releases that have `install`, and the
+  package sat in a pnpm install listed above (a pnpm 10 or pnpm 12 global or project install). Those versions
+  wrote the resolved, version-named pnpm store path, which an upgrade deletes. The
+  installed files keep naming that directory until `install` runs again, including
+  for a pnpm 12 project install (#311). An npm global install, a clone, and a linked
+  package wrote a path with no version, so this case does not apply to them.
+- A release adds or changes harness files, for example a new hook or a changed entry
+  point. Those files reach a harness only through a new `install`.
+
+When a hook command changes, Codex asks for a new trust step. Run `/hooks` in Codex
+to review and trust the changed hook.
 
 ### Uninstall skips
 
