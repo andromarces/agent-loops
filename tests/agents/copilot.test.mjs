@@ -323,7 +323,8 @@ test("a first copilot worker turn that reports an id then fails leaves sessionId
 
 // Usefulness: verifies a failed first turn keeps the session id the CLI reported in its result
 // event, so the next turn resumes it, and keeps none when the failed output reports none. The
-// pre-assigned id is never kept: it can name no session (issue #360).
+// pre-assigned id is never kept: a failed turn that reports no id does not show that a session
+// exists (issue #360).
 test("copilot keeps the reported session id of a failed first turn", async () => {
   const error = new Error("Copilot failed");
   error.stdout = '{"type":"result","sessionId":"copilot-reported","exitCode":1}';
