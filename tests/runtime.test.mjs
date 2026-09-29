@@ -333,8 +333,9 @@ test("abort returns exit 1 and reason", async () => {
 
 // Usefulness: verifies a review-only headless run refuses a run_worker action,
 // because that mode dispatches no worker, the same hard guard the interactive
-// path applies to --role worker. The refusal ends the run on exit 1 with the
-// reason, spawns no worker, and charges no step (issue #337).
+// path applies to --role worker. The check is observable: the run ends on exit 1,
+// the emitted events carry the refusal, no worker turn runs, and the
+// orchestrator is not asked again (issue #337).
 test("a review-only run refuses a run_worker action", async () => {
   const repo = await createTempRepo();
   try {
@@ -346,6 +347,7 @@ test("a review-only run refuses a run_worker action", async () => {
       }),
     ]);
     const workerAdapter = scripted(["worker did task"]);
+    const events = [];
 
     const result = await runLoop({
       task: "Review only.",
@@ -358,10 +360,14 @@ test("a review-only run refuses a run_worker action", async () => {
         reviewer: { kind: "rev", sessionId: null },
       },
       agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+      onEvent: (event) => events.push(event),
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.reason).toContain("mode review-only rejects a run_worker action");
+    // The refused action is recorded, then the refusal, then the run ends.
+    expect(events.map((event) => event.type)).toEqual(["invocation", "action", "refusal"]);
+    const refusal = events.find((event) => event.type === "refusal");
+    expect(refusal.reason).toContain("mode review-only rejects a run_worker action");
     // No worker turn ran, so no step was charged and the run did not recover by
     // asking the orchestrator again.
     expect(workerAdapter.recorded.length).toBe(0);

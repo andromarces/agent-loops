@@ -393,6 +393,9 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       sessionId: null,
     };
   }
+  // The mode is recorded only when the run named one, so a mode-free run writes
+  // the transcript shape origin/main wrote and a consumer of that file sees no
+  // field this flag introduced (#337).
   const transcriptData = {
     task: options.task,
     cwd: options.cwd,
@@ -402,7 +405,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       requireAccept: options.requireAccept,
       pr: options.pr,
       requireCi: options.requireCi,
-      mode: options.mode,
+      ...(options.mode === null ? {} : { mode: options.mode }),
     },
     roles,
     events,

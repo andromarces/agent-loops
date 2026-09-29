@@ -396,6 +396,7 @@ export async function runLoop(options) {
     // because a corrective turn would cost a step to reach the state the run
     // started in (#337).
     if (mode === "review-only" && action.action === "run_worker") {
+      onEvent({ type: "refusal", reason: REVIEW_ONLY_WORKER_REFUSAL, stepsUsed });
       return stopLoop(1, { reason: REVIEW_ONLY_WORKER_REFUSAL });
     }
 

@@ -520,6 +520,17 @@ Completion is completion of the requested work, not code acceptance.
   verdict. The summary records the verdict in `verified` and the findings in
   `open`.
 
+A `review-only` finish carries no completion rule of its own on either path, and
+both behave the same way: `agent-loop role finish` in that mode accepts a finish
+from `active` with no reviewer turn at all, and a headless `--mode review-only`
+run accepts a finish with no reviewer report. The rule that mode states is the
+parent's, not a gate: call `finish` after the reviewer report, and record what
+the run did not cover in `notDone` and `open`. The interactive run always has a
+reviewer turn before its finish, because the init dispatch is itself a turn, and
+a headless review-only run is refused `--require-accept`, so neither mode
+enforces that report. Do not read the absence of a gate as a guarantee that a
+reviewer ran.
+
 Map the child report fields into the finish summary:
 
 - Carry each `Deferred` item forward from every worker or reviewer turn. An item
