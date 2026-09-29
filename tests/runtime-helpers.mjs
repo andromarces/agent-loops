@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -84,30 +84,50 @@ export async function deadPid() {
   });
 }
 
+// A hanging child outlives every wait below, so a survivor is still running when
+// the checks end. It is a `node` process on every platform, launched by a
+// wrapper (`.cmd` on Windows, `sh` elsewhere) that stays alive as its parent, so
+// a kill that reaches only the wrapper leaves the node process running.
+const SHIM_HANG_MS = 20_000;
+const SHIM_BEAT_MS = 100;
+// A beat older than this is stale. A live child stalls this long only if the
+// machine starves it for a full second.
+const SHIM_FRESH_MS = 1000;
+// The longest a kill may take to land after the call returns. A survivor is
+// running for SHIM_HANG_MS from its start, which is far past this window plus
+// the bound and its margin, so a survivor is still beating when the wait ends.
+const SHIM_GONE_WINDOW_MS = 5000;
+// How far past its bound a bounded call may return. Load adds start and kill time
+// to the bound; the margin sits far below SHIM_HANG_MS, so a call that waits for
+// the child overshoots it, and a bound that is wrong by more than the margin
+// overshoots it too.
+const SHIM_BOUND_MARGIN_MS = 5000;
+
 /**
  * Writes a `command` shim into `dir` that hangs, so a bound is exercised against
- * a real child process. The shim records its own pid in `started` when it runs,
- * and writes `alive` only if it lives `hangMs`. The shim is a `.cmd` on Windows
- * and an executable shell script elsewhere, which is what `git` and `gh` resolve
- * to on each platform.
+ * a real child process. The long-lived node process records its own pid in
+ * `started` when it runs, then rewrites `beat` with the current time every
+ * SHIM_BEAT_MS until SHIM_HANG_MS passes. A beat is written only by the process
+ * that runs the shim, so it identifies a survivor even if its pid is reused.
  */
-async function writeHangingShim(dir, command, hangMs) {
+async function writeHangingShim(dir, command) {
   const started = join(dir, "started.txt");
-  const alive = join(dir, "alive.txt");
+  const beat = join(dir, "beat.txt");
+  const script = join(dir, "hang.js");
+  await writeFile(
+    script,
+    `const fs = require("fs");
+fs.writeFileSync(${JSON.stringify(started)}, String(process.pid));
+setInterval(() => fs.writeFileSync(${JSON.stringify(beat)}, String(Date.now())), ${SHIM_BEAT_MS});
+setTimeout(() => process.exit(0), ${SHIM_HANG_MS});
+`,
+  );
   if (process.platform === "win32") {
-    const fwd = (path) => path.split("\\").join("/");
-    await writeFile(
-      join(dir, `${command}.cmd`),
-      `@echo off\r\nnode -e "require('fs').writeFileSync('${fwd(started)}',String(process.pid));setTimeout(function(){require('fs').writeFileSync('${fwd(alive)}','x')},${hangMs})"\r\n`,
-    );
+    await writeFile(join(dir, `${command}.cmd`), `@echo off\r\nnode "${script}"\r\n`);
   } else {
-    await writeFile(
-      join(dir, command),
-      `#!/bin/sh\necho $$ > '${started}'\nsleep ${hangMs / 1000}\ntouch '${alive}'\n`,
-      { mode: 0o755 },
-    );
+    await writeFile(join(dir, command), `#!/bin/sh\nnode '${script}'\n`, { mode: 0o755 });
   }
-  return { started, alive };
+  return { started, beat };
 }
 
 // Returns the pid the shim recorded, or null if none appears within `waitMs`.
@@ -134,15 +154,38 @@ function processExists(pid) {
   }
 }
 
-async function assertGone(pids, alive) {
-  const deadline = Date.now() + 5000;
-  for (const pid of pids) {
-    while (processExists(pid) && Date.now() < deadline) {
-      await delay(50);
-    }
-    assert.ok(!processExists(pid), `the shim child ${pid} survived the cancellation`);
+// A survivor is a live pid that is still beating. The beat guards against pid
+// reuse: another process that took the pid writes no beat, so it reads as gone.
+async function isSurvivor(pid, beat) {
+  if (!processExists(pid)) {
+    return false;
   }
-  await assert.rejects(readFile(alive), "the shim child outlived its hang and wrote its marker");
+  const last = Number.parseInt(await readFile(beat, "utf8").catch(() => ""), 10);
+  return Number.isInteger(last) && Date.now() - last < SHIM_FRESH_MS;
+}
+
+async function assertGone(pid, beat) {
+  const deadline = Date.now() + SHIM_GONE_WINDOW_MS;
+  while ((await isSurvivor(pid, beat)) && Date.now() < deadline) {
+    await delay(50);
+  }
+  assert.ok(!(await isSurvivor(pid, beat)), `the shim child ${pid} survived the cancellation`);
+}
+
+// A call that a surviving child holds open never returns, so the wait is capped
+// and fails with the reason instead of running into the test timeout.
+async function returnsWithin(call, limitMs, message) {
+  const cap = new AbortController();
+  try {
+    return await Promise.race([
+      call,
+      delay(limitMs, undefined, { signal: cap.signal }).then(() => {
+        throw new assert.AssertionError({ message });
+      }),
+    ]);
+  } finally {
+    cap.abort();
+  }
 }
 
 async function withShimOnPath(dir, body) {
@@ -156,52 +199,36 @@ async function withShimOnPath(dir, body) {
 }
 
 /**
- * Checks that a time bound kills a real hanging `command` child. `run(timeoutMs)`
- * starts the bounded call and must resolve once the call returns.
+ * Checks that a time bound of `boundMs` kills a real hanging `command` child.
+ * `run(boundMs)` starts the bounded call and resolves when it returns.
  *
- * The verdict rests on the child's recorded pid, not on a wall-clock window: a
- * child that starts late under load still writes its pid, and the test fails if
- * that pid outlives the call. A call that returns before the shim started is
- * inconclusive, because the bound may have killed the launcher first, so the run
- * repeats with the next, longer bound and fails if no bound is conclusive.
- * Returns the result of the conclusive call.
+ * The bound is proved by the call returning within `boundMs` plus
+ * SHIM_BOUND_MARGIN_MS. Termination is proved by the node process the shim
+ * recorded: it must be gone, or no longer beating, within SHIM_GONE_WINDOW_MS.
+ * Neither check depends on a wall-clock wait for a marker. The child must have
+ * started before the call returned, or the test fails: a child that never ran
+ * proves nothing about the kill, so `boundMs` must leave the shim time to start
+ * on a loaded machine. Returns the result of the call.
  */
-export async function expectBoundKillsShim(
-  command,
-  run,
-  { hangMs = 20_000, bounds = [300, 2000, 5000] } = {},
-) {
-  const root = await mkdtemp(join(tmpdir(), `hang-${command}-`));
-  const shims = [];
+export async function expectBoundKillsShim(command, run, boundMs = 2000) {
+  const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
   try {
-    for (const [index, bound] of bounds.entries()) {
-      const dir = join(root, String(index));
-      await mkdir(dir);
-      const shim = await writeHangingShim(dir, command, hangMs);
-      shims.push(shim);
-      const result = await withShimOnPath(dir, async () => {
-        const began = Date.now();
-        const returned = await run(bound);
-        assert.ok(Date.now() - began < hangMs, "the call waited for the hanging child");
-        return returned;
-      });
-      // Inconclusive until the shim shows it ran. A survivor that starts late
-      // shows here too, and its pid is checked with the rest.
-      if ((await waitForPid(shim.started, 1500)) !== null) {
-        const pids = [];
-        for (const seen of shims) {
-          const pid = await waitForPid(seen.started, 0);
-          if (pid !== null) {
-            pids.push(pid);
-          }
-        }
-        await assertGone(pids, shim.alive);
-        return result;
-      }
-    }
-    assert.fail(`the shim never started before any bound of ${bounds.join(", ")} ms`);
+    const shim = await writeHangingShim(dir, command);
+    return await withShimOnPath(dir, async () => {
+      const result = await returnsWithin(
+        run(boundMs),
+        boundMs + SHIM_BOUND_MARGIN_MS,
+        `the call outlasted its ${boundMs} ms bound by more than ${SHIM_BOUND_MARGIN_MS} ms`,
+      );
+      // The record was written before the bound expired, so a short wait only
+      // covers file visibility.
+      const pid = await waitForPid(shim.started, 500);
+      assert.notEqual(pid, null, `the shim did not start within the ${boundMs} ms bound`);
+      await assertGone(pid, shim.beat);
+      return result;
+    });
   } finally {
-    await removePath(root);
+    await removePath(dir);
   }
 }
 
@@ -209,20 +236,24 @@ export async function expectBoundKillsShim(
  * Checks that an abort signal kills a real hanging `command` child. `start(signal)`
  * starts the call without a time bound and returns its promise. The test aborts
  * only after the shim recorded its pid, so a slow start cannot make the abort
- * precede the child, and the pid must be gone once the call returns.
+ * precede the child, and the child must be gone once the call returns.
  */
-export async function expectAbortKillsShim(command, start, { hangMs = 20_000 } = {}) {
+export async function expectAbortKillsShim(command, start) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
   try {
-    const shim = await writeHangingShim(dir, command, hangMs);
+    const shim = await writeHangingShim(dir, command);
     return await withShimOnPath(dir, async () => {
       const controller = new AbortController();
       const pending = start(controller.signal);
       const pid = await waitForPid(shim.started, 15_000);
       assert.notEqual(pid, null, "the shim never started");
       controller.abort();
-      const result = await pending;
-      await assertGone([pid], shim.alive);
+      const result = await returnsWithin(
+        pending,
+        SHIM_GONE_WINDOW_MS,
+        "the call did not return after the abort",
+      );
+      await assertGone(pid, shim.beat);
       return result;
     });
   } finally {

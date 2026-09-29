@@ -44,15 +44,15 @@ test("assertGitWorkTree validates git directory", async () => {
 // to check that a slow `git` cannot add its own time to a caller's total limit,
 // because every other test uses a real fast `git` (issue #329).
 test("assertGitWorkTree refuses a probe that outlasts its bound", async () => {
-  // The verdict rests on the child's recorded pid, so a shim that starts late
-  // under load cannot slip past a fixed wait (issue #373). The timeout covers the
-  // three bounds the helper may try in turn.
+  // One fixed bound: the call must return within it plus the helper's margin,
+  // and the recorded child must be gone. The helper fails, not retries, if the
+  // shim had not started when the bound expired (issue #373).
   await expectBoundKillsShim("git", (timeoutMs) =>
     expect(assertGitWorkTree(tmpdir(), { timeoutMs })).rejects.toThrow(
       /validation did not complete within its bound/,
     ),
   );
-}, 30_000);
+});
 
 // Usefulness: verifies diffSnapshots detects when nothing changes.
 test("diffSnapshots returns empty list when no change occurred", async () => {
