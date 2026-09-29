@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
@@ -3074,6 +3074,66 @@ test("the refusal assertion covers every endpoint the finish gate reads", async 
     expect(uncovered).toEqual([]);
     // The gate really does read several endpoints, so the list is not vacuous.
     expect(gateReads(calls).length).toBeGreaterThan(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the headless wait bound follows the turn --timeout the run
+// was started with, so a wait the orchestrator runs ends before the turn does and
+// the run cannot end on exit 1 with no action (issue #348).
+test("the orchestrator prompt states a wait bound below the run's turn timeout", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orch = scripted([JSON.stringify({ action: "abort", reason: "stop" })]);
+    await runLoop({
+      task: "PR work: address issue 43 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      timeout: 60,
+      requireCi: 42,
+      gh: ciGateGh("0".repeat(40)),
+      roles: {
+        orchestrator: { kind: "claude", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { claude: orch, work: scripted([]), rev: scripted([]) },
+    });
+
+    const prompt = orch.recorded[0].prompt;
+    expect(prompt).toContain(`--cwd "${resolve(repo).replaceAll("\\", "/")}" --pr 42 --timeout 25`);
+    expect(prompt).not.toContain("--watch");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a run whose turn --timeout is too short for any bounded
+// wait tells the orchestrator not to wait, instead of a wait the turn cannot
+// hold (issue #348).
+test("the orchestrator prompt names no wait when the turn timeout is too short", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orch = scripted([JSON.stringify({ action: "abort", reason: "stop" })]);
+    await runLoop({
+      task: "PR work: address issue 43 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      timeout: 8,
+      requireCi: 42,
+      gh: ciGateGh("0".repeat(40)),
+      roles: {
+        orchestrator: { kind: "claude", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { claude: orch, work: scripted([]), rev: scripted([]) },
+    });
+
+    const prompt = orch.recorded[0].prompt;
+    expect(prompt).not.toContain("--pr 42 --timeout");
+    expect(prompt).toMatch(/cannot wait for the required checks/i);
   } finally {
     await removePath(repo);
   }

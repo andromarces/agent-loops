@@ -275,6 +275,8 @@ export async function runLoop(options) {
     pr,
     requireCi,
     mode,
+    timeout,
+    cwd,
     orchestratorKind: orchestrator?.kind ?? null,
     reviewerKind: reviewer?.kind ?? null,
   });

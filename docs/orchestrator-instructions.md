@@ -464,8 +464,51 @@ A headless status read spends no step, because a step is charged only to
 `run_worker` and `run_reviewer`. It is not free of other cost. The turn is
 bounded by the per-invocation `--timeout`, which defaults to 3600 seconds and is
 unbounded at 0, and a turn that outlasts that bound ends the run on exit 1
-before it returns an action, so a long watch can end a run that would otherwise
-have finished. Bound the watch to a few minutes so it returns inside the turn.
+before it returns an action.
+
+The headless orchestrator runs each wait as `role wait-checks --cwd <work tree>
+--pr <pr> --timeout <seconds>`, the same operation the interactive parent uses,
+and never as a `gh pr checks --watch`, which has no timeout. The prompt renders
+the whole command with the Node binary, the CLI script, and the work tree of the
+run itself. That form resolves for a global install, an `npm link`, and a clone
+run through `node <repo>/src/cli.mjs` or `pnpm agent-loop`, none of which promise
+`agent-loop` on `PATH`, and `--cwd` makes the wait read the run's repository
+whatever directory the shell starts in. The orchestrator runs it as written.
+
+A quoted executable path is a string expression in PowerShell, so it needs the
+call operator, while bash and cmd reject that operator. On Windows the prompt
+therefore gives two forms and the orchestrator uses the one for the shell that its
+shell tool runs: `& "<node>" "<cli>" role wait-checks ...` for PowerShell, and
+`"<node>" "<cli>" role wait-checks ...` for bash or cmd. Other platforms get the
+plain form. On Windows, paths use forward slashes, which Node accepts. On POSIX a
+path is never rewritten.
+
+The runtime renders no command, and the prompt names no wait, when the Node path,
+the CLI path, or the work tree path holds a character that bash, PowerShell, or
+cmd expands or reinterprets inside double quotes: `"`, `$`, a backtick, `%`,
+`!`, the typographic double quotes U+201C, U+201D, and U+201E, or a control
+character such as a line break. A POSIX path that holds a backslash is refused
+too, because a backslash is a name character there and cannot be rewritten.
+
+The runtime states the `--timeout` in the prompt, below the turn `--timeout`:
+300 seconds, or half the turn `--timeout` less the five-second child-exit
+ceiling when that is smaller. The command returns inside that bound plus the
+ceiling, so a wait cannot outlast the turn. A turn `--timeout` under 12 seconds
+fits no positive bound, so the prompt names no wait: the orchestrator does not
+run `gh pr checks` or `role wait-checks`, and the `--require-ci` gate is the only
+check read. A finish refused for a pending check is corrected by a reviewer
+dispatch, or by an `abort` with the pending check named.
+
+`childExitUnconfirmed: true` in the envelope means the five-second window expired
+with the `gh` child still unaccounted for. The orchestrator settles that process
+before it starts another wait, and does not wait again when it cannot.
+
+A wait that ends on the bound reports `"timedOut": true`. The orchestrator
+treats it as a completed read that left the check pending: it is not a pass and
+not a finish condition. The orchestrator does not wait again in the same turn.
+It dispatches the reviewer, or `abort`s with the pending check named in the
+reason, and it can wait again on a later turn. An unresolved read exits 1 with
+`status: "error"` and never reads as a pass.
 
 On an orchestrator CLI that can run the status read, both wait points hold in the
 headless loop: the wait before the reviewer dispatch, and the wait before
