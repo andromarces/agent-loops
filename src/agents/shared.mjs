@@ -61,3 +61,11 @@ export function flagMissingSession(err, requestedId, missingLine) {
     err.sessionMissing = true;
   }
 }
+
+/**
+ * Returns `value` when it is a non-empty string, else `undefined`. A CLI id of any other type,
+ * such as a number or an object, is not a session id, so a success path must not store it.
+ */
+export function asSessionId(value) {
+  return typeof value === "string" && value ? value : undefined;
+}

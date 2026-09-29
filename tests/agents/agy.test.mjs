@@ -169,3 +169,26 @@ test("agy keeps the conversation id of a first turn with no response text", asyn
   await expect(runAgy(state, "p", { cwd: "/dir" })).resolves.toBe("");
   expect(state.sessionId).toBe("conv-empty");
 });
+
+// Usefulness: verifies a successful result whose session id is truthy but not a string, such as a
+// number or an object, fails the turn with a clear error instead of returning success with no
+// stored id. A first turn keeps no id, and a resumed turn keeps its stored id (issue #360).
+test.each([
+  ["a number", 42],
+  ["an object", { id: "x" }],
+])("agy rejects %s as the reported session id", async (_name, id) => {
+  const stdout = JSON.stringify({ conversation_id: id, response: "ok" });
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const first = { kind: "agy", sessionId: null, model: null, effort: null };
+  await expect(runAgy(first, "p", { cwd: "/dir" })).rejects.toThrow(
+    "Antigravity did not return a conversation_id.",
+  );
+  expect(first.sessionId).toBeNull();
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const resumed = { kind: "agy", sessionId: "stored", model: null, effort: null };
+  await expect(runAgy(resumed, "p", { cwd: "/dir" })).rejects.toThrow(
+    "Antigravity did not return a conversation_id.",
+  );
+  expect(resumed.sessionId).toBe("stored");
+});

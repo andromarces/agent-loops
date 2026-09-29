@@ -237,3 +237,31 @@ test("codex keeps the thread id when a first turn fails response validation", as
   await expect(runCodex(state, "p", { cwd: "/dir" })).rejects.toThrow("agent message");
   expect(state.sessionId).toBe("th-validated");
 });
+
+// Usefulness: verifies a successful result whose session id is truthy but not a string, such as a
+// number or an object, fails the turn with a clear error instead of returning success with no
+// stored id. A first turn keeps no id, and a resumed turn keeps its stored id (issue #360).
+test.each([
+  ["a number", 42],
+  ["an object", { id: "x" }],
+])("codex rejects %s as the reported session id", async (_name, id) => {
+  const stdout = [
+    { type: "thread.started", thread_id: id },
+    { type: "item.completed", item: { type: "agent_message", text: "ok" } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const first = { kind: "codex", sessionId: null, model: null, effort: null };
+  await expect(runCodex(first, "p", { cwd: "/dir" })).rejects.toThrow(
+    "Codex did not return a thread ID.",
+  );
+  expect(first.sessionId).toBeNull();
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const resumed = { kind: "codex", sessionId: "stored", model: null, effort: null };
+  await expect(runCodex(resumed, "p", { cwd: "/dir" })).rejects.toThrow(
+    "Codex did not return a thread ID.",
+  );
+  expect(resumed.sessionId).toBe("stored");
+});

@@ -258,3 +258,26 @@ test("claude keeps the session id of a first turn whose result has no text", asy
   await expect(runClaude(state, "p", { cwd: "/path" })).resolves.toBe("");
   expect(state.sessionId).toBe("s-empty");
 });
+
+// Usefulness: verifies a successful result whose session id is truthy but not a string, such as a
+// number or an object, fails the turn with a clear error instead of returning success with no
+// stored id. A first turn keeps no id, and a resumed turn keeps its stored id (issue #360).
+test.each([
+  ["a number", 42],
+  ["an object", { id: "x" }],
+])("claude rejects %s as the reported session id", async (_name, id) => {
+  const stdout = JSON.stringify({ session_id: id, result: "ok" });
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const first = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(runClaude(first, "p", { cwd: "/path" })).rejects.toThrow(
+    "Claude Code did not return a session_id.",
+  );
+  expect(first.sessionId).toBeNull();
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const resumed = { kind: "claude", sessionId: "stored", model: null, effort: null };
+  await expect(runClaude(resumed, "p", { cwd: "/path" })).rejects.toThrow(
+    "Claude Code did not return a session_id.",
+  );
+  expect(resumed.sessionId).toBe("stored");
+});

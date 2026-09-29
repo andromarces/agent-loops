@@ -2,7 +2,7 @@ import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
-import { keepFailedSessionId, resumeMismatchError } from "./shared.mjs";
+import { asSessionId, keepFailedSessionId, resumeMismatchError } from "./shared.mjs";
 
 // A part that opens a report label. The reviewer `Verdict:` line is excluded: it gates acceptance,
 // so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
@@ -82,7 +82,7 @@ export async function runOpenCode(state, prompt, options = {}) {
   // replaces the adapter error (issue #335).
   const events = parseJsonLines(stdout).filter(isEvent);
 
-  const sessionId = events.map((event) => event.sessionID).find(Boolean);
+  const sessionId = events.map((event) => asSessionId(event.sessionID)).find(Boolean);
 
   if (!sessionId) {
     throw new Error("opencode did not return a session ID.");

@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
-import { keepFailedSessionId, resumeMismatchError, setMainLoopUsage } from "./shared.mjs";
+import {
+  asSessionId,
+  keepFailedSessionId,
+  resumeMismatchError,
+  setMainLoopUsage,
+} from "./shared.mjs";
 
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
@@ -45,7 +50,7 @@ export async function runCopilot(state, prompt, options = {}) {
   const resultEvent = findResultEvent(events);
   setMainLoopUsage(state, objectUsage(resultEvent));
 
-  const returnedId = resultEvent?.sessionId ?? resultEvent?.session_id;
+  const returnedId = asSessionId(resultEvent?.sessionId ?? resultEvent?.session_id);
   if (!returnedId) {
     throw new Error("Copilot did not return a session ID.");
   }

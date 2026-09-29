@@ -366,3 +366,31 @@ test("copilot keeps the stored session id when a resumed turn fails", async () =
   await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toBe(error);
   expect(state.sessionId).toBe("copilot-stored");
 });
+
+// Usefulness: verifies a successful result whose session id is truthy but not a string, such as a
+// number or an object, fails the turn with a clear error instead of returning success with no
+// stored id. A first turn keeps no id, and a resumed turn keeps its stored id (issue #360).
+test.each([
+  ["a number", 42],
+  ["an object", { id: "x" }],
+])("copilot rejects %s as the reported session id", async (_name, id) => {
+  const stdout = [
+    { type: "assistant.message", data: { content: "ok" } },
+    { type: "result", sessionId: id, exitCode: 0 },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const first = { kind: "copilot", sessionId: null, model: null, effort: null };
+  await expect(runCopilot(first, "p", { cwd: "/dir" })).rejects.toThrow(
+    "Copilot did not return a session ID.",
+  );
+  expect(first.sessionId).toBeNull();
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const resumed = { kind: "copilot", sessionId: "stored", model: null, effort: null };
+  await expect(runCopilot(resumed, "p", { cwd: "/dir" })).rejects.toThrow(
+    "Copilot did not return a session ID.",
+  );
+  expect(resumed.sessionId).toBe("stored");
+});

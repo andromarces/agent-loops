@@ -1,7 +1,7 @@
 import { parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
-import { keepFailedSessionId, setMainLoopUsage } from "./shared.mjs";
+import { asSessionId, keepFailedSessionId, setMainLoopUsage } from "./shared.mjs";
 
 // agy warns on stderr, exit 0, and starts a new conversation when `--conversation` names one it
 // does not have. The run succeeds, so no error reaches the runtime.
@@ -44,7 +44,8 @@ export async function runAgy(state, prompt, options = {}) {
   }
   const result = parseJson(stdout, "Antigravity CLI");
 
-  if (!result.conversation_id) {
+  const conversationId = asSessionId(result.conversation_id);
+  if (!conversationId) {
     throw new Error("Antigravity did not return a conversation_id.");
   }
 
@@ -53,10 +54,10 @@ export async function runAgy(state, prompt, options = {}) {
   // duplicate work.
   if (requestedSessionId && MISSING_SESSION.test(stderr ?? "")) {
     logWarn(
-      `agy did not find conversation ${requestedSessionId}; the turn ran in new conversation ${result.conversation_id} without the role preamble`,
+      `agy did not find conversation ${requestedSessionId}; the turn ran in new conversation ${conversationId} without the role preamble`,
     );
   }
-  state.sessionId = result.conversation_id;
+  state.sessionId = conversationId;
   setMainLoopUsage(state, result?.usage);
 
   return String(result.response ?? "").trim();

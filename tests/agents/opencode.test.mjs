@@ -922,3 +922,31 @@ test("opencode keeps the session id when a first turn fails response validation"
   await expect(runOpenCode(state, "p", { cwd: "/dir" })).rejects.toThrow("response text");
   expect(state.sessionId).toBe("ses-validated");
 });
+
+// Usefulness: verifies a successful result whose session id is truthy but not a string, such as a
+// number or an object, fails the turn with a clear error instead of returning success with no
+// stored id. A first turn keeps no id, and a resumed turn keeps its stored id (issue #360).
+test.each([
+  ["a number", 42],
+  ["an object", { id: "x" }],
+])("opencode rejects %s as the reported session id", async (_name, id) => {
+  const stdout = [
+    { type: "step_start", sessionID: id, part: {} },
+    { type: "text", sessionID: id, part: { text: "ok" } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const first = { kind: "opencode", sessionId: null, model: null, effort: null };
+  await expect(runOpenCode(first, "p", { cwd: "/dir" })).rejects.toThrow(
+    "opencode did not return a session ID.",
+  );
+  expect(first.sessionId).toBeNull();
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+  const resumed = { kind: "opencode", sessionId: "stored", model: null, effort: null };
+  await expect(runOpenCode(resumed, "p", { cwd: "/dir" })).rejects.toThrow(
+    "opencode did not return a session ID.",
+  );
+  expect(resumed.sessionId).toBe("stored");
+});

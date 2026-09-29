@@ -1,6 +1,7 @@
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import {
+  asSessionId,
   flagMissingSession,
   keepFailedSessionId,
   resumeMismatchError,
@@ -51,7 +52,7 @@ export async function runCodex(state, prompt, options = {}) {
   const events = parseJsonLines(stdout);
 
   const started = events.find((event) => event.type === "thread.started");
-  const returnedId = started?.thread_id;
+  const returnedId = asSessionId(started?.thread_id);
 
   if (!returnedId) {
     throw new Error("Codex did not return a thread ID.");

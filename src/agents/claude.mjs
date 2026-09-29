@@ -1,6 +1,11 @@
 import { parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
-import { flagMissingSession, keepFailedSessionId, resumeMismatchError } from "./shared.mjs";
+import {
+  asSessionId,
+  flagMissingSession,
+  keepFailedSessionId,
+  resumeMismatchError,
+} from "./shared.mjs";
 
 // Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
 const missingSession = (id) => `No conversation found with session ID: ${id}`;
@@ -72,8 +77,8 @@ export async function runClaude(state, prompt, options = {}) {
 
 function findSessionId(parsed) {
   return Array.isArray(parsed)
-    ? parsed.map((event) => event?.session_id).find(Boolean)
-    : parsed?.session_id;
+    ? parsed.map((event) => asSessionId(event?.session_id)).find(Boolean)
+    : asSessionId(parsed?.session_id);
 }
 
 function findResultEvent(parsed) {
