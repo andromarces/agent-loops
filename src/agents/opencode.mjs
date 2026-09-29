@@ -82,7 +82,9 @@ export async function runOpenCode(state, prompt, options = {}) {
   // replaces the adapter error (issue #335).
   const events = parseJsonLines(stdout).filter(isEvent);
 
-  const sessionId = events.map((event) => asSessionId(event.sessionID)).find(Boolean);
+  // Select the first id-bearing event, then validate it: a later valid id never rescues an
+  // invalid or mismatched first one.
+  const sessionId = asSessionId(events.map((event) => event.sessionID).find(Boolean));
 
   if (!sessionId) {
     throw new Error("opencode did not return a session ID.");

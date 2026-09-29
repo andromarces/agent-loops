@@ -77,7 +77,7 @@ export async function runClaude(state, prompt, options = {}) {
 
 function findSessionId(parsed) {
   return Array.isArray(parsed)
-    ? parsed.map((event) => asSessionId(event?.session_id)).find(Boolean)
+    ? asSessionId(parsed.map((event) => event?.session_id).find(Boolean))
     : asSessionId(parsed?.session_id);
 }
 

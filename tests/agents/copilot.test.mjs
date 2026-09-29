@@ -394,3 +394,39 @@ test.each([
   );
   expect(resumed.sessionId).toBe("stored");
 });
+
+// Usefulness: verifies the adapter selects the id from the last result event, then validates
+// that selected id, so a later valid id never rescues an invalid or mismatched selected one. A
+// resumed turn keeps its stored id on every failure (issue #360).
+test.each([
+  ["invalid then valid, first turn", [42, "good"], null, "good"],
+  ["valid then invalid, first turn", ["good", 42], null, "ERR_ID"],
+  ["valid then different valid, first turn", ["a", "b"], null, "b"],
+  ["stored then invalid, resumed turn", ["stored", 42], "stored", "ERR_ID"],
+  ["stored then different, resumed turn", ["stored", "other"], "stored", "ERR_MISMATCH"],
+  ["different then stored, resumed turn", ["other", "stored"], "stored", "stored"],
+])("copilot selects then validates the id: %s", async (_name, ids, requested, expected) => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      { type: "assistant.message", data: { content: "ok" } },
+      ...ids.map((id) => ({ type: "result", sessionId: id, exitCode: 0 })),
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n"),
+    stderr: "",
+  });
+  const state = { kind: "copilot", sessionId: requested, model: null, effort: null };
+  const call = runCopilot(state, "p", { cwd: "/dir" });
+
+  if (expected === "ERR_ID" || expected === "ERR_MISMATCH") {
+    await expect(call).rejects.toThrow(
+      expected === "ERR_ID"
+        ? "Copilot did not return a session ID."
+        : "Copilot did not resume the expected session.",
+    );
+    expect(state.sessionId).toBe(requested);
+  } else {
+    await expect(call).resolves.toBe("ok");
+    expect(state.sessionId).toBe(expected);
+  }
+});

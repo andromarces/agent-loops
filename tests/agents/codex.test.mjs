@@ -265,3 +265,40 @@ test.each([
   );
   expect(resumed.sessionId).toBe("stored");
 });
+
+// Usefulness: verifies the adapter selects the id from the first thread.started event, then validates
+// that selected id, so a later valid id never rescues an invalid or mismatched selected one. A
+// resumed turn keeps its stored id on every failure (issue #360).
+test.each([
+  ["invalid then valid, first turn", [42, "good"], null, "ERR_ID"],
+  ["empty then valid, first turn", ["", "good"], null, "ERR_ID"],
+  ["valid then different valid, first turn", ["a", "b"], null, "a"],
+  ["invalid then stored, resumed turn", [42, "stored"], "stored", "ERR_ID"],
+  ["different then stored, resumed turn", ["other", "stored"], "stored", "ERR_MISMATCH"],
+  ["stored then different, resumed turn", ["stored", "other"], "stored", "stored"],
+  ["empty then stored, resumed turn", ["", "stored"], "stored", "ERR_ID"],
+])("codex selects then validates the id: %s", async (_name, ids, requested, expected) => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      ...ids.map((id) => ({ type: "thread.started", thread_id: id })),
+      { type: "item.completed", item: { type: "agent_message", text: "ok" } },
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n"),
+    stderr: "",
+  });
+  const state = { kind: "codex", sessionId: requested, model: null, effort: null };
+  const call = runCodex(state, "p", { cwd: "/dir" });
+
+  if (expected === "ERR_ID" || expected === "ERR_MISMATCH") {
+    await expect(call).rejects.toThrow(
+      expected === "ERR_ID"
+        ? "Codex did not return a thread ID."
+        : "Codex did not resume the expected thread.",
+    );
+    expect(state.sessionId).toBe(requested);
+  } else {
+    await expect(call).resolves.toBe("ok");
+    expect(state.sessionId).toBe(expected);
+  }
+});

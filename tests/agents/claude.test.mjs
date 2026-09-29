@@ -281,3 +281,38 @@ test.each([
   );
   expect(resumed.sessionId).toBe("stored");
 });
+
+// Usefulness: verifies the adapter selects the id from the first id-bearing event, then validates
+// that selected id, so a later valid id never rescues an invalid or mismatched selected one. A
+// resumed turn keeps its stored id on every failure (issue #360).
+test.each([
+  ["invalid then valid, first turn", [42, "good"], null, "ERR_ID"],
+  ["empty then valid, first turn", ["", "good"], null, "good"],
+  ["valid then different valid, first turn", ["a", "b"], null, "a"],
+  ["invalid then stored, resumed turn", [42, "stored"], "stored", "ERR_ID"],
+  ["different then stored, resumed turn", ["other", "stored"], "stored", "ERR_MISMATCH"],
+  ["stored then different, resumed turn", ["stored", "other"], "stored", "stored"],
+  ["empty then stored, resumed turn", ["", "stored"], "stored", "stored"],
+])("claude selects then validates the id: %s", async (_name, ids, requested, expected) => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify([
+      ...ids.map((id) => ({ type: "system", session_id: id })),
+      { type: "result", result: "ok" },
+    ]),
+    stderr: "",
+  });
+  const state = { kind: "claude", sessionId: requested, model: null, effort: null };
+  const call = runClaude(state, "p", { cwd: "/path" });
+
+  if (expected === "ERR_ID" || expected === "ERR_MISMATCH") {
+    await expect(call).rejects.toThrow(
+      expected === "ERR_ID"
+        ? "Claude Code did not return a session_id."
+        : "Claude Code did not resume the expected session.",
+    );
+    expect(state.sessionId).toBe(requested);
+  } else {
+    await expect(call).resolves.toBe("ok");
+    expect(state.sessionId).toBe(expected);
+  }
+});
