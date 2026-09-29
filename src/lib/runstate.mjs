@@ -240,9 +240,15 @@ async function createLock(lockFile) {
   // by the running process, so nothing else would clean it (#353).
   try {
     await writeFile(tempFile, owner, "utf8");
-    return await linkLock(tempFile, lockFile, owner);
-  } finally {
+    const created = await linkLock(tempFile, lockFile, owner);
     await rm(tempFile, { force: true });
+    return created;
+  } catch (err) {
+    // The body already failed, so a temp that will not delete is the lesser
+    // problem: swallow the cleanup error and surface the one the caller must
+    // act on (#353).
+    await rm(tempFile, { force: true }).catch(() => {});
+    throw err;
   }
 }
 
@@ -353,11 +359,18 @@ export async function writeState(stateFile, state) {
 // Writes `text` to `file` atomically: a private temp file in the same directory
 // is renamed over the destination, so a concurrent reader sees the old content
 // or the new content, never a partial write. Node rename replaces an existing
-// destination on Windows and POSIX.
+// destination on Windows and POSIX. A failed write or rename leaves the temp
+// behind, and it sits in the state directory beside the lock temp, so the guard
+// removes it and keeps the original error as the one that surfaces (#353).
 async function writeFileAtomic(file, text) {
   const temp = `${file}.${process.pid}.tmp`;
-  await writeFile(temp, text, "utf8");
-  await renameWithRetry(temp, file);
+  try {
+    await writeFile(temp, text, "utf8");
+    await renameWithRetry(temp, file);
+  } catch (err) {
+    await rm(temp, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 // Rename is the atomic replace step, but on Windows it fails while another
