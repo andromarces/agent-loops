@@ -110,22 +110,23 @@ the wrong reason for the first, and the correction is recorded here.
 
 One list, so a review can check the code against it.
 
-| Source                    | Reply shape                                                                                                                                                                                                                                                                                                                            | Class                                               |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Repository rulesets       | A read of every page that is a non-empty array whose entries all carry a documented rule type and none is a `required_status_checks` rule                                                                                                                                                                                              | absent                                              |
-| Repository rulesets       | A read of every page carrying a `required_status_checks` rule whose `required_status_checks` is a non-empty array of entries with a non-empty string `context`                                                                                                                                                                         | has-contexts                                        |
-| Repository rulesets       | A read of every page that is empty, which is a successful read that found no rule: it contributes no contexts and does not refuse the per-check path, and it is not a positive absence because an empty read is the same reply for a branch no ruleset applies to and for a caller or endpoint that enumerates no rule for that branch | unknown                                             |
-| Repository rulesets       | An entry that is not an object, is null, is an array, has no `type`, has a `type` that is not a string, or has a `type` outside the documented rule types                                                                                                                                                                              | unknown                                             |
-| Repository rulesets       | A `required_status_checks` rule whose `required_status_checks` is missing, is not an array, is empty, or holds an entry with no string `context`                                                                                                                                                                                       | unknown                                             |
-| Repository rulesets       | A body that is empty, is not JSON, or is JSON that is not the array of pages `--slurp` returns, or that holds a page which is not an array                                                                                                                                                                                             | unknown                                             |
-| Repository rulesets       | Any non-zero exit                                                                                                                                                                                                                                                                                                                      | unknown, except an unrecognized shape, which throws |
-| Classic branch protection | Exactly `gh: Branch not protected (HTTP 404)`, allowing one trailing LF or CRLF                                                                                                                                                                                                                                                        | absent                                              |
-| Classic branch protection | A non-empty JSON object whose `required_status_checks` is an object whose `contexts` and `checks` entries all name a context, and which names at least one                                                                                                                                                                             | has-contexts                                        |
-| Classic branch protection | A body that is empty, is not JSON, is JSON that is not an object, has no `required_status_checks`, has it as null or of the wrong type, or names no check                                                                                                                                                                              | unknown                                             |
-| Classic branch protection | `Not Found` (404), either `Resource not accessible` 403, the Free-plan 403, and `Branch not protected` carrying any surrounding or extra text                                                                                                                                                                                          | unknown                                             |
-| Classic branch protection | Any other non-zero exit                                                                                                                                                                                                                                                                                                                | unknown, except an unrecognized shape, which throws |
-| `gh pr checks --required` | A JSON array of named checks                                                                                                                                                                                                                                                                                                           | has-contexts for those names                        |
-| `gh pr checks --required` | An empty array, output that is not a JSON array, and a failed read                                                                                                                                                                                                                                                                     | never classified, and never an absence              |
+| Source                    | Class                        | Reply shape and the effect on each path                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository rulesets       | absent                       | Non-empty: every page holds rules, every entry carries a documented rule type, and none is a `required_status_checks` rule. Normal path: contributes no contexts, the per-check pass runs on the other sources. Relaxed path: a positive absence                                                                                                                          |
+| Repository rulesets       | has-contexts                 | Non-empty: some page carries a `required_status_checks` rule whose check list is a non-empty array of entries with a non-empty string `context`. Normal path: the per-check pass enforces those names. Relaxed path: not reached, the union is non-empty                                                                                                                  |
+| Repository rulesets       | empty                        | Exactly one page, and that page is empty: a successful read that found no rule. Normal path: contributes no contexts, the per-check pass runs on the other sources, so a classic-only repository finishes. Relaxed path: not a positive absence, the empty-union refusal names it                                                                                         |
+| Repository rulesets       | unknown                      | An entry that is not an object, is null, is an array, has no `type`, has a `type` that is not a string, or has a `type` outside the documented rule types. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                    |
+| Repository rulesets       | unknown                      | A `required_status_checks` rule whose check list is missing, is not an array, is empty, or holds an entry with no string `context`. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                           |
+| Repository rulesets       | unknown                      | A body that is empty, is not JSON, or is JSON that is not the array of pages `--slurp` returns, or that holds a page which is not an array. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                   |
+| Repository rulesets       | unknown                      | No page at all, two or more empty pages, or an empty page beside a page that holds rules, because GitHub stops paginating when there is no next page. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                         |
+| Repository rulesets       | unknown                      | Any non-zero exit, except an unrecognized shape, which throws. Normal path: refuses. Relaxed path: refuses                                                                                                                                                                                                                                                                |
+| Classic branch protection | absent                       | Exactly `gh: Branch not protected (HTTP 404)`, allowing one trailing LF or CRLF. Normal path: contributes no contexts, the per-check pass runs on the other sources. Relaxed path: a positive absence                                                                                                                                                                     |
+| Classic branch protection | has-contexts                 | A non-empty JSON object whose `required_status_checks` names at least one context and every entry names one. Normal path: the per-check pass enforces those names. Relaxed path: not reached, the union is non-empty                                                                                                                                                      |
+| Classic branch protection | unknown                      | A body that is empty, is not JSON, is JSON that is not an object, has no `required_status_checks`, has it as null or of the wrong type, or names no check, because a classic-protected branch can require reviews without requiring a check. Normal path: keeps the origin/main behavior, so the other sources still gate. Relaxed path: the empty-union refusal names it |
+| Classic branch protection | unknown                      | `Not Found` (404), either `Resource not accessible` 403, the Free-plan 403, and `Branch not protected` carrying any surrounding or extra text. Normal path: keeps the origin/main behavior, so the other sources still gate. Relaxed path: the empty-union refusal names it                                                                                               |
+| Classic branch protection | unknown                      | Any other non-zero exit, except an unrecognized shape, which throws. Normal path: keeps the origin/main behavior, so the other sources still gate. Relaxed path: the empty-union refusal names it                                                                                                                                                                         |
+| `gh pr checks --required` | has-contexts for those names | A JSON array of named checks. Normal path: the per-check pass enforces them. Relaxed path: not reached, the union is non-empty                                                                                                                                                                                                                                            |
+| `gh pr checks --required` | never classified             | An empty array, output that is not a JSON array, and a failed read, because it lists only the checks that already reported. Normal path: contributes no contexts and never decides an outcome. Relaxed path: never establishes an absence                                                                                                                                 |
 
 ## Decision
 
@@ -169,29 +170,43 @@ One list, so a review can check the code against it.
    unknown. The refusal is the origin/main empty-union refusal and its reason names
    each unknown source, because a parent can only fix a source it can see. The gate
    cannot tell an empty branch from a protected one this caller may not read.
-4. The repository-rulesets source has three outcomes, not two.
-   - A read that found no rule is `EMPTY`. It contributes no contexts and the
-     per-check pass runs on the other sources, which is what origin/main did for
-     every unreadable ruleset reply, so a classic-only repository whose required
-     checks passed still finishes. It is not a positive absence, so the
-     empty-union refusal still names it and the limit for a branch with no ruleset
-     stays.
-   - A read that names at least one required-status rule is `HAS_CONTEXTS`, and the
-     per-check pass enforces it.
-   - An unknown read refuses the finish whatever the rest of the union holds, before
-     the per-check pass, with a reason that names the ruleset source. That is a
-     failed or partial page, a malformed or unparseable body, and an unlisted or
-     malformed rule type. Such a reply may carry a required-status rule this caller
-     never saw, so a non-empty union from another source must not let the per-check
-     pass judge only the names it saw.
+4. A required-check configuration source reply is classified as `ABSENT`,
+   `HAS_CONTEXTS`, `EMPTY`, or `UNKNOWN`, and the reply-shape table below gives each
+   shape its class and its effect on both paths. The ruleset source carries all
+   four:
+   - `ABSENT` is a non-empty read whose entries are all documented rule types and
+     none is a `required_status_checks` rule. On the normal path it contributes no
+     contexts and the per-check pass runs on the other sources. On the relaxed path
+     it is the positive absence.
+   - `HAS_CONTEXTS` is a read that names at least one required-status rule. The
+     per-check pass enforces it, and the relaxed path is not reached.
+   - `EMPTY` is exactly one page, and that page is empty: a successful read that
+     found no rule. On the normal path it contributes no contexts and the
+     per-check pass runs on the other sources, which is what origin/main did, so a
+     classic-only repository whose required checks passed still finishes. It is not
+     a positive absence, so the relaxed path keeps the empty-union refusal and
+     names it, and the limit for a branch with no ruleset stays.
+   - `UNKNOWN` refuses the finish whatever the rest of the union holds, before the
+     per-check pass, with a reason that names the source. It is a failed or
+     partial page, a body that is empty, not JSON, not the array of pages, or holds
+     a page that is not an array, an anomalous page sequence, which is no page at
+     all, two or more empty pages, or an empty page beside a page that holds rules,
+     and an unlisted or malformed rule type. Such a reply may carry a
+     required-status rule this caller never saw, so a non-empty union from another
+     source must not let the per-check pass judge only the names it saw. GitHub
+     stops paginating when there is no next page, so the single empty page is the
+     one empty shape that states an outcome.
 
-   Relative to origin/main, which treated every failed ruleset read as an empty
+   The classic-protection source carries `ABSENT`, `HAS_CONTEXTS`, and `UNKNOWN`
+   only. An unknown classic-protection read keeps its origin/main behavior, so the
+   per-check pass still runs on the other sources and the empty-union refusal names
+   it on the relaxed path.
+
+   Relative to origin/main, which treated every unreadable ruleset reply as an empty
    source and refused only on an unrecognized message, the change adds refusals in
    one case only: a ruleset read the gate cannot interpret, on a branch whose other
    sources named at least one required check. A classic-only repository is
-   unchanged, because its ruleset read is `EMPTY` and not unknown. The
-   classic-protection source keeps its origin/main behavior throughout, so a caller
-   without repository admin still gates through the other two sources.
+   unchanged, because its ruleset read is a single empty page and not unknown.
 
 5. An empty union over sources that each stated they hold no required check is an
    established absence. The gate then applies the same conditions it applies

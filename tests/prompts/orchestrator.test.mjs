@@ -427,9 +427,10 @@ for (const [name, path] of RULE_SURFACES) {
     const text = await readFile(path, "utf8");
     // A read the gate cannot interpret refuses whatever the union holds.
     expectRule(text, /ruleset read the gate cannot interpret/i, /refuses the finish/i, /union/i);
-    // A successful read that found no rule is neither, so a classic-only
-    // repository still finishes.
-    expectRule(text, /found no rule/i, /contributes no contexts/i, /origin.main/i);
+    // Exactly one empty page is neither, so a classic-only repository still
+    // finishes, and the anomalous page sequences are named as refusals.
+    expectRule(text, /exactly one empty page/i, /contributes no contexts/i, /origin.main/i);
+    expectRule(text, /no page at all/i, /two or more empty pages/i);
   });
 
   // Usefulness: verifies ${name} states that an empty page inside a longer read

@@ -639,18 +639,21 @@ current behavior, and each flag fails with a clear error.
   a refused finish never reports an absence.
   The rule for that pass is one allowlist, and it fails closed. Each required-check
   configuration source is classified by what its reply proved. A ruleset read the gate cannot interpret refuses the finish whatever the rest of the union
-  holds, before the per-check pass, because that reply may carry a required-status rule the
-  gate never saw. A ruleset read that succeeded and found no rule is neither of those: it
-  contributes no contexts and the per-check pass runs on the other sources, exactly as
-  origin/main did, so a classic-only repository whose required checks passed still
-  finishes.
+  holds, before the per-check pass, because that reply may carry a required-status rule
+  the gate never saw; that is a failed or partial page, a body that is not a readable array
+  of pages, an anomalous page sequence, which is no page at all, two or more empty pages,
+  or an empty page beside a page that holds rules, and an unlisted or malformed rule type.
+  A ruleset read of exactly one empty page is neither of those: it contributes no contexts
+  and the per-check pass runs on the other sources, exactly as origin/main did, so a
+  classic-only repository whose required checks passed still finishes.
   Otherwise a finish passes on the absence only when no source named a required
   check and no source is unknown, so both sources must have stated the outcome, and
   an unknown classic-protection source keeps the empty-union refusal with the reason
   naming it, so a parent can fix a source it can name. An exact list of every reply
   shape and its class is in
   `adr/0012-establish-the-absence-of-a-required-check.md`; the classes are
-  absent, has-contexts, empty, and unknown.
+  absent, has-contexts, empty, and unknown, and the table states each one on both the normal
+  and the relaxed path.
   Absent, the only class that lets a finish pass, has exactly one reply per source.
   For repository rulesets it is a read of every page that returns a non-empty array
   whose entries all carry a documented rule type and none is a
