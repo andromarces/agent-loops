@@ -342,6 +342,19 @@ The read follows `--pr`, which is the PR input both paths know at dispatch. A
 headless run that takes only `--require-ci` and declares no `--pr` reads no
 status.
 
+## Test evidence when the reviewer cannot run tests
+
+A Codex reviewer on Windows under `sandbox_mode="read-only"` cannot spawn the
+test runner: Vitest fails with `spawn EPERM` and `pnpm` fails on its store lock.
+Its `Checks` line then excludes the test suite. macOS, Linux, and the elevated
+Windows sandbox are not verified.
+
+When the reviewer `Checks` line shows that tests did not run, rely on the
+required CI checks for test evidence. Start the run with `--pr` or `--require-ci`
+so CI status reaches the gate. Do not read a reviewer accept as a passing test
+suite. A worker `Checks` line that shows a passing local test run is reported
+evidence, not a gate input.
+
 ## Waiting for required checks
 
 When a run will end with `--require-ci`, wait for the required checks on the new
