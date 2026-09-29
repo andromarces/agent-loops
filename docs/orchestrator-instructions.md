@@ -682,7 +682,9 @@ current behavior, and each flag fails with a clear error.
   head commit otherwise. A required check run passes with the conclusion
   `success`, `skipped`, or `neutral`; a required commit status passes with the
   state `success`. When a check run and a commit status share a required name,
-  both must pass, and a pending or missing check fails. A context qualified by
+  both must pass, and a pending or missing check fails. Required contexts come
+  from repository rulesets, classic branch protection, and
+  `gh pr checks --required`. A context qualified by
   an app (a ruleset `integration_id` or a classic-protection `app_id`) is
   satisfied only by a check run from that app, and an unqualified copy of that
   name is dropped.
@@ -760,7 +762,9 @@ current behavior, and each flag fails with a clear error.
 to GitHub Pro or make this repository public to enable this feature.`, was measured
   on the classic protection, branch rules, and rulesets endpoints with an admin
   classic PAT and an admin fine-grained PAT, and a read-capable collaborator was not
-  tested, so whether a non-admin sees the same 403 is unverified. A private GitHub
+  tested, so whether a non-admin sees the same 403 is unverified. That reply
+  leaves each measured endpoint with no required contexts, and it is classified
+  unknown rather than empty, so the empty-union refusal names it. A private GitHub
   Free-plan repository still refuses a declared run under this change, so this does
   not resolve #336 for it, and such a repository must omit `--pr`, which leaves the
   #286 gap in place.
