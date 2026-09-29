@@ -1971,9 +1971,9 @@ test("a status read through the A-to-B-to-A window is still marked advisory", as
 // Usefulness: verifies the `gh` runner terminates the child when its bound
 // expires, on Windows and on macOS. A real process is the only way to check that
 // the kill reaches the child, because an injected runner never spawns one
-// (issue #329). One fixed bound: the call must return within it plus the
-// helper's margin, and the recorded child must be gone. The helper fails, not
-// retries, if the shim had not started when the bound expired (issue #373).
+// (issue #329). Termination only: the bound value is proved in
+// spawn-bounds.test.mjs, so the waits here are ceilings that load cannot reach
+// (issue #373).
 test("runGh terminates the gh child when its bound expires", async () => {
   const result = await expectBoundKillsShim("gh", (timeoutMs) =>
     runGh(["pr", "checks", "42", "--required"], tmpdir(), { timeoutMs }),

@@ -44,9 +44,8 @@ test("assertGitWorkTree validates git directory", async () => {
 // to check that a slow `git` cannot add its own time to a caller's total limit,
 // because every other test uses a real fast `git` (issue #329).
 test("assertGitWorkTree refuses a probe that outlasts its bound", async () => {
-  // One fixed bound: the call must return within it plus the helper's margin,
-  // and the recorded child must be gone. The helper fails, not retries, if the
-  // shim had not started when the bound expired (issue #373).
+  // Termination only: the bound value is proved in spawn-bounds.test.mjs, so the
+  // waits here are ceilings that load cannot reach (issue #373).
   await expectBoundKillsShim("git", (timeoutMs) =>
     expect(assertGitWorkTree(tmpdir(), { timeoutMs })).rejects.toThrow(
       /validation did not complete within its bound/,
