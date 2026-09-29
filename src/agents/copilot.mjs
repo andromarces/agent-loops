@@ -5,10 +5,9 @@ import { resumeMismatchError, setMainLoopUsage } from "./shared.mjs";
 
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
-  const requestedSessionId = state.sessionId;
   // A new session id reaches the role state only after Copilot reports it, so a failed
   // first turn leaves `state.sessionId` null and the next worker turn keeps its preamble.
-  const sessionId = requestedSessionId ?? randomUUID();
+  const sessionId = state.sessionId ?? randomUUID();
 
   const args = ["--session-id", sessionId, "-s", "--no-ask-user", "--output-format", "json"];
 
@@ -42,8 +41,10 @@ export async function runCopilot(state, prompt, options = {}) {
     throw new Error("Copilot did not return a session ID.");
   }
 
-  if (requestedSessionId && requestedSessionId !== returnedId) {
-    throw resumeMismatchError("Copilot", "session", requestedSessionId, returnedId);
+  // The id passed through --session-id, pre-assigned or resumed, must come back unchanged.
+  // A different id would leave the stored id pointing at a session Copilot did not create.
+  if (returnedId !== sessionId) {
+    throw resumeMismatchError("Copilot", "session", sessionId, returnedId);
   }
 
   state.sessionId = returnedId;
