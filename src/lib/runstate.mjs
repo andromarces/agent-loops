@@ -154,7 +154,8 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * Exclusive access around one state-file operation. Creates `state.lock` (an
  * atomic hard link where supported, otherwise an exclusive create), treats an
  * existing lock with a live owner pid as busy and a dead one as stale
- * (removed with a warning, then retried). Returns the result of `fn`. `label`
+ * (removed with a warning only if it still holds the content read as stale, then
+ * retried once). Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
  * is locked instead of the generic default; `noun` is the same resource as a
  * lowercase phrase for the stale-removal warning.
@@ -202,7 +203,8 @@ async function acquireLock(lockFile, { retry = true, label = "State", noun = "st
     return;
   }
 
-  const owner = await readLockOwner(lockFile);
+  const lockText = await readLockText(lockFile);
+  const owner = parseLockOwner(lockText);
   if (owner && pidAlive(owner.pid)) {
     throw new Error(
       `${label} is locked by a live process (pid ${owner.pid}, started ${owner.startedAt ?? "unknown"}).`,
@@ -222,8 +224,39 @@ async function acquireLock(lockFile, { retry = true, label = "State", noun = "st
   }
 
   logWarn(`removing stale ${noun} lock (dead pid ${owner?.pid ?? "unknown"})`);
-  await rm(lockFile, { force: true });
+  await removeStaleLock(lockFile, lockText);
   return acquireLock(lockFile, { retry: false, label, noun });
+}
+
+// Removes the lock only if it still holds `staleText`, the content that was read
+// as stale. A bare `rm` after the read would delete a live lock that another
+// process created in between (#363). The lock is renamed to a private path
+// first, so the content that is checked is the content that is removed. A
+// different lock is put back with the no-overwrite link that lock creation uses.
+// known-limit: the lock path is briefly absent while a displaced live lock is
+// out. A third contender that creates the lock in that window wins, and the
+// displaced owner is dropped with a warning. A separate reaper lock would close
+// the window but is itself a lock that can go stale.
+async function removeStaleLock(lockFile, staleText) {
+  const claimFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
+  try {
+    await rename(lockFile, claimFile);
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return;
+    }
+    throw err;
+  }
+  try {
+    const claimedText = await readLockText(claimFile);
+    if (claimedText !== null && claimedText !== staleText) {
+      if (!(await linkLock(claimFile, lockFile, claimedText))) {
+        logWarn("a newer lock took the lock path while a displaced lock was restored; dropped");
+      }
+    }
+  } finally {
+    await removeTemp(claimFile);
+  }
 }
 
 // Create the lock and its owner content. The owner JSON goes to a private temp
@@ -310,9 +343,18 @@ export function pidAlive(pid) {
   }
 }
 
-async function readLockOwner(lockFile) {
+// Raw lock content, or null when the lock cannot be read.
+async function readLockText(lockFile) {
   try {
-    const value = JSON.parse(await readFile(lockFile, "utf8"));
+    return await readFile(lockFile, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function parseLockOwner(text) {
+  try {
+    const value = JSON.parse(text);
     if (value === null || typeof value !== "object" || !Number.isInteger(value.pid)) {
       return null;
     }
