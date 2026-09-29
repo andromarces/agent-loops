@@ -666,8 +666,15 @@ ends when two refusals land with no child turn between them. The marker is
 satisfied on a re-finish, with no child turn; the `review-only` condition and
 `--require-accept` take the same corrective turn, which costs a step, and the
 missing gate of a declared PR run is the one condition no child turn can supply.
-The `--require-ci` gate runs only when nothing above it refused, so a refused
-`finish` never reads GitHub. In `review-only`, a `finish` without them keeps the
+The two paths differ in when the `--require-ci` gate reads GitHub, and the
+difference is the code's. The `role finish` command throws as soon as any
+condition above the gate refused, so on that path a refused `finish` never reads
+GitHub. The headless loop does not: it evaluates every gate it owns, so the
+`--require-ci` gate runs whenever the run carries it and the declared-PR condition
+did not refuse, and a finish that the marker, the `review-only` condition, or
+`--require-accept` already refused still reads GitHub. Only the declared-PR gate
+condition skips it, because that condition means no gate for this run's PR. In
+`review-only`, a `finish` without them keeps the
 current behavior, and each flag fails with a clear error.
 
 - `--require-accept`: refuse unless the latest turn is a reviewer accept with a

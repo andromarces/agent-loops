@@ -159,7 +159,11 @@ nothing else.
      empty result is excluded, because a read of exactly one empty page states
      nothing about the branch, and so is a read of no page at all, and so is a
      second empty page, because that sequence is not the complete result it claims
-     to be. A rule
+     to be. Those three are not one outcome, and the distinction is the code's:
+     exactly one empty page is `EMPTY`, which contributes no contexts and does not
+     refuse, while a read of no page at all, two or more empty pages, and an empty
+     page beside a page that holds rules are `UNKNOWN`, which refuses before the
+     per-check pass. A rule
      type outside the documented list is excluded, because a type the list does not
      carry may be a required-status rule under a name the gate has not seen; the list
      is the documented one, so a future GitHub rule type makes such a read unknown,
