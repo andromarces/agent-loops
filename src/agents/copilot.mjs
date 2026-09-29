@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import { logWarn } from "../lib/log.mjs";
 import { resumeMismatchError, setMainLoopUsage } from "./shared.mjs";
 
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
   // A new session id reaches the role state only after Copilot reports it, so a failed
   // first turn leaves `state.sessionId` null and the next worker turn keeps its preamble.
-  const sessionId = state.sessionId ?? randomUUID();
+  const requestedSessionId = state.sessionId;
+  const sessionId = requestedSessionId ?? randomUUID();
 
   const args = ["--session-id", sessionId, "-s", "--no-ask-user", "--output-format", "json"];
 
@@ -41,10 +43,14 @@ export async function runCopilot(state, prompt, options = {}) {
     throw new Error("Copilot did not return a session ID.");
   }
 
-  // The id passed through --session-id, pre-assigned or resumed, must come back unchanged.
-  // A different id would leave the stored id pointing at a session Copilot did not create.
+  // A resumed id must come back unchanged. The repository holds no recorded Copilot output
+  // showing that a pre-assigned id is echoed, so a first turn stores the id Copilot reports,
+  // which is the session the next turn can resume.
   if (returnedId !== sessionId) {
-    throw resumeMismatchError("Copilot", "session", sessionId, returnedId);
+    if (requestedSessionId) {
+      throw resumeMismatchError("Copilot", "session", requestedSessionId, returnedId);
+    }
+    logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
   }
 
   state.sessionId = returnedId;

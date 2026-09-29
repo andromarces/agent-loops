@@ -264,8 +264,8 @@ test("a failed first copilot worker turn leaves sessionId null and the next turn
   expect(role.sessionId).toBe(vi.mocked(exec).mock.calls[1][1][1]);
 });
 
-// Usefulness: verifies a first turn that reports a different id than the pre-assigned one fails and stores no id.
-test("copilot rejects a reported id that differs from the pre-assigned id and stores none", async () => {
+// Usefulness: verifies a first turn stores the id Copilot reports when it differs from the pre-assigned one, so the next turn resumes the real session.
+test("copilot stores the reported id when it differs from the pre-assigned id on a first turn", async () => {
   vi.mocked(exec).mockReset();
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: [
@@ -276,8 +276,11 @@ test("copilot rejects a reported id that differs from the pre-assigned id and st
   });
 
   const state = { kind: "copilot", sessionId: null, model: null, effort: null };
-  await expect(
-    runCopilot(state, "copilot first turn prompt", { cwd: "/dir", readOnly: false }),
-  ).rejects.toThrow("Received: copilot-other-sess");
-  expect(state.sessionId).toBeNull();
+  const response = await runCopilot(state, "copilot first turn prompt", {
+    cwd: "/dir",
+    readOnly: false,
+  });
+
+  expect(response).toBe("Other session");
+  expect(state.sessionId).toBe("copilot-other-sess");
 });
