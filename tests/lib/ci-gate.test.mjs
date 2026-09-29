@@ -382,40 +382,120 @@ test("refuses the empty union and names the source when repository rulesets cann
   expect(result.reason).toContain("repository rulesets");
 });
 
-// Usefulness: verifies a ruleset body that is not the array the endpoint returns
-// settles nothing and keeps the empty-union refusal, so a read error cannot reach
-// the relaxed path as an absence (issue #336 review).
-test("refuses the empty union when a ruleset read is not the shape that endpoint returns", async () => {
-  const result = await checkCi({
-    pr: 42,
-    reviewed: REVIEWED,
-    cwd: ".",
-    gh: fakeGh(
-      routes({
-        required: { message: "unexpected" },
-        protection: null,
-        prChecks: "",
-        headRuns: [run("ci (ubuntu-latest)", "success")],
-      }),
-    ),
-  });
-  expect(result.ok).toBe(false);
-  expect(result.reason).toContain("repository rulesets");
-});
+// The malformed successful replies that must keep the empty-union refusal. The
+// allowlist admits one ruleset shape, an array of well-formed rules with no
+// required-status-check rule, so each of these is one step away from it and none
+// of them states the outcome. A read-only probe that returned one of these as
+// `noRequiredChecks: true` is the defect this list covers (issue #336 review).
+const MALFORMED_RULESET_READS = {
+  "a JSON value that is not an array": { required: { rules: [] } },
+  "an entry that is not an object": { required: ["required_status_checks"] },
+  "a null entry": { required: [null] },
+  "an entry with no type field": { required: [{ parameters: {} }] },
+  "an entry whose type is not a string": { required: [{ type: 7 }] },
+  "a required-status-check rule that names no check": {
+    required: [{ type: "required_status_checks", parameters: { required_status_checks: [] } }],
+  },
+  "a required-status-check rule whose check list is missing": {
+    required: [{ type: "required_status_checks", parameters: {} }],
+  },
+  "a required-status-check entry with no context": {
+    required: [{ type: "required_status_checks", parameters: { required_status_checks: [{}] } }],
+  },
+  "an empty body": { required: "" },
+  "a body that is not JSON": { required: "not json" },
+};
 
-// Usefulness: verifies an empty ruleset read is an absence for that source, since
-// a read that completed and named no required check states the outcome, so the
-// relaxed path stays reachable for a caller that can read both sources
+for (const [shape, { required }] of Object.entries(MALFORMED_RULESET_READS)) {
+  // Usefulness: verifies a ruleset read that is ${shape} settles nothing, so it
+  // keeps the empty-union refusal and names the source rather than passing the
+  // relaxed path on a reply the gate could not read (issue #336 review).
+  test(`refuses the empty union and names the source on a ruleset read that is ${shape}`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required,
+          protection: null,
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+        }),
+      ),
+    });
+    expect(result.ok, "a malformed ruleset read must not reach the absence path").toBe(false);
+    expect(result.reason).toContain("no required checks were found");
+    expect(result.reason).toContain("repository rulesets");
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+}
+
+// The classic-protection successful replies that must also keep the refusal. Only
+// the exact `Branch not protected` 404 proves an absence for that source, so a
+// body the gate can read but that states no unprotected branch settles nothing
 // (issue #336 review).
-test("passes and records the absence when both sources were read and named no check", async () => {
+const MALFORMED_PROTECTION_READS = {
+  "a body that is not the object that endpoint returns": { protection: [] },
+  "a body with no required_status_checks field": { protection: { enabled: true } },
+  "a required_status_checks field of the wrong type": {
+    protection: { required_status_checks: "ci" },
+  },
+  "a required_status_checks field that names no check": {
+    protection: { required_status_checks: {} },
+  },
+  "a context entry that is not a string": {
+    protection: { required_status_checks: { contexts: [7] } },
+  },
+  "an empty body": { protection: "" },
+};
+
+for (const [shape, override] of Object.entries(MALFORMED_PROTECTION_READS)) {
+  // Usefulness: verifies a classic-protection read that is ${shape} settles
+  // nothing, so it keeps the empty-union refusal and names the source rather than
+  // passing the relaxed path on a body that never stated the branch is
+  // unprotected (issue #336 review).
+  test(`refuses the empty union and names the source on a protection read that is ${shape}`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          required: [],
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+          ...override,
+        }),
+      ),
+    });
+    expect(result.ok, "a protection read that names no unprotected branch must not pass").toBe(
+      false,
+    );
+    expect(result.reason).toContain("no required checks were found");
+    expect(result.reason).toContain("classic branch protection");
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+}
+
+// Usefulness: verifies the absence path is reachable at all, through the one reply
+// per source that states the outcome: a ruleset read whose entries are all
+// well-formed and none a required-status-check rule, and the exact
+// `Branch not protected` 404. Without this the allowlist could pass every test by
+// refusing everything (issue #336 review).
+test("passes and records the absence when both sources stated the outcome", async () => {
   const result = await checkCi({
     pr: 42,
     reviewed: REVIEWED,
     cwd: ".",
     gh: fakeGh(
       routes({
-        required: [],
-        protection: { required_status_checks: null },
+        required: [
+          { type: "deletion" },
+          { type: "non_fast_forward" },
+          { type: "pull_request", parameters: { required_approving_review_count: 0 } },
+        ],
+        protection: null,
         prChecks: "",
         headRuns: [run("ci (ubuntu-latest)", "success")],
       }),
@@ -423,6 +503,69 @@ test("passes and records the absence when both sources were read and named no ch
   });
   expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
 });
+
+// A merge state the gate cannot read must refuse on the absence path exactly as
+// it does on the per-check path, so the relaxed path cannot pass on a state the
+// gate never understood (issue #336 review). `missing` removes the field, which a
+// merge-state override alone cannot express.
+const UNREADABLE_MERGE_STATES = {
+  "a missing merge state": null,
+  "a null merge state": { mergeStateStatus: null },
+  "an empty merge state": { mergeStateStatus: "" },
+  "an unrecognized merge state": { mergeStateStatus: "MOSTLY_FINE" },
+};
+
+/** The `pr view` body for a merge state the gate cannot read. */
+function unreadableMergeState(overrides) {
+  const info = prInfo(overrides ?? {});
+  if (overrides === null) {
+    delete info.mergeStateStatus;
+  }
+  return info;
+}
+
+for (const [shape, overrides] of Object.entries(UNREADABLE_MERGE_STATES)) {
+  // Usefulness: verifies ${shape} refuses on the relaxed path, so a base branch
+  // with no required check is not passed on a merge state the gate could not read
+  // (issue #336 review).
+  test(`refuses ${shape} on the absence path`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          info: unreadableMergeState(overrides),
+          required: [],
+          protection: null,
+          prChecks: "",
+          headRuns: [run("ci (ubuntu-latest)", "success")],
+        }),
+      ),
+    });
+    expect(result.ok, "an unreadable merge state must not pass the absence path").toBe(false);
+    expect(result.reason).toContain("merge state");
+    expect(result.noRequiredChecks).toBeUndefined();
+  });
+
+  // Usefulness: verifies ${shape} refuses on the per-check path as well, so the
+  // two paths apply one merge-state condition rather than two (issue #336 review).
+  test(`refuses ${shape} on the per-check path`, async () => {
+    const result = await checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: fakeGh(
+        routes({
+          info: unreadableMergeState(overrides),
+          headRuns: [run("ci (ubuntu-latest)", "success"), run("ci (windows-latest)", "success")],
+        }),
+      ),
+    });
+    expect(result.ok, "an unreadable merge state must not pass the per-check path").toBe(false);
+    expect(result.reason).toContain("merge state");
+  });
+}
 
 // Usefulness: verifies a `gh pr checks --required` reply that carries no JSON
 // contributes no names, so a repository whose every required check never
