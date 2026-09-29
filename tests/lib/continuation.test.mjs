@@ -110,3 +110,63 @@ test("readContinuation returns the transcript", async () => {
   const value = transcript();
   expect(await readJson(value)).toEqual(value);
 });
+
+const OPENCODE_CWD = CWD;
+
+function opencodeTranscript(worker) {
+  const earlier = transcript();
+  earlier.roles.worker = { kind: "opencode", sessionId: "w-1", ...worker };
+  return earlier;
+}
+
+function opencodeRoles(worker) {
+  return roles({ worker: { kind: "opencode", sessionId: null, ...worker } });
+}
+
+// Usefulness: an OpenCode effort is passed as <model>#<effort>, so the same model
+// with another effort is another effective model and the session cannot resume.
+test("restoreSessions rejects a changed OpenCode effort on the same model", () => {
+  const earlier = opencodeTranscript({ model: "p/m", effort: "high" });
+  expect(() =>
+    restoreSessions(opencodeRoles({ model: "p/m", effort: null }), earlier, OPENCODE_CWD),
+  ).toThrow('worker model was "p/m#high" in the earlier run, not "p/m"');
+  expect(() =>
+    restoreSessions(opencodeRoles({ model: "p/m", effort: "low" }), earlier, OPENCODE_CWD),
+  ).toThrow('"p/m#high" in the earlier run, not "p/m#low"');
+});
+
+// Usefulness: an OpenCode role with no model runs OpenCode's own default, which the
+// transcript does not record and which varies by machine, so the check refuses it
+// rather than assume it matches. An explicit model resumes.
+test("restoreSessions refuses an OpenCode role whose effective model is a default", () => {
+  const earlier = opencodeTranscript({ model: null, effort: null });
+  expect(() =>
+    restoreSessions(opencodeRoles({ model: null, effort: null }), earlier, OPENCODE_CWD),
+  ).toThrow("worker uses opencode with no --worker-model");
+  const explicit = opencodeTranscript({ model: "p/m", effort: "high" });
+  const next = opencodeRoles({ model: "p/m", effort: "high" });
+  restoreSessions(next, explicit, OPENCODE_CWD);
+  expect(next.worker.sessionId).toBe("w-1");
+});
+
+// Usefulness: the orchestrator is checked like every other role.
+test("restoreSessions checks the orchestrator's OpenCode effective model", () => {
+  const earlier = transcript();
+  earlier.roles.orchestrator = { kind: "opencode", model: "p/m", effort: "high", sessionId: "o-1" };
+  const next = roles({ orchestrator: { kind: "opencode", model: "p/m", effort: null } });
+  expect(() => restoreSessions(next, earlier, OPENCODE_CWD)).toThrow(
+    'orchestrator model was "p/m#high" in the earlier run, not "p/m"',
+  );
+});
+
+// Usefulness: effort is a separate flag for the other adapters, so it stays uncompared there.
+test("restoreSessions ignores effort for a non-OpenCode role", () => {
+  const next = roles({ worker: { kind: "claude", model: "opus", effort: "low", sessionId: null } });
+  expect(() => restoreSessions(next, transcript(), CWD)).not.toThrow();
+});
+
+// Usefulness: a transcript whose events are not a list is rejected, because the
+// same-path continuation appends to them.
+test("readContinuation rejects events that are not a list", async () => {
+  await expect(readJson({ ...transcript(), events: "x" })).rejects.toThrow("events");
+});

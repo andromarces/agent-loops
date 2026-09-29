@@ -1149,3 +1149,66 @@ test("--continue-from requires a value and accepts the inline form", () => {
   );
   expect(parseArgs(CONTINUE_BASE).continueFrom).toBeNull();
 });
+
+// Usefulness: verifies a continuation whose --transcript names the --continue-from
+// file keeps every earlier event, in order, and appends the new ones after them
+// (#362 review). The earlier run's outcome is kept in a boundary event.
+test("--continue-from with the same --transcript path keeps the earlier events", async () => {
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    const review = JSON.stringify({ action: "run_reviewer", prompt: "r" });
+    const seen = { codex: [], claude: [], agy: [] };
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      sessionAgents([work, work], seen),
+    );
+    const earlier = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(earlier.exitCode).toBe(2);
+    expect(earlier.events.length).toBeGreaterThan(0);
+
+    await main(
+      [
+        ...CONTINUE_BASE,
+        "--cwd",
+        repo,
+        "--max-steps",
+        "2",
+        "--continue-from",
+        transcriptPath,
+        "--transcript",
+        transcriptPath,
+      ],
+      sessionAgents([review, FINISH], { codex: [], claude: [], agy: [] }),
+    );
+
+    const after = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(after.events.slice(0, earlier.events.length)).toEqual(earlier.events);
+    const boundary = after.events[earlier.events.length];
+    expect(boundary).toMatchObject({
+      type: "continued",
+      earlier: { exitCode: 2, error: "Step limit reached with work remaining." },
+    });
+    expect(after.events.slice(earlier.events.length + 1).map((event) => event.type)).toContain(
+      "result",
+    );
+    expect(after.exitCode).toBe(0);
+  });
+});
+
+// Usefulness: verifies a different --transcript path holds only the new run's events.
+test("--continue-from with another --transcript path records only the new events", async () => {
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      sessionAgents([work, work], { codex: [], claude: [], agy: [] }),
+    );
+    const next = join(repo, "next.json");
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--continue-from", transcriptPath, "--transcript", next],
+      sessionAgents([FINISH], { codex: [], claude: [], agy: [] }),
+    );
+    const after = JSON.parse(await readFile(next, "utf8"));
+    expect(after.events.some((event) => event.type === "continued")).toBe(false);
+  });
+});

@@ -368,6 +368,10 @@ Agents:
   );
 }
 
+function sameFile(a, b) {
+  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
 function formatSummary(summary) {
   return [
     `Changed: ${summary.changed}`,
@@ -424,7 +428,22 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
   // --continue-from file, and a refusal must not overwrite the sessions it holds.
   if (options.continueFrom) {
     try {
-      restoreSessions(roles, await readContinuation(options.continueFrom), options.cwd);
+      const earlier = await readContinuation(options.continueFrom);
+      restoreSessions(roles, earlier, options.cwd);
+      // --transcript rewrites its file at exit, so a run that names the file it
+      // continues carries the earlier events into the rewrite, then a boundary
+      // event that keeps the earlier outcome the rewrite replaces.
+      if (options.transcript && sameFile(options.transcript, options.continueFrom)) {
+        events.push(...(earlier.events ?? []), {
+          type: "continued",
+          earlier: {
+            exitCode: earlier.exitCode ?? null,
+            error: earlier.error ?? null,
+            maxSteps: earlier.options?.maxSteps ?? null,
+          },
+          at: new Date().toISOString(),
+        });
+      }
     } catch (err) {
       console.error(`
 ${err.message}`);
