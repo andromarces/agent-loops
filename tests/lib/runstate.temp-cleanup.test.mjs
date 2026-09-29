@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -27,6 +27,15 @@ function failWriteAfterCreate(code, message) {
 
 function fsError(code, message) {
   return Object.assign(new Error(message), { code });
+}
+
+/** A promise a test resolves by hand to order two overlapping writes. */
+function deferred() {
+  let resolve;
+  const promise = new Promise((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
 }
 
 let dirs = [];
@@ -68,20 +77,26 @@ test("a lock owner write that fails partway leaves no temp file", async () => {
 
 // Usefulness: verifies a cleanup failure never replaces the error that caused
 // it. The caller acts on the write failure, so a temp that cannot be removed
-// must not surface as the removal error instead (#353).
+// must not surface as the removal error instead (#353). The removal is retried
+// once after the injected failure, so the temp is still gone; without the retry
+// the file would survive.
 test("a temp file that cannot be removed does not replace the write error", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
   failWriteAfterCreate("ENOSPC", "ENOSPC: no space left on device");
-  vi.mocked(rm).mockRejectedValueOnce(fsError("EPERM", "EPERM: operation not permitted"));
+  vi.mocked(rm)
+    .mockRejectedValueOnce(fsError("EPERM", "EPERM: operation not permitted"))
+    .mockImplementationOnce(async (...a) => await realFs.rm(...a));
 
   await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
     /ENOSPC: no space left on device/,
   );
+
+  expect(await readdir(dir)).toEqual([]);
 });
 
 // Usefulness: verifies a state write that fails partway leaves no
-// `state.json.<pid>.tmp` behind. The state file and the lock temp share a
+// `state.json.<pid>.<n>.tmp` behind. The state file and the lock temp share a
 // directory, so the leftover is the same class of stray `.tmp` as #353.
 test("a state write that fails partway leaves no temp file", async () => {
   const dir = await tempDir();
@@ -93,4 +108,48 @@ test("a state write that fails partway leaves no temp file", async () => {
   });
 
   expect(await readdir(dir)).toEqual([]);
+});
+
+// Usefulness: verifies a failed write cleans up only its own temp. Two state
+// writes to one file overlap inside a single process, so a per-process temp path
+// would let the failing call delete the temp the successful call is about to
+// rename, losing that write (#353).
+test("a failed state write does not remove a concurrent write's temp", async () => {
+  const dir = await tempDir();
+  const stateFile = join(dir, "state.json");
+  const firstTempIsOnDisk = deferred();
+  const secondHasWritten = deferred();
+  const failingCallHasCleaned = deferred();
+
+  // The failing call is created first, so it takes the first stub. It writes,
+  // then fails only once the second call's temp is on disk, so its cleanup runs
+  // while that temp still exists.
+  vi.mocked(writeFile).mockImplementationOnce(async (file, text, options) => {
+    await realFs.writeFile(file, text, options);
+    firstTempIsOnDisk.resolve();
+    await secondHasWritten.promise;
+    throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+  });
+  // The second call writes once the first temp exists, then holds its rename
+  // until the first call's cleanup has run. That fixes the order: the cleanup
+  // always happens between the two writes and the second rename, so the test
+  // cannot pass by racing the rename ahead of the cleanup.
+  vi.mocked(writeFile).mockImplementationOnce(async (file, text, options) => {
+    await firstTempIsOnDisk.promise;
+    await realFs.writeFile(file, text, options);
+    secondHasWritten.resolve();
+    await failingCallHasCleaned.promise;
+  });
+
+  const failing = writeState(stateFile, { lifecycle: "active" }).catch((err) => {
+    failingCallHasCleaned.resolve();
+    return err;
+  });
+  const succeeding = writeState(stateFile, { lifecycle: "finished" });
+
+  expect(await failing).toMatchObject({ code: "ENOSPC" });
+  await succeeding;
+
+  expect(await readFile(stateFile, "utf8")).toBe('{\n  "lifecycle": "finished"\n}\n');
+  expect(await readdir(dir)).toEqual(["state.json"]);
 });
