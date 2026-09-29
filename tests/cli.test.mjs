@@ -1247,20 +1247,17 @@ test("--continue-from keeps a large earlier event whole", async () => {
   });
 });
 
-// An event count that made the old argument spread over the earlier event list
-// throw RangeError under vitest on Node 26: 124,999 events still threw, so the
-// V8 argument limit sits just below this count. The limit depends on the stack
-// size, so another runtime can differ.
-const SPREAD_LIMIT_EVENTS = 125_000;
+const EARLIER_EVENTS = 50;
 
-// Usefulness: verifies a same-path continuation carries an earlier transcript
-// with more events than an argument spread can pass, and keeps them all in order
-// (#362 review). The earlier transcript is written directly, so one run of the
-// real read-and-write path is all the test pays for.
-test("--continue-from keeps a transcript with many events", async () => {
+// Usefulness: verifies a same-path continuation reads a written transcript and
+// rewrites it with every earlier event in order, then the boundary event. The
+// many-event limit is covered in memory by carryEarlierEvents in
+// tests/lib/continuation.test.mjs. The earlier transcript is written directly,
+// so one run of the real read-and-write path is all the test pays for.
+test("--continue-from rewrites a written transcript with every earlier event", async () => {
   await withContinueRepo(async (repo, transcriptPath) => {
     const role = (kind) => ({ kind, model: null, effort: null, sessionId: "s" });
-    const events = Array.from({ length: SPREAD_LIMIT_EVENTS }, (_, index) => ({
+    const events = Array.from({ length: EARLIER_EVENTS }, (_, index) => ({
       type: "e",
       index,
     }));
@@ -1293,7 +1290,7 @@ test("--continue-from keeps a transcript with many events", async () => {
 
     expect(process.exitCode).toBe(0);
     const after = JSON.parse(await readFile(transcriptPath, "utf8"));
-    const count = SPREAD_LIMIT_EVENTS;
+    const count = EARLIER_EVENTS;
     expect(after.events[0].index).toBe(0);
     expect(after.events[count - 1].index).toBe(count - 1);
     expect(after.events[count].type).toBe("continued");

@@ -19,7 +19,7 @@ import {
   roleFlags,
   splitInlineFlag,
 } from "./lib/args.mjs";
-import { readContinuation, restoreSessions } from "./lib/continuation.mjs";
+import { carryEarlierEvents, readContinuation, restoreSessions } from "./lib/continuation.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import {
   runHarnessCheckCommand,
@@ -438,20 +438,7 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
       // continues carries the earlier events into the rewrite, then a boundary
       // event that keeps the earlier outcome the rewrite replaces.
       if (options.transcript && sameFile(options.transcript, options.continueFrom)) {
-        // A loop, not a spread: an argument spread over a long event list throws
-        // RangeError, and the list has no bound.
-        for (const event of earlier.events ?? []) {
-          events.push(event);
-        }
-        events.push({
-          type: "continued",
-          earlier: {
-            exitCode: earlier.exitCode ?? null,
-            error: earlier.error ?? null,
-            maxSteps: earlier.options?.maxSteps ?? null,
-          },
-          at: new Date().toISOString(),
-        });
+        carryEarlierEvents(events, earlier);
       }
     } catch (err) {
       console.error(`

@@ -86,3 +86,26 @@ export function restoreSessions(roles, earlier, cwd) {
 function describe(value) {
   return value ? JSON.stringify(value) : "(omitted)";
 }
+
+/**
+ * Appends the earlier run's events to `events`, then one `continued` event that
+ * keeps the earlier outcome a same-path transcript rewrite replaces. A loop, not
+ * an argument spread: a spread over a long event list throws RangeError, and the
+ * list has no bound.
+ * @param {object[]} events destination; mutated
+ * @param {{ events?: object[], exitCode?: number, error?: string | null, options?: { maxSteps?: number } }} earlier
+ */
+export function carryEarlierEvents(events, earlier) {
+  for (const event of earlier.events ?? []) {
+    events.push(event);
+  }
+  events.push({
+    type: "continued",
+    earlier: {
+      exitCode: earlier.exitCode ?? null,
+      error: earlier.error ?? null,
+      maxSteps: earlier.options?.maxSteps ?? null,
+    },
+    at: new Date().toISOString(),
+  });
+}

@@ -2,7 +2,11 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "vitest";
-import { readContinuation, restoreSessions } from "../../src/lib/continuation.mjs";
+import {
+  carryEarlierEvents,
+  readContinuation,
+  restoreSessions,
+} from "../../src/lib/continuation.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const CWD = resolve("work-tree");
@@ -165,4 +169,38 @@ test("restoreSessions checks the orchestrator model and effort", () => {
 // same-path continuation appends to them.
 test("readContinuation rejects events that are not a list", async () => {
   await expect(readJson({ ...transcript(), events: "x" })).rejects.toThrow("events");
+});
+
+// Usefulness: an argument spread over the earlier events throws RangeError once
+// the list passes the V8 argument limit, which is about 125,000 at the default
+// stack and grows with a larger stack, so 2,000,000 events fail the old spread on
+// any stack size in practice (#362 review). In memory, no disk I/O.
+test("carryEarlierEvents copies more events than any argument spread can pass", () => {
+  const count = 2_000_000;
+  const event = { type: "e" };
+  const earlier = {
+    events: Array.from({ length: count }, () => event),
+    exitCode: 2,
+    error: "Step limit reached with work remaining.",
+    options: { maxSteps: 1 },
+  };
+  const events = [{ type: "first" }];
+
+  carryEarlierEvents(events, earlier);
+
+  expect(events.length).toBe(count + 2);
+  expect(events[0].type).toBe("first");
+  expect(events[count]).toBe(event);
+  expect(events[count + 1]).toMatchObject({
+    type: "continued",
+    earlier: { exitCode: 2, error: "Step limit reached with work remaining.", maxSteps: 1 },
+  });
+});
+
+// Usefulness: a transcript with no events still gets the boundary event.
+test("carryEarlierEvents adds only the boundary for a transcript with no events", () => {
+  const events = [];
+  carryEarlierEvents(events, {});
+  expect(events).toHaveLength(1);
+  expect(events[0].earlier).toEqual({ exitCode: null, error: null, maxSteps: null });
 });
