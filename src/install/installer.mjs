@@ -868,31 +868,43 @@ function executableCandidates(command) {
   return [command, ...extensions.map((extension) => `${command}${extension.toLowerCase()}`)];
 }
 
-async function onPath(command) {
-  const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
-  for (const dir of dirs) {
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Walks PATH in order and stops at the first match.
+async function onPath(command, path) {
+  for (const dir of path.split(delimiter).filter(Boolean)) {
     for (const candidate of executableCandidates(command)) {
-      try {
-        await access(join(dir, candidate));
+      if (await exists(join(dir, candidate))) {
         return true;
-      } catch {
-        // Try the next candidate.
       }
     }
   }
   return false;
 }
 
-/** Harnesses whose CLI is found on PATH, in registry order. */
-export async function detectHarnesses() {
-  const detected = [];
-  for (const harness of HARNESS_ORDER) {
-    for (const command of HARNESS_META[harness].commands) {
-      if (await onPath(command)) {
-        detected.push(harness);
-        break;
+/**
+ * Harnesses whose CLI is found on PATH, in registry order. Harnesses are
+ * probed concurrently, at most one probe outstanding per harness, so the scan
+ * stays short on a long PATH or a loaded machine (#365). `path` overrides
+ * `process.env.PATH`.
+ */
+export async function detectHarnesses({ path = process.env.PATH ?? "" } = {}) {
+  const found = await Promise.all(
+    HARNESS_ORDER.map(async (harness) => {
+      for (const command of HARNESS_META[harness].commands) {
+        if (await onPath(command, path)) {
+          return true;
+        }
       }
-    }
-  }
-  return detected;
+      return false;
+    }),
+  );
+  return HARNESS_ORDER.filter((_, index) => found[index]);
 }
