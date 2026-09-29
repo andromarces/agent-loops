@@ -15,7 +15,7 @@ import {
   manifestPath,
   readManifest,
 } from "../../src/install/manifest.mjs";
-import { deadPid, removePath } from "../runtime-helpers.mjs";
+import { deadPid, removePath, restoreAgentLoopHome } from "../runtime-helpers.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const homes = [];
@@ -958,7 +958,7 @@ test("CLI dispatches install, uninstall, and harness-check", async () => {
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });
@@ -987,7 +987,7 @@ test("CLI install and uninstall accept --harness=<list>", async () => {
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });
@@ -1010,7 +1010,7 @@ test("CLI install rejects --verbose=1", async () => {
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });
@@ -1039,7 +1039,7 @@ test("CLI install rejects an inline value on a boolean flag", async () => {
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });
@@ -1062,7 +1062,7 @@ test("CLI install reports the full unknown inline token", async () => {
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });
@@ -1085,7 +1085,7 @@ test("CLI install rejects --harness=", async () => {
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });
@@ -1148,7 +1148,7 @@ test("CLI prints the manual snippet when a settings file does not parse", async 
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });
@@ -1176,7 +1176,7 @@ test("CLI prints a post-install note past the log cap in full", async () => {
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });
@@ -1391,7 +1391,7 @@ test("CLI uninstall reports a malformed manifest and exits 1", async () => {
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });
