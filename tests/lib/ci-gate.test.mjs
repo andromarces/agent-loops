@@ -1826,8 +1826,10 @@ test("reads an unresolved status when the gh call exceeds the time bound", async
 // same options the read passes, including the abort signal. The unit stubs
 // accept any option shape, so only the real runner catches an option name that
 // the installed execa rejects, which is what made every real read fail
-// (issue #320 review).
-test("the real gh runner runs a bounded read and terminates a hung child", async () => {
+// (issue #320 review). Termination of a hung child is checked against a shim
+// below, because a real `gh` gives no deterministic hang and a second real
+// spawn doubled the exposure to a slow Windows start (issue #373).
+test("the real gh runner answers a read through the options the read passes", async () => {
   const { runGh } = await import("../../src/lib/ci-gate.mjs");
   const controller = new AbortController();
   const reply = await runGh(["--version"], ".", {
@@ -1836,14 +1838,6 @@ test("the real gh runner runs a bounded read and terminates a hung child", async
   });
   expect(reply.status).toBe(0);
   expect(reply.stdout.trim()).toMatch(/^gh version/);
-
-  // A hung child is terminated by the bound, which is what keeps a stalled
-  // `gh` from outliving the read.
-  const hung = await runGh(["pr", "checks", "42", "--json", "name,bucket"], ".", {
-    signal: AbortSignal.timeout(1),
-    timeoutMs: 1,
-  });
-  expect(hung.status).not.toBe(0);
 });
 
 // Usefulness: verifies a read whose PR head moves between the head read and the
@@ -1996,27 +1990,55 @@ async function hangingGh(dir, marker, afterMs) {
   });
 }
 
-// Usefulness: verifies the `gh` runner terminates the child when its bound
-// expires, on Windows and on macOS. A real process is the only way to check that
-// the kill reaches the child, because an injected runner never spawns one
-// (issue #329).
-test("runGh terminates the gh child when its bound expires", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "gh-timeout-"));
+// The shim outlasts the bound by 4.7 s. A loaded Windows runner spent 2.3 s past
+// the bound starting and killing the shim (issue #373), so the margin stays wide
+// of that: a runner that waits for the child lands at `HANG_MS` or later and
+// fails the elapsed assertion, while start and kill overhead cannot reach it.
+const HANG_MS = 5000;
+
+// Runs `runGh` against the hanging shim and checks the child died with the
+// call: the call returns before the child could finish, and the child never
+// writes its marker. The marker wait runs to the child's own deadline, so load
+// cannot shorten it.
+async function expectHungGhTerminated(dirPrefix, run) {
+  const dir = await mkdtemp(join(tmpdir(), dirPrefix));
   const marker = join(dir, "alive.txt");
-  await hangingGh(dir, marker, 2000);
+  await hangingGh(dir, marker, HANG_MS);
   const path = process.env.PATH;
 
   try {
     process.env.PATH = `${dir}${delimiter}${path}`;
     const started = Date.now();
-    const result = await runGh(["pr", "checks", "42", "--required"], dir, { timeoutMs: 300 });
-    expect(result.timedOut).toBe(true);
-    expect(Date.now() - started).toBeLessThan(2000);
+    const result = await run(dir);
+    expect(Date.now() - started).toBeLessThan(HANG_MS);
     // The child was terminated, not abandoned: it never reaches its marker.
-    await delay(2500);
+    await delay(Math.max(0, started + HANG_MS + 500 - Date.now()));
     await expect(access(marker)).rejects.toThrow();
+    return result;
   } finally {
     process.env.PATH = path;
     await removePath(dir);
   }
+}
+
+// Usefulness: verifies the `gh` runner terminates the child when its bound
+// expires, on Windows and on macOS. A real process is the only way to check that
+// the kill reaches the child, because an injected runner never spawns one
+// (issue #329).
+test("runGh terminates the gh child when its bound expires", async () => {
+  const result = await expectHungGhTerminated("gh-timeout-", (dir) =>
+    runGh(["pr", "checks", "42", "--required"], dir, { timeoutMs: 300 }),
+  );
+  expect(result.timedOut).toBe(true);
+}, 15000);
+
+// Usefulness: verifies the `gh` runner terminates the child when the abort
+// signal fires, which is how the read cancels a call it no longer waits for.
+// The bound is off, so only the signal can stop the child (issue #320 review).
+test("runGh terminates the gh child when its abort signal fires", async () => {
+  const result = await expectHungGhTerminated("gh-abort-", (dir) =>
+    runGh(["pr", "checks", "42", "--required"], dir, { signal: AbortSignal.timeout(300) }),
+  );
+  expect(result.status).not.toBe(0);
+  expect(result.timedOut).toBe(false);
 }, 15000);

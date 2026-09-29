@@ -65,7 +65,12 @@ async function hangingGit(dir, marker, afterMs) {
 test("assertGitWorkTree refuses a probe that outlasts its bound", async () => {
   const dir = await mkdtemp(join(tmpdir(), "git-probe-bound-"));
   const marker = join(dir, "alive.txt");
-  await hangingGit(dir, marker, 2000);
+  // The bound is 300 ms and the child outlasts it by 4.7 s. A loaded Windows
+  // runner spent 2.3 s past the bound starting and killing the shim, so the
+  // margin stays wide of that: a probe that waits for the child still lands at
+  // `hangMs` or later and fails the assertion, while overhead cannot reach it.
+  const hangMs = 5000;
+  await hangingGit(dir, marker, hangMs);
   const path = process.env.PATH;
 
   try {
@@ -74,9 +79,10 @@ test("assertGitWorkTree refuses a probe that outlasts its bound", async () => {
     await expect(assertGitWorkTree(dir, { timeoutMs: 300 })).rejects.toThrow(
       /validation did not complete within its bound/,
     );
-    expect(Date.now() - started).toBeLessThan(2000);
-    // The child was terminated, not abandoned: it never reaches its marker.
-    await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(Date.now() - started).toBeLessThan(hangMs);
+    // The child was terminated, not abandoned: it never reaches its marker. The
+    // wait runs to the child's own deadline, so load cannot shorten it.
+    await new Promise((resolve) => setTimeout(resolve, started + hangMs + 500 - Date.now()));
     await expect(access(marker)).rejects.toThrow();
   } finally {
     process.env.PATH = path;
