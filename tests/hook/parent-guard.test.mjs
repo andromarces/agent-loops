@@ -9,7 +9,7 @@ import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mj
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
 import { buildTargets } from "../../src/install/harnesses.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import { createTempRepo, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
 
 const noopAdapter = {
   async run() {
@@ -98,7 +98,7 @@ afterEach(async () => {
   if (runsRoot === undefined) {
     return;
   }
-  delete process.env.AGENT_LOOP_RUNS_ROOT;
+  restoreRunsRoot();
   for (const dir of repos) {
     await removePath(dir);
   }
