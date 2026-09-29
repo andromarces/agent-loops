@@ -1247,20 +1247,36 @@ test("--continue-from keeps a large earlier event whole", async () => {
   });
 });
 
-// Usefulness: verifies a same-path continuation carries a transcript of several
-// hundred thousand events, more than an argument spread can pass, and keeps them
-// all in order (#362 review).
+// An event count that made the old argument spread over the earlier event list
+// throw RangeError under vitest on Node 26: 124,999 events still threw, so the
+// V8 argument limit sits just below this count. The limit depends on the stack
+// size, so another runtime can differ.
+const SPREAD_LIMIT_EVENTS = 125_000;
+
+// Usefulness: verifies a same-path continuation carries an earlier transcript
+// with more events than an argument spread can pass, and keeps them all in order
+// (#362 review). The earlier transcript is written directly, so one run of the
+// real read-and-write path is all the test pays for.
 test("--continue-from keeps a transcript with many events", async () => {
   await withContinueRepo(async (repo, transcriptPath) => {
-    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
-    await main(
-      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
-      sessionAgents([work, work], { codex: [], claude: [], agy: [] }),
+    const role = (kind) => ({ kind, model: null, effort: null, sessionId: "s" });
+    const events = Array.from({ length: SPREAD_LIMIT_EVENTS }, (_, index) => ({
+      type: "e",
+      index,
+    }));
+    await writeFile(
+      transcriptPath,
+      JSON.stringify({
+        task: "long task",
+        cwd: repo,
+        options: { maxSteps: 1 },
+        roles: { orchestrator: role("codex"), worker: role("claude"), reviewer: role("agy") },
+        events,
+        exitCode: 2,
+        error: "Step limit reached with work remaining.",
+      }),
+      "utf8",
     );
-    const earlier = JSON.parse(await readFile(transcriptPath, "utf8"));
-    const count = 400_000;
-    earlier.events = Array.from({ length: count }, (_, index) => ({ type: "e", index }));
-    await writeFile(transcriptPath, JSON.stringify(earlier), "utf8");
 
     await main(
       [
@@ -1277,9 +1293,10 @@ test("--continue-from keeps a transcript with many events", async () => {
 
     expect(process.exitCode).toBe(0);
     const after = JSON.parse(await readFile(transcriptPath, "utf8"));
+    const count = SPREAD_LIMIT_EVENTS;
     expect(after.events[0].index).toBe(0);
     expect(after.events[count - 1].index).toBe(count - 1);
     expect(after.events[count].type).toBe("continued");
     expect(after.events.length).toBeGreaterThan(count + 1);
   });
-}, 60_000);
+});
