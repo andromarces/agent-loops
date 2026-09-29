@@ -1247,8 +1247,10 @@ test("--continue-from keeps a large earlier event whole", async () => {
   });
 });
 
-// Well above the default V8 argument limit (about 125,000 on Node 22 and 26), so an
-// argument spread over the earlier events anywhere on this path throws RangeError.
+// Well above the smallest spread that threw in a standalone bisection of
+// [].push(...list, {}): 124,862 elements on Node v26.8.1 and 125,217 on Node
+// v22.23.3. With a spread restored at the call site in src/cli.mjs, this test
+// failed on both versions at this count.
 const EARLIER_EVENTS = 500_000;
 
 // Usefulness: verifies a same-path continuation reads a written transcript with
