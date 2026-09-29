@@ -12,7 +12,7 @@ import { main as cliMain } from "../../src/cli.mjs";
 import { removeDirQuiet } from "../../src/install/fsutil.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { installRoot, manifestPath, readManifest } from "../../src/install/manifest.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath, restoreAgentLoopHome } from "../runtime-helpers.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -193,7 +193,7 @@ test("the uninstall CLI exits 1 when the install directory cannot be removed", a
   } finally {
     console.log = originalLog;
     console.error = originalError;
-    delete process.env.AGENT_LOOP_HOME;
+    restoreAgentLoopHome();
     process.exitCode = 0;
   }
 });

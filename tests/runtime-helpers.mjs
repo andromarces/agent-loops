@@ -47,6 +47,21 @@ export function restoreRunsRoot() {
   }
 }
 
+// Captured at import, before any test overrides the install home.
+const originalAgentLoopHome = process.env.AGENT_LOOP_HOME;
+
+/**
+ * Puts AGENT_LOOP_HOME back to the value it had before the tests overrode it:
+ * set when it existed, deleted only when it did not.
+ */
+export function restoreAgentLoopHome() {
+  if (originalAgentLoopHome === undefined) {
+    delete process.env.AGENT_LOOP_HOME;
+  } else {
+    process.env.AGENT_LOOP_HOME = originalAgentLoopHome;
+  }
+}
+
 /**
  * Runs an ordered list of fake replies and records each call in `recorded`.
  * A reply may be a value or a `(state, prompt, options)` function; values are
