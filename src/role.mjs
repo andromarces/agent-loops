@@ -1,4 +1,4 @@
-// `agent-loop role`: run one worker or reviewer turn, or finish/abort a run,
+// `agent-loop role`: run one worker or reviewer turn, or finish/abort/extend a run,
 // through the same guards as the headless loop, driven by a lifecycle state
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
 // envelope per invocation; all logs go to stderr.
@@ -39,7 +39,7 @@ import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
-const OPERATIONS = new Set(["dispatch", "finish", "abort", "wait-checks"]);
+const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "wait-checks"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
@@ -330,10 +330,17 @@ async function archiveState(paths, existing) {
   logInfo(`archived terminal state file to ${archived}`);
 }
 
-/** Later calls read configuration from the state file and reject any change. */
-function rejectInitFlagChanges(args, state) {
+/**
+ * Later calls read configuration from the state file and reject any change.
+ * `extend` passes `maxSteps` in `allowed`, because raising it is that operation's
+ * purpose; every other init field stays fixed.
+ */
+function rejectInitFlagChanges(args, state, allowed = []) {
   const provided = [];
   for (const flag of INIT_FIELDS) {
+    if (allowed.includes(flag)) {
+      continue;
+    }
     const isGiven = flag === "timeout" ? args.timeoutProvided : args[flag] !== null;
     if (isGiven) {
       provided.push([flag, args[flag], state[flag]]);
@@ -857,6 +864,68 @@ async function abort(args) {
 }
 
 /**
+ * `extend`: raises `maxSteps` of a non-terminal run in place, so the stored role
+ * session ids and first-turn tracking keep working where a new run would start
+ * every role on a new session (#361). The new value must exceed both `stepsUsed`
+ * and the current `maxSteps`; `--max-steps` already passed the init range check
+ * at parse time. The change is appended to `budgetChanges` with the steps used at
+ * that point, so the history shows where the budget moved (ADR 0014). The
+ * lifecycle is left as it is: an `interrupted` run stays interrupted.
+ */
+async function extend(args) {
+  if (args.role !== null) {
+    throw new RoleError("--role is only valid for dispatch.");
+  }
+  if (args.reason !== null) {
+    throw new RoleError("--reason is only valid for abort.");
+  }
+  rejectFinishOnlyFlags(args, "extend");
+  if (args.maxSteps === null) {
+    throw new RoleError("extend requires --max-steps <count>.");
+  }
+
+  const paths = statePaths({ cwd: args.cwd });
+  return withStateLock(paths.lockFile, async () => {
+    const state = requireState(await readState(paths.stateFile), args.cwd, { needsBudget: true });
+    rejectInitFlagChanges(args, state, ["maxSteps"]);
+    if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
+      throw new RoleError(`Run is already ${state.lifecycle}.`);
+    }
+    if (args.maxSteps <= state.stepsUsed) {
+      throw new RoleError(
+        `--max-steps must be larger than stepsUsed (${state.stepsUsed}), got: ${args.maxSteps}.`,
+      );
+    }
+    if (args.maxSteps <= state.maxSteps) {
+      throw new RoleError(
+        `--max-steps must be larger than the current maxSteps (${state.maxSteps}), got: ${args.maxSteps}.`,
+      );
+    }
+    if (!Array.isArray(state.budgetChanges)) {
+      state.budgetChanges = [];
+    }
+    state.budgetChanges.push({
+      from: state.maxSteps,
+      to: args.maxSteps,
+      stepsUsed: state.stepsUsed,
+      at: new Date().toISOString(),
+    });
+    state.maxSteps = args.maxSteps;
+    await writeState(paths.stateFile, state);
+    logInfo(`step budget raised to ${state.maxSteps} (${state.stepsUsed} steps used)`);
+    return {
+      exitCode: 0,
+      payload: {
+        status: "ok",
+        lifecycle: state.lifecycle,
+        maxSteps: state.maxSteps,
+        stepsUsed: state.stepsUsed,
+      },
+    };
+  });
+}
+
+/**
  * `wait-checks`: polls the required checks of `--pr` until none is pending or
  * the bound elapses, then prints the last check states with a `timedOut` flag.
  * It reads status only, so it touches no run state and needs no init, but it
@@ -956,6 +1025,8 @@ export async function executeRoleCommand(args, deps = {}) {
         return await finish(args, deps);
       case "abort":
         return await abort(args, deps);
+      case "extend":
+        return await extend(args);
       case "wait-checks":
         return await waitChecksOperation(args, deps);
       default:

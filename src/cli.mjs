@@ -200,7 +200,7 @@ The runtime enforces step limits and mutation boundaries.
 
 Subcommands:
 
-  agent-loop role               Run a single worker or reviewer turn, or finish/abort
+  agent-loop role               Run a single worker or reviewer turn, or finish/abort/extend
                                 a run, from a lifecycle state file (see below). One JSON
                                 object on stdout; logs on stderr.
   agent-loop install            Install harness entry points and parent guards at user
@@ -221,6 +221,10 @@ Role operations:
                                 keys to record an unresolved PR-head compare. Exits 0 for
                                 that marker, where the headless loop exits 4.
   abort                         End the run with --reason.
+  extend                        Raise the step budget of a non-terminal run to
+                                --max-steps, on the same state file, so the stored
+                                role session ids stay. The value must exceed both
+                                stepsUsed and the current budget.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
                                 timedOut flag. The bound starts at command entry
@@ -244,6 +248,7 @@ Role flags:
   --task / --mode / --worker* / --reviewer* / --max-steps / --timeout
                                 First (init) call only. Later calls read these from the
                                 state file and reject any attempt to change them.
+                                Only extend takes --max-steps after init.
   --prompt-file <path>          Prompt source. Default is stdin.
   --transcript <file>           Append invocation and result events (JSON lines).
   --resume-interrupted          Explicitly continue after an uncertain previous turn.

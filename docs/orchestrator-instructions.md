@@ -92,7 +92,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `--task` on a later dispatch: `--task` keys init detection, so a dispatch
   that carries it while a run is active fails instead of continuing the run.
   Repeating any other init flag with its current value is accepted; changing
-  one is rejected, so omit changed flags and never invent new values.
+  one is rejected, so omit changed flags and never invent new values. The one
+  exception is the step budget, which only `role extend` changes (see below).
 
 ## Dispatch
 
@@ -864,10 +865,23 @@ to GitHub Pro or make this repository public to enable this feature.`, was measu
 
 ## Blockers and terminal states
 
-- Blocker, `interrupted` lifecycle, or step limit with work remaining: call
+- Blocker or `interrupted` lifecycle: call
   `agent-loop role abort --cwd "<work tree>" --reason "<explanation>"` and
   report the unresolved condition. Never repeat an uncertain turn without a
   maintainer decision.
+- Step limit with work remaining (`Step budget exhausted`): if the user
+  authorized more steps, raise the budget with
+  `agent-loop role extend --cwd "<work tree>" --max-steps <count>`, then
+  dispatch again. Otherwise call `abort` and report the unresolved condition.
+  Never raise the budget on your own to avoid a stop the user set.
+- `extend` changes the budget in place on the same state file, so each role
+  keeps its stored session and the run does not send the preamble again. Do not
+  abort and start a new run to gain steps: that starts every role on a new
+  session and loses its conversation history. `<count>` must be larger than both
+  `stepsUsed` and the current `maxSteps`, and follows the `--max-steps` range
+  below. `extend` works from `active`, `dispatched`, and `interrupted`, leaves
+  the lifecycle as it is, and refuses a terminal run. An `interrupted` run still
+  needs `abort` or `dispatch --resume-interrupted`.
 - `halted` lifecycle (reviewer mutation or snapshot error): the run is already
   terminal and the subcommand rejects further operations, including `abort`.
   Report the failure and the modified paths from the envelope, then stop.
@@ -912,9 +926,13 @@ needed: the subcommand records each dispatched turn itself.
   recovery call records an already-charged step and charges none of its own, so
   it does not push the history past that bound. The entries are fixed-shape, so
   the history cannot grow with the text a child returns.
+- `budgetChanges` holds one entry per `role extend`: `from` and `to` (the old
+  and new `maxSteps`), `stepsUsed` when the change ran, and `at`. It shows after
+  which turn the budget changed. A run never extended has no `budgetChanges`.
+  Because `maxSteps` only grows, `turns` still holds at most `maxSteps` entries.
 - Accepted `--max-steps` range: 1 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
-  The CLI refuses a `--max-steps` outside it, and `dispatch` and `finish`
-  re-check the stored `maxSteps` against the same range before reading the
+  The CLI refuses a `--max-steps` outside it, and `dispatch`, `finish`, and
+  `extend` re-check the stored `maxSteps` against the same range before reading the
   budget, because a state file written by an earlier version or hand-edited
   carries the value past the flag check. A refusal names the state file field to
   correct. Every budget a run reads is therefore a safe integer, so the step
