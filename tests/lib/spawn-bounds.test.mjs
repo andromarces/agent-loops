@@ -4,12 +4,22 @@ vi.mock("execa", () => ({ execa: vi.fn() }));
 
 import { execa } from "execa";
 import { runGh } from "../../src/lib/ci-gate.mjs";
+import { FORCE_KILL_AFTER_DELAY_MS } from "../runtime-helpers.mjs";
 import { assertGitWorkTree } from "../../src/lib/snapshot.mjs";
 
-// The real-process tests prove a bound terminates its child, but a wall clock
-// cannot also prove the bound's value on a loaded runner (issue #373). These
-// tests prove the value without a clock: they read what the runner hands the
-// spawn layer, so a late, missing, or changed bound fails on any machine.
+// Scoped exception to the TDD rule (issue #373, maintainer decision on PR #381):
+// these tests assert the options handed to execa, an implementation detail,
+// because that is the only proof of the bound value that holds on every runner.
+//
+// - execa runs its bound and its force-kill delay on `node:timers/promises`,
+//   which Vitest fake timers do not drive, so no fake clock can advance a real
+//   child to 299 ms and then 300 ms.
+// - No observable proof of the bound value is independent of runner load: the
+//   bound fires from a timer in this process, so a late bound and a loaded runner
+//   look the same in any wall-clock measurement.
+//
+// The real-process tests in ci-gate.test.mjs and snapshot.test.mjs prove the other
+// half: a bound that fires does kill the child.
 
 function spawnedWith() {
   expect(execa).toHaveBeenCalledTimes(1);
@@ -24,7 +34,7 @@ test("runGh hands the spawn layer its exact bound and a tree kill", async () => 
   await runGh(["pr", "checks", "42"], ".", { timeoutMs: 300 });
   expect(spawnedWith()).toMatchObject({
     timeout: 300,
-    forceKillAfterDelay: 1000,
+    forceKillAfterDelay: FORCE_KILL_AFTER_DELAY_MS,
     killDescendants: true,
     cleanup: true,
   });
@@ -49,7 +59,7 @@ test("assertGitWorkTree hands the spawn layer its exact bound and a tree kill", 
   await assertGitWorkTree(".", { timeoutMs: 300 });
   expect(spawnedWith()).toMatchObject({
     timeout: 300,
-    forceKillAfterDelay: 1000,
+    forceKillAfterDelay: FORCE_KILL_AFTER_DELAY_MS,
     killDescendants: true,
     cleanup: true,
   });

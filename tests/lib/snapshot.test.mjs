@@ -13,7 +13,11 @@ import {
   snapshot,
   withMutationCheck,
 } from "../../src/lib/snapshot.mjs";
-import { expectBoundKillsShim, removePath } from "../runtime-helpers.mjs";
+import {
+  BOUND_KILL_TEST_TIMEOUT_MS,
+  expectBoundKillsShim,
+  removePath,
+} from "../runtime-helpers.mjs";
 
 async function createTempRepo() {
   const dir = await mkdtemp(join(tmpdir(), "agent-loops-snap-test-"));
@@ -43,15 +47,19 @@ test("assertGitWorkTree validates git directory", async () => {
 // when the bound expires, on Windows and on macOS. A real process is the only way
 // to check that a slow `git` cannot add its own time to a caller's total limit,
 // because every other test uses a real fast `git` (issue #329).
-test("assertGitWorkTree refuses a probe that outlasts its bound", async () => {
-  // Termination only: the bound value is proved in spawn-bounds.test.mjs, so the
-  // waits here are ceilings that load cannot reach (issue #373).
-  await expectBoundKillsShim("git", (timeoutMs) =>
-    expect(assertGitWorkTree(tmpdir(), { timeoutMs })).rejects.toThrow(
-      /validation did not complete within its bound/,
-    ),
-  );
-});
+test(
+  "assertGitWorkTree refuses a probe that outlasts its bound",
+  async () => {
+    // Termination only: the bound value is proved in spawn-bounds.test.mjs, so the
+    // waits here are ceilings that load cannot reach (issue #373).
+    await expectBoundKillsShim("git", (timeoutMs) =>
+      expect(assertGitWorkTree(tmpdir(), { timeoutMs })).rejects.toThrow(
+        /validation did not complete within its bound/,
+      ),
+    );
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
 
 // Usefulness: verifies diffSnapshots detects when nothing changes.
 test("diffSnapshots returns empty list when no change occurred", async () => {

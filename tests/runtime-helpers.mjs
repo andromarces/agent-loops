@@ -93,9 +93,48 @@ export async function deadPid() {
 // clock by tests/lib/spawn-bounds.test.mjs, so every wait here is a generous
 // ceiling that load cannot reach, and none of them measures the bound.
 const SHIM_HANG_MS = 60_000;
-// The longest a call may take to return, and a kill to land, once the bound or
-// the abort has fired. A survivor is still running when either ceiling ends.
-const SHIM_CEILING_MS = 10_000;
+// The force-kill delay the runners pass with a bound. The source sets it in
+// runGh and assertGitWorkTree, and spawn-bounds.test.mjs pins the value there, so
+// a change to it fails that test until this constant follows.
+export const FORCE_KILL_AFTER_DELAY_MS = 1000;
+// With no bound the runners pass no delay, so execa applies its own default. It is
+// the delay the abort path waits before the forced kill.
+const ABORT_FORCE_KILL_AFTER_DELAY_MS = 5000;
+// Slack past the force-kill boundary for the OS to finish tearing the process
+// down: TerminateProcess and SIGKILL finish in milliseconds, and the pid leaves
+// the process table shortly after. One second is far above that and small against
+// the delay it follows, so a child that outlives it was not force-killed.
+const TEARDOWN_MARGIN_MS = 1000;
+// The longest a call may take to return once the bound or the abort has fired.
+// A survivor that holds the call open never returns, so this cap fails the test
+// with the reason before the test timeout does.
+const CALL_CEILING_MS = 10_000;
+// The longest the shim may take to record its pid, and to make the record visible.
+const START_WAIT_MS = 10_000;
+const RECORD_VISIBLE_MS = 500;
+// The most the fixture removal after a test can take: `removePath` retries 10
+// times, 100 ms apart.
+const CLEANUP_MS = 2000;
+const BOUND_MS = 2000;
+
+/**
+ * Vitest timeouts for the two helpers below. Each is the sum of the waits the
+ * helper permits, so a test that waits within its limits cannot hit the test
+ * timeout, and a test that exceeds a limit fails on that limit's own message.
+ */
+export const BOUND_KILL_TEST_TIMEOUT_MS =
+  BOUND_MS +
+  CALL_CEILING_MS +
+  RECORD_VISIBLE_MS +
+  FORCE_KILL_AFTER_DELAY_MS +
+  TEARDOWN_MARGIN_MS +
+  CLEANUP_MS;
+export const ABORT_KILL_TEST_TIMEOUT_MS =
+  START_WAIT_MS +
+  CALL_CEILING_MS +
+  ABORT_FORCE_KILL_AFTER_DELAY_MS +
+  TEARDOWN_MARGIN_MS +
+  CLEANUP_MS;
 
 /**
  * Writes a `command` shim into `dir` that hangs, so a kill is exercised against
@@ -148,12 +187,19 @@ function processExists(pid) {
   }
 }
 
-async function assertGone(pid) {
-  const deadline = Date.now() + SHIM_CEILING_MS;
+// The child must be gone once the force-kill boundary and the teardown margin
+// have passed after the call returned. The force-kill timer starts when the kill
+// is sent, which is at or before the return, so a child alive past this point was
+// not force-killed.
+async function assertGone(pid, forceKillAfterDelayMs) {
+  const deadline = Date.now() + forceKillAfterDelayMs + TEARDOWN_MARGIN_MS;
   while (processExists(pid) && Date.now() < deadline) {
     await delay(50);
   }
-  assert.ok(!processExists(pid), `the shim child ${pid} survived the cancellation`);
+  assert.ok(
+    !processExists(pid),
+    `the shim child ${pid} outlived the ${forceKillAfterDelayMs} ms force-kill boundary`,
+  );
 }
 
 // A call that a surviving child holds open never returns, so the wait is capped
@@ -185,28 +231,29 @@ async function withShimOnPath(dir, body) {
 /**
  * Checks that a time bound kills a real hanging `command` child. `run(boundMs)`
  * starts the bounded call and resolves when it returns. The call must return
- * within `boundMs` plus SHIM_CEILING_MS, and the node process the shim recorded
- * must be gone within a further SHIM_CEILING_MS. The child must have started
- * before the call returned, or the test fails: a child that never ran proves
- * nothing about the kill, so `boundMs` must leave the shim time to start on a
- * loaded machine. That value is not what is under test here. Returns the call
+ * within `boundMs` plus CALL_CEILING_MS, and the node process the shim recorded
+ * must be gone within the force-kill delay plus the teardown margin after that.
+ * The child must have started before the call returned, or the test fails: a
+ * child that never ran proves nothing about the kill, so `boundMs` must leave the
+ * shim time to start on a loaded machine. That value is not what is under test
+ * here. Pass BOUND_KILL_TEST_TIMEOUT_MS as the test timeout. Returns the call
  * result.
  */
-export async function expectBoundKillsShim(command, run, boundMs = 2000) {
+export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
   try {
     const shim = await writeHangingShim(dir, command);
     return await withShimOnPath(dir, async () => {
       const result = await returnsWithin(
         run(boundMs),
-        boundMs + SHIM_CEILING_MS,
+        boundMs + CALL_CEILING_MS,
         "the call did not return after its bound",
       );
       // The record was written before the bound expired, so a short wait only
       // covers file visibility.
-      const pid = await waitForPid(shim.started, 500);
+      const pid = await waitForPid(shim.started, RECORD_VISIBLE_MS);
       assert.notEqual(pid, null, `the shim did not start within the ${boundMs} ms bound`);
-      await assertGone(pid);
+      await assertGone(pid, FORCE_KILL_AFTER_DELAY_MS);
       return result;
     });
   } finally {
@@ -218,7 +265,9 @@ export async function expectBoundKillsShim(command, run, boundMs = 2000) {
  * Checks that an abort signal kills a real hanging `command` child. `start(signal)`
  * starts the call without a time bound and returns its promise. The test aborts
  * only after the shim recorded its pid, so a slow start cannot make the abort
- * precede the child, and the child must be gone once the call returns.
+ * precede the child. The child must be gone within execa's default force-kill
+ * delay plus the teardown margin after the call returns. Pass
+ * ABORT_KILL_TEST_TIMEOUT_MS as the test timeout.
  */
 export async function expectAbortKillsShim(command, start) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
@@ -227,15 +276,15 @@ export async function expectAbortKillsShim(command, start) {
     return await withShimOnPath(dir, async () => {
       const controller = new AbortController();
       const pending = start(controller.signal);
-      const pid = await waitForPid(shim.started, SHIM_CEILING_MS);
+      const pid = await waitForPid(shim.started, START_WAIT_MS);
       assert.notEqual(pid, null, "the shim never started");
       controller.abort();
       const result = await returnsWithin(
         pending,
-        SHIM_CEILING_MS,
+        CALL_CEILING_MS,
         "the call did not return after the abort",
       );
-      await assertGone(pid);
+      await assertGone(pid, ABORT_FORCE_KILL_AFTER_DELAY_MS);
       return result;
     });
   } finally {

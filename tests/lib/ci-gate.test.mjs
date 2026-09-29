@@ -1,7 +1,12 @@
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
 import { checkCi, readRequiredChecks, runGh } from "../../src/lib/ci-gate.mjs";
-import { expectAbortKillsShim, expectBoundKillsShim } from "../runtime-helpers.mjs";
+import {
+  ABORT_KILL_TEST_TIMEOUT_MS,
+  BOUND_KILL_TEST_TIMEOUT_MS,
+  expectAbortKillsShim,
+  expectBoundKillsShim,
+} from "../runtime-helpers.mjs";
 
 const HEAD = "1111111111111111111111111111111111111111";
 const MERGE = "2222222222222222222222222222222222222222";
@@ -1974,21 +1979,29 @@ test("a status read through the A-to-B-to-A window is still marked advisory", as
 // (issue #329). Termination only: the bound value is proved in
 // spawn-bounds.test.mjs, so the waits here are ceilings that load cannot reach
 // (issue #373).
-test("runGh terminates the gh child when its bound expires", async () => {
-  const result = await expectBoundKillsShim("gh", (timeoutMs) =>
-    runGh(["pr", "checks", "42", "--required"], tmpdir(), { timeoutMs }),
-  );
-  expect(result.timedOut).toBe(true);
-});
+test(
+  "runGh terminates the gh child when its bound expires",
+  async () => {
+    const result = await expectBoundKillsShim("gh", (timeoutMs) =>
+      runGh(["pr", "checks", "42", "--required"], tmpdir(), { timeoutMs }),
+    );
+    expect(result.timedOut).toBe(true);
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
 
 // Usefulness: verifies the `gh` runner terminates the child when the abort
 // signal fires, which is how the read cancels a call it no longer waits for.
 // The bound is off and the abort follows the shim's start, so only the signal
 // can stop the child (issue #320 review).
-test("runGh terminates the gh child when its abort signal fires", async () => {
-  const result = await expectAbortKillsShim("gh", (signal) =>
-    runGh(["pr", "checks", "42", "--required"], tmpdir(), { signal }),
-  );
-  expect(result.status).not.toBe(0);
-  expect(result.timedOut).toBe(false);
-});
+test(
+  "runGh terminates the gh child when its abort signal fires",
+  async () => {
+    const result = await expectAbortKillsShim("gh", (signal) =>
+      runGh(["pr", "checks", "42", "--required"], tmpdir(), { signal }),
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.timedOut).toBe(false);
+  },
+  ABORT_KILL_TEST_TIMEOUT_MS,
+);
