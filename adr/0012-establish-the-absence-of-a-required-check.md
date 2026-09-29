@@ -87,42 +87,45 @@ those apart. And `Branch not protected` was matched as an unanchored search, so
 the same text inside another error, or beside a second line, read as an absence;
 it is now compared as a whole reply.
 
-Two shapes were examined and left as they are, because the reply cannot tell them
-apart and the ambiguity only makes the gate over-refuse:
+Two shapes were examined and left as they are. An earlier draft of this ADR gave
+the wrong reason for the first, and the correction is recorded here.
 
-- A ruleset whose `enforcement` is `disabled` or `evaluate`. The branch-rules
-  reply carries no enforcement field; that field is on the rulesets endpoint. A
-  read-only probe on 2026-09-29 against `andromarces/agent-loops` confirms the
-  branch-rules entries carry `type`, `parameters` where a rule has them,
-  `ruleset_source_type`, `ruleset_source`, and `ruleset_id`, and nothing else. A
-  rule from a non-enforced ruleset is therefore read as a required context, which
-  refuses a pull request the branch does not actually require, and never passes
-  one it does.
-- A rule that applies to the branch by a name pattern or by `~DEFAULT_BRANCH`.
-  Branch conditions live on the rulesets endpoint too, so the branch-rules reply
-  is already the list GitHub filtered for that branch, and a rule that reaches it
-  applies. The same over-refuse follows if it does not.
+- A ruleset whose `enforcement` is `disabled` or `evaluate`. GitHub's
+  [branch-rules documentation](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch)
+  states that the endpoint returns active rules only, and that rules in rulesets with
+  `evaluate` or `disabled` enforcement are not returned. An earlier draft of this ADR
+  claimed the reply carried no enforcement field, so such a rule would be read as a
+  required context and over-refuse. That was wrong: the rule never appears in the
+  reply, so there is nothing to misread and no over-refusal follows. The corrected
+  reason does not change any classification, so the code is unchanged. One
+  consequence is worth keeping: a rule that is not enforced cannot require a check,
+  so its absence from the reply is correct evidence rather than a gap.
+- A rule that applies to the branch by a name pattern or by `~DEFAULT_BRANCH`. The
+  documentation states the same for branch conditions: every active rule that applies
+  to the branch is returned regardless of the level it is configured at, so the
+  reply is already the list GitHub filtered for that branch, and a rule that reaches
+  it applies.
 
 ## Reply shapes and their class
 
 One list, so a review can check the code against it.
 
-| Source                    | Reply shape                                                                                                                                                                | Class                                               |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Repository rulesets       | A non-empty JSON array whose entries are all well-formed rules, an object with a string `type`, and none a `required_status_checks` rule                                   | absent                                              |
-| Repository rulesets       | A non-empty JSON array carrying a `required_status_checks` rule whose `required_status_checks` is a non-empty array of entries with a non-empty string `context`           | has-contexts                                        |
-| Repository rulesets       | An empty JSON array, which is unknown because it is the same reply for a branch no ruleset applies to and for a caller or endpoint that enumerates no rule for that branch | unknown                                             |
-| Repository rulesets       | An entry that is not an object, is null, is an array, has no `type`, or has a `type` that is not a string                                                                  | unknown                                             |
-| Repository rulesets       | A `required_status_checks` rule whose `required_status_checks` is missing, is not an array, is empty, or holds an entry with no string `context`                           | unknown                                             |
-| Repository rulesets       | A body that is empty, is not JSON, or is JSON that is not an array                                                                                                         | unknown                                             |
-| Repository rulesets       | Any non-zero exit                                                                                                                                                          | unknown, except an unrecognized shape, which throws |
-| Classic branch protection | Exactly `gh: Branch not protected (HTTP 404)`, allowing one trailing LF or CRLF                                                                                            | absent                                              |
-| Classic branch protection | A non-empty JSON object whose `required_status_checks` is an object whose `contexts` and `checks` entries all name a context, and which names at least one                 | has-contexts                                        |
-| Classic branch protection | A body that is empty, is not JSON, is JSON that is not an object, has no `required_status_checks`, has it as null or of the wrong type, or names no check                  | unknown                                             |
-| Classic branch protection | `Not Found` (404), either `Resource not accessible` 403, the Free-plan 403, and `Branch not protected` carrying any surrounding or extra text                              | unknown                                             |
-| Classic branch protection | Any other non-zero exit                                                                                                                                                    | unknown, except an unrecognized shape, which throws |
-| `gh pr checks --required` | A JSON array of named checks                                                                                                                                               | has-contexts for those names                        |
-| `gh pr checks --required` | An empty array, output that is not a JSON array, and a failed read                                                                                                         | never classified, and never an absence              |
+| Source                    | Reply shape                                                                                                                                                                                        | Class                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Repository rulesets       | A read of every page that is a non-empty array whose entries all carry a documented rule type and none is a `required_status_checks` rule                                                          | absent                                              |
+| Repository rulesets       | A read of every page carrying a `required_status_checks` rule whose `required_status_checks` is a non-empty array of entries with a non-empty string `context`                                     | has-contexts                                        |
+| Repository rulesets       | A read of every page that is an empty array, which is unknown because it is the same reply for a branch no ruleset applies to and for a caller or endpoint that enumerates no rule for that branch | unknown                                             |
+| Repository rulesets       | An entry that is not an object, is null, is an array, has no `type`, has a `type` that is not a string, or has a `type` outside the documented rule types                                          | unknown                                             |
+| Repository rulesets       | A `required_status_checks` rule whose `required_status_checks` is missing, is not an array, is empty, or holds an entry with no string `context`                                                   | unknown                                             |
+| Repository rulesets       | A body that is empty, is not JSON, or is JSON that is not the array of pages `--slurp` returns, or that holds a page which is not an array                                                         | unknown                                             |
+| Repository rulesets       | Any non-zero exit                                                                                                                                                                                  | unknown, except an unrecognized shape, which throws |
+| Classic branch protection | Exactly `gh: Branch not protected (HTTP 404)`, allowing one trailing LF or CRLF                                                                                                                    | absent                                              |
+| Classic branch protection | A non-empty JSON object whose `required_status_checks` is an object whose `contexts` and `checks` entries all name a context, and which names at least one                                         | has-contexts                                        |
+| Classic branch protection | A body that is empty, is not JSON, is JSON that is not an object, has no `required_status_checks`, has it as null or of the wrong type, or names no check                                          | unknown                                             |
+| Classic branch protection | `Not Found` (404), either `Resource not accessible` 403, the Free-plan 403, and `Branch not protected` carrying any surrounding or extra text                                                      | unknown                                             |
+| Classic branch protection | Any other non-zero exit                                                                                                                                                                            | unknown, except an unrecognized shape, which throws |
+| `gh pr checks --required` | A JSON array of named checks                                                                                                                                                                       | has-contexts for those names                        |
+| `gh pr checks --required` | An empty array, output that is not a JSON array, and a failed read                                                                                                                                 | never classified, and never an absence              |
 
 ## Decision
 
@@ -130,11 +133,16 @@ One list, so a review can check the code against it.
    branch protection, is classified by what its reply proved. The classification
    is an allowlist, so it fails closed, and `ABSENT`, the only answer that lets a
    finish pass, has exactly one reply per source:
-   - Repository rulesets: a successful reply whose body is a non-empty JSON array
-     in which every entry is a well-formed rule, an object carrying a string
-     `type`, and no entry is a `required_status_checks` rule. That is the read of
-     a branch that has no required-status-check rule. An empty array is excluded,
-     because it states nothing about the branch.
+   - Repository rulesets: a read of every page whose entries all carry a rule type
+     GitHub documents, and none is a `required_status_checks` rule. The endpoint
+     paginates at 30 rules per page, so the read follows every page, and a body the
+     gate cannot account for every page of is unknown, or a required-status rule on
+     a later page would be missed and a branch that requires a check would pass. An
+     empty result is excluded, because it states nothing about the branch. A rule
+     type outside the documented list is excluded, because a type the list does not
+     carry may be a required-status rule under a name the gate has not seen; the list
+     is the documented one, so a future GitHub rule type makes such a read unknown,
+     which refuses.
    - Classic branch protection: exactly `gh: Branch not protected` (404), which
      the endpoint writes only to a caller that can read protection, compared as a
      whole reply so no surrounding text can pass as it. No successful body proves

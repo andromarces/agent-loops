@@ -126,7 +126,7 @@ function suppliedRead(pr) {
  * @returns {string}
  */
 function noRequiredCheckClause() {
-  return " A base branch whose required-check sources each state that it holds no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records the absence. Only one exact reply per source states that outcome, so a source this credential cannot read, one that returns a shape the gate cannot read, and an empty ruleset reply all leave the gate refusing instead, with the refusal naming the source.";
+  return " A base branch whose required-check sources each state that it holds no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records the absence. Only one exact reply per source states that outcome, so a source this credential cannot read, a reply the gate cannot read, an empty ruleset result, and a merge state the gate cannot read all leave it refusing instead, with the refusal naming the source.";
 }
 
 /**

@@ -403,19 +403,21 @@ const RULE_SURFACES = [
 
 for (const [name, path] of RULE_SURFACES) {
   // Usefulness: verifies ${name} states the allowlist rule, the one absence per
-  // source, and the empty-array unknown, so it cannot describe a malformed,
-  // unreadable, or empty read as a pass (#336 review).
+  // source, and the pagination and rule-type unknown, so it cannot describe a
+  // partial, malformed, or unreadable read as a pass (#336 review).
   test(`${name} states the allowlisted absence rule`, async () => {
     const text = await readFile(path, "utf8");
     expectRule(text, /allowlist/i, /fails closed/i);
-    // The one per-source absence each. For repository rulesets it is the non-empty
-    // array read with no required-status-check rule; for classic protection it is
-    // the exact 404, and no successful body proves one.
-    expectRule(text, /repository rulesets/i, /non-empty/i, /JSON array/i, /well-formed rule/i);
+    expectRule(text, /three classes/i, /absent/i, /has-contexts/i, /unknown/i);
+    // The one per-source absence each, and the ruleset read is every page.
+    expectRule(text, /repository rulesets/i, /read of every page/i, /documented rule type/i);
     expectRule(text, /classic branch protection/i, /Branch not protected/);
     expectRule(text, /No successful classic-protection body proves an absence/i);
-    // The empty ruleset array states nothing, so it is unknown.
-    expectRule(text, /empty ruleset array/i, /unknown/i);
+    // The empty result and the unknown rule type both settle nothing.
+    expectRule(text, /empty ruleset result/i, /unknown/i);
+    expectRule(text, /not a documented rule type/i, /unknown/i);
+    // A rule on a later page is enforced rather than missed.
+    expectRule(text, /paginated/i, /later page/i, /enforced/i);
   });
 
   // Usefulness: verifies ${name} states that a ruleset-only branch reaches the
