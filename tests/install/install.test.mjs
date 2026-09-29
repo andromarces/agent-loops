@@ -431,12 +431,14 @@ test("rendered targets carry absolute package paths and no placeholders", async 
   );
 });
 
-// Usefulness: verifies detection runs without throwing and returns harness ids
-// in registry order; the detected set depends on the machine, so only the shape
-// is asserted.
+// Usefulness: verifies detection returns harness ids in registry order from a
+// controlled PATH, so the result does not depend on the machine or its load.
 test("detectHarnesses returns a subset of the registry", async () => {
-  const detected = await detectHarnesses();
-  expect(Array.isArray(detected)).toBe(true);
+  const bin = await makeHome();
+  await writeFile(join(bin, "codex"), "");
+  await writeFile(join(bin, "claude"), "");
+  const detected = await detectHarnesses({ path: bin });
+  expect(detected).toEqual(["claude", "codex"]);
   for (const harness of detected) {
     expect(HARNESS_ORDER).toContain(harness);
   }

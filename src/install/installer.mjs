@@ -877,23 +877,33 @@ async function exists(path) {
   }
 }
 
-// Probes every PATH entry and candidate at once. A serial scan cost one file
-// system round trip per candidate, so a long PATH on a slow or loaded machine
-// took seconds (#365).
-async function onPath(command) {
-  const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
-  const probes = dirs.flatMap((dir) =>
-    executableCandidates(command).map((candidate) => exists(join(dir, candidate))),
-  );
-  return (await Promise.all(probes)).some(Boolean);
+// Walks PATH in order and stops at the first match.
+async function onPath(command, path) {
+  for (const dir of path.split(delimiter).filter(Boolean)) {
+    for (const candidate of executableCandidates(command)) {
+      if (await exists(join(dir, candidate))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
-/** Harnesses whose CLI is found on PATH, in registry order. */
-export async function detectHarnesses() {
+/**
+ * Harnesses whose CLI is found on PATH, in registry order. Harnesses are
+ * probed concurrently, at most one probe outstanding per harness, so the scan
+ * stays short on a long PATH or a loaded machine (#365). `path` overrides
+ * `process.env.PATH`.
+ */
+export async function detectHarnesses({ path = process.env.PATH ?? "" } = {}) {
   const found = await Promise.all(
     HARNESS_ORDER.map(async (harness) => {
-      const probes = HARNESS_META[harness].commands.map(onPath);
-      return (await Promise.all(probes)).some(Boolean);
+      for (const command of HARNESS_META[harness].commands) {
+        if (await onPath(command, path)) {
+          return true;
+        }
+      }
+      return false;
     }),
   );
   return HARNESS_ORDER.filter((_, index) => found[index]);
