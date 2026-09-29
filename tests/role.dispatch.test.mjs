@@ -860,3 +860,71 @@ test("a declared PR supplies the runtime-read required-check status to the revie
   const state = await readRepoState(repo);
   expect(state.lastResult.prChecks).toMatchObject({ pr: 42, status: "failing" });
 });
+
+// Usefulness: verifies a failed first turn that reported a session id persists it, so the next
+// dispatch resumes that session, and a missing resumed session clears the stored id and reruns as
+// a first turn without a second step (issue #360, ADR 0014).
+test("a failed first turn keeps its session id and a missing session falls back in one step", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const prompts = [];
+  const worker = {
+    async run(state, prompt) {
+      prompts.push({ sessionId: state.sessionId, prompt });
+      if (prompts.length === 1) {
+        state.sessionId = "sess-failed";
+        throw new Error("boom");
+      }
+      if (state.sessionId === "sess-failed") {
+        throw Object.assign(new Error("No conversation found"), { sessionMissing: true });
+      }
+      state.sessionId = "sess-new";
+      return REPORT;
+    },
+  };
+  const agents = { fake1: worker, fake2: recordingAdapter([]) };
+
+  const first = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(first.payload).toMatchObject({ status: "error" });
+  expect((await readRepoState(repo)).roles.worker.sessionId).toBe("sess-failed");
+
+  const second = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(second.payload).toMatchObject({ status: "ok" });
+  expect(prompts.map((p) => p.sessionId)).toEqual([null, "sess-failed", null]);
+  expect(prompts[1].prompt).not.toContain("You are the implementation agent");
+  expect(prompts[2].prompt).toContain("You are the implementation agent");
+
+  const state = await readRepoState(repo);
+  expect(state).toMatchObject({ stepsUsed: 2 });
+  expect(state.turns).toHaveLength(2);
+  expect(state.roles.worker.sessionId).toBe("sess-new");
+});
+
+// Usefulness: verifies a cancel that ends the turn after the CLI reported its session still
+// persists the id for the resume that follows.
+test("a canceled turn keeps the session id the CLI reported", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const worker = {
+    async run(state) {
+      state.sessionId = "sess-canceled";
+      throw Object.assign(new Error("canceled"), { isCanceled: true });
+    },
+  };
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(130);
+  expect((await readRepoState(repo)).roles.worker.sessionId).toBe("sess-canceled");
+});

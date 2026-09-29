@@ -890,3 +890,22 @@ test("opencode keeps a mid-line Verdict part out of the closing block", async ()
     deferred: "none",
   });
 });
+
+// Usefulness: verifies a timed-out first turn keeps the session id its partial stream printed, so
+// the next turn resumes it (issue #360). A resumed turn keeps its stored id.
+test("opencode keeps the session id from a failed first turn", async () => {
+  const stdout = JSON.stringify({ type: "step_start", sessionID: "ses-failed", part: {} });
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("opencode timed out."), { stdout, stderr: "", timedOut: true }),
+  );
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  await expect(runOpenCode(state, "p", { cwd: "/dir" })).rejects.toThrow("timed out");
+  expect(state.sessionId).toBe("ses-failed");
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("opencode exited."), { stdout, stderr: "", exitCode: 1 }),
+  );
+  const resumed = { kind: "opencode", sessionId: "ses-stored", model: null, effort: null };
+  await expect(runOpenCode(resumed, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(resumed.sessionId).toBe("ses-stored");
+});

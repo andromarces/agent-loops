@@ -109,3 +109,49 @@ test("agy clears state.usage when the result carries no usage", async () => {
 
   expect(state.usage).toBeUndefined();
 });
+
+// Usefulness: verifies a failed first turn that printed a non-empty conversation id keeps it, and
+// an empty id (the model-error output) keeps nothing (issue #360).
+test("agy keeps a non-empty conversation id from a failed first turn", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("agy exited with code 1."), {
+      stdout: JSON.stringify({ conversation_id: "conv-failed", status: "ERROR", error: "boom" }),
+      stderr: "",
+    }),
+  );
+  const state = { kind: "agy", sessionId: null, model: null, effort: null };
+  await expect(runAgy(state, "p", { cwd: "/dir" })).rejects.toThrow("exited");
+  expect(state.sessionId).toBe("conv-failed");
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("agy exited with code 1."), {
+      stdout: JSON.stringify({ conversation_id: "", status: "ERROR", error: "bad model" }),
+      stderr: "",
+    }),
+  );
+  const empty = { kind: "agy", sessionId: null, model: null, effort: null };
+  await expect(runAgy(empty, "p", { cwd: "/dir" })).rejects.toThrow("exited");
+  expect(empty.sessionId).toBeNull();
+});
+
+// Usefulness: verifies a failure with unparseable stdout, such as a timeout, rethrows the exec error.
+test("agy rethrows a failure with no parseable stdout", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("agy timed out after 5 seconds."), { stdout: "", stderr: "" }),
+  );
+  const state = { kind: "agy", sessionId: "conv-1", model: null, effort: null };
+  await expect(runAgy(state, "p", { cwd: "/dir" })).rejects.toThrow("timed out");
+  expect(state.sessionId).toBe("conv-1");
+});
+
+// Usefulness: verifies agy's behavior for a missing conversation: exit 0 with a warning and a new
+// conversation. The adapter adopts the new id (issue #360).
+test("agy adopts the new conversation when the resumed one is missing", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ conversation_id: "conv-new", response: "ok" }),
+    stderr: 'warning: conversation "conv-old" not found',
+  });
+  const state = { kind: "agy", sessionId: "conv-old", model: null, effort: null };
+  await expect(runAgy(state, "p", { cwd: "/dir" })).resolves.toBe("ok");
+  expect(state.sessionId).toBe("conv-new");
+});

@@ -131,3 +131,61 @@ test("codex removes usage when no turn-completed usage exists", async () => {
 
   expect(state).not.toHaveProperty("usage");
 });
+
+// Usefulness: verifies a failed first turn keeps the thread id that `thread.started` printed
+// before the failure, so the next turn resumes it (issue #360).
+test("codex keeps the thread id from a failed first turn", async () => {
+  const stdout = [
+    { type: "thread.started", thread_id: "th-failed" },
+    { type: "turn.failed", error: { message: "boom" } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), { stdout, stderr: "" }),
+  );
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  await expect(runCodex(state, "p", { cwd: "/dir" })).rejects.toThrow("exited");
+  expect(state.sessionId).toBe("th-failed");
+});
+
+// Usefulness: verifies a failed resumed turn never changes the stored id.
+test("codex keeps the stored thread id when a resumed turn fails", async () => {
+  const stdout = JSON.stringify({ type: "thread.started", thread_id: "th-other" });
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), { stdout, stderr: "" }),
+  );
+
+  const state = { kind: "codex", sessionId: "th-stored", model: null, effort: null };
+  await expect(runCodex(state, "p", { cwd: "/dir" })).rejects.toThrow("exited");
+  expect(state.sessionId).toBe("th-stored");
+});
+
+// Usefulness: verifies the Codex stderr for a missing thread marks the error (issue #360).
+test("codex flags a resume of a missing thread", async () => {
+  const err = Object.assign(new Error("codex exited with code 1."), {
+    stdout: "",
+    stderr:
+      "Error: thread/resume: thread/resume failed: no rollout found for thread id abc (code -32600)",
+  });
+  vi.mocked(exec).mockRejectedValueOnce(err);
+
+  const state = { kind: "codex", sessionId: "abc", model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.sessionMissing).toBe(true);
+});
+
+// Usefulness: verifies a timeout is not flagged and the stored id stays.
+test("codex does not flag a timeout", async () => {
+  const err = Object.assign(new Error("codex timed out after 5 seconds."), {
+    stdout: "",
+    stderr: "",
+  });
+  vi.mocked(exec).mockRejectedValueOnce(err);
+
+  const state = { kind: "codex", sessionId: "abc", model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.sessionMissing).toBeUndefined();
+  expect(state.sessionId).toBe("abc");
+});

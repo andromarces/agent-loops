@@ -129,3 +129,78 @@ test("claude clears stale usage when a failed call has no parseable stdout", asy
   );
   expect(state.usage).toBeUndefined();
 });
+
+// Usefulness: verifies a failed first turn that printed its session id keeps the id, so the next
+// turn resumes that session and its edits (issue #360).
+test("claude keeps the session id from a failed first turn", async () => {
+  const stdout = JSON.stringify([
+    { type: "system", subtype: "init", session_id: "s-failed" },
+    { type: "result", is_error: true, session_id: "s-failed", result: "boom" },
+  ]);
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude exited with code 1."), { stdout, stderr: "" }),
+  );
+
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path", readOnly: false })).rejects.toThrow("exited");
+  expect(state.sessionId).toBe("s-failed");
+});
+
+// Usefulness: verifies a failed resumed turn never changes the stored id.
+test("claude keeps the stored session id when a resumed turn fails", async () => {
+  const stdout = JSON.stringify({ type: "result", session_id: "s-other", result: "boom" });
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude exited with code 1."), { stdout, stderr: "" }),
+  );
+
+  const state = { kind: "claude", sessionId: "s-stored", model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path", readOnly: false })).rejects.toThrow("exited");
+  expect(state.sessionId).toBe("s-stored");
+});
+
+// Usefulness: verifies a timeout with empty stdout leaves the id null (nothing to read).
+test("claude leaves the session id null when a failed first turn printed nothing", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude timed out after 5 seconds."), { stdout: "", stderr: "" }),
+  );
+
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path", readOnly: false })).rejects.toThrow("timed");
+  expect(state.sessionId).toBeNull();
+});
+
+// Usefulness: verifies the Claude Code stderr for a missing session marks the error, so the
+// runtime reruns the turn as a first turn (issue #360).
+test("claude flags a resume of a missing session", async () => {
+  const err = Object.assign(new Error("claude exited with code 1."), {
+    stdout: "",
+    stderr: "No conversation found with session ID: 11111111-2222-4333-8444-555555555555",
+  });
+  vi.mocked(exec).mockRejectedValueOnce(err);
+
+  const state = { kind: "claude", sessionId: "gone", model: null, effort: null };
+  const caught = await runClaude(state, "p", { cwd: "/path" }).catch((e) => e);
+  expect(caught.sessionMissing).toBe(true);
+});
+
+// Usefulness: verifies a first turn and an unrelated stderr are never flagged.
+test("claude does not flag a first turn or an unrelated resume failure", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("failed"), {
+      stdout: "",
+      stderr: "No conversation found with session ID: x",
+    }),
+  );
+  const first = await runClaude({ kind: "claude", sessionId: null }, "p", { cwd: "/path" }).catch(
+    (e) => e,
+  );
+  expect(first.sessionMissing).toBeUndefined();
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("failed"), { stdout: "", stderr: "API Error: 500" }),
+  );
+  const other = await runClaude({ kind: "claude", sessionId: "s1" }, "p", { cwd: "/path" }).catch(
+    (e) => e,
+  );
+  expect(other.sessionMissing).toBeUndefined();
+});

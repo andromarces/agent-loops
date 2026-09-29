@@ -27,3 +27,27 @@ export function resumeMismatchError(agent, idLabel, expected, received) {
     ].join("\n"),
   );
 }
+
+/**
+ * Keeps the session id a failed first turn reported, so the next turn resumes that session
+ * and its edits instead of starting a new one. A turn that resumed an id never changes it.
+ */
+export function keepFailedSessionId(state, id) {
+  if (!state.sessionId && typeof id === "string" && id) {
+    state.sessionId = id;
+  }
+}
+
+/**
+ * Marks a failed resume whose session the CLI does not have, so the runtime can rerun the turn
+ * as a first turn. The match reads stderr only, because stdout carries model output that could
+ * quote the phrase. Nothing is marked for a first turn, which has no session to lose.
+ * @param {unknown} err the error `exec` threw
+ * @param {string | null} requestedId session id the failed call asked the CLI to resume
+ * @param {RegExp} pattern the CLI's stderr text for a session it cannot find
+ */
+export function flagMissingSession(err, requestedId, pattern) {
+  if (requestedId && err && typeof err === "object" && pattern.test(err.stderr ?? "")) {
+    err.sessionMissing = true;
+  }
+}

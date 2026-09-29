@@ -558,6 +558,9 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
   } catch (err) {
     const canceled = Boolean(err?.isCanceled);
     const payload = { role: roleName, status: "error", error: errorMessage(err) };
+    // A cancel or a fatal guard error can end the turn after the CLI reported its session, so
+    // keep the id for the resume that follows. A null id records a session the fallback cleared.
+    state.roles[roleName].sessionId = role.sessionId;
     state.lifecycle = canceled ? "interrupted" : "halted";
     const at = new Date().toISOString();
     state.lastResult = { ...payload, at };
@@ -571,9 +574,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
   const at = new Date().toISOString();
   state.lastResult = { ...result, at };
   recordTurn(state, roleName, result, at);
-  if (role.sessionId) {
-    state.roles[roleName].sessionId = role.sessionId;
-  }
+  state.roles[roleName].sessionId = role.sessionId;
   await writeState(paths.stateFile, state);
 
   onEvent({ type: "result", role: roleName, result, stepsUsed: state.stepsUsed });
