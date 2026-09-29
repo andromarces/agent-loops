@@ -661,9 +661,11 @@ finish` names every condition above the `--require-ci` gate, and a later `finish
 can report a `--require-ci` condition that the first refusal did not name. The
 headless loop collects them in this order: the marker condition, then the `review-only` reviewer-turn condition, then
 `--require-accept`, then the declared-PR gate condition, then `--require-ci`. The
-`role finish` command applies the same rule and the same order except the
+`role finish` command checks the same conditions in the same order, except the
 `review-only` condition, which it cannot reach, because its init dispatch is
-itself a reviewer turn. The headless loop grants one corrective turn, so a refusal
+itself a reviewer turn, and except `--require-ci`, which it checks only after
+every other condition passes. A refusal from `role finish` never lists a
+`--require-ci` condition beside another condition. The headless loop grants one corrective turn, so a refusal
 that named a single condition would spend it on the condition the next refusal
 names instead, so a headless parent learns every condition from one call. A headless run
 ends when two refusals land with no child turn between them. The marker is
