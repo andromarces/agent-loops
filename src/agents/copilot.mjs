@@ -1,17 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import { logWarn } from "../lib/log.mjs";
 import { resumeMismatchError, setMainLoopUsage } from "./shared.mjs";
 
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
+  // A new session id reaches the role state only after Copilot reports it, so a failed
+  // first turn leaves `state.sessionId` null and the next worker turn keeps its preamble.
   const requestedSessionId = state.sessionId;
+  const sessionId = requestedSessionId ?? randomUUID();
 
-  if (!state.sessionId) {
-    state.sessionId = randomUUID();
-  }
-
-  const args = ["--session-id", state.sessionId, "-s", "--no-ask-user", "--output-format", "json"];
+  const args = ["--session-id", sessionId, "-s", "--no-ask-user", "--output-format", "json"];
 
   if (readOnly) {
     args.push("--deny-tool", "write");
@@ -43,11 +43,10 @@ export async function runCopilot(state, prompt, options = {}) {
     throw new Error("Copilot did not return a session ID.");
   }
 
-  if (requestedSessionId && requestedSessionId !== returnedId) {
+  // A resumed id must come back unchanged.
+  if (requestedSessionId && returnedId !== requestedSessionId) {
     throw resumeMismatchError("Copilot", "session", requestedSessionId, returnedId);
   }
-
-  state.sessionId = returnedId;
 
   const message = events
     .filter((event) => event.type === "assistant.message")
@@ -58,6 +57,14 @@ export async function runCopilot(state, prompt, options = {}) {
   if (!message) {
     throw new Error("Copilot did not return response text.");
   }
+
+  // Every check that can fail the turn has passed, so the id is safe to keep. The repository
+  // holds no recorded Copilot output showing that a pre-assigned id is echoed, so a first turn
+  // stores the id Copilot reports, which is the session the next turn can resume.
+  if (returnedId !== sessionId) {
+    logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
+  }
+  state.sessionId = returnedId;
 
   return String(message).trim();
 }
