@@ -11,7 +11,7 @@
 // non-terminal run owned by the hook session. The reader also unions the legacy
 // single-file index at `<root>/sessions/<parent-session>`; init never writes it,
 // and the directory name avoids a file-versus-directory clash at that path.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -154,7 +154,19 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * Exclusive access around one state-file operation. Creates `state.lock` (an
  * atomic hard link where supported, otherwise an exclusive create), treats an
  * existing lock with a live owner pid as busy and a dead one as stale
- * (removed with a warning, then retried). Returns the result of `fn`. `label`
+ * (removed with a warning, then retried once). The removal runs under a claim
+ * file `<lock>.reap.<digest>` keyed by the stale content (a fixed-length name at
+ * every depth), so at most one contender removes it. It deletes the lock only if the lock still holds the content read
+ * as stale. Each acquisition writes a unique nonce, so a lock that a new owner
+ * created in between never matches and survives, and the retry reports it as
+ * busy. This guarantee holds only when every contender runs this version or
+ * later: a contender on an older version removes a stale lock with a bare rm and
+ * keeps the original race with any other contender. A lock written without a
+ * nonce by an older version is matched by content alone, so an older-version
+ * owner with the same pid and start time in the same millisecond is taken for
+ * it. A contender that finds a live claim exits as busy. A claim
+ * left by a crashed process is removed the same way, under a claim keyed by its
+ * own content. Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
  * is locked instead of the generic default; `noun` is the same resource as a
  * lowercase phrase for the stale-removal warning.
@@ -190,10 +202,16 @@ const LINK_UNSUPPORTED = new Set([
   "EISDIR",
 ]);
 
+// Nesting bound for dead stale-removal claims; a deeper chain fails closed.
+const MAX_CLAIM_DEPTH = 3;
+
 // Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
 const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
 
-async function acquireLock(lockFile, { retry = true, label = "State", noun = "state" } = {}) {
+async function acquireLock(
+  lockFile,
+  { retry = true, label = "State", noun = "state", depth = 0, rootLockFile = lockFile } = {},
+) {
   if (await createLock(lockFile)) {
     // Best-effort removal of temp files left by a crash between the temp write
     // and the link (#178). Runs while the lock is held and never touches a live
@@ -202,7 +220,8 @@ async function acquireLock(lockFile, { retry = true, label = "State", noun = "st
     return;
   }
 
-  const owner = await readLockOwner(lockFile);
+  const lockText = await readLockText(lockFile);
+  const owner = parseLockOwner(lockText);
   if (owner && pidAlive(owner.pid)) {
     throw new Error(
       `${label} is locked by a live process (pid ${owner.pid}, started ${owner.startedAt ?? "unknown"}).`,
@@ -221,9 +240,75 @@ async function acquireLock(lockFile, { retry = true, label = "State", noun = "st
     throw new Error(`${label} lock could not be acquired after stale removal.`);
   }
 
+  if (depth >= MAX_CLAIM_DEPTH) {
+    throw new Error(
+      `${label} is locked (stale-removal claims from crashed processes are nested too deep).`,
+    );
+  }
+
   logWarn(`removing stale ${noun} lock (dead pid ${owner?.pid ?? "unknown"})`);
-  await rm(lockFile, { force: true });
-  return acquireLock(lockFile, { retry: false, label, noun });
+  await removeStaleFile(lockFile, lockText, { label, depth, rootLockFile });
+  return acquireLock(lockFile, { retry: false, label, noun, depth, rootLockFile });
+}
+
+// Path of the claim that guards the removal of the file that holds `staleText`.
+// The name is `<root lock name>.reap.<digest>` beside the lock, so it has the same
+// length at every nesting depth, which keeps a recovery chain within the Windows
+// path limit. The digest is the full SHA-256 of the guarded file's name and its
+// JSON-encoded content: distinct inputs get distinct names up to SHA-256
+// collision resistance, not by a strict injective mapping, and a claim for a
+// claim differs from a first-level claim because the guarded name differs. The
+// JSON encoding keeps an unreadable file (null) and the literal text "null"
+// apart.
+function claimFileFor(rootLockFile, file, staleText) {
+  const id = createHash("sha256")
+    .update(JSON.stringify([basename(file), staleText]))
+    .digest("hex");
+  return `${rootLockFile}.reap.${id}`;
+}
+
+// A claim guards the removal of one stale file, and a dead claim is itself
+// removed under a claim keyed by its own content. Each level's claim is created
+// with the exclusive link, so exactly one contender wins it, and it is removed
+// only by its winner. While a winner holds it, the stale file cannot change: its
+// owner is dead, nobody else removes it, and nobody creates a file at a path
+// that exists. Every acquisition writes unique content (a nonce), so a file that
+// reads as the stale content under the claim is the file that was read as stale,
+// and removing it cannot delete a new owner's file (#363). Nothing is renamed, and no path is bare-removed unclaimed. A loser
+// finds a live claim and exits as busy; a file that reads differently or cannot
+// be read is kept, and the caller's retry reports it as busy.
+// known-limit: a claim left by a crashed process stays until a contender hits
+// its stale file, and a chain of more than two crashed claims fails closed
+// (MAX_CLAIM_DEPTH). A lock written without a nonce by an older version is
+// matched by content alone, so an older-version owner with the same pid and
+// start time in the same millisecond would be taken for it.
+// Mixed versions: a contender that runs an older version removes a stale lock
+// with a bare rm, so it can still remove a new live lock exactly as before this
+// fix. The guarantee holds only when every contender runs this version or later.
+async function removeStaleFile(file, staleText, { label, depth, rootLockFile }) {
+  const claimFile = claimFileFor(rootLockFile, file, staleText);
+  await acquireLock(claimFile, {
+    label,
+    noun: "stale-removal claim",
+    depth: depth + 1,
+    rootLockFile,
+  });
+  try {
+    if (await stillStale(file, staleText)) {
+      await rm(file, { force: true });
+    }
+  } finally {
+    await rm(claimFile, { force: true });
+  }
+}
+
+// True when the lock still holds the content read as stale. An unparseable
+// lock must also still be older than the grace window.
+async function stillStale(lockFile, staleText) {
+  if ((await readLockText(lockFile)) !== staleText) {
+    return false;
+  }
+  return parseLockOwner(staleText) !== null || (await lockAgeMs(lockFile)) >= STALE_LOCK_GRACE_MS;
 }
 
 // Create the lock and its owner content. The owner JSON goes to a private temp
@@ -233,7 +318,14 @@ async function acquireLock(lockFile, { retry = true, label = "State", noun = "st
 // and write keeps the lock usable at the cost of that window. Returns false
 // only when another owner already holds the lock.
 async function createLock(lockFile) {
-  const owner = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+  // The nonce makes every acquisition's content unique, so a re-read that matches
+  // the stale content can only be the same file, never a later owner (#363). A
+  // lock written without one by an older version parses the same way.
+  const owner = JSON.stringify({
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    nonce: randomUUID(),
+  });
   const tempFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
   // The write is inside the guard because it creates the temp file: a write cut
   // short leaves a partial temp behind, and the prune never removes a temp owned
@@ -310,9 +402,18 @@ export function pidAlive(pid) {
   }
 }
 
-async function readLockOwner(lockFile) {
+// Raw lock content, or null when the lock cannot be read.
+async function readLockText(lockFile) {
   try {
-    const value = JSON.parse(await readFile(lockFile, "utf8"));
+    return await readFile(lockFile, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function parseLockOwner(text) {
+  try {
+    const value = JSON.parse(text);
     if (value === null || typeof value !== "object" || !Number.isInteger(value.pid)) {
       return null;
     }
