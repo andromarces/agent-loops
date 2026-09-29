@@ -216,6 +216,245 @@ test("--pr with --require-ci for another pull request is a usage error", () => {
   expect(parseArgs([...BASE, "--require-ci", "7"]).requireCi).toBe(7);
 });
 
+// Usefulness: verifies a review-only headless run refuses --pr, --require-accept,
+// and --require-ci before any child turn runs, with the interactive wordings, so
+// the two paths state one rule for a mode that could never reach a gate. The
+// check is the command outcome: exit 1, the refusal on stderr, and no child CLI
+// call (issue #337).
+test("a review-only run refuses the PR flags before any child turn", async () => {
+  const refusals = [
+    [["--pr", "42"], "--pr declares PR work, which needs the --require-ci gate"],
+    [
+      ["--require-accept"],
+      "--require-accept and --require-ci apply only to work-first and review-first",
+    ],
+    [
+      ["--require-ci", "42"],
+      "--require-accept and --require-ci apply only to work-first and review-first",
+    ],
+  ];
+  const origExitCode = process.exitCode;
+
+  try {
+    for (const [flags, message] of refusals) {
+      const repo = await createTempRepo();
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const agents = {
+        codex: {
+          async run() {
+            throw new Error("orchestrator must not run");
+          },
+        },
+        claude: {
+          async run() {
+            throw new Error("worker must not run");
+          },
+        },
+        agy: {
+          async run() {
+            throw new Error("reviewer must not run");
+          },
+        },
+      };
+      try {
+        await main([...BASE, "--mode", "review-only", ...flags, "--cwd", repo], agents);
+        expect(process.exitCode).toBe(1);
+        expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(message));
+      } finally {
+        process.exitCode = origExitCode;
+        errorSpy.mockRestore();
+        await removePath(repo);
+      }
+    }
+  } finally {
+    process.exitCode = origExitCode;
+  }
+});
+
+// Usefulness: verifies a work-first or review-first run still takes the PR flags
+// the review-only run refuses, and that a run with no --mode takes them too,
+// because only review-only rejects a gate. The check is the command outcome: the
+// run starts, so the orchestrator CLI is called and no usage error is printed
+// (issue #337).
+test("the other modes and a mode-free run still take the PR flags", async () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  try {
+    for (const flags of [["--mode", "work-first"], ["--mode", "review-first"], []]) {
+      const repo = await createTempRepo();
+      let orchestratorCalls = 0;
+      const agents = {
+        codex: {
+          async run() {
+            orchestratorCalls += 1;
+            return JSON.stringify({
+              action: "finish",
+              summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+            });
+          },
+        },
+        claude: {
+          async run() {
+            return "worker ok";
+          },
+        },
+        agy: {
+          async run() {
+            return "reviewer ok";
+          },
+        },
+      };
+      try {
+        // The gate is declared but never evaluated: this orchestrator finishes
+        // with no reviewer turn, so the gate refuses and the run ends on exit 1
+        // with a gate reason rather than a usage error.
+        await main([...BASE, ...flags, "--pr", "42", "--require-ci", "42", "--cwd", repo], agents);
+        // The run started, so the orchestrator CLI was called at least once, and
+        // no usage error named a review-only refusal.
+        expect(orchestratorCalls).toBeGreaterThan(0);
+        expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("review-only"));
+      } finally {
+        process.exitCode = origExitCode;
+        await removePath(repo);
+      }
+    }
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+  }
+});
+
+// Usefulness: verifies the headless --mode accepts the same three values as the
+// interactive path and refuses any other, so a caller learns the mode names from
+// one list on both paths. The check is the command outcome: a known value starts
+// the run, an unknown one exits 1 with the message (issue #337).
+test("--mode takes the interactive mode values", async () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  try {
+    for (const mode of ["work-first", "review-first", "review-only"]) {
+      const repo = await createTempRepo();
+      let orchestratorCalls = 0;
+      const agents = {
+        codex: {
+          async run() {
+            orchestratorCalls += 1;
+            return JSON.stringify({ action: "abort", reason: "done" });
+          },
+        },
+        claude: {
+          async run() {
+            return "worker ok";
+          },
+        },
+        agy: {
+          async run() {
+            return "reviewer ok";
+          },
+        },
+      };
+      try {
+        await main([...BASE, "--mode", mode, "--cwd", repo], agents);
+        expect(orchestratorCalls).toBe(1);
+      } finally {
+        process.exitCode = origExitCode;
+        await removePath(repo);
+      }
+    }
+
+    const repo = await createTempRepo();
+    try {
+      await main([...BASE, "--mode", "nope", "--cwd", repo]);
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "--mode must be one of work-first, review-first, review-only, got: nope",
+        ),
+      );
+    } finally {
+      process.exitCode = origExitCode;
+      await removePath(repo);
+    }
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+  }
+});
+
+// Usefulness: verifies a repeated --mode takes the last value, the way every
+// other repeated single-value flag on this path already behaves, such as --task,
+// so the flag adds no new rule. The check is the command outcome: the last value
+// decides, so review-only last refuses the PR flag and work-first last accepts
+// it (issue #337).
+test("a repeated --mode takes the last value", async () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  try {
+    const refused = await createTempRepo();
+    try {
+      await main([
+        ...BASE,
+        "--mode",
+        "work-first",
+        "--mode",
+        "review-only",
+        "--pr",
+        "42",
+        "--cwd",
+        refused,
+      ]);
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("review-only rejects that gate"),
+      );
+    } finally {
+      process.exitCode = origExitCode;
+      await removePath(refused);
+    }
+
+    const accepted = await createTempRepo();
+    let orchestratorCalls = 0;
+    const agents = {
+      codex: {
+        async run() {
+          orchestratorCalls += 1;
+          return JSON.stringify({
+            action: "finish",
+            summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+          });
+        },
+      },
+      claude: {
+        async run() {
+          return "worker ok";
+        },
+      },
+      agy: {
+        async run() {
+          return "reviewer ok";
+        },
+      },
+    };
+    try {
+      await main(
+        [...BASE, "--mode", "review-only", "--mode", "work-first", "--pr", "42", "--cwd", accepted],
+        agents,
+      );
+      // work-first won, so the declaration was accepted and the run started.
+      expect(orchestratorCalls).toBeGreaterThan(0);
+    } finally {
+      process.exitCode = origExitCode;
+      await removePath(accepted);
+    }
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+  }
+});
+
 // Usefulness: verifies readValue guards against missing value or value starting with -.
 test("readValue guards against missing or flag-like values", () => {
   expect(() => parseArgs(["--orchestrator", "--worker"])).toThrow(
@@ -395,6 +634,66 @@ test("successful finish run writes transcript with exitCode 0", async () => {
     process.exitCode = origExitCode;
     await removePath(repo);
   }
+});
+
+// Usefulness: verifies a run with no --mode writes the origin/main transcript,
+// so a consumer of that file sees no field this flag introduced. The comparison
+// is the recorded file: the same top-level keys, the same option keys, and the
+// same event list a run without the flag wrote before it (issue #337).
+test("a mode-free run writes the origin/main transcript shape", async () => {
+  const runOnce = async (extra) => {
+    const repo = await createTempRepo();
+    const transcriptPath = join(repo, "transcript.json");
+    const origExitCode = process.exitCode;
+    const agents = {
+      codex: {
+        async run() {
+          return JSON.stringify({
+            action: "finish",
+            summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+          });
+        },
+      },
+      claude: {
+        async run() {
+          return "worker ok";
+        },
+      },
+      agy: {
+        async run() {
+          return "reviewer ok";
+        },
+      },
+    };
+    try {
+      await main([...BASE, ...extra, "--cwd", repo, "--transcript", transcriptPath], agents);
+      return JSON.parse(await readFile(transcriptPath, "utf8"));
+    } finally {
+      process.exitCode = origExitCode;
+      await removePath(repo);
+    }
+  };
+
+  const modeFree = await runOnce([]);
+  // origin/main wrote these keys, and no more, for a run that names no mode.
+  expect(Object.keys(modeFree).sort()).toEqual(
+    ["cwd", "error", "events", "exitCode", "options", "roles", "task"].sort(),
+  );
+  expect(Object.keys(modeFree.options).sort()).toEqual(
+    ["maxSteps", "pr", "requireAccept", "requireCi", "timeout"].sort(),
+  );
+  expect(modeFree.events.map((event) => event.type)).toEqual(["invocation", "action"]);
+
+  // A run that names a mode records it, and its other fields are unchanged.
+  const withMode = await runOnce(["--mode", "review-first"]);
+  expect(withMode.options.mode).toBe("review-first");
+  expect(Object.keys(withMode).sort()).toEqual(Object.keys(modeFree).sort());
+  expect(Object.keys(withMode.options).sort()).toEqual(
+    [...Object.keys(modeFree.options), "mode"].sort(),
+  );
+  expect(withMode.events.map((event) => event.type)).toEqual(
+    modeFree.events.map((event) => event.type),
+  );
 });
 
 // Usefulness: verifies step limit reached writes transcript with exitCode 2.

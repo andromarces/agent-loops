@@ -477,10 +477,24 @@ Every command for a run passes that run's `--cwd`. Each run ends with its own
 - `review-only`: reviewer, then report. Findings alone never authorize edits;
   the subcommand rejects worker dispatch in this mode.
 
-This section governs the interactive `role` mode. The headless loop chooses its
-own action order; its prompt states the completion rule and the `review-only`
-mapping instead, and `agent-loop --require-accept` enforces that rule. The
-headless gate follows turn order only; an edit made outside the loop after a
+Both paths name the mode with the same flag and the same three values:
+`agent-loop --mode <mode>` on the headless command and `--mode <mode>` on the
+`role` init call. The headless loop chooses its own action order, and its
+`--mode` is off by default, so a run without the flag keeps the current
+behavior. `--mode review-only` changes what a run accepts on either path: it
+dispatches no worker, so it takes neither `--pr`, nor `--require-accept`, nor
+`--require-ci`, and the headless command refuses each of them at parse time with
+the same wording the interactive path uses. It also refuses a `run_worker`
+action at runtime, which ends the run on exit 1 with the reason
+`mode review-only rejects a run_worker action`, the same hard guard this mode
+applies to `--role worker` on the interactive path. It also refuses a `finish`
+until a reviewer turn has run, whatever that turn returned, which the
+interactive path reaches without a rule because its init dispatch is itself that
+turn. Its prompt states the completion rule and the `review-only` mapping
+instead, and `agent-loop --require-accept` enforces that rule on every other
+mode, because a review-only run refuses that flag.
+
+The headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
 PR gate headlessly, so the runtime resolves the PR head there too (#293), and
 `--pr <pr>` on either path declares the run PR work, so that run can only end
@@ -505,9 +519,36 @@ Completion is completion of the requested work, not code acceptance.
 - `work-first` and `review-first`: call `finish` after the reviewer returns
   `verdict: accept` on the latest changed state and the report names the
   checks that passed.
-- `review-only`: call `finish` after the reviewer report, whatever the
-  verdict. The summary records the verdict in `verified` and the findings in
-  `open`.
+- `review-only`: call `finish` after the reviewer turn, whatever it returned. The
+  gate is on the turn, not on a report: a turn that ended in an error satisfies
+  it, so the finish can carry no report. The runtime checks only that all five
+  summary keys are non-empty strings, and it never compares their content with
+  what the reviewer returned.
+
+The two paths reach that reviewer turn differently, and the difference is the
+rule, not the wording. `agent-loop role finish` in `review-only` applies no
+reviewer-turn rule of its own: it accepts a finish from `active` once any
+reviewer turn has run, whatever that turn returned, including a turn that ended
+in a handled error. Every reachable interactive run already has a reviewer turn,
+because the init dispatch is itself that turn. A headless `--mode review-only`
+run owns its own action order and can reach a finish before any reviewer turn, so
+the runtime refuses that finish until a reviewer turn has run. That gate
+requires that a reviewer turn was dispatched, and that turn can end in an error.
+The runtime does not compare the summary with the reviewer result; record the
+reviewer status and verdict in `verified`, including an error or a missing
+report.
+
+Neither path takes `--require-accept` in this mode, and both say so differently.
+`agent-loop role finish` refuses the flag at `finish`, with
+`--require-accept and --require-ci apply only to work-first and review-first;
+review-only accepts any verdict.` `agent-loop --mode review-only` refuses the
+flag before the run starts, with the same sentence, because the headless command
+takes every flag on one command line. A review-only headless run therefore
+applies the reviewer turn with no flag of its own.
+
+The turn is what the mode records either way, so call
+`finish` after it, whatever it returned, and record what the run did not cover in
+`notDone` and `open`.
 
 Map the child report fields into the finish summary:
 
@@ -588,7 +629,10 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   other init field. A state file written before this field has no `pr`, and that
   run keeps the marker-only behavior.
 - `review-only` refuses `--pr` at init, because that mode rejects `--require-ci`
-  at finish and the run would refuse every finish.
+  at finish and the run would refuse every finish. On the headless path every
+  flag arrives on one command line, so `--mode review-only` with `--pr`,
+  `--require-accept`, or `--require-ci` is a usage error before the run starts,
+  with the same two wordings this section states.
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the

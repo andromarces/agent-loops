@@ -77,6 +77,22 @@ export function readMaxSteps(value) {
 export const DEFAULT_MAX_STEPS = 20;
 export const DEFAULT_TIMEOUT = 3600;
 
+// Loop modes, shared by the headless `--mode` and the role subcommand `--mode`
+// so both paths accept the same values and refuse the same PR flags in
+// review-only (#337).
+export const MODES = new Set(["work-first", "review-first", "review-only"]);
+
+export function modeError(value) {
+  return `--mode must be one of work-first, review-first, review-only, got: ${value}`;
+}
+
+// One wording per refusal, shared by both paths, because the interactive path
+// states these rules and the headless path must not drift from it (#337).
+export const REVIEW_ONLY_PR_REFUSAL =
+  "--pr declares PR work, which needs the --require-ci gate; review-only rejects that gate.";
+export const REVIEW_ONLY_GATE_REFUSAL =
+  "--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.";
+
 // Role flags: `--<role>[-model|-effort]` to option key. The headless CLI reads
 // all three roles, the role subcommand reads the child roles.
 export const CHILD_ROLE_KINDS = ["worker", "reviewer"];

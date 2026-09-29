@@ -9,8 +9,12 @@ import {
   CHILD_ROLE_KINDS,
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
+  MODES,
+  REVIEW_ONLY_GATE_REFUSAL,
+  REVIEW_ONLY_PR_REFUSAL,
   ROLE_FLAG_BY_OPTION,
   assertOpenCodeOptions,
+  modeError,
   readArgValue,
   readInlineValue,
   readMaxSteps,
@@ -36,7 +40,6 @@ import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
 const OPERATIONS = new Set(["dispatch", "finish", "abort", "wait-checks"]);
-const MODES = new Set(["work-first", "review-first", "review-only"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
@@ -117,9 +120,7 @@ export function parseRoleArgs(argv) {
       case "--mode":
         args.mode = readInline(arg);
         if (!MODES.has(args.mode)) {
-          throw new RoleError(
-            `--mode must be one of work-first, review-first, review-only, got: ${args.mode}`,
-          );
+          throw new RoleError(modeError(args.mode));
         }
         break;
 
@@ -250,9 +251,7 @@ function validateInitFlags(args, agents = {}) {
   // declared PR there could never be gated. The run would refuse every finish, so
   // the declaration is refused at init instead (#302).
   if (args.pr !== null && (args.mode ?? "work-first") === "review-only") {
-    throw new RoleError(
-      "--pr declares PR work, which needs the --require-ci gate; review-only rejects that gate.",
-    );
+    throw new RoleError(REVIEW_ONLY_PR_REFUSAL);
   }
   // review-only never dispatches the worker, so --worker is optional there.
   const requiredRoles =
@@ -680,9 +679,7 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
     }
 
     if ((args.requireAccept || args.requireCi !== null) && state.mode === "review-only") {
-      throw new RoleError(
-        "--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.",
-      );
+      throw new RoleError(REVIEW_ONLY_GATE_REFUSAL);
     }
 
     const text = await stdin(args);

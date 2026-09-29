@@ -310,6 +310,50 @@ test("initialPrompt states the completion rule and its mode mapping", () => {
   expect(prompt).toContain("loop policy");
 });
 
+// Usefulness: verifies a review-only headless run states the mapping the mode
+// already carries in the interactive path: no worker dispatch, a finish that
+// needs a dispatched reviewer turn, and the review-only summary mapping. A run
+// without `--mode` keeps the mode-free prompt, so the block cannot reach a run
+// that did not ask for it (issue #337).
+test("a review-only run states the review-only mapping", () => {
+  const reviewOnly = initialPrompt({ task: "T", maxSteps: 10, mode: "review-only" });
+  expectRule(reviewOnly, /review-only/i, /do not dispatch[^.!?]{0,40}worker/i);
+  expectRule(reviewOnly, /runtime/i, /refuses[^.!?]{0,40}run_worker/i);
+  // The finish the mode records needs a reviewer turn, so the prompt states that
+  // gate rather than leaving the orchestrator to guess (issue #337).
+  expectRule(reviewOnly, /runtime/i, /refuses[^.!?]{0,40}finish/i, /reviewer turn/i);
+  // The gate is on the dispatched turn, and the summary is not compared with the
+  // reviewer result, so the prompt tells the orchestrator to record the status.
+  expectRule(reviewOnly, /gate requires that a reviewer turn was dispatched/i);
+  expectRule(reviewOnly, /does not compare the summary with the reviewer result/i);
+  expectRule(
+    reviewOnly,
+    /record the reviewer status and verdict in verified/i,
+    /error|missing report/i,
+  );
+  expectRule(reviewOnly, /Blockers/i, /open/i);
+  // The mode-free prompt carries none of it, so an ordinary run is untouched.
+  const noMode = initialPrompt({ task: "T", maxSteps: 10 });
+  expect(noMode).not.toContain("This run is review-only");
+  expect(reviewOnly).not.toBe(noMode);
+  // A work-first or review-first run states its own mode and takes both gates.
+  for (const mode of ["work-first", "review-first"]) {
+    const prompt = initialPrompt({ task: "T", maxSteps: 10, mode, pr: 42, requireCi: 42 });
+    expect(prompt).toContain(`This run is ${mode}`);
+    expect(prompt).toContain("--require-ci 42");
+  }
+});
+
+// Usefulness: verifies a run with no --mode keeps the origin/main prompt text
+// byte for byte, so a run that never asked for a mode gets no changed prompt
+// from this flag. The line is pinned verbatim because the PR promises it is
+// unchanged (issue #337).
+test("a run with no mode keeps the mode-free prompt", () => {
+  expect(initialPrompt({ task: "T", maxSteps: 10 })).toContain(
+    "- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.",
+  );
+});
+
 // Usefulness: verifies the headless prompt names the deterministic gate when the
 // run is started with --require-accept (issue #234).
 test("initialPrompt states the --require-accept gate when enabled", () => {
