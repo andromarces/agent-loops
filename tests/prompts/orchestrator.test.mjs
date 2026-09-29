@@ -420,6 +420,22 @@ for (const [name, path] of RULE_SURFACES) {
     expectRule(text, /paginated/i, /later page/i, /enforced/i);
   });
 
+  // Usefulness: verifies ${name} states that an unknown ruleset read refuses whatever
+  // the rest of the union holds, which is the case a non-empty union from another
+  // source used to slip past (#336 review).
+  test(`${name} states that an unknown ruleset read refuses whatever the union holds`, async () => {
+    const text = await readFile(path, "utf8");
+    expectRule(text, /unknown ruleset read/i, /refuses the finish/i, /union/i);
+  });
+
+  // Usefulness: verifies ${name} states that an empty page inside a longer read
+  // settles nothing, so a partial read is not classified from the pages that did
+  // arrive (#336 review).
+  test(`${name} states that an empty page inside a longer read settles nothing`, async () => {
+    const text = await readFile(path, "utf8");
+    expectRule(text, /empty page inside a longer read/i, /nothing/i);
+  });
+
   // Usefulness: verifies ${name} states that a ruleset-only branch reaches the
   // absence path, the case an earlier claim got backwards (#336 review).
   test(`${name} states that a ruleset-only branch reaches the absence path`, async () => {

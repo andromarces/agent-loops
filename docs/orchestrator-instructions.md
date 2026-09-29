@@ -638,11 +638,14 @@ current behavior, and each flag fails with a clear error.
   envelope and the state file here. The event appears on an accepted finish only, so
   a refused finish never reports an absence.
   The rule for that pass is one allowlist, and it fails closed. Each required-check
-  configuration source is classified by what its reply proved, and a finish passes on
-  the absence only when no source named a required check and no source is unknown, so
-  both sources must have stated the outcome. Any unknown source keeps the
-  empty-union refusal with the reason naming it, so a parent can fix a source it can
-  name. An exact list of every reply shape and its class is in
+  configuration source is classified by what its reply proved. An unknown ruleset
+  read refuses the finish whatever the rest of the union holds, before the per-check
+  pass, because that reply may carry a required-status rule the gate never saw.
+  Otherwise a finish passes on the absence only when no source named a required
+  check and no source is unknown, so both sources must have stated the outcome, and
+  an unknown classic-protection source keeps the empty-union refusal with the reason
+  naming it, so a parent can fix a source it can name. An exact list of every reply
+  shape and its class is in
   `adr/0012-establish-the-absence-of-a-required-check.md`; the three classes are
   absent, has-contexts, and unknown.
   Absent, the only class that lets a finish pass, has exactly one reply per source.
@@ -662,7 +665,8 @@ current behavior, and each flag fails with a clear error.
   rule type, a malformed or unparseable body, and every unreadable reply.
   A branch reaches the absence path where both sources state the outcome, so a
   ruleset-only branch does, while a branch with no ruleset at all does not, because
-  an empty result states nothing, and neither does a classic-protected branch that
+  an empty result, and an empty page inside a longer read, state nothing, and neither does a
+  classic-protected branch that
   requires reviews but names no check. GitHub documents that the ruleset read
   returns active rules only, so a rule in a ruleset whose enforcement is `disabled`
   or `evaluate` never appears in it and never affects the classification.

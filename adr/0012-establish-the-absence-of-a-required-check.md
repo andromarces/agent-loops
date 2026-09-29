@@ -110,22 +110,22 @@ the wrong reason for the first, and the correction is recorded here.
 
 One list, so a review can check the code against it.
 
-| Source                    | Reply shape                                                                                                                                                                                        | Class                                               |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Repository rulesets       | A read of every page that is a non-empty array whose entries all carry a documented rule type and none is a `required_status_checks` rule                                                          | absent                                              |
-| Repository rulesets       | A read of every page carrying a `required_status_checks` rule whose `required_status_checks` is a non-empty array of entries with a non-empty string `context`                                     | has-contexts                                        |
-| Repository rulesets       | A read of every page that is an empty array, which is unknown because it is the same reply for a branch no ruleset applies to and for a caller or endpoint that enumerates no rule for that branch | unknown                                             |
-| Repository rulesets       | An entry that is not an object, is null, is an array, has no `type`, has a `type` that is not a string, or has a `type` outside the documented rule types                                          | unknown                                             |
-| Repository rulesets       | A `required_status_checks` rule whose `required_status_checks` is missing, is not an array, is empty, or holds an entry with no string `context`                                                   | unknown                                             |
-| Repository rulesets       | A body that is empty, is not JSON, or is JSON that is not the array of pages `--slurp` returns, or that holds a page which is not an array                                                         | unknown                                             |
-| Repository rulesets       | Any non-zero exit                                                                                                                                                                                  | unknown, except an unrecognized shape, which throws |
-| Classic branch protection | Exactly `gh: Branch not protected (HTTP 404)`, allowing one trailing LF or CRLF                                                                                                                    | absent                                              |
-| Classic branch protection | A non-empty JSON object whose `required_status_checks` is an object whose `contexts` and `checks` entries all name a context, and which names at least one                                         | has-contexts                                        |
-| Classic branch protection | A body that is empty, is not JSON, is JSON that is not an object, has no `required_status_checks`, has it as null or of the wrong type, or names no check                                          | unknown                                             |
-| Classic branch protection | `Not Found` (404), either `Resource not accessible` 403, the Free-plan 403, and `Branch not protected` carrying any surrounding or extra text                                                      | unknown                                             |
-| Classic branch protection | Any other non-zero exit                                                                                                                                                                            | unknown, except an unrecognized shape, which throws |
-| `gh pr checks --required` | A JSON array of named checks                                                                                                                                                                       | has-contexts for those names                        |
-| `gh pr checks --required` | An empty array, output that is not a JSON array, and a failed read                                                                                                                                 | never classified, and never an absence              |
+| Source                    | Reply shape                                                                                                                                                                                                                                                                                                                                  | Class                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Repository rulesets       | A read of every page that is a non-empty array whose entries all carry a documented rule type and none is a `required_status_checks` rule                                                                                                                                                                                                    | absent                                              |
+| Repository rulesets       | A read of every page carrying a `required_status_checks` rule whose `required_status_checks` is a non-empty array of entries with a non-empty string `context`                                                                                                                                                                               | has-contexts                                        |
+| Repository rulesets       | Any page that is empty, including a read whose pages are all empty, which is unknown because an empty result is the same reply for a branch no ruleset applies to and for a caller or endpoint that enumerates no rule for that branch, and an empty page beside a page that holds rules is a read the gate cannot account for every page of | unknown                                             |
+| Repository rulesets       | An entry that is not an object, is null, is an array, has no `type`, has a `type` that is not a string, or has a `type` outside the documented rule types                                                                                                                                                                                    | unknown                                             |
+| Repository rulesets       | A `required_status_checks` rule whose `required_status_checks` is missing, is not an array, is empty, or holds an entry with no string `context`                                                                                                                                                                                             | unknown                                             |
+| Repository rulesets       | A body that is empty, is not JSON, or is JSON that is not the array of pages `--slurp` returns, or that holds a page which is not an array                                                                                                                                                                                                   | unknown                                             |
+| Repository rulesets       | Any non-zero exit                                                                                                                                                                                                                                                                                                                            | unknown, except an unrecognized shape, which throws |
+| Classic branch protection | Exactly `gh: Branch not protected (HTTP 404)`, allowing one trailing LF or CRLF                                                                                                                                                                                                                                                              | absent                                              |
+| Classic branch protection | A non-empty JSON object whose `required_status_checks` is an object whose `contexts` and `checks` entries all name a context, and which names at least one                                                                                                                                                                                   | has-contexts                                        |
+| Classic branch protection | A body that is empty, is not JSON, is JSON that is not an object, has no `required_status_checks`, has it as null or of the wrong type, or names no check                                                                                                                                                                                    | unknown                                             |
+| Classic branch protection | `Not Found` (404), either `Resource not accessible` 403, the Free-plan 403, and `Branch not protected` carrying any surrounding or extra text                                                                                                                                                                                                | unknown                                             |
+| Classic branch protection | Any other non-zero exit                                                                                                                                                                                                                                                                                                                      | unknown, except an unrecognized shape, which throws |
+| `gh pr checks --required` | A JSON array of named checks                                                                                                                                                                                                                                                                                                                 | has-contexts for those names                        |
+| `gh pr checks --required` | An empty array, output that is not a JSON array, and a failed read                                                                                                                                                                                                                                                                           | never classified, and never an absence              |
 
 ## Decision
 
@@ -165,35 +165,44 @@ One list, so a review can check the code against it.
    already reported, so it can name a required check and it cannot prove one is
    absent, and a failed read of it neither establishes nor hides a context. It
    contributes names and nothing else, as it did before.
-3. An empty union of required checks refuses when any configuration source is
-   unknown. The refusal is the origin/main empty-union refusal and its reason
-   names each unknown source, because a parent can only fix a source it can see.
-   The gate cannot tell an empty branch from a protected one this caller may not
-   read.
-4. An empty union over sources that each stated they hold no required check is an
+3. An empty union of required checks refuses when the classic-protection source is
+   unknown. The refusal is the origin/main empty-union refusal and its reason names
+   each unknown source, because a parent can only fix a source it can see. The gate
+   cannot tell an empty branch from a protected one this caller may not read.
+4. An unknown repository-rulesets read refuses the finish whatever the rest of the
+   union holds, before the per-check pass, with a reason that names the ruleset
+   source. That reply may carry a required-status rule this caller never saw, so a
+   non-empty union from another source must not let the per-check pass judge only
+   the names it saw. This is stricter than origin/main, which treated a failed
+   ruleset read as an empty source and refused only on an unrecognized message, so a
+   branch whose ruleset read failed but whose classic protection or required-names
+   read named a check passed there and refuses here. The classic-protection source
+   keeps its origin/main behavior, so a caller without repository admin still gates
+   through the other two sources rather than refusing outright.
+5. An empty union over sources that each stated they hold no required check is an
    established absence. The gate then applies the same conditions it applies
    elsewhere, the merge state included, so a blocked merge state still refuses
    with a reason that names the unmet rule and not a required check. On a pass it
    reports `noRequiredChecks: true` beside the commit, so a caller can tell a
    finish that verified no check from one that verified a check.
-5. The merge state is validated before either path, against the states GitHub's
+6. The merge state is validated before either path, against the states GitHub's
    GraphQL `mergeStateStatus` reports, so the absence path applies exactly the same
    merge-state condition as the per-check path. A missing, null, empty, or
    unrecognized state refuses on both, because a state the gate cannot read is not
    a clean one. `UNKNOWN` is outside that set, because GitHub computes it lazily
    and it states no outcome either (#336 review).
-6. The record travels the path the finish takes. A headless run emits a
+7. The record travels the path the finish takes. A headless run emits a
    `no-required-checks` event carrying the gated `pr` and the `stepsUsed`, and
    the interactive path records `noRequiredChecks` in the finish envelope and
    beside `summary` in the state file. A finish on a base branch that does
    require a check carries no such record, so the field means the branch had none
    rather than that the gate ran.
-7. The absence is recorded on an accepted finish only. The headless gate runs
+8. The absence is recorded on an accepted finish only. The headless gate runs
    before the runtime collects the other finish conditions, so a run whose finish
    is refused by another condition has not finished and verified nothing. A
    `no-required-checks` event is therefore emitted inside the accepted-finish
    branch, after every refusal has been found absent.
-8. The prompt, the interactive instructions, the README, and the CLI help state
+9. The prompt, the interactive instructions, the README, and the CLI help state
    the outcome and its condition in one form: a base branch that states it has no
    required check has no check to wait for, so the gate passes on the PR head, the
    clean reviewed tree, and the merge state, and the run records the absence, when
@@ -201,9 +210,9 @@ One list, so a review can check the code against it.
    credential cannot read, or one that returns a shape the gate cannot read, leaves
    the gate refusing. The rule states what the gate checks and predicts no outcome
    beyond that.
-9. Nothing else about the declaration changes. A run that declares a PR still
-   needs the gate for that same PR, still refuses `unresolvedCompare`, and
-   `review-only` still refuses `--pr` at init.
+10. Nothing else about the declaration changes. A run that declares a PR still
+    needs the gate for that same PR, still refuses `unresolvedCompare`, and
+    `review-only` still refuses `--pr` at init.
 
 ## Consequences
 
