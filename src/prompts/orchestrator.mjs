@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
 
@@ -54,10 +54,14 @@ const CLI_PATH = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 //   interactive bash history;
 // - a control character (Unicode category Cc), a line break included, ends or
 //   corrupts the line.
-// A backslash is not listed because it is rewritten to a slash first.
+// On Windows a backslash is a path separator and is rewritten to a slash first,
+// so it is not listed. On POSIX it is a name character that bash reads as an
+// escape inside double quotes, and the path cannot be rewritten without pointing
+// at another path, so a POSIX path holding one is refused.
 // known-limit: a non-ASCII path is rendered as is, and cmd reads it through its
 // active code page.
 const UNSAFE_IN_QUOTES = /["$`%!\u201C\u201D\u201E\p{Cc}]/u;
+const UNSAFE_IN_QUOTES_POSIX = new RegExp(`${UNSAFE_IN_QUOTES.source}|\\\\`, "u");
 
 /**
  * The commands that run `role wait-checks` in the work tree `cwd`, one per shell
@@ -81,10 +85,15 @@ export function waitChecksCommand({
   cwd = process.cwd(),
   platform = process.platform,
 } = {}) {
-  const [node, cli, tree] = [execPath, cliPath, resolve(cwd)].map((path) =>
-    path.replaceAll("\\", "/"),
+  const windows = platform === "win32";
+  const resolved = (windows ? win32 : posix).resolve(cwd);
+  // Only a Windows path separator becomes a slash. A POSIX backslash is a name
+  // character, and rewriting it would point the command at another path.
+  const [node, cli, tree] = [execPath, cliPath, resolved].map((path) =>
+    windows ? path.replaceAll("\\", "/") : path,
   );
-  if ([node, cli, tree].some((path) => UNSAFE_IN_QUOTES.test(path))) return null;
+  const unsafe = windows ? UNSAFE_IN_QUOTES : UNSAFE_IN_QUOTES_POSIX;
+  if ([node, cli, tree].some((path) => unsafe.test(path))) return null;
   const plain = `"${node}" "${cli}" role wait-checks --cwd "${tree}"`;
   if (platform !== "win32") return [{ shell: "sh", command: plain }];
   return [

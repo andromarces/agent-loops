@@ -25,7 +25,7 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
 2. The prompt renders the whole command, not a bare `agent-loop`.
    `waitChecksCommand` names `process.execPath`, the `src/cli.mjs` that this
    process runs, and `--cwd` with the run's resolved work tree, each path in
-   double quotes with forward slashes. The command resolves for a global install,
+   double quotes. On Windows the separators become forward slashes. The command resolves for a global install,
    an `npm link`, and a clone run through `node <repo>/src/cli.mjs` or
    `pnpm agent-loop`, and the wait reads the run's repository whatever directory
    the shell starts in. `runLoop` passes its `cwd` to `initialPrompt`.
@@ -44,8 +44,11 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
    - `!`: delayed expansion in cmd, and history expansion in interactive bash.
    - Any control character (Unicode category Cc), a line break and NUL included.
 
-   A backslash is not in the set because the path is rewritten with forward
-   slashes first.
+   A backslash is not in the set on Windows, where it is a path separator and
+   the path is rewritten with forward slashes first. On POSIX it is a name
+   character that bash reads as an escape inside double quotes, and a rewrite
+   would point the command at another path, so a POSIX path holding one is
+   refused.
 
 5. The prompt states `<seconds>` and derives it from the run's turn `--timeout`,
    which `runLoop` passes to `initialPrompt`: 300 seconds, or half the turn

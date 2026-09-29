@@ -459,13 +459,15 @@ call operator, while bash and cmd reject that operator. On Windows the prompt
 therefore gives two forms and the orchestrator uses the one for the shell that its
 shell tool runs: `& "<node>" "<cli>" role wait-checks ...` for PowerShell, and
 `"<node>" "<cli>" role wait-checks ...` for bash or cmd. Other platforms get the
-plain form. Paths use forward slashes, which Node accepts on Windows.
+plain form. On Windows, paths use forward slashes, which Node accepts. On POSIX a
+path is never rewritten.
 
 The runtime renders no command, and the prompt names no wait, when the Node path,
 the CLI path, or the work tree path holds a character that bash, PowerShell, or
 cmd expands or reinterprets inside double quotes: `"`, `$`, a backtick, `%`,
 `!`, the typographic double quotes U+201C, U+201D, and U+201E, or a control
-character such as a line break.
+character such as a line break. A POSIX path that holds a backslash is refused
+too, because a backslash is a name character there and cannot be rewritten.
 
 The runtime states the `--timeout` in the prompt, below the turn `--timeout`:
 300 seconds, or half the turn `--timeout` less the five-second child-exit

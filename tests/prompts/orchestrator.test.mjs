@@ -785,7 +785,6 @@ test("the wait command renders the shell forms of the platform", () => {
   expect(win[1].command.startsWith(plain)).toBe(true);
   expect(win[1].command.endsWith('work tree"')).toBe(true);
 
-  const tree = resolve("/srv/work tree").replaceAll("\\", "/");
   const posix = waitChecksCommand({
     execPath: "/opt/node",
     cliPath: "/opt/a b/cli.mjs",
@@ -795,7 +794,7 @@ test("the wait command renders the shell forms of the platform", () => {
   expect(posix).toEqual([
     {
       shell: "sh",
-      command: `"/opt/node" "/opt/a b/cli.mjs" role wait-checks --cwd "${tree}"`,
+      command: `"/opt/node" "/opt/a b/cli.mjs" role wait-checks --cwd "/srv/work tree"`,
     },
   ]);
 });
@@ -804,7 +803,7 @@ test("the wait command renders the shell forms of the platform", () => {
 // wait reads the right repository whatever directory the shell starts in, and the
 // prompt passes the run's `cwd` through (issue #348).
 test("the wait command and the prompt carry the resolved work tree", () => {
-  const forms = waitChecksCommand({ cwd: "relative/tree", platform: "linux" });
+  const forms = waitChecksCommand({ cwd: "relative/tree" });
   expect(forms[0].command).toContain(`--cwd "${resolve("relative/tree").replaceAll("\\", "/")}"`);
   const prompt = initialPrompt({
     task: "T",
@@ -846,6 +845,42 @@ test.each(UNSAFE_CHARACTERS)("the wait command refuses a path holding %j (%s)", 
     expect(waitChecksCommand(input), key).toBeNull();
     expect(waitChecksCommand({ ...input, platform: "win32" }), key).toBeNull();
   }
+});
+
+// Usefulness: verifies a POSIX path keeps its backslashes or is refused, never
+// rewritten: a POSIX backslash is a name character, so a slash in its place would
+// point the command at another path. The slash rewrite stays Windows-only
+// (issue #348).
+test("a POSIX path is never rewritten and a backslash in it is refused", () => {
+  const safe = { execPath: "/opt/node", cliPath: "/opt/cli.mjs", cwd: "/srv/tree" };
+  const rendered = waitChecksCommand({ ...safe, platform: "linux" });
+  expect(rendered[0].command).toBe('"/opt/node" "/opt/cli.mjs" role wait-checks --cwd "/srv/tree"');
+  for (const key of ["execPath", "cliPath", "cwd"]) {
+    const input = { ...safe, [key]: `${safe[key]}/dir\\name`, platform: "linux" };
+    expect(waitChecksCommand(input), key).toBeNull();
+  }
+  // The same character is a separator on Windows and becomes a slash there.
+  const win = waitChecksCommand({
+    execPath: "C:\\node\\node.exe",
+    cliPath: "C:\\repo\\cli.mjs",
+    cwd: "C:\\repo",
+    platform: "win32",
+  });
+  expect(win[1].command).toBe(
+    '"C:/node/node.exe" "C:/repo/cli.mjs" role wait-checks --cwd "C:/repo"',
+  );
+});
+
+// Usefulness: verifies the README architecture section states the same
+// status-read exception as the prompt, `agent-loop role wait-checks` only, so no
+// text keeps the older rule that allowed `gh pr checks` (issue #348).
+test("the README architecture rule names role wait-checks as the only exception command", async () => {
+  const readme = await readFile(join(dirname(instructionsPath), "../README.md"), "utf8");
+  const rule = readme.split("\n").find((line) => line.startsWith("- **Orchestrator**"));
+  expect(rule).toContain(
+    "read the pull request check status with `agent-loop role wait-checks`, and that status read is the only command the exception covers",
+  );
+  expect(rule).not.toContain("gh pr checks");
 });
 
 // Usefulness: verifies a run with no renderable command names no wait, and says
