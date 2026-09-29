@@ -53,9 +53,11 @@ function fail(reason) {
 //                                                  Administration permission
 //
 // All four leave the source with no required contexts, and the caller refuses an
-// empty union either way, so the gate treats them alike. The second is not a
-// permission problem: the branch simply has no classic protection, and a
-// ruleset-only repository answers it for an admin.
+// empty union over an unknown source either way, so the gate treats them alike.
+// The second is not a permission problem: the branch simply has no classic
+// protection, and a ruleset-only repository answers it for an admin. That one
+// also states the absence, so it is the one of the four that establishes it
+// (issue #336).
 //
 // A private repository on the GitHub Free plan answers 403 on the classic
 // protection, branch rules, and rulesets endpoints with a message that names the
@@ -102,26 +104,288 @@ function fail(reason) {
 const UNREADABLE =
   /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)/;
 
+// The exact 404 the classic protection endpoint writes only to a caller that can
+// read it, on a branch with no classic protection. It is the one unreadable reply
+// that proves the source holds no required check (issue #336). It is compared
+// whole, like the Free-plan 403 below, because an unanchored search also matches
+// the same text inside another error: a reply that merely quotes it, or carries
+// it beside a second line, says nothing about the branch and must not read as an
+// absence (issue #336 review).
+const NOT_PROTECTED_404 = "gh: Branch not protected (HTTP 404)";
+
 // The exact reply a private Free-plan repository writes, compared whole so no
 // surrounding text or second line can pass as it.
 const FREE_PLAN_403 =
   "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
+
+/** Whether `stderr` is the exact `Branch not protected` 404, one trailing break aside. */
+function isNotProtected404(stderr) {
+  return stderr.replace(/\r?\n$/, "") === NOT_PROTECTED_404;
+}
 
 /** Whether `stderr` is the exact Free-plan 403, ignoring one trailing LF or CRLF. */
 function isFreePlan403(stderr) {
   return stderr.replace(/\r?\n$/, "") === FREE_PLAN_403;
 }
 
-async function ghApi(gh, args, cwd, { allowUnreadable = false } = {}) {
+async function ghApi(gh, args, cwd) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    if (allowUnreadable && (UNREADABLE.test(stderr) || isFreePlan403(stderr))) {
-      return null;
-    }
     throw new Error(`gh api ${args[0]} failed: ${stderr.trim() || `exit ${status}`}`);
   }
   const text = stdout.trim();
   return text === "" ? null : JSON.parse(text);
+}
+
+/**
+ * One required-check configuration source, classified by what its reply proved.
+ *
+ * The classification is an allowlist, so it fails closed. `ABSENT` is the only
+ * answer that lets a finish pass, and each source is allowed exactly one reply
+ * shape to produce it:
+ *
+ * - Repository rulesets: a successful reply whose body is a JSON array in which
+ *   every entry is a well-formed rule (an object carrying a string `type`) and no
+ *   entry is a `required_status_checks` rule. That is the read of a branch with
+ *   no required-status-check rule (#336).
+ * - Classic branch protection: the exact `Branch not protected` (404), which the
+ *   endpoint writes only to a caller that can read protection, and which names an
+ *   unprotected branch (#280, #295).
+ *
+ * `HAS_CONTEXTS` is a reply that named at least one required check, so the
+ * per-check pass runs. Every other reply is `UNKNOWN`, which settles nothing and
+ * keeps the empty-union refusal:
+ *
+ * - any non-zero exit other than the exact `Branch not protected` 404, including
+ *   `Not Found` (404), both `Resource not accessible` 403s, and the Free-plan
+ *   403, which names the plan and not the branch;
+ * - a body that is empty, is not JSON, is JSON that is not the array or object
+ *   this endpoint returns, or is an array carrying an entry that is not a
+ *   well-formed rule;
+ * - a `required_status_checks` rule that names no check, which states neither an
+ *   absence nor a context to enforce.
+ *
+ * A non-zero reply that is not an unreadable shape still throws, which fails the
+ * run rather than reaching the gate (issue #280).
+ * @param {object} options
+ * @param {(stderr: string) => boolean} options.absentOnError the one non-zero
+ *   reply that proves this source holds no required check, compared whole.
+ *   `isNotProtected404` for classic protection, and a predicate that never matches
+ *   for repository rulesets, whose endpoint does not write it.
+ * @param {(data: unknown) => ({ state: string, contexts: object[] })} options.classify
+ *   the classification of a successful reply body.
+ * @returns {Promise<{ state: string, contexts: { name: string, appId: number | null }[] }>}
+ */
+async function readRequiredSource(gh, args, cwd, { absentOnError, classify }) {
+  const { status, stdout, stderr } = await gh(["api", ...args], cwd);
+  if (status !== 0) {
+    if (absentOnError(stderr)) {
+      return { state: ABSENT, contexts: [] };
+    }
+    if (UNREADABLE.test(stderr) || isFreePlan403(stderr)) {
+      return { state: UNKNOWN, contexts: [] };
+    }
+    throw new Error(`gh api ${args[0]} failed: ${stderr.trim() || `exit ${status}`}`);
+  }
+  const text = stdout.trim();
+  if (text === "") {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  const { state, contexts } = classify(body);
+  return { state, contexts };
+}
+
+// The classifications a required-check configuration source reply can carry.
+// `ABSENT` is a reply that states the source holds no required check, `HAS_CONTEXTS`
+// a reply that names at least one, and `UNKNOWN` a reply that settles nothing.
+// `EMPTY` is the one outcome the ruleset source alone carries: a successful read
+// that found no rule. It is not a positive absence, and it does not refuse the
+// per-check path, so a classic-only repository keeps the behavior origin/main gave
+// it (issue #336 review).
+const ABSENT = "absent";
+const HAS_CONTEXTS = "contexts";
+const UNKNOWN = "unknown";
+const EMPTY = "empty";
+
+// Every rule type GitHub documents for a repository ruleset, from the create and
+// update ruleset schemas. A rule entry whose `type` is missing, is not a string, or
+// is outside this list is unknown rather than skipped, because a type this list does
+// not carry may be a required-status-check rule under a name the gate has not seen
+// (issue #336 review). The list is the documented one, not an observed one: a
+// future GitHub rule type makes such a read unknown, which refuses, and that is the
+// safe direction.
+const RULE_TYPES = new Set([
+  "branch_name_pattern",
+  "code_coverage",
+  "code_quality",
+  "code_scanning",
+  "commit_author_email_pattern",
+  "commit_message_pattern",
+  "committer_email_pattern",
+  "copilot_code_review",
+  "creation",
+  "deletion",
+  "file_extension_restriction",
+  "file_path_restriction",
+  "license_compliance_scanning",
+  "max_file_path_length",
+  "max_file_size",
+  "merge_queue",
+  "non_fast_forward",
+  "pull_request",
+  "required_deployments",
+  "required_linear_history",
+  "required_signatures",
+  "required_status_checks",
+  "tag_name_pattern",
+  "update",
+  "workflows",
+]);
+
+// The names used in the refusal when a source settles nothing, so a parent can
+// tell which source it must fix.
+const RULESETS = "repository rulesets";
+const PROTECTION = "classic branch protection";
+
+// Every merge state GitHub's GraphQL `mergeStateStatus` reports that the gate can
+// act on. A value outside this set, and a missing or null one, is a state the
+// gate cannot read, so it refuses on both the per-check path and the absence path
+// (issue #336 review). `UNSTABLE` means a check is failing, which the per-check
+// path judges by name, and `HAS_HOOKS` and `DRAFT` report no unmet rule the gate
+// enforces; `BLOCKED` refuses at the end of both paths. `UNKNOWN` is deliberately
+// absent: GitHub computes it lazily, so it states no outcome either.
+const MERGE_STATES = new Set([
+  "BEHIND",
+  "BLOCKED",
+  "CLEAN",
+  "DIRTY",
+  "DRAFT",
+  "HAS_HOOKS",
+  "UNSTABLE",
+]);
+
+/**
+ * Classifies a successful repository rulesets read. `ABSENT` needs a JSON array
+ * whose entries are all well-formed rules and none of them a
+ * `required_status_checks` rule, because that is the only shape in which the
+ * read states that no required-status-check rule applies to the branch. A
+ * malformed entry makes the whole read unknown rather than skipped: an entry the
+ * gate cannot read may be a required-status-check rule it never enforced
+ * (issue #336).
+ * @param {unknown} data the parsed body.
+ * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
+ */
+function classifyRulesets(data) {
+  // `--slurp` wraps every page in an outer array, so a complete read is an array
+  // of arrays. A body that is not that shape, or that holds a page which is not an
+  // array, is a read the gate cannot account for every page of, so it settles
+  // nothing rather than being classified from the pages that arrived (issue #336
+  // review).
+  if (!Array.isArray(data) || data.some((page) => !Array.isArray(page))) {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  if (data.length === 0) {
+    // A read that returned no page at all is not a read that found no rule. An
+    // empty body from the paginated call is the same reply whether the branch has
+    // no rule or the read returned nothing, and only the single empty page says
+    // the first (issue #336 review).
+    return { state: UNKNOWN, contexts: [] };
+  }
+  if (data.every((page) => page.length === 0)) {
+    // Exactly one empty page is the reply that says the branch has no rule, so it
+    // is `EMPTY`. More than one empty page is an anomalous sequence: GitHub stops
+    // paginating when there is no next page, so a second empty page means the read
+    // is not the complete result it claims to be (issue #336 review).
+    return { state: data.length === 1 ? EMPTY : UNKNOWN, contexts: [] };
+  }
+  if (data.some((page) => page.length === 0)) {
+    // An empty page beside a page that holds rules settles nothing, for the same
+    // reason: a partial read must not be classified from the pages that did arrive
+    // (issue #336 review).
+    return { state: UNKNOWN, contexts: [] };
+  }
+  const rules = data.flat();
+  const contexts = [];
+  for (const rule of rules) {
+    if (typeof rule !== "object" || rule === null || Array.isArray(rule)) {
+      return { state: UNKNOWN, contexts: [] };
+    }
+    if (typeof rule.type !== "string" || !RULE_TYPES.has(rule.type)) {
+      // A type the gate does not know may be a required-status-check rule under a
+      // name this list does not carry, so it is unknown rather than skipped
+      // (issue #336 review).
+      return { state: UNKNOWN, contexts: [] };
+    }
+    if (rule.type !== "required_status_checks") {
+      continue;
+    }
+    const checks = rule.parameters?.required_status_checks;
+    if (!Array.isArray(checks) || checks.length === 0) {
+      // A required-status-check rule that names no check states neither an
+      // absence nor a context the gate could enforce.
+      return { state: UNKNOWN, contexts: [] };
+    }
+    for (const check of checks) {
+      if (typeof check?.context !== "string" || check.context === "") {
+        return { state: UNKNOWN, contexts: [] };
+      }
+      contexts.push({ name: check.context, appId: check.integration_id });
+    }
+  }
+  return { state: contexts.length > 0 ? HAS_CONTEXTS : ABSENT, contexts };
+}
+
+/**
+ * Classifies a successful classic branch-protection read. No body proves an
+ * absence for this source: the only reply that states the branch is unprotected
+ * is the exact `Branch not protected` (404), handled on the error path, so a
+ * successful body reaches `ABSENT` never. A body that is not the object
+ * `repos/{slug}/branches/{base}/protection` returns, or whose
+ * `required_status_checks` is present but not an object, is unknown. A body that
+ * was read and carries no `required_status_checks` names no context but does not
+ * say the branch is unprotected, because a classic-protected branch can require
+ * reviews or a signed-off push without requiring a check, so it is unknown too
+ * (issue #336).
+ * @param {unknown} data the parsed body.
+ * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
+ */
+function classifyProtection(data) {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  const required = data.required_status_checks;
+  if (required === undefined) {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  if (required === null) {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  if (typeof required !== "object" || Array.isArray(required)) {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  const contexts = [];
+  for (const context of required.contexts ?? []) {
+    if (typeof context !== "string" || context === "") {
+      return { state: UNKNOWN, contexts: [] };
+    }
+    contexts.push({ name: context, appId: null });
+  }
+  for (const check of required.checks ?? []) {
+    if (typeof check?.context !== "string" || check.context === "") {
+      return { state: UNKNOWN, contexts: [] };
+    }
+    contexts.push({ name: check.context, appId: check.app_id });
+  }
+  if (contexts.length === 0) {
+    return { state: UNKNOWN, contexts: [] };
+  }
+  return { state: HAS_CONTEXTS, contexts };
 }
 
 async function prInfo(gh, pr, cwd) {
@@ -185,37 +449,49 @@ function addContext(contexts, name, appId = null) {
   }
 }
 
-// Required status contexts from every source the caller can read: repository
-// rulesets, classic branch protection, and `gh pr checks --required`.
-// Deduplicated by name and app qualifier. An unreadable source contributes no
-// contexts; the caller refuses an empty union, so a source that yields no
-// contexts fails closed instead of passing vacuously.
+// Required status contexts from every source: repository rulesets, classic branch
+// protection, and `gh pr checks --required`.
+// Deduplicated by name and app qualifier. `unknown` names every configuration
+// source whose reply settled nothing, because such a source may hold a required
+// check this caller never saw. An empty union is then a refusal, naming each
+// source that settled nothing; an empty union over sources that each stated they
+// hold no required check is an established absence the gate records (issue #336).
+// `gh pr checks --required` contributes names and nothing else, so it never
+// appears among the sources that settled nothing and never establishes an
+// absence. It lists only the checks that already reported, so it can name a
+// required check and it cannot prove one is absent: on a base branch with no
+// required check it prints nothing, which is the same silence as a read failure.
 async function requiredContexts(gh, slug, base, pr, cwd) {
   const contexts = new Map();
+  const unknown = [];
 
-  const rules = await ghApi(gh, [`repos/${slug}/rules/branches/${base}`], cwd, {
-    allowUnreadable: true,
-  });
-  if (Array.isArray(rules)) {
-    for (const rule of rules) {
-      if (rule?.type !== "required_status_checks") {
-        continue;
-      }
-      for (const check of rule.parameters?.required_status_checks ?? []) {
-        addContext(contexts, check?.context, check?.integration_id);
-      }
-    }
+  const rules = await readRequiredSource(
+    gh,
+    // The endpoint paginates at 30 rules per page by default, so a single read can
+    // stop before a required-status-check rule and report an absence for a branch
+    // that requires one. Every page is fetched, and a body the gate cannot account
+    // for every page of is unknown (issue #336 review).
+    [`repos/${slug}/rules/branches/${base}`, "--paginate", "--slurp"],
+    cwd,
+    { absentOnError: () => false, classify: classifyRulesets },
+  );
+  if (rules.state === UNKNOWN) {
+    unknown.push(RULESETS);
   }
-
-  const protection = await ghApi(gh, [`repos/${slug}/branches/${base}/protection`], cwd, {
-    allowUnreadable: true,
-  });
-  const required = protection?.required_status_checks;
-  for (const context of required?.contexts ?? []) {
-    addContext(contexts, context);
+  for (const context of rules.contexts) {
+    addContext(contexts, context.name, context.appId);
   }
-  for (const check of required?.checks ?? []) {
-    addContext(contexts, check?.context, check?.app_id);
+  const protection = await readRequiredSource(
+    gh,
+    [`repos/${slug}/branches/${base}/protection`],
+    cwd,
+    { absentOnError: isNotProtected404, classify: classifyProtection },
+  );
+  if (protection.state === UNKNOWN) {
+    unknown.push(PROTECTION);
+  }
+  for (const context of protection.contexts) {
+    addContext(contexts, context.name, context.appId);
   }
 
   for (const name of await ghRequiredNames(gh, pr, cwd)) {
@@ -230,13 +506,22 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   const qualifiedNames = new Set(
     values.filter((context) => context.appId !== null).map((context) => context.name),
   );
-  return values
-    .filter((context) => context.appId !== null || !qualifiedNames.has(context.name))
-    .sort((a, b) => {
-      const left = contextKey(a.name, a.appId);
-      const right = contextKey(b.name, b.appId);
-      return left < right ? -1 : left > right ? 1 : 0;
-    });
+  return {
+    unknown,
+    // The ruleset state is carried separately from `unknown`, because an empty read
+    // is neither an absence nor a refusal: it contributes no contexts and leaves the
+    // per-check path to the other sources, exactly as origin/main did (issue #336
+    // review).
+    rulesetState: rules.state,
+    protectionState: protection.state,
+    contexts: values
+      .filter((context) => context.appId !== null || !qualifiedNames.has(context.name))
+      .sort((a, b) => {
+        const left = contextKey(a.name, a.appId);
+        const right = contextKey(b.name, b.appId);
+        return left < right ? -1 : left > right ? 1 : 0;
+      }),
+  };
 }
 
 async function checkRuns(gh, slug, sha, cwd) {
@@ -344,10 +629,23 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
  * on the commit GitHub evaluates. A blocked merge state refuses after the
  * per-check pass, so a named check refusal keeps its name; any remaining block
  * (a required check that never reported, a required review, or another required
- * rule) fails closed. Refuses when no required checks are found, so an empty
- * source fails closed.
+ * rule) fails closed.
+ *
+ * An unknown repository-rulesets read refuses the finish whatever the rest of the
+ * union holds, because that reply may carry a required-status rule this caller
+ * never saw, so a non-empty union from another source must not let the per-check
+ * pass judge only the names it saw. origin/main treated a failed ruleset read as an
+ * empty source and refused only on an unrecognized message, so this is stricter than
+ * that (issue #336 review).
+ *
+ * An empty union of required checks refuses when the classic-protection source
+ * settled nothing, so a source this caller cannot read fails closed and the reason
+ * names it. An empty union over sources that each stated they hold no required check
+ * is an established absence, which passes and reports `noRequiredChecks: true` so a
+ * caller can tell it apart from a gated pass on a branch that required a check
+ * (issue #336).
  * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
- * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
+ * @returns {Promise<{ ok: true, commit: string, noRequiredChecks?: true } | { ok: false, reason: string }>}
  */
 export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   if (!reviewed) {
@@ -361,20 +659,71 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   if (info.mergeStateStatus === "BEHIND") {
     return fail("the PR is behind its base branch");
   }
-  if (info.mergeStateStatus === "UNKNOWN") {
-    return fail("GitHub reports the PR merge state as unknown (computed lazily; retry shortly)");
-  }
   if (info.mergeStateStatus === "DIRTY") {
     return fail("the PR has merge conflicts (merge state DIRTY)");
+  }
+  // The merge state is validated before either path, so the relaxed absence path
+  // applies exactly the same merge-state condition as the per-check path. A state
+  // that is missing, null, empty, or not one GitHub documents settles nothing, and
+  // a state the gate cannot read is not a clean one, so it refuses on both paths
+  // rather than passing the absence path on a reply it never understood
+  // (issue #336 review).
+  if (!MERGE_STATES.has(info.mergeStateStatus)) {
+    return fail("GitHub reports the PR merge state as unknown (computed lazily; retry shortly)");
   }
   if (info.headRefOid !== reviewed.head) {
     return fail("the PR head differs from the reviewed commit");
   }
 
   const slug = await repoSlug(gh, cwd);
-  const required = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
-  if (required.length === 0) {
-    return fail("no required checks were found for the base branch");
+  const {
+    unknown,
+    rulesetState,
+    protectionState,
+    contexts: required,
+  } = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
+  // An unknown ruleset read refuses the finish whatever the rest of the union
+  // holds. Its own reply may carry a required-status rule this caller never saw,
+  // and a non-empty union from another source would otherwise let the per-check
+  // pass judge only the names it saw, so a ruleset-required check could be skipped
+  // (issue #336 review).
+  //
+  // A successful read that found no rule is not in this branch. It contributes no
+  // contexts and the per-check pass runs on the other sources, which is what
+  // origin/main did for every unreadable ruleset reply, so a classic-only
+  // repository whose required checks passed still finishes. It is still not a
+  // positive absence, so the empty-union refusal below names it.
+  if (rulesetState === UNKNOWN) {
+    return fail(
+      "the repository rulesets could not be read, so the gate cannot tell which required checks the base branch requires",
+    );
+  }
+  // No required check exists only when both sources stated they hold none. A source
+  // that settled nothing, and a ruleset read that found no rule, are both named in
+  // the refusal, because a parent can only fix a source it can see (issue #336). A
+  // blocked merge state still refuses below, so an absent check set cannot pass a
+  // pull request another required rule blocks.
+  const noRequiredChecks =
+    required.length === 0 && rulesetState === ABSENT && protectionState === ABSENT;
+  if (required.length === 0 && !noRequiredChecks) {
+    const unproven = [...unknown];
+    if (rulesetState === EMPTY) {
+      unproven.push(RULESETS);
+    }
+    // The protection source cannot be `EMPTY`: `classifyProtection` returns
+    // `ABSENT`, `HAS_CONTEXTS`, or `UNKNOWN` and nothing else, so an unreadable
+    // protection reply is already in `unknown` and needs no second push (#336).
+    return fail(
+      `no required checks were found for the base branch, and ${unproven.join(" and ")} did not state that it holds no required check, so the gate cannot tell a base branch with no required check from one whose check it never saw`,
+    );
+  }
+  if (noRequiredChecks) {
+    if (info.mergeStateStatus === "BLOCKED") {
+      return fail(
+        "the PR merge state is blocked (a required review or another required rule is unmet)",
+      );
+    }
+    return { ok: true, commit: info.headRefOid, noRequiredChecks: true };
   }
   const { commit, runs, statuses } = await evaluatedState(gh, slug, info, cwd);
   for (const context of required) {
@@ -388,14 +737,17 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   // classic-protection-only repo a caller without admin rights cannot enumerate
   // a required check that never started; GitHub reports that PR as blocked to such
   // a caller, confirmed live with a non-admin `GITHUB_TOKEN` (#280). When no other
-  // required check reported, the empty-union refusal above fires first. The REST
-  // `mergeable_state` reads `blocked` for an admin and `unstable` for an anonymous
-  // caller on that same pull request, so its value depends on the viewer and is not
-  // a stable signal. The GraphQL `mergeStateStatus` reads `BLOCKED` for the admin
-  // and for a non-admin `GITHUB_TOKEN`, which is what was observed; GraphQL needs
+  // required check reported, the empty-union refusal above fires first, because
+  // that caller's protection source is unreadable. The REST `mergeable_state`
+  // reads `blocked` for an admin and `unstable` for an anonymous caller on that
+  // same pull request, so its value depends on the viewer and is not a stable
+  // signal. The GraphQL `mergeStateStatus` reads `BLOCKED` for the admin and for
+  // a non-admin `GITHUB_TOKEN`, which is what was observed; GraphQL needs
   // authentication, so no anonymous reading of it exists (#280). Other unmet rules
   // (a required review, unresolved conversations, a required deployment) also report
-  // blocked, and the gate cannot tell them apart, so it fails closed (#271).
+  // blocked, and the gate cannot tell them apart, so it fails closed (#271). The
+  // established-absence pass above refuses on it too, because a branch with no
+  // required check can still carry another required rule (#336).
   if (info.mergeStateStatus === "BLOCKED") {
     return fail(
       "the PR merge state is blocked (a required check, review, or other required rule is unmet)",

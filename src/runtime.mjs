@@ -182,7 +182,11 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * does, and that refusal is collected with the rest rather than replacing them.
  * The gate flag is a run input, so no child turn satisfies that refusal and its
  * recovery names `abort` as the outcome the orchestrator owns. A run with
- * neither `pr` nor `requireCi` behaves exactly as before (#302).
+ * neither `pr` nor `requireCi` behaves exactly as before (#302). A gate that
+ * passes on a base branch with no required check verified the PR head, the clean
+ * reviewed tree, and the merge state, and the run emits a `no-required-checks`
+ * event, so a finish that verified no check never reads as one whose checks
+ * passed (#336).
  *
  * With `mode`, the headless run names its loop policy with the same flag and the
  * same values the interactive path takes, and the prompt states that mode. A
@@ -299,9 +303,12 @@ export async function runLoop(options) {
       // prompt, because the run grants a single corrective turn and a second
       // refused finish ends it. Reporting one condition at a time would spend
       // that turn on a condition the next refusal names instead, which is how a
-      // prompt that says "finish again" becomes an exit 1 (#293). The order
-      // matches the interactive `role finish`: the marker condition, the
-      // completion rule, the declared-PR gate condition, then the PR gate. The
+      // prompt that says "finish again" becomes an exit 1 (#293). The order is
+      // the marker condition, the `review-only` reviewer-turn condition, the
+      // completion rule, the declared-PR gate condition, then the PR gate. It
+      // matches the interactive `role finish` except for the `review-only`
+      // condition, which that path cannot reach because its init dispatch is
+      // itself a reviewer turn (#337). The
       // `--pr` declaration is the PR input, so its refusal sits where the gate
       // sits (#302).
       const refusals = [];
@@ -310,6 +317,11 @@ export async function runLoop(options) {
       // refusal needs one, and forcing it on the marker would spend a step and
       // start a review cycle the run did not need (#293).
       let needsChildTurn = false;
+      // The absence the gate established on a base branch with no required check.
+      // It is recorded on the accepted finish only, because another refusal in
+      // this same decision means the run did not finish, and a finish that never
+      // happened verified nothing (#336 review).
+      let noRequiredChecks = false;
       // The marker condition applies to a run that carries the gate and to a run
       // that declares its PR, because both require the gate that resolves the
       // compare. A run that declares neither keeps the marker (#302).
@@ -361,15 +373,24 @@ export async function runLoop(options) {
         // can no longer misreport. Its own failure is a refusal rather than a
         // thrown error, so a `gh` failure does not discard a run that a later
         // turn could pass (#293).
-        const gate = await ciRefusal({ pr: requireCi, reviewed: lastReviewed, cwd, gh });
-        if (gate) {
+        const gate = await ciGate({ pr: requireCi, reviewed: lastReviewed, cwd, gh });
+        if (gate.refusal) {
           // The gate reads the reviewed state, which only a reviewer turn
           // establishes, so a gate refusal always needs a child turn (#293).
           needsChildTurn = true;
-          refusals.push(gate);
+          refusals.push(gate.refusal);
+        } else {
+          noRequiredChecks = gate.noRequiredChecks;
         }
       }
       if (refusals.length === 0) {
+        if (noRequiredChecks) {
+          // A base branch with no required check leaves the gate verifying the PR
+          // head, the clean reviewed tree, and the merge state only. The event is
+          // emitted here, on the accepted finish, so a refused finish never
+          // reports an absence for a run that did not finish (#336 review).
+          onEvent({ type: "no-required-checks", pr: requireCi, stepsUsed });
+        }
         // A finish the parent marks as an unresolved PR-head compare stays on
         // the loop's own recorded-finish code 0, but it emits a
         // machine-readable event and reports the marker, so it never reads the
@@ -523,9 +544,11 @@ export function missingGateRefusal(pr, requireCi) {
 }
 
 /**
- * The reason `--require-ci` refuses a finish, or null when the gate allows it.
- * The shared `checkCi` gate resolves the PR head in the runtime, so the outcome
- * comes from a gate result and not from a field the parent set (#293).
+ * The outcome of the `--require-ci` gate for one finish: a refusal when the gate
+ * refuses, and the base-branch absence when it passes on a branch with no
+ * required check. The shared `checkCi` gate resolves the PR head in the runtime,
+ * so the outcome comes from a gate result and not from a field the parent set
+ * (#293).
  *
  * A `gh` failure is a refusal, not a thrown error: `checkCi` throws on an
  * unreadable PR, repository, or API reply, and in the interactive path that
@@ -535,9 +558,9 @@ export function missingGateRefusal(pr, requireCi) {
  * clears the prior-refusal flag, so a retry costs a step rather than ending the
  * run.
  * @param {object} options
- * @returns {Promise<{ reason: string, recovery: string } | null>}
+ * @returns {Promise<{ refusal: { reason: string, recovery: string } | null, noRequiredChecks: boolean }>}
  */
-async function ciRefusal({ pr, reviewed, cwd, gh }) {
+async function ciGate({ pr, reviewed, cwd, gh }) {
   let gate;
   try {
     gate = await checkCi({ pr, reviewed, cwd, gh });
@@ -545,25 +568,31 @@ async function ciRefusal({ pr, reviewed, cwd, gh }) {
     const detail = (err?.message ?? String(err)).split("\n")[0];
     logError(`ci gate could not run: ${detail}`);
     return {
-      reason: `the PR gate could not be evaluated: ${detail}`,
-      // The run is not out of attempts here: any child turn clears the flag that
-      // records the prior refusal, so a later refusal still gets a corrective
-      // turn while step budget remains. The orchestrator cannot reach a
-      // credential or a network itself, so the only retry it owns is the next
-      // gate read.
-      recovery: `That is a failure to read GitHub, not a verdict on the work, and the fix is outside this run's reach. The only retry you can make is a reviewer turn, which re-reads the reviewed state and re-runs the gate; a worker turn resets that state to none, so it does not retry the gate. The finish carries no unresolvedCompare marker either way, because the gate resolves the PR head from PR ${pr}.`,
+      refusal: {
+        reason: `the PR gate could not be evaluated: ${detail}`,
+        // The run is not out of attempts here: any child turn clears the flag that
+        // records the prior refusal, so a later refusal still gets a corrective
+        // turn while step budget remains. The orchestrator cannot reach a
+        // credential or a network itself, so the only retry it owns is the next
+        // gate read.
+        recovery: `That is a failure to read GitHub, not a verdict on the work, and the fix is outside this run's reach. The only retry you can make is a reviewer turn, which re-reads the reviewed state and re-runs the gate; a worker turn resets that state to none, so it does not retry the gate. The finish carries no unresolvedCompare marker either way, because the gate resolves the PR head from PR ${pr}.`,
+      },
+      noRequiredChecks: false,
     };
   }
   if (gate.ok) {
-    return null;
+    return { refusal: null, noRequiredChecks: gate.noRequiredChecks === true };
   }
   return {
-    reason: gate.reason,
-    // A reviewer turn is what the gate needs, because only a reviewer turn
-    // establishes the reviewed state the gate reads. A worker turn is needed
-    // first only when the condition is about the change itself, and it needs a
-    // reviewer turn after it either way (#293).
-    recovery: `That condition is read from PR ${pr} by the gate, so the finish carries no unresolvedCompare marker. Dispatch the reviewer to re-read the state and re-run the gate, then finish. If the condition is about the change rather than the checks, dispatch the worker first and then the reviewer on the new state: a worker turn resets the reviewed state to none, so on its own it satisfies neither the gate nor the completion rule.`,
+    refusal: {
+      reason: gate.reason,
+      // A reviewer turn is what the gate needs, because only a reviewer turn
+      // establishes the reviewed state the gate reads. A worker turn is needed
+      // first only when the condition is about the change itself, and it needs a
+      // reviewer turn after it either way (#293).
+      recovery: `That condition is read from PR ${pr} by the gate, so the finish carries no unresolvedCompare marker. Dispatch the reviewer to re-read the state and re-run the gate, then finish. If the condition is about the change rather than the checks, dispatch the worker first and then the reviewer on the new state: a worker turn resets the reviewed state to none, so on its own it satisfies neither the gate nor the completion rule.`,
+    },
+    noRequiredChecks: false,
   };
 }
 

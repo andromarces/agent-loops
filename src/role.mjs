@@ -660,7 +660,10 @@ function dispatchPayload(roleName, result) {
  * head (#286). The headless loop resolves it under the same flag (#293). A run
  * that declared `--pr <pr>` at init must end through the `--require-ci <pr>`
  * gate: a finish with no gate, or with a gate for another PR, is refused, and so
- * is one that carries the marker (#302).
+ * is one that carries the marker (#302). A gate that passes on a base branch
+ * with no required check verified the PR head, the clean reviewed tree, and the
+ * merge state, so the finish records `noRequiredChecks` in the envelope and the
+ * state file (#336).
  */
 async function finish(args, { stdin = readStdin, gh } = {}) {
   if (args.role !== null) {
@@ -701,9 +704,10 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
       throw new RoleError(validated.error);
     }
     // Every applicable refusal is collected and reported in one error, in the
-    // order the headless list uses: the marker condition, the completion rule,
-    // then the declared-PR gate condition, then the gate. A finish that breaks
-    // two rules must name both, or the parent spends a `finish` call per
+    // order the headless list uses, minus the `review-only` reviewer-turn
+    // condition this path cannot reach: the marker condition, the completion
+    // rule, then the declared-PR gate condition, then the gate. A finish that
+    // breaks two rules must name both, or the parent spends a `finish` call per
     // condition. The gate runs only when nothing above refused, so a refused
     // finish never reads GitHub, which the headless loop cannot promise because
     // it owns the whole run (#302).
@@ -740,6 +744,7 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
       }
       throw new RoleError(`Finish refused: ${refusals.join("; ")}.`);
     }
+    let noRequiredChecks = false;
     if (args.requireCi !== null) {
       const gate = await checkCi({
         pr: args.requireCi,
@@ -750,11 +755,23 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
       if (!gate.ok) {
         throw new RoleError(`Finish refused: ${gate.reason}.`);
       }
+      noRequiredChecks = gate.noRequiredChecks === true;
     }
 
     state.lifecycle = "finished";
     state.summary = validated.value.summary;
     const payload = { status: "ok", lifecycle: "finished" };
+    if (noRequiredChecks) {
+      // A base branch with no required check leaves the gate verifying the PR
+      // head, the clean reviewed tree, and the merge state only. The finish
+      // records that, so a reader never reads it as a pass on a checked branch
+      // (#336).
+      state.noRequiredChecks = true;
+      payload.noRequiredChecks = true;
+      logInfo(
+        "no required check exists for the base branch; the gate verified the PR head, the reviewed tree, and the merge state",
+      );
+    }
     if (validated.value.unresolvedCompare) {
       // Recorded in the envelope and beside the summary in the state file, so a
       // recorded unresolved compare never reads as a verified finish (#281). A

@@ -424,6 +424,101 @@ test("the headless prompt adds the declaration rule and nothing else", () => {
   );
 });
 
+// Usefulness: verifies the headless prompt states that a gate on a base branch
+// whose required-check sources each state it holds none passes on the PR head, the
+// clean reviewed tree, and the merge state, and records the absence, so an
+// orchestrator on such a branch knows the gate can pass and knows what it did not
+// verify (issue #336).
+test("the headless prompt states the no-required-check gate outcome", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+  });
+  expectRule(prompt, /no required check/i, /pass/i, /PR head/i, /reviewed/i, /merge state/i);
+  expectRule(prompt, /no required check/i, /record/i);
+  // The rule names the condition the pass rests on, so an orchestrator whose
+  // credential cannot read a source does not expect the gate to pass.
+  expectRule(prompt, /required-check sources/i, /state/i);
+  expectRule(prompt, /cannot read/i, /refus/i);
+  // The same rule on the interactive surface, so the two parent paths do not
+  // diverge on it.
+  const instructions = await readFile(instructionsPath, "utf8");
+  expectRule(instructions, /no required check/i, /pass/i, /PR head/i, /reviewed/i, /merge state/i);
+  expectRule(instructions, /no required check/i, /record/i);
+  expectRule(instructions, /cannot read/i, /refus/i);
+});
+
+// The surfaces that state the gate's empty-union rule. The reviewer found them
+// contradicting each other, so one rule is asserted on each: only an allowlisted
+// reply proves an absence, and a private Free-plan repository must omit `--pr`.
+// Usefulness: verifies every surface states the same rule, so an orchestrator
+// reading one is not told a run passes on a branch the gate refuses (#336 review).
+const RULE_SURFACES = [
+  ["docs/orchestrator-instructions.md", instructionsPath],
+  ["README.md", join(dirname(fileURLToPath(import.meta.url)), "../../README.md")],
+];
+
+for (const [name, path] of RULE_SURFACES) {
+  // Usefulness: verifies ${name} states the allowlist rule, the one absence per
+  // source, and the pagination and rule-type unknown, so it cannot describe a
+  // partial, malformed, or unreadable read as a pass (#336 review).
+  test(`${name} states the allowlisted absence rule`, async () => {
+    const text = await readFile(path, "utf8");
+    expectRule(text, /allowlist/i, /fails closed/i);
+    expectRule(text, /classes/i, /absent/i, /has-contexts/i, /empty/i, /unknown/i);
+    // The one per-source absence each, and the ruleset read is every page.
+    expectRule(text, /repository rulesets/i, /read of every page/i, /documented rule type/i);
+    expectRule(text, /classic branch protection/i, /Branch not protected/);
+    expectRule(text, /No successful classic-protection body proves an absence/i);
+    // A read of no page at all is unknown, and exactly one empty page is empty: two
+    // different replies, and neither is a positive absence (#336 review).
+    expectRule(text, /no page at all/i, /unknown/i);
+    expectRule(text, /exactly one empty page/i, /empty/i, /positive absence/i);
+    // An unlisted rule type settles nothing either.
+    expectRule(text, /not a documented rule type/i, /unknown/i);
+    // A rule on a later page is enforced rather than missed.
+    expectRule(text, /paginated/i, /later page/i, /enforced/i);
+  });
+
+  // Usefulness: verifies ${name} states the four ruleset outcomes, so the empty
+  // ruleset read is not described with the name of a reply that refuses (#336
+  // review).
+  test(`${name} states the four ruleset outcomes`, async () => {
+    const text = await readFile(path, "utf8");
+    // A read the gate cannot interpret refuses whatever the union holds.
+    expectRule(text, /ruleset read the gate cannot interpret/i, /refuses the finish/i, /union/i);
+    // Exactly one empty page is neither, so a classic-only repository still
+    // finishes, and the anomalous page sequences are named as refusals.
+    expectRule(text, /exactly one empty page/i, /contributes no contexts/i, /origin.main/i);
+    expectRule(text, /no page at all/i, /two or more empty pages/i);
+  });
+
+  // Usefulness: verifies ${name} states that an empty page inside a longer read
+  // settles nothing, so a partial read is not classified from the pages that did
+  // arrive (#336 review).
+  test(`${name} states that an empty page inside a longer read settles nothing`, async () => {
+    const text = await readFile(path, "utf8");
+    expectRule(text, /empty page inside a longer read/i, /nothing/i);
+  });
+
+  // Usefulness: verifies ${name} states that a ruleset-only branch reaches the
+  // absence path, the case an earlier claim got backwards (#336 review).
+  test(`${name} states that a ruleset-only branch reaches the absence path`, async () => {
+    const text = await readFile(path, "utf8");
+    expectRule(text, /ruleset-only branch/i, /reaches|does/i);
+  });
+
+  // Usefulness: verifies ${name} states that a private Free-plan repository still
+  // refuses a declared run and must omit `--pr`, so the gap #336 leaves is
+  // visible to whoever reads it (#336 review).
+  test(`${name} states that a private Free-plan repository must omit --pr`, async () => {
+    const text = await readFile(path, "utf8");
+    expectRule(text, /private/i, /Free.plan/i, /omit/i, /--pr/);
+  });
+}
+
 // Usefulness: verifies a run that declares no PR keeps the prompt origin/main
 // sends, because the declaration block is the only addition and it is empty
 // without `--pr` (#302).

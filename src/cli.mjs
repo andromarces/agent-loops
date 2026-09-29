@@ -254,8 +254,15 @@ Role flags:
                                 request, so a finish must end through the
                                 --require-ci <pr> gate for the same PR. Refuses a
                                 finish with no such gate and a finish that sets
-                                unresolvedCompare. Later calls read it from the
-                                state file and reject any attempt to change it.
+                                unresolvedCompare. A base branch whose required-check
+                                sources each state that it holds none does not
+                                refuse it; the gate passes on the PR head, the
+                                clean reviewed tree, and the merge state, and
+                                records that no required check exists. A private
+                                GitHub Free-plan repository still refuses a
+                                declared run, so it must omit --pr. Later
+                                calls read it from the state file and reject any
+                                attempt to change it.
   --timeout <seconds>           wait-checks: bound on the wait. Defaults to 300. 0 is
                                 refused, because the wait must stay bounded.
   --require-ci <pr>             finish only: refuse unless the PR head matches the
@@ -264,7 +271,12 @@ Role flags:
                                 conflicts, is not blocked, and every required check
                                 passed on the commit GitHub evaluates. An app-qualified
                                 required check must pass on a check run from that app.
-                                Refuses a finish that also sets unresolvedCompare.
+                                A base branch whose required-check sources each
+                                state that it holds none has no check to wait for,
+                                so the gate passes on the PR head, the clean
+                                reviewed tree, and the merge state, and the run
+                                records the absence. Refuses a
+                                finish that also sets unresolvedCompare.
 
 Options:
 
