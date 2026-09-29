@@ -80,7 +80,7 @@ export async function runChild(options) {
   // every later turn would fail the same way. Clear the id and rerun the turn once as a first
   // turn, so a worker gets its preamble again. The rerun belongs to the step already charged for
   // this turn: the failed resume ran no model turn, and the single rerun bounds the extra cost
-  // (ADR 0014).
+  // (ADR 0016).
   const runFn = async (finalPrompt) => {
     const resumedId = role.sessionId;
     try {

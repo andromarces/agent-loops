@@ -863,7 +863,7 @@ test("a declared PR supplies the runtime-read required-check status to the revie
 
 // Usefulness: verifies a failed first turn that reported a session id persists it, so the next
 // dispatch resumes that session, and a missing resumed session clears the stored id and reruns as
-// a first turn without a second step (issue #360, ADR 0014).
+// a first turn without a second step (issue #360, ADR 0016).
 test("a failed first turn keeps its session id and a missing session falls back in one step", async () => {
   await setup();
   const repo = await createTempRepo();

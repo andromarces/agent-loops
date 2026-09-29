@@ -3141,7 +3141,7 @@ test("the orchestrator prompt names no wait when the turn timeout is too short",
 
 // Usefulness: verifies a resume that fails because the CLI has no such session clears the id and
 // reruns the turn once as a first turn with the worker preamble, inside the one charged step
-// (issue #360, ADR 0014).
+// (issue #360, ADR 0016).
 test("a missing worker session reruns the turn as a first turn in the same step", async () => {
   const repo = await createTempRepo();
   try {

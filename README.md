@@ -58,7 +58,7 @@ Each adapter manages its own persistent session across turns. Model and effort a
 
 A failed first turn keeps its session. When the failed output names a session id, the adapter stores it on the role state, so the next turn resumes that session and the edits the failed turn left. A failed resumed turn never changes its id. Copilot pre-assigns its id and always keeps it.
 
-When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn: a worker gets the role preamble again. The rerun charges no second step. The failed resume ran no model turn, so the step pays for the one requested turn, and the rerun happens at most once per turn. The transcript shows two `invocation` events with the same `stepsUsed`, and the state file keeps one `turns` entry (issue #360, ADR 0014).
+When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn: a worker gets the role preamble again. The rerun charges no second step. The failed resume ran no model turn, so the step pays for the one requested turn, and the rerun happens at most once per turn. The transcript shows two `invocation` events with the same `stepsUsed`, and the state file keeps one `turns` entry (issue #360, ADR 0016).
 
 Verified on the installed CLIs (Claude Code 2.1.284, codex-cli 0.161.0-alpha.1, OpenCode v0.0.0-dev-20291, agy 1.2.13):
 

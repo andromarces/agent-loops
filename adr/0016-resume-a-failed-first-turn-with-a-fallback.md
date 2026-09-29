@@ -1,4 +1,4 @@
-# 0014. Resume the session of a failed first turn, with a fallback to a new session
+# 0016. Resume the session of a failed first turn, with a fallback to a new session
 
 ## Status
 
