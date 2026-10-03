@@ -674,6 +674,23 @@ function dispatchPayload(roleName, result) {
 }
 
 /**
+ * Runs `fn(state, paths)` under the state lock for a run that is not terminal.
+ * Rejects init-flag changes and a terminal lifecycle first. `requireOptions`
+ * goes to `requireState`.
+ */
+function withOpenRun(args, requireOptions, fn) {
+  const paths = statePaths({ cwd: args.cwd });
+  return withStateLock(paths.lockFile, async () => {
+    const state = requireState(await readState(paths.stateFile), args.cwd, requireOptions);
+    rejectInitFlagChanges(args, state);
+    if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
+      throw new RoleError(`Run is already ${state.lifecycle}.`);
+    }
+    return fn(state, paths);
+  });
+}
+
+/**
  * `finish`: accepts the five-key summary as JSON on stdin, from active only.
  * `--require-accept` and `--require-ci` gate the finish; every applicable
  * refusal is collected and reported in one error, in the order the headless list
@@ -696,13 +713,7 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
     throw new RoleError("--role is only valid for dispatch.");
   }
 
-  const paths = statePaths({ cwd: args.cwd });
-  return withStateLock(paths.lockFile, async () => {
-    const state = requireState(await readState(paths.stateFile), args.cwd, { needsBudget: true });
-    rejectInitFlagChanges(args, state);
-    if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
-      throw new RoleError(`Run is already ${state.lifecycle}.`);
-    }
+  return withOpenRun(args, { needsBudget: true }, async (state, paths) => {
     if (state.lifecycle !== "active") {
       throw new RoleError(`finish is accepted only from active; run is ${state.lifecycle}.`);
     }
@@ -867,13 +878,7 @@ async function abort(args) {
   }
   rejectFinishOnlyFlags(args, "abort");
 
-  const paths = statePaths({ cwd: args.cwd });
-  return withStateLock(paths.lockFile, async () => {
-    const state = requireState(await readState(paths.stateFile), args.cwd);
-    rejectInitFlagChanges(args, state);
-    if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
-      throw new RoleError(`Run is already ${state.lifecycle}.`);
-    }
+  return withOpenRun(args, {}, async (state, paths) => {
     state.lifecycle = "aborted";
     state.reason = args.reason;
     await writeState(paths.stateFile, state);
