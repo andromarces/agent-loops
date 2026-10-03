@@ -55,16 +55,20 @@ refusal.
    because `unresolvedCompareReason` is what both paths call.
 4. Every applicable refusal is collected and reported in one refusal, in the
    order marker condition, `--require-accept`, declared-PR gate condition,
-   `--require-ci`. The interactive `role finish` applies the same rule and the
-   same order, so a finish that breaks two rules names both on either path and a
-   parent learns every condition from one call. An undeclared run keeps the error
-   text it had before, so the collect-then-report rule changes only the runs that
-   declare a PR.
+   `--require-ci`. On the headless path one refusal names every condition the
+   finish breaks. The interactive `role finish` applies the same order and names
+   every condition above the `--require-ci` gate. It reaches the gate only after
+   those pass (item 6), so a later `finish` can report a `--require-ci` condition
+   that the first refusal did not name. An undeclared run keeps the error text it
+   had before, so the collect-then-report rule changes only the runs that declare
+   a PR.
 5. The prompt states one rule and predicts no outcome: a declared run finishes
    through the gate for the declared PR; a finish with no gate or with the
    unresolved-compare marker is refused; a matching gate still applies its own
-   conditions; and one refusal names every condition that failed. The runtime
-   collects every applicable condition, so a per-case line that named the sole
+   conditions; and one refusal names every condition that failed. On the
+   headless path that is every condition, and on the interactive path it is every
+   condition above the gate. The runtime collects every applicable condition on
+   its path, so a per-case line that named the sole
    reason, or described a gate the runtime never evaluates, would contradict it.
    The prompt therefore has no line for a mismatched gate: the headless path
    refuses that combination before the prompt exists. The block is empty without
@@ -102,7 +106,8 @@ refusal.
 
 - A run that states its PR cannot end through a field the parent set, so a
   forgotten `--require-ci` is a refusal instead of a silent verified finish.
-- A finish that breaks two conditions now names both on either path, so a
+- A finish that breaks two conditions names both on the headless path, and on
+  the interactive path when both sit above the `--require-ci` gate, so a
   corrective turn or a `finish` call is not spent on the condition the next
   refusal would name.
 - A parent must pass both flags on the headless path, and must init with `--pr`
