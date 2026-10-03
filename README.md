@@ -368,7 +368,9 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
                                unresolvedCompare. Off by default; without it the
                                unresolvedCompare marker is the only record of an
                                unresolved compare.
--h, --help                    Show help.
+-h, --help                    Show help. Also valid after role.
+-V, --version                 Print the package version and exit. Must be the first
+                              argument.
 ```
 
 A value flag also accepts the inline form `--flag=value`, for example

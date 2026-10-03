@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
@@ -201,6 +202,9 @@ Usage:
 
   agent-loop role dispatch --role worker --prompt-file prompt.txt
 
+  agent-loop --version
+  agent-loop role --help
+
 The orchestrator selects actions (run_worker, run_reviewer, finish, abort).
 The runtime enforces step limits and mutation boundaries.
 
@@ -362,7 +366,9 @@ Options:
                                 unresolvedCompare marker is the only record of an
                                 unresolved compare. A --mode review-only run refuses
                                 it outright.
-  -h, --help                    Show help.
+  -h, --help                    Show help. Also valid after role.
+  -V, --version                 Print the package version and exit. Must be the first
+                                argument.
 
   A value flag also accepts the inline form --flag=value, for example
   --task=-x, which allows a value that starts with a dash. A boolean flag,
@@ -394,6 +400,13 @@ function formatSummary(summary) {
 }
 
 export async function main(argv = process.argv.slice(2), agents = defaultAgents) {
+  if (argv[0] === "--version" || argv[0] === "-V") {
+    // Read on demand: install fixtures copy src without package.json.
+    const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url)));
+    console.log(version);
+    return;
+  }
+
   if (argv[0] === "role") {
     await runRoleMain(argv.slice(1), { agents });
     return;

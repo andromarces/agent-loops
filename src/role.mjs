@@ -45,6 +45,17 @@ const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
 class RoleError extends Error {}
 
+const ROLE_USAGE = [
+  "Usage: agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]",
+  "",
+  "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
+  "state file. One JSON object on stdout; logs on stderr.",
+  "",
+  "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",
+  "",
+  "-h, --help  Show this help. Run agent-loop --help for every role flag.",
+].join("\n");
+
 const INIT_FIELDS = ["task", "mode", "parentSession", "maxSteps", "timeout", "pr"];
 
 /**
@@ -78,6 +89,7 @@ export function parseRoleArgs(argv) {
     pr: null,
     verbose: false,
     timeoutProvided: false,
+    help: false,
   };
 
   let index = 0;
@@ -169,6 +181,11 @@ export function parseRoleArgs(argv) {
 
       case "--verbose":
         args.verbose = true;
+        break;
+
+      case "--help":
+      case "-h":
+        args.help = true;
         break;
 
       default:
@@ -1072,6 +1089,11 @@ export async function main(argv, { agents = defaultAgents } = {}) {
     } catch (err) {
       console.log(JSON.stringify({ status: "error", error: errorMessage(err) }));
       process.exitCode = 1;
+      return;
+    }
+
+    if (args.help) {
+      console.log(ROLE_USAGE);
       return;
     }
 
