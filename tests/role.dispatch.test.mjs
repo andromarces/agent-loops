@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -145,6 +145,29 @@ test("an init dispatch on a refused --cwd writes no run state", async () => {
     expect(await readState(statePaths({ cwd }).stateFile), cwd).toBeNull();
   }
   expect(worker.recorded.length).toBe(0);
+});
+
+// Usefulness: verifies the `--cwd` guard does not refuse a Git work tree whose
+// path contains spaces, which would otherwise block every run in such a work tree
+// on both the init dispatch and a later one (issue #352).
+test("a dispatch in a Git work tree whose path contains spaces is not refused", async () => {
+  await setup();
+  const parent = await mkdtemp(join(tmpdir(), "role test spaced parent-"));
+  repos.push(parent);
+  const repo = join(parent, "my work tree");
+  await rename(await createTempRepo(), repo);
+  const worker = recordingAdapter([]);
+  const agents = { fake1: worker, fake2: recordingAdapter([]) };
+
+  for (const overrides of [INIT_OVERRIDES, []]) {
+    const result = await executeRoleCommand(withRepo(dispatchArgv(overrides), repo), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.payload).toMatchObject({ status: "ok" });
+  }
+  expect(worker.recorded.length).toBe(2);
 });
 
 // Usefulness: verifies a later dispatch at a live run's own `--cwd` is refused
