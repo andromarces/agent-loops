@@ -156,8 +156,10 @@ nothing else.
      paginates at 30 rules per page, so the read follows every page, and a body the
      gate cannot account for every page of is unknown, or a required-status rule on
      a later page would be missed and a branch that requires a check would pass. An
-     empty result is excluded, because a read of exactly one empty page states
-     nothing about the branch, and so is a read of no page at all, and so is a
+     empty result is excluded, because a read of exactly one empty page is the same
+     reply for a branch no ruleset applies to and for a caller or endpoint that
+     enumerates no rule for that branch, so it contributes no contexts but is not a
+     positive absence, and so is a read of no page at all, and so is a
      second empty page, because that sequence is not the complete result it claims
      to be. Those three are not one outcome, and the reply-shape table above gives
      each its class. A read of exactly one empty page is `empty`, which contributes
