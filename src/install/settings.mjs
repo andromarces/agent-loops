@@ -1,6 +1,6 @@
 // Settings-file merge for the installer (#139). A settings target records where
 // its one entry lives with a locator:
-//   - `{ kind: "array", path: ["hooks", "PreToolUse"], matcher, matcherKey }`
+//   - `{ kind: "array", path: ["hooks", "PreToolUse"] }`
 //     inserts one element into the array at `path` (for example a Claude or
 //     Codex hook entry).
 //   - `{ kind: "key", key }` sets one top-level key (the Antigravity named hook

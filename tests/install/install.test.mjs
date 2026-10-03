@@ -1572,3 +1572,29 @@ test("a full uninstall removes the install home directory", async () => {
   await uninstall({ home });
   expect(existsSync(installRoot(home))).toBe(false);
 });
+
+// Usefulness: verifies #190 — new array locators carry no unread `matcher`, and
+// an existing manifest record that still carries one stays valid for upgrade
+// and uninstall.
+test("array locators drop matcher and a legacy matcher record still uninstalls", async () => {
+  for (const harness of ["claude", "codex"]) {
+    const [target] = (await targetPaths(harness, await makeHome())).settings;
+    expect(target.locator).toEqual({ kind: "array", path: ["hooks", "PreToolUse"] });
+  }
+
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  const original = `${JSON.stringify(claudeSeed(), null, 2)}\n`;
+  await writeJson(settingsPath, claudeSeed());
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const manifest = await readManifest(home);
+  const record = manifest.harnesses.claude.settings[0];
+  expect(record.locator).not.toHaveProperty("matcher");
+  record.locator.matcher = record.entry.matcher;
+  await writeFile(manifestPath(home), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  await uninstall({ home });
+  expect(await readText(settingsPath)).toBe(original);
+});

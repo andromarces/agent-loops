@@ -84,7 +84,6 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       locator: {
         kind: "array",
         path: ["hooks", "PreToolUse"],
-        matcher: entry.matcher,
       },
       entry,
     });
@@ -111,7 +110,6 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       locator: {
         kind: "array",
         path: ["hooks", "PreToolUse"],
-        matcher: entry.matcher,
       },
       entry,
     });
