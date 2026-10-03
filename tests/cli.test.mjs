@@ -1,9 +1,14 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execa } from "execa";
 import { expect, test, vi } from "vitest";
 import { main, parseArgs } from "../src/cli.mjs";
+import { parseRoleArgs } from "../src/role.mjs";
 import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+
+const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 
 // Usefulness: verifies missing required --orchestrator flag throws error.
 test("missing --orchestrator fails", () => {
@@ -1301,4 +1306,38 @@ test("--continue-from rewrites a large written transcript with every earlier eve
     expect(after.events[count].type).toBe("continued");
     expect(after.events.length).toBeGreaterThan(count + 1);
   });
+});
+
+// Usefulness: verifies --version and -V print the package.json version without an exit error.
+test.each(["--version", "-V"])("%s prints the package version", async (flag) => {
+  const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url)));
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  process.exitCode = undefined;
+  try {
+    await main([flag]);
+    expect(log.mock.calls).toEqual([[version]]);
+    expect(process.exitCode).toBeUndefined();
+  } finally {
+    log.mockRestore();
+  }
+});
+
+// Usefulness: verifies the top-level help lists both new flags.
+test("--help lists --version and role --help", async () => {
+  const { stdout } = await execa(process.execPath, [CLI, "--help"]);
+  expect(stdout).toContain("-V, --version");
+  expect(stdout).toContain("agent-loop role --help");
+});
+
+// Usefulness: verifies `role --help` and `role -h` print usage on stdout and exit 0.
+test.each(["--help", "-h"])("role %s prints usage and exits 0", async (flag) => {
+  const result = await execa(process.execPath, [CLI, "role", flag]);
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toMatch(/^Usage: agent-loop role/);
+});
+
+// Usefulness: verifies a help flag after an operation parses, and an inline value is rejected.
+test("role help parses after an operation and rejects an inline value", () => {
+  expect(parseRoleArgs(["finish", "-h"]).help).toBe(true);
+  expect(() => parseRoleArgs(["--help=1"])).toThrow("--help does not take a value.");
 });

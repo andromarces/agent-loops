@@ -1,7 +1,8 @@
 // `agent-loop role`: run one worker or reviewer turn, or finish/abort/extend a run,
 // through the same guards as the headless loop, driven by a lifecycle state
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
-// envelope per invocation; all logs go to stderr.
+// envelope per invocation, except `--help`, which prints plain usage; all logs go
+// to stderr.
 import { readFile, appendFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
@@ -45,6 +46,17 @@ const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
 class RoleError extends Error {}
 
+const ROLE_USAGE = [
+  "Usage: agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]",
+  "",
+  "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
+  "state file. One JSON object on stdout, except this help; logs on stderr.",
+  "",
+  "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",
+  "",
+  "-h, --help  Show this help. Run agent-loop --help for every role flag.",
+].join("\n");
+
 const INIT_FIELDS = ["task", "mode", "parentSession", "maxSteps", "timeout", "pr"];
 
 /**
@@ -78,6 +90,7 @@ export function parseRoleArgs(argv) {
     pr: null,
     verbose: false,
     timeoutProvided: false,
+    help: false,
   };
 
   let index = 0;
@@ -169,6 +182,11 @@ export function parseRoleArgs(argv) {
 
       case "--verbose":
         args.verbose = true;
+        break;
+
+      case "--help":
+      case "-h":
+        args.help = true;
         break;
 
       default:
@@ -1053,7 +1071,8 @@ export async function executeRoleCommand(args, deps = {}) {
 
 /**
  * Entry point for `agent-loop role ...`. Prints exactly one JSON envelope on
- * stdout and sets the process exit code. All lifecycle logging goes to stderr.
+ * stdout and sets the process exit code, except `--help`, which prints plain
+ * usage and exits 0. All lifecycle logging goes to stderr.
  */
 export async function main(argv, { agents = defaultAgents } = {}) {
   setLogsToStderr(true);
@@ -1072,6 +1091,11 @@ export async function main(argv, { agents = defaultAgents } = {}) {
     } catch (err) {
       console.log(JSON.stringify({ status: "error", error: errorMessage(err) }));
       process.exitCode = 1;
+      return;
+    }
+
+    if (args.help) {
+      console.log(ROLE_USAGE);
       return;
     }
 
