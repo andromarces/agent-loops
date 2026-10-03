@@ -1,7 +1,9 @@
+import { isJsonObject } from "../lib/json.mjs";
+
 const SUMMARY_KEYS = ["changed", "verified", "deferred", "notDone", "open"];
 
 export function validateAction(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isJsonObject(value)) {
     return { ok: false, error: "Action must be an object." };
   }
 

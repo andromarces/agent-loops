@@ -4,6 +4,7 @@
 // Windows nor macOS by default. The runtime owns the bound instead (issue #329).
 import { setTimeout as delay } from "node:timers/promises";
 import { runGh } from "./ci-gate.mjs";
+import { isJsonObject } from "./json.mjs";
 
 /** Default wait bound, in seconds. Short enough to fit a harness command timeout. */
 export const DEFAULT_WAIT_SECONDS = 300;
@@ -48,7 +49,7 @@ const PASSING_STATES = new Set(["SUCCESS", "SKIPPED", "NEUTRAL"]);
  * checks has no state to read, so it is unresolved, never a pass (#329).
  */
 function readItem(item) {
-  if (item === null || typeof item !== "object" || Array.isArray(item)) {
+  if (!isJsonObject(item)) {
     return null;
   }
   const name = typeof item.name === "string" ? item.name.trim() : "";

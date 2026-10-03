@@ -6,6 +6,7 @@
 // The `gh` runner is injected so a caller can run the gate against captured
 // responses. The default runner shells out to the `gh` CLI.
 import { execa } from "execa";
+import { isJsonObject } from "./json.mjs";
 
 // A check run passes with one of these conclusions; every other conclusion and
 // every non-completed status fails the gate.
@@ -313,7 +314,7 @@ function classifyRulesets(data) {
   const rules = data.flat();
   const contexts = [];
   for (const rule of rules) {
-    if (typeof rule !== "object" || rule === null || Array.isArray(rule)) {
+    if (!isJsonObject(rule)) {
       return { state: UNKNOWN, contexts: [] };
     }
     if (typeof rule.type !== "string" || !RULE_TYPES.has(rule.type)) {
@@ -356,7 +357,7 @@ function classifyRulesets(data) {
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
 function classifyProtection(data) {
-  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+  if (!isJsonObject(data)) {
     return { state: UNKNOWN, contexts: [] };
   }
   const required = data.required_status_checks;
@@ -366,7 +367,7 @@ function classifyProtection(data) {
   if (required === null) {
     return { state: UNKNOWN, contexts: [] };
   }
-  if (typeof required !== "object" || Array.isArray(required)) {
+  if (!isJsonObject(required)) {
     return { state: UNKNOWN, contexts: [] };
   }
   const contexts = [];
@@ -797,7 +798,7 @@ function parseListedChecks(stdout) {
     return null;
   }
   for (const check of parsed) {
-    if (typeof check !== "object" || check === null || Array.isArray(check)) {
+    if (!isJsonObject(check)) {
       return null;
     }
     if (typeof check.name !== "string" || oneLine(check.name) === "") {

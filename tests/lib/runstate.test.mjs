@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import {
   STALE_LOCK_GRACE_MS,
+  readState,
   readStatesForSession,
   statePaths,
   withStateLock,
@@ -203,5 +204,18 @@ test("readStatesForSession ignores an entry temp file", async () => {
     ]);
   } finally {
     restoreRunsRoot();
+  }
+});
+
+// Usefulness: verifies a state file that is valid JSON but not an object throws with its path; no other test reaches this error path.
+test("readState throws on a state file that is not a JSON object", async () => {
+  const dir = await tempDir();
+  const stateFile = join(dir, "state.json");
+
+  for (const text of ["[]", "null", "7"]) {
+    await writeFile(stateFile, text);
+    await expect(readState(stateFile)).rejects.toThrow(
+      `State file is not a JSON object: ${stateFile}`,
+    );
   }
 });
