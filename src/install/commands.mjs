@@ -129,28 +129,39 @@ function printReports(reports, dryRun) {
   }
 }
 
-export async function runInstallCommand(argv) {
+/**
+ * Parses flags, prints `usage` for --help, and applies --verbose. Returns the
+ * options, or null when the command already finished: a parse error sets exit
+ * code 1, and --help exits 0.
+ */
+function parseCommand(argv, usage) {
   let options;
   try {
     options = parseFlags(argv);
   } catch (err) {
     logError(err.message);
     process.exitCode = 1;
-    return;
+    return null;
   }
   if (options.help) {
-    console.log(
-      [
-        "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run]",
-        "",
-        "A value flag also accepts --flag=value, for example --harness=claude,codex.",
-        `Harnesses: ${HARNESS_ORDER.join(", ")}`,
-        "Without --harness, detected CLIs are preselected in an interactive prompt.",
-      ].join("\n"),
-    );
-    return;
+    console.log(usage.join("\n"));
+    return null;
   }
   setVerbose(Boolean(options.verbose));
+  return options;
+}
+
+export async function runInstallCommand(argv) {
+  const options = parseCommand(argv, [
+    "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run]",
+    "",
+    "A value flag also accepts --flag=value, for example --harness=claude,codex.",
+    `Harnesses: ${HARNESS_ORDER.join(", ")}`,
+    "Without --harness, detected CLIs are preselected in an interactive prompt.",
+  ]);
+  if (!options) {
+    return;
+  }
 
   let harnesses = options.harnesses;
   if (!harnesses) {
@@ -189,26 +200,15 @@ export async function runInstallCommand(argv) {
 }
 
 export async function runUninstallCommand(argv) {
-  let options;
-  try {
-    options = parseFlags(argv);
-  } catch (err) {
-    logError(err.message);
-    process.exitCode = 1;
+  const options = parseCommand(argv, [
+    "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run]",
+    "",
+    "A value flag also accepts --flag=value, for example --harness=claude,codex.",
+    "Without --harness, the harnesses recorded in the install manifest are removed.",
+  ]);
+  if (!options) {
     return;
   }
-  if (options.help) {
-    console.log(
-      [
-        "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run]",
-        "",
-        "A value flag also accepts --flag=value, for example --harness=claude,codex.",
-        "Without --harness, the harnesses recorded in the install manifest are removed.",
-      ].join("\n"),
-    );
-    return;
-  }
-  setVerbose(Boolean(options.verbose));
 
   let harnesses = options.harnesses;
   if (!harnesses && !options.yes && process.stdin.isTTY) {
