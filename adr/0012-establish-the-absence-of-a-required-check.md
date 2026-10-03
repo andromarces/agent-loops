@@ -156,8 +156,10 @@ nothing else.
      paginates at 30 rules per page, so the read follows every page, and a body the
      gate cannot account for every page of is unknown, or a required-status rule on
      a later page would be missed and a branch that requires a check would pass. An
-     empty result is excluded, because a read of exactly one empty page states
-     nothing about the branch, and so is a read of no page at all, and so is a
+     empty result is excluded, because a read of exactly one empty page is the same
+     reply for a branch no ruleset applies to and for a caller or endpoint that
+     enumerates no rule for that branch, so it contributes no contexts but is not a
+     positive absence, and so is a read of no page at all, and so is a
      second empty page, because that sequence is not the complete result it claims
      to be. Those three are not one outcome, and the reply-shape table above gives
      each its class. A read of exactly one empty page is `empty`, which contributes
@@ -385,8 +387,9 @@ Andro Marces
   `gh pr checks --required` printed nothing and exited non-zero. No source stated
   that the branch requires no check, so the empty union over that read is a
   refusal, not an absence. The ruleset reply recorded there is a read of no page at
-  all, so it is `unknown`; a read of exactly one empty page is `empty` and refuses
-  neither path.
+  all, so it is `unknown`; a read of exactly one empty page is `empty`, which
+  contributes no contexts and does not refuse the normal path, but is not a
+  positive absence, so the relaxed path keeps the empty-union refusal.
 - [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md)
   stays `accepted`: its decision stands, and the ceiling this ADR lifts was a
   Consequence that ADR 0009 deferred to #295 and #301.
