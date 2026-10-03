@@ -1,14 +1,22 @@
 /**
+ * Sets `state.usage` to `usage`, or removes it when the CLI reported none (`undefined` or
+ * `null`), so a turn that omits usage leaves no stale value behind. An empty object is kept.
+ */
+export function setUsageOrDelete(state, usage) {
+  if (usage == null) {
+    delete state.usage;
+  } else {
+    state.usage = usage;
+  }
+}
+
+/**
  * Sets `state.usage.mainLoop` from one turn's usage, or removes `state.usage` when
- * the CLI reported none, so a turn that omits usage leaves no stale value behind.
+ * the CLI reported none.
  * Any truthy value counts as usage; a caller with a narrower rule passes a filtered value.
  */
 export function setMainLoopUsage(state, usage) {
-  if (usage) {
-    state.usage = { mainLoop: usage };
-  } else {
-    delete state.usage;
-  }
+  setUsageOrDelete(state, usage ? { mainLoop: usage } : undefined);
 }
 
 /**

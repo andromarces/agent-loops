@@ -5,6 +5,7 @@ import {
   flagMissingSession,
   keepFailedSessionId,
   resumeMismatchError,
+  setUsageOrDelete,
 } from "./shared.mjs";
 
 // Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
@@ -99,9 +100,5 @@ function setUsage(state, resultEvent) {
   if (typeof resultEvent?.total_cost_usd === "number") {
     usage.totalCostUsd = resultEvent.total_cost_usd;
   }
-  if (Object.keys(usage).length > 0) {
-    state.usage = usage;
-  } else {
-    delete state.usage;
-  }
+  setUsageOrDelete(state, Object.keys(usage).length > 0 ? usage : undefined);
 }
