@@ -1,4 +1,4 @@
-import { access, mkdtemp } from "node:fs/promises";
+import { access, mkdtemp, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -221,4 +221,24 @@ test("wait-checks refuses a --cwd outside a Git work tree", async () => {
   expect(result.payload.error).toMatch(/must be inside a Git work tree/);
   // A refused work tree is refused before the read, not after it.
   expect(read).toBe(false);
+});
+
+// Usefulness: verifies the `--cwd` guard does not refuse a Git work tree whose
+// path contains spaces, which would otherwise block every wait in such a work
+// tree (issue #413).
+test("wait-checks does not refuse a Git work tree whose path contains spaces", async () => {
+  await setup();
+  const parent = await mkdtemp(join(tmpdir(), "wait checks spaced parent-"));
+  repos.push(parent);
+  const source = await createTempRepo();
+  repos.push(source);
+  const repo = join(parent, "my work tree");
+  await rename(source, repo);
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "60"]),
+    { gh: scriptedGh([SETTLED]), ...fakeClock() },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toMatchObject({ status: "ok", pr: 42, timedOut: false });
 });
