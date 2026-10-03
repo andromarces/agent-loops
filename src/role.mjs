@@ -1,7 +1,8 @@
 // `agent-loop role`: run one worker or reviewer turn, or finish/abort/extend a run,
 // through the same guards as the headless loop, driven by a lifecycle state
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
-// envelope per invocation; all logs go to stderr.
+// envelope per invocation, except `--help`, which prints plain usage; all logs go
+// to stderr.
 import { readFile, appendFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
@@ -49,7 +50,7 @@ const ROLE_USAGE = [
   "Usage: agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]",
   "",
   "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
-  "state file. One JSON object on stdout; logs on stderr.",
+  "state file. One JSON object on stdout, except this help; logs on stderr.",
   "",
   "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",
   "",
@@ -1070,7 +1071,8 @@ export async function executeRoleCommand(args, deps = {}) {
 
 /**
  * Entry point for `agent-loop role ...`. Prints exactly one JSON envelope on
- * stdout and sets the process exit code. All lifecycle logging goes to stderr.
+ * stdout and sets the process exit code, except `--help`, which prints plain
+ * usage and exits 0. All lifecycle logging goes to stderr.
  */
 export async function main(argv, { agents = defaultAgents } = {}) {
   setLogsToStderr(true);

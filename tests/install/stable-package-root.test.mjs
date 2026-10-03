@@ -41,6 +41,7 @@ async function pnpmGlobal(v11, { id, hash, version }) {
   await mkdir(store, { recursive: true });
   await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
   await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
+  await cp(join(REPO_ROOT, "package.json"), join(store, "package.json"));
   // The one runtime dependency, beside the package the way pnpm places it.
   await symlink(
     join(REPO_ROOT, "node_modules", "execa"),
@@ -174,6 +175,7 @@ async function pnpmProject(project, version) {
   await mkdir(store, { recursive: true });
   await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
   await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
+  await cp(join(REPO_ROOT, "package.json"), join(store, "package.json"));
   // The one runtime dependency, beside the package the way pnpm places it.
   await symlink(
     join(REPO_ROOT, "node_modules", "execa"),
@@ -246,6 +248,7 @@ async function pnpm12Project(pnpmHome, project, { hash, version }) {
   await mkdir(store, { recursive: true });
   await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
   await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
+  await cp(join(REPO_ROOT, "package.json"), join(store, "package.json"));
   // The one runtime dependency, beside the package the way pnpm places it.
   await symlink(
     join(REPO_ROOT, "node_modules", "execa"),
@@ -604,4 +607,19 @@ test("a dlx cache root stays refused after the stable rewrite", async () => {
     (err) => err,
   );
   expect(error?.message).toMatch(/npx|dlx/);
+});
+
+// Usefulness: verifies --version resolves in an installed pnpm layout, where the
+// package directory holds src, docs, and package.json and nothing else.
+test("--version prints the package version from an installed layout", async () => {
+  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-version-global-"));
+  paths.push(globalHome);
+  const { linked } = await pnpmGlobal(join(globalHome, "global", "v11"), {
+    id: "637c-18d963de1bc57d7c-0",
+    hash: null,
+    version: "0.3.0",
+  });
+  const { version } = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
+  const { stdout } = await execa(process.execPath, [join(linked, "src", "cli.mjs"), "--version"]);
+  expect(stdout).toBe(version);
 });

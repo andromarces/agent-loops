@@ -212,7 +212,8 @@ Subcommands:
 
   agent-loop role               Run a single worker or reviewer turn, or finish/abort/extend
                                 a run, from a lifecycle state file (see below). One JSON
-                                object on stdout; logs on stderr.
+                                object on stdout, except --help, which prints plain
+                                usage; logs on stderr.
   agent-loop install            Install harness entry points and parent guards at user
                                 scope. Interactive, or --harness <list> --yes.
   agent-loop uninstall          Remove the installed entry points and guards. Restores

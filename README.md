@@ -424,7 +424,7 @@ Operations: `dispatch` (default), `finish`, `abort`, `extend`, `wait-checks`.
 - The reviewer is required to end with one explicit `Verdict:` line (`accept` or `reject`, parsed case-insensitively) inside its closing block. The verdict word alone, the word closed by a sentence period (`reject.`), or the word followed by a separator and a trailing clause (`reject — the state does not pass`) parses to that word, unless the clause names either verdict as a whole word. Any other malformed value, including a missing line or a line that names both verdicts, yields `verdict: unknown`; process success never implies acceptance.
 - `--transcript <file>` appends one JSON line per `invocation` and `result` event, in the same shape as the headless mode, accumulating across calls. It stays a per-call flag; the `turns` array above is the history every run keeps without it.
 
-Stdout carries exactly one JSON envelope; all logs go to stderr:
+Stdout carries exactly one JSON envelope, except for `role --help` and `role -h`, which print plain usage text and exit 0. All logs go to stderr:
 
 ```json
 {
