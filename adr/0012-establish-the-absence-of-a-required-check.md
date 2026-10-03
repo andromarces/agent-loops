@@ -387,8 +387,9 @@ Andro Marces
   `gh pr checks --required` printed nothing and exited non-zero. No source stated
   that the branch requires no check, so the empty union over that read is a
   refusal, not an absence. The ruleset reply recorded there is a read of no page at
-  all, so it is `unknown`; a read of exactly one empty page is `empty` and refuses
-  neither path.
+  all, so it is `unknown`; a read of exactly one empty page is `empty`, which
+  contributes no contexts and does not refuse the normal path, but is not a
+  positive absence, so the relaxed path keeps the empty-union refusal.
 - [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md)
   stays `accepted`: its decision stands, and the ceiling this ADR lifts was a
   Consequence that ADR 0009 deferred to #295 and #301.
