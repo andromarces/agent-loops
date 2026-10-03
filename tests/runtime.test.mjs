@@ -1974,9 +1974,11 @@ test("a finish that breaks several rules is refused for all of them", async () =
 
 // 48a. Usefulness: verifies the headless loop runs the `--require-ci` gate after
 // an earlier refusal, so one refused finish names every broken condition. Only
-// the declared-PR gate condition skips the gate. Each case holds a reviewed
-// state and a PR head that differs from it, so the gate refusal and a gate read
-// both show that the gate ran (#366).
+// the declared-PR gate condition skips the gate. Each case other than the
+// review-only case holds a reviewed state and a PR head that differs from it, so
+// the gate refusal and a gate read both show that the gate ran. The review-only
+// case holds no reviewed state, and its gate refuses with the no-reviewed-state
+// reason (#366).
 test("--require-ci still runs the gate after the unresolvedCompare refusal", async () => {
   const repo = await createTempRepo();
   try {
