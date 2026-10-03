@@ -2,7 +2,12 @@ import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
-import { asSessionId, keepFailedSessionId, resumeMismatchError } from "./shared.mjs";
+import {
+  asSessionId,
+  keepFailedSessionId,
+  resumeMismatchError,
+  setUsageOrDelete,
+} from "./shared.mjs";
 
 // A part that opens a report label. The reviewer `Verdict:` line is excluded: it gates acceptance,
 // so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
@@ -189,11 +194,7 @@ function setUsage(state, events) {
   if (hasTokens) usage.mainLoop = tokens;
   if (hasCost && isUsageNumber(cost)) usage.totalCostUsd = cost;
 
-  if (Object.keys(usage).length > 0) {
-    state.usage = usage;
-  } else {
-    delete state.usage;
-  }
+  setUsageOrDelete(state, Object.keys(usage).length > 0 ? usage : undefined);
 }
 
 /**
