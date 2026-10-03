@@ -687,18 +687,20 @@ async function runInstall({
   return reports;
 }
 
+function uninstallReport(record, kind, action, detail) {
+  const report = { harness: record.harness, kind, action, path: record.path };
+  if (detail !== undefined) {
+    report.detail = detail;
+  }
+  return report;
+}
+
 async function restoreOrDelete(record, kind, dryRun) {
   if (record.existedBefore) {
     const backupFile = record.backupPath ?? backupPathFor(record.path);
     const backup = await readTextOrNull(backupFile);
     if (backup === null) {
-      return {
-        harness: record.harness,
-        kind,
-        action: "skip",
-        path: record.path,
-        detail: "backup missing; left unchanged",
-      };
+      return uninstallReport(record, kind, "skip", "backup missing; left unchanged");
     }
     if (!dryRun) {
       await writeTextAtomic(record.path, backup, {
@@ -706,18 +708,18 @@ async function restoreOrDelete(record, kind, dryRun) {
       });
       await removeFileQuiet(backupFile);
     }
-    return { harness: record.harness, kind, action: "restore", path: record.path };
+    return uninstallReport(record, kind, "restore");
   }
   if (!dryRun) {
     await removeFileQuiet(record.path);
   }
-  return { harness: record.harness, kind, action: "delete", path: record.path };
+  return uninstallReport(record, kind, "delete");
 }
 
 async function planSettingsRestore(record, dryRun) {
   const current = await readTextOrNull(record.path);
   if (current === null) {
-    return { harness: record.harness, kind: "settings", action: "missing", path: record.path };
+    return uninstallReport(record, "settings", "missing");
   }
   const currentSha = sha256(current);
 
@@ -729,22 +731,10 @@ async function planSettingsRestore(record, dryRun) {
   try {
     settings = parseSettings(current, record.path);
   } catch {
-    return {
-      harness: record.harness,
-      kind: "settings",
-      action: "skip",
-      path: record.path,
-      detail: "settings do not parse; left unchanged",
-    };
+    return uninstallReport(record, "settings", "skip", "settings do not parse; left unchanged");
   }
   if (!removeEntry(settings, record.locator, record.entry)) {
-    return {
-      harness: record.harness,
-      kind: "settings",
-      action: "skip",
-      path: record.path,
-      detail: "recorded entry not found; left unchanged",
-    };
+    return uninstallReport(record, "settings", "skip", "recorded entry not found; left unchanged");
   }
   pruneEmptyLocator(settings, record.locator, record.createdFrom ?? 0);
   if (!record.existedBefore && Object.keys(settings).length === 0) {
@@ -753,34 +743,31 @@ async function planSettingsRestore(record, dryRun) {
     if (!dryRun) {
       await removeFileQuiet(record.path);
     }
-    return { harness: record.harness, kind: "settings", action: "delete", path: record.path };
+    return uninstallReport(record, "settings", "delete");
   }
   if (!dryRun) {
     await writeTextAtomic(record.path, serializeSettings(settings, current));
   }
-  return {
-    harness: record.harness,
-    kind: "settings",
-    action: "remove-entry",
-    path: record.path,
-    detail:
-      "the file changed after install; removed only the recorded entry, so the result is not byte-identical",
-  };
+  return uninstallReport(
+    record,
+    "settings",
+    "remove-entry",
+    "the file changed after install; removed only the recorded entry, so the result is not byte-identical",
+  );
 }
 
 async function planFileRestore(record, dryRun) {
   const current = await readTextOrNull(record.path);
   if (current === null) {
-    return { harness: record.harness, kind: "file", action: "missing", path: record.path };
+    return uninstallReport(record, "file", "missing");
   }
   if (sha256(current) !== record.shaAfter) {
-    return {
-      harness: record.harness,
-      kind: "file",
-      action: "skip",
-      path: record.path,
-      detail: "owned file changed since install; left unchanged",
-    };
+    return uninstallReport(
+      record,
+      "file",
+      "skip",
+      "owned file changed since install; left unchanged",
+    );
   }
   return restoreOrDelete(record, "file", dryRun);
 }
