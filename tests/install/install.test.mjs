@@ -1572,3 +1572,80 @@ test("a full uninstall removes the install home directory", async () => {
   await uninstall({ home });
   expect(existsSync(installRoot(home))).toBe(false);
 });
+
+// Rewrites the recorded Claude settings locator as a pre-#190 manifest wrote it,
+// with the unread `matcher` field, and returns the record.
+async function addLegacyMatcher(home) {
+  const manifest = await readManifest(home);
+  const record = manifest.harnesses.claude.settings[0];
+  expect(record.locator).not.toHaveProperty("matcher");
+  record.locator.matcher = record.entry.matcher;
+  await writeFile(manifestPath(home), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return record;
+}
+
+// Usefulness: verifies #190 — new array locators carry no unread `matcher`.
+test("array locators carry no matcher", async () => {
+  for (const harness of ["claude", "codex"]) {
+    const [target] = (await targetPaths(harness, await makeHome())).settings;
+    expect(target.locator).toEqual({ kind: "array", path: ["hooks", "PreToolUse"] });
+  }
+});
+
+// Usefulness: verifies #190 — an upgrade that changes the managed entry still
+// finds and replaces it through a record whose locator carries the legacy
+// `matcher`, and the user's own entries stay.
+test("an upgrade replaces the entry of a legacy matcher record", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  const original = `${JSON.stringify(claudeSeed(), null, 2)}\n`;
+  await writeJson(settingsPath, claudeSeed());
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  const newEntry = (await targetPaths("claude", home)).settings[0].entry;
+
+  const record = await addLegacyMatcher(home);
+  const manifest = await readManifest(home);
+  const legacy = manifest.harnesses.claude.settings[0];
+  const oldEntry = {
+    matcher: record.entry.matcher,
+    hooks: [{ type: "command", command: 'node "/old/location/parent-guard.mjs"', timeout: 10 }],
+  };
+  const settings = JSON.parse(await readText(settingsPath));
+  const index = settings.hooks.PreToolUse.findIndex((entry) => deepEqual(entry, legacy.entry));
+  settings.hooks.PreToolUse[index] = oldEntry;
+  await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  legacy.entry = oldEntry;
+  legacy.shaAfter = sha256(await readText(settingsPath));
+  await writeFile(manifestPath(home), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  const upgraded = JSON.parse(await readText(settingsPath));
+  expect(upgraded.hooks.PreToolUse.some((entry) => deepEqual(entry, oldEntry))).toBe(false);
+  expect(upgraded.hooks.PreToolUse.filter((entry) => deepEqual(entry, newEntry))).toHaveLength(1);
+  expect(upgraded.hooks.PreToolUse).toHaveLength(settings.hooks.PreToolUse.length);
+
+  await uninstall({ home });
+  expect(await readText(settingsPath)).toBe(original);
+});
+
+// Usefulness: verifies #190 — uninstall removes the entry by the locator of a
+// legacy `matcher` record. A later user edit rules out the backup restore, so
+// only the locator-based removal can succeed.
+test("uninstall removes the entry of a legacy matcher record by locator", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, claudeSeed());
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  const record = await addLegacyMatcher(home);
+
+  const edited = JSON.parse(await readText(settingsPath));
+  edited.theme = "dark";
+  await writeFile(settingsPath, `${JSON.stringify(edited, null, 2)}\n`, "utf8");
+
+  const reports = await uninstall({ home });
+  expect(reports.find((entry) => entry.path === settingsPath).action).toBe("remove-entry");
+  const after = JSON.parse(await readText(settingsPath));
+  expect(after.theme).toBe("dark");
+  expect(after.hooks.PreToolUse.some((entry) => deepEqual(entry, record.entry))).toBe(false);
+  expect(after.hooks.PreToolUse).toEqual(claudeSeed().hooks.PreToolUse);
+});
