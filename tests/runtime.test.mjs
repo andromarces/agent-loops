@@ -1972,6 +1972,108 @@ test("a finish that breaks several rules is refused for all of them", async () =
   }
 });
 
+// 48a. Usefulness: verifies the headless loop runs the `--require-ci` gate after
+// an earlier refusal, so one refused finish names every broken condition. Only
+// the declared-PR gate condition skips the gate. Each case holds a reviewed
+// state and a PR head that differs from it, so the gate refusal and a gate read
+// both show that the gate ran (#366).
+test("--require-ci still runs the gate after the unresolvedCompare refusal", async () => {
+  const repo = await createTempRepo();
+  try {
+    const calls = [];
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: SUMMARY,
+      unresolvedCompare: true,
+    });
+
+    const result = await runLoop({
+      task: "PR work: address issue 366 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: ciGateGh(OTHER_HEAD, calls),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          finish,
+          finish,
+        ]),
+        work: scripted([]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("unresolvedCompare cannot be combined with --require-ci");
+    expect(result.reason).toContain("the PR head differs from the reviewed commit");
+    expect(gateReads(calls).length).toBeGreaterThan(0);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+test("--require-ci still runs the gate after the review-only reviewer-turn refusal", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({ action: "finish", summary: SUMMARY });
+
+    const result = await runLoop({
+      task: "Review PR 42 only.",
+      cwd: repo,
+      maxSteps: 5,
+      mode: "review-only",
+      requireCi: 42,
+      gh: ciGateGh(OTHER_HEAD),
+      roles: gateRoles(),
+      agents: { orch: scripted([finish, finish]), work: scripted([]), rev: scripted([]) },
+    });
+
+    // No reviewer turn ran, so the gate itself refuses with its no-reviewed-state reason.
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("no reviewer turn has run");
+    expect(result.reason).toContain("the latest reviewer turn has no reviewed state");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+test("--require-ci still runs the gate after the --require-accept refusal", async () => {
+  const repo = await createTempRepo();
+  try {
+    const calls = [];
+    const finish = JSON.stringify({ action: "finish", summary: SUMMARY });
+
+    const result = await runLoop({
+      task: "PR work: address issue 366 through PR 42.",
+      cwd: repo,
+      maxSteps: 6,
+      requireAccept: true,
+      requireCi: 42,
+      gh: ciGateGh(OTHER_HEAD, calls),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_worker", prompt: "work" }),
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          finish,
+          finish,
+        ]),
+        work: scripted(["worker pushed the change"]),
+        rev: scripted([REVIEW_REJECT]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("no reviewer accept with a Checks line");
+    expect(result.reason).toContain("the PR head differs from the reviewed commit");
+    expect(gateReads(calls).length).toBeGreaterThan(0);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 49. Usefulness: verifies an orchestrator that follows the refusal prompt
 // reaches exit 0, for the marker refusal and for the gate refusal. The prompt is
 // the run's only recovery, and a second refused finish with no child turn in
