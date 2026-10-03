@@ -1,4 +1,4 @@
-import { parseJsonLines } from "../lib/json.mjs";
+import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
@@ -80,7 +80,7 @@ export async function runOpenCode(state, prompt, options = {}) {
   // Every read below names a field of the event, so a line that parsed to another JSON value, such
   // as the `null` of a diagnostic line, is dropped first: reading it would throw a TypeError that
   // replaces the adapter error (issue #335).
-  const events = parseJsonLines(stdout).filter(isEvent);
+  const events = parseJsonLines(stdout).filter(isJsonObject);
 
   // Select the first truthy id, so an empty id is skipped, then require it to be a non-empty
   // string: a later valid id never rescues a truthy invalid or mismatched first one.
@@ -276,7 +276,7 @@ function lastErrorDetail(events) {
  * detail rather than a coerced one (issue #326).
  */
 function providerDetail(error) {
-  if (!error || typeof error !== "object" || Array.isArray(error)) {
+  if (!isJsonObject(error)) {
     return "";
   }
 
@@ -290,14 +290,6 @@ function providerDetail(error) {
   }
 
   return boundedLine(describeError({ type, message, status }), DETAIL_LIMIT);
-}
-
-/**
- * Returns whether a parsed line is a stream event. `parseJsonLines` returns any JSON value, so a
- * line can be `null`, a number, or a string, and no field read of such a line is meaningful.
- */
-function isEvent(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** Returns the byte count of a stream, for a debug line that carries size and not content. */

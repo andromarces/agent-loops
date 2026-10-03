@@ -13,6 +13,7 @@ import {
   removeFileQuiet,
   writeTextAtomic,
 } from "./fsutil.mjs";
+import { isJsonObject } from "../lib/json.mjs";
 
 export const MANIFEST_VERSION = 1;
 
@@ -52,11 +53,6 @@ export function manifestLockFile(home = resolveHome()) {
 
 export function emptyManifest() {
   return { version: MANIFEST_VERSION, harnesses: {} };
-}
-
-/** True for a JSON object, which excludes null and an array. */
-function isJsonObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** True for a settings locator, so a record's `locator` cannot crash the merge. */

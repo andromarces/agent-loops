@@ -16,6 +16,7 @@ import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "nod
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { isJsonObject } from "./json.mjs";
 import { logWarn } from "./log.mjs";
 
 export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
@@ -414,7 +415,7 @@ async function readLockText(lockFile) {
 function parseLockOwner(text) {
   try {
     const value = JSON.parse(text);
-    if (value === null || typeof value !== "object" || !Number.isInteger(value.pid)) {
+    if (!isJsonObject(value) || !Number.isInteger(value.pid)) {
       return null;
     }
     return value;
@@ -447,7 +448,7 @@ export async function readState(stateFile) {
     throw err;
   }
   const value = JSON.parse(text);
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isJsonObject(value)) {
     throw new Error(`State file is not a JSON object: ${stateFile}`);
   }
   return value;

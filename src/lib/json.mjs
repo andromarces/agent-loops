@@ -26,6 +26,11 @@ export function parseJsonLines(text) {
   return events;
 }
 
+/** True for a JSON object, which excludes null and an array. */
+export function isJsonObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 export function extractJsonObject(text) {
   let trimmed = text.trim();
 
@@ -45,7 +50,7 @@ export function extractJsonObject(text) {
     return { ok: false, error: "Response is not valid JSON." };
   }
 
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isJsonObject(value)) {
     return { ok: false, error: "Response is not a JSON object." };
   }
 

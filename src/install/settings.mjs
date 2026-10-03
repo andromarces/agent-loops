@@ -8,6 +8,7 @@
 // The visible entry is the only ownership key: find and remove compare the
 // recorded entry by deep equality, so a package move or an upgrade that changes
 // a path still finds the old record.
+import { isJsonObject } from "../lib/json.mjs";
 import { deepEqual } from "./fsutil.mjs";
 
 export function parseSettings(text, path) {
@@ -17,7 +18,7 @@ export function parseSettings(text, path) {
   } catch (err) {
     throw new Error(`Settings file does not parse: ${path} (${err.message})`);
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isJsonObject(value)) {
     throw new Error(`Settings file is not a JSON object: ${path}`);
   }
   return value;
@@ -70,7 +71,7 @@ export function validateLocator(settings, locator) {
   let node = settings;
   for (let index = 0; index < locator.path.length; index++) {
     const key = locator.path[index];
-    if (node === null || typeof node !== "object" || Array.isArray(node)) {
+    if (!isJsonObject(node)) {
       const where = locator.path.slice(0, index).join(".") || "(root)";
       return { ok: false, reason: `expected an object at ${where}` };
     }
@@ -83,7 +84,7 @@ export function validateLocator(settings, locator) {
       if (!Array.isArray(value)) {
         return { ok: false, reason: `expected an array at ${locator.path.join(".")}` };
       }
-    } else if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    } else if (!isJsonObject(value)) {
       return {
         ok: false,
         reason: `expected an object at ${locator.path.slice(0, index + 1).join(".")}`,
