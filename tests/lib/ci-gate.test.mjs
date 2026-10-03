@@ -1555,6 +1555,26 @@ test("refuses when there is no reviewed state", async () => {
   });
 });
 
+// Usefulness: verifies the two local refusals read nothing from GitHub, so a
+// change that moves either check after a `gh` call fails here (#366).
+test.each([
+  ["no reviewed state", null, "the latest reviewer turn has no reviewed state"],
+  [
+    "a work tree that is not clean",
+    { ...REVIEWED, clean: false },
+    "the reviewed work tree is not clean",
+  ],
+])("refuses on %s with no gh call", async (_name, reviewed, reason) => {
+  const calls = [];
+  const gh = async (args) => {
+    calls.push(args.join(" "));
+    return fakeGh(routes())(args);
+  };
+  const result = await checkCi({ pr: 42, reviewed, cwd: ".", gh });
+  expect(result).toEqual({ ok: false, reason });
+  expect(calls).toEqual([]);
+});
+
 // A status-read stub: it answers the PR head the read resolves first, then the
 // required-check list. `checks` is the list body, `status` the exit code `gh`
 // reports with it, and `head` the PR head the stub claims, so a test can place
