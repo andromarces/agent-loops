@@ -154,8 +154,10 @@ test("a dispatch in a Git work tree whose path contains spaces is not refused", 
   await setup();
   const parent = await mkdtemp(join(tmpdir(), "role test spaced parent-"));
   repos.push(parent);
+  const source = await createTempRepo();
+  repos.push(source);
   const repo = join(parent, "my work tree");
-  await rename(await createTempRepo(), repo);
+  await rename(source, repo);
   const worker = recordingAdapter([]);
   const agents = { fake1: worker, fake2: recordingAdapter([]) };
 
