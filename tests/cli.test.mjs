@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -637,6 +637,50 @@ test("successful finish run writes transcript with exitCode 0", async () => {
   } finally {
     process.exitCode = origExitCode;
     await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the `--cwd` guard does not refuse a Git work tree whose
+// path contains spaces, which would otherwise block every headless run in such a
+// work tree (issue #413).
+test("a Git work tree whose path contains spaces is not refused", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "cli spaced parent-"));
+  const source = await createTempRepo();
+  const repo = join(parent, "my work tree");
+  await rename(source, repo);
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const agents = {
+    codex: {
+      async run() {
+        return JSON.stringify({
+          action: "finish",
+          summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+        });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+
+  try {
+    await main([...BASE, "--cwd", repo, "--transcript", transcriptPath], agents);
+
+    expect(process.exitCode).toBe(0);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(transcript.exitCode).toBe(0);
+    expect(transcript.error).toBeNull();
+  } finally {
+    process.exitCode = origExitCode;
+    await removePath(parent);
   }
 });
 
