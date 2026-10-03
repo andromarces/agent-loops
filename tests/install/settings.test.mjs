@@ -11,7 +11,7 @@ test("parseSettings rejects a root that is not a JSON object", () => {
   expect(parseSettings('{"a":1}', "/home/settings.json")).toEqual({ a: 1 });
 });
 
-// Usefulness: verifies a non-object container on a locator path is refused with its location; no other test reaches this refusal.
+// Usefulness: verifies the refusal reason names the failing location, which the installer test "a wrong-typed settings container stops install with no write" does not assert (it checks the snippet and no write), and covers a null container that test never seeds.
 test("validateLocator refuses a container that is not an object", () => {
   const locator = { kind: "array", path: ["hooks", "PreToolUse"] };
 
