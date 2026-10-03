@@ -207,8 +207,7 @@ test("readStatesForSession ignores an entry temp file", async () => {
   }
 });
 
-// Usefulness: verifies a state file that is valid JSON but not an object throws with the path, so
-// a caller exits instead of reading a lifecycle from an array or scalar.
+// Usefulness: verifies a state file that is valid JSON but not an object throws with its path; no other test reaches this error path.
 test("readState throws on a state file that is not a JSON object", async () => {
   const dir = await tempDir();
   const stateFile = join(dir, "state.json");

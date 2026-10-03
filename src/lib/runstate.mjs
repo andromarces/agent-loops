@@ -415,7 +415,7 @@ async function readLockText(lockFile) {
 function parseLockOwner(text) {
   try {
     const value = JSON.parse(text);
-    if (!isJsonObject(value) || !Number.isInteger(value.pid)) {
+    if (value === null || typeof value !== "object" || !Number.isInteger(value.pid)) {
       return null;
     }
     return value;

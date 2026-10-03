@@ -28,7 +28,11 @@ export function validateAction(value) {
     }
 
     case "finish": {
-      if (!isJsonObject(value.summary)) {
+      if (
+        value.summary === null ||
+        typeof value.summary !== "object" ||
+        Array.isArray(value.summary)
+      ) {
         return { ok: false, error: "finish requires a summary object." };
       }
 
