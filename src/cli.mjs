@@ -321,8 +321,10 @@ Role flags:
                                 digest, so pass the same --test-cmd on every reviewer dispatch;
                                 a changed or missing value is refused.
   --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. The command and its
-                                child processes are killed at the bound, and the run reports
-                                timed out. Requires --test-cmd.
+                                command's own process group (POSIX) or process tree (Windows)
+                                is killed at the bound, and the run reports timed out. An
+                                orphan that left the group, or whose parent exited on Windows,
+                                can survive (ADR 0017). Requires --test-cmd.
 
 Options:
 
@@ -406,8 +408,10 @@ Options:
                                 of the runtime, so keep secrets out of the command text.
                                 Optional.
   --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. The command and its
-                                child processes are killed at the bound, and the run reports
-                                timed out. Requires --test-cmd.
+                                command's own process group (POSIX) or process tree (Windows)
+                                is killed at the bound, and the run reports timed out. An
+                                orphan that left the group, or whose parent exited on Windows,
+                                can survive (ADR 0017). Requires --test-cmd.
 
   A value flag also accepts the inline form --flag=value, for example
   --task=-x, which allows a value that starts with a dash. A boolean flag,

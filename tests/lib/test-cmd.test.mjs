@@ -112,7 +112,9 @@ async function waitForPidFiles(files) {
 }
 
 // Both processes record their pids before the bound, or the test fails: a child
-// that never ran proves nothing about the kill.
+// that never ran proves nothing about the kill. The survival check runs before any
+// cleanup kill, so a leaked process fails the test, and the cleanup in `finally`
+// only keeps a failed test from leaving a process behind.
 async function expectAllGone(pidFiles) {
   const pids = [];
   for (const file of pidFiles) {
@@ -120,15 +122,17 @@ async function expectAllGone(pidFiles) {
     expect(Number.isInteger(pid), `${file} holds no pid, so the process never started`).toBe(true);
     pids.push(pid);
   }
-  const deadline = Date.now() + 4000;
-  while (pids.some(processExists) && Date.now() < deadline) {
-    await delay(50);
-  }
-  for (const pid of pids) {
-    if (processExists(pid)) {
+  try {
+    const deadline = Date.now() + 4000;
+    while (pids.some(processExists) && Date.now() < deadline) {
+      await delay(50);
+    }
+    const survivors = pids.filter(processExists);
+    expect(survivors, `processes outlived the kill: ${survivors.join(", ")}`).toEqual([]);
+  } finally {
+    for (const pid of pids.filter(processExists)) {
       process.kill(pid, "SIGKILL");
     }
-    expect(processExists(pid), `process ${pid} outlived the kill`).toBe(false);
   }
 }
 
@@ -143,6 +147,7 @@ test("a timeout kills the command and its child process and reports timed-out", 
   const run = await runTestCmd({ command, timeoutSeconds: 3, cwd });
   expect(run).toMatchObject({ status: "timed-out", timedOut: true, exitCode: null });
   expect(run.summary).toContain("neither a pass nor a failure");
+  expect(run.summary).toContain("an orphan that left it can survive");
   await expectAllGone(pidFiles);
 }, 20_000);
 
@@ -210,6 +215,7 @@ test("a cancel reports the work tree change the command made before it", async (
   controller.abort();
   const error = await outcome;
   expect(error.isCanceled).toBe(true);
+  expect(error.testRun.summary).toContain("an orphan that left it can survive");
   expect(error.testRun).toMatchObject({
     status: "canceled",
     exitCode: null,

@@ -377,11 +377,14 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
                               response. This flag is the only source of the command. It
                               runs with the environment of the runtime, so keep secrets out
                               of the command text. Off by default; a run without it is
-                              unchanged. On `agent-loop role` it is an init flag, and later
-                              calls reject a change.
+                              unchanged. On `agent-loop role` it is an init flag, and every
+                              reviewer dispatch passes the same value again; a changed or
+                              missing value is refused.
 --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. At the bound the
-                              command and its child processes are killed, and the run
-                              reports timed-out, which is neither a pass nor a failure.
+                              the command's own process group (POSIX) or process tree
+                              (Windows) is killed, and the run reports timed-out, which is
+                              neither a pass nor a failure. An orphan that left the group,
+                              or whose parent exited on Windows, can survive (ADR 0017).
                               Requires --test-cmd.
 -h, --help                    Show help. Also valid after role.
 -V, --version                 Print the package version and exit. Must be the first

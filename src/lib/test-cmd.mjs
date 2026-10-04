@@ -59,7 +59,9 @@ function killTree(subprocess) {
  * on Windows) in `cwd`, so the command is written in the syntax of the shell
  * that runs it and the runtime adds no quoting. The command and its child
  * processes are killed when the bound expires, which reports `timed-out` with
- * `exitCode: null`, whatever code the killed command exited with.
+ * `exitCode: null`, whatever code the killed command exited with. The kill reaches
+ * the process group of the command on POSIX and its tree on Windows only: an orphan
+ * that left the group, or whose parent exited on Windows, can survive (ADR 0017).
  * Output is read as a rolling window, so a noisy command cannot exhaust memory.
  * The work tree is compared before and after the command; the caller takes its
  * reviewer snapshot after this returns, so the changes are reported here and are
@@ -140,10 +142,11 @@ export async function runTestCmd({
   let summary;
   if (canceled) {
     status = "canceled";
-    summary = "canceled before the command finished; the command and its descendants were killed";
+    summary =
+      "canceled before the command finished; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive";
   } else if (timedOut) {
     status = "timed-out";
-    summary = `timed out after ${timeoutSeconds} seconds; the command and its child processes were killed; this is neither a pass nor a failure`;
+    summary = `timed out after ${timeoutSeconds} seconds; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive; this is neither a pass nor a failure`;
   } else if (exitCode === null) {
     status = "error";
     summary = `did not run to an exit code${result.signal ? ` (signal ${result.signal})` : ""}`;
