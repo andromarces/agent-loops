@@ -1,5 +1,5 @@
 import { tmpdir } from "node:os";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { checkCi, readRequiredChecks, runGh } from "../../src/lib/ci-gate.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
@@ -1844,22 +1844,30 @@ test("reads an unresolved status when the gh call exceeds the time bound", async
   expect(read.summary).toMatch(/timed out|abort/i);
 });
 
-// Usefulness: verifies the real `gh` runner answers a status read through the
-// same options the read passes, including the abort signal. The unit stubs
-// accept any option shape, so only the real runner catches an option name that
-// the installed execa rejects, which is what made every real read fail
-// (issue #320 review). Termination of a hung child is checked against a shim
-// below, because a real `gh` gives no deterministic hang and a second real
-// spawn doubled the exposure to a slow Windows start (issue #373).
-test("the real gh runner answers a read through the options the read passes", async () => {
-  const { runGh } = await import("../../src/lib/ci-gate.mjs");
-  const controller = new AbortController();
-  const reply = await runGh(["--version"], ".", {
-    signal: controller.signal,
-    timeoutMs: 60_000,
-  });
-  expect(reply.status).toBe(0);
-  expect(reply.stdout.trim()).toMatch(/^gh version/);
+// Usefulness: verifies the real `gh` runner hands the installed execa the options
+// the read passes, including the abort signal. The unit stubs accept any option
+// shape, so only the real runner catches an option name that the installed execa
+// rejects, which is what made every real read fail (issue #320 review). execa
+// validates its options before it starts a process, so an empty PATH leaves it no
+// `gh` to start: the call fails with ENOENT and spawns nothing. A spawn is the cost
+// a loaded Windows runner made slow (issues #373 and #399). Termination of a hung
+// child is checked against a shim below, and the bound and signal values in
+// spawn-bounds.test.mjs.
+test("the real gh runner accepts the options the read passes", async () => {
+  vi.stubEnv("PATH", "");
+  try {
+    const controller = new AbortController();
+    const reply = await runGh(["--version"], ".", {
+      signal: controller.signal,
+      timeoutMs: 60_000,
+    });
+    // A rejected option throws before this point. The reply is the missing
+    // `gh`, so the runner mapped the failed start to a non-zero status.
+    expect(reply.status).not.toBe(0);
+    expect(reply.timedOut).toBe(false);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 // Usefulness: verifies a read whose PR head moves between the head read and the

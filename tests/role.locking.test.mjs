@@ -73,6 +73,13 @@ test("crash aftermath: interrupted lifecycle, stale lock removal, abort path", a
 
 // Usefulness: verifies acceptance — two concurrent calls: exactly one runs a
 // child; the other exits non-zero and the step count rises by one.
+//
+// The winner's child holds the lock until the loser has returned, so the result
+// does not depend on how long either call takes to start. A fixed delay in the
+// child let a loaded runner start the second call after the first had released
+// the lock, and both then ran (issue #399). A second child that starts anyway
+// releases the first at once, so a broken lock fails on the assertions and does
+// not hang.
 test("concurrent dispatches: exactly one child runs, the loser exits non-zero", async () => {
   await setup();
   const repo = await createTempRepo();
@@ -83,29 +90,40 @@ test("concurrent dispatches: exactly one child runs, the loser exits non-zero", 
   });
   expect(first.exitCode).toBe(0);
 
-  const slowWorker = {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const holdingWorker = {
     recorded: [],
     async run(state, prompt, options) {
       this.recorded.push({ state, prompt, options });
       state.sessionId = "sess-slow";
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (this.recorded.length > 1) {
+        release();
+      }
+      await held;
       return WORKER_REPLY;
     },
   };
-  const agents = { fake1: slowWorker, fake2: recordingAdapter([]) };
+  const agents = { fake1: holdingWorker, fake2: recordingAdapter([]) };
   const args = withRepo(dispatchArgv(), repo);
 
-  const [a, b] = await Promise.all([
+  const calls = [
     executeRoleCommand(args, { agents, stdin: stdinPrompt }),
     executeRoleCommand(args, { agents, stdin: stdinPrompt }),
-  ]);
+  ];
+  // The call that settles first is the loser: the winner is parked in its child.
+  const loser = await Promise.race(calls);
+  release();
+  const [a, b] = await Promise.all(calls);
 
   expect([a.exitCode, b.exitCode].sort()).toEqual([0, 1]);
-  const loser = a.exitCode === 1 ? a : b;
+  expect(loser.exitCode).toBe(1);
   // Both refusal messages stay valid fail-closed outcomes: atomic creation
   // (#176) removes the half-written window, but a contender that loses the
   // link race can still read after the winner releases (removal race, #172).
   expect(loser.payload.error).toMatch(/locked by a live process|not readable yet/);
-  expect(slowWorker.recorded.length).toBe(1);
+  expect(holdingWorker.recorded.length).toBe(1);
   expect((await readRepoState(repo)).stepsUsed).toBe(2);
 });
