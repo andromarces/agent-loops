@@ -26,6 +26,7 @@ import {
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
+import { copyLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
@@ -84,6 +85,7 @@ export function parseRoleArgs(argv) {
     promptFile: null,
     transcript: null,
     resumeInterrupted: false,
+    noCopyLocalFiles: false,
     reason: null,
     requireAccept: false,
     requireCi: null,
@@ -166,6 +168,10 @@ export function parseRoleArgs(argv) {
 
       case "--require-accept":
         args.requireAccept = true;
+        break;
+
+      case "--no-copy-local-files":
+        args.noCopyLocalFiles = true;
         break;
 
       case "--require-ci":
@@ -309,6 +315,7 @@ function initialState(args) {
     stepsUsed: 0,
     lifecycle: "active",
     pr: args.pr,
+    copyLocalFiles: !args.noCopyLocalFiles,
     roles: {
       worker: roleState(args, "worker"),
       reviewer: roleState(args, "reviewer"),
@@ -363,6 +370,14 @@ function rejectInitFlagChanges(args, state, allowed = []) {
     if (isGiven) {
       provided.push([flag, args[flag], state[flag]]);
     }
+  }
+  // The copy runs once at init, so a later call cannot turn it off. A state file
+  // written before the field copied nothing, so its absent value counts as on
+  // only for this comparison.
+  if (args.noCopyLocalFiles && (state.copyLocalFiles ?? true) !== false) {
+    throw new RoleError(
+      `--no-copy-local-files cannot be changed after init (state holds: ${JSON.stringify(state.copyLocalFiles ?? null)}).`,
+    );
   }
   for (const roleName of CHILD_ROLE_KINDS) {
     for (const [flag, path] of [
@@ -544,9 +559,18 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
 
   const prompt = await readPrompt(args, stdin);
 
+  let localFiles = null;
   if (init) {
-    // Every check and the prompt read passed; now archive the old terminal
-    // state file, if any, and write the new one.
+    // Every check and the prompt read passed. The copy comes first, before the
+    // state file exists, so a copy that throws leaves no run to abort, and
+    // before the first child turn and snapshot, so every turn sees the files.
+    if (state.copyLocalFiles) {
+      localFiles = await copyLocalFiles(args.cwd);
+      if (localFiles) {
+        onEvent({ type: "local-files", ...localFiles });
+      }
+    }
+    // Now archive the old terminal state file, if any, and write the new one.
     await archiveState(paths, existing);
     await writeState(paths.stateFile, state);
     if (args.parentSession) {
@@ -592,7 +616,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
     recordTurn(state, roleName, payload, at);
     await writeState(paths.stateFile, state);
     onEvent({ type: "result", role: roleName, result: payload, stepsUsed: state.stepsUsed });
-    return { exitCode: canceled ? 130 : 1, payload };
+    return { exitCode: canceled ? 130 : 1, payload: withLocalFiles(payload, localFiles) };
   }
 
   state.lifecycle = "active";
@@ -606,7 +630,15 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
 
   // The dispatch itself succeeded, but a child error result is still a
   // non-zero command outcome for the calling parent.
-  return { exitCode: result.status === "ok" ? 0 : 1, payload: dispatchPayload(roleName, result) };
+  return {
+    exitCode: result.status === "ok" ? 0 : 1,
+    payload: withLocalFiles(dispatchPayload(roleName, result), localFiles),
+  };
+}
+
+/** Adds the copied and skipped path names of the init copy to the envelope. */
+function withLocalFiles(payload, localFiles) {
+  return localFiles ? { ...payload, localFiles } : payload;
 }
 
 function errorMessage(err) {

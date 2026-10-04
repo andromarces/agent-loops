@@ -334,6 +334,8 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
                               reset, not restored (see Continue a run). The file is read once
                               at start and the transcript write is atomic, so --transcript can
                               name the same file and a failed write keeps the earlier file.
+--no-copy-local-files         Do not copy local files into a linked --cwd (see Local files in a
+                              linked work tree). Off by default: the copy is on.
 --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
 --require-accept              Refuse finish until a reviewer turn reports on the state, and
                               after a worker turn that reviewer turn accepts with a Checks
@@ -400,6 +402,7 @@ agent-loop role dispatch --role reviewer --cwd /path/to/work-tree --prompt-file 
 Operations: `dispatch` (default), `finish`, `abort`, `extend`, `wait-checks`.
 
 - The run state lives at a fixed path derived from the resolved `--cwd` (`<os tmpdir>/agent-loops/runs/<sha256 of cwd, shortened>/state.json`, with `state.lock` beside it). There is no `--state` flag; `AGENT_LOOP_RUNS_ROOT` overrides the root for tests only.
+- `--no-copy-local-files` is an init field: it turns off the copy of local files into a linked `--cwd` (see [Local files in a linked work tree](#local-files-in-a-linked-work-tree)). A later call that passes it against a run that copied is refused, like every other init field. The init envelope carries `localFiles: {"copied": [...], "skipped": [...]}` when the copy ran, and no such key otherwise.
 - The init call requires `--parent-session`: the CLI refuses an init without it,
   and refuses an unexpanded placeholder such as `${CLAUDE_SESSION_ID}` or
   `%CODEX_THREAD_ID%`, before any state is written. A run through `role` is
@@ -572,6 +575,22 @@ skill separates a refusal from a check that did not decide. See
 
 The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. Five harnesses add a hard guard for the file-edit tools, and all share the decision logic in `src/hook/decision.mjs`. See [Parent guard details](docs/parent-guard.md) for the per-harness matchers, the session-field mapping, and the pre-tool hook availability survey.
 
+## Local files in a linked work tree
+
+`git worktree add` checks out tracked files only, so a run work tree lacks the untracked, ignored files that configure a child agent. When `--cwd` is a linked work tree, the runtime copies them from the main work tree once, at init, before the first child spawns and before the first snapshot. The copy is on by default. `--no-copy-local-files` on the headless `agent-loop` command, or as an init field of `agent-loop role`, turns it off ([ADR 0017](adr/0017-copy-local-files-into-a-linked-run-work-tree.md)).
+
+A file is copied only when it exists in the main work tree, is untracked there, and is ignored in `--cwd` by any ignore source (`.gitignore` of the branch in `--cwd`, `.git/info/exclude`, `core.excludesFile`). An untracked file that is not ignored in `--cwd` is skipped and reported.
+
+Covered paths: `.agents/`, `.claude/`, `.codex/`, `.env`, `.envrc`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `opencode.jsonc`, `opencode.json`, `.github/copilot-instructions.md`, and `.vscode/`. For a directory, each file inside it meets the conditions on its own.
+
+- Nothing is overwritten, and a symlink is never followed or created. Nothing under `.claude/worktrees/` or any other work tree is copied.
+- A file over 1 MiB is skipped, and so is a listed directory with more than 2000 entries.
+- A copy leaves `clean` and the snapshot digest unchanged, because a copied file is ignored.
+- `--cwd` as the main work tree, or a bare repository, copies nothing.
+- The report names paths only, in the `role` init envelope and in the `local-files` transcript event. The runtime never prints, logs, or transcribes file content.
+- Secrets: `.env`, `.envrc`, `.mcp.json`, and files under `.claude/`, `.codex/`, or `.vscode/` can hold secrets. The copy is a second copy on disk inside the run work tree. Pass `--no-copy-local-files` to avoid it.
+- A work tree that a child creates for itself during a turn is not covered.
+
 ## Reviewer safety
 
 Reviewer and orchestrator turns run in read-only mode to prevent unintended repository mutations.
@@ -678,6 +697,8 @@ A re-finish after a marker-only refusal is still a repeat in the bookkeeping sen
 A `gh` failure inside the gate is a refusal, not a crash, so a transient credential or network failure is refused on the ordinary path with the work of that attempt intact, and the run ends on exit 1 when the failure recurs with no child turn in between. The orchestrator cannot reach a credential or a network itself, so the only retry it owns is a reviewer turn that re-runs the gate, and that costs a step like any other.
 
 An `unresolved-compare` event records a `finish` whose action set `"unresolvedCompare": true`, the case where the parent records an unresolved PR-head compare under `notDone` and `open` instead of verifying it (#266). The event follows the finish `action` event and carries `stepsUsed`. The same finish exits `4` instead of `0` and keeps the same summary, so the recorded finish stays distinguishable without a transcript: a consumer that reads only the exit code sees `4` for a recorded unresolved compare and `0` for a verified finish (#279). A run without `--require-ci` has no PR input, so only the parent can report the condition, through that field, and a `finish` that records the compare and omits the field produces no event and exits `0` (issue #286). With `--require-ci <pr>` the runtime resolves the PR head itself, so the marker is refused rather than recorded and the omission leaves nothing to detect (#293). With `--pr <pr>` the run declares that PR, so the gate for that PR is required and the marker is refused with the missing gate (issue #302).
+
+A `local-files` event records the paths the init copy of local files copied and skipped, by name only, with no file content (ADR 0017).
 
 A `no-required-checks` event records a finish the `--require-ci` gate passed because every required-check source stated that the base branch has no required check, and the merge state was one the gate could read, so the gate verified the PR head, the clean reviewed tree, and the merge state, and no check status at all. It carries the gated `pr` and the `stepsUsed`, and is emitted on an accepted finish only, so a run on a branch that does require a check never carries it and a refused finish never reports an absence. Without the event a finish on such a branch reads exactly like one whose checks passed, which is the gap issue #336 closed (issue #336).
 

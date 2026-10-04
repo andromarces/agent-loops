@@ -22,6 +22,10 @@ function cleanRepoGit(cwd) {
       case "status":
       case "ls-files":
         return answer("");
+      // The directory is the only work tree, so the init copy of local files has
+      // no main work tree to copy from.
+      case "worktree":
+        return answer(`worktree ${cwd}\nHEAD ${HEAD}\n\n`);
       default:
         throw new Error(`unexpected git call: ${args.join(" ")}`);
     }

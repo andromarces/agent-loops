@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -20,6 +20,29 @@ export async function createTempRepo() {
   await execa("git", ["add", "init.txt"], { cwd: dir });
   await execa("git", ["commit", "-m", "init"], { cwd: dir });
   return dir;
+}
+
+/**
+ * Creates a main work tree with one commit and a linked work tree on a new
+ * branch `run`, both under one temp directory. `ignore` lines go to the shared
+ * `.git/info/exclude`. `seed(main)` runs after the first commit and before the
+ * linked work tree exists. Callers remove `base` with `removePath`.
+ */
+export async function createLinkedWorkTree({ ignore = [], seed = async () => {} } = {}) {
+  const base = await mkdtemp(join(tmpdir(), "linked-test-"));
+  const main = join(base, "main");
+  const linked = join(base, "linked");
+  await mkdir(main);
+  await execa("git", ["init"], { cwd: main });
+  await execa("git", ["config", "user.name", "Tester"], { cwd: main });
+  await execa("git", ["config", "user.email", "test@example.com"], { cwd: main });
+  await writeFile(join(main, "init.txt"), "hello\n");
+  await execa("git", ["add", "init.txt"], { cwd: main });
+  await execa("git", ["commit", "-m", "init"], { cwd: main });
+  await writeFile(join(main, ".git", "info", "exclude"), `${ignore.join("\n")}\n`);
+  await seed(main);
+  await execa("git", ["worktree", "add", linked, "-b", "run"], { cwd: main });
+  return { base, main, linked };
 }
 
 /**

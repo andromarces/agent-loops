@@ -209,6 +209,17 @@ because the CLI has no such session, the runtime clears the id and reruns the tu
 once as a first turn, with the worker preamble. That rerun is part of the step the
 dispatch already charged: it charges no second step and adds no `turns` entry.
 
+When `--cwd` is a linked work tree, the init call copies the untracked local files
+of the main work tree that `--cwd` ignores (agent instructions, harness
+configuration, `.env`, and the other paths in the README) into `--cwd`, before the
+first child turn. A file already in `--cwd` is never replaced, and no symlink is
+followed. The init envelope reports the paths as `localFiles: {copied, skipped}`,
+by name only, and a path in `skipped` is untracked in the main work tree but not
+copied: the child does not have it. Do not read, print, or quote any copied file.
+The copy duplicates secrets such as `.env` into the run work tree, so remove that
+work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
+the copy off. It is an init field, so a later call cannot change it.
+
 A refused `--cwd` is not the parent's to repair: end the run, name the path and
 the refusal in the reason, and leave the work tree to a maintainer, who decides
 whether to recreate it and start a new run.

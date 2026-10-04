@@ -48,6 +48,7 @@ export function parseArgs(argv) {
     requireCi: null,
     mode: null,
     continueFrom: null,
+    copyLocalFiles: true,
   };
   for (const role of ROLES) {
     options[role] = null;
@@ -104,6 +105,10 @@ export function parseArgs(argv) {
 
       case "--require-accept":
         options.requireAccept = true;
+        break;
+
+      case "--no-copy-local-files":
+        options.copyLocalFiles = false;
         break;
 
       case "--pr":
@@ -258,7 +263,7 @@ Role flags:
                                 session id the parent-edit guard matches; later calls
                                 reject a changed value, and extend refuses a mismatch. The headless form (no subcommand) is the explicit
                                 unguarded path.
-  --task / --mode / --worker* / --reviewer* / --max-steps / --timeout
+  --task / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files
                                 First (init) call only. Later calls read these from the
                                 state file and reject any attempt to change them.
                                 Only extend takes --max-steps after init.
@@ -341,6 +346,12 @@ Options:
                                 earlier transcript is read once at start, so --transcript can name
                                 the same file, and the transcript write is atomic, so a failed write
                                 keeps the earlier file.
+  --no-copy-local-files         Do not copy local files into a linked --cwd. By default, when --cwd is a
+                                linked work tree, the run copies each untracked file of the main work
+                                tree that --cwd ignores (agent instructions, harness configuration,
+                                .env, .envrc, and the other paths in the README) before the first
+                                turn, never overwriting a file and never following a symlink. The
+                                transcript names the copied and skipped paths and never a content.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   --require-accept              Refuse finish until a reviewer turn reports on the state, and
                                 after a worker turn that reviewer turn accepts with a Checks
@@ -482,6 +493,7 @@ ${err.message}`);
       requireCi: options.requireCi,
       ...(options.mode === null ? {} : { mode: options.mode }),
       ...(options.continueFrom ? { continueFrom: options.continueFrom } : {}),
+      ...(options.copyLocalFiles ? {} : { copyLocalFiles: false }),
     },
     roles,
     events,
@@ -558,6 +570,7 @@ ${err.message}`);
         requireCi: options.requireCi,
         mode: options.mode,
         continued: Boolean(options.continueFrom),
+        copyLocalFiles: options.copyLocalFiles,
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,
