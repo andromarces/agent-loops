@@ -1,13 +1,22 @@
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { expect, test, vi } from "vitest";
+import { join } from "node:path";
+import { afterEach, expect, test, vi } from "vitest";
 
 vi.mock("execa", () => ({ execa: vi.fn() }));
 
 import { execa } from "execa";
 import { runLoop } from "../src/runtime.mjs";
-import { scripted } from "./runtime-helpers.mjs";
+import { removePath, scripted } from "./runtime-helpers.mjs";
 
 const HEAD = "1111111111111111111111111111111111111111";
+
+const dirs = [];
+afterEach(async () => {
+  for (const dir of dirs.splice(0)) {
+    await removePath(dir);
+  }
+});
 
 // A clean repo at one commit, answered from memory. The real snapshot code still
 // runs over these answers, so a turn that changed the repo is still detected by
@@ -18,7 +27,14 @@ function cleanRepoGit(cwd) {
     const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
     switch (args[0]) {
       case "rev-parse":
+        if (args.includes("--git-common-dir")) {
+          // The directory holds a `.git` directory, so it is its own main work tree.
+          return answer(".git\n");
+        }
         return answer(args.includes("--show-toplevel") ? cwd : `${HEAD}\n`);
+      // No `core.worktree` is set.
+      case "config":
+        return { exitCode: 1, stdout: "", stderr: "" };
       case "status":
       case "ls-files":
         return answer("");
@@ -41,7 +57,9 @@ function cleanRepoGit(cwd) {
 // Nothing here depends on a real repository: the behavior under test is the
 // runtime's finish rule, and the snapshot code has its own tests on real repos.
 async function expectFinishAcceptedAfterReviewerTurn(what, reply) {
-  const cwd = tmpdir();
+  const cwd = await mkdtemp(join(tmpdir(), "review-only-finish-"));
+  dirs.push(cwd);
+  await mkdir(join(cwd, ".git"));
   execa.mockReset().mockImplementation(cleanRepoGit(cwd));
   const orchAdapter = scripted([
     JSON.stringify({ action: "run_reviewer", prompt: "inspect the repo" }),

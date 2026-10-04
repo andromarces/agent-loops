@@ -856,7 +856,15 @@ function cleanRepoGit(command, args, options) {
     if (args.includes("--is-inside-work-tree")) {
       return answer("true\n");
     }
+    // The directory holds a `.git` directory, so it is its own main work tree.
+    if (args.includes("--git-common-dir")) {
+      return answer(".git\n");
+    }
     return answer(args.includes("--show-toplevel") ? options.cwd : `${CLEAN_REPO_HEAD}\n`);
+  }
+  // No `core.worktree` is set.
+  if (args[0] === "config") {
+    return { exitCode: 1, stdout: "", stderr: "" };
   }
   if (args[0] === "status" || args[0] === "ls-files") {
     return answer("");
@@ -873,6 +881,7 @@ function cleanRepoGit(command, args, options) {
 // `git` setup.
 async function useAcceptedPrRun() {
   const repo = await mkdtemp(join(tmpdir(), "role-test-clean-repo-"));
+  await mkdir(join(repo, ".git"));
   repos.push(repo);
   await initPrRun(repo, 42);
   await dispatchReviewer(repo, ACCEPT);

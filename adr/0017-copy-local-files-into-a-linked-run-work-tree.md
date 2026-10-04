@@ -23,12 +23,16 @@ files is a new runtime contract, and it handles files that can hold secrets.
 ## Decision
 
 1. **Scope.** At init, when `--cwd` is a linked work tree, the runtime copies a file
-   from the main work tree into `--cwd`. The main work tree is the first entry of
-   `git worktree list`. The copy happens once, before the first child spawn and the
+   from the main work tree into `--cwd`. The main work tree is the checkout that
+   Git records for the shared Git directory (decision 10). The copy happens once, before the first child spawn and the
    first snapshot. It is on by default.
 2. **Three conditions.** A file is copied only when all three hold:
    1. It exists in the main work tree.
-   2. It is untracked in the main work tree (`git ls-files` there).
+   2. It is untracked in the main work tree (`git ls-files` there). A file that
+      Git tracks is tracked under any spelling that reaches it, so the tracked
+      names under the listed paths are also compared by canonical path: on a
+      case-insensitive file system `.claude/config` is the tracked
+      `.Claude/config` and is not copied.
    3. `git check-ignore` run in `--cwd` names it ignored. Every ignore source
       counts: the `.gitignore` files of the branch checked out in `--cwd`, the
       shared `.git/info/exclude`, and `core.excludesFile`. The check runs in
@@ -79,7 +83,7 @@ worktree list` names (even when its `.git` entry is gone), every directory that
    the exact match, so folding can only skip more files, never read or write more.
    A case or Windows alias such as `.GITIGNORE`, `.GitAttributes`, `.gitignore.`,
    or `.Claude/Worktrees` therefore matches its plain name. A path is never
-   folded: paths are compared as the canonical strings that `fs.realpath`
+   folded: paths are compared as the canonical strings that `fs.promises.realpath`
    returns.
 8. **Size cap.** A file over 1 MiB is skipped and named. Each listed directory has
    its own bound of 2000 entries, counting every entry read under it, nested
@@ -93,21 +97,24 @@ worktree list` names (even when its `.git` entry is gone), every directory that
 9. **Checks, and the approved swap limit.** Each file passes these checks, in
    order, and a file that fails one is skipped and reported:
    1. The walk records the canonical path of each candidate file, from
-      `fs.realpath`, after it checked with `lstat` that no path component is a
-      symlink. Just before the copy, the source is opened once with no-follow, and
-      the opened file must be the regular file within the size cap that the walk
-      saw: `fs.realpath` of the path must still equal the recorded canonical path,
-      and the `fstat` identity (device and inode) of the opened file must equal the
-      `lstat` identity of the path. `fs.realpath` has the semantics of
-      `fs.realpath.native`: on a case-insensitive file system it returns the
-      on-disk spelling, on a case-sensitive one the exact spelling. Two strings
-      are therefore equal exactly when no symlink and no other directory lies on
-      the path, and `/repo` and `/REPO` are two directories where the file system
-      keeps them apart. No guess about the file system is made, so no probe of it
-      exists. This was probed on 2026-10-04 with Node 26.8.1 on macOS: on a
-      case-insensitive APFS volume `realpath` returned the on-disk spelling for a
-      path given in another case, and on a case-sensitive volume it returned each
-      spelling unchanged.
+      `fs.promises.realpath`, after it checked with `lstat` that no path component
+      is a symlink. Just before the copy, the source is opened once with
+      no-follow, and the opened file must be the regular file within the size cap
+      that the walk saw: `fs.promises.realpath` of the path must still equal the
+      recorded canonical path, and the `fstat` identity (device and inode) of the
+      opened file must equal the `lstat` identity of the path. The Node
+      documentation states that `fsPromises.realpath` determines the location with
+      the same semantics as `fs.realpath.native()`. The callback `fs.realpath` is
+      a different, JavaScript implementation and is not used: a probe on
+      2026-10-04 with Node 26.8.1 on macOS showed it returns the spelling that was
+      passed in, while `fs.promises.realpath` and `fs.realpath.native` returned the
+      on-disk spelling on a case-insensitive APFS volume, and the exact spelling on
+      a case-sensitive volume. On a case-insensitive file system the canonical
+      string is the on-disk spelling, on a case-sensitive one the exact spelling.
+      Two strings are therefore equal exactly when no symlink and no other
+      directory lies on the path, and `/repo` and `/REPO` are two directories where
+      the file system keeps them apart. No guess about the file system is made, so
+      no probe of it exists.
    2. Missing target directories are created one level at a time, and every
       ancestor in `--cwd` must be a real directory, with no `.git` entry, outside
       every registered work tree.
@@ -120,10 +127,23 @@ worktree list` names (even when its `.git` entry is gone), every directory that
       and detect a swap that is in place when they run. They do not prevent a swap
       inside the window, and a file that such a swap redirects is still reported as
       copied. The runtime claims no more protection than that.
-10. **Nothing without a main work tree.** When `--cwd` is the main work tree, the
-    repository is bare, or the first work tree that `git worktree list` names is
-    not a work tree (a repository with a separate Git directory), nothing is copied
-    and nothing is reported.
+10. **Finding the main work tree.** Git is asked, in this order. The command
+    `git rev-parse --git-common-dir` names the shared Git directory. The main work
+    tree is `core.worktree` of that Git directory (relative to it), or the parent
+    of a Git directory named `.git`. A bare repository has neither. The candidate
+    must exist, and `git rev-parse` run there must report the same common Git
+    directory, or it is not the main work tree. A `core.worktree` that names the
+    Git directory itself is taken as written. The command `git worktree list` is not used for this,
+    because Git lists the Git directory first when the Git directory is separate. Probed on
+    2026-10-04 with Git 2.56.0: for a normal repository the method returns the main
+    checkout; for a submodule, `core.worktree` of its Git directory names the
+    checkout; for a repository made with `git init --separate-git-dir`, the Git
+    directory records no checkout path (`core.worktree` is unset, `core.bare` is
+    false), and the checkout only points at the Git directory, so no Git command
+    names it. In that case, and for a bare repository, nothing is copied and the
+    run logs `no main work tree found, so nothing is copied`. That is a limit of
+    what Git records, not a choice. When `--cwd` is the main work tree, nothing is
+    copied and nothing is reported.
 11. **Opt-out.** `--no-copy-local-files` is an init field of `agent-loop role` and
     a flag of the headless `agent-loop` command. With it, nothing is copied and
     the behavior is as before. The role init stores `copyLocalFiles` (a boolean) in
@@ -141,8 +161,10 @@ worktree list` names (even when its `.git` entry is gone), every directory that
     counts only.
 14. **Snapshot.** A copied file is ignored, so `git status` never lists it, and
     `clean` and the snapshot digest do not change.
-15. **Failure.** A copy step that cannot run (for example `git` fails) fails the
-    init before the state file exists, so no run is left to abort. A single file
+15. **Failure.** A copy step that cannot run (for example a `git` command fails,
+    including while the main work tree is looked up or probed) fails the init with
+    an error that names the command, before the state file exists, so no run is
+    left to abort. A failed probe never reads as "no main work tree". A single file
     that fails to copy is skipped and named.
 
 ## Consequences

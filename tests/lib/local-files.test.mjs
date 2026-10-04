@@ -1,5 +1,4 @@
 import {
-  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -12,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { execa } from "execa";
 import { copyLocalFiles, MAX_WALKED_ENTRIES } from "../../src/lib/local-files.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
@@ -22,6 +21,7 @@ const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const created = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const dir of created.splice(0)) {
     await removePath(dir);
   }
@@ -237,9 +237,9 @@ test("returns null and changes nothing when cwd is the main work tree", async ()
   expect(await copyLocalFiles(main)).toBeNull();
 });
 
-// Usefulness: verifies a repository with no main work tree copies nothing.
+// Usefulness: verifies a repository with no main work tree copies nothing and says so.
 // Not redundant: it uses a bare repository, which no other test creates. The separate
-// Git directory test is refused by the same check.
+// Git directory tests below have a main work tree that Git may or may not record.
 test("returns null for a linked work tree of a bare repository", async () => {
   const base = await mkdtemp(join(tmpdir(), "local-files-bare-"));
   created.push(base);
@@ -255,8 +255,10 @@ test("returns null for a linked work tree of a bare repository", async () => {
   await execa("git", ["clone", "--bare", seed, bare]);
   const linked = join(base, "linked");
   await git(bare, "worktree", "add", linked, "-b", "run");
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
   expect(await copyLocalFiles(linked)).toBeNull();
+  expect(log).toHaveBeenCalledWith(expect.stringContaining("no main work tree"));
 });
 
 // Usefulness: verifies copied files leave the `clean` flag and the snapshot digest
@@ -755,8 +757,9 @@ const caseInsensitive = async (base) => {
 };
 
 // A main work tree whose `.git` is a file that points at a separate Git directory,
-// as in a submodule or a work tree, plus a linked work tree.
-async function createLinkedWithGitFile() {
+// plus a linked work tree. `git init --separate-git-dir` records no checkout path in
+// the Git directory; `recordWorkTree` adds `core.worktree`, which a submodule has.
+async function createLinkedWithGitFile({ recordWorkTree = false } = {}) {
   const base = await mkdtemp(join(tmpdir(), "local-files-gitfile-"));
   created.push(base);
   const main = join(base, "main");
@@ -769,6 +772,10 @@ async function createLinkedWithGitFile() {
   await git(main, "add", "init.txt");
   await git(main, "commit", "-m", "init");
   await writeFile(join(base, "gitdir", "info", "exclude"), ".codex/\n");
+  if (recordWorkTree) {
+    // Where a submodule's Git directory records its checkout.
+    await git(main, "config", "--file", join(base, "gitdir", "config"), "core.worktree", main);
+  }
   await git(main, "worktree", "add", linked, "-b", "run");
   return { base, main, linked };
 }
@@ -814,21 +821,70 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-// Usefulness: verifies a repository whose Git directory is separate from its main work
-// tree copies nothing, because Git then lists the Git directory first, and that
-// directory is not a work tree. The test also puts a hard link named `.GIT` beside the
-// `.git` file, which has no effect because the copy guesses nothing about case.
-// Not redundant: it is the test with a `.git` file. The bare repository test has no
-// work tree at all.
-test("returns null when the first listed work tree is a separate Git directory", async () => {
+// Usefulness: verifies the main checkout of a repository with a separate Git directory
+// is found through `core.worktree`, the way Git records a submodule's checkout, and
+// files are copied from it. Git lists the Git directory first there, not the checkout.
+// Not redundant: every other test has a main work tree with a `.git` directory.
+test("copies from the main checkout that core.worktree names", async () => {
+  const { main, linked } = await createLinkedWithGitFile({ recordWorkTree: true });
+  await mkdir(join(main, ".codex"));
+  await writeFile(join(main, ".codex", "config.toml"), "a=1\n");
+
+  const report = await copyLocalFiles(linked);
+
+  expect(report).toEqual({ copied: [".codex/config.toml"], skipped: [] });
+  expect(await readFile(join(linked, ".codex", "config.toml"), "utf8")).toBe("a=1\n");
+});
+
+// Usefulness: verifies a separate Git directory that records no checkout path has no
+// main checkout that Git can name, so nothing is copied and the run says so.
+// Not redundant: it is the same layout as the test above without `core.worktree`, which
+// is what `git init --separate-git-dir` writes.
+test("copies nothing and reports it when Git records no main checkout", async () => {
   const { main, linked } = await createLinkedWithGitFile();
-  await writeFile(join(main, ".env"), "A=1\n");
-  if (process.platform !== "win32") {
-    await link(join(main, ".git"), join(main, ".GIT")).catch(() => {});
-  }
+  await mkdir(join(main, ".codex"));
+  await writeFile(join(main, ".codex", "config.toml"), "a=1\n");
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
   expect(await copyLocalFiles(linked)).toBeNull();
-  expect(await exists(join(linked, ".env"))).toBe(false);
+  expect(log).toHaveBeenCalledWith(expect.stringContaining("no main work tree"));
+  expect(await exists(join(linked, ".codex"))).toBe(false);
+});
+
+// Usefulness: verifies a `core.worktree` that names a checkout of another repository,
+// or a path that does not exist, is not taken as the main work tree: nothing is copied
+// and the run says so.
+// Not redundant: each case reaches a different check of the candidate. The tests above
+// have a `core.worktree` that is right or absent.
+test("copies nothing when core.worktree names something that is not the main checkout", async () => {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  for (const target of ["other-repo", "missing"]) {
+    const { base, main, linked } = await createLinkedWithGitFile({ recordWorkTree: true });
+    await mkdir(join(main, ".codex"));
+    await writeFile(join(main, ".codex", "config.toml"), "a=1\n");
+    if (target === "other-repo") {
+      await mkdir(join(base, target));
+      await git(join(base, target), "init");
+    }
+    const config = join(base, "gitdir", "config");
+    await git(main, "config", "--file", config, "core.worktree", join(base, target));
+    log.mockClear();
+
+    expect(await copyLocalFiles(linked), target).toBeNull();
+    expect(log, target).toHaveBeenCalledWith(expect.stringContaining("no main work tree"));
+    expect(await exists(join(linked, ".codex")), target).toBe(false);
+  }
+});
+
+// Usefulness: verifies a Git command that fails while the main checkout is probed fails
+// the init with an error that names the command, instead of copying nothing silently.
+// Not redundant: the other probes in this file succeed. Here the checkout exists but
+// its `.git` file points nowhere, so Git refuses to run in it.
+test("fails when Git cannot be run in the main checkout", async () => {
+  const { main, linked } = await createLinkedWithGitFile({ recordWorkTree: true });
+  await writeFile(join(main, ".git"), "gitdir: /nonexistent/local-files-test\n");
+
+  await expect(copyLocalFiles(linked)).rejects.toThrow(/git rev-parse failed/);
 });
 
 // Usefulness: verifies two work trees whose paths differ only in case are two work
@@ -870,4 +926,25 @@ test("copies a listed directory whose on-disk name differs in case", async ({ sk
   const report = await copyLocalFiles(linked);
 
   expect(report).toEqual({ copied: [".claude/settings.json"], skipped: [] });
+});
+
+// Usefulness: verifies a file that the main work tree tracks is never copied through
+// another spelling of its path. On a case-insensitive file system `.claude/config` and
+// the tracked `.Claude/config` are one file, and Git tracks it under one spelling.
+// Not redundant: the tracked-path test uses the same spelling for the listed name and
+// the tracked name. It is skipped on a case-sensitive file system, where they differ.
+test("does not copy a tracked file through a different spelling of its path", async ({ skip }) => {
+  const { base, main, linked } = await createLinked({ ignore: [".claude/"] });
+  if (!(await caseInsensitive(base))) {
+    skip();
+  }
+  await mkdir(join(main, ".Claude"));
+  await writeFile(join(main, ".Claude", "config"), "tracked\n");
+  await git(main, "add", "-f", ".Claude/config");
+  await git(main, "commit", "-m", "track");
+
+  const report = await copyLocalFiles(linked);
+
+  expect(report).toEqual({ copied: [], skipped: [] });
+  expect(await exists(join(linked, ".claude"))).toBe(false);
 });

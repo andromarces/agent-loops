@@ -5,7 +5,7 @@
 // is a path name.
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { execa } from "execa";
 import { logInfo, logWarn } from "./log.mjs";
 
@@ -49,7 +49,10 @@ const GIT_CONTROL_FILES = new Set([".gitignore", ".gitattributes"]);
 async function git(cwd, args, options = {}) {
   const result = await execa("git", args, { cwd, reject: false, ...options });
   if (result.exitCode !== 0 && !options.allowExit?.includes(result.exitCode)) {
-    throw new Error(`git ${args[0]} failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
+    const detail = (result.stderr || result.shortMessage || "").trim();
+    throw new Error(
+      `local files: git ${args[0]} failed (exit ${result.exitCode ?? "none"}): ${detail}`,
+    );
   }
   return result;
 }
@@ -124,32 +127,60 @@ async function hasBlockedAncestor(base, rel, blocked, create = false) {
 }
 
 /**
- * Reads every registered work tree path from `git worktree list`, the main work
- * tree first, as canonical paths. Returns null when there is no main work tree: a
- * bare repository, or a repository whose Git directory is separate (Git then
- * lists that directory first, and it is not a work tree). A path that Git still
- * lists counts as a work tree even when its `.git` entry is gone.
+ * Lists every registered work tree from `git worktree list` as canonical paths. A
+ * path that Git still lists counts as a work tree even when its `.git` entry is
+ * gone. For a repository with a separate Git directory Git lists that directory
+ * first, so the list is not used to find the main work tree.
  */
-async function readWorkTrees(root) {
+async function listWorkTrees(root) {
   const { stdout } = await git(root, ["worktree", "list", "--porcelain"]);
-  const blocks = stdout
-    .split(/\r?\n\r?\n/)
-    .map((block) => block.split(/\r?\n/).filter(Boolean))
-    .filter((lines) => lines.length > 0);
-  if (blocks.length === 0) {
-    return null;
-  }
-  const paths = blocks
-    .map((lines) => lines.find((line) => line.startsWith("worktree "))?.slice(9))
-    .filter(Boolean);
-  const inside = await execa("git", ["rev-parse", "--is-inside-work-tree"], {
-    cwd: paths[0],
-    reject: false,
-  });
-  if (inside.stdout?.trim() !== "true") {
-    return null;
-  }
+  const paths = stdout
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice(9));
   return await Promise.all(paths.map((path) => realpath(path).catch(() => resolve(path))));
+}
+
+/**
+ * Finds the main work tree the way Git records it. Returns its canonical path, or
+ * null when Git names none: a bare repository, or a Git directory that records no
+ * checkout path. `git init --separate-git-dir` records none (the main work tree
+ * only points at the Git directory), and Git then lists the Git directory as the
+ * first work tree, so no Git command names the checkout. A submodule's Git
+ * directory records it in `core.worktree`.
+ * 1. `git rev-parse --git-common-dir` names the Git directory shared by all work
+ *    trees.
+ * 2. The checkout is `core.worktree` of that Git directory, relative to it, or the
+ *    parent of a Git directory named `.git`. A bare repository has neither.
+ * 3. `git rev-parse` run in the checkout must report the same common Git
+ *    directory. A Git command that fails there throws.
+ */
+async function findMainWorkTree(root) {
+  const commonDir = resolve(
+    root,
+    (await git(root, ["rev-parse", "--git-common-dir"])).stdout.trim(),
+  );
+  const readConfig = async (args) =>
+    (
+      await git(root, ["config", "--file", join(commonDir, "config"), ...args], {
+        allowExit: [1],
+      })
+    ).stdout.trim();
+  const configured = await readConfig(["--get", "core.worktree"]);
+  let candidate = null;
+  if (configured) {
+    candidate = resolve(commonDir, configured);
+  } else if (basename(commonDir) === ".git") {
+    candidate = dirname(commonDir);
+  }
+  if (candidate === null || (await lstatOrNull(candidate)) === null) {
+    return null;
+  }
+  const common = (await git(candidate, ["rev-parse", "--git-common-dir"])).stdout.trim();
+  if ((await realpath(resolve(candidate, common))) !== (await realpath(commonDir))) {
+    return null;
+  }
+  return await realpath(candidate);
 }
 
 /**
@@ -203,8 +234,9 @@ async function collect(ctx, rel, abs) {
  * folded, which can only skip more; paths are compared as canonical strings from
  * `realpath`. Returns `{ copied, skipped }` as sorted root-relative path names, or
  * null when there is no main work tree to copy from (`cwd` is the main work tree,
- * the repository is bare, or its Git directory is separate), where nothing is
- * copied. An untracked file that is not
+ * or Git names no main work tree: a bare repository, or a Git directory that
+ * records no checkout), where nothing is copied. A Git command that fails while
+ * the main work tree is looked up or probed throws, and fails the init. An untracked file that is not
  * copied is in `skipped`. A listed directory that holds more than
  * `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and none of its files
  * is copied. A file whose check fails is in `skipped`.
@@ -221,17 +253,22 @@ async function collect(ctx, rel, abs) {
  */
 export async function copyLocalFiles(cwd, hooks = {}) {
   const root = (await git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();
-  const trees = await readWorkTrees(root);
-  const rootReal = await realpath(root);
-  if (!trees || trees[0] === rootReal) {
+  const mainReal = await findMainWorkTree(root);
+  if (mainReal === null) {
+    logInfo("local files: no main work tree found, so nothing is copied");
     return null;
   }
-  const mainReal = trees[0];
+  const rootReal = await realpath(root);
+  if (mainReal === rootReal) {
+    return null;
+  }
   // A registered work tree is never read from (inside the main work tree) and
   // never written into (inside the linked work tree), whether or not its `.git`
   // entry is still there.
-  const sourceBlocked = new Set(trees.slice(1));
-  const targetBlocked = new Set(trees);
+  const trees = await listWorkTrees(root);
+  const sourceBlocked = new Set(trees);
+  sourceBlocked.delete(mainReal);
+  const targetBlocked = new Set([mainReal, ...trees]);
   targetBlocked.delete(rootReal);
 
   const skipped = new Set();
@@ -262,12 +299,21 @@ export async function copyLocalFiles(cwd, hooks = {}) {
     }
   }
 
-  const tracked = new Set(
-    (await git(mainReal, ["ls-files", "-z"])).stdout.split("\0").filter(Boolean),
-  );
+  const trackedNames = (await git(mainReal, ["ls-files", "-z"])).stdout.split("\0").filter(Boolean);
+  // A tracked file is tracked under any spelling that reaches it, so the tracked
+  // names under the listed paths are also compared by canonical path: on a
+  // case-insensitive file system `.claude/config` is the tracked `.Claude/config`.
+  const listedRoots = new Set(LOCAL_FILE_PATHS.map((path) => foldName(path.split("/")[0])));
+  const tracked = new Set(trackedNames);
+  const trackedCanon = new Set();
+  for (const name of trackedNames) {
+    if (listedRoots.has(foldName(name.split("/")[0]))) {
+      trackedCanon.add(await realpath(join(mainReal, name)).catch(() => null));
+    }
+  }
   const pending = [];
   for (const file of files) {
-    if (tracked.has(file.rel)) {
+    if (tracked.has(file.rel) || trackedCanon.has(file.canon)) {
       continue;
     }
     // The target checks come before `git check-ignore`, which refuses a path
@@ -313,7 +359,8 @@ const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
 /**
  * True when the path `path` still resolves to the canonical path `canon` that the
  * walk recorded, and names the regular file with the identity of `opened` (a
- * `bigint` `stat`). `realpath` returns the on-disk spelling on a case-insensitive
+ * `bigint` `stat`). `realpath` (`fs.promises.realpath`, which has the semantics of
+ * `fs.realpath.native`, unlike the callback `fs.realpath`) returns the on-disk spelling on a case-insensitive
  * file system and the exact spelling on a case-sensitive one, so the two strings
  * are equal exactly when no symlink and no other directory lies on the path, and
  * two directories that differ only in case are different directories. No guess
