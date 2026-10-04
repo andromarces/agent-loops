@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -312,27 +312,6 @@ test("the snapshot is unchanged for each ignore source", async () => {
   expect(reviewedState(await snapshot(linked))).toEqual(before);
 });
 
-// Usefulness: verifies a symlink that resolves inside the main work tree is
-// copied as a regular file with the target content, and never as a link (the
-// issue forbids following a symlink out of the main work tree, not within it).
-// Not redundant: the outside-link test proves the refusal, and only this one
-// proves the permitted case still copies.
-test.skipIf(process.platform === "win32")(
-  "copies a symlink that resolves inside the main work tree as a regular file",
-  async () => {
-    const { main, linked } = await createLinked({ ignore: [".envrc"] });
-    await mkdir(join(main, "notes"));
-    await writeFile(join(main, "notes", "envrc.src"), "export A=1\n");
-    await symlink(join("notes", "envrc.src"), join(main, ".envrc"));
-
-    const report = await copyLocalFiles(linked);
-
-    expect(report.copied).toEqual([".envrc"]);
-    expect((await lstat(join(linked, ".envrc"))).isSymbolicLink()).toBe(false);
-    expect(await readFile(join(linked, ".envrc"), "utf8")).toBe("export A=1\n");
-  },
-);
-
 // Usefulness: verifies a symlink into `.git` is skipped even though it resolves
 // inside the main work tree path, because `.git` holds repository state, not a
 // local file. Not redundant: the in-tree
@@ -366,36 +345,231 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-// Usefulness: verifies a directory symlink that resolves inside the main work
-// tree is walked, a file under it is copied, a file that the main work tree
-// tracks under its real path is not copied, a link to the repository root is
-// dropped, and a link back to an ancestor ends instead of looping. Not redundant: it is the only test of a directory
-// link, which the file-link tests do not reach.
+// Usefulness: verifies the symlink policy of issue #423 ("The copy must not
+// follow a symlink out of the main work tree"), taken without a race: a symlink
+// is never followed, so a link that resolves inside the main work tree is
+// skipped and named too, and nothing is created in its place. Not redundant: the
+// outside-link test cannot tell a policy that follows in-tree links from one that
+// follows none.
 test.skipIf(process.platform === "win32")(
-  "walks an in-tree directory symlink without copying tracked files or looping",
+  "skips a symlink that resolves inside the main work tree",
   async () => {
-    const { main, linked } = await createLinked({
-      ignore: [".codex/", ".agents/"],
-      seed: async (repo) => {
-        await mkdir(join(repo, "shared"));
-        await writeFile(join(repo, "shared", "tracked.toml"), "t=1\n");
-        await git(repo, "add", "shared/tracked.toml");
-        await git(repo, "commit", "-m", "shared");
-      },
-    });
+    const { main, linked } = await createLinked({ ignore: [".envrc"] });
+    await mkdir(join(main, "notes"));
+    await writeFile(join(main, "notes", "envrc.src"), "export A=1\n");
+    await symlink(join("notes", "envrc.src"), join(main, ".envrc"));
+
+    const report = await copyLocalFiles(linked);
+
+    expect(report).toEqual({ copied: [], skipped: [".envrc"] });
+    expect(await exists(join(linked, ".envrc"))).toBe(false);
+  },
+);
+
+// Usefulness: verifies a directory symlink is skipped by name and not walked, so
+// no file is copied through it, and a link back to an ancestor cannot loop. Not
+// redundant: it is the only test of a directory link.
+test.skipIf(process.platform === "win32")(
+  "skips a directory symlink without walking it",
+  async () => {
+    const { main, linked } = await createLinked({ ignore: [".codex/", ".agents/"] });
+    await mkdir(join(main, "shared"));
     await writeFile(join(main, "shared", "a.toml"), "a=1\n");
     await symlink("shared", join(main, ".codex"));
     await mkdir(join(main, ".agents"));
-    await symlink("..", join(main, ".agents", "root"));
+    await writeFile(join(main, ".agents", "skill.md"), "s\n");
     await symlink(".", join(main, ".agents", "self"));
 
     const report = await copyLocalFiles(linked);
 
-    expect(report.copied).toContain(".codex/a.toml");
-    expect(report.copied).not.toContain(".codex/tracked.toml");
-    expect(await exists(join(linked, ".codex", "tracked.toml"))).toBe(false);
-    expect(await exists(join(linked, ".agents", "root"))).toBe(false);
-    expect(report.skipped).toContain(".agents/self");
+    expect(report.copied).toEqual([".agents/skill.md"]);
+    expect(report.skipped).toEqual([".agents/self", ".codex"]);
+    expect(await exists(join(linked, ".codex"))).toBe(false);
+  },
+);
+
+// Usefulness: verifies a listed path under a symlinked directory of the main work
+// tree is skipped by name, because the read would go through the link. Not
+// redundant: every other source test has the link at the leaf.
+test.skipIf(process.platform === "win32")(
+  "skips a listed path under a symlinked directory of the main work tree",
+  async () => {
+    const { base, main, linked } = await createLinked({ ignore: [".github/"] });
+    const outside = join(base, "outside-gh");
+    await mkdir(outside);
+    await writeFile(join(outside, "copilot-instructions.md"), `${SECRET}\n`);
+    await symlink(outside, join(main, ".github"));
+
+    const report = await copyLocalFiles(linked);
+
+    expect(report).toEqual({ copied: [], skipped: [".github/copilot-instructions.md"] });
+    expect(await exists(join(linked, ".github"))).toBe(false);
+  },
+);
+
+// Usefulness: verifies a case or Windows alias of a Git control file is skipped
+// like the plain name (review blocker 4), on every platform. Not redundant: the
+// control-file test uses the exact lower-case names, so only this one fails when
+// the comparison is case-sensitive.
+test("skips a case or name alias of a Git control file", async () => {
+  const { main, linked } = await createLinked({ ignore: [".vscode/"] });
+  await mkdir(join(main, ".vscode"));
+  await writeFile(join(main, ".vscode", "tasks.json"), "{}\n");
+  const aliases = [".GITIGNORE", ".GitAttributes"];
+  if (process.platform !== "win32") {
+    aliases.push(".gitignore.", ".gitignore ", ".gitattributes:stream");
+  }
+  for (const name of aliases) {
+    await writeFile(join(main, ".vscode", name), "!tasks.json\n");
+  }
+
+  const report = await copyLocalFiles(linked);
+
+  expect(report.copied).toEqual([".vscode/tasks.json"]);
+  expect(report.skipped).toEqual(aliases.map((name) => `.vscode/${name}`).sort());
+});
+
+// Usefulness: verifies a case alias of `.git` or of `.claude/worktrees` is dropped
+// like the plain name (review blocker 2), so a path that must be excluded is not
+// read through another spelling. Not redundant: the worktrees test uses the exact
+// lower-case path.
+test("drops a case alias of .git and of .claude/worktrees", async () => {
+  const { main, linked } = await createLinked({ ignore: [".claude/"] });
+  await mkdir(join(main, ".claude", "Worktrees", "wt"), { recursive: true });
+  await writeFile(join(main, ".claude", "Worktrees", "wt", "f.txt"), "x\n");
+  const gitAliases = [".GIT"];
+  if (process.platform !== "win32") {
+    gitAliases.push(".git.", ".git ");
+  }
+  // One parent per alias: a parent that holds an entry equal to `.git` on this
+  // file system is dropped whole by the nested-repository rule, which would hide
+  // the alias rule under test.
+  for (const [index, name] of gitAliases.entries()) {
+    await mkdir(join(main, ".claude", `sub${index}`, name), { recursive: true });
+    await writeFile(join(main, ".claude", `sub${index}`, name, "config"), "x\n");
+  }
+  await writeFile(join(main, ".claude", "settings.json"), "{}\n");
+
+  const report = await copyLocalFiles(linked);
+
+  expect(report).toEqual({ copied: [".claude/settings.json"], skipped: [] });
+});
+
+// Usefulness: verifies a source swapped for a symlink to a secret after the walk
+// and before the open is not copied (review blocker 1). Not redundant: the
+// symlink-policy tests set the link up before the walk, so only this one fails
+// when the copy trusts the walk instead of the opened file.
+test.skipIf(process.platform === "win32")(
+  "does not copy a source that is swapped for a symlink before it is opened",
+  async () => {
+    const { base, main, linked } = await createLinked({ ignore: [".env"] });
+    const secret = join(base, "secret.txt");
+    await writeFile(secret, `${SECRET}\n`);
+    await writeFile(join(main, ".env"), "A=1\n");
+
+    const report = await copyLocalFiles(linked, {
+      beforeSourceOpen: async () => {
+        await rm(join(main, ".env"));
+        await symlink(secret, join(main, ".env"));
+      },
+    });
+
+    expect(report).toEqual({ copied: [], skipped: [".env"] });
+    expect(await exists(join(linked, ".env"))).toBe(false);
+  },
+);
+
+// Usefulness: verifies a source whose ancestor directory is swapped for a symlink
+// after the walk is not copied, which the no-follow flag on the last component
+// alone does not stop. Not redundant: only this test fails when the opened file
+// is not checked against its resolved path.
+test.skipIf(process.platform === "win32")(
+  "does not copy a source whose directory is swapped for a symlink before it is opened",
+  async () => {
+    const { base, main, linked } = await createLinked({ ignore: [".codex/"] });
+    const outside = join(base, "outside-codex");
+    await mkdir(outside);
+    await writeFile(join(outside, "config.toml"), `${SECRET}\n`);
+    await mkdir(join(main, ".codex"));
+    await writeFile(join(main, ".codex", "config.toml"), "a=1\n");
+
+    const report = await copyLocalFiles(linked, {
+      beforeSourceOpen: async () => {
+        await rename(join(main, ".codex"), join(base, "moved-codex"));
+        await symlink(outside, join(main, ".codex"));
+      },
+    });
+
+    expect(report).toEqual({ copied: [], skipped: [".codex/config.toml"] });
+    expect(await exists(join(linked, ".codex"))).toBe(false);
+  },
+);
+
+// Usefulness: verifies a target directory swapped for a symlink after the
+// directories were created gets no content and no leftover file (review blocker
+// 3). Not redundant: the symlinked-directory test sets the link up before the
+// copy, so only this one fails when the target is not verified after the open.
+test.skipIf(process.platform === "win32")(
+  "writes nothing through a target directory that is swapped for a symlink",
+  async () => {
+    const { base, main, linked } = await createLinked({ ignore: [".claude/"] });
+    const outside = join(base, "outside-claude");
+    await mkdir(outside);
+    await mkdir(join(main, ".claude"));
+    await writeFile(join(main, ".claude", "settings.json"), `${SECRET}\n`);
+
+    const report = await copyLocalFiles(linked, {
+      beforeTargetOpen: async () => {
+        await rm(join(linked, ".claude"), { recursive: true });
+        await symlink(outside, join(linked, ".claude"));
+      },
+    });
+
+    expect(report).toEqual({ copied: [], skipped: [".claude/settings.json"] });
+    expect(await exists(join(outside, "settings.json"))).toBe(false);
+  },
+);
+
+// Usefulness: verifies a target that appears in the linked work tree after the
+// existence check is not overwritten, because the target is created exclusively.
+// Not redundant: the existing-file test sets the file up before the check, so
+// only this one fails when the create is not exclusive.
+test("does not overwrite a target that appears after the existence check", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "from-main\n");
+
+  const report = await copyLocalFiles(linked, {
+    beforeTargetOpen: async () => {
+      await writeFile(join(linked, ".env"), "already-here\n");
+    },
+  });
+
+  expect(report).toEqual({ copied: [], skipped: [".env"] });
+  expect(await readFile(join(linked, ".env"), "utf8")).toBe("already-here\n");
+});
+
+// Usefulness: verifies a target directory that becomes a symlink after the
+// existence check and before the directories are created is refused (review
+// blocker 3). Not redundant: the swap test below fires after the directories
+// exist, so only this one fails when an existing directory is not checked to be
+// a real directory.
+test.skipIf(process.platform === "win32")(
+  "refuses a target directory that becomes a symlink before the directories are created",
+  async () => {
+    const { base, main, linked } = await createLinked({ ignore: [".claude/"] });
+    const outside = join(base, "outside-claude-early");
+    await mkdir(outside);
+    await mkdir(join(main, ".claude"));
+    await writeFile(join(main, ".claude", "settings.json"), `${SECRET}\n`);
+
+    const report = await copyLocalFiles(linked, {
+      beforeSourceOpen: async () => {
+        await symlink(outside, join(linked, ".claude"));
+      },
+    });
+
+    expect(report).toEqual({ copied: [], skipped: [".claude/settings.json"] });
+    expect(await exists(join(outside, "settings.json"))).toBe(false);
   },
 );
 

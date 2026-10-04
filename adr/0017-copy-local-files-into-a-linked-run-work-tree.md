@@ -50,27 +50,28 @@ files is a new runtime contract, and it handles files that can hold secrets.
 5. **No overwrite.** The copy uses `COPYFILE_EXCL`, so a file of `--cwd` is never
    replaced. A tracked file of `--cwd` is never replaced, because it either exists
    (refused as above) or is not ignored (condition 3).
-6. **Symlinks.** The copy never follows a symlink out of the main work tree and
-   never creates a symlink. A symlink whose target resolves inside the main work
-   tree is followed and copied as a regular file with the content of its target.
-   That holds for a listed path, an entry inside a listed directory, and a listed
-   path under a symlinked directory. The following are skipped by name: a link
-   whose target resolves outside the main work tree, a dangling link, a link into
-   `.git` or into another work tree, and a directory link back to a directory
-   already on the walk, so a loop ends. A file reached through a directory link
-   is tracked or untracked by both its link path and its resolved path, so a
-   tracked file is never copied as a local file. In `--cwd`, a target under a
-   symlinked directory is skipped, because the write would leave `--cwd`, and
-   `git check-ignore` refuses such a path. A copy, not a link, because a Windows
-   symlink needs extra privileges and a copy does not follow later edits in the
-   main work tree.
+6. **Symlinks.** The policy is the narrowest that the issue text states and that
+   has no race. Issue #423 says "The copy must not follow a symlink out of the
+   main work tree" and "Copy, do not symlink". Following a link that stays inside
+   the tree would need a check of the link target that a later swap can defeat, so
+   no symlink is followed at all. A symlink entry, whatever its target, is skipped
+   by name, and so is a listed path under a symlinked directory of the main work
+   tree. The copy never creates a symlink. In `--cwd`, a target under a symlinked
+   directory is skipped, because the write would leave `--cwd`, and `git
+check-ignore` refuses such a path. A copy, not a link, because a Windows symlink
+   needs extra privileges and a copy does not follow later edits in the main work
+   tree.
 7. **Work trees and Git files are excluded.** `.claude/worktrees/`, every directory
-   that `git worktree list` names, every directory that holds a `.git` entry, and
-   `.git` itself are never walked and never reported. A `.gitignore` or
-   `.gitattributes` is never copied, because a copied one changes ignore rules or
-   line endings in `--cwd`: it can un-ignore a file that was copied, so that the
-   snapshot lists it and the run's `clean` flag and digest change. A copied file
-   under the three conditions is ignored by rules that the copy cannot alter.
+   that holds a `.git` entry (a work tree or a repository nested in the main work
+   tree), and any path component named `.git` are never walked and never reported. A
+   `.gitignore` or `.gitattributes` is never copied, because a copied one changes
+   ignore rules or line endings in `--cwd`: it can un-ignore a file that was
+   copied, so that the snapshot lists it and the run's `clean` flag and digest
+   change. Every name exclusion compares folded names on every platform: lower
+   case, without a stream suffix (`name:stream`), and without trailing dots or
+   spaces. A case or Windows alias such as `.GITIGNORE`, `.GitAttributes`,
+   `.gitignore.`, or `.Claude/Worktrees` therefore matches its plain name, whatever
+   the file system.
 8. **Size cap.** A file over 1 MiB is skipped and named. Each listed directory has
    its own bound of 2000 entries, counting every entry read under it, nested
    directories included. A listed directory that holds more than 2000 entries is
@@ -80,26 +81,40 @@ files is a new runtime contract, and it handles files that can hold secrets.
    The cap applies to `.agents/`, `.claude/`, `.codex/`, and `.vscode/`, where
    caches, logs, and session stores can sit beside small configuration files.
    There is no cap flag.
-9. **Nothing without a main work tree.** When `--cwd` is the main work tree, or the
-   repository is bare, nothing is copied and nothing is reported.
-10. **Opt-out.** `--no-copy-local-files` is an init field of `agent-loop role` and
+9. **No check-then-copy race.** The source is opened once with no-follow, and the
+   opened file, not the path, is then verified: its `fstat` identity must equal the
+   `lstat` identity of the path, the path must resolve to itself, and the file must
+   be a regular file within the size cap. A swap of the file or of an ancestor
+   before or after the open fails that check and the file is skipped. The target is
+   created with `O_EXCL`, which refuses an existing file and a symlink at the
+   target, the directories are created one level at a time and each must be a real
+   directory, and the created target is verified the same way before any byte is
+   written. A target that fails the check is removed when it still names the file
+   just created. Bytes move only between those two verified descriptors, through a
+   bounded read. The directory ancestors cannot be opened relative to a descriptor
+   from Node, so the identity check, not the open, closes the ancestor swap: the
+   content is never written through a swapped ancestor, and the only trace of a
+   swap that wins every check is the removed empty file.
+10. **Nothing without a main work tree.** When `--cwd` is the main work tree, or the
+    repository is bare, nothing is copied and nothing is reported.
+11. **Opt-out.** `--no-copy-local-files` is an init field of `agent-loop role` and
     a flag of the headless `agent-loop` command. With it, nothing is copied and
     the behavior is as before. The role init stores `copyLocalFiles` (a boolean) in
     the state file. A later call that passes the flag against a run that copied is
     refused, as for every other init field. A state file written before the field
     holds no value and copied nothing.
-11. **Secrets.** The runtime never prints, logs, returns, or transcribes file
-    content. It reads bytes only through `copyFile`. Every report holds root-relative
+12. **Secrets.** The runtime never prints, logs, returns, or transcribes file
+    content. Bytes move only through the two verified descriptors of decision 9. Every report holds root-relative
     path names. A copy failure logs the error code only. The state file holds the
     boolean, not the names.
-12. **Reporting.** The interactive init envelope carries
+13. **Reporting.** The interactive init envelope carries
     `localFiles: { copied, skipped }`. Both paths emit one `local-files` event with
     the same two lists, which the transcript records. A run with the opt-out, a main
     work tree, or a bare repository has no envelope key and no event. The log holds
     counts only.
-13. **Snapshot.** A copied file is ignored, so `git status` never lists it, and
+14. **Snapshot.** A copied file is ignored, so `git status` never lists it, and
     `clean` and the snapshot digest do not change.
-14. **Failure.** A copy step that cannot run (for example `git` fails) fails the
+15. **Failure.** A copy step that cannot run (for example `git` fails) fails the
     init before the state file exists, so no run is left to abort. A single file
     that fails to copy is skipped and named.
 
@@ -114,17 +129,22 @@ files is a new runtime contract, and it handles files that can hold secrets.
 - A copy does not follow later edits in the main work tree.
 - A work tree that a child creates for itself during a turn is not covered.
 - The runtime has a bounded set of paths. A new harness file needs a code change.
-- A concurrent writer in the main work tree can swap a source file for a symlink
-  between the `realpath` check and the copy. The main work tree belongs to the caller,
-  so that actor is outside the threat model.
-- Windows: no symlink is created, so the contract needs no extra privilege. File
-  mode bits are those that `copyFile` preserves on the platform.
+- A symlink in the main work tree is never copied, even when it points inside the
+  tree. A parent that shares one instruction file by symlink must copy it itself.
+- A mount point inside the main work tree is not a symlink and is walked like a
+  directory. A file system that the caller mounted there is the caller's choice.
+- Windows: no symlink is created, so the contract needs no extra privilege. The
+  no-follow open flag does not exist there, so the identity check of decision 9
+  carries the guard alone. The target keeps the permission bits of the source,
+  reduced by the process umask.
 
 ## Alternatives
 
-1. **Skip every symlink**: rejected. The issue forbids following a symlink out of
-   the main work tree, and nothing else. A link inside the tree is a normal way to
-   share one instruction file between harnesses.
+1. **Follow a symlink that resolves inside the main work tree**: rejected in the
+   second revision. The issue requires only that no link is followed out of the
+   tree, and following one inside needs a target check that a swap can defeat, and
+   exclusion checks for `.git`, other work trees, loops, and tracked files reached
+   by two paths. No symlink is followed, which has none of those cases.
 2. **Symlink the files into `--cwd`**: rejected. A Windows symlink needs extra privileges, and a
    link follows later edits and could expose the main work tree to a child write.
 3. **A configurable path list or a size flag**: rejected. A config value that has

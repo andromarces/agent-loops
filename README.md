@@ -583,7 +583,8 @@ A file is copied only when it exists in the main work tree, is untracked there, 
 
 Covered paths: `.agents/`, `.claude/`, `.codex/`, `.env`, `.envrc`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `opencode.jsonc`, `opencode.json`, `.github/copilot-instructions.md`, and `.vscode/`. For a directory, each file inside it meets the conditions on its own.
 
-- Nothing is overwritten, and no symlink is created. A symlink whose target resolves outside the main work tree, into `.git`, or into another work tree is skipped and named. A symlink that resolves inside the main work tree is copied as a regular file. Nothing under `.claude/worktrees/` or any other work tree is copied, and neither is a `.gitignore` or `.gitattributes`, because a copy would change ignore rules or line endings in `--cwd`.
+- Nothing is overwritten, and no symlink is created or followed. A symlink in the main work tree, whatever its target, and a listed path under a symlinked directory are skipped and named. Nothing under `.git`, `.claude/worktrees/`, or any other work tree is copied, and neither is a `.gitignore` or `.gitattributes`, because a copy would change ignore rules or line endings in `--cwd`. Name exclusions ignore case, a trailing dot or space, and a stream suffix, so `.GITIGNORE` is skipped like `.gitignore`.
+- The copy opens the source once without following a link and verifies the opened file and the exclusively created target against their paths before it writes a byte, so a file or directory swapped during the copy is skipped instead of followed.
 - A file over 1 MiB is skipped. A listed directory that holds more than 2000 entries, counted under it with nested directories, is skipped as one name, and none of its files is copied. Each listed path has its own bound.
 - A copy leaves `clean` and the snapshot digest unchanged, because a copied file is ignored.
 - `--cwd` as the main work tree, or a bare repository, copies nothing.

@@ -213,7 +213,7 @@ When `--cwd` is a linked work tree, the init call copies the untracked local fil
 of the main work tree that `--cwd` ignores (agent instructions, harness
 configuration, `.env`, and the other paths in the README) into `--cwd`, before the
 first child turn. A file already in `--cwd` is never replaced, and no symlink is
-followed out of the main work tree. The init envelope reports the paths as `localFiles: {copied, skipped}`,
+followed: a symlink in the main work tree is skipped and named. The init envelope reports the paths as `localFiles: {copied, skipped}`,
 by name only, and a path in `skipped` is untracked in the main work tree but not
 copied: the child does not have it. Do not read, print, or quote any copied file.
 The copy duplicates secrets such as `.env` into the run work tree, so remove that
