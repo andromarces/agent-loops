@@ -1856,9 +1856,9 @@ test("reads an unresolved status when the gh call exceeds the time bound", async
 // #373 and #399). A rejected option throws from `runGh` before `spawn` is reached.
 test("the installed execa accepts the options the gh runner passes", async () => {
   const realSpawn = childProcess.spawn;
-  const spawned = [];
-  childProcess.spawn = (file) => {
-    spawned.push(file);
+  let spawnCalls = 0;
+  childProcess.spawn = () => {
+    spawnCalls += 1;
     throw new Error("stand-in spawn: no process starts");
   };
   syncBuiltinESMExports();
@@ -1868,7 +1868,9 @@ test("the installed execa accepts the options the gh runner passes", async () =>
       signal: controller.signal,
       timeoutMs: 60_000,
     });
-    expect(spawned).toEqual(["gh"]);
+    // execa reached `spawn`, so it accepted the options. The file it passes is the
+    // resolved `gh` path on Windows, so only the call is asserted.
+    expect(spawnCalls).toBe(1);
     expect(reply.status).not.toBe(0);
   } finally {
     childProcess.spawn = realSpawn;
