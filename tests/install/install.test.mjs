@@ -1016,7 +1016,9 @@ test("CLI install rejects --verbose=1", async () => {
 });
 
 // Usefulness: verifies acceptance (#186) — install and uninstall print their own
-// usage for --help and -h, exit 0, and reject an unknown flag with exit code 1.
+// usage for --help and -h and exit 0. Verifies acceptance (#419) — usage goes to
+// stdout only; the stderr-empty check is not redundant because the stdout
+// assertion alone passes when usage is also written to stderr.
 test.each([
   ["install", "--help", "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run]"],
   ["install", "-h", "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run]"],
@@ -1042,6 +1044,10 @@ test.each([
   }
 });
 
+// Usefulness: verifies acceptance (#186) — an unknown flag exits 1 with an
+// error. Verifies acceptance (#419) — the error goes to stderr only; the
+// stdout-empty check is not redundant because the stderr assertion alone passes
+// when the error is also written to stdout.
 test.each(["install", "uninstall"])(
   "CLI %s rejects an unknown flag on stderr only",
   async (command) => {
