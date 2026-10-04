@@ -1,13 +1,11 @@
 // Copies untracked, ignored local agent and environment files from the main work
-// tree into a linked run work tree (ADR 0017). File bytes move from one verified
-// source descriptor into a private temporary file, which is then hard-linked to
-// the target, so a target never holds a partial file and an existing file is
-// never replaced. The module never prints, logs, or returns file content: every
-// report is a path name.
-import { randomBytes } from "node:crypto";
+// tree into a linked run work tree (ADR 0017). Each file is copied with
+// `copyFile` and `COPYFILE_EXCL`, so an existing file is never replaced or
+// deleted. The module never prints, logs, or returns file content: every report
+// is a path name.
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, readdir, realpath, unlink } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { execa } from "execa";
 import { logInfo, logWarn } from "./log.mjs";
 
@@ -180,18 +178,6 @@ async function collect(ctx, rel, abs) {
 }
 
 /**
- * Thrown when a path changed under the copy in a way that the checks detect but
- * cannot undo safely. It fails the init closed: nothing is deleted at the target,
- * and the message names the file only.
- */
-class CopyChangedError extends Error {
-  constructor(rel) {
-    super(`local files: the work tree changed during the copy of ${rel}; check the work tree`);
-    this.name = "CopyChangedError";
-  }
-}
-
-/**
  * Copies each untracked local file of the main work tree that is ignored in
  * `cwd`'s work tree into it, once, at init. A file is copied only when all three
  * hold: it exists in the main work tree, it is untracked there, and `git
@@ -205,14 +191,16 @@ class CopyChangedError extends Error {
  * the repository is bare, where nothing is copied. An untracked file that is not
  * copied is in `skipped`. A listed directory that holds more than
  * `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and none of its files
- * is copied. A file is in `copied` only after its target is in place and
- * verified. Throws when a verification finds that a path changed during the copy.
+ * is copied. A file whose check fails is in `skipped`.
  *
- * `hooks` is a test seam. `beforeSourceOpen`, `beforeTargetCreate`, and
- * `beforeLink` run with the file's path name just before the source is opened,
- * the temporary file is created, and the temporary file is linked to its target.
+ * Approved limit (ADR 0017): Node has no descriptor-relative open, so a directory
+ * or link swapped between a check and the `copyFile` call can redirect that read
+ * or write. A swap needs local write access to the work trees during init.
+ *
+ * `hooks` is a test seam. `beforeSourceOpen` and `beforeCopy` run with the file's
+ * path name just before the source is opened and just before `copyFile`.
  * @param {string} cwd
- * @param {{ beforeSourceOpen?: (rel: string) => Promise<void>, beforeTargetCreate?: (rel: string) => Promise<void>, beforeLink?: (rel: string) => Promise<void> }} [hooks]
+ * @param {{ beforeSourceOpen?: (rel: string) => Promise<void>, beforeCopy?: (rel: string) => Promise<void> }} [hooks]
  * @returns {Promise<{ copied: string[], skipped: string[] } | null>}
  */
 export async function copyLocalFiles(cwd, hooks = {}) {
@@ -229,6 +217,8 @@ export async function copyLocalFiles(cwd, hooks = {}) {
   const sourceBlocked = new Set(trees.slice(1).map(foldPath));
   const targetBlocked = new Set(trees.map(foldPath));
   targetBlocked.delete(foldPath(rootReal));
+
+  const insensitive = await isCaseInsensitive(mainReal);
 
   const skipped = new Set();
   const files = [];
@@ -292,7 +282,10 @@ export async function copyLocalFiles(cwd, hooks = {}) {
 
   const copied = [];
   for (const { rel, src } of pending) {
-    if (ignored.has(rel) && (await copyOne(src, rootReal, rel, targetBlocked, hooks))) {
+    if (
+      ignored.has(rel) &&
+      (await copyOne(src, rootReal, rel, targetBlocked, insensitive, hooks))
+    ) {
       copied.push(rel);
     } else {
       skipped.add(rel);
@@ -303,55 +296,48 @@ export async function copyLocalFiles(cwd, hooks = {}) {
   return { copied: copied.sort(), skipped: [...skipped].sort() };
 }
 
-const TEMP_SUFFIX = ".agent-loop-copy";
-
 const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
 
 /**
- * True when `path` resolves to itself, through no symlink, and names the regular
- * file with the identity of `opened` (a `bigint` `stat`). A swap of the file or of
- * any ancestor is detected when it is in place at the time of the check.
+ * Whether the directory `dir` of a Git work tree is on a file system that reads
+ * names without regard to case, probed with its `.git` entry. Unknown counts as
+ * case-sensitive, the strict answer.
  */
-async function namesFile(path, opened) {
-  const [resolved, named] = await Promise.all([realpath(path), lstat(path, { bigint: true })]);
-  return foldPath(resolved) === foldPath(path) && named.isFile() && sameFile(opened, named);
-}
-
-/** Reads a whole open file, at most `MAX_FILE_BYTES`. Returns null when it is longer. */
-async function readBounded(handle) {
-  const buffer = Buffer.alloc(MAX_FILE_BYTES + 1);
-  let length = 0;
-  while (length <= MAX_FILE_BYTES) {
-    const { bytesRead } = await handle.read(buffer, length, MAX_FILE_BYTES + 1 - length, length);
-    if (bytesRead === 0) {
-      break;
-    }
-    length += bytesRead;
-  }
-  return length > MAX_FILE_BYTES ? null : buffer.subarray(0, length);
+async function isCaseInsensitive(dir) {
+  const [lower, upper] = await Promise.all([
+    lstatOrNull(join(dir, ".git"), { bigint: true }),
+    lstatOrNull(join(dir, ".GIT"), { bigint: true }),
+  ]);
+  return lower !== null && upper !== null && sameFile(lower, upper);
 }
 
 /**
- * Copies one source file to `rootReal/rel` and returns true only when the target
- * is in place and verified. Steps, each failing closed:
- * 1. Open the source without following a final symlink, and check that the opened
- *    file is the regular file the path names. Bytes are read from that descriptor.
- * 2. Create the missing directories one level at a time, none through a symlink.
- * 3. Create a private temporary file beside the target with an unguessable name,
- *    check that it lies where expected, and only then write the bytes.
- * 4. Hard-link the temporary file to the target. A link never replaces a file and
- *    never follows a symlink at the target, and the target never holds a partial
- *    file. Check that the target names the temporary file's identity.
- * 5. Remove the temporary name. Nothing is ever deleted at the target. A swap that
- *    the checks detect after the fact throws `CopyChangedError`.
- * Node has no descriptor-relative open, so a directory swapped between a check and
- * the following path-based step is detected, not prevented.
+ * True when `path` resolves to itself, through no symlink, and names the regular
+ * file with the identity of `opened` (a `bigint` `stat`). A path that resolves to
+ * itself only up to case counts as itself on a case-insensitive file system only:
+ * on a case-sensitive one it is another directory, which can lie outside the work
+ * tree.
  */
-async function copyOne(sourcePath, rootReal, rel, blocked, hooks) {
-  const targetPath = join(rootReal, rel);
+async function namesFile(path, opened, insensitive) {
+  const [resolved, named] = await Promise.all([realpath(path), lstat(path, { bigint: true })]);
+  const sameName = resolved === path || (insensitive && foldPath(resolved) === foldPath(path));
+  return sameName && named.isFile() && sameFile(opened, named);
+}
+
+/**
+ * Copies one source file to `rootReal/rel` and returns true when `copyFile` did.
+ * Each check fails closed: the file is skipped.
+ * 1. Open the source without following a final symlink, and check that the opened
+ *    file is the regular file within the size cap that the path names.
+ * 2. Create the missing target directories one level at a time, none through a
+ *    symlink, none holding a `.git` entry, none a registered work tree.
+ * 3. `copyFile` with `COPYFILE_EXCL`, which refuses an existing target and never
+ *    deletes one.
+ * The checks run before `copyFile`, which reads and writes by path. A swap in
+ * between is the approved limit of `copyLocalFiles`.
+ */
+async function copyOne(sourcePath, rootReal, rel, blocked, insensitive, hooks) {
   let source = null;
-  let temp = null;
-  let tempPath = null;
   try {
     await hooks.beforeSourceOpen?.(rel);
     source = await open(sourcePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
@@ -359,41 +345,17 @@ async function copyOne(sourcePath, rootReal, rel, blocked, hooks) {
     if (
       !stat.isFile() ||
       stat.size > BigInt(MAX_FILE_BYTES) ||
-      !(await namesFile(sourcePath, stat))
+      !(await namesFile(sourcePath, stat, insensitive))
     ) {
-      return false;
-    }
-    const data = await readBounded(source);
-    if (data === null) {
       return false;
     }
     if (await hasBlockedAncestor(rootReal, rel, blocked, true)) {
       return false;
     }
-    await hooks.beforeTargetCreate?.(rel);
-    tempPath = join(dirname(targetPath), `.${randomBytes(8).toString("hex")}${TEMP_SUFFIX}`);
-    temp = await open(
-      tempPath,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-      Number(stat.mode & 0o777n),
-    );
-    const created = await temp.stat({ bigint: true });
-    if (!(await namesFile(tempPath, created))) {
-      throw new CopyChangedError(rel);
-    }
-    await temp.writeFile(data);
-    await temp.close();
-    temp = null;
-    await hooks.beforeLink?.(rel);
-    await link(tempPath, targetPath);
-    if (!(await namesFile(targetPath, created))) {
-      throw new CopyChangedError(rel);
-    }
+    await hooks.beforeCopy?.(rel);
+    await copyFile(sourcePath, join(rootReal, rel), constants.COPYFILE_EXCL);
     return true;
   } catch (err) {
-    if (err instanceof CopyChangedError) {
-      throw err;
-    }
     // An existing target is the normal no-overwrite outcome and needs no warning.
     // The code names a failure. The message can hold a path, never content.
     if (err.code !== "EEXIST") {
@@ -402,10 +364,5 @@ async function copyOne(sourcePath, rootReal, rel, blocked, hooks) {
     return false;
   } finally {
     await source?.close();
-    await temp?.close();
-    // Only the unguessable temporary name is removed, never the target.
-    if (tempPath) {
-      await unlink(tempPath).catch(() => {});
-    }
   }
 }

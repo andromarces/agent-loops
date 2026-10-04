@@ -27,7 +27,7 @@ const exists = (path) =>
 
 // Usefulness: verifies the copy is on by default and the opt-out flag turns it
 // off, and that the boolean flag rejects an inline value like every other one.
-// Not redundant: the loop tests never parse argv, so only this test fails when the flag name, its default, or its inline-value refusal changes.
+// Not redundant: it parses argv and stops there. The other two tests in this file run `main`.
 test("--no-copy-local-files parses as an opt-out and takes no value", () => {
   expect(parseArgs(BASE).copyLocalFiles).toBe(true);
   expect(parseArgs([...BASE, "--no-copy-local-files"]).copyLocalFiles).toBe(false);
@@ -58,7 +58,7 @@ async function runHeadless(flags) {
 
 // Usefulness: verifies the headless command copies by default, and the
 // transcript names the file and never holds its content (acceptance 1, 6).
-// Not redundant: the runtime test calls `runLoop` directly, so only this test fails when `main` does not reach the copy or the transcript holds content.
+// Not redundant: it runs `main` end to end and reads the transcript file. The runtime test calls `runLoop` directly.
 test("headless command copies by default and the transcript holds names only", async () => {
   const { linked, transcript } = await runHeadless([]);
 
@@ -70,7 +70,7 @@ test("headless command copies by default and the transcript holds names only", a
 
 // Usefulness: verifies the flag reaches the loop, so the opt-out copies
 // nothing on the headless command (acceptance 4).
-// Not redundant: the parse test stops at argv, so only this test fails when `main` does not pass the flag to `runLoop`.
+// Not redundant: it runs `main` with the flag. The parse test stops at argv.
 test("headless --no-copy-local-files copies nothing", async () => {
   const { linked, transcript } = await runHeadless(["--no-copy-local-files"]);
 

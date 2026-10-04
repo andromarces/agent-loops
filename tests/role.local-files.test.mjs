@@ -34,7 +34,7 @@ async function linkedWithEnv() {
 // Usefulness: verifies acceptance 1 — an init on a linked work tree copies the
 // file before the first child turn, and names it, with no content, in the
 // envelope. The adapter reads the file inside the turn to prove the order.
-// Not redundant: the lib tests call the copy directly, so only this test fails when the role init copies after the child turn or drops the envelope key.
+// Not redundant: it runs the interactive init and reads the file inside the first child turn. The lib tests call the copy directly.
 test("init copies a local file before the first child turn and names it in the envelope", async () => {
   await setup();
   const { linked } = await linkedWithEnv();
@@ -56,7 +56,7 @@ test("init copies a local file before the first child turn and names it in the e
 
 // Usefulness: verifies acceptance 4 — the opt-out copies nothing, adds no
 // envelope key, and is recorded as the run's setting.
-// Not redundant: the lib tests never see the flag, so only this test fails when the init field is ignored or not recorded.
+// Not redundant: it passes the opt-out flag on the interactive path and reads the state file. The CLI tests use the headless path.
 test("--no-copy-local-files copies nothing and records the setting", async () => {
   await setup();
   const { linked } = await linkedWithEnv();
@@ -74,7 +74,7 @@ test("--no-copy-local-files copies nothing and records the setting", async () =>
 
 // Usefulness: verifies the opt-out is an init field — a later call that sets it
 // on a run that copied is refused, like every other init field.
-// Not redundant: the repeat-opt-out test proves the accepted case, and only this one fails when a later call may change the field.
+// Not redundant: it is the refusal of a later call. The next test is the accepted repeat.
 test("a later call cannot turn the copy off", async () => {
   await setup();
   const { linked } = await linkedWithEnv();
@@ -91,7 +91,7 @@ test("a later call cannot turn the copy off", async () => {
 
 // Usefulness: verifies a later call that repeats the opt-out of a run that
 // opted out is accepted, the same as a repeated matching init field.
-// Not redundant: the refusal test would pass if every later call carrying the flag were refused, and only this test fails then.
+// Not redundant: it is the accepted repeat. The refusal test above would still pass if every later call that carries the flag were refused.
 test("a later call may repeat the opt-out of an opted-out run", async () => {
   await setup();
   const { linked } = await linkedWithEnv();
@@ -110,7 +110,7 @@ test("a later call may repeat the opt-out of an opted-out run", async () => {
 
 // Usefulness: verifies the main work tree as --cwd copies nothing, adds no
 // envelope key, and changes no file.
-// Not redundant: the lib test covers the copy, and only this one fails when the init reports or writes for a main work tree.
+// Not redundant: it runs the init in the main work tree through the role path. The lib test calls the copy directly.
 test("init in the main work tree copies nothing and reports nothing", async () => {
   await setup();
   const repo = await createTempRepo();
@@ -130,7 +130,7 @@ test("init in the main work tree copies nothing and reports nothing", async () =
 
 // Usefulness: verifies the transcript records the copied and skipped names and
 // never a file's content.
-// Not redundant: the envelope test does not read the transcript, so only this test fails when the event is not emitted or holds content.
+// Not redundant: it reads the transcript file. The envelope test does not.
 test("the transcript records names only", async () => {
   await setup();
   const { base, linked } = await linkedWithEnv();
@@ -149,7 +149,7 @@ test("the transcript records names only", async () => {
 
 // Usefulness: verifies a refused init (missing worker) copies nothing, so a
 // rejected init leaves the work tree as it was.
-// Not redundant: the other role tests run accepted inits, so only this test fails when the copy runs before the init checks.
+// Not redundant: it runs an init that is refused. The other role tests run accepted inits.
 test("a refused init copies nothing", async () => {
   await setup();
   const { linked } = await linkedWithEnv();

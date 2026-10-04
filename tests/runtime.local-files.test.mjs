@@ -59,7 +59,7 @@ async function linkedWithEnv() {
 // Usefulness: verifies acceptance 1 on the headless path — the file is in
 // --cwd before the first orchestrator turn, which is the first child spawn and
 // the first snapshot, and a local-files event names it without content.
-// Not redundant: the role test covers the interactive path, and only this one fails when `runLoop` copies after the first orchestrator turn.
+// Not redundant: it calls `runLoop` and reads the file inside the first orchestrator turn. The role tests cover the interactive path.
 test("headless run copies local files before the first turn and reports names", async () => {
   const { linked } = await linkedWithEnv();
 
@@ -74,7 +74,7 @@ test("headless run copies local files before the first turn and reports names", 
 
 // Usefulness: verifies acceptance 4 on the headless path — the opt-out copies
 // nothing and emits no event.
-// Not redundant: the CLI test passes the flag through `main`, and only this one fails when `runLoop` ignores its own option.
+// Not redundant: it calls `runLoop` with the option set to false and parses no flag. The CLI test passes the flag through `main`.
 test("headless copyLocalFiles false copies nothing", async () => {
   const { linked } = await linkedWithEnv();
 
