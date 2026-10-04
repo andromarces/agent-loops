@@ -1,14 +1,16 @@
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { parse } from "node:path";
-import { expect, test } from "vitest";
+import { join, parse } from "node:path";
+import { expect, test, vi } from "vitest";
 import { checkCi, readRequiredChecks, runGh } from "../../src/lib/ci-gate.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,
   expectAbortKillsShim,
   expectBoundKillsShim,
+  removePath,
 } from "../runtime-helpers.mjs";
 
 const HEAD = "1111111111111111111111111111111111111111";
@@ -1857,11 +1859,19 @@ test("reads an unresolved status when the gh call exceeds the time bound", async
 // where a real `gh` start is the cost a loaded Windows runner made slow (issues
 // #373 and #399). A rejected option throws from `runGh` before `spawn` is reached.
 //
-// On Windows, execa resolves `gh` through `PATHEXT` and hands `spawn` the full path
-// of `gh.exe`, so the file is compared by its base name without the extension.
-// known-limit: a Windows host where `gh` resolves to a `.cmd` shim, or to nothing,
-// gets `cmd.exe /d /s /c "..."` from execa, and the file assertion fails there.
+// On Windows, execa resolves `gh` through `PATH` and `PATHEXT` before it calls
+// `spawn` (node_modules/execa/lib/arguments/command-file.js, `resolvePath`, which
+// reads `process.env` when the call passes no `env`). A host `gh.cmd` shim would
+// make execa wrap the call in `cmd.exe /d /s /c "..."`. The call here resolves
+// against a `PATH` that holds one empty `gh.exe`, with `PATHEXT` set to `.EXE`, so
+// the host install does not change what `spawn` receives: the full path of that
+// `gh.exe` on Windows, and the bare name elsewhere. The file is compared by its
+// base name without the extension.
 test("the installed execa accepts the options the gh runner passes", async () => {
+  const bin = await mkdtemp(join(tmpdir(), "gh-resolve-"));
+  await writeFile(join(bin, "gh.exe"), "");
+  vi.stubEnv("PATH", bin);
+  vi.stubEnv("PATHEXT", ".EXE");
   const realSpawn = childProcess.spawn;
   const spawned = [];
   childProcess.spawn = (file, args) => {
@@ -1871,7 +1881,7 @@ test("the installed execa accepts the options the gh runner passes", async () =>
   syncBuiltinESMExports();
   try {
     const controller = new AbortController();
-    const reply = await runGh(["pr", "checks", "42", "--required"], ".", {
+    const reply = await runGh(["pr", "checks", "42", "--required"], bin, {
       signal: controller.signal,
       timeoutMs: 60_000,
     });
@@ -1883,6 +1893,8 @@ test("the installed execa accepts the options the gh runner passes", async () =>
   } finally {
     childProcess.spawn = realSpawn;
     syncBuiltinESMExports();
+    vi.unstubAllEnvs();
+    await removePath(bin);
   }
 });
 
