@@ -1045,7 +1045,9 @@ test("the status-read exception covers the wait-checks command", () => {
 test("the headless prompt forbids a remote write and keeps the wait-checks read allowed", () => {
   const prompt = gatedPrompt("claude").replace(/\s+/g, " ");
   expect(prompt).toContain("You must NOT write to GitHub or any remote");
-  expect(prompt).toContain("A status read changes nothing, so it is not a write.");
+  expect(prompt).toContain(
+    "A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed",
+  );
   expect(prompt).toContain(
     "not an edit, and not a remote write, and agent-loop role wait-checks is the only command it covers",
   );
