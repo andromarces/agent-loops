@@ -1022,35 +1022,48 @@ test.each([
   ["install", "-h", "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run]"],
   ["uninstall", "--help", "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run]"],
   ["uninstall", "-h", "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run]"],
-])("CLI %s %s prints usage and exits 0", async (command, flag, usage) => {
+])("CLI %s %s prints usage to stdout only and exits 0", async (command, flag, usage) => {
   const originalLog = console.log;
+  const originalError = console.error;
   const lines = [];
+  const errors = [];
   console.log = (message) => lines.push(String(message));
+  console.error = (message) => errors.push(String(message));
   try {
     process.exitCode = 0;
     await cliMain([command, flag]);
     expect(process.exitCode).toBe(0);
     expect(lines.join("\n")).toContain(usage);
+    expect(errors).toEqual([]);
   } finally {
     console.log = originalLog;
-    process.exitCode = 0;
-  }
-});
-
-test.each(["install", "uninstall"])("CLI %s rejects an unknown flag", async (command) => {
-  const originalError = console.error;
-  const errors = [];
-  console.error = (message) => errors.push(String(message));
-  try {
-    process.exitCode = 0;
-    await cliMain([command, "--nope"]);
-    expect(process.exitCode).toBe(1);
-    expect(errors.join("\n")).toContain("Unknown argument: --nope");
-  } finally {
     console.error = originalError;
     process.exitCode = 0;
   }
 });
+
+test.each(["install", "uninstall"])(
+  "CLI %s rejects an unknown flag on stderr only",
+  async (command) => {
+    const originalLog = console.log;
+    const originalError = console.error;
+    const lines = [];
+    const errors = [];
+    console.log = (message) => lines.push(String(message));
+    console.error = (message) => errors.push(String(message));
+    try {
+      process.exitCode = 0;
+      await cliMain([command, "--nope"]);
+      expect(process.exitCode).toBe(1);
+      expect(errors.join("\n")).toContain("Unknown argument: --nope");
+      expect(lines).toEqual([]);
+    } finally {
+      console.log = originalLog;
+      console.error = originalError;
+      process.exitCode = 0;
+    }
+  },
+);
 
 // Usefulness: verifies acceptance (#215) — the install parser rejects an inline
 // value on any boolean flag, empty or not, without a hand-maintained list.
