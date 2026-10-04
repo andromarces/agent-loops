@@ -1460,3 +1460,89 @@ test("a fatal run keeps the test command result in the transcript", async () => 
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a headless run that ends on a fatal error reports the command
+// result and its work tree compare on stderr when no --transcript is given, so the
+// parent that reads only the exit report still gets the evidence the runtime read
+// (issue #420 review of 9ec667e).
+test("a fatal run reports the test command result on stderr without a transcript", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const agents = {
+    codex: {
+      async run() {
+        return JSON.stringify({ action: "run_reviewer", prompt: "review" });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run(_state, _prompt, options) {
+        await writeFile(join(options.cwd, "by-reviewer.txt"), "x");
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main(
+      [
+        ...BASE,
+        "--test-cmd",
+        `node -e "require('fs').writeFileSync('generated.txt', 'x'); console.log('9 passed')"`,
+        "--cwd",
+        repo,
+      ],
+      agents,
+    );
+    expect(process.exitCode).toBe(1);
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain("Mutation detected during reviewer turn");
+    expect(report).toContain("Test command result");
+    expect(report).toContain("9 passed");
+    expect(report).toContain("generated.txt");
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a fatal run with no --test-cmd prints no test report, so the
+// error report keeps its earlier shape when the flag is absent (issue #420).
+test("a fatal run without a test command prints no test report", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const agents = {
+    codex: {
+      async run() {
+        return JSON.stringify({ action: "run_reviewer", prompt: "review" });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run(_state, _prompt, options) {
+        await writeFile(join(options.cwd, "by-reviewer.txt"), "x");
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main([...BASE, "--cwd", repo], agents);
+    expect(process.exitCode).toBe(1);
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).not.toContain("Test command result");
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});

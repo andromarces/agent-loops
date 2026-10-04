@@ -541,12 +541,22 @@ ${err.message}`);
     }
   };
 
+  // The command result and work tree compare of a turn that ended in a fatal error. The
+  // run has no result event for that turn, so the error report carries them, and a parent
+  // that gave no --transcript still receives the evidence the runtime read (ADR 0017).
+  let fatalTestRun = null;
+
   const finish = async ({ exitCode, error }) => {
     transcriptData.exitCode = exitCode;
     transcriptData.error = error ? (error.message ?? String(error)) : null;
     await writeTranscript();
     if (error) {
       console.error(`\n${error.message ?? error}`);
+      if (fatalTestRun) {
+        console.error(
+          `\nTest command result before the failed turn (advisory):\n${JSON.stringify(fatalTestRun, null, 2)}`,
+        );
+      }
     }
     process.exitCode = exitCode;
   };
@@ -566,6 +576,9 @@ ${err.message}`);
     }
 
     const onEvent = (event) => {
+      if (event.type === "test-run") {
+        fatalTestRun = event.testRun;
+      }
       if (options.transcript) {
         events.push({
           ...event,
