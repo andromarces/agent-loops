@@ -1,3 +1,5 @@
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
 import { checkCi, readRequiredChecks, runGh } from "../../src/lib/ci-gate.mjs";
@@ -1842,6 +1844,36 @@ test("reads an unresolved status when the gh call exceeds the time bound", async
   });
   expect(read).toMatchObject({ status: "unresolved", checks: [] });
   expect(read.summary).toMatch(/timed out|abort/i);
+});
+
+// Usefulness: verifies the real `gh` runner passes the installed execa only options
+// that it accepts. The unit stubs accept any option shape, and the double in
+// spawn-bounds.test.mjs replaces execa, so only the real execa catches an option
+// name that it rejects, which is what made every real read fail (issue #320
+// review). execa validates its options before it calls `spawn`. The stand-in
+// `spawn` throws, so the call stops there and no process starts on any platform,
+// where a real `gh` start is the cost a loaded Windows runner made slow (issues
+// #373 and #399). A rejected option throws from `runGh` before `spawn` is reached.
+test("the installed execa accepts the options the gh runner passes", async () => {
+  const realSpawn = childProcess.spawn;
+  const spawned = [];
+  childProcess.spawn = (file) => {
+    spawned.push(file);
+    throw new Error("stand-in spawn: no process starts");
+  };
+  syncBuiltinESMExports();
+  try {
+    const controller = new AbortController();
+    const reply = await runGh(["--version"], ".", {
+      signal: controller.signal,
+      timeoutMs: 60_000,
+    });
+    expect(spawned).toEqual(["gh"]);
+    expect(reply.status).not.toBe(0);
+  } finally {
+    childProcess.spawn = realSpawn;
+    syncBuiltinESMExports();
+  }
 });
 
 // Usefulness: verifies a read whose PR head moves between the head read and the
