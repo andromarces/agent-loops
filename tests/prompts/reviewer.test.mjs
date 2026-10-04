@@ -287,3 +287,18 @@ test("a supplied status does not contradict the rule that orders the read", () =
   // And no line forbids the read outright, which would contradict the fallback.
   expect(supplied.join("\n")).not.toMatch(/without reading it again|do not read/);
 });
+
+// Usefulness: verifies every reviewer turn forbids a remote write while read-only
+// queries stay allowed, for a run with a PR input, one without, and one with a
+// supplied required-check status, because the runtime mutation check does not see
+// a remote write (issue #422).
+test.each([
+  ["a PR input", () => reviewerPrompt("review PR 422")],
+  ["no PR input", () => reviewerPrompt("review the change")],
+  ["a supplied status", () => reviewerPrompt("review PR 422", FAILING_READ)],
+])("reviewer prompt forbids a remote write with %s", (_name, render) => {
+  const prompt = render();
+  expect(prompt).toContain("Do not write to GitHub or any remote");
+  expect(prompt).toContain("merge, push");
+  expect(prompt).toContain("A read-only query changes nothing, so it stays allowed.");
+});

@@ -140,7 +140,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
   if (rule === "wait") {
     return [
       gate,
-      "- This run excepts one read from the role rule above: you may read the pull request check status yourself. A status read is not a review, not a test, and not an edit, and agent-loop role wait-checks is the only command it covers.",
+      "- This run excepts one read from the role rule above: you may read the pull request check status yourself. A status read is not a review, not a test, not an edit, and not a remote write, and agent-loop role wait-checks is the only command it covers.",
       "- Wait for the required checks at two points:",
       "  - Before you dispatch the reviewer on a new PR head, wait for the required checks on that head to complete.",
       "  - When a reviewer turn reports a pending required check, wait for that check to complete before you finish. A check still pending after a wait is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check, so dispatch the reviewer again, or wait again on a later turn, or abort with the pending check named in the reason.",
@@ -293,6 +293,7 @@ export function initialPrompt({
 You are the orchestrator in an automated multi-agent coding loop.
 Your role is to direct the workflow to complete the user task.
 You must NOT edit files, and you must NOT run agent CLIs or background processes directly. The one exception is a pull request check status read, which a gated run allows; the PR gate block below states it.
+You must NOT write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A status read changes nothing, so it is not a write.
 
 You have two child roles:
 - worker: Implements changes, runs checks and tests, and reports findings and progress.
