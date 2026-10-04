@@ -463,6 +463,58 @@ test("a review-only run refuses a finish with no reviewer report", async () => {
   }
 });
 
+// Usefulness: verifies every orchestrator turn prompt of a headless run carries the
+// no-remote-write rule and keeps the wait-checks status read allowed: the repair
+// turn, the finish refusal, and the result turn each stand alone, because a
+// resumed session can open a new conversation without the initial prompt, which
+// the agy fallback does (issue #422).
+test("every orchestrator turn prompt carries the remote-write rule", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orchAdapter = scripted([
+      "not json",
+      finish,
+      JSON.stringify({ action: "run_reviewer", prompt: "inspect the repo" }),
+      finish,
+    ]);
+
+    const result = await runLoop({
+      task: "Review only.",
+      cwd: repo,
+      maxSteps: 5,
+      mode: "review-only",
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: {
+        orch: orchAdapter,
+        work: scripted([]),
+        rev: scripted(["Conclusion: done\nWhy: read\nBlockers: none\nVerdict: accept"]),
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    // Initial, repair, refusal, and result prompts.
+    const prompts = orchAdapter.recorded.map((call) => call.prompt);
+    expect(prompts).toHaveLength(4);
+    expect(prompts[1]).toContain("validation error");
+    expect(prompts[2]).toContain("Finish refused");
+    expect(prompts[3]).toContain("Role execution result");
+    for (const prompt of prompts) {
+      expect(prompt).toContain("You must NOT write to GitHub or any remote");
+      expect(prompt).toContain("agent-loop role wait-checks stays allowed");
+    }
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies the reviewer-report refusal ends a review-only run that
 // keeps finishing without one, by the same repeated-refusal rule every other
 // finish gate uses: a second refusal with no child turn in between ends the run

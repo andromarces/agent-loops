@@ -275,6 +275,14 @@ function modeBlock(mode) {
   return `\n- This run is ${mode}: ${rules[mode]}`;
 }
 
+// The remote-write rule rides on every orchestrator turn prompt, not only the
+// first. A resumed session can lose its initial prompt when a CLI opens a new
+// conversation in its place (the agy known-limit), so each follow-up carries the
+// rule itself. The runtime mutation check reads only the local work tree, so the
+// rule is advisory (issue #422).
+const REMOTE_WRITE_RULE =
+  "You must NOT write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.";
+
 export function initialPrompt({
   task,
   maxSteps,
@@ -293,7 +301,7 @@ export function initialPrompt({
 You are the orchestrator in an automated multi-agent coding loop.
 Your role is to direct the workflow to complete the user task.
 You must NOT edit files, and you must NOT run agent CLIs or background processes directly. The one exception is a pull request check status read, which a gated run allows; the PR gate block below states it.
-You must NOT write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A status read changes nothing, so it is not a write.
+${REMOTE_WRITE_RULE}
 
 You have two child roles:
 - worker: Implements changes, runs checks and tests, and reports findings and progress.
@@ -375,6 +383,8 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
 Role execution result:
 ${JSON.stringify(payload, null, 2)}
 
+${REMOTE_WRITE_RULE}
+
 Choose the next action.
 Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported actions: run_worker, run_reviewer, finish, abort.
@@ -390,6 +400,8 @@ export function refusalPrompt(reason) {
   return `
 ${reason}
 
+${REMOTE_WRITE_RULE}
+
 Choose the next action.
 Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported actions: run_worker, run_reviewer, finish, abort.
@@ -400,6 +412,8 @@ export function repairPrompt(error) {
   return `
 Your previous response could not be accepted due to the following validation error:
 ${error}
+
+${REMOTE_WRITE_RULE}
 
 Respond with one valid JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported action formats:
