@@ -69,32 +69,48 @@ test("the command runs in the given work tree", async () => {
   expect(await readFile(join(printed, "init.txt"), "utf8")).toBe("hello\n");
 });
 
-// A command that records its pid and starts a grandchild that records its own, then
-// both hang. `detached` puts the grandchild in a process group of its own, which a
-// group signal to the command does not reach. `trapTerm` makes the command exit 0
-// when it receives SIGTERM, which is the shape of a runner that cleans up and exits.
-async function hangingTree({ detached, trapTerm }) {
+// A command that records its pid and starts a process tree, then hangs. `detached`
+// puts the grandchild in a process group of its own, which a group signal to the
+// command does not reach. `orphan` starts the grandchild from an intermediate process
+// that exits at once, so the grandchild has no live parent: it is reparented away from
+// the command, and no walk of the parent links finds it. `trapTerm` makes the command
+// exit 0 on SIGTERM, the shape of a runner that cleans up and exits.
+async function hangingTree({ detached = false, orphan = false, trapTerm = false }) {
   const dir = await mkdtemp(join(tmpdir(), "test-cmd-hang-"));
   dirs.push(dir);
   const grandchildPid = join(dir, "grandchild.pid");
   const childPid = join(dir, "child.pid");
   const grandchild = join(dir, "grandchild.js");
+  const middle = join(dir, "middle.js");
   const child = join(dir, "child.js");
-  await writeFile(
-    grandchild,
-    `require("fs").writeFileSync(${JSON.stringify(grandchildPid)}, String(process.pid));
-setTimeout(() => {}, 60000);
-`,
-  );
+  const record = (file) =>
+    `require("fs").writeFileSync(${JSON.stringify(file)}, String(process.pid));`;
+  const spawnGrandchild = `require("child_process").spawn(process.execPath, [${JSON.stringify(grandchild)}], { stdio: "ignore", detached: ${detached} }).unref();`;
+  await writeFile(grandchild, `${record(grandchildPid)}\nsetTimeout(() => {}, 60000);\n`);
+  await writeFile(middle, `${spawnGrandchild}\n`);
+  const start = orphan
+    ? `const mid = require("child_process").spawn(process.execPath, [${JSON.stringify(middle)}], { stdio: "ignore" });\nmid.on("exit", () => setTimeout(() => {}, 60000));`
+    : spawnGrandchild;
   await writeFile(
     child,
-    `require("fs").writeFileSync(${JSON.stringify(childPid)}, String(process.pid));
-require("child_process").spawn(process.execPath, [${JSON.stringify(grandchild)}], { stdio: "ignore", detached: ${detached} });
-${trapTerm ? 'process.on("SIGTERM", () => process.exit(0));' : ""}
-setTimeout(() => {}, 60000);
-`,
+    `${record(childPid)}\n${start}\n${trapTerm ? 'process.on("SIGTERM", () => process.exit(0));' : ""}\nsetTimeout(() => {}, 60000);\n`,
   );
   return { command: `node "${child}"`, pidFiles: [childPid, grandchildPid] };
+}
+
+// Waits until every file holds a pid, so a cancel never precedes the processes it must kill.
+async function waitForPidFiles(files) {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const pids = await Promise.all(
+      files.map((file) => readFile(file, "utf8").then(Number.parseInt, () => Number.NaN)),
+    );
+    if (pids.every(Number.isInteger)) {
+      return;
+    }
+    expect(Date.now() < deadline, "the process tree never started").toBe(true);
+    await delay(50);
+  }
 }
 
 // Both processes record their pids before the bound, or the test fails: a child
@@ -114,7 +130,7 @@ async function expectAllGone(pidFiles) {
     if (processExists(pid)) {
       process.kill(pid, "SIGKILL");
     }
-    expect(processExists(pid), `process ${pid} outlived the timeout`).toBe(false);
+    expect(processExists(pid), `process ${pid} outlived the kill`).toBe(false);
   }
 }
 
@@ -154,6 +170,82 @@ test("a timed-out command reports exitCode null even when it exits 0 on the sign
   expect(run).toMatchObject({ status: "timed-out", timedOut: true, exitCode: null });
   expect(run.summary).not.toContain("exit 0");
   await expectAllGone(pidFiles);
+}, 20_000);
+
+// Windows is skipped for the three orphan tests: taskkill walks parent links only and Node
+// exposes no job object, a limit ADR 0017 states.
+// Usefulness: verifies a timeout kills a grandchild that has no live parent and sits in
+// a process group of its own, so no orphan stays running after the bound (issue #420
+// acceptance, review of aa0b25e).
+test.skipIf(process.platform === "win32")(
+  "a timeout kills an orphan in its own process group",
+  async () => {
+    const cwd = await repo();
+    const { command, pidFiles } = await hangingTree({ detached: true, orphan: true });
+    const run = await runTestCmd({ command, timeoutSeconds: 3, cwd });
+    expect(run).toMatchObject({ status: "timed-out", timedOut: true, exitCode: null });
+    await expectAllGone(pidFiles);
+  },
+  20_000,
+);
+
+// Usefulness: verifies a timeout kills an orphan that stayed in the process group of the
+// command, the path a group the runtime owns reaches (issue #420 review of aa0b25e).
+test.skipIf(process.platform === "win32")(
+  "a timeout kills an orphan in the process group of the command",
+  async () => {
+    const cwd = await repo();
+    const { command, pidFiles } = await hangingTree({ orphan: true });
+    await runTestCmd({ command, timeoutSeconds: 3, cwd });
+    await expectAllGone(pidFiles);
+  },
+  20_000,
+);
+
+// Usefulness: verifies a cancel kills the same orphan, so an aborted run leaves no
+// process behind (issue #420 review of aa0b25e).
+test.skipIf(process.platform === "win32")(
+  "a cancel kills an orphan in its own process group",
+  async () => {
+    const cwd = await repo();
+    const { command, pidFiles } = await hangingTree({ detached: true, orphan: true });
+    const controller = new AbortController();
+    const pending = runTestCmd({ command, timeoutSeconds: 60, cwd, signal: controller.signal });
+    const outcome = pending.catch((err) => err);
+    await waitForPidFiles(pidFiles);
+    controller.abort();
+    expect(await outcome).toMatchObject({ isCanceled: true });
+    await expectAllGone(pidFiles);
+  },
+  30_000,
+);
+
+// Usefulness: verifies a cancel still compares the work tree and carries the result on
+// the error, so a write the command made before the cancel is reported and not lost
+// (issue #420 review of aa0b25e).
+test("a cancel reports the work tree change the command made before it", async () => {
+  const cwd = await repo();
+  const controller = new AbortController();
+  const pending = runTestCmd({
+    command: node("require('fs').writeFileSync('early.txt', 'x'); setTimeout(() => {}, 60000)"),
+    cwd,
+    signal: controller.signal,
+  });
+  const outcome = pending.catch((err) => err);
+  const deadline = Date.now() + 10_000;
+  while (!(await readFile(join(cwd, "early.txt"), "utf8").catch(() => null))) {
+    expect(Date.now() < deadline, "the command never wrote its file").toBe(true);
+    await delay(50);
+  }
+  controller.abort();
+  const error = await outcome;
+  expect(error.isCanceled).toBe(true);
+  expect(error.testRun).toMatchObject({
+    status: "canceled",
+    exitCode: null,
+    workTreeChanged: true,
+    changedPaths: ["early.txt"],
+  });
 }, 20_000);
 
 // Usefulness: verifies an output far over the capture window is cut to the tail,

@@ -255,3 +255,34 @@ test("init refuses a bound without a command and a blank command", async () => {
     expect(result.payload.error).toContain(message);
   }
 });
+
+// Usefulness: verifies an interactive cancel during the command keeps the result and the
+// work tree compare in the envelope and the state file, so the parent sees what the
+// command wrote before the cancel (issue #420 review of aa0b25e).
+test("a cancel during the command keeps the test result in the envelope and the state", async () => {
+  const dir = await scratchDir();
+  const started = join(dir, "started.txt");
+  const cmd = node(
+    `require('fs').writeFileSync('early.txt', 'x'); require('fs').writeFileSync('${started.replaceAll("\\", "/")}', 'y'); setTimeout(() => {}, 60000)`,
+  );
+  const { repo, agents } = await start(["--test-cmd", cmd]);
+  const controller = new AbortController();
+  const pending = executeRoleCommand(
+    withRepo(dispatchArgv(["--test-cmd", cmd], "reviewer"), repo),
+    { agents, stdin: stdinPrompt, signal: controller.signal },
+  );
+  const deadline = Date.now() + 10_000;
+  while (!(await exists(started))) {
+    expect(Date.now() < deadline, "the command never started").toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  controller.abort();
+  const turn = await pending;
+  expect(turn.exitCode).toBe(130);
+  expect(turn.payload.testRun).toMatchObject({
+    status: "canceled",
+    workTreeChanged: true,
+    changedPaths: ["early.txt"],
+  });
+  expect((await readRepoState(repo)).lastResult.testRun).toMatchObject({ status: "canceled" });
+}, 20_000);

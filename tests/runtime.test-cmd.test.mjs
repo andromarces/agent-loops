@@ -254,3 +254,42 @@ test("an adapter error keeps the test result in the event and the orchestrator p
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a headless run that ends on a fatal error after the command ran
+// still emits the command result and its work tree compare as an event, which the
+// transcript records, so the evidence does not vanish with the throw (issue #420 review
+// of aa0b25e).
+test("a fatal reviewer error emits the test result as an event before the run ends", async () => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const error = await runLoop({
+      task: "Review the change.",
+      cwd: repo,
+      maxSteps: 5,
+      testCmd: node("require('fs').writeFileSync('out.txt', 'x'); console.log('9 passed')"),
+      roles: roles(),
+      agents: {
+        orch: scripted([JSON.stringify({ action: "run_reviewer", prompt: "review" })]),
+        work: scripted([]),
+        rev: scripted([
+          async () => {
+            await writeFile(join(repo, "by-reviewer.txt"), "x");
+            return REVIEW;
+          },
+        ]),
+      },
+      onEvent: (event) => events.push(event),
+    }).catch((err) => err);
+    expect(error).toBeInstanceOf(MutationError);
+    const evidence = events.find((e) => e.type === "test-run");
+    expect(evidence).toMatchObject({ role: "reviewer", fatal: true, stepsUsed: 1 });
+    expect(evidence.testRun).toMatchObject({
+      status: "pass",
+      workTreeChanged: true,
+      changedPaths: ["out.txt"],
+    });
+  } finally {
+    await removePath(repo);
+  }
+});

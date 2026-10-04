@@ -1,3 +1,5 @@
+import { readdir, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { execa } from "execa";
 import { logInfo } from "./log.mjs";
 import { diffSnapshots, snapshot } from "./snapshot.mjs";
@@ -72,16 +74,53 @@ const signalPid = (pid, signal) => {
   }
 };
 
+// The command and every process it starts inherit this variable, so a process whose
+// parent already exited, and which sits in a group of its own, is still found by it.
+const TAG_VAR = "AGENT_LOOP_TEST_RUN";
+
+// Every process that carries `tag` in its environment, except this one. POSIX only.
+// Linux reads /proc. macOS has no /proc, so it reads the environment that `ps -E`
+// prints, which the system hides for a platform binary that System Integrity
+// Protection restricts, such as /bin/sh.
+async function listTagged(tag) {
+  const needle = `${TAG_VAR}=${tag}`;
+  const found = [];
+  if (process.platform === "linux") {
+    for (const name of await readdir("/proc").catch(() => [])) {
+      const pid = Number(name);
+      if (Number.isInteger(pid) && pid !== process.pid) {
+        const environ = await readFile(`/proc/${pid}/environ`, "utf8").catch(() => "");
+        if (environ.split("\0").includes(needle)) {
+          found.push(pid);
+        }
+      }
+    }
+    return found;
+  }
+  const table = await execa("ps", ["-Eww", "-A", "-o", "pid=,command="], { reject: false });
+  for (const line of String(table.stdout ?? "").split("\n")) {
+    const pid = Number.parseInt(line, 10);
+    if (Number.isInteger(pid) && pid !== process.pid && line.includes(needle)) {
+      found.push(pid);
+    }
+  }
+  return found;
+}
+
 /**
- * Kills the command and every descendant. A process group signal misses a
- * descendant that started its own group, so on POSIX the tree is read from the
- * process table, stopped with SIGSTOP so it cannot start more children, read
- * again until no new process appears, then killed with SIGKILL. On Windows execa
- * runs `taskkill /T /F`, which walks the parent links. known-limit: a descendant
- * whose parent exited before the kill has no parent link left, and neither
- * platform finds it.
+ * Kills the command and every descendant, an orphan included. A process group
+ * signal misses a descendant that started its own group, and a walk of the parent
+ * links misses one whose parent exited. On POSIX the runtime therefore takes the
+ * union of the parent walk and the processes that carry the run tag in their
+ * environment, stops them with SIGSTOP so they start no more children, repeats
+ * until no new process appears, then sends SIGKILL to each and to the process group.
+ * On Windows execa runs `taskkill /T /F`, which walks the parent links. Limits: on
+ * Windows, and on macOS for a platform binary whose environment the system hides, an
+ * orphan outside the process group of the command is not found, and neither Node nor
+ * execa exposes a job object that would reach it. A process that clears its
+ * environment and loses its parent is not found on any platform.
  */
-async function killTree(subprocess) {
+async function killTree(subprocess, tag) {
   if (subprocess.pid === undefined) {
     return;
   }
@@ -91,7 +130,8 @@ async function killTree(subprocess) {
   }
   const known = new Set([subprocess.pid]);
   for (let round = 0; round < MAX_KILL_ROUNDS; round++) {
-    const fresh = (await listDescendants(subprocess.pid)).filter((pid) => !known.has(pid));
+    const seen = [...(await listDescendants(subprocess.pid)), ...(await listTagged(tag))];
+    const fresh = [...new Set(seen)].filter((pid) => !known.has(pid));
     for (const pid of fresh) {
       known.add(pid);
     }
@@ -105,7 +145,7 @@ async function killTree(subprocess) {
   for (const pid of known) {
     signalPid(pid, "SIGKILL");
   }
-  // The group signal covers a process the table read missed.
+  // The group signal covers a process the table reads missed.
   subprocess.kill("SIGKILL");
 }
 
@@ -118,10 +158,12 @@ async function killTree(subprocess) {
  * Output is read as a rolling window, so a noisy command cannot exhaust memory.
  * The work tree is compared before and after the command; the caller takes its
  * reviewer snapshot after this returns, so the changes are reported here and are
- * not a mutation by the reviewer. A snapshot failure and a cancel throw; every
- * other failure of the command is a result.
+ * not a mutation by the reviewer. A snapshot failure throws. A cancel kills the
+ * tree, takes the same after snapshot, and throws an error with `isCanceled` and the
+ * result, `status: "canceled"`, as `testRun`, so a write made before the cancel is
+ * reported. Every other failure of the command is a result.
  * @param {{ command: string, timeoutSeconds?: number, cwd: string, signal?: AbortSignal }} options
- * @returns {Promise<object>} the advisory result: `status` is `pass`, `fail`, `timed-out`, or `error`
+ * @returns {Promise<object>} the advisory result: `status` is `pass`, `fail`, `timed-out`, `error`, or `canceled` (thrown)
  */
 export async function runTestCmd({
   command,
@@ -130,6 +172,7 @@ export async function runTestCmd({
   signal,
 }) {
   const before = await snapshot(cwd);
+  const tag = randomUUID();
   const startedAt = Date.now();
   logInfo(`test command started (bound ${timeoutSeconds}s)`);
 
@@ -142,17 +185,22 @@ export async function runTestCmd({
     buffer: false,
     cleanup: true,
     killDescendants: true,
+    env: { [TAG_VAR]: tag },
   });
   // The runtime owns the bound and the cancel, so both reach the whole tree.
   let timedOut = false;
   let canceled = false;
+  let killing = null;
+  const kill = () => {
+    killing ??= killTree(subprocess, tag);
+  };
   const timer = setTimeout(() => {
     timedOut = true;
-    void killTree(subprocess);
+    kill();
   }, timeoutSeconds * 1000);
   const onAbort = () => {
     canceled = true;
-    void killTree(subprocess);
+    kill();
   };
   if (signal?.aborted) {
     onAbort();
@@ -172,17 +220,13 @@ export async function runTestCmd({
   let result;
   try {
     result = await subprocess;
+    // The kill outlives the command it stopped, so the result waits for the sweep.
+    await killing;
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onAbort);
   }
   const durationMs = Date.now() - startedAt;
-
-  if (canceled) {
-    const err = new Error("test command canceled");
-    err.isCanceled = true;
-    throw err;
-  }
 
   const after = await snapshot(cwd);
   const changed = diffSnapshots(before, after);
@@ -193,10 +237,14 @@ export async function runTestCmd({
   const truncated = total > CAPTURE_WINDOW_BYTES || text.length > TAIL_CHARS;
   const tail = text.slice(-TAIL_CHARS);
 
-  const exitCode = !timedOut && typeof result.exitCode === "number" ? result.exitCode : null;
+  const exitCode =
+    !timedOut && !canceled && typeof result.exitCode === "number" ? result.exitCode : null;
   let status;
   let summary;
-  if (timedOut) {
+  if (canceled) {
+    status = "canceled";
+    summary = "canceled before the command finished; the command and its descendants were killed";
+  } else if (timedOut) {
     status = "timed-out";
     summary = `timed out after ${timeoutSeconds} seconds; the command and its child processes were killed; this is neither a pass nor a failure`;
   } else if (exitCode === null) {
@@ -208,7 +256,7 @@ export async function runTestCmd({
   }
   logInfo(`test command finished in ${durationMs}ms: ${status}`);
 
-  return {
+  const testRun = {
     command: stripControl(redactEnvSecrets(command)),
     status,
     exitCode,
@@ -223,4 +271,11 @@ export async function runTestCmd({
     changedCount: changed.length,
     advisory: true,
   };
+  if (canceled) {
+    const err = new Error("test command canceled");
+    err.isCanceled = true;
+    err.testRun = testRun;
+    throw err;
+  }
+  return testRun;
 }

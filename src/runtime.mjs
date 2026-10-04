@@ -165,6 +165,8 @@ export async function runChild(options) {
         logError(`${roleName} canceled by signal`);
       }
       // A fatal error ends the turn, and the caller records it, so the result rides on it.
+      // A cancel of the command itself already carries its own result.
+      testRun ??= err?.testRun ?? null;
       if (testRun && err && typeof err === "object") {
         err.testRun = testRun;
       }
@@ -525,31 +527,42 @@ export async function runLoop(options) {
     const targetRole = isWorkerDispatch ? worker : reviewer;
     const roleName = isWorkerDispatch ? "worker" : "reviewer";
 
-    const result = await runChild({
-      agents,
-      role: targetRole,
-      roleName,
-      prompt: action.prompt,
-      cwd,
-      timeout,
-      signal,
-      stepsUsed,
-      // The declared PR is the run's PR input, so it is known before the turn and
-      // supplies the reviewer with the required-check status (#320). A run with no
-      // declaration reads nothing, and the reviewer keeps its own read.
-      pr,
-      // The command text comes from the `--test-cmd` run input only (ADR 0017).
-      testCmd:
-        testCmdText === null
-          ? null
-          : {
-              command: testCmdText,
-              timeoutSeconds: testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
-            },
-      gh,
-      readTimeoutMs,
-      onEvent,
-    });
+    let result;
+    try {
+      result = await runChild({
+        agents,
+        role: targetRole,
+        roleName,
+        prompt: action.prompt,
+        cwd,
+        timeout,
+        signal,
+        stepsUsed,
+        // The declared PR is the run's PR input, so it is known before the turn and
+        // supplies the reviewer with the required-check status (#320). A run with no
+        // declaration reads nothing, and the reviewer keeps its own read.
+        pr,
+        // The command text comes from the `--test-cmd` run input only (ADR 0017).
+        testCmd:
+          testCmdText === null
+            ? null
+            : {
+                command: testCmdText,
+                timeoutSeconds: testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
+              },
+        gh,
+        readTimeoutMs,
+        onEvent,
+      });
+    } catch (err) {
+      // A fatal error ends the run with no result event, so the command result and the
+      // work tree compare the runtime already read are emitted here, and the transcript
+      // keeps them (ADR 0017).
+      if (err?.testRun) {
+        onEvent({ type: "test-run", role: roleName, testRun: err.testRun, fatal: true, stepsUsed });
+      }
+      throw err;
+    }
     onEvent({ type: "result", role: roleName, result, stepsUsed });
 
     lastReviewed = result.reviewed ?? null;

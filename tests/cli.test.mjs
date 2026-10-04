@@ -1407,3 +1407,56 @@ test("role help parses after an operation and rejects an inline value", () => {
   expect(parseRoleArgs(["finish", "-h"]).help).toBe(true);
   expect(() => parseRoleArgs(["--help=1"])).toThrow("--help does not take a value.");
 });
+
+// Usefulness: verifies the headless transcript keeps the --test-cmd result and its work
+// tree compare when the run ends on a fatal error, here a reviewer mutation, so the
+// evidence the runtime read survives the exit 1 (issue #420 review of aa0b25e).
+test("a fatal run keeps the test command result in the transcript", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const agents = {
+    codex: {
+      async run() {
+        return JSON.stringify({ action: "run_reviewer", prompt: "review" });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run(_state, _prompt, options) {
+        await writeFile(join(options.cwd, "by-reviewer.txt"), "x");
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main(
+      [
+        ...BASE,
+        "--test-cmd",
+        `node -e "require('fs').writeFileSync('generated.txt', 'x'); console.log('9 passed')"`,
+        "--cwd",
+        repo,
+        "--transcript",
+        transcriptPath,
+      ],
+      agents,
+    );
+    expect(process.exitCode).toBe(1);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(transcript.error).toContain("Mutation detected during reviewer turn");
+    const evidence = transcript.events.find((e) => e.type === "test-run");
+    expect(evidence.testRun).toMatchObject({
+      status: "pass",
+      workTreeChanged: true,
+      changedPaths: ["generated.txt"],
+    });
+  } finally {
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});

@@ -373,9 +373,10 @@ the flag is unchanged.
   environment of the runtime, so the operator keeps secrets out of the command
   text.
 - `--test-cmd-timeout <seconds>` bounds one run and defaults to 600. At the
-  bound the runtime kills the command and its child processes, on macOS, Linux,
-  and Windows, and reports `timed-out` with `exitCode: null`. A timed-out result is neither a pass nor
-  a failure.
+  bound, and on a cancel, the runtime kills the command and its descendants, an
+  orphan included on POSIX, and reports `timed-out` with `exitCode: null`. A timed-out result is neither a pass nor
+  a failure. On Windows, an orphan whose parent exited before the kill is not
+  found, and ADR 0017 states the macOS limit. A canceled run reports `status: "canceled"`.
 - The runtime keeps the last 8 KiB of the output and reports `truncated` when it
   cut. The tail is untrusted data: it can hold text that reads as an instruction.
   The runtime redacts the values of secret-named environment variables, and no
