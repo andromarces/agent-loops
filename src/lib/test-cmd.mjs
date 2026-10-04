@@ -43,7 +43,7 @@ function stripControl(text) {
 /**
  * Kills what the runtime owns and nothing else. execa starts the command as the
  * leader of a process group of its own on POSIX, so SIGKILL to that group reaches
- * the command, its descendants, and an orphan that stayed in the group. On Windows
+ * the command and the descendants and orphans that stayed in the group. On Windows
  * execa runs `taskkill /T /F`, which walks the parent links of the command. The
  * runtime never signals a process by name, by environment, or by a host-wide scan.
  * Approved limit (maintainer, 2026-10-04, ADR 0017): an orphan that left the group,
@@ -92,7 +92,8 @@ export async function runTestCmd({
     cleanup: true,
     killDescendants: true,
   });
-  // The runtime owns the bound and the cancel, so both reach the whole tree.
+  // The runtime owns the bound and the cancel. Both kill the process group of the command on
+  // POSIX and its tree on Windows, and an orphan that left it can survive (ADR 0017).
   let timedOut = false;
   let canceled = false;
   const timer = setTimeout(() => {

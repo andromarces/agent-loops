@@ -138,7 +138,7 @@ async function expectAllGone(pidFiles) {
 
 // Usefulness: verifies a command that runs past its bound is reported as timed
 // out, never as a failure or a pass, and that the command and the child process
-// it started are both gone, so no process stays running (issue #420). The bound
+// it started, which stay in its process group, are both gone (issue #420). The bound
 // is 3 seconds, the floor of a whole second plus time for both node processes to
 // start on a loaded machine.
 test("a timeout kills the command and its child process and reports timed-out", async () => {
@@ -182,7 +182,7 @@ test.skipIf(process.platform === "win32")(
 );
 
 // Usefulness: verifies a cancel kills the command and its child on every platform, so an
-// aborted run leaves no process of the tree behind (issue #420).
+// aborted run leaves no process of the command's own group or tree behind (issue #420).
 test("a cancel kills the command and its child process", async () => {
   const cwd = await repo();
   const { command, pidFiles } = await hangingTree({});
@@ -294,7 +294,7 @@ test("a short secret-named value is not redacted", () => {
 });
 
 // Usefulness: verifies a canceled run throws a cancel the caller already handles
-// and leaves no command running (issue #420).
+// and kills the command it was running (issue #420).
 test("an abort signal cancels the command", async () => {
   const cwd = await repo();
   const controller = new AbortController();
