@@ -882,6 +882,9 @@ test("copies nothing when core.worktree names something that is not the main che
 // its `.git` file points nowhere, so Git refuses to run in it.
 test("fails when Git cannot be run in the main checkout", async () => {
   const { main, linked } = await createLinkedWithGitFile({ recordWorkTree: true });
+  // Git marks a `.git` file hidden on Windows, which refuses a write that opens it
+  // for truncation, so the file is removed and written again.
+  await rm(join(main, ".git"));
   await writeFile(join(main, ".git"), "gitdir: /nonexistent/local-files-test\n");
 
   await expect(copyLocalFiles(linked)).rejects.toThrow(/git rev-parse failed/);
