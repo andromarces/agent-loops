@@ -5,6 +5,7 @@ import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
+import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, runTestCmd } from "./lib/test-cmd.mjs";
 import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
@@ -42,9 +43,10 @@ async function invoke(agents, state, roleName, prompt, opts, onEvent, stepsUsed)
  * errors: detected mutation, snapshot failure, or cancel.
  * A reviewer result also carries `reviewed`, the runtime-owned identity of the
  * work tree the reviewer saw, and `prChecks`, the required-check status the
- * runtime read for a declared PR (#320).
+ * runtime read for a declared PR (#320), and `testRun`, the result of the
+ * operator's `--test-cmd` that the runtime ran before the turn (ADR 0017).
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object } | { role: string, status: "error", error: string }>}
+ * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string }>}
  */
 export async function runChild(options) {
   const {
@@ -57,6 +59,7 @@ export async function runChild(options) {
     signal,
     stepsUsed = 0,
     pr = null,
+    testCmd = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -124,6 +127,13 @@ export async function runChild(options) {
   try {
     let reviewed = null;
     let prChecks = null;
+    // The command runs before the mutation check takes its baseline, so the
+    // writes it makes are reported by the runner and are not a reviewer mutation.
+    // The reviewed state below therefore describes the tree after the command
+    // (ADR 0017). The command never fails the turn: a failed, timed-out, or
+    // unstartable command is a result the reviewer receives.
+    const testRun =
+      roleName === "reviewer" && testCmd ? await runTestCmd({ ...testCmd, cwd, signal }) : null;
     const response = readOnly
       ? await withMutationCheck(cwd, roleName, async (before) => {
           // The reviewed state comes from the runtime snapshot, never from the
@@ -132,7 +142,7 @@ export async function runChild(options) {
             reviewed = reviewedState(before);
             prChecks = await readStatus(reviewed.head);
           }
-          return runFn(isWorker ? workerFinalPrompt : reviewerPrompt(prompt, prChecks));
+          return runFn(isWorker ? workerFinalPrompt : reviewerPrompt(prompt, prChecks, testRun));
         })
       : await runFn(workerFinalPrompt);
     return {
@@ -141,6 +151,7 @@ export async function runChild(options) {
       response,
       ...(reviewed ? { reviewed } : {}),
       ...(prChecks ? { prChecks } : {}),
+      ...(testRun ? { testRun } : {}),
     };
   } catch (err) {
     if (err?.name === "MutationError" || err?.name === "SnapshotError" || err?.isCanceled) {
@@ -223,6 +234,11 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * work that no reviewer has accepted, so a finish under `requireAccept` needs a
  * reviewer accept in this run (#362).
  *
+ * With `testCmd`, the runtime runs that command in `cwd` before each reviewer
+ * turn and supplies the result to the reviewer prompt and the result event as
+ * advisory `testRun` evidence; `testCmdTimeout` bounds one run in seconds
+ * (ADR 0017).
+ *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
  * a Checks line, and with no worker turn it needs at least one reviewer report.
@@ -245,6 +261,8 @@ export async function runLoop(options) {
     requireAccept = false,
     pr = null,
     requireCi = null,
+    testCmd: testCmdText = null,
+    testCmdTimeout = null,
     mode = null,
     continued = false,
     gh,
@@ -304,6 +322,7 @@ export async function runLoop(options) {
     requireAccept,
     pr,
     requireCi,
+    testCmd: testCmdText !== null,
     mode,
     continued,
     timeout,
@@ -504,6 +523,14 @@ export async function runLoop(options) {
       // supplies the reviewer with the required-check status (#320). A run with no
       // declaration reads nothing, and the reviewer keeps its own read.
       pr,
+      // The command text comes from the `--test-cmd` run input only (ADR 0017).
+      testCmd:
+        testCmdText === null
+          ? null
+          : {
+              command: testCmdText,
+              timeoutSeconds: testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
+            },
       gh,
       readTimeoutMs,
       onEvent,

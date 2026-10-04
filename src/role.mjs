@@ -23,6 +23,7 @@ import {
   readPositiveInt,
   roleFlags,
   splitInlineFlag,
+  testCmdError,
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
@@ -37,6 +38,7 @@ import {
   writeState,
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
+import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS } from "./lib/test-cmd.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
@@ -57,7 +59,16 @@ const ROLE_USAGE = [
   "-h, --help  Show this help. Run agent-loop --help for every role flag.",
 ].join("\n");
 
-const INIT_FIELDS = ["task", "mode", "parentSession", "maxSteps", "timeout", "pr"];
+const INIT_FIELDS = [
+  "task",
+  "mode",
+  "parentSession",
+  "maxSteps",
+  "timeout",
+  "pr",
+  "testCmd",
+  "testCmdTimeout",
+];
 
 /**
  * Parses `agent-loop role [dispatch|finish|abort] [flags]`. Reuses the flag
@@ -88,6 +99,8 @@ export function parseRoleArgs(argv) {
     requireAccept: false,
     requireCi: null,
     pr: null,
+    testCmd: null,
+    testCmdTimeout: null,
     verbose: false,
     timeoutProvided: false,
     help: false,
@@ -174,6 +187,14 @@ export function parseRoleArgs(argv) {
 
       case "--pr":
         args.pr = readPositiveInt(arg, readInline(arg));
+        break;
+
+      case "--test-cmd":
+        args.testCmd = readInline(arg);
+        break;
+
+      case "--test-cmd-timeout":
+        args.testCmdTimeout = readPositiveInt(arg, readInline(arg));
         break;
 
       case "--reason":
@@ -265,6 +286,10 @@ function validateInitFlags(args, agents = {}) {
       "Init requires --parent-session (the harness session id the parent-edit guard matches).",
     );
   }
+  const testCmdRefusal = testCmdError(args.testCmd, args.testCmdTimeout);
+  if (testCmdRefusal) {
+    throw new RoleError(testCmdRefusal);
+  }
   // review-only dispatches no worker and rejects --require-ci at finish, so a
   // declared PR there could never be gated. The run would refuse every finish, so
   // the declaration is refused at init instead (#302).
@@ -309,6 +334,14 @@ function initialState(args) {
     stepsUsed: 0,
     lifecycle: "active",
     pr: args.pr,
+    // Written at init only and never from a response: the flag is the only source
+    // of the command (ADR 0017). A run with no command carries neither field.
+    ...(args.testCmd === null
+      ? {}
+      : {
+          testCmd: args.testCmd,
+          testCmdTimeout: args.testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
+        }),
     roles: {
       worker: roleState(args, "worker"),
       reviewer: roleState(args, "reviewer"),
@@ -577,6 +610,9 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
       // required-check status the runtime read (#320). A run that declares no PR
       // reads nothing, and the reviewer keeps its own read.
       pr: state.pr ?? null,
+      testCmd: state.testCmd
+        ? { command: state.testCmd, timeoutSeconds: state.testCmdTimeout }
+        : null,
       gh,
       onEvent,
     });
@@ -665,6 +701,12 @@ function dispatchPayload(roleName, result) {
     // its fixed shape (ADR 0008), so the status is not recorded there.
     if (result.prChecks) {
       payload.prChecks = result.prChecks;
+    }
+    // The test command result the runtime ran before this turn (ADR 0017), for
+    // the same comparison. The state file keeps it beside the response in
+    // `lastResult`, and the turn history keeps its fixed shape.
+    if (result.testRun) {
+      payload.testRun = result.testRun;
     }
   }
   if (!report) {

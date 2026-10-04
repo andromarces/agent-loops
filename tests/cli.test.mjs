@@ -204,6 +204,28 @@ test("--pr declares the run PR and takes a positive integer", () => {
   }
 });
 
+// Usefulness: verifies the headless loop takes the test command and its bound,
+// defaults both off, and refuses a blank command, a bound with no command, and a
+// bound that is not a positive integer, so a bad value fails at parse time and
+// the run never starts with a command it cannot run (issue #420).
+test("--test-cmd and --test-cmd-timeout parse and refuse bad values", () => {
+  expect(parseArgs(BASE)).toMatchObject({ testCmd: null, testCmdTimeout: null });
+  expect(parseArgs([...BASE, "--test-cmd", "pnpm test"]).testCmd).toBe("pnpm test");
+  expect(parseArgs([...BASE, "--test-cmd=pnpm test", "--test-cmd-timeout", "90"])).toMatchObject({
+    testCmd: "pnpm test",
+    testCmdTimeout: 90,
+  });
+  expect(() => parseArgs([...BASE, "--test-cmd", "   "])).toThrow("--test-cmd must not be blank.");
+  expect(() => parseArgs([...BASE, "--test-cmd-timeout", "90"])).toThrow(
+    "--test-cmd-timeout requires --test-cmd.",
+  );
+  for (const bad of ["0", "abc"]) {
+    expect(() => parseArgs([...BASE, "--test-cmd", "x", "--test-cmd-timeout", bad])).toThrow(
+      "--test-cmd-timeout must be a positive integer.",
+    );
+  }
+});
+
 // Usefulness: verifies the headless path refuses a gate for another pull request
 // at parse time, before any child turn runs and before the prompt is built. Both
 // flags arrive on one command line there, so a run that could never be gated

@@ -1409,3 +1409,39 @@ describe("continued run prompt", () => {
     expect(initialPrompt({ ...base, continued: false })).toBe(initialPrompt(base));
   });
 });
+
+// Usefulness: verifies the headless orchestrator sees the test result beside the
+// reviewer response, and a worker result carries none, so the comparison with the
+// reviewer Checks line has both in one prompt (issue #420, ADR 0017).
+test("the result prompt carries the runtime-run test result only when the result has one", () => {
+  const withRun = resultPrompt({
+    result: {
+      role: "reviewer",
+      status: "ok",
+      response: "Verdict: accept",
+      testRun: { status: "fail", exitCode: 1, advisory: true },
+    },
+    stepsUsed: 1,
+    maxSteps: 5,
+  });
+  expect(withRun).toMatch(/"testRun"/);
+  expect(withRun).toMatch(/"exitCode": 1/);
+  const without = resultPrompt({
+    result: { role: "worker", status: "ok", response: "done" },
+    stepsUsed: 1,
+    maxSteps: 5,
+  });
+  expect(without).not.toMatch(/testRun/);
+});
+
+// Usefulness: verifies the initial prompt names the test command only for a run
+// that has one, and a run without the flag keeps its prompt, so the prompt never
+// describes a result that will not arrive (issue #420).
+test("the initial prompt describes the test command only when the run has one", () => {
+  const base = { task: "t", maxSteps: 5 };
+  expect(initialPrompt(base)).toBe(initialPrompt({ ...base, testCmd: false }));
+  expect(initialPrompt(base)).not.toContain("--test-cmd");
+  const prompt = initialPrompt({ ...base, testCmd: true });
+  expect(prompt).toContain("This run has a test command (--test-cmd).");
+  expect(prompt).toContain("A status of timed-out is neither a pass nor a failure.");
+});
