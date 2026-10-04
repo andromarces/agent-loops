@@ -1,4 +1,5 @@
 import {
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -237,7 +238,8 @@ test("returns null and changes nothing when cwd is the main work tree", async ()
 });
 
 // Usefulness: verifies a repository with no main work tree copies nothing.
-// Not redundant: it uses a bare repository, which no other test creates.
+// Not redundant: it uses a bare repository, which no other test creates. The separate
+// Git directory test is refused by the same check.
 test("returns null for a linked work tree of a bare repository", async () => {
   const base = await mkdtemp(join(tmpdir(), "local-files-bare-"));
   created.push(base);
@@ -410,8 +412,9 @@ test.skipIf(process.platform === "win32")(
 
 // Usefulness: verifies a listed path under a symlinked directory of the main work tree
 // is skipped by name, because the read would pass through the link.
-// Not redundant: its link is an ancestor of the listed path. The copy-time identity
-// check also refuses this path, so removing the ancestor check alone does not fail it.
+// Not redundant: its link is an ancestor of the listed path, which the walk-time
+// ancestor check refuses. The copy-time checks compare against the path the walk
+// recorded, so they do not catch a link that was already there.
 test.skipIf(process.platform === "win32")(
   "skips a listed path under a symlinked directory of the main work tree",
   async () => {
@@ -478,8 +481,9 @@ test("drops a case alias of .git and of .claude/worktrees", async () => {
 
 // Usefulness: verifies a source file swapped for a symlink to a secret after the walk
 // and before the open is not copied.
-// Not redundant: it swaps the file itself. Either the no-follow open or the identity
-// check refuses it, so it fails only when both are removed.
+// Not redundant: it swaps the file itself. The no-follow open, the canonical path
+// check, and the check that the path names a regular file each refuse it, so removing
+// the first two together does not fail this test.
 test.skipIf(process.platform === "win32")(
   "does not copy a source that is swapped for a symlink before it is opened",
   async () => {
@@ -503,7 +507,7 @@ test.skipIf(process.platform === "win32")(
 // Usefulness: verifies a source whose directory is swapped for a symlink after the walk
 // is not copied.
 // Not redundant: it swaps a directory, which the no-follow flag on the last path
-// component does not stop, so it fails when the identity check is removed.
+// component does not stop, so it fails when the canonical path comparison is removed.
 test.skipIf(process.platform === "win32")(
   "does not copy a source whose directory is swapped for a symlink before it is opened",
   async () => {
@@ -743,42 +747,127 @@ test("a failed copy leaves the snapshot unchanged", async () => {
   expect(await readdir(join(linked, ".claude"))).toEqual(["settings.json"]);
 });
 
-// Whether `dir` is on a file system that reads names without regard to case.
-const caseInsensitive = async (dir) => {
-  const [lower, upper] = await Promise.all([
-    lstat(join(dir, ".git")).catch(() => null),
-    lstat(join(dir, ".GIT")).catch(() => null),
-  ]);
-  return lower !== null && upper !== null && lower.ino === upper.ino;
+// Whether `base` is on a file system that reads names without regard to case, decided
+// by a directory that is looked up under a name that differs only in case.
+const caseInsensitive = async (base) => {
+  await mkdir(join(base, "casecheck"));
+  return exists(join(base, "CASECHECK"));
 };
+
+// A main work tree whose `.git` is a file that points at a separate Git directory,
+// as in a submodule or a work tree, plus a linked work tree.
+async function createLinkedWithGitFile() {
+  const base = await mkdtemp(join(tmpdir(), "local-files-gitfile-"));
+  created.push(base);
+  const main = join(base, "main");
+  const linked = join(base, "linked");
+  await mkdir(main);
+  await execa("git", ["init", "--separate-git-dir", join(base, "gitdir"), main]);
+  await git(main, "config", "user.name", "Tester");
+  await git(main, "config", "user.email", "test@example.com");
+  await writeFile(join(main, "init.txt"), "hello\n");
+  await git(main, "add", "init.txt");
+  await git(main, "commit", "-m", "init");
+  await writeFile(join(base, "gitdir", "info", "exclude"), ".codex/\n");
+  await git(main, "worktree", "add", linked, "-b", "run");
+  return { base, main, linked };
+}
+
+// Swaps `main/.codex` for a link to `lookalike/.codex`, which holds SECRET, just
+// before the copy opens its source. Returns the copy report.
+async function copyWithSwappedDirectory({ base, main, linked, lookalike }) {
+  await mkdir(join(lookalike, ".codex"), { recursive: true });
+  await writeFile(join(lookalike, ".codex", "config.toml"), `${SECRET}\n`);
+  await mkdir(join(main, ".codex"));
+  await writeFile(join(main, ".codex", "config.toml"), "a=1\n");
+  return copyLocalFiles(linked, {
+    beforeSourceOpen: async () => {
+      await rename(join(main, ".codex"), join(base, "moved-codex"));
+      await symlink(join(lookalike, ".codex"), join(main, ".codex"));
+    },
+  });
+}
 
 // Usefulness: verifies a directory swapped, after the walk, for a link to a directory
 // whose path differs from the main work tree path only in case is not read on a
 // case-sensitive file system, where that directory is outside the main work tree.
-// Not redundant: it needs two directories that differ only in case, so it is skipped on
-// a case-insensitive file system, where they are one directory. It was run on a
-// case-sensitive volume.
+// Not redundant: the other swap tests link to a directory whose path differs by more
+// than case. It needs two directories that differ only in case, so it is skipped on a
+// case-insensitive file system, where they are one directory.
 test.skipIf(process.platform === "win32")(
   "does not read through a swapped directory that differs from the main path only in case",
   async ({ skip }) => {
     const { base, main, linked } = await createLinked({ ignore: [".codex/"] });
-    if (await caseInsensitive(main)) {
+    if (await caseInsensitive(base)) {
       skip();
     }
-    const lookalike = join(base, "MAIN");
-    await mkdir(join(lookalike, ".codex"), { recursive: true });
-    await writeFile(join(lookalike, ".codex", "config.toml"), `${SECRET}\n`);
-    await mkdir(join(main, ".codex"));
-    await writeFile(join(main, ".codex", "config.toml"), "a=1\n");
 
-    const report = await copyLocalFiles(linked, {
-      beforeSourceOpen: async () => {
-        await rename(join(main, ".codex"), join(base, "moved-codex"));
-        await symlink(join(lookalike, ".codex"), join(main, ".codex"));
-      },
+    const report = await copyWithSwappedDirectory({
+      base,
+      main,
+      linked,
+      lookalike: join(base, "MAIN"),
     });
 
     expect(report).toEqual({ copied: [], skipped: [".codex/config.toml"] });
     expect(await exists(join(linked, ".codex"))).toBe(false);
   },
 );
+
+// Usefulness: verifies a repository whose Git directory is separate from its main work
+// tree copies nothing, because Git then lists the Git directory first, and that
+// directory is not a work tree. The test also puts a hard link named `.GIT` beside the
+// `.git` file, which has no effect because the copy guesses nothing about case.
+// Not redundant: it is the test with a `.git` file. The bare repository test has no
+// work tree at all.
+test("returns null when the first listed work tree is a separate Git directory", async () => {
+  const { main, linked } = await createLinkedWithGitFile();
+  await writeFile(join(main, ".env"), "A=1\n");
+  if (process.platform !== "win32") {
+    await link(join(main, ".git"), join(main, ".GIT")).catch(() => {});
+  }
+
+  expect(await copyLocalFiles(linked)).toBeNull();
+  expect(await exists(join(linked, ".env"))).toBe(false);
+});
+
+// Usefulness: verifies two work trees whose paths differ only in case are two work
+// trees on a case-sensitive file system, so the copy runs from one into the other.
+// Not redundant: every other test names its work trees `main` and `linked`. It is
+// skipped on a case-insensitive file system, where the two paths are one directory.
+test("copies between work trees whose paths differ only in case", async ({ skip }) => {
+  const probe = await mkdtemp(join(tmpdir(), "local-files-case-"));
+  created.push(probe);
+  if (await caseInsensitive(probe)) {
+    skip();
+  }
+  const { main, linked } = await createLinked({
+    ignore: [".env"],
+    mainName: "repo",
+    linkedName: "REPO",
+  });
+  await writeFile(join(main, ".env"), "A=1\n");
+
+  const report = await copyLocalFiles(linked);
+
+  expect(report).toEqual({ copied: [".env"], skipped: [] });
+  expect(await readFile(join(linked, ".env"), "utf8")).toBe("A=1\n");
+});
+
+// Usefulness: verifies a listed directory whose on-disk name differs in case from the
+// listed name is still copied on a case-insensitive file system, so the exact path
+// comparison does not skip a file that is eligible.
+// Not redundant: every other test uses the on-disk spelling of the listed name. It is
+// skipped on a case-sensitive file system, where `.Claude` is not `.claude`.
+test("copies a listed directory whose on-disk name differs in case", async ({ skip }) => {
+  const { base, main, linked } = await createLinked({ ignore: [".claude/"] });
+  if (!(await caseInsensitive(base))) {
+    skip();
+  }
+  await mkdir(join(main, ".Claude"));
+  await writeFile(join(main, ".Claude", "settings.json"), "{}\n");
+
+  const report = await copyLocalFiles(linked);
+
+  expect(report).toEqual({ copied: [".claude/settings.json"], skipped: [] });
+});

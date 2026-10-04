@@ -57,16 +57,17 @@ async function git(cwd, args, options = {}) {
 /**
  * Folds a file name to the form that the strictest file system reads it as:
  * lower case, no stream suffix (`name:stream`), and no trailing dots or spaces.
- * Every exclusion compares folded names on every platform, so a case or Windows
- * alias such as `.GITIGNORE`, `.GitAttributes`, or `.gitignore.` cannot bypass it.
+ * Only the excluded names (`.git`, `.claude/worktrees`, `.gitignore`,
+ * `.gitattributes`) are compared this way. A folded match includes the exact
+ * match, so folding can only skip more files, never read or write more. A path is
+ * never folded: paths are compared as the canonical strings that `realpath`
+ * returns.
  */
 const foldName = (name) =>
   name
     .toLowerCase()
     .replace(/:.*$/s, "")
     .replace(/[. ]+$/, "");
-
-const foldPath = (path) => path.toLowerCase();
 
 /** True for a path that holds repository state or a checkout, never a local file. */
 function isExcludedRel(rel) {
@@ -92,7 +93,7 @@ async function lstatOrNull(path, options) {
  * Walks the ancestor directories of `rel` under `base`, never `base` itself, and
  * returns true when one of them must not be read or written through: a symlink, a
  * directory that holds a `.git` entry, or a registered work tree listed in
- * `blocked` (folded paths). With `create`, a missing ancestor is created, one
+ * `blocked` (canonical paths). With `create`, a missing ancestor is created, one
  * level at a time and without following anything; without it, the walk stops at
  * the first missing ancestor.
  */
@@ -113,7 +114,7 @@ async function hasBlockedAncestor(base, rel, blocked, create = false) {
     }
     if (
       !stat.isDirectory() ||
-      blocked.has(foldPath(current)) ||
+      blocked.has(await realpath(current)) ||
       (await lstatOrNull(join(current, ".git"))) !== null
     ) {
       return true;
@@ -124,9 +125,10 @@ async function hasBlockedAncestor(base, rel, blocked, create = false) {
 
 /**
  * Reads every registered work tree path from `git worktree list`, the main work
- * tree first. Returns null for a bare repository, which has no main work tree.
- * A path that Git still lists counts as a work tree even when its `.git` entry is
- * gone.
+ * tree first, as canonical paths. Returns null when there is no main work tree: a
+ * bare repository, or a repository whose Git directory is separate (Git then
+ * lists that directory first, and it is not a work tree). A path that Git still
+ * lists counts as a work tree even when its `.git` entry is gone.
  */
 async function readWorkTrees(root) {
   const { stdout } = await git(root, ["worktree", "list", "--porcelain"]);
@@ -134,18 +136,26 @@ async function readWorkTrees(root) {
     .split(/\r?\n\r?\n/)
     .map((block) => block.split(/\r?\n/).filter(Boolean))
     .filter((lines) => lines.length > 0);
-  if (blocks.length === 0 || blocks[0].includes("bare")) {
+  if (blocks.length === 0) {
     return null;
   }
   const paths = blocks
     .map((lines) => lines.find((line) => line.startsWith("worktree "))?.slice(9))
     .filter(Boolean);
+  const inside = await execa("git", ["rev-parse", "--is-inside-work-tree"], {
+    cwd: paths[0],
+    reject: false,
+  });
+  if (inside.stdout?.trim() !== "true") {
+    return null;
+  }
   return await Promise.all(paths.map((path) => realpath(path).catch(() => resolve(path))));
 }
 
 /**
  * Collects the candidate files of one listed path into `ctx.files` as
- * `{ rel, src }`. No symlink is followed: a symlink entry is skipped by name, and
+ * `{ rel, src, canon }`: `canon` is the canonical path of the file, which the copy
+ * compares with the path it resolves again just before it reads. No symlink is followed: a symlink entry is skipped by name, and
  * so is a listed path under a symlinked directory, so every path that is read
  * lies inside the main work tree. `.git`, `.claude/worktrees`, every registered
  * work tree, and every directory that holds a `.git` entry (a file or a
@@ -153,7 +163,7 @@ async function readWorkTrees(root) {
  * checkout, not a local file.
  */
 async function collect(ctx, rel, abs) {
-  if (isExcludedRel(rel) || ctx.others.has(foldPath(abs))) {
+  if (isExcludedRel(rel)) {
     return;
   }
   const stat = await lstatOrNull(abs);
@@ -163,8 +173,12 @@ async function collect(ctx, rel, abs) {
   if (stat.isSymbolicLink()) {
     ctx.skipped.add(rel);
   } else if (stat.isFile()) {
-    ctx.files.push({ rel, src: abs });
-  } else if (stat.isDirectory() && (await lstatOrNull(join(abs, ".git"))) === null) {
+    ctx.files.push({ rel, src: abs, canon: await realpath(abs) });
+  } else if (
+    stat.isDirectory() &&
+    !ctx.others.has(await realpath(abs)) &&
+    (await lstatOrNull(join(abs, ".git"))) === null
+  ) {
     const entries = await readdir(abs);
     ctx.budget.left -= entries.length;
     if (ctx.budget.left < 0) {
@@ -181,14 +195,16 @@ async function collect(ctx, rel, abs) {
  * Copies each untracked local file of the main work tree that is ignored in
  * `cwd`'s work tree into it, once, at init. A file is copied only when all three
  * hold: it exists in the main work tree, it is untracked there, and `git
- * check-ignore` in the linked work tree names it ignored. Never overwrites a file
- * of the linked work tree, never follows a symlink, never reads or writes inside
- * `.git`, a registered work tree, or a directory that holds a `.git` entry, never
- * copies a `.gitignore` or `.gitattributes`, and never writes through a symlinked
- * directory of the linked work tree. Name exclusions compare folded names, so
- * case and Windows aliases do not bypass them. Returns `{ copied, skipped }` as
- * sorted root-relative path names, or null when `cwd` is the main work tree or
- * the repository is bare, where nothing is copied. An untracked file that is not
+ * check-ignore` in the linked work tree names it ignored. It never overwrites a
+ * file of the linked work tree. Its checks refuse a symlink, `.git`, a registered
+ * work tree, a directory that holds a `.git` entry, a `.gitignore` or
+ * `.gitattributes`, and a target under a symlinked directory of the linked work
+ * tree, as far as the approved limit below allows. The excluded names are matched
+ * folded, which can only skip more; paths are compared as canonical strings from
+ * `realpath`. Returns `{ copied, skipped }` as sorted root-relative path names, or
+ * null when there is no main work tree to copy from (`cwd` is the main work tree,
+ * the repository is bare, or its Git directory is separate), where nothing is
+ * copied. An untracked file that is not
  * copied is in `skipped`. A listed directory that holds more than
  * `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and none of its files
  * is copied. A file whose check fails is in `skipped`.
@@ -207,18 +223,16 @@ export async function copyLocalFiles(cwd, hooks = {}) {
   const root = (await git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();
   const trees = await readWorkTrees(root);
   const rootReal = await realpath(root);
-  if (!trees || foldPath(trees[0]) === foldPath(rootReal)) {
+  if (!trees || trees[0] === rootReal) {
     return null;
   }
   const mainReal = trees[0];
   // A registered work tree is never read from (inside the main work tree) and
   // never written into (inside the linked work tree), whether or not its `.git`
   // entry is still there.
-  const sourceBlocked = new Set(trees.slice(1).map(foldPath));
-  const targetBlocked = new Set(trees.map(foldPath));
-  targetBlocked.delete(foldPath(rootReal));
-
-  const insensitive = await isCaseInsensitive(mainReal);
+  const sourceBlocked = new Set(trees.slice(1));
+  const targetBlocked = new Set(trees);
+  targetBlocked.delete(rootReal);
 
   const skipped = new Set();
   const files = [];
@@ -281,11 +295,9 @@ export async function copyLocalFiles(cwd, hooks = {}) {
   }
 
   const copied = [];
-  for (const { rel, src } of pending) {
-    if (
-      ignored.has(rel) &&
-      (await copyOne(src, rootReal, rel, targetBlocked, insensitive, hooks))
-    ) {
+  for (const file of pending) {
+    const { rel } = file;
+    if (ignored.has(rel) && (await copyOne(file, rootReal, targetBlocked, hooks))) {
       copied.push(rel);
     } else {
       skipped.add(rel);
@@ -299,36 +311,24 @@ export async function copyLocalFiles(cwd, hooks = {}) {
 const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
 
 /**
- * Whether the directory `dir` of a Git work tree is on a file system that reads
- * names without regard to case, probed with its `.git` entry. Unknown counts as
- * case-sensitive, the strict answer.
+ * True when the path `path` still resolves to the canonical path `canon` that the
+ * walk recorded, and names the regular file with the identity of `opened` (a
+ * `bigint` `stat`). `realpath` returns the on-disk spelling on a case-insensitive
+ * file system and the exact spelling on a case-sensitive one, so the two strings
+ * are equal exactly when no symlink and no other directory lies on the path, and
+ * two directories that differ only in case are different directories. No guess
+ * about the file system is needed.
  */
-async function isCaseInsensitive(dir) {
-  const [lower, upper] = await Promise.all([
-    lstatOrNull(join(dir, ".git"), { bigint: true }),
-    lstatOrNull(join(dir, ".GIT"), { bigint: true }),
-  ]);
-  return lower !== null && upper !== null && sameFile(lower, upper);
-}
-
-/**
- * True when `path` resolves to itself, through no symlink, and names the regular
- * file with the identity of `opened` (a `bigint` `stat`). A path that resolves to
- * itself only up to case counts as itself on a case-insensitive file system only:
- * on a case-sensitive one it is another directory, which can lie outside the work
- * tree.
- */
-async function namesFile(path, opened, insensitive) {
+async function namesFile(path, canon, opened) {
   const [resolved, named] = await Promise.all([realpath(path), lstat(path, { bigint: true })]);
-  const sameName = resolved === path || (insensitive && foldPath(resolved) === foldPath(path));
-  return sameName && named.isFile() && sameFile(opened, named);
+  return resolved === canon && named.isFile() && sameFile(opened, named);
 }
 
 /**
  * Copies one source file to `rootReal/rel` and returns true when `copyFile` did.
  * Each check fails closed: the file is skipped.
  * 1. Open the source without following a final symlink, and check that the opened
- *    file is the regular file within the size cap that the path names.
+ *    file is the regular file within the size cap that the walk recorded.
  * 2. Create the missing target directories one level at a time, none through a
  *    symlink, none holding a `.git` entry, none a registered work tree.
  * 3. `copyFile` with `COPYFILE_EXCL`, which refuses an existing target and never
@@ -336,16 +336,16 @@ async function namesFile(path, opened, insensitive) {
  * The checks run before `copyFile`, which reads and writes by path. A swap in
  * between is the approved limit of `copyLocalFiles`.
  */
-async function copyOne(sourcePath, rootReal, rel, blocked, insensitive, hooks) {
+async function copyOne({ rel, src, canon }, rootReal, blocked, hooks) {
   let source = null;
   try {
     await hooks.beforeSourceOpen?.(rel);
-    source = await open(sourcePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    source = await open(src, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const stat = await source.stat({ bigint: true });
     if (
       !stat.isFile() ||
       stat.size > BigInt(MAX_FILE_BYTES) ||
-      !(await namesFile(sourcePath, stat, insensitive))
+      !(await namesFile(src, canon, stat))
     ) {
       return false;
     }
@@ -353,7 +353,7 @@ async function copyOne(sourcePath, rootReal, rel, blocked, insensitive, hooks) {
       return false;
     }
     await hooks.beforeCopy?.(rel);
-    await copyFile(sourcePath, join(rootReal, rel), constants.COPYFILE_EXCL);
+    await copyFile(src, join(rootReal, rel), constants.COPYFILE_EXCL);
     return true;
   } catch (err) {
     // An existing target is the normal no-overwrite outcome and needs no warning.

@@ -52,17 +52,17 @@ files is a new runtime contract, and it handles files that can hold secrets.
    create refuses an existing file and never deletes it, and the code removes
    nothing. A tracked file of `--cwd` is never replaced, because it either exists
    (refused as above) or is not ignored (condition 3).
-6. **Symlinks.** The policy is the narrowest that the issue text states and that
-   has no race. Issue #423 says "The copy must not follow a symlink out of the
-   main work tree" and "Copy, do not symlink". Following a link that stays inside
-   the tree would need a check of the link target that a later swap can defeat, so
-   no symlink is followed at all. A symlink entry, whatever its target, is skipped
-   by name, and so is a listed path under a symlinked directory of the main work
-   tree. The copy never creates a symlink. In `--cwd`, a target under a symlinked
-   directory is skipped, because the write would leave `--cwd`, and `git
-check-ignore` refuses such a path. A copy, not a link, because a Windows symlink
-   needs extra privileges and a copy does not follow later edits in the main work
-   tree.
+6. **Symlinks.** The policy is the narrowest that the issue text states, and the
+   simplest to check. Issue #423 says "The copy must not follow a symlink out of
+   the main work tree" and "Copy, do not symlink". Following a link that stays
+   inside the tree would need a check of the link target, so no symlink is followed
+   at all. A symlink entry, whatever its target, is skipped by name, and so is a
+   listed path under a symlinked directory of the main work tree. The copy never
+   creates a symlink. In `--cwd`, a target under a symlinked directory is skipped,
+   because the write would leave `--cwd`, and `git check-ignore` refuses such a
+   path. These checks run before the copy and are subject to the swap limit of
+   decision 9. A copy, not a link, because a Windows symlink needs extra
+   privileges and a copy does not follow later edits in the main work tree.
 7. **Work trees and Git files are excluded.** Isolation holds on both sides. In the
    main work tree, `.claude/worktrees/`, every registered work tree that `git
 worktree list` names (even when its `.git` entry is gone), every directory that
@@ -73,11 +73,14 @@ worktree list` names (even when its `.git` entry is gone), every directory that
    `.gitignore` or `.gitattributes` is never copied, because a copied one changes
    ignore rules or line endings in `--cwd`: it can un-ignore a file that was
    copied, so that the snapshot lists it and the run's `clean` flag and digest
-   change. Every name exclusion compares folded names on every platform: lower
-   case, without a stream suffix (`name:stream`), and without trailing dots or
-   spaces. A case or Windows alias such as `.GITIGNORE`, `.GitAttributes`,
-   `.gitignore.`, or `.Claude/Worktrees` therefore matches its plain name, whatever
-   the file system.
+   change. Only the excluded names (`.git`, `.claude/worktrees`, `.gitignore`,
+   `.gitattributes`) are compared by folding: lower case, without a stream suffix
+   (`name:stream`), and without trailing dots or spaces. A folded match includes
+   the exact match, so folding can only skip more files, never read or write more.
+   A case or Windows alias such as `.GITIGNORE`, `.GitAttributes`, `.gitignore.`,
+   or `.Claude/Worktrees` therefore matches its plain name. A path is never
+   folded: paths are compared as the canonical strings that `fs.realpath`
+   returns.
 8. **Size cap.** A file over 1 MiB is skipped and named. Each listed directory has
    its own bound of 2000 entries, counting every entry read under it, nested
    directories included. A listed directory that holds more than 2000 entries is
@@ -89,13 +92,22 @@ worktree list` names (even when its `.git` entry is gone), every directory that
    There is no cap flag.
 9. **Checks, and the approved swap limit.** Each file passes these checks, in
    order, and a file that fails one is skipped and reported:
-   1. The source is opened once with no-follow, and the opened file must be the
-      regular file within the size cap that the path names: its `fstat` identity
-      equals the `lstat` identity of the path, and the path resolves to itself.
-      "Itself" is exact. A path that matches only up to case counts as itself on a
-      case-insensitive file system only, which a probe of the `.git` entry of the
-      main work tree decides. On a case-sensitive file system such a path is a
-      different directory, possibly outside the main work tree, and is refused.
+   1. The walk records the canonical path of each candidate file, from
+      `fs.realpath`, after it checked with `lstat` that no path component is a
+      symlink. Just before the copy, the source is opened once with no-follow, and
+      the opened file must be the regular file within the size cap that the walk
+      saw: `fs.realpath` of the path must still equal the recorded canonical path,
+      and the `fstat` identity (device and inode) of the opened file must equal the
+      `lstat` identity of the path. `fs.realpath` has the semantics of
+      `fs.realpath.native`: on a case-insensitive file system it returns the
+      on-disk spelling, on a case-sensitive one the exact spelling. Two strings
+      are therefore equal exactly when no symlink and no other directory lies on
+      the path, and `/repo` and `/REPO` are two directories where the file system
+      keeps them apart. No guess about the file system is made, so no probe of it
+      exists. This was probed on 2026-10-04 with Node 26.8.1 on macOS: on a
+      case-insensitive APFS volume `realpath` returned the on-disk spelling for a
+      path given in another case, and on a case-sensitive volume it returned each
+      spelling unchanged.
    2. Missing target directories are created one level at a time, and every
       ancestor in `--cwd` must be a real directory, with no `.git` entry, outside
       every registered work tree.
@@ -108,8 +120,10 @@ worktree list` names (even when its `.git` entry is gone), every directory that
       and detect a swap that is in place when they run. They do not prevent a swap
       inside the window, and a file that such a swap redirects is still reported as
       copied. The runtime claims no more protection than that.
-10. **Nothing without a main work tree.** When `--cwd` is the main work tree, or the
-    repository is bare, nothing is copied and nothing is reported.
+10. **Nothing without a main work tree.** When `--cwd` is the main work tree, the
+    repository is bare, or the first work tree that `git worktree list` names is
+    not a work tree (a repository with a separate Git directory), nothing is copied
+    and nothing is reported.
 11. **Opt-out.** `--no-copy-local-files` is an init field of `agent-loop role` and
     a flag of the headless `agent-loop` command. With it, nothing is copied and
     the behavior is as before. The role init stores `copyLocalFiles` (a boolean) in
@@ -147,10 +161,10 @@ worktree list` names (even when its `.git` entry is gone), every directory that
 - A mount point inside the main work tree is not a symlink and is walked like a
   directory. A file system that the caller mounted there is the caller's choice.
 - Windows: no symlink is created, so the contract needs no extra privilege. The
-  no-follow open flag does not exist there, so the identity check of decision 9
-  carries the guard alone. The name folding of decision 7 and the identity check
-  were not run against a native Windows file system or a mount point during this
-  change; CI covers the portable behavior only. The target
+  no-follow open flag does not exist there, so the canonical path and identity
+  checks of decision 9 carry the guard alone. The name folding of decision 7 and
+  those checks were not run against a native Windows file system or a mount point
+  during this change; CI covers the portable behavior only. The target
   keeps the permission bits of the source, reduced by the process umask.
 
 ## Alternatives
