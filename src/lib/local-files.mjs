@@ -4,7 +4,7 @@
 // every report is a path name.
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, realpath } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execa } from "execa";
 import { logInfo, logWarn } from "./log.mjs";
 
@@ -34,9 +34,16 @@ const CLAUDE_WORKTREES = ".claude/worktrees";
 // store, so it is skipped and named instead of duplicated into every run.
 export const MAX_FILE_BYTES = 1024 * 1024;
 
-// Bounds the walk of a listed directory. A directory past it is skipped by name
-// as a whole, so a huge `.claude/` cannot stall the init or flood the report.
+// Bounds the walk of one listed directory, counting every entry read under it,
+// nested directories included. A listed directory that holds more than this is
+// skipped by name as a whole, with none of its files copied, so a huge `.claude/`
+// cannot stall the init or flood the report. Each listed path has its own bound.
 export const MAX_WALKED_ENTRIES = 2000;
+
+// Files that change how Git reads a work tree. Copying one can un-ignore a file
+// that was copied or change its line endings, so the snapshot would list it and
+// the run's reviewed state would shift (ADR 0017).
+const GIT_CONTROL_FILES = new Set([".gitignore", ".gitattributes"]);
 
 async function git(cwd, args, options = {}) {
   const result = await execa("git", args, { cwd, reject: false, ...options });
@@ -96,48 +103,68 @@ async function readWorkTrees(root) {
   return { main: pathOf(first), others: rest.map(pathOf).filter(Boolean) };
 }
 
+const isInside = (parent, child) => {
+  const rel = relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+};
+
+/** True for a path that holds repository state or a checkout, never a local file. */
+const isExcluded = (ctx, real) =>
+  [join(ctx.main, ".git"), join(ctx.main, CLAUDE_WORKTREES), ...ctx.others].some((dir) =>
+    isInside(dir, real),
+  );
+
 /**
- * Lists the candidate files of one listed path in the main work tree. A symlink,
- * a directory past the walk bound, and a path under a symlinked ancestor go to
- * `skipped`, so none is followed. A work tree directory is dropped silently,
- * because it holds a checkout, not a local file.
+ * Collects the candidate files of one listed path into `ctx.files` as
+ * `{ rel, src, srcRel }`: `rel` is the path in the work tree, `src` the resolved
+ * source file, `srcRel` its path in the main work tree. A symlink is followed only
+ * when its target resolves inside the main work tree and outside `.git` and every
+ * other work tree. A target outside, or a dangling link, is skipped by name, so no
+ * symlink is followed out of the main work tree. A copy is always a regular file.
+ * A directory link already on the walk chain is skipped, so a loop ends. A work
+ * tree directory is dropped silently, because it holds a checkout.
  */
-async function collect(main, rel, others, found, budget) {
-  const abs = join(main, rel);
-  const stat = await lstatOrNull(abs);
-  if (stat === null) {
+async function collect(ctx, rel, abs, chain) {
+  if ((await lstatOrNull(abs)) === null) {
     return;
   }
-  if (stat.isSymbolicLink() || (await hasLinkedAncestor(main, rel))) {
-    found.skipped.push(rel);
+  let real;
+  try {
+    real = await realpath(abs);
+  } catch {
+    ctx.skipped.add(rel);
     return;
   }
+  const viaLink = !same(real, abs);
+  if (!isInside(ctx.main, real) || isExcluded(ctx, real)) {
+    if (viaLink) {
+      ctx.skipped.add(rel);
+    }
+    return;
+  }
+  const stat = await lstat(real);
   if (stat.isFile()) {
-    found.files.push(rel);
+    ctx.files.push({ rel, src: real, srcRel: relative(ctx.main, real).split(sep).join("/") });
     return;
   }
   if (!stat.isDirectory()) {
     return;
   }
-  if (rel === CLAUDE_WORKTREES || others.some((other) => same(resolve(other), resolve(abs)))) {
+  if (chain.has(real)) {
+    ctx.skipped.add(rel);
     return;
   }
-  if ((await lstatOrNull(join(abs, ".git"))) !== null) {
+  if ((await lstatOrNull(join(real, ".git"))) !== null) {
     return;
   }
-  const entries = await readdir(abs, { withFileTypes: true });
-  budget.left -= entries.length;
-  if (budget.left < 0) {
-    found.skipped.push(rel);
+  const entries = await readdir(real);
+  ctx.budget.left -= entries.length;
+  if (ctx.budget.left < 0) {
+    ctx.budget.exceeded = true;
     return;
   }
-  for (const entry of entries) {
-    const child = `${rel}/${entry.name}`;
-    if (entry.isSymbolicLink()) {
-      found.skipped.push(child);
-    } else if (entry.isFile() || entry.isDirectory()) {
-      await collect(main, child, others, found, budget);
-    }
+  for (const name of entries) {
+    await collect(ctx, `${rel}/${name}`, join(real, name), new Set(chain).add(real));
   }
 }
 
@@ -146,13 +173,18 @@ async function collect(main, rel, others, found, budget) {
  * `cwd`'s work tree into it, once, at init. A file is copied only when all three
  * hold: it exists in the main work tree, it is untracked there, and `git
  * check-ignore` in the linked work tree names it ignored. Never overwrites a file
- * of the linked work tree, never follows a symlink, and never copies a work tree
- * directory. Returns `{ copied, skipped }` as sorted root-relative path names, or
- * null when `cwd` is the main work tree or the repository is bare, where nothing
- * is copied. An untracked file that is not copied is in `skipped`.
+ * of the linked work tree, never follows a symlink out of the main work tree,
+ * never copies a work tree directory, `.git`, `.gitignore`, or `.gitattributes`,
+ * and never writes through a symlinked directory of the linked work tree. A
+ * symlink that resolves inside the main work tree is copied as a regular file.
+ * Returns `{ copied, skipped }` as sorted root-relative path names, or null when
+ * `cwd` is the main work tree or the repository is bare, where nothing is copied.
+ * An untracked file that is not copied is in `skipped`. A listed directory that
+ * holds more than `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and
+ * none of its files is copied.
  *
- * known-limit: the source is checked with `lstat` and then copied by path, so a
- * concurrent writer in the main work tree can swap a file for a symlink between
+ * known-limit: the source is resolved with `realpath` and then copied by path, so
+ * a concurrent writer in the main work tree can swap a file for a symlink between
  * the two. The main work tree is the caller's own, so that actor is out of the
  * threat model (ADR 0017).
  * @param {string} cwd
@@ -164,36 +196,58 @@ export async function copyLocalFiles(cwd) {
   if (!trees || (await realpath(trees.main)) === (await realpath(root))) {
     return null;
   }
-  const { main, others } = trees;
+  const mainReal = await realpath(trees.main);
+  const others = await Promise.all(
+    trees.others.map((other) => realpath(other).catch(() => resolve(other))),
+  );
 
-  const found = { files: [], skipped: [] };
-  const budget = { left: MAX_WALKED_ENTRIES };
+  const skipped = new Set();
+  const files = [];
   for (const rel of LOCAL_FILE_PATHS) {
-    await collect(main, rel, others, found, budget);
+    // One bound and one result list per listed path, so a path past its bound is
+    // dropped whole and never starves the next listed path.
+    const ctx = {
+      main: mainReal,
+      others,
+      files: [],
+      skipped: new Set(),
+      budget: { left: MAX_WALKED_ENTRIES, exceeded: false },
+    };
+    await collect(ctx, rel, join(mainReal, rel), new Set());
+    if (ctx.budget.exceeded) {
+      skipped.add(rel);
+    } else {
+      files.push(...ctx.files);
+      ctx.skipped.forEach((name) => skipped.add(name));
+    }
   }
 
   const tracked = new Set(
-    (await git(main, ["--literal-pathspecs", "ls-files", "-z", "--", ...LOCAL_FILE_PATHS])).stdout
-      .split("\0")
-      .filter(Boolean),
+    (await git(mainReal, ["ls-files", "-z"])).stdout.split("\0").filter(Boolean),
   );
-  const skipped = new Set(found.skipped);
   const pending = [];
-  for (const rel of found.files) {
-    if (tracked.has(rel)) {
+  for (const file of files) {
+    // Tracked under the path in the work tree or under the resolved path: a
+    // tracked file is not a local file, and it is not reported.
+    if (tracked.has(file.rel) || tracked.has(file.srcRel)) {
       continue;
     }
-    if ((await lstatOrNull(join(root, rel))) !== null || (await hasLinkedAncestor(root, rel))) {
-      skipped.add(rel);
+    if (GIT_CONTROL_FILES.has(basename(file.rel)) || GIT_CONTROL_FILES.has(basename(file.srcRel))) {
+      skipped.add(file.rel);
+    } else if (
+      (await lstatOrNull(join(root, file.rel))) !== null ||
+      (await hasLinkedAncestor(root, file.rel))
+    ) {
+      skipped.add(file.rel);
     } else {
-      pending.push(rel);
+      pending.push(file);
     }
   }
 
   const ignored = new Set();
   if (pending.length > 0) {
     const result = await git(root, ["check-ignore", "-z", "--stdin"], {
-      input: `${pending.join("\0")}\0`,
+      input: `${pending.map((file) => file.rel).join("\0")}\0`,
       allowExit: [1],
     });
     for (const rel of result.stdout.split("\0").filter(Boolean)) {
@@ -202,11 +256,11 @@ export async function copyLocalFiles(cwd) {
   }
 
   const copied = [];
-  for (const rel of pending) {
-    if (!ignored.has(rel) || !(await copyOne(main, root, rel))) {
-      skipped.add(rel);
-    } else {
+  for (const { rel, src } of pending) {
+    if (ignored.has(rel) && (await copyOne(src, join(root, rel)))) {
       copied.push(rel);
+    } else {
+      skipped.add(rel);
     }
   }
 
@@ -214,10 +268,8 @@ export async function copyLocalFiles(cwd) {
   return { copied: copied.sort(), skipped: [...skipped].sort() };
 }
 
-/** Copies one file without overwrite. Returns false when it is not copied. */
-async function copyOne(main, root, rel) {
-  const source = join(main, rel);
-  const target = join(root, rel);
+/** Copies one resolved source file without overwrite. Returns false when it is not copied. */
+async function copyOne(source, target) {
   try {
     const stat = await lstat(source);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {

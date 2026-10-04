@@ -43,23 +43,40 @@ files is a new runtime contract, and it handles files that can hold secrets.
    still receives the files at the root.
 4. **Skipped, not copied.** An untracked file that is not ignored in `--cwd` is not
    copied and is reported as skipped. A file that already exists in `--cwd`, a
-   file whose target path sits under a symlink, a file over the size cap, and a
-   file whose copy failed are reported as skipped. A path that is tracked in the
+   file whose target path sits under a symlinked directory of `--cwd`, a file over
+   the size cap, a `.gitignore` or `.gitattributes`, and a file whose copy failed
+   are reported as skipped. A path that is tracked in the
    main work tree or absent from it is not a local file and is not reported.
 5. **No overwrite.** The copy uses `COPYFILE_EXCL`, so a file of `--cwd` is never
    replaced. A tracked file of `--cwd` is never replaced, because it either exists
    (refused as above) or is not ignored (condition 3).
-6. **Symlinks.** The copy never follows a symlink and never creates one. A listed
-   path that is a symlink, an entry inside a listed directory that is a symlink,
-   and a listed path under a symlinked ancestor in the main work tree are skipped
-   by name. A target under a symlinked ancestor in `--cwd` is skipped, so a write
-   cannot leave `--cwd`. A copy, not a link, because a Windows symlink needs extra
-   privileges and a copy does not follow later edits in the main work tree.
-7. **Work trees are excluded.** `.claude/worktrees/`, every directory that
-   `git worktree list` names, and every directory that holds a `.git` entry are
-   never walked and never reported.
-8. **Size cap.** A file over 1 MiB is skipped and named. A listed directory whose
-   walk passes 2000 entries is skipped as one name, with none of its files copied.
+6. **Symlinks.** The copy never follows a symlink out of the main work tree and
+   never creates a symlink. A symlink whose target resolves inside the main work
+   tree is followed and copied as a regular file with the content of its target.
+   That holds for a listed path, an entry inside a listed directory, and a listed
+   path under a symlinked directory. The following are skipped by name: a link
+   whose target resolves outside the main work tree, a dangling link, a link into
+   `.git` or into another work tree, and a directory link back to a directory
+   already on the walk, so a loop ends. A file reached through a directory link
+   is tracked or untracked by both its link path and its resolved path, so a
+   tracked file is never copied as a local file. In `--cwd`, a target under a
+   symlinked directory is skipped, because the write would leave `--cwd`, and
+   `git check-ignore` refuses such a path. A copy, not a link, because a Windows
+   symlink needs extra privileges and a copy does not follow later edits in the
+   main work tree.
+7. **Work trees and Git files are excluded.** `.claude/worktrees/`, every directory
+   that `git worktree list` names, every directory that holds a `.git` entry, and
+   `.git` itself are never walked and never reported. A `.gitignore` or
+   `.gitattributes` is never copied, because a copied one changes ignore rules or
+   line endings in `--cwd`: it can un-ignore a file that was copied, so that the
+   snapshot lists it and the run's `clean` flag and digest change. A copied file
+   under the three conditions is ignored by rules that the copy cannot alter.
+8. **Size cap.** A file over 1 MiB is skipped and named. Each listed directory has
+   its own bound of 2000 entries, counting every entry read under it, nested
+   directories included. A listed directory that holds more than 2000 entries is
+   skipped as one name (the listed path, for example `.codex`), with none of its
+   files copied. A directory over the bound does not use up the bound of another
+   listed path.
    The cap applies to `.agents/`, `.claude/`, `.codex/`, and `.vscode/`, where
    caches, logs, and session stores can sit beside small configuration files.
    There is no cap flag.
@@ -98,25 +115,28 @@ files is a new runtime contract, and it handles files that can hold secrets.
 - A work tree that a child creates for itself during a turn is not covered.
 - The runtime has a bounded set of paths. A new harness file needs a code change.
 - A concurrent writer in the main work tree can swap a source file for a symlink
-  between the `lstat` check and the copy. The main work tree belongs to the caller,
+  between the `realpath` check and the copy. The main work tree belongs to the caller,
   so that actor is outside the threat model.
 - Windows: no symlink is created, so the contract needs no extra privilege. File
   mode bits are those that `copyFile` preserves on the platform.
 
 ## Alternatives
 
-1. **Symlink the files**: rejected. A Windows symlink needs extra privileges, and a
+1. **Skip every symlink**: rejected. The issue forbids following a symlink out of
+   the main work tree, and nothing else. A link inside the tree is a normal way to
+   share one instruction file between harnesses.
+2. **Symlink the files into `--cwd`**: rejected. A Windows symlink needs extra privileges, and a
    link follows later edits and could expose the main work tree to a child write.
-2. **A configurable path list or a size flag**: rejected. A config value that has
+3. **A configurable path list or a size flag**: rejected. A config value that has
    one reasonable setting is speculative. The list and the cap change with a code
    change.
-3. **Copy by evaluating ignore rules in the main work tree**: rejected. A
+4. **Copy by evaluating ignore rules in the main work tree**: rejected. A
    `.gitignore` comes from the branch of each work tree, so the main work tree can
    ignore a path that `--cwd` does not, and the copy would then show up as an
    untracked change that breaks the mutation check.
-4. **Create the run work tree in the runtime**: rejected. The parent owns the work
+5. **Create the run work tree in the runtime**: rejected. The parent owns the work
    tree (`docs/orchestrator-instructions.md`, "Work tree ownership").
-5. **Copy on every dispatch**: rejected. Init-only keeps the contract simple and
+6. **Copy on every dispatch**: rejected. Init-only keeps the contract simple and
    keeps a later edit of a copied file in `--cwd` from being overwritten or
    reported as a change.
 

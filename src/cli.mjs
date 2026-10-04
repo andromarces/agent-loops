@@ -350,7 +350,7 @@ Options:
                                 linked work tree, the run copies each untracked file of the main work
                                 tree that --cwd ignores (agent instructions, harness configuration,
                                 .env, .envrc, and the other paths in the README) before the first
-                                turn, never overwriting a file and never following a symlink. The
+                                turn, never overwriting a file and never following a symlink out of the main work tree. The
                                 transcript names the copied and skipped paths and never a content.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   --require-accept              Refuse finish until a reviewer turn reports on the state, and
