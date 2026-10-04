@@ -8,9 +8,10 @@ import { FORCE_KILL_AFTER_DELAY_MS } from "../runtime-helpers.mjs";
 import { assertGitWorkTree } from "../../src/lib/snapshot.mjs";
 
 // Scoped exception to the TDD rule (issue #373, maintainer decision on PR #381).
-// These tests assert three fields of the options handed to execa, an
-// implementation detail, and no others: `timeout` (the bound value),
-// `forceKillAfterDelay` (the kill timing), and `cancelSignal` (the abort wiring).
+// These tests assert fields of the options handed to execa, an implementation
+// detail, and no others: `timeout` (the bound value), `forceKillAfterDelay` (the
+// kill timing), `cancelSignal` (the abort wiring), and, in the read test, `cwd` and
+// `reject` (the read's own call shape).
 //
 // - execa runs its bound and its force-kill delay on `node:timers/promises`,
 //   which Vitest fake timers do not drive, so no fake clock can advance a real
@@ -50,6 +51,38 @@ test("runGh hands the spawn layer the caller's abort signal", async () => {
   const options = spawnedWith();
   expect(options.cancelSignal).toBe(controller.signal);
   expect(options).not.toHaveProperty("timeout");
+});
+
+// Usefulness: verifies a status read through the `gh` runner returns the answer the
+// spawn layer produced and hands that layer the option set the read passes, so a
+// runner that drops an option or stops returning the answer fails here. No `gh`
+// process starts: the unit stubs elsewhere accept any option shape, and a real
+// `gh` spawn is the cost a loaded Windows runner made slow (issues #320, #373,
+// #399). `cancelSignal` is the name the installed execa accepts, and `signal` is
+// the one it rejects.
+test("runGh answers a read through the options the read passes", async () => {
+  execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: "gh version 2.0.0\n", stderr: "" });
+  const controller = new AbortController();
+  const reply = await runGh(["--version"], "/work", {
+    signal: controller.signal,
+    timeoutMs: 60_000,
+  });
+  expect(reply).toEqual({
+    status: 0,
+    stdout: "gh version 2.0.0\n",
+    stderr: "",
+    timedOut: false,
+  });
+  expect(execa.mock.calls[0][0]).toBe("gh");
+  expect(execa.mock.calls[0][1]).toEqual(["--version"]);
+  expect(spawnedWith()).toMatchObject({
+    cwd: "/work",
+    reject: false,
+    cancelSignal: controller.signal,
+    timeout: 60_000,
+    forceKillAfterDelay: FORCE_KILL_AFTER_DELAY_MS,
+  });
+  expect(spawnedWith()).not.toHaveProperty("signal");
 });
 
 // Usefulness: verifies the work-tree probe passes the configured bound to the

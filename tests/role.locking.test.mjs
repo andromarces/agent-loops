@@ -75,11 +75,10 @@ test("crash aftermath: interrupted lifecycle, stale lock removal, abort path", a
 // child; the other exits non-zero and the step count rises by one.
 //
 // The winner's child holds the lock until the loser has returned, so the result
-// does not depend on how long either call takes to start. A fixed delay in the
-// child let a loaded runner start the second call after the first had released
-// the lock, and both then ran (issue #399). A second child that starts anyway
-// releases the first at once, so a broken lock fails on the assertions and does
-// not hang.
+// does not depend on how long either call takes to start. The test failed under
+// load with a fixed 100 ms delay in the child (issue #399). A second child that
+// starts anyway releases the first at once, so a broken lock fails on the
+// assertions and does not hang.
 test("concurrent dispatches: exactly one child runs, the loser exits non-zero", async () => {
   await setup();
   const repo = await createTempRepo();

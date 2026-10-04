@@ -2545,11 +2545,11 @@ function cleanRepoGit(cwd) {
 // it verified no check instead of reading as a pass on a checked branch (issue
 // #336).
 //
-// `git` is answered from memory, not spawned. The run spent about thirty `git`
-// processes on a repo and the snapshots around its turns, and a loaded Windows
-// runner outlasted the test limit (issue #399). The behavior under test is the
-// finish gate over the `gh` answers, and the snapshot code has its own tests on
-// real repos.
+// `git` is answered from memory, not spawned. Run alone, the test started 34 `git`
+// processes: a repo and the snapshots around its turns. The same cost made the
+// finish tests in role.finish-abort.test.mjs time out under load (issue #385). This
+// test was not observed to fail (issue #399). The behavior under test is the finish
+// gate over the `gh` answers, and the snapshot code has its own tests on real repos.
 test("a declared PR finishes on a base branch with no required check", async () => {
   const cwd = tmpdir();
   gitDouble.answer = cleanRepoGit(cwd);
