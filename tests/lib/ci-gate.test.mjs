@@ -1,6 +1,7 @@
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
+import { parse } from "node:path";
 import { expect, test } from "vitest";
 import { checkCi, readRequiredChecks, runGh } from "../../src/lib/ci-gate.mjs";
 import {
@@ -1847,30 +1848,37 @@ test("reads an unresolved status when the gh call exceeds the time bound", async
 });
 
 // Usefulness: verifies the real `gh` runner passes the installed execa only options
-// that it accepts. The unit stubs accept any option shape, and the double in
+// that it accepts, and that the command and arguments of the read reach the spawn
+// layer. The unit stubs accept any option shape, and the double in
 // spawn-bounds.test.mjs replaces execa, so only the real execa catches an option
 // name that it rejects, which is what made every real read fail (issue #320
 // review). execa validates its options before it calls `spawn`. The stand-in
 // `spawn` throws, so the call stops there and no process starts on any platform,
 // where a real `gh` start is the cost a loaded Windows runner made slow (issues
 // #373 and #399). A rejected option throws from `runGh` before `spawn` is reached.
+//
+// On Windows, execa resolves `gh` through `PATHEXT` and hands `spawn` the full path
+// of `gh.exe`, so the file is compared by its base name without the extension.
+// known-limit: a Windows host where `gh` resolves to a `.cmd` shim, or to nothing,
+// gets `cmd.exe /d /s /c "..."` from execa, and the file assertion fails there.
 test("the installed execa accepts the options the gh runner passes", async () => {
   const realSpawn = childProcess.spawn;
-  let spawnCalls = 0;
-  childProcess.spawn = () => {
-    spawnCalls += 1;
+  const spawned = [];
+  childProcess.spawn = (file, args) => {
+    spawned.push({ file, args });
     throw new Error("stand-in spawn: no process starts");
   };
   syncBuiltinESMExports();
   try {
     const controller = new AbortController();
-    const reply = await runGh(["--version"], ".", {
+    const reply = await runGh(["pr", "checks", "42", "--required"], ".", {
       signal: controller.signal,
       timeoutMs: 60_000,
     });
-    // execa reached `spawn`, so it accepted the options. The file it passes is the
-    // resolved `gh` path on Windows, so only the call is asserted.
-    expect(spawnCalls).toBe(1);
+    // execa reached `spawn`, so it accepted the options.
+    expect(spawned).toHaveLength(1);
+    expect(parse(spawned[0].file).name.toLowerCase()).toBe("gh");
+    expect(spawned[0].args).toEqual(["pr", "checks", "42", "--required"]);
     expect(reply.status).not.toBe(0);
   } finally {
     childProcess.spawn = realSpawn;
