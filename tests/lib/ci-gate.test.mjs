@@ -3,7 +3,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
-import { expect, test, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { checkCi, readRequiredChecks, runGh } from "../../src/lib/ci-gate.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
@@ -1867,35 +1867,48 @@ test("reads an unresolved status when the gh call exceeds the time bound", async
 // the host install does not change what `spawn` receives: the full path of that
 // `gh.exe` on Windows, and the bare name elsewhere. The file is compared by its
 // base name without the extension.
-test("the installed execa accepts the options the gh runner passes", async () => {
-  const bin = await mkdtemp(join(tmpdir(), "gh-resolve-"));
-  await writeFile(join(bin, "gh.exe"), "");
-  vi.stubEnv("PATH", bin);
-  vi.stubEnv("PATHEXT", ".EXE");
-  const realSpawn = childProcess.spawn;
-  const spawned = [];
-  childProcess.spawn = (file, args) => {
-    spawned.push({ file, args });
-    throw new Error("stand-in spawn: no process starts");
-  };
-  syncBuiltinESMExports();
-  try {
-    const controller = new AbortController();
-    const reply = await runGh(["pr", "checks", "42", "--required"], bin, {
-      signal: controller.signal,
-      timeoutMs: 60_000,
-    });
-    // execa reached `spawn`, so it accepted the options.
-    expect(spawned).toHaveLength(1);
-    expect(parse(spawned[0].file).name.toLowerCase()).toBe("gh");
-    expect(spawned[0].args).toEqual(["pr", "checks", "42", "--required"]);
-    expect(reply.status).not.toBe(0);
-  } finally {
-    childProcess.spawn = realSpawn;
+describe("the gh runner against the installed execa", () => {
+  // The fixture is made in a hook, outside the test's own time limit, and no run
+  // changes it. The directory is recorded before the file is written, so the
+  // `afterAll` removes it even when the write fails.
+  let bin;
+  beforeAll(async () => {
+    bin = await mkdtemp(join(tmpdir(), "gh-resolve-"));
+    await writeFile(join(bin, "gh.exe"), "");
+  });
+  afterAll(async () => {
+    if (bin) {
+      await removePath(bin);
+    }
+  });
+
+  test("the installed execa accepts the options the gh runner passes", async () => {
+    vi.stubEnv("PATH", bin);
+    vi.stubEnv("PATHEXT", ".EXE");
+    const realSpawn = childProcess.spawn;
+    const spawned = [];
+    childProcess.spawn = (file, args) => {
+      spawned.push({ file, args });
+      throw new Error("stand-in spawn: no process starts");
+    };
     syncBuiltinESMExports();
-    vi.unstubAllEnvs();
-    await removePath(bin);
-  }
+    try {
+      const controller = new AbortController();
+      const reply = await runGh(["pr", "checks", "42", "--required"], bin, {
+        signal: controller.signal,
+        timeoutMs: 60_000,
+      });
+      // execa reached `spawn`, so it accepted the options.
+      expect(spawned).toHaveLength(1);
+      expect(parse(spawned[0].file).name.toLowerCase()).toBe("gh");
+      expect(spawned[0].args).toEqual(["pr", "checks", "42", "--required"]);
+      expect(reply.status).not.toBe(0);
+    } finally {
+      childProcess.spawn = realSpawn;
+      syncBuiltinESMExports();
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 // Usefulness: verifies a read whose PR head moves between the head read and the
