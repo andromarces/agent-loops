@@ -1,11 +1,13 @@
 // Copies untracked, ignored local agent and environment files from the main work
-// tree into a linked run work tree (ADR 0017). File bytes move only through one
-// verified source descriptor and one verified, exclusively created target
-// descriptor. The module never prints, logs, or returns file content: every
+// tree into a linked run work tree (ADR 0017). File bytes move from one verified
+// source descriptor into a private temporary file, which is then hard-linked to
+// the target, so a target never holds a partial file and an existing file is
+// never replaced. The module never prints, logs, or returns file content: every
 // report is a path name.
+import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, unlink } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { link, lstat, mkdir, open, readdir, realpath, unlink } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { execa } from "execa";
 import { logInfo, logWarn } from "./log.mjs";
 
@@ -88,17 +90,34 @@ async function lstatOrNull(path, options) {
   }
 }
 
-/** True when an existing ancestor directory of `rel` under `base` is a symlink. */
-async function hasLinkedAncestor(base, rel) {
-  const parts = rel.split("/").slice(0, -1);
+/**
+ * Walks the ancestor directories of `rel` under `base`, never `base` itself, and
+ * returns true when one of them must not be read or written through: a symlink, a
+ * directory that holds a `.git` entry, or a registered work tree listed in
+ * `blocked` (folded paths). With `create`, a missing ancestor is created, one
+ * level at a time and without following anything; without it, the walk stops at
+ * the first missing ancestor.
+ */
+async function hasBlockedAncestor(base, rel, blocked, create = false) {
   let current = base;
-  for (const part of parts) {
+  for (const part of rel.split("/").slice(0, -1)) {
     current = join(current, part);
+    if (create) {
+      await mkdir(current).catch((err) => {
+        if (err.code !== "EEXIST") {
+          throw err;
+        }
+      });
+    }
     const stat = await lstatOrNull(current);
     if (stat === null) {
       return false;
     }
-    if (stat.isSymbolicLink()) {
+    if (
+      !stat.isDirectory() ||
+      blocked.has(foldPath(current)) ||
+      (await lstatOrNull(join(current, ".git"))) !== null
+    ) {
       return true;
     }
   }
@@ -106,34 +125,37 @@ async function hasLinkedAncestor(base, rel) {
 }
 
 /**
- * Reads the main work tree path from `git worktree list`, where it is the first
- * entry. Returns null for a bare repository, which has no main work tree.
+ * Reads every registered work tree path from `git worktree list`, the main work
+ * tree first. Returns null for a bare repository, which has no main work tree.
+ * A path that Git still lists counts as a work tree even when its `.git` entry is
+ * gone.
  */
-async function readMainWorkTree(root) {
+async function readWorkTrees(root) {
   const { stdout } = await git(root, ["worktree", "list", "--porcelain"]);
   const blocks = stdout
     .split(/\r?\n\r?\n/)
     .map((block) => block.split(/\r?\n/).filter(Boolean))
     .filter((lines) => lines.length > 0);
-  const [first] = blocks;
-  if (!first || first.includes("bare")) {
+  if (blocks.length === 0 || blocks[0].includes("bare")) {
     return null;
   }
-  const pathOf = (lines) => lines.find((line) => line.startsWith("worktree "))?.slice(9);
-  return pathOf(first);
+  const paths = blocks
+    .map((lines) => lines.find((line) => line.startsWith("worktree "))?.slice(9))
+    .filter(Boolean);
+  return await Promise.all(paths.map((path) => realpath(path).catch(() => resolve(path))));
 }
 
 /**
  * Collects the candidate files of one listed path into `ctx.files` as
  * `{ rel, src }`. No symlink is followed: a symlink entry is skipped by name, and
  * so is a listed path under a symlinked directory, so every path that is read
- * lies inside the main work tree. `.git`, `.claude/worktrees`, and every
- * directory that holds a `.git` entry (a nested work tree or repository) are
- * dropped silently, because they hold repository state or a checkout, not a
- * local file.
+ * lies inside the main work tree. `.git`, `.claude/worktrees`, every registered
+ * work tree, and every directory that holds a `.git` entry (a file or a
+ * directory) are dropped silently, because they hold repository state or a
+ * checkout, not a local file.
  */
 async function collect(ctx, rel, abs) {
-  if (isExcludedRel(rel)) {
+  if (isExcludedRel(rel) || ctx.others.has(foldPath(abs))) {
     return;
   }
   const stat = await lstatOrNull(abs);
@@ -158,34 +180,55 @@ async function collect(ctx, rel, abs) {
 }
 
 /**
+ * Thrown when a path changed under the copy in a way that the checks detect but
+ * cannot undo safely. It fails the init closed: nothing is deleted at the target,
+ * and the message names the file only.
+ */
+class CopyChangedError extends Error {
+  constructor(rel) {
+    super(`local files: the work tree changed during the copy of ${rel}; check the work tree`);
+    this.name = "CopyChangedError";
+  }
+}
+
+/**
  * Copies each untracked local file of the main work tree that is ignored in
  * `cwd`'s work tree into it, once, at init. A file is copied only when all three
  * hold: it exists in the main work tree, it is untracked there, and `git
  * check-ignore` in the linked work tree names it ignored. Never overwrites a file
- * of the linked work tree, never follows a symlink, never copies a work tree
- * directory, `.git`, `.gitignore`, or `.gitattributes`, and never writes through
- * a symlinked directory of the linked work tree. Name exclusions compare folded
- * names, so case and Windows aliases do not bypass them. Returns `{ copied,
- * skipped }` as sorted root-relative path names, or null when `cwd` is the main
- * work tree or the repository is bare, where nothing is copied. An untracked
- * file that is not copied is in `skipped`. A listed directory that holds more
- * than `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and none of its
- * files is copied.
+ * of the linked work tree, never follows a symlink, never reads or writes inside
+ * `.git`, a registered work tree, or a directory that holds a `.git` entry, never
+ * copies a `.gitignore` or `.gitattributes`, and never writes through a symlinked
+ * directory of the linked work tree. Name exclusions compare folded names, so
+ * case and Windows aliases do not bypass them. Returns `{ copied, skipped }` as
+ * sorted root-relative path names, or null when `cwd` is the main work tree or
+ * the repository is bare, where nothing is copied. An untracked file that is not
+ * copied is in `skipped`. A listed directory that holds more than
+ * `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and none of its files
+ * is copied. A file is in `copied` only after its target is in place and
+ * verified. Throws when a verification finds that a path changed during the copy.
  *
- * `hooks` is a test seam that runs just before the source and the target of one
- * file are opened.
+ * `hooks` is a test seam. `beforeSourceOpen`, `beforeTargetCreate`, and
+ * `beforeLink` run with the file's path name just before the source is opened,
+ * the temporary file is created, and the temporary file is linked to its target.
  * @param {string} cwd
- * @param {{ beforeSourceOpen?: (rel: string) => Promise<void>, beforeTargetOpen?: (rel: string) => Promise<void> }} [hooks]
+ * @param {{ beforeSourceOpen?: (rel: string) => Promise<void>, beforeTargetCreate?: (rel: string) => Promise<void>, beforeLink?: (rel: string) => Promise<void> }} [hooks]
  * @returns {Promise<{ copied: string[], skipped: string[] } | null>}
  */
 export async function copyLocalFiles(cwd, hooks = {}) {
   const root = (await git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();
-  const main = await readMainWorkTree(root);
-  if (!main || (await realpath(main)) === (await realpath(root))) {
+  const trees = await readWorkTrees(root);
+  const rootReal = await realpath(root);
+  if (!trees || foldPath(trees[0]) === foldPath(rootReal)) {
     return null;
   }
-  const mainReal = await realpath(main);
-  const rootReal = await realpath(root);
+  const mainReal = trees[0];
+  // A registered work tree is never read from (inside the main work tree) and
+  // never written into (inside the linked work tree), whether or not its `.git`
+  // entry is still there.
+  const sourceBlocked = new Set(trees.slice(1).map(foldPath));
+  const targetBlocked = new Set(trees.map(foldPath));
+  targetBlocked.delete(foldPath(rootReal));
 
   const skipped = new Set();
   const files = [];
@@ -193,12 +236,16 @@ export async function copyLocalFiles(cwd, hooks = {}) {
     // One bound and one result list per listed path, so a path past its bound is
     // dropped whole and never starves the next listed path.
     const ctx = {
+      others: sourceBlocked,
       files: [],
       skipped: new Set(),
       budget: { left: MAX_WALKED_ENTRIES, exceeded: false },
     };
     const abs = join(mainReal, rel);
-    if ((await lstatOrNull(abs)) !== null && (await hasLinkedAncestor(mainReal, rel))) {
+    if (
+      (await lstatOrNull(abs)) !== null &&
+      (await hasBlockedAncestor(mainReal, rel, sourceBlocked))
+    ) {
       skipped.add(rel);
       continue;
     }
@@ -219,10 +266,12 @@ export async function copyLocalFiles(cwd, hooks = {}) {
     if (tracked.has(file.rel)) {
       continue;
     }
+    // The target checks come before `git check-ignore`, which refuses a path
+    // beyond a symlink or inside a nested repository.
     if (
       GIT_CONTROL_FILES.has(foldName(basename(file.rel))) ||
       (await lstatOrNull(join(rootReal, file.rel))) !== null ||
-      (await hasLinkedAncestor(rootReal, file.rel))
+      (await hasBlockedAncestor(rootReal, file.rel, targetBlocked))
     ) {
       skipped.add(file.rel);
     } else {
@@ -243,7 +292,7 @@ export async function copyLocalFiles(cwd, hooks = {}) {
 
   const copied = [];
   for (const { rel, src } of pending) {
-    if (ignored.has(rel) && (await copyOne(src, rootReal, rel, hooks))) {
+    if (ignored.has(rel) && (await copyOne(src, rootReal, rel, targetBlocked, hooks))) {
       copied.push(rel);
     } else {
       skipped.add(rel);
@@ -254,113 +303,109 @@ export async function copyLocalFiles(cwd, hooks = {}) {
   return { copied: copied.sort(), skipped: [...skipped].sort() };
 }
 
+const TEMP_SUFFIX = ".agent-loop-copy";
+
 const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
 
 /**
- * Verifies that an open descriptor is the regular file that `path` names now,
- * through no symlink: the path resolves to itself, and its `lstat` identity is
- * the descriptor identity. A swap of the file or of any ancestor before or after
- * the open is therefore detected, and the descriptor, not the path, is read or
- * written afterwards.
+ * True when `path` resolves to itself, through no symlink, and names the regular
+ * file with the identity of `opened` (a `bigint` `stat`). A swap of the file or of
+ * any ancestor is detected when it is in place at the time of the check.
  */
-async function descriptorIsPath(handle, path) {
-  const [opened, resolved, named] = await Promise.all([
-    handle.stat({ bigint: true }),
-    realpath(path),
-    lstat(path, { bigint: true }),
-  ]);
+async function namesFile(path, opened) {
+  const [resolved, named] = await Promise.all([realpath(path), lstat(path, { bigint: true })]);
   return foldPath(resolved) === foldPath(path) && named.isFile() && sameFile(opened, named);
 }
 
-/** Removes `path` only when it still names the file that `handle` created. */
-async function removeIfCreated(handle, path) {
-  try {
-    const created = await handle.stat({ bigint: true });
-    const named = await lstatOrNull(path, { bigint: true });
-    if (named && sameFile(created, named)) {
-      await unlink(path);
+/** Reads a whole open file, at most `MAX_FILE_BYTES`. Returns null when it is longer. */
+async function readBounded(handle) {
+  const buffer = Buffer.alloc(MAX_FILE_BYTES + 1);
+  let length = 0;
+  while (length <= MAX_FILE_BYTES) {
+    const { bytesRead } = await handle.read(buffer, length, MAX_FILE_BYTES + 1 - length, length);
+    if (bytesRead === 0) {
+      break;
     }
-  } catch {
-    // Nothing more can be removed safely.
+    length += bytesRead;
   }
-}
-
-/** Creates each missing directory under `rootReal` one level at a time, none through a symlink. */
-async function ensureDirectories(rootReal, rel) {
-  let current = rootReal;
-  for (const part of rel.split("/").slice(0, -1)) {
-    current = join(current, part);
-    try {
-      await mkdir(current);
-    } catch (err) {
-      if (err.code !== "EEXIST") {
-        throw err;
-      }
-    }
-    if (!(await lstat(current)).isDirectory()) {
-      return false;
-    }
-  }
-  return true;
+  return length > MAX_FILE_BYTES ? null : buffer.subarray(0, length);
 }
 
 /**
- * Copies one source file to `rootReal/rel` without overwrite. The source is
- * opened without following a final symlink and verified against its path, the
- * target is created exclusively and verified before any byte is written, and a
- * target that fails the check is removed when it is still the file just created.
- * Returns false when the file is not copied.
+ * Copies one source file to `rootReal/rel` and returns true only when the target
+ * is in place and verified. Steps, each failing closed:
+ * 1. Open the source without following a final symlink, and check that the opened
+ *    file is the regular file the path names. Bytes are read from that descriptor.
+ * 2. Create the missing directories one level at a time, none through a symlink.
+ * 3. Create a private temporary file beside the target with an unguessable name,
+ *    check that it lies where expected, and only then write the bytes.
+ * 4. Hard-link the temporary file to the target. A link never replaces a file and
+ *    never follows a symlink at the target, and the target never holds a partial
+ *    file. Check that the target names the temporary file's identity.
+ * 5. Remove the temporary name. Nothing is ever deleted at the target. A swap that
+ *    the checks detect after the fact throws `CopyChangedError`.
+ * Node has no descriptor-relative open, so a directory swapped between a check and
+ * the following path-based step is detected, not prevented.
  */
-async function copyOne(sourcePath, rootReal, rel, hooks) {
+async function copyOne(sourcePath, rootReal, rel, blocked, hooks) {
   const targetPath = join(rootReal, rel);
   let source = null;
-  let target = null;
+  let temp = null;
+  let tempPath = null;
   try {
     await hooks.beforeSourceOpen?.(rel);
     source = await open(sourcePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const stat = await source.stat({ bigint: true });
-    if (stat.size > BigInt(MAX_FILE_BYTES) || !(await descriptorIsPath(source, sourcePath))) {
+    if (
+      !stat.isFile() ||
+      stat.size > BigInt(MAX_FILE_BYTES) ||
+      !(await namesFile(sourcePath, stat))
+    ) {
       return false;
     }
-    if (!(await ensureDirectories(rootReal, rel))) {
+    const data = await readBounded(source);
+    if (data === null) {
       return false;
     }
-    await hooks.beforeTargetOpen?.(rel);
-    // O_EXCL refuses an existing target and a symlink at the target.
-    target = await open(
-      targetPath,
+    if (await hasBlockedAncestor(rootReal, rel, blocked, true)) {
+      return false;
+    }
+    await hooks.beforeTargetCreate?.(rel);
+    tempPath = join(dirname(targetPath), `.${randomBytes(8).toString("hex")}${TEMP_SUFFIX}`);
+    temp = await open(
+      tempPath,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
       Number(stat.mode & 0o777n),
     );
-    if (!(await descriptorIsPath(target, targetPath))) {
-      await removeIfCreated(target, targetPath);
-      return false;
+    const created = await temp.stat({ bigint: true });
+    if (!(await namesFile(tempPath, created))) {
+      throw new CopyChangedError(rel);
     }
-    // Bounded read: the file can have grown since the size check.
-    const buffer = Buffer.alloc(MAX_FILE_BYTES + 1);
-    let length = 0;
-    while (length <= MAX_FILE_BYTES) {
-      const { bytesRead } = await source.read(buffer, length, MAX_FILE_BYTES + 1 - length, length);
-      if (bytesRead === 0) {
-        break;
-      }
-      length += bytesRead;
+    await temp.writeFile(data);
+    await temp.close();
+    temp = null;
+    await hooks.beforeLink?.(rel);
+    await link(tempPath, targetPath);
+    if (!(await namesFile(targetPath, created))) {
+      throw new CopyChangedError(rel);
     }
-    if (length > MAX_FILE_BYTES) {
-      await removeIfCreated(target, targetPath);
-      return false;
-    }
-    await target.write(buffer, 0, length);
     return true;
   } catch (err) {
-    if (target) {
-      await removeIfCreated(target, targetPath);
+    if (err instanceof CopyChangedError) {
+      throw err;
     }
-    // The code names the failure. The message can hold the path, never content.
-    logWarn(`local files: a copy failed (${err.code ?? "error"})`);
+    // An existing target is the normal no-overwrite outcome and needs no warning.
+    // The code names a failure. The message can hold a path, never content.
+    if (err.code !== "EEXIST") {
+      logWarn(`local files: a copy failed (${err.code ?? "error"})`);
+    }
     return false;
   } finally {
     await source?.close();
-    await target?.close();
+    await temp?.close();
+    // Only the unguessable temporary name is removed, never the target.
+    if (tempPath) {
+      await unlink(tempPath).catch(() => {});
+    }
   }
 }

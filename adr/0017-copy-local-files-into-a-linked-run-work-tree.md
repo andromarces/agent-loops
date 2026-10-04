@@ -43,13 +43,15 @@ files is a new runtime contract, and it handles files that can hold secrets.
    still receives the files at the root.
 4. **Skipped, not copied.** An untracked file that is not ignored in `--cwd` is not
    copied and is reported as skipped. A file that already exists in `--cwd`, a
-   file whose target path sits under a symlinked directory of `--cwd`, a file over
-   the size cap, a `.gitignore` or `.gitattributes`, and a file whose copy failed
-   are reported as skipped. A path that is tracked in the
-   main work tree or absent from it is not a local file and is not reported.
-5. **No overwrite.** The copy uses `COPYFILE_EXCL`, so a file of `--cwd` is never
-   replaced. A tracked file of `--cwd` is never replaced, because it either exists
-   (refused as above) or is not ignored (condition 3).
+   file whose target path sits under a symlinked directory, a registered work
+   tree, or a directory that holds a `.git` entry in `--cwd`, a file over the size
+   cap, a `.gitignore` or `.gitattributes`, and a file whose copy failed are
+   reported as skipped. A path that is tracked in the main work tree or absent
+   from it is not a local file and is not reported.
+5. **No overwrite.** The target is created by a hard link, which refuses an
+   existing file, so a file of `--cwd` is never replaced. A tracked file of `--cwd`
+   is never replaced, because it either exists (refused as above) or is not
+   ignored (condition 3).
 6. **Symlinks.** The policy is the narrowest that the issue text states and that
    has no race. Issue #423 says "The copy must not follow a symlink out of the
    main work tree" and "Copy, do not symlink". Following a link that stays inside
@@ -61,9 +63,13 @@ files is a new runtime contract, and it handles files that can hold secrets.
 check-ignore` refuses such a path. A copy, not a link, because a Windows symlink
    needs extra privileges and a copy does not follow later edits in the main work
    tree.
-7. **Work trees and Git files are excluded.** `.claude/worktrees/`, every directory
-   that holds a `.git` entry (a work tree or a repository nested in the main work
-   tree), and any path component named `.git` are never walked and never reported. A
+7. **Work trees and Git files are excluded.** Isolation holds on both sides. In the
+   main work tree, `.claude/worktrees/`, every registered work tree that `git
+worktree list` names (even when its `.git` entry is gone), every directory that
+   holds a `.git` entry (a file or a directory), and any path component named
+   `.git` are never walked and never reported. In `--cwd`, a target is never
+   written inside a registered work tree other than `--cwd` itself, nor inside a
+   directory that holds a `.git` entry, and such a file is reported as skipped. A
    `.gitignore` or `.gitattributes` is never copied, because a copied one changes
    ignore rules or line endings in `--cwd`: it can un-ignore a file that was
    copied, so that the snapshot lists it and the run's `clean` flag and digest
@@ -81,20 +87,36 @@ check-ignore` refuses such a path. A copy, not a link, because a Windows symlink
    The cap applies to `.agents/`, `.claude/`, `.codex/`, and `.vscode/`, where
    caches, logs, and session stores can sit beside small configuration files.
    There is no cap flag.
-9. **No check-then-copy race.** The source is opened once with no-follow, and the
-   opened file, not the path, is then verified: its `fstat` identity must equal the
-   `lstat` identity of the path, the path must resolve to itself, and the file must
-   be a regular file within the size cap. A swap of the file or of an ancestor
-   before or after the open fails that check and the file is skipped. The target is
-   created with `O_EXCL`, which refuses an existing file and a symlink at the
-   target, the directories are created one level at a time and each must be a real
-   directory, and the created target is verified the same way before any byte is
-   written. A target that fails the check is removed when it still names the file
-   just created. Bytes move only between those two verified descriptors, through a
-   bounded read. The directory ancestors cannot be opened relative to a descriptor
-   from Node, so the identity check, not the open, closes the ancestor swap: the
-   content is never written through a swapped ancestor, and the only trace of a
-   swap that wins every check is the removed empty file.
+9. **Copy mechanics and races.** Node has no descriptor-relative open, so a
+   directory swapped between a check and the next path-based step cannot be
+   prevented. The design therefore detects, fails closed, and never deletes at
+   the target.
+   1. The source is opened once with no-follow, and the opened file is checked
+      against its path: its `fstat` identity must equal the `lstat` identity of the
+      path, the path must resolve to itself, and the file must be a regular file
+      within the size cap. The bytes are then read from that descriptor, in a
+      bounded read, so a swap after the check cannot change what is read. A swap of
+      the file or of an ancestor that is in place at the check skips the file.
+   2. Missing target directories are created one level at a time, and every
+      ancestor must be a real directory, with no `.git` entry, outside every
+      registered work tree.
+   3. The bytes go to a private temporary file in the target directory, created
+      with `O_EXCL` and an unguessable name. Its location is checked before any
+      byte is written, so content never lands in a redirected directory that the
+      check can see.
+   4. The temporary file is hard-linked to the target. A link refuses an existing
+      file and never follows a symlink at the target, and the target never holds a
+      partial file: it exists complete or not at all. A file is reported as copied
+      only after the link exists and the target is verified to be the temporary
+      file's identity at its own path.
+   5. Only the temporary name is removed. Nothing at the target is ever deleted, so
+      a file that something else put there during the copy stays as it is. A
+      verification that fails after the fact (a swap that the checks see only
+      after the link) throws, which fails the init closed with a message that names
+      the file, and the work tree is left for the owner to inspect.
+      The window that remains is the one between the last check and the link: a swap
+      inside it can place a hard link of a verified file in another directory, which
+      the later check detects and reports but cannot undo.
 10. **Nothing without a main work tree.** When `--cwd` is the main work tree, or the
     repository is bare, nothing is copied and nothing is reported.
 11. **Opt-out.** `--no-copy-local-files` is an init field of `agent-loop role` and
@@ -104,7 +126,7 @@ check-ignore` refuses such a path. A copy, not a link, because a Windows symlink
     refused, as for every other init field. A state file written before the field
     holds no value and copied nothing.
 12. **Secrets.** The runtime never prints, logs, returns, or transcribes file
-    content. Bytes move only through the two verified descriptors of decision 9. Every report holds root-relative
+    content. Bytes move only through the verified descriptors of decision 9. Every report holds root-relative
     path names. A copy failure logs the error code only. The state file holds the
     boolean, not the names.
 13. **Reporting.** The interactive init envelope carries
@@ -116,7 +138,8 @@ check-ignore` refuses such a path. A copy, not a link, because a Windows symlink
     `clean` and the snapshot digest do not change.
 15. **Failure.** A copy step that cannot run (for example `git` fails) fails the
     init before the state file exists, so no run is left to abort. A single file
-    that fails to copy is skipped and named.
+    that fails to copy is skipped and named. A verification that finds a change
+    during the copy (decision 9, step 5) fails the init the same way.
 
 ## Consequences
 
@@ -133,10 +156,18 @@ check-ignore` refuses such a path. A copy, not a link, because a Windows symlink
   tree. A parent that shares one instruction file by symlink must copy it itself.
 - A mount point inside the main work tree is not a symlink and is walked like a
   directory. A file system that the caller mounted there is the caller's choice.
+- The target is a hard link of the temporary file, so a file system without hard
+  links (some network and FAT-style volumes) skips every file and warns with the
+  error code. The copy then does nothing, which is the safe outcome.
+- A crash between the temporary write and its removal leaves one file named
+  `.<hex>.agent-loop-copy` in a target directory. It is ignored only when a rule
+  covers it, so the owner removes it.
 - Windows: no symlink is created, so the contract needs no extra privilege. The
   no-follow open flag does not exist there, so the identity check of decision 9
-  carries the guard alone. The target keeps the permission bits of the source,
-  reduced by the process umask.
+  carries the guard alone. The name folding of decision 7, the hard link, and the
+  identity check were not run against a native Windows file system or a mount
+  point during this change; CI covers the portable behavior only. The target
+  keeps the permission bits of the source, reduced by the process umask.
 
 ## Alternatives
 
@@ -145,18 +176,23 @@ check-ignore` refuses such a path. A copy, not a link, because a Windows symlink
    tree, and following one inside needs a target check that a swap can defeat, and
    exclusion checks for `.git`, other work trees, loops, and tracked files reached
    by two paths. No symlink is followed, which has none of those cases.
-2. **Symlink the files into `--cwd`**: rejected. A Windows symlink needs extra privileges, and a
+2. **Create the target with `O_EXCL` and remove it on failure**: rejected in the
+   third revision. A failure part way leaves a partial file, and a removal by path
+   can delete a file that something else put there after the copy began. The
+   temporary file and the link give a complete or absent target and delete only an
+   unguessable name.
+3. **Symlink the files into `--cwd`**: rejected. A Windows symlink needs extra privileges, and a
    link follows later edits and could expose the main work tree to a child write.
-3. **A configurable path list or a size flag**: rejected. A config value that has
+4. **A configurable path list or a size flag**: rejected. A config value that has
    one reasonable setting is speculative. The list and the cap change with a code
    change.
-4. **Copy by evaluating ignore rules in the main work tree**: rejected. A
+5. **Copy by evaluating ignore rules in the main work tree**: rejected. A
    `.gitignore` comes from the branch of each work tree, so the main work tree can
    ignore a path that `--cwd` does not, and the copy would then show up as an
    untracked change that breaks the mutation check.
-5. **Create the run work tree in the runtime**: rejected. The parent owns the work
+6. **Create the run work tree in the runtime**: rejected. The parent owns the work
    tree (`docs/orchestrator-instructions.md`, "Work tree ownership").
-6. **Copy on every dispatch**: rejected. Init-only keeps the contract simple and
+7. **Copy on every dispatch**: rejected. Init-only keeps the contract simple and
    keeps a later edit of a copied file in `--cwd` from being overwritten or
    reported as a change.
 

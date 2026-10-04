@@ -218,7 +218,9 @@ by name only, and a path in `skipped` is untracked in the main work tree but not
 copied: the child does not have it. Do not read, print, or quote any copied file.
 The copy duplicates secrets such as `.env` into the run work tree, so remove that
 work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
-the copy off. It is an init field, so a later call cannot change it.
+the copy off. It is an init field, so a later call cannot change it. If the init fails
+with `the work tree changed during the copy`, a path in `--cwd` or in the main work
+tree changed while the copy ran: inspect that work tree before a new init.
 
 A refused `--cwd` is not the parent's to repair: end the run, name the path and
 the refusal in the reason, and leave the work tree to a maintainer, who decides
