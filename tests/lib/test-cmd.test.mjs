@@ -69,13 +69,11 @@ test("the command runs in the given work tree", async () => {
   expect(await readFile(join(printed, "init.txt"), "utf8")).toBe("hello\n");
 });
 
-// Usefulness: verifies a command that runs past its bound is reported as timed
-// out, never as a failure or a pass, and that the command and the child process
-// it started are both gone, so no process stays running (issue #420). Both
-// processes record their pids before the bound, or the test fails: a child that
-// never ran proves nothing about the kill.
-test("a timeout kills the command and its child process and reports timed-out", async () => {
-  const cwd = await repo();
+// A command that records its pid and starts a grandchild that records its own, then
+// both hang. `detached` puts the grandchild in a process group of its own, which a
+// group signal to the command does not reach. `trapTerm` makes the command exit 0
+// when it receives SIGTERM, which is the shape of a runner that cleans up and exits.
+async function hangingTree({ detached, trapTerm }) {
   const dir = await mkdtemp(join(tmpdir(), "test-cmd-hang-"));
   dirs.push(dir);
   const grandchildPid = join(dir, "grandchild.pid");
@@ -91,19 +89,19 @@ setTimeout(() => {}, 60000);
   await writeFile(
     child,
     `require("fs").writeFileSync(${JSON.stringify(childPid)}, String(process.pid));
-require("child_process").spawn(process.execPath, [${JSON.stringify(grandchild)}], { stdio: "ignore" });
+require("child_process").spawn(process.execPath, [${JSON.stringify(grandchild)}], { stdio: "ignore", detached: ${detached} });
+${trapTerm ? 'process.on("SIGTERM", () => process.exit(0));' : ""}
 setTimeout(() => {}, 60000);
 `,
   );
+  return { command: `node "${child}"`, pidFiles: [childPid, grandchildPid] };
+}
 
-  // The bound is 3 seconds, a floor of a whole second: it leaves both node
-  // processes time to start on a loaded machine.
-  const run = await runTestCmd({ command: `node "${child}"`, timeoutSeconds: 3, cwd });
-  expect(run).toMatchObject({ status: "timed-out", timedOut: true, exitCode: null });
-  expect(run.summary).toContain("neither a pass nor a failure");
-
+// Both processes record their pids before the bound, or the test fails: a child
+// that never ran proves nothing about the kill.
+async function expectAllGone(pidFiles) {
   const pids = [];
-  for (const file of [childPid, grandchildPid]) {
+  for (const file of pidFiles) {
     const pid = Number.parseInt(await readFile(file, "utf8"), 10);
     expect(Number.isInteger(pid), `${file} holds no pid, so the process never started`).toBe(true);
     pids.push(pid);
@@ -118,6 +116,44 @@ setTimeout(() => {}, 60000);
     }
     expect(processExists(pid), `process ${pid} outlived the timeout`).toBe(false);
   }
+}
+
+// Usefulness: verifies a command that runs past its bound is reported as timed
+// out, never as a failure or a pass, and that the command and the child process
+// it started are both gone, so no process stays running (issue #420). The bound
+// is 3 seconds, the floor of a whole second plus time for both node processes to
+// start on a loaded machine.
+test("a timeout kills the command and its child process and reports timed-out", async () => {
+  const cwd = await repo();
+  const { command, pidFiles } = await hangingTree({ detached: false, trapTerm: false });
+  const run = await runTestCmd({ command, timeoutSeconds: 3, cwd });
+  expect(run).toMatchObject({ status: "timed-out", timedOut: true, exitCode: null });
+  expect(run.summary).toContain("neither a pass nor a failure");
+  await expectAllGone(pidFiles);
+}, 20_000);
+
+// Usefulness: verifies a timeout kills a descendant that left the process group of
+// the command, which a group signal does not reach, so no grandchild survives a
+// timeout (issue #420 review).
+test("a timeout kills a grandchild that left the process group", async () => {
+  const cwd = await repo();
+  const { command, pidFiles } = await hangingTree({ detached: true, trapTerm: false });
+  const run = await runTestCmd({ command, timeoutSeconds: 3, cwd });
+  expect(run).toMatchObject({ status: "timed-out", timedOut: true });
+  await expectAllGone(pidFiles);
+}, 20_000);
+
+// Usefulness: verifies a timed-out result carries exitCode null whatever the
+// command exits with after the kill signal, as the ADR and the docs state, so a
+// parent never reads a timeout as the exit code of a runner that trapped the
+// signal and exited 0 (issue #420 review).
+test("a timed-out command reports exitCode null even when it exits 0 on the signal", async () => {
+  const cwd = await repo();
+  const { command, pidFiles } = await hangingTree({ detached: false, trapTerm: true });
+  const run = await runTestCmd({ command, timeoutSeconds: 3, cwd });
+  expect(run).toMatchObject({ status: "timed-out", timedOut: true, exitCode: null });
+  expect(run.summary).not.toContain("exit 0");
+  await expectAllGone(pidFiles);
 }, 20_000);
 
 // Usefulness: verifies an output far over the capture window is cut to the tail,

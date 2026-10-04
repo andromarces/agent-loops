@@ -317,8 +317,9 @@ Role flags:
                                 exit code and an output tail to the reviewer prompt as
                                 advisory evidence. This flag is the only source of the
                                 command. It runs with the environment of the runtime, so keep
-                                secrets out of the command text. Later calls read it from the
-                                state file and reject any change.
+                                secrets out of the command text. The state file holds only a
+                                digest, so pass the same --test-cmd on every reviewer dispatch;
+                                a changed or missing value is refused.
   --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. The command and its
                                 child processes are killed at the bound, and the run reports
                                 timed out. Requires --test-cmd.

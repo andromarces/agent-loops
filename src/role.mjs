@@ -38,6 +38,7 @@ import {
   writeState,
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
+import { sha256 } from "./lib/hash.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS } from "./lib/test-cmd.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
@@ -66,7 +67,6 @@ const INIT_FIELDS = [
   "maxSteps",
   "timeout",
   "pr",
-  "testCmd",
   "testCmdTimeout",
 ];
 
@@ -334,12 +334,14 @@ function initialState(args) {
     stepsUsed: 0,
     lifecycle: "active",
     pr: args.pr,
-    // Written at init only and never from a response: the flag is the only source
-    // of the command (ADR 0017). A run with no command carries neither field.
+    // The state file holds a digest of the command and never the command: the
+    // flag on each reviewer dispatch is the only source of what runs, and the
+    // digest only detects a changed flag (ADR 0017). A run with no command
+    // carries neither field.
     ...(args.testCmd === null
       ? {}
       : {
-          testCmd: args.testCmd,
+          testCmdSha256: sha256(args.testCmd),
           testCmdTimeout: args.testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
         }),
     roles: {
@@ -387,6 +389,12 @@ async function archiveState(paths, existing) {
  * purpose; every other init field stays fixed.
  */
 function rejectInitFlagChanges(args, state, allowed = []) {
+  // The command is compared by digest, so the refusal never prints a stored value.
+  if (args.testCmd !== null && sha256(args.testCmd) !== (state.testCmdSha256 ?? null)) {
+    throw new RoleError(
+      `--test-cmd cannot be changed after init (state holds: ${state.testCmdSha256 ? "a different command" : "null"}).`,
+    );
+  }
   const provided = [];
   for (const flag of INIT_FIELDS) {
     if (allowed.includes(flag)) {
@@ -532,6 +540,15 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
 
   const roleName = args.role;
 
+  // The flag is the only source of the command, on every dispatch, a resume
+  // included, so a reviewer dispatch of a run that set one must pass it again.
+  // The refusal comes before the step is charged (ADR 0017).
+  if (!init && roleName === "reviewer" && state.testCmdSha256 && args.testCmd === null) {
+    throw new RoleError(
+      "--test-cmd is required on every reviewer dispatch of a run that set it at init. Pass the same value: the state file holds only a digest of it.",
+    );
+  }
+
   // Hard guard that survives compaction and restart: review-only never runs the worker.
   if (state.mode === "review-only" && roleName === "worker") {
     throw new RoleError("mode review-only rejects --role worker.");
@@ -610,15 +627,28 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
       // required-check status the runtime read (#320). A run that declares no PR
       // reads nothing, and the reviewer keeps its own read.
       pr: state.pr ?? null,
-      testCmd: state.testCmd
-        ? { command: state.testCmd, timeoutSeconds: state.testCmdTimeout }
-        : null,
+      // The command is the flag value, which init stored a digest of or the digest
+      // check above matched. Nothing the state file holds is run.
+      testCmd:
+        args.testCmd === null
+          ? null
+          : {
+              command: args.testCmd,
+              timeoutSeconds: Number.isSafeInteger(state.testCmdTimeout)
+                ? Math.max(1, state.testCmdTimeout)
+                : DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
+            },
       gh,
       onEvent,
     });
   } catch (err) {
     const canceled = Boolean(err?.isCanceled);
-    const payload = { role: roleName, status: "error", error: errorMessage(err) };
+    const payload = {
+      role: roleName,
+      status: "error",
+      error: errorMessage(err),
+      ...(err?.testRun ? { testRun: err.testRun } : {}),
+    };
     // A cancel or a fatal guard error can end the turn after the CLI reported its session, so
     // keep the id for the resume that follows. A null id records a session the fallback cleared.
     state.roles[roleName].sessionId = role.sessionId;
@@ -686,7 +716,12 @@ function recordTurn(state, roleName, result, at) {
 // long block and with it the text the report was meant to preserve (issue #268).
 function dispatchPayload(roleName, result) {
   if (result.status !== "ok") {
-    return { role: roleName, status: "error", error: result.error };
+    return {
+      role: roleName,
+      status: "error",
+      error: result.error,
+      ...(result.testRun ? { testRun: result.testRun } : {}),
+    };
   }
   const report = parseReportBlock(result.response);
   const payload = { role: roleName, status: "ok", report };

@@ -44,9 +44,11 @@ async function invoke(agents, state, roleName, prompt, opts, onEvent, stepsUsed)
  * A reviewer result also carries `reviewed`, the runtime-owned identity of the
  * work tree the reviewer saw, and `prChecks`, the required-check status the
  * runtime read for a declared PR (#320), and `testRun`, the result of the
- * operator's `--test-cmd` that the runtime ran before the turn (ADR 0017).
+ * operator's `--test-cmd` that the runtime ran before the turn (ADR 0017). A
+ * handled error result keeps `testRun`, and a fatal error carries it as
+ * `err.testRun`, so a turn that fails after the command ran loses no evidence.
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string }>}
+ * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, testRun?: object }>}
  */
 export async function runChild(options) {
   const {
@@ -124,6 +126,9 @@ export async function runChild(options) {
     return status;
   };
 
+  // Declared outside the try so a turn that fails after the command ran still
+  // reports what the runtime read and the work tree change it saw (ADR 0017).
+  let testRun = null;
   try {
     let reviewed = null;
     let prChecks = null;
@@ -132,8 +137,9 @@ export async function runChild(options) {
     // The reviewed state below therefore describes the tree after the command
     // (ADR 0017). The command never fails the turn: a failed, timed-out, or
     // unstartable command is a result the reviewer receives.
-    const testRun =
-      roleName === "reviewer" && testCmd ? await runTestCmd({ ...testCmd, cwd, signal }) : null;
+    if (roleName === "reviewer" && testCmd) {
+      testRun = await runTestCmd({ ...testCmd, cwd, signal });
+    }
     const response = readOnly
       ? await withMutationCheck(cwd, roleName, async (before) => {
           // The reviewed state comes from the runtime snapshot, never from the
@@ -158,6 +164,10 @@ export async function runChild(options) {
       if (err?.isCanceled) {
         logError(`${roleName} canceled by signal`);
       }
+      // A fatal error ends the turn, and the caller records it, so the result rides on it.
+      if (testRun && err && typeof err === "object") {
+        err.testRun = testRun;
+      }
       throw err;
     }
     let errorMessage = err?.message ?? String(err);
@@ -165,7 +175,12 @@ export async function runChild(options) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
     }
     logWarn(err?.timedOut ? errorMessage : `${roleName}: ${errorMessage.split("\n")[0]}`);
-    return { role: roleName, status: "error", error: errorMessage };
+    return {
+      role: roleName,
+      status: "error",
+      error: errorMessage,
+      ...(testRun ? { testRun } : {}),
+    };
   }
 }
 

@@ -156,16 +156,17 @@ test("a command that changes the work tree is reported and is not a mutation", a
 
 // Usefulness: verifies the reviewer mutation guard is unchanged with the flag
 // set: a reviewer that writes a file still ends the run on a MutationError
-// (issue #420, no sandbox or guard setting changes).
+// (issue #420, no sandbox or guard setting changes), and the error carries the
+// command result the runtime already read, so a fatal turn loses no evidence.
 test("a reviewer mutation is still detected when a test command is set", async () => {
   const repo = await createTempRepo();
   try {
-    await expect(
-      reviewOnce(repo, { testCmd: node("console.log('ok')") }, async () => {
-        await writeFile(join(repo, "by-reviewer.txt"), "x");
-        return REVIEW;
-      }),
-    ).rejects.toBeInstanceOf(MutationError);
+    const error = await reviewOnce(repo, { testCmd: node("console.log('ok')") }, async () => {
+      await writeFile(join(repo, "by-reviewer.txt"), "x");
+      return REVIEW;
+    }).catch((err) => err);
+    expect(error).toBeInstanceOf(MutationError);
+    expect(error.testRun).toMatchObject({ status: "pass", exitCode: 0 });
   } finally {
     await removePath(repo);
   }
@@ -208,5 +209,48 @@ test("the command runs once per reviewer turn and never for a worker turn", asyn
   } finally {
     await removePath(repo);
     await removePath(dir);
+  }
+});
+
+// Usefulness: verifies a reviewer turn that ends in an adapter error still carries
+// the command result and its work tree change in the result event, which the
+// transcript records, and in the prompt the orchestrator receives next, so a
+// failed turn does not lose evidence the runtime already read (issue #420 review).
+test("an adapter error keeps the test result in the event and the orchestrator prompt", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orch = scripted([
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ]);
+    const events = [];
+    await runLoop({
+      task: "Review the change.",
+      cwd: repo,
+      maxSteps: 5,
+      testCmd: node("require('fs').writeFileSync('out.txt', 'x'); console.log('9 passed')"),
+      roles: roles(),
+      agents: {
+        orch,
+        work: scripted([]),
+        rev: scripted([
+          () => {
+            throw new Error("reviewer CLI crashed");
+          },
+        ]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+    const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer").result;
+    expect(reviewed.status).toBe("error");
+    expect(reviewed.testRun).toMatchObject({
+      status: "pass",
+      workTreeChanged: true,
+      changedPaths: ["out.txt"],
+    });
+    expect(orch.recorded[1].prompt).toContain('"testRun"');
+    expect(orch.recorded[1].prompt).toContain("out.txt");
+  } finally {
+    await removePath(repo);
   }
 });

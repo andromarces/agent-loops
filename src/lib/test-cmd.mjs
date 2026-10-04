@@ -5,8 +5,9 @@ import { diffSnapshots, snapshot } from "./snapshot.mjs";
 // ADR 0017. The command is the operator's `--test-cmd`, run by the runtime in
 // the run's work tree before each reviewer turn, outside every CLI sandbox.
 export const DEFAULT_TEST_CMD_TIMEOUT_SECONDS = 600;
-// The command is killed this long after the first kill signal if it ignores it.
-const FORCE_KILL_AFTER_DELAY_MS = 1000;
+// A kill walks the process table at most this many times to catch children that a
+// descendant started while the tree was being stopped.
+const MAX_KILL_ROUNDS = 5;
 // Bytes kept while the command runs: twice the tail the reviewer sees, so a
 // secret cut at the left edge of the window never reaches the final tail.
 const CAPTURE_WINDOW_BYTES = 16 * 1024;
@@ -42,11 +43,78 @@ function stripControl(text) {
     .join("");
 }
 
+// Every descendant of `rootPid`, from one read of the process table. POSIX only.
+async function listDescendants(rootPid) {
+  const table = await execa("ps", ["-A", "-o", "pid=,ppid="], { reject: false });
+  const children = new Map();
+  for (const line of String(table.stdout ?? "").split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (Number.isInteger(pid) && Number.isInteger(ppid)) {
+      children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+    }
+  }
+  const found = [];
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    for (const pid of children.get(queue.shift()) ?? []) {
+      found.push(pid);
+      queue.push(pid);
+    }
+  }
+  return found;
+}
+
+const signalPid = (pid, signal) => {
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // The process already exited.
+  }
+};
+
+/**
+ * Kills the command and every descendant. A process group signal misses a
+ * descendant that started its own group, so on POSIX the tree is read from the
+ * process table, stopped with SIGSTOP so it cannot start more children, read
+ * again until no new process appears, then killed with SIGKILL. On Windows execa
+ * runs `taskkill /T /F`, which walks the parent links. known-limit: a descendant
+ * whose parent exited before the kill has no parent link left, and neither
+ * platform finds it.
+ */
+async function killTree(subprocess) {
+  if (subprocess.pid === undefined) {
+    return;
+  }
+  if (process.platform === "win32") {
+    subprocess.kill();
+    return;
+  }
+  const known = new Set([subprocess.pid]);
+  for (let round = 0; round < MAX_KILL_ROUNDS; round++) {
+    const fresh = (await listDescendants(subprocess.pid)).filter((pid) => !known.has(pid));
+    for (const pid of fresh) {
+      known.add(pid);
+    }
+    for (const pid of round === 0 ? known : fresh) {
+      signalPid(pid, "SIGSTOP");
+    }
+    if (fresh.length === 0) {
+      break;
+    }
+  }
+  for (const pid of known) {
+    signalPid(pid, "SIGKILL");
+  }
+  // The group signal covers a process the table read missed.
+  subprocess.kill("SIGKILL");
+}
+
 /**
  * Runs `command` through the platform shell (`/bin/sh -c` on POSIX, `cmd.exe`
  * on Windows) in `cwd`, so the command is written in the syntax of the shell
  * that runs it and the runtime adds no quoting. The command and its child
- * processes are killed when the bound expires, which reports `timed-out`.
+ * processes are killed when the bound expires, which reports `timed-out` with
+ * `exitCode: null`, whatever code the killed command exited with.
  * Output is read as a rolling window, so a noisy command cannot exhaust memory.
  * The work tree is compared before and after the command; the caller takes its
  * reviewer snapshot after this returns, so the changes are reported here and are
@@ -74,10 +142,23 @@ export async function runTestCmd({
     buffer: false,
     cleanup: true,
     killDescendants: true,
-    timeout: timeoutSeconds * 1000,
-    forceKillAfterDelay: FORCE_KILL_AFTER_DELAY_MS,
-    ...(signal ? { cancelSignal: signal } : {}),
   });
+  // The runtime owns the bound and the cancel, so both reach the whole tree.
+  let timedOut = false;
+  let canceled = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    void killTree(subprocess);
+  }, timeoutSeconds * 1000);
+  const onAbort = () => {
+    canceled = true;
+    void killTree(subprocess);
+  };
+  if (signal?.aborted) {
+    onAbort();
+  } else {
+    signal?.addEventListener("abort", onAbort, { once: true });
+  }
   let window = Buffer.alloc(0);
   let total = 0;
   subprocess.all.on("data", (chunk) => {
@@ -88,10 +169,16 @@ export async function runTestCmd({
       window = window.subarray(window.length - CAPTURE_WINDOW_BYTES);
     }
   });
-  const result = await subprocess;
+  let result;
+  try {
+    result = await subprocess;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
   const durationMs = Date.now() - startedAt;
 
-  if (result.isCanceled) {
+  if (canceled) {
     const err = new Error("test command canceled");
     err.isCanceled = true;
     throw err;
@@ -106,8 +193,7 @@ export async function runTestCmd({
   const truncated = total > CAPTURE_WINDOW_BYTES || text.length > TAIL_CHARS;
   const tail = text.slice(-TAIL_CHARS);
 
-  const timedOut = Boolean(result.timedOut);
-  const exitCode = typeof result.exitCode === "number" ? result.exitCode : null;
+  const exitCode = !timedOut && typeof result.exitCode === "number" ? result.exitCode : null;
   let status;
   let summary;
   if (timedOut) {
