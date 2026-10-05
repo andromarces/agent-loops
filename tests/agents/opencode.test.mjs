@@ -803,25 +803,30 @@ test("opencode keeps a late plain-text message off the last closing block line",
   expect(parseReportBlock(reviewer)).toEqual(BLOCK_VALUES);
 });
 
-// Usefulness: verifies a malformed messageID cannot lift mid-line text to a column-0 `Verdict:`
-// label, because a verdict gates acceptance. A break needs a non-empty string id on both parts, so
-// each malformed id leaves the mid-line `Verdict: accept` as `unknown` (issue #458).
+// Usefulness: verifies a malformed messageID cannot lift a `Verdict:` to a verdict that gates
+// acceptance. Parts that share no valid id are one unidentified message, so the mid-line text stays
+// glued and `unknown`. A malformed id on either side of a valid id makes a separate message whose
+// `Verdict: accept` supersedes the earlier block, so it pairs with no earlier field (issues #458
+// and #467).
 test.each([[""], [7], [null], [{}], [["msg-2"]], [true]])(
-  "opencode ignores the malformed messageID %j when it joins a mid-line Verdict part",
+  "opencode never lifts a Verdict part with the malformed messageID %j",
   async (malformed) => {
     const lead = `${CLOSING_BLOCK}\n\nThe reviewer said`;
-    const bad = textEvent("Verdict: accept", malformed);
+
+    const glued = await runWithEvents(textEvent(lead), textEvent("Verdict: accept", malformed));
+    expect(glued).toContain("The reviewer saidVerdict: accept");
+    expect(parseVerdict(glued)).toBe("unknown");
+    expect(parseReportBlock(glued)).toEqual(BLOCK_VALUES);
 
     for (const events of [
-      [textEvent(lead, "msg-1"), bad],
+      [textEvent(lead, "msg-1"), textEvent("Verdict: accept", malformed)],
       [textEvent(lead, malformed), textEvent("Verdict: accept", "msg-2")],
-      [textEvent(lead), bad],
     ]) {
       const response = await runWithEvents(...events);
 
-      expect(response).toContain("The reviewer saidVerdict: accept");
+      expect(response).toBe("Verdict: accept");
+      expect(parseReportBlock(response)).toBeNull();
       expect(parseVerdict(response)).toBe("unknown");
-      expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
     }
   },
 );
@@ -1057,41 +1062,200 @@ test.each([
   }
 });
 
-// Usefulness: verifies a late message with valid, different ids that opens with `Verdict: accept`
-// cannot override the earlier `Verdict: reject`, because a verdict gates acceptance. The late part
-// stays glued to the last line as it did before issue #458, so the verdict and every block value
-// equal what the join produced then, including the `Deferred` value the late text glues onto.
-test("opencode keeps an earlier reject verdict when a late message opens with Verdict: accept", async () => {
+// Decision (issue #467): the last closing block governs, and it governs alone. A message that holds
+// a closing block attempt supersedes every earlier message that holds one, as the Codex and Copilot
+// adapters select it (lastClosingMessage, src/agents/shared.mjs). A late message never combines
+// with the fields of the earlier block, so a late bare `Verdict: accept` cannot pair with the
+// earlier `Checks` line to satisfy the `--require-accept` gate.
+const REJECTED_BLOCK = CLOSING_BLOCK.replace("Blockers: none", "Blockers: b1").replace(
+  "Deferred: none",
+  "Verdict: reject",
+);
+const LATE_FULL_BLOCK = [
+  "Conclusion: late",
+  "Why: late reason",
+  "Blockers: late blocker",
+  "Checks: late check",
+  "Verdict: accept",
+].join("\n");
+
+// Usefulness: verifies a late bare `Verdict: accept` governs alone in both line-break shapes of the
+// earlier message: the earlier fields, including `Checks`, do not carry over, so the report is
+// unparseable and the verdict is `unknown` as the Codex selection gives (issue #467, rows 1-2).
+test.each([
+  ["no trailing newline", REJECTED_BLOCK],
+  ["a trailing newline", `${REJECTED_BLOCK}\n`],
+])(
+  "opencode drops the earlier block fields for a late bare Verdict after %s",
+  async (_name, first) => {
+    const response = await runWithEvents(
+      textEvent(first, "msg-1"),
+      textEvent("Verdict: accept", "msg-2"),
+    );
+
+    expect(response).toBe("Verdict: accept");
+    expect(parseReportBlock(response)).toBeNull();
+    expect(parseVerdict(response)).toBe("unknown");
+  },
+);
+
+// Usefulness: verifies a late partial block governs alone: no report fields, and the verdict of the
+// late message only (issue #467, row 3).
+test("opencode reports a late partial block as unparseable without the earlier fields", async () => {
   const response = await runWithEvents(
-    textEvent(CLOSING_BLOCK.replace("Deferred: none", "Verdict: reject\nDeferred: none"), "msg-1"),
-    textEvent("Verdict: accept", "msg-2"),
+    textEvent(REJECTED_BLOCK, "msg-1"),
+    textEvent("Conclusion: late\nVerdict: accept", "msg-2"),
   );
 
-  expect(parseVerdict(response)).toBe("reject");
-  expect(parseReportBlock(response)).toEqual({
-    ...BLOCK_VALUES,
-    deferred: "noneVerdict: accept",
-  });
+  expect(parseReportBlock(response)).toBeNull();
+  expect(parseVerdict(response)).toBe("accept");
 });
 
-// Usefulness: verifies the break decision reads the whole late message, not one part, because a
-// `Verdict:` label can span parts. A split label (`Ver` + `dict: accept`) and an empty first part
-// must leave the earlier reject and every block value as the join produced them before issue #458.
-// Each case failed when the decision looked at a single part.
+// Usefulness: verifies a late `Blockers: none` does not edit the earlier block: it governs alone, so
+// the earlier `Blockers: b1`, `Checks`, and verdict do not survive in a combined report (row 4).
+test("opencode does not merge a late Blockers line into the earlier block", async () => {
+  const response = await runWithEvents(
+    textEvent(REJECTED_BLOCK, "msg-1"),
+    textEvent("Blockers: none", "msg-2"),
+  );
+
+  expect(parseReportBlock(response)).toBeNull();
+  expect(parseVerdict(response)).toBe("unknown");
+});
+
+// Usefulness: verifies a later complete block replaces the earlier one in full, the only way a late
+// message changes the report (issue #467).
+test("opencode lets a later complete block replace the earlier block", async () => {
+  const response = await runWithEvents(
+    textEvent(REJECTED_BLOCK, "msg-1"),
+    textEvent(LATE_FULL_BLOCK, "msg-2"),
+  );
+
+  expect(response).toBe(LATE_FULL_BLOCK);
+  expect(parseReportBlock(response)).toMatchObject({
+    blockers: "late blocker",
+    checks: "late check",
+  });
+  expect(parseVerdict(response)).toBe("accept");
+});
+
+// Usefulness: verifies narration before the block and plain prose after it stay in the response,
+// so only a superseded closing block attempt is dropped (issue #467).
+test("opencode keeps narration and late prose around the governing block", async () => {
+  const response = await runWithEvents(
+    textEvent("Working on it.", "msg-1"),
+    textEvent(REJECTED_BLOCK, "msg-2"),
+    textEvent("The watcher finished.", "msg-3"),
+  );
+
+  expect(response).toBe(`Working on it.\n${REJECTED_BLOCK}\nThe watcher finished.`);
+  expect(parseVerdict(response)).toBe("reject");
+});
+
+// Usefulness: verifies parts of one message stay one message when another message comes between
+// them (A/B/A order): the only complete block, split across A's parts, is not dropped as superseded
+// by its own later part, so its report and verdict survive (issue #467).
+test("opencode keeps the only complete block of a message whose parts another message interrupts", async () => {
+  const [head, tail] = [REJECTED_BLOCK.slice(0, 60), REJECTED_BLOCK.slice(60)];
+  const response = await runWithEvents(
+    textEvent(head, "msg-a"),
+    textEvent("A side note.", "msg-b"),
+    textEvent(tail, "msg-a"),
+  );
+
+  expect(response).toBe(`${REJECTED_BLOCK}\nA side note.`);
+  expect(parseVerdict(response)).toBe("reject");
+  expect(parseReportBlock(response)).toMatchObject({ blockers: "b1", checks: "pnpm test" });
+});
+
+const ACCEPTED_BLOCK = `${CLOSING_BLOCK}\nVerdict: accept`;
+const INTERLEAVED = "opencode returned closing block attempts from interleaved messages.";
+
+// Usefulness: verifies the reviewer's stream fails closed: unidentified narration comes first, A holds
+// a full accept block with `Checks`, and a later unidentified part holds a reject block. The two
+// attempt-holding messages interleave in the stream, so no block can be said to govern and the
+// turn errors instead of returning the accept (issue #467).
+test("opencode refuses a stream whose unidentified block interleaves an identified block", async () => {
+  await expect(
+    runWithEvents(
+      textEvent("Working on it."),
+      textEvent(ACCEPTED_BLOCK, "msg-a"),
+      textEvent(`${REJECTED_BLOCK}\n`),
+    ),
+  ).rejects.toThrow(INTERLEAVED);
+});
+
+// Usefulness: verifies an invalid-id part cannot pull A's verdict out of A: A's parts surround B's
+// reject block, so both messages hold an attempt and interleave. The turn errors, so no accept can
+// pair with B's `Checks` line (issue #467).
+test("opencode refuses two blocks whose messages interleave across an invalid-id part", async () => {
+  await expect(
+    runWithEvents(
+      textEvent("Working on it.", "msg-a"),
+      textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+      textEvent("", 7),
+      textEvent("Verdict: accept", "msg-a"),
+    ),
+  ).rejects.toThrow(INTERLEAVED);
+});
+
+// Usefulness: verifies one block split across A's parts, with another message's block between them,
+// is ambiguous and errors rather than letting either block govern (issue #467).
+test("opencode refuses a block split across parts that another block interrupts", async () => {
+  await expect(
+    runWithEvents(
+      textEvent(REJECTED_BLOCK.slice(0, 60), "msg-a"),
+      textEvent(LATE_FULL_BLOCK, "msg-b"),
+      textEvent(REJECTED_BLOCK.slice(60), "msg-a"),
+    ),
+  ).rejects.toThrow(INTERLEAVED);
+});
+
+// Usefulness: verifies a new valid id after an invalid-id part still starts its own message: its
+// `Verdict: accept` supersedes the earlier block instead of joining it and pairing with the earlier
+// `Checks` line, so the report fails closed (issue #467).
+test("opencode does not bridge a new valid-id message into the block before an invalid-id part", async () => {
+  const response = await runWithEvents(
+    textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+    textEvent("", 7),
+    textEvent("Verdict: accept", "msg-c"),
+  );
+
+  expect(response).toBe("Verdict: accept");
+  expect(parseReportBlock(response)).toBeNull();
+  expect(parseVerdict(response)).toBe("unknown");
+});
+
+// Usefulness: verifies a part with no valid id never joins a message that has one: a late
+// `Verdict: accept` without an id supersedes the earlier block instead of landing on its own line
+// inside it and pairing with its `Checks` line (issue #467).
+test.each([[undefined], [""], [null]])(
+  "opencode keeps a part with messageID %j out of the block message",
+  async (messageID) => {
+    const response = await runWithEvents(
+      textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+      textEvent("Verdict: accept", messageID),
+    );
+
+    expect(response).toBe("Verdict: accept");
+    expect(parseReportBlock(response)).toBeNull();
+    expect(parseVerdict(response)).toBe("unknown");
+  },
+);
+
+// Usefulness: verifies the attempt test reads the whole late message, because a `Verdict:` label can
+// span parts. A split label, an empty first part, and an indented label all hold an attempt, so each
+// supersedes the earlier block and governs alone (issue #467).
 test.each([
   ["a label split across parts", ["Ver", "dict: accept"]],
   ["an empty first part", ["", "Verdict: accept"]],
   ["leading whitespace parts", [" ", "\t", "Verdict: accept"]],
-])("opencode keeps an earlier reject verdict with a late message of %s", async (_name, late) => {
-  const first = CLOSING_BLOCK.replace("Deferred: none", "Verdict: reject\nDeferred: none");
+])("opencode reads a late message of %s as one superseding message", async (_name, late) => {
   const response = await runWithEvents(
-    textEvent(first, "msg-1"),
+    textEvent(REJECTED_BLOCK, "msg-1"),
     ...late.map((part) => textEvent(part, "msg-2")),
   );
 
-  expect(parseVerdict(response)).toBe("reject");
-  expect(parseReportBlock(response)).toEqual({
-    ...BLOCK_VALUES,
-    deferred: `none${late.join("")}`,
-  });
+  expect(response).toBe(late.join("").trim());
+  expect(parseReportBlock(response)).toBeNull();
 });
