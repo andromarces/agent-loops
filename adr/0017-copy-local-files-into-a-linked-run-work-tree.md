@@ -172,16 +172,22 @@ worktree list` names (even when its `.git` entry is gone), every directory that
     directory, so the later Git commands run in the operator's string, not in Git's
     echo of it.
 
-    Fail closed on a control character. When `--cwd`, the top level of the work
-    tree, a registered work tree path, the main work tree, or the common Git
-    directory (as printed or as resolved) holds a control character (a line feed, a
-    carriage return, a tab, another character below 0x20, or 0x7f), nothing is
-    copied, the init does not fail, and the run logs that a path holds a control
-    character. A path that tools downstream could cut or redirect is not trusted.
-    This also covers a work tree whose own name holds one. The repository does not state a minimum Git version, and the
-    first Git release that accepts `-z` for `git worktree list` was not verified
-    here. A Git that rejects the option makes the command fail, and the init fails
-    with Git's error (decision 15). It never falls back to the plain format.
+    Minimum Git version. The repository does not state a minimum Git version, and the first
+    Git release that accepts `-z` for `git worktree list` was not verified here. A
+    Git that rejects the option makes the command fail, and the init fails with
+    Git's error (decision 15). It never falls back to the plain format.
+
+    Fail closed on a control character. Approved by the repository owner on
+    2026-10-05 as an exception to Acceptance 1 of issue #423 ("a run on a linked
+    work tree, with no opt-out, finds each listed path that meets the three
+    conditions in `--cwd` before the first child turn"): when `--cwd`, the top level
+    of the work tree, a registered work tree path, the main work tree, or the common
+    Git directory (as printed or as resolved) holds a control character (a line
+    feed, a carriage return, a tab, another character below 0x20, or 0x7f), the copy
+    does nothing, reports it, and does not fail the init, so a run in such a work
+    tree gets none of the files that Acceptance 1 names. The run logs that a path
+    holds a control character. A path that tools downstream could cut or redirect
+    is not trusted. This also covers a work tree whose own name holds one.
 
 11. **Opt-out.** `--no-copy-local-files` is an init field of `agent-loop role` and
     a flag of the headless `agent-loop` command. With it, nothing is copied and

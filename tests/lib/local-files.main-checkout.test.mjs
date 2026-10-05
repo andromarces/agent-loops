@@ -27,12 +27,16 @@ afterEach(async () => {
 });
 
 /**
- * Answers the three Git commands that find the main checkout: the top level of the
- * linked work tree (`top`, `root` unless given), `git worktree list --porcelain -z`, and `git rev-parse
- * --git-common-dir`. A command in `failing` exits 128. Any other command is an error.
+ * A Git that answers the three commands that find the main checkout: the top level of
+ * the linked work tree (`top`, `root` unless given), `git worktree list --porcelain
+ * -z`, and `git rev-parse --git-common-dir`. A command in `failing` exits 128, and so
+ * does every command that runs outside `workingDirectory` when that is given. Any
+ * other command is an error. Like execa, the double removes one final `\n` or `\r\n`
+ * from the output unless the caller asks to keep it, so a path that ends in one of
+ * them reaches the code only if the code asks for the output unchanged.
  */
-function answerGit({ root, top = root, list, common, failing = [] }) {
-  execa.mockImplementation(async (command, args) => {
+function answerGit({ root, top = root, list, common, failing = [], workingDirectory }) {
+  execa.mockImplementation(async (command, args, options = {}) => {
     expect(command).toBe("git");
     const name = args.slice(0, 2).join(" ");
     const reply = {
@@ -46,8 +50,15 @@ function answerGit({ root, top = root, list, common, failing = [] }) {
     if (failing.includes(name)) {
       return { exitCode: 128, stdout: "", stderr: "fatal: simulated failure" };
     }
+    if (workingDirectory !== undefined && options.cwd !== workingDirectory) {
+      return { exitCode: 128, stdout: "", stderr: "fatal: not a git repository" };
+    }
     // The worktree list is a NUL separated stream; the other answers end in a newline.
-    return { exitCode: 0, stdout: name === "worktree list" ? reply : `${reply}\n`, stderr: "" };
+    let stdout = name === "worktree list" ? reply : `${reply}\n`;
+    if (options.stripFinalNewline !== false && name !== "worktree list") {
+      stdout = stdout.replace(/\r?\n$/, "");
+    }
+    return { exitCode: 0, stdout, stderr: "" };
   });
 }
 
@@ -125,50 +136,42 @@ test("fails with a clear error when a Git command fails", async () => {
 
 const refusal = () => expect.stringContaining("control character");
 
-// Usefulness: verifies a `--cwd` with a control character is refused before any Git
-// command runs, so nothing in Git's output or a path comparison can redirect it.
-// Not redundant: no Git answer is given at all, and the test asserts that none was
-// asked for. It runs on every platform, since it needs no directory.
-test("copies nothing, runs no Git command, for a --cwd with a control character", async () => {
+// Usefulness: verifies a `--cwd` with a control character is refused without any Git
+// command, so nothing in Git's output or a path comparison can redirect it. The Git
+// double throws on any call, so a copy that asked Git anything would reject.
+// Not redundant: it is the test where Git cannot be reached at all. It runs on every
+// platform, since it needs no directory.
+test("copies nothing without asking Git for a --cwd with a control character", async () => {
+  execa.mockImplementation(() => {
+    throw new Error("git must not run for this --cwd");
+  });
   for (const cwd of ["/run\n", "/run\r", "/run\t", "/ru\nn", "/run\u007f"]) {
     expect(await copyLocalFiles(cwd), JSON.stringify(cwd)).toBeNull();
   }
   expect(log).toHaveBeenCalledWith(refusal());
-  expect(execa).not.toHaveBeenCalled();
 });
 
-// Usefulness: verifies a top-level path that Git prints with a control character is
-// refused when `--cwd` itself is clean, and that the line feed Git adds is the only
-// byte removed from the answer: a path that ends in a line feed or a carriage return
-// keeps it. Here Git answers `<root>\n` plus its own terminator.
+// Usefulness: verifies a top-level path that Git prints with a control character at its
+// end is refused when `--cwd` itself is clean: a path that ends in a line feed or a
+// carriage return keeps it, and the copy stops there. Git answers `<root>` plus the
+// character plus its own terminator, and every later Git command fails, so a copy that
+// had lost the character would carry on, ask for the work tree list, and reject.
 // Not redundant: `--cwd` is clean in this test, so the refusal can come only from the
-// printed top level, and it stops before Git is asked for the work tree list.
+// printed top level.
 test("copies nothing when Git prints a top level that ends in a control character", async () => {
   const { root } = await makeBase();
   for (const character of ["\n", "\r"]) {
-    execa.mockClear();
-    answerGit({ root, top: `${root}${character}`, list: entry(root), common: ".git" });
+    answerGit({
+      root,
+      top: `${root}${character}`,
+      list: entry(root),
+      common: ".git",
+      failing: ["worktree list", "rev-parse --git-common-dir"],
+    });
 
     expect(await copyLocalFiles(root), JSON.stringify(character)).toBeNull();
-    expect(execa, JSON.stringify(character)).toHaveBeenCalledTimes(1);
   }
   expect(log).toHaveBeenCalledWith(refusal());
-});
-
-// Usefulness: verifies every Git command of the copy asks execa for byte-exact output,
-// because execa removes a final `\n` or `\r\n` by default, which can belong to a path.
-// Not redundant: the mocked answers here do not depend on the option, so this is the
-// one test that reads the option itself.
-test("asks execa for output that is not stripped of a final newline", async () => {
-  const { root, gitDir } = await makeBase();
-  answerGit({ root, list: entry(gitDir), common: gitDir });
-
-  await copyLocalFiles(root);
-
-  expect(execa).toHaveBeenCalled();
-  for (const [, , options] of execa.mock.calls) {
-    expect(options).toMatchObject({ stripFinalNewline: false });
-  }
 });
 
 // Usefulness: verifies a common Git directory whose path ends in a newline is refused,
@@ -250,18 +253,16 @@ test.skipIf(process.platform === "win32")(
 );
 
 // Usefulness: verifies the Git commands after the top-level lookup run in the operator's
-// own `--cwd` string when Git names the same directory, not in Git's echo of it. Here
-// `--cwd` is the work tree with a trailing separator and Git prints it without.
-// Not redundant: it reads the `cwd` option of the Git calls, which the other tests in
-// this file do not, and it needs no control character, so it runs on every platform.
-test("runs Git in the operator's --cwd when Git names the same directory", async () => {
+// own `--cwd` string when Git names the same directory. Here `--cwd` is the work tree
+// with a trailing separator and Git prints it without. The Git double works only in the
+// operator's string, so a copy that ran later commands in Git's echo would reject.
+// Not redundant: it needs no control character, so it runs on every platform, and no
+// other test gives Git a working directory that is spelled differently from its echo.
+test("copies nothing and reports it when Git runs only in the operator's --cwd", async () => {
   const { root, gitDir } = await makeBase();
   const operator = `${root}${sep}`;
-  answerGit({ root, list: entry(gitDir), common: gitDir });
+  answerGit({ root, list: entry(gitDir), common: gitDir, workingDirectory: operator });
 
-  await copyLocalFiles(operator);
-
-  const later = execa.mock.calls.filter(([, args]) => args[0] === "worktree");
-  expect(later.length).toBe(1);
-  expect(later[0][2].cwd).toBe(operator);
+  expect(await copyLocalFiles(operator)).toBeNull();
+  expect(log).toHaveBeenCalledWith(expect.stringContaining("no main work tree"));
 });
