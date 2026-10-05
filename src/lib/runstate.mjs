@@ -11,7 +11,7 @@
 // non-terminal run owned by the hook session. The reader also unions the legacy
 // single-file index at `<root>/sessions/<parent-session>`; init never writes it,
 // and the directory name avoids a file-versus-directory clash at that path.
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -263,9 +263,7 @@ async function acquireLock(
 // JSON encoding keeps an unreadable file (null) and the literal text "null"
 // apart.
 function claimFileFor(rootLockFile, file, staleText) {
-  const id = createHash("sha256")
-    .update(JSON.stringify([basename(file), staleText]))
-    .digest("hex");
+  const id = sha256(JSON.stringify([basename(file), staleText]));
   return `${rootLockFile}.reap.${id}`;
 }
 

@@ -318,3 +318,16 @@ test("stale locks with distinct content do not share a claim", async () => {
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 });
+
+// Usefulness: verifies the claim name for a given stale lock never changes across versions, so a claim that an earlier version wrote is still found and honored (#446).
+test("the claim file name for a stale lock is stable across versions", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const stale = JSON.stringify({ pid: 999999999, startedAt: "old" });
+
+  const claimFile = await learnNextClaim(lockFile, stale, []);
+
+  expect(basename(claimFile)).toBe(
+    "state.lock.reap.88057746166664f02d34a2d246009f3d041890d2411f13b2ed48b9a9db7a4fdc",
+  );
+});
