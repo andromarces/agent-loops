@@ -984,7 +984,8 @@ parent-edit guard and `extend` match that id, and no call changes it. After init
 each subcommand treats `--parent-session` as follows:
 
 - `extend`: required. A missing value or any value other than the stored id is
-  refused, and the refusal does not name the stored id.
+  refused, and the refusal does not name the stored id. The stored id is
+  accepted.
 - `dispatch`, `finish`, and `abort`: optional. When omitted, they check nothing
   and run. When given, a different value is refused with the error
   `--parent-session cannot be changed after init`, which names the stored id.
@@ -992,14 +993,14 @@ each subcommand treats `--parent-session` as follows:
   id.
 - `wait-checks`: reads no run state and ignores the flag.
 
-A run that a new session resumes is therefore unguarded for that session, and
-`extend` refuses its id. No call moves the stored id to the new session. The new
-session can still run `dispatch`, `finish`, and `abort` by omitting
-`--parent-session`. To get a guard and an extendable run, call `abort` and start a
-new run with the new session id. A new run starts every role on a new session
-(ADR 0019). Never copy the stored id from the state file to pass the `extend`
-check: a child role can do the same, and the prompt rule is the only thing that
-keeps a child from calling `extend`.
+A run that a new session resumes is therefore unguarded for that session. No
+call moves the stored id to the new session. The new session can run `dispatch`,
+`finish`, and `abort` by omitting `--parent-session`. It can run `extend` only by
+passing the stored id. `extend` compares the id only, so that call succeeds for
+any caller that holds the id, a child role included, and it gives no guard
+coverage. A child role never runs `extend`, and the prompt rule is the only thing
+that keeps it from doing so. To get a guard, call `abort` and start a new run with
+the new session id. A new run starts every role on a new session (ADR 0019).
 
 ## Turn history
 

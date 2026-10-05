@@ -11,10 +11,12 @@ accepted
 ## Context
 
 A run stores the `--parent-session` of the session that started it. The parent-edit
-guard (ADR 0006, ADR 0007) and `role extend` (ADR 0014) match that id, and every
-later call refuses a changed `--parent-session`. A new session that continues a
-non-terminal run another session started is therefore unguarded, and `extend`
-refuses its id (issue #435).
+guard (ADR 0006, ADR 0007) and `role extend` (ADR 0014) match that id. After init,
+`dispatch`, `finish`, and `abort` refuse a `--parent-session` that differs from it,
+`extend` refuses every value but the stored id, and `wait-checks` ignores the flag.
+A new session that continues a non-terminal run another session started is
+therefore unguarded, because the guard matches the stored id, not the new session
+(issue #435).
 
 The proposal was `role adopt`: move the session entry to the new session and record
 the change in the state file. Two requirements decide it. The new session's guard
@@ -24,9 +26,11 @@ must not be able to use the command.
 ## Decision
 
 Do not add a takeover command. A run resumed from another session is unguarded for
-the new session and cannot be extended by it. `docs/orchestrator-instructions.md`
-states this under recovery. The route to a guarded, extendable run is `abort` and a
-new run under the new session id, which starts every role on a new session.
+the new session. That session can run `extend` only by passing the stored id, which
+`extend` compares as an id only, so the call succeeds for any caller that holds the
+id and gives no guard coverage. `docs/orchestrator-instructions.md` states this
+under recovery. The route to a guarded run is `abort` and a new run under the new
+session id, which starts every role on a new session.
 
 A takeover command cannot meet the second requirement:
 
@@ -47,26 +51,38 @@ A takeover command cannot meet the second requirement:
      tools (`Edit|Write|MultiEdit|NotebookEdit`, `^apply_patch$`, `Edit|Write`).
    - Antigravity CLI: `conversationId` and `toolCall.name`, on the matched tools:
      the file-edit tools plus `invoke_subagent` and `send_message`.
-   - OpenCode: `PermissionEvaluation.sessionID`, on `edit` actions. A `shell`
-     action raises a permission event too, but the plugin returns for `edit` only,
-     and the repository does not establish what a `shell` event carries.
-     No harness guard registers on shell calls, and the `agent-loop` command runs
-     through a shell. A hook on shell calls could read the session id in the payload
-     of Claude Code, Codex CLI, Copilot CLI, and Antigravity CLI, and could compare it
-     with the new `--parent-session`. That compares a caller with itself. A child runs
-     in its own harness session and passes its own id, so the hook allows the call
-     and the child takes the guard. A sound check must tell a runtime-spawned child
-     from the user's new session, and a session id does not.
-4. The environment does not tell them apart either. A child process inherits the
-   session variable of the parent shell: a nested harness inherits
-   `CODEX_THREAD_ID`, and child processes inherit `ANTIGRAVITY_CONVERSATION_ID`. No
-   child marker exists at spawn (ADR 0014 point 7).
+   - OpenCode: the plugin registers its guard in `setup(ctx)` with
+     `ctx.permission.hook("evaluate", ...)`. The callback reads `event.action` and
+     `event.sessionID`. It returns without setting an effect when the action is not
+     in `EDIT_ACTIONS` (`edit`) or `sessionID` is not a string. Otherwise it passes
+     `sessionID` to `decideParentGuard` and, on a deny, sets `event.effect` and
+     `event.message`. A lookup error is swallowed. The plugin also adds an
+     `agent-loop` command through `ctx.command.transform` whose handler receives
+     `sessionID`. A source comment states that the `shell` tool raises another
+     action; the repository shows no `shell` event from OpenCode itself, so what such
+     an event carries is not established.
+     No installed guard acts on a shell call: the matchers above select only the
+     listed tools, and the OpenCode callback returns for every action but `edit`. The
+     `agent-loop` command runs through a shell. This ADR did not read or probe the
+     payload of a shell tool call, so it does not claim that any harness puts the
+     session id there. Assume it did: a hook that compares the session id with the new
+     `--parent-session` compares a caller with itself. A child runs in its own harness
+     session and would pass its own id, so the hook allows the call and the child takes
+     the guard. A sound check must tell a runtime-spawned child from the user's new
+     session, and a session id does not.
+4. The environment does not tell them apart either, per the repository docs. The
+   README states that a nested harness inherits `CODEX_THREAD_ID`, and
+   `docs/parent-guard.md` states that child processes inherit
+   `ANTIGRAVITY_CONVERSATION_ID`. ADR 0014 point 7 states that no child marker
+   exists at spawn.
 5. A secret that only the old parent holds does not reach the new session, which is
    the case the command exists for.
 
 ## Consequences
 
-- The limit stays: the new session has no guard, and `extend` refuses its id.
+- The limit stays: the new session has no guard. `extend` refuses the new
+  session's own id and accepts the stored id from any caller, so the new session can
+  extend only by passing the stored id, and that gives no guard coverage.
   `dispatch`, `finish`, and `abort` check `--parent-session` only when it is given,
   so the new session can still drive and end the run by omitting it.
 - The prompt rule still keeps a child away from `extend`; no check backs it beyond
