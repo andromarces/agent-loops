@@ -1046,6 +1046,56 @@ test("main serializes a non-string message under the error key like the base env
   }
 });
 
+// Usefulness: verifies a stateful toJSON is called once, so the envelope and the state file both
+// hold the first (redacted) value and a later call cannot change what was printed or persisted.
+test("main calls a message toJSON once and prints and persists the same value", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const writeSpy = spyStdoutWrite();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const origExitCode = process.exitCode;
+
+  try {
+    const promptFile = join(repo, "main-prompt.txt");
+    await writeFile(promptFile, "work it", "utf8");
+    let calls = 0;
+    const fatal = Object.assign(new Error("fatal"), { name: "MutationError" });
+    Object.defineProperty(fatal, "message", {
+      value: { toJSON: () => (++calls === 1 ? "[redacted]" : "LEAKED-CONTENT") },
+    });
+    const agents = {
+      fake1: {
+        async run() {
+          throw fatal;
+        },
+      },
+      fake2: recordingAdapter([]),
+    };
+    await runRoleMain(
+      [
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        ...INIT_OVERRIDES,
+        "--prompt-file",
+        promptFile,
+      ],
+      { agents },
+    );
+    const printed = writeSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(JSON.parse(printed)).toMatchObject({ status: "error", error: "[redacted]" });
+    expect((await readRepoState(repo)).lastResult.error).toBe("[redacted]");
+    expect(calls).toBe(1);
+  } finally {
+    writeSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
 // Usefulness: verifies a stdout that errors asynchronously (closed pipe) leaves no unhandled
 // stream error, and that a failed write keeps a cancel exit 130 rather than turning it into 1.
 test.each([

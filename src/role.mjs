@@ -737,11 +737,13 @@ function withLocalFiles(payload, localFiles) {
 }
 
 /**
- * Error text for the envelope. A string message, and a non-string message that
- * serializes under the key `error`, return unchanged, so the envelope prints
- * exactly what it printed before, including a `toJSON` that redacts by key. A
- * message that cannot serialize printed nothing before, so it returns a fixed
- * placeholder, or its digits for a BigInt, and the envelope stringifies.
+ * Error value for the envelope. A string message returns unchanged. Any other
+ * message is serialized once under the key `error`, as the envelope did before,
+ * so a `toJSON` that redacts by key keeps its output and runs exactly once. The
+ * returned plain JSON value serializes the same on every later call, so the
+ * stdout envelope and the state file hold one value. A message that cannot
+ * serialize printed nothing before, so it returns a fixed placeholder, or its
+ * digits for a BigInt, and the envelope stringifies.
  */
 function errorMessage(err) {
   const message = err?.message ?? String(err);
@@ -749,8 +751,7 @@ function errorMessage(err) {
     return message;
   }
   try {
-    JSON.stringify({ error: message });
-    return message;
+    return JSON.parse(JSON.stringify({ error: message })).error;
   } catch {
     return typeof message === "bigint" ? message.toString() : UNSERIALIZABLE_MESSAGE;
   }
