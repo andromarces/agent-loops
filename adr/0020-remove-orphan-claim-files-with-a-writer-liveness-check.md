@@ -1,4 +1,4 @@
-# 0019. Remove orphan claim files with a writer liveness check
+# 0020. Remove orphan claim files with a writer liveness check
 
 ## Status
 
@@ -32,34 +32,46 @@ running process. It also asks to check a reported PID-reuse window.
 
 ## Decision
 
-1. **Writer evidence, not age.** `createLock` already writes a temp file
-   `<file>.<pid>.<n>.tmp` before it creates the lock or claim, and removes it after
-   the content is written. Between creation and write, that temp file is the only
-   trace of the owner. `hasLiveWriter(file)` is true when a temp for `file` has a
-   live pid. An unparseable file with a live writer is never taken over, at any age.
-   The grace window and `STALE_LOCK_GRACE_MS` are removed.
-2. **Stale means identified dead.** A file is stale when its parsed pid is dead, or
-   when it is unparseable, readable, and has no live writer. A file that cannot be
-   read, or that is missing, is kept and the contender exits as busy.
-3. **Check under the claim.** Under the guard claim, `stillStale` re-reads the file.
+1. **Writer marker, then age.** `createLock` already writes a temp file before it
+   creates the lock or claim, and removes it after the content is written. Between
+   creation and write, that temp file is the only trace of the owner. It is the
+   marker `<file>.<pid>.<token>.<n>.tmp`. `hasLiveWriter(file)` is true when a
+   marker for `file` has a live pid. An unparseable file with a live marker is
+   never taken over, at any age.
+2. **Grace path for markerless writers.** A writer of an older version, in the
+   exclusive-create fallback, can leave no marker (versions before #176 wrote no
+   temp). Its unwritten file cannot be told from a dead one except by age, so an
+   unparseable file with no live marker stays protected until it is older than
+   `STALE_LOCK_GRACE_MS` (60 s). This is the grace window of the earlier design,
+   kept only for the writer that leaves no marker. The pre-guard decision and the
+   scan use `ownerless`; the check under the guard uses it too.
+3. **Stale means identified dead.** A file is stale when its parsed pid is dead, or
+   when it is unparseable, readable, and `ownerless`. A file that cannot be read, or
+   that is missing, is kept and the contender exits as busy.
+4. **Check under the claim.** Under the guard claim, `stillStale` re-reads the file.
    A parsed owner's content is unique (nonce), so equal content is the same file. An
    unparseable file has no unique content, so the check also compares the file
    identity (inode, size, mtime, ctime, as nanosecond values) before and after the
-   writer check. A later file at the same path therefore never matches.
-4. **Scan.** After a successful root lock acquisition, `pruneOrphanClaims` lists the
+   reads. A later file at the same path therefore never matches.
+5. **Unique marker names.** The marker name carries a token that is unique to the
+   process, and a counter that is unique to the call. A later process that reuses a
+   pid differs by token, so its marker never has the path of an earlier process's
+   marker. A cleanup (the creator's own removal, or the prune of a dead pid's temp)
+   can only remove a marker that it created or that names a dead process. The
+   `<pid>.<n>.tmp` name of an older version stays recognized for liveness and prune.
+6. **Scan.** After a successful root lock acquisition, `pruneOrphanClaims` lists the
    claims beside the lock and removes each orphan through the existing claimed
    removal. The guard is keyed by the claim's name and content, the same key a
    takeover contender uses for that claim, so exactly one process acts on it. A
    claim that is live, busy, or unreadable is kept, and any failure is swallowed:
    the scan never fails the lock holder. Claim temp files are pruned like lock temp
    files.
-5. **PID reuse.** The OS can give the pid of a dead owner to an unrelated process.
+7. **PID reuse.** The OS can give the pid of a dead owner to an unrelated process.
    `pidAlive` then reports a live owner, so the lock or claim stays until that
    process exits. This is fail-closed: reuse never reports a running owner as dead,
    so it cannot remove a running process's lock or claim, and a replacement owner
    never matches stale content because every acquisition writes a nonce (#363). The
-   window after the liveness query has no recorded reproduction and no unsafe
-   outcome. Closing the stuck case needs the owner's start time, a platform-specific
+   marker race that reuse could cause with a counter-only name is closed by decision 5. Closing the stuck case needs the owner's start time, a platform-specific
    process-table query. It is recorded as a `known-limit` in `src/lib/runstate.mjs`.
 
 ## Consequences
@@ -67,10 +79,13 @@ running process. It also asks to check a reported PID-reuse window.
 - Orphaned claims, including a claim whose creator crashed inside the
   exclusive-create window, are removed at the next lock acquisition, not only when
   a contender meets the same stale lock.
-- A foreign or corrupt unparseable lock with no running writer is now stale at once,
-  where it waited 60 s. A lock that cannot be read stays busy until it can be read.
+- A foreign or corrupt unparseable lock with no live marker is still stale after the
+  60 s grace window. A lock that cannot be read stays busy until it can be read.
 - The guarantees hold only when every contender runs this version or later. An older
   contender takes an unwritten file over after its grace window.
+- A running writer of an older version that leaves no marker keeps its unwritten file
+  only for the grace window. A stall past it loses the file. This is a known limit
+  that upgrading every process removes.
 - Windows and POSIX use the same code: `process.kill(pid, 0)` and file names are the
   only OS contracts. No native dependency is added.
 - A writer whose temp file an outside process deleted reads as dead. Only this module

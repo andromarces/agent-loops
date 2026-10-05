@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -58,19 +58,27 @@ function afterLockRead(lockFile, interleave) {
   });
 }
 
+/** Ages a file far past the grace window, so an unparseable lock counts as stale. */
+async function ageFile(file) {
+  await utimes(file, new Date(0), new Date(0));
+}
+
 /**
  * Learns, by watching the hard links a takeover attempts, the path of the first
  * claim it takes that is not already `planted` (a list of `[path, text]`). The
  * claim name is keyed by the stale content, so the same stale lock always yields
  * the same path. Leaves the directory empty.
  */
-async function learnNextClaim(lockFile, stale, planted) {
+async function learnNextClaim(lockFile, stale, planted, { aged = false } = {}) {
   const attempted = [];
   vi.mocked(link).mockImplementation(async (from, to) => {
     attempted.push(to);
     return await realFs.link(from, to);
   });
   await writeFile(lockFile, stale, "utf8");
+  if (aged) {
+    await ageFile(lockFile);
+  }
   for (const [path, text] of planted) {
     await writeFile(path, text, "utf8");
   }
@@ -296,8 +304,9 @@ test("a new owner with the stale owner's pid and start time survives the takeove
 test("stale locks with distinct content do not share a claim", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
-  const nullClaim = await learnNextClaim(lockFile, "null", []);
+  const nullClaim = await learnNextClaim(lockFile, "null", [], { aged: true });
   await writeFile(lockFile, "unreadable", "utf8");
+  await ageFile(lockFile);
   await writeFile(nullClaim, LIVE_OWNER, "utf8");
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
