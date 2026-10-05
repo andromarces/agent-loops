@@ -1,5 +1,6 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
+import { readableErrorMessage } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
@@ -173,7 +174,9 @@ export async function runChild(options) {
       }
       throw err;
     }
-    let errorMessage = err?.message ?? String(err);
+    // The result carries text, so a non-string message is its JSON form.
+    const message = readableErrorMessage(err);
+    let errorMessage = typeof message === "string" ? message : JSON.stringify(message);
     if (err?.timedOut) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
     }
