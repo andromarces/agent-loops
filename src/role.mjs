@@ -52,6 +52,8 @@ const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
 class RoleError extends Error {}
 
+const UNSERIALIZABLE_MESSAGE = "[unserializable message]";
+
 const ROLE_USAGE = [
   "Usage: agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]",
   "",
@@ -734,10 +736,26 @@ function withLocalFiles(payload, localFiles) {
   return localFiles ? { ...payload, localFiles } : payload;
 }
 
-/** Error text as a string, so the envelope stringifies for any thrown value. */
+/**
+ * Error text as a string, so the envelope stringifies for any thrown value. A
+ * non-string message is serialized the way the envelope serialized it before:
+ * through `JSON.stringify`, so a `toJSON` that redacts keeps its output and
+ * `toString` is never read. A value that cannot serialize printed nothing
+ * before, so it prints a fixed placeholder.
+ */
 function errorMessage(err) {
   const message = err?.message ?? String(err);
-  return typeof message === "string" ? message : String(message);
+  if (typeof message === "string") {
+    return message;
+  }
+  if (typeof message === "bigint") {
+    return message.toString();
+  }
+  try {
+    return JSON.stringify(message) ?? UNSERIALIZABLE_MESSAGE;
+  } catch {
+    return UNSERIALIZABLE_MESSAGE;
+  }
 }
 
 /** One error envelope for a thrown value. A cancel keeps exit 130. */
@@ -1235,7 +1253,7 @@ export async function executeRoleCommand(args, deps = {}) {
 /**
  * Writes the envelope as one stdout line and sets the exit code. A failed write
  * cannot be retried on the same stream, so it is reported on stderr and turns a
- * zero exit code into 1. `console.log` swallows a write error, so the write
+ * zero exit code into 1; any other exit code, such as 130, is kept. `console.log` swallows a write error, so the write
  * callback is the only place the failure shows.
  */
 async function printEnvelope(payload, exitCode) {
@@ -1246,6 +1264,10 @@ async function printEnvelope(payload, exitCode) {
     line = JSON.stringify({ status: "error", error: "Unserializable envelope" });
     exitCode ||= 1;
   }
+  // Node also emits a failed write as a stream 'error' event after the callback. With no
+  // listener that event crashes the process, so one stays until the event queue drains.
+  const consume = () => {};
+  process.stdout.on("error", consume);
   const failure = await new Promise((resolve) => {
     try {
       process.stdout.write(`${line}\n`, resolve);
@@ -1253,6 +1275,7 @@ async function printEnvelope(payload, exitCode) {
       resolve(err);
     }
   });
+  setImmediate(() => process.stdout.off("error", consume));
   process.exitCode = exitCode;
   if (failure) {
     console.error(`Failed to write the envelope to stdout: ${failure.code ?? failure.message}`);

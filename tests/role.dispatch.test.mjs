@@ -14,6 +14,7 @@ import {
   recordingAdapter,
   REPORT,
   repos,
+  settleStreamEvents,
   setup,
   spyStdoutWrite,
   stdinPrompt,
@@ -912,7 +913,7 @@ test.each([
       loop.self = loop;
       return loop;
     },
-    "[object Object]",
+    "[unserializable message]",
   ],
   [
     "an object whose toJSON throws",
@@ -921,7 +922,7 @@ test.each([
         throw new Error("toJSON failed");
       },
     }),
-    "[object Object]",
+    "[unserializable message]",
   ],
 ])("main prints one error envelope when the message is %s", async (_label, makeMessage, text) => {
   await setup();
@@ -996,6 +997,111 @@ test.each([
     );
     expect(process.exitCode).toBe(1);
     expect(errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain("EPIPE");
+  } finally {
+    writeSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
+// Usefulness: verifies a stdout that errors asynchronously (closed pipe) leaves no unhandled
+// stream error, and that a failed write keeps a cancel exit 130 rather than turning it into 1.
+test.each([
+  [true, 130],
+  [false, 1],
+])(
+  "main consumes the stdout error event and keeps a non-zero exit code (isCanceled=%s, exit %i)",
+  async (isCanceled, exitCode) => {
+    await setup();
+    const repo = await createTempRepo();
+    repos.push(repo);
+    const failure = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    const writeSpy = spyStdoutWrite({ failure, emitsErrorEvent: true });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const origExitCode = process.exitCode;
+
+    try {
+      const promptFile = join(repo, "main-prompt.txt");
+      await writeFile(promptFile, "work it", "utf8");
+      const agents = {
+        get fake1() {
+          throw {
+            get message() {
+              process.emit("SIGINT");
+              throw Object.assign(new Error("message getter failed"), { isCanceled });
+            },
+          };
+        },
+        fake2: recordingAdapter([]),
+      };
+      await runRoleMain(
+        [
+          "dispatch",
+          "--role",
+          "worker",
+          "--cwd",
+          repo,
+          ...INIT_OVERRIDES,
+          "--prompt-file",
+          promptFile,
+        ],
+        { agents },
+      );
+      await settleStreamEvents();
+      expect(writeSpy.unhandledErrorEvents).toBe(0);
+      expect(process.exitCode).toBe(exitCode);
+      expect(errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain("EPIPE");
+    } finally {
+      writeSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = origExitCode;
+    }
+  },
+);
+
+// Usefulness: verifies coercing a non-string message never prints more than the base envelope
+// did: a value that its toJSON redacts stays redacted, and its toString is never read.
+test("main keeps a non-string message redacted by its toJSON", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const writeSpy = spyStdoutWrite();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const origExitCode = process.exitCode;
+
+  try {
+    const promptFile = join(repo, "main-prompt.txt");
+    await writeFile(promptFile, "work it", "utf8");
+    const agents = {
+      get fake1() {
+        throw {
+          message: {
+            toJSON: () => "[redacted]",
+            toString: () => "SECRET-MARKER",
+          },
+        };
+      },
+      fake2: recordingAdapter([]),
+    };
+    await runRoleMain(
+      [
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        ...INIT_OVERRIDES,
+        "--prompt-file",
+        promptFile,
+      ],
+      { agents },
+    );
+    const printed = writeSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(printed).not.toContain("SECRET-MARKER");
+    expect(JSON.parse(printed)).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("[redacted]"),
+    });
   } finally {
     writeSpy.mockRestore();
     errorSpy.mockRestore();
