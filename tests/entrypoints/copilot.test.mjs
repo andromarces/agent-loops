@@ -61,10 +61,15 @@ test("Copilot launcher passes no line breaks in its arguments", () => {
 // Usefulness: verifies the launcher failure report is built from the exit code, the signal, and the
 // error code, never from the execa command line, so a secret-named environment value in the task
 // cannot reach it in any quoting, here a value with an apostrophe, a quote, and a backslash that
-// execa shell-quotes (issue #431, ADR 0017).
+// execa shell-quotes (issue #431, ADR 0017). A missing binary reports the error code ENOENT on
+// POSIX and exit code 1 on Windows, where execa runs it through cmd.exe (Windows CI, 2026-10-05).
 test.each([
-  ["a non-zero exit", "node", "exit code 3"],
-  ["a missing binary", "agent-loop-missing-copilot-binary", "ENOENT"],
+  ["a non-zero exit", "node", /\(exit code 3\)/],
+  [
+    "a missing binary",
+    "agent-loop-missing-copilot-binary",
+    process.platform === "win32" ? /\(exit code 1\)/ : /\(error code ENOENT\)/,
+  ],
 ])("Copilot launcher failure report for %s echoes no argument", async (_name, binary, expected) => {
   const synthetic = "synth'etic\"probe\\value-8f3a1c";
   process.env.SYNTH_PROBE_TOKEN = synthetic;
@@ -74,8 +79,8 @@ test.each([
   try {
     await main([`Implement it with --test-cmd "run ${synthetic}"`]).catch(reportFailure);
     const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
-    expect(report).toContain("agent-loop-copilot:");
-    expect(report).toContain(expected);
+    expect(report).toMatch(/^agent-loop-copilot: copilot failed/);
+    expect(report).toMatch(expected);
     expect(report).not.toContain("8f3a1c");
     expect(report).not.toContain("--test-cmd");
     expect(process.exitCode).toBe(1);
