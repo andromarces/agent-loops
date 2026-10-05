@@ -2,7 +2,7 @@ import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { readProp } from "../lib/error-message.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
-import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
+import { REPORT_LABEL_NAMES, hasClosingBlockAttempt } from "../lib/report.mjs";
 import {
   asSessionId,
   keepFailedSessionId,
@@ -135,13 +135,18 @@ export async function runOpenCode(state, prompt, options = {}) {
  * part, including one that opens the reviewer's `Verdict:` line, keeps the text before it, so a
  * mid-line `Verdict:` never becomes a verdict the model did not write on its own line.
  * A different assistant message also starts its own line, so a late message cannot join the last
- * line of the closing block (issues #458 and #467). Parts are first grouped into messages: a
- * boundary needs a valid, non-empty string `part.messageID` on both the previous and the current
- * part, and the ids must differ. Any other part joins the current message as before. No break
- * precedes a message that holds no text. A late message that opens with a report label or a
- * `Verdict:` line breaks like any other, so the last closing block governs: parseReportBlock and
- * parseVerdict read the last labeled line, and the late label replaces the earlier value as written
- * instead of gluing onto it.
+ * line of the closing block (issue #458). Parts are first grouped into messages: a boundary needs a
+ * valid, non-empty string `part.messageID` on both the previous and the current part, and the ids
+ * must differ. Any other part joins the current message as before. No break precedes a message that
+ * holds no text.
+ * The last closing block governs, and it governs alone (issue #467). A message that holds a closing
+ * block attempt (hasClosingBlockAttempt) supersedes every earlier message that holds one, so the
+ * join drops those earlier messages. A late message that opens with a report label or `Verdict:`
+ * therefore never combines with the fields of the earlier block, and a late bare `Verdict: accept`
+ * pairs with no earlier `Checks` line. Messages without an attempt stay: narration before the block
+ * and plain prose after it. This is the Codex and Copilot selection (lastClosingMessage,
+ * src/agents/shared.mjs) plus those kept messages. The attempt test reads the whole message, because
+ * a label can span parts.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
@@ -157,7 +162,12 @@ function joinTextParts(events) {
     previousId = id;
   }
 
-  return messages.reduce((text, parts) => {
+  const lastAttempt = messages.findLastIndex((parts) => hasClosingBlockAttempt(parts.join("")));
+  const kept = messages.filter(
+    (parts, i) => i >= lastAttempt || !hasClosingBlockAttempt(parts.join("")),
+  );
+
+  return kept.reduce((text, parts) => {
     const opening = parts.join("");
     const breaks = text && opening && !text.endsWith("\n");
     return parts.reduce(joinPart, breaks ? `${text}\n` : text);
