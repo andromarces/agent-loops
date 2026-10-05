@@ -1,10 +1,13 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
-// Answers `git` from memory for the tests that switch it on (see `cleanRepoGit`
-// in runtime-helpers.mjs); every other test reaches the real `execa`.
+// Answers `git` from memory for the tests that switch it on (see `useCleanRepo`
+// and `cleanRepoGit` in runtime-helpers.mjs), so no test here starts a `git`
+// process. Snapshot behavior against a real repo is tested in
+// tests/lib/snapshot.test.mjs.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -17,10 +20,8 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { execa } from "execa";
 import { executeRoleCommand } from "../src/role.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
-import { snapshot } from "../src/lib/snapshot.mjs";
 import {
   basicDeps,
   cleanup,
@@ -33,9 +34,39 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { CLEAN_REPO_HEAD, cleanRepoGit, createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { CLEAN_REPO_HEAD, cleanRepoGit, removePath } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
+afterEach(() => {
+  gitDouble.answer = null;
+});
+
+// A directory with a `.git` directory stands in for a repo, and `git` is answered
+// from memory until the test ends, so the test starts no `git` process. `answer`
+// replaces `cleanRepoGit` where the test needs another repo state.
+async function useCleanRepo(answer = cleanRepoGit) {
+  const repo = await mkdtemp(join(tmpdir(), "role-test-clean-repo-"));
+  await mkdir(join(repo, ".git"));
+  repos.push(repo);
+  gitDouble.answer = answer;
+  return repo;
+}
+
+// A clean repo whose work tree status is `status`, in the `--porcelain=v1 -z` format.
+function gitWithStatus(status) {
+  return (command, args, options) =>
+    args[0] === "status"
+      ? { exitCode: 0, stdout: status, stderr: "" }
+      : cleanRepoGit(command, args, options);
+}
+
+// A clean repo that git refuses once its `.git` directory is gone, as `git` does
+// outside a work tree.
+function gitUnlessGitDirGone(command, args, options) {
+  return existsSync(join(options.cwd, ".git"))
+    ? cleanRepoGit(command, args, options)
+    : { exitCode: 128, stdout: "", stderr: "fatal: not a git repository" };
+}
 
 // Usefulness: verifies abort ends a run whose `--cwd` no longer exists or is no
 // longer a Git work tree. A refused dispatch leaves that run active, and the
@@ -43,10 +74,8 @@ afterEach(cleanup);
 // command that works without a usable work tree (issue #327).
 test("abort ends a run whose --cwd is missing or not a Git work tree", async () => {
   await setup();
-  const goneRepo = await createTempRepo();
-  repos.push(goneRepo);
-  const plainRepo = await createTempRepo();
-  repos.push(plainRepo);
+  const goneRepo = await useCleanRepo(gitUnlessGitDirGone);
+  const plainRepo = await useCleanRepo(gitUnlessGitDirGone);
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
 
   for (const repo of [goneRepo, plainRepo]) {
@@ -77,8 +106,7 @@ test("abort ends a run whose --cwd is missing or not a Git work tree", async () 
 // #327).
 test("abort refuses a path with no run state", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
 
   const result = await executeRoleCommand(
     withRepo(["abort", "--cwd", "<repo>", "--reason", "work tree unusable"], repo),
@@ -94,8 +122,7 @@ test("abort refuses a path with no run state", async () => {
 // second one can rewrite why it ended (issue #327).
 test("abort refuses a run that is already terminal", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   await executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", "--reason", "stop"], repo));
   expect((await readRepoState(repo)).lifecycle).toBe("aborted");
@@ -115,8 +142,7 @@ test("abort refuses a run that is already terminal", async () => {
 // succeeds with verdict: reject recorded in the summary.
 test("finish from active in review-only mode succeeds with the verdict recorded", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
 
   const init = withRepo(
     dispatchArgv(
@@ -162,8 +188,7 @@ test("finish from active in review-only mode succeeds with the verdict recorded"
 // non-zero and leaves lifecycle active.
 test("finish with an invalid summary exits non-zero and keeps lifecycle active", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
     ...basicDeps(),
@@ -187,8 +212,7 @@ test("finish with an invalid summary exits non-zero and keeps lifecycle active",
 // too — a changed init flag exits non-zero and leaves the state unchanged.
 test("finish and abort reject changed init flags", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
 
@@ -263,8 +287,7 @@ async function dispatchWorker(repo, reply) {
 // with no later reviewer turn, and keeps the run active (issue #218).
 test("--require-accept refuses a finish after a worker turn with no later review", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   const result = await finishCall(repo, ["--require-accept"]);
@@ -277,8 +300,7 @@ test("--require-accept refuses a finish after a worker turn with no later review
 // reject, and allows it after a reviewer accept with a Checks line (issue #218).
 test("--require-accept follows the latest reviewer verdict", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   await dispatchReviewer(repo, REJECT);
@@ -297,8 +319,7 @@ test("--require-accept follows the latest reviewer verdict", async () => {
 // refused until a reviewer accept covers the state (issue #310, issue #318).
 test("--require-accept refuses a finish that relies on a worker Checks line", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   await dispatchWorker(repo, WORKER_WITH_CHECKS);
@@ -318,12 +339,12 @@ test("--require-accept refuses a finish that relies on a worker Checks line", as
 // head (issue #218).
 test("--require-accept refuses a change after the accepted review", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
   await dispatchReviewer(repo, ACCEPT);
 
   await writeFile(join(repo, "after-review.txt"), "changed after the review\n");
+  gitDouble.answer = gitWithStatus("?? after-review.txt\0");
   const result = await finishCall(repo, ["--require-accept"]);
   expect(result.exitCode).toBe(1);
   expect(result.payload.error).toContain("work tree changed");
@@ -334,8 +355,7 @@ test("--require-accept refuses a change after the accepted review", async () => 
 // matching the parent prompt rule (issue #218).
 test("--require-accept refuses an accept with no Checks line", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
   await dispatchReviewer(repo, ACCEPT_NO_CHECKS);
 
@@ -348,8 +368,7 @@ test("--require-accept refuses an accept with no Checks line", async () => {
 // not exact, because a null-hash entry has no content identity (issue #218).
 test("--require-accept refuses a reviewed snapshot that is not exact", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
   await dispatchReviewer(repo, ACCEPT);
 
@@ -368,19 +387,15 @@ test("--require-accept refuses a reviewed snapshot that is not exact", async () 
 // snapshot rather than the reviewed one (issue #272).
 test("--require-accept refuses a current snapshot that is not exact", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
   await dispatchReviewer(repo, ACCEPT);
   expect((await readRepoState(repo)).lastResult.reviewed.exact).toBe(true);
 
-  // Stage a gitlink after the review: the work-tree path is a directory, so the
-  // current snapshot has an entry with no content hash and is not exact.
-  const head = (await snapshot(repo)).head;
+  // A directory in the work tree path has no content hash, so the current snapshot
+  // is not exact.
   await mkdir(join(repo, "sub"), { recursive: true });
-  await execa("git", ["update-index", "--add", "--cacheinfo", "160000", head, "sub"], {
-    cwd: repo,
-  });
+  gitDouble.answer = gitWithStatus("A  sub\0");
 
   const result = await finishCall(repo, ["--require-accept"]);
   expect(result.exitCode).toBe(1);
@@ -392,8 +407,7 @@ test("--require-accept refuses a current snapshot that is not exact", async () =
 // gate flags with a clear error (issue #218).
 test("review-only rejects the finish gates and keeps a flagless finish", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await executeRoleCommand(
     withRepo(dispatchArgv(REVIEW_ONLY_OVERRIDES, "reviewer"), repo),
     basicDeps(),
@@ -416,8 +430,7 @@ test("review-only rejects the finish gates and keeps a flagless finish", async (
 // them (issue #218).
 test("the finish gates are rejected outside finish", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   const dispatchResult = await executeRoleCommand(
@@ -439,11 +452,10 @@ test("the finish gates are rejected outside finish", async () => {
 // required check is failing (issue #218).
 test("--require-ci refuses an unknown merge state and passes a clean PR", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
   await dispatchReviewer(repo, ACCEPT);
-  const head = (await snapshot(repo)).head;
+  const head = CLEAN_REPO_HEAD;
 
   const ciGh = (mergeStateStatus) => async (args) => {
     const key = args.join(" ");
@@ -515,8 +527,7 @@ const UNRESOLVED_SUMMARY = {
 // state file, where nothing else separates the two (issue #281).
 test("finish records unresolvedCompare in the envelope and the state", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
@@ -544,8 +555,7 @@ test("finish records unresolvedCompare in the envelope and the state", async () 
 // so the new marker does not make every recorded finish look unresolved (#281).
 test("a verified finish keeps its envelope and state unchanged", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   const result = await finishCall(repo);
@@ -563,8 +573,7 @@ test("a verified finish keeps its envelope and state unchanged", async () => {
 // limit stays pinned here.
 test("a PR finish that omits unresolvedCompare reads as verified", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   const summary = {
@@ -588,8 +597,7 @@ test("a PR finish that omits unresolvedCompare reads as verified", async () => {
 // dropped as an unknown key, so a non-boolean value refuses the finish (#281).
 test("finish refuses a non-boolean unresolvedCompare", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
@@ -604,8 +612,7 @@ test("finish refuses a non-boolean unresolvedCompare", async () => {
 // CI gate, which resolves the PR head and so proves the compare (#281).
 test("finish refuses unresolvedCompare together with --require-ci", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   const result = await executeRoleCommand(
@@ -629,8 +636,7 @@ test("finish refuses unresolvedCompare together with --require-ci", async () => 
 // text origin/main returned (#302).
 test("an undeclared run keeps the marker refusal text it had before", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initWorkerRun(repo);
 
   const result = await executeRoleCommand(
@@ -711,8 +717,7 @@ function cleanPrGh(head) {
 // (#302).
 test("a run that declares a PR refuses a finish with no --require-ci gate", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initPrRun(repo, 42);
 
   const refused = await finishCall(repo, [], {
@@ -732,8 +737,7 @@ test("a run that declares a PR refuses a finish with no --require-ci gate", asyn
 // produce (#302).
 test("a run that declares a PR refuses a finish that records unresolvedCompare", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initPrRun(repo, 42);
 
   const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
@@ -750,8 +754,7 @@ test("a run that declares a PR refuses a finish that records unresolvedCompare",
 // names instead (#302).
 test("a declared PR with no gate reports the marker and the gate in one refusal", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initPrRun(repo, 42);
 
   const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
@@ -810,9 +813,7 @@ function noRequiredCheckGh(head) {
 // A directory stands in for the repo: the double answers for it, so it needs no
 // `git` setup.
 async function useDeclaredPrRun() {
-  const repo = await mkdtemp(join(tmpdir(), "role-test-clean-repo-"));
-  await mkdir(join(repo, ".git"));
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initPrRun(repo, 42);
   return { repo, head: CLEAN_REPO_HEAD };
 }
@@ -824,13 +825,6 @@ async function useAcceptedPrRun() {
 }
 
 describe("finish on a run that declares a PR", () => {
-  beforeEach(() => {
-    gitDouble.answer = cleanRepoGit;
-  });
-  afterEach(() => {
-    gitDouble.answer = null;
-  });
-
   // Usefulness: verifies a declared run finishes on a base branch with no required
   // check, and records the absence in the envelope and the state file, so a finish
   // that verified no check stays distinguishable from one that verified a check
@@ -901,8 +895,7 @@ describe("finish on a run that declares a PR", () => {
 // PR without reading GitHub, so a wrong PR never reaches the gate (#302).
 test("a run that declares a PR refuses a gate for a different PR", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initPrRun(repo, 42);
   await dispatchReviewer(repo, ACCEPT);
 
@@ -924,8 +917,7 @@ test("a run that declares a PR refuses a gate for a different PR", async () => {
 // it (issue #320 review, third round).
 test("a refused finish makes no GitHub call from the moment the finish starts", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await useCleanRepo();
   await initPrRun(repo, 42);
   await dispatchReviewer(repo, ACCEPT);
 

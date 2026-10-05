@@ -1101,18 +1101,13 @@ const FINISH = JSON.stringify({
   summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
 });
 
-// Runs `fn(repo, transcriptPath)` with a temp repo and clean exit-code and error state.
-// With `inMemoryGit`, the repo is a directory with a `.git` directory and `git` is
-// answered from memory (`cleanRepoGit`), so the test starts no `git` process.
-async function withContinueRepo(fn, { inMemoryGit = false } = {}) {
-  let repo;
-  if (inMemoryGit) {
-    repo = await mkdtemp(join(tmpdir(), "cli-test-clean-repo-"));
-    await mkdir(join(repo, ".git"));
-    gitDouble.answer = cleanRepoGit;
-  } else {
-    repo = await createTempRepo();
-  }
+// Runs `fn(repo, transcriptPath, errorSpy)` with a clean exit-code and error state. The
+// repo is a directory with a `.git` directory and `git` is answered from memory
+// (`cleanRepoGit`), so the test starts no `git` process.
+async function withContinueRepo(fn) {
+  const repo = await mkdtemp(join(tmpdir(), "cli-test-clean-repo-"));
+  await mkdir(join(repo, ".git"));
+  gitDouble.answer = cleanRepoGit;
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1252,48 +1247,45 @@ test("--continue-from requires a value and accepts the inline form", () => {
 // file keeps every earlier event, in order, and appends the new ones after them
 // (#362 review). The earlier run's outcome is kept in a boundary event.
 test("--continue-from with the same --transcript path keeps the earlier events", async () => {
-  await withContinueRepo(
-    async (repo, transcriptPath) => {
-      const work = JSON.stringify({ action: "run_worker", prompt: "w" });
-      const review = JSON.stringify({ action: "run_reviewer", prompt: "r" });
-      const seen = { codex: [], claude: [], agy: [] };
-      await main(
-        [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
-        sessionAgents([work, work], seen),
-      );
-      const earlier = JSON.parse(await readFile(transcriptPath, "utf8"));
-      expect(earlier.exitCode).toBe(2);
-      expect(earlier.events.length).toBeGreaterThan(0);
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    const review = JSON.stringify({ action: "run_reviewer", prompt: "r" });
+    const seen = { codex: [], claude: [], agy: [] };
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      sessionAgents([work, work], seen),
+    );
+    const earlier = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(earlier.exitCode).toBe(2);
+    expect(earlier.events.length).toBeGreaterThan(0);
 
-      await main(
-        [
-          ...CONTINUE_BASE,
-          "--cwd",
-          repo,
-          "--max-steps",
-          "2",
-          "--continue-from",
-          transcriptPath,
-          "--transcript",
-          transcriptPath,
-        ],
-        sessionAgents([review, FINISH], { codex: [], claude: [], agy: [] }),
-      );
+    await main(
+      [
+        ...CONTINUE_BASE,
+        "--cwd",
+        repo,
+        "--max-steps",
+        "2",
+        "--continue-from",
+        transcriptPath,
+        "--transcript",
+        transcriptPath,
+      ],
+      sessionAgents([review, FINISH], { codex: [], claude: [], agy: [] }),
+    );
 
-      const after = JSON.parse(await readFile(transcriptPath, "utf8"));
-      expect(after.events.slice(0, earlier.events.length)).toEqual(earlier.events);
-      const boundary = after.events[earlier.events.length];
-      expect(boundary).toMatchObject({
-        type: "continued",
-        earlier: { exitCode: 2, error: "Step limit reached with work remaining." },
-      });
-      expect(after.events.slice(earlier.events.length + 1).map((event) => event.type)).toContain(
-        "result",
-      );
-      expect(after.exitCode).toBe(0);
-    },
-    { inMemoryGit: true },
-  );
+    const after = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(after.events.slice(0, earlier.events.length)).toEqual(earlier.events);
+    const boundary = after.events[earlier.events.length];
+    expect(boundary).toMatchObject({
+      type: "continued",
+      earlier: { exitCode: 2, error: "Step limit reached with work remaining." },
+    });
+    expect(after.events.slice(earlier.events.length + 1).map((event) => event.type)).toContain(
+      "result",
+    );
+    expect(after.exitCode).toBe(0);
+  });
 });
 
 // Usefulness: verifies a different --transcript path holds only the new run's events.
