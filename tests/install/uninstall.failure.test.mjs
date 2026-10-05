@@ -264,3 +264,30 @@ test("a recorded path that is not a directory is reported and the record clears"
   expect(existsSync(blocked)).toBe(true);
   expect(await readText(manifestPath(home))).toBe(null);
 });
+
+// Usefulness: verifies acceptance #199 item 3 with a real regular file — the
+// file survives, is reported, and the record clears whatever code rmdir
+// returns. The mock forces ENOENT, which Windows returns for a file, so the
+// check does not depend on the ENOTDIR code that POSIX returns.
+test("a regular file at a recorded path is kept and reported on any platform", async () => {
+  const home = await makeHome();
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const blocked = deepestDir((await readManifest(home)).harnesses.claude.dirs);
+  // A first uninstall fails on the directory, which leaves a directory-only
+  // record; the directory is then replaced by a file before the retry.
+  control.failures.set(blocked, "EPERM");
+  await uninstall({ home });
+  await removePath(blocked);
+  await writeFile(blocked, "user data\n", "utf8");
+  control.failures.set(blocked, "ENOENT");
+
+  const reports = await uninstall({ home });
+
+  expect(reports.find((entry) => entry.path === blocked)).toMatchObject({
+    kind: "dir",
+    action: "skip",
+  });
+  expect(await readText(blocked)).toBe("user data\n");
+  expect(await readText(manifestPath(home))).toBe(null);
+});

@@ -4,6 +4,7 @@
 import {
   access,
   chmod,
+  lstat,
   mkdir,
   readFile,
   rename,
@@ -118,9 +119,10 @@ export async function ensureDir(dir, created) {
 
 /**
  * Removes empty directories, deepest first. Missing and non-empty entries are
- * ignored. A path that is no longer a directory (ENOTDIR) is left in place and
- * listed in `notDirs`, so a retry does not fail on it forever. Any other error
- * propagates to the caller.
+ * ignored. A path that is no longer a directory is left in place and listed in
+ * `notDirs`, so a retry does not fail on it forever. An `lstat` decides this
+ * before `rmdir`, because Windows reports ENOENT, not ENOTDIR, for a regular
+ * file. Any other error propagates to the caller.
  * @returns {Promise<{removed: string[], notDirs: string[]}>} the directories
  *   this call removed and the paths it left in place as non-directories
  */
@@ -130,7 +132,12 @@ export async function pruneEmptyDirs(dirs) {
   const notDirs = [];
   for (const dir of ordered) {
     try {
-      if (await removeDirQuiet(dir)) {
+      const entry = await lstat(dir).catch((err) =>
+        err.code === "ENOENT" ? null : Promise.reject(err),
+      );
+      if (entry && !entry.isDirectory()) {
+        notDirs.push(dir);
+      } else if (await removeDirQuiet(dir)) {
         removed.push(dir);
       }
     } catch (err) {
