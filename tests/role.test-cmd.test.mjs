@@ -286,3 +286,19 @@ test("a cancel during the command keeps the test result in the envelope and the 
   });
   expect((await readRepoState(repo)).lastResult.testRun).toMatchObject({ status: "canceled" });
 }, 20_000);
+
+// Usefulness: verifies a canceled error that cannot take the test result (frozen) still ends the
+// turn as an interrupted cancel, so attaching the result never replaces the original error.
+test("a frozen canceled error keeps the cancel exit and lifecycle after the command ran", async () => {
+  const cmd = node("console.log('ok')");
+  const { repo, agents } = await start(["--test-cmd", cmd]);
+  agents.fake2 = {
+    async run() {
+      throw Object.freeze(Object.assign(new Error("stopped"), { isCanceled: true }));
+    },
+  };
+  const turn = await reviewerTurn(repo, agents, ["--test-cmd", cmd]);
+  expect(turn.exitCode).toBe(130);
+  expect(turn.payload).toMatchObject({ role: "reviewer", status: "error", error: "stopped" });
+  expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
+});

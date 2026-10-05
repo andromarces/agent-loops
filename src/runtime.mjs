@@ -172,7 +172,10 @@ export async function runChild(options) {
       // A cancel of the command itself already carries its own result.
       testRun ??= readProp(err, "testRun") ?? null;
       if (testRun && err && typeof err === "object") {
-        err.testRun = testRun;
+        // A frozen error or a throwing setter keeps the original error and its classification.
+        try {
+          err.testRun = testRun;
+        } catch {}
       }
       throw err;
     }
