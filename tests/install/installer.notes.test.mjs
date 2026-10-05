@@ -37,3 +37,29 @@ test.each([
   expect(detail).toContain("cannot run or finds no harness ancestor");
   expect(detail).not.toContain("foreign session");
 });
+
+// Usefulness: verifies #201 — the Codex trust note names the hook file and entry
+// and states the cost of skipping trust, in a dry run and a real install alike.
+test.each([{ dryRun: true }, { dryRun: false }])(
+  "the Codex trust note names the hook and says the guard stays inactive until trusted (dryRun: $dryRun)",
+  async ({ dryRun }) => {
+    const home = await mkdtemp(join(tmpdir(), "agent-loop-notes-home-"));
+    homes.push(home);
+    const reports = await install({
+      harnesses: ["codex"],
+      home,
+      packageRoot: PACKAGE_ROOT,
+      dryRun,
+    });
+    const note = reports.find(
+      (r) => r.action === "note" && r.path === join(home, ".codex", "hooks.json"),
+    );
+    expect(note).toBeDefined();
+    expect(note.detail).toContain("~/.codex/hooks.json");
+    expect(note.detail).toContain("parent-guard.mjs");
+    expect(note.detail).toContain("Checking parent orchestration guard");
+    expect(note.detail).toContain("/hooks");
+    expect(note.detail).toMatch(/guard stays inactive/);
+    expect(note.detail).toContain("A changed hook command needs a new trust step.");
+  },
+);
