@@ -70,9 +70,13 @@ checks`, which reports no commit and could not separate that case.
    `pending`. Otherwise it is `pass`.
    The read is stricter than the gate where it can be, and each of these is
    `unresolved`: a ruleset read that settles nothing, an empty set of required
-   contexts, a failed read of the required names, a check-run or commit-status
+   contexts, a failed read of the required names (any exit other than 0, or 1 or 8
+   with a non-empty list, or the exact `no required checks reported` answer), a
+   merge state the gate refuses (BLOCKED, BEHIND, DIRTY, UNKNOWN, or a value the gate
+   does not know) when every required check passed, a check-run or commit-status
    reply that is not the paginated shape, an entry the judgment cannot read or
-   order (an id or a timestamp that is missing or not a date), a classic
+   order (an empty name or context, or an id or a timestamp that is missing or not
+   a date), a classic
    protection reply whose shape cannot be interpreted, and a ruleset or protection
    source that answers success with a body that is not JSON. A malformed reply
    never reads as a pass. The gate keeps its lenient reads of an entry, so the

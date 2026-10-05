@@ -361,9 +361,12 @@ treats the status as evidence. A status never replaces the gate.
 
 The status is `failing` when a required check failed, `pending` when a required
 check or commit status is pending or has no run or status on the commit, and
-`pass` when every required check passed. A ruleset source that cannot be read, a
-reply that cannot be parsed, and a base branch with no required check are
-unresolved.
+`pass` when every required check passed. A failure among entries that share a
+required name wins over pending. These are unresolved: a ruleset source that cannot
+be read, a reply or an entry that cannot be parsed or ordered (an empty name
+included), a protection reply that cannot be interpreted, a failed read of the
+required names, a base branch with no required check, and a pass withheld for a
+merge state the gate refuses (blocked, behind, conflicting, or unknown).
 
 A run that declares no PR reads no status, and the reviewer keeps its own read.
 The read follows `--pr`, which is the PR input both paths know at dispatch. A

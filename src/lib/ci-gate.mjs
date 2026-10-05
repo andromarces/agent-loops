@@ -428,6 +428,30 @@ function isProtectionMalformed(data) {
   );
 }
 
+// The merge-state refusals the gate makes before it reads any check: behind its
+// base, merge conflicts, and a state the gate cannot read. `UNKNOWN`, which GitHub
+// computes lazily, a missing state, and a value outside `MERGE_STATES` are all the
+// last kind. Shared with the status read so it cannot report a pass for a state the
+// gate refuses (issue #349).
+function earlyMergeRefusal(mergeState) {
+  if (mergeState === "BEHIND") {
+    return "the PR is behind its base branch";
+  }
+  if (mergeState === "DIRTY") {
+    return "the PR has merge conflicts (merge state DIRTY)";
+  }
+  // The merge state is validated before either path, so the relaxed absence path
+  // applies exactly the same merge-state condition as the per-check path. A state
+  // that is missing, null, empty, or not one GitHub documents settles nothing, and
+  // a state the gate cannot read is not a clean one, so it refuses on both paths
+  // rather than passing the absence path on a reply it never understood
+  // (issue #336 review).
+  if (!MERGE_STATES.has(mergeState)) {
+    return "GitHub reports the PR merge state as unknown (computed lazily; retry shortly)";
+  }
+  return null;
+}
+
 async function prInfo(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(
     [
@@ -463,27 +487,35 @@ async function repoSlug(gh, cwd) {
 // contributes no names. This source carries no app qualifier, so every name it
 // yields is unqualified.
 //
-// `ok` is false for a reply that is not a list of named checks and not the
-// `no required checks` answer, for example a failed call. The gate ignores it. The
-// status read refuses on it, because the list may name a required check no
-// configuration source did (issue #349).
+// `ok` is true only for a read that succeeded, whatever its stdout holds: exit 0
+// with a list of named checks, exit 1 or 8 (a failing or pending check) with a
+// non-empty list of named checks, or the exact `no required checks reported`
+// answer on exit 1 with no stdout. Any other exit, an empty list on a non-zero
+// exit, and an error text that merely contains those words are a failed read. The
+// gate ignores `ok`. The status read refuses on it, because the list may name a
+// required check no configuration source did (issue #349).
+const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' branch$/;
+
 async function ghRequiredNames(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(
     ["pr", "checks", String(pr), "--required", "--json", "name"],
     cwd,
   );
+  let parsed = null;
   try {
-    const parsed = JSON.parse(stdout);
-    if (Array.isArray(parsed)) {
-      return {
-        names: parsed.map((check) => check?.name).filter(Boolean),
-        ok: parsed.every((check) => typeof check?.name === "string" && check.name !== ""),
-      };
-    }
+    parsed = JSON.parse(stdout);
   } catch {
     // Not JSON: judged below.
   }
-  const none = stdout.trim() === "" && status === 1 && /no (?:required )?checks/i.test(stderr);
+  if (Array.isArray(parsed)) {
+    const named = parsed.every((check) => typeof check?.name === "string" && check.name !== "");
+    const succeeded = status === 0 || ((status === 1 || status === 8) && parsed.length > 0);
+    return {
+      names: parsed.map((check) => check?.name).filter(Boolean),
+      ok: named && succeeded,
+    };
+  }
+  const none = stdout.trim() === "" && status === 1 && NO_REQUIRED_CHECKS.test(stderr.trim());
   return { names: [], ok: none };
 }
 
@@ -644,6 +676,7 @@ async function checkRuns(gh, slug, sha, cwd, strict = false) {
     if (
       !isJsonObject(run) ||
       typeof run.name !== "string" ||
+      run.name === "" ||
       !CHECK_RUN_STATUSES.has(run.status) ||
       (run.status === "completed" && typeof run.conclusion !== "string") ||
       // A queued run has not started, so it may carry no start time.
@@ -675,6 +708,7 @@ async function commitStatuses(gh, slug, sha, cwd, strict = false) {
     if (
       !isJsonObject(status) ||
       typeof status.context !== "string" ||
+      status.context === "" ||
       !COMMIT_STATUS_STATES.has(status.state) ||
       !isOrderable(status, ["updated_at", "created_at"])
     ) {
@@ -820,20 +854,9 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   }
 
   const info = await prInfo(gh, pr, cwd);
-  if (info.mergeStateStatus === "BEHIND") {
-    return fail("the PR is behind its base branch");
-  }
-  if (info.mergeStateStatus === "DIRTY") {
-    return fail("the PR has merge conflicts (merge state DIRTY)");
-  }
-  // The merge state is validated before either path, so the relaxed absence path
-  // applies exactly the same merge-state condition as the per-check path. A state
-  // that is missing, null, empty, or not one GitHub documents settles nothing, and
-  // a state the gate cannot read is not a clean one, so it refuses on both paths
-  // rather than passing the absence path on a reply it never understood
-  // (issue #336 review).
-  if (!MERGE_STATES.has(info.mergeStateStatus)) {
-    return fail("GitHub reports the PR merge state as unknown (computed lazily; retry shortly)");
+  const early = earlyMergeRefusal(info.mergeStateStatus);
+  if (early) {
+    return fail(early);
   }
   if (info.headRefOid !== reviewed.head) {
     return fail("the PR head differs from the reviewed commit");
@@ -1058,6 +1081,13 @@ export async function readRequiredChecks({
       findings.filter(({ failure }) => failure && kinds.includes(failure.kind));
     const failing = ofKind("failing");
     const waiting = ofKind("pending", "missing");
+    // A pass is withheld for a merge state the gate refuses. A failing or pending
+    // status is already not a pass, so it keeps its own word.
+    const mergeRefusal =
+      earlyMergeRefusal(info.mergeStateStatus) ??
+      (info.mergeStateStatus === "BLOCKED"
+        ? "the PR merge state is blocked (a required check, review, or other required rule is unmet)"
+        : null);
     const on = `on PR head ${head}${commit === head ? "" : ` (evaluated on test merge commit ${commit})`}`;
     if (failing.length > 0) {
       return report(
@@ -1074,6 +1104,9 @@ export async function readRequiredChecks({
         `a required check is pending or has not reported ${on}: ${waiting.map(label).join(", ")}`,
         head,
       );
+    }
+    if (mergeRefusal) {
+      return unresolved(`unread: ${mergeRefusal} on PR head ${head}`, head);
     }
     return report(
       "pass",

@@ -2107,6 +2107,23 @@ test.each([
     { headRuns: [run("ci (ubuntu-latest)", "failure")], mergeRuns: BOTH_PASS },
   ],
   ["a failing required check on the head", { headRuns: [run("ci (ubuntu-latest)", "failure")] }],
+  ...[
+    "CLEAN",
+    "UNSTABLE",
+    "HAS_HOOKS",
+    "DRAFT",
+    "BLOCKED",
+    "BEHIND",
+    "DIRTY",
+    "UNKNOWN",
+    "SOMETHING_NEW",
+    "",
+    null,
+    undefined,
+  ].map((mergeStateStatus) => [
+    `passing checks with merge state ${JSON.stringify(mergeStateStatus) ?? "missing"}`,
+    { headRuns: BOTH_PASS, info: prInfo({ mergeStateStatus }) },
+  ]),
 ])(
   "the supplied status agrees with the finish gate on %s",
   async (_name, { statusPages, ...options }) => {
@@ -2118,6 +2135,70 @@ test.each([
     const read = await readOn(HEAD, fakeGh(table));
     const gate = await checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh: fakeGh(table) });
     expect(read.status === "pass").toBe(gate.ok);
+  },
+);
+
+// Usefulness: verifies an empty check-run name or an empty status context reads as
+// unresolved and never as a pass, because an entry that names nothing cannot be
+// matched to a required check and must not be skipped (issue #349).
+test.each([
+  ["an empty check-run name", "check-runs", [{ check_runs: [...BOTH_PASS, run("", "success")] }]],
+  ["an empty status context", "status --paginate", [{ statuses: [commitStatus("", "success")] }]],
+])("reads an unresolved status for %s", async (_name, endpoint, body) => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match.includes(endpoint) ? [match, body] : [match, value],
+    ),
+  );
+  expect((await readOn(HEAD, gh)).status).toBe("unresolved");
+});
+
+// Usefulness: verifies a required-name read that did not succeed reads as
+// unresolved whatever its stdout holds, while the documented exit 1 and exit 8
+// answers that carry a list still read (issue #349).
+const NAMES = '[{"name":"ci (ubuntu-latest)"}]';
+const NO_CHECKS = "no required checks reported on the 'main' branch";
+test.each([
+  ["exit 2 with a JSON list", { status: 2, stdout: NAMES, stderr: "" }, "unresolved"],
+  ["exit 1 with an empty JSON list", { status: 1, stdout: "[]", stderr: "" }, "unresolved"],
+  ["exit 4 with the no-checks text", { status: 4, stdout: "", stderr: NO_CHECKS }, "unresolved"],
+  [
+    "exit 1 with an error that quotes the no-checks text",
+    { status: 1, stdout: "", stderr: `gh: HTTP 502: ${NO_CHECKS} (retry)` },
+    "unresolved",
+  ],
+  ["exit 1 with a list", { status: 1, stdout: NAMES, stderr: "" }, "pass"],
+  ["exit 8 with a list", { status: 8, stdout: NAMES, stderr: "" }, "pass"],
+  [
+    "exit 1 with the exact no-checks answer",
+    { status: 1, stdout: "", stderr: `${NO_CHECKS}\n` },
+    "pass",
+  ],
+])("reads the required names from %s", async (_name, reply, expected) => {
+  const table = fakeGh(routes({ headRuns: BOTH_PASS }));
+  const gh = async (args, ...rest) =>
+    args.join(" ") === "pr checks 42 --required --json name" ? reply : table(args, ...rest);
+  expect((await readOn(HEAD, gh)).status).toBe(expected);
+});
+
+// Usefulness: verifies a merge state the finish gate refuses withholds the pass, so
+// the status never reports a pass for a state the gate refuses, while a failing
+// check keeps its own word (issue #349).
+test.each(["BLOCKED", "BEHIND", "DIRTY", "UNKNOWN", "SOMETHING_NEW"])(
+  "reads a non-pass status for merge state %s",
+  async (mergeStateStatus) => {
+    const info = prInfo({ mergeStateStatus });
+    const read = await readOn(HEAD, statusReadGh({ headRuns: BOTH_PASS, info }));
+    expect(read.status).toBe("unresolved");
+    expect(read.summary).toContain(HEAD);
+    const failing = await readOn(
+      HEAD,
+      statusReadGh({
+        headRuns: [run("ci (ubuntu-latest)", "failure"), run("ci (windows-latest)", "success")],
+        info,
+      }),
+    );
+    expect(failing.status).toBe("failing");
   },
 );
 

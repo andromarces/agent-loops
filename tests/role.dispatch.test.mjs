@@ -1286,7 +1286,7 @@ test("a declared PR supplies the runtime-read required-check status to the revie
   const gh = async (args) => {
     const key = args.join(" ");
     if (key.startsWith("pr view 42")) {
-      return json({ headRefOid: localHead, baseRefName: "main" });
+      return json({ headRefOid: localHead, baseRefName: "main", mergeStateStatus: "CLEAN" });
     }
     if (key.startsWith("repo view")) {
       return { status: 0, stdout: "owner/repo", stderr: "" };
@@ -1322,7 +1322,8 @@ test("a declared PR supplies the runtime-read required-check status to the revie
     if (key.includes("/status")) {
       return json(key.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
     }
-    return { status: 1, stdout: "[]", stderr: "" };
+    // `gh pr checks` names no check beyond the ruleset.
+    return { status: 0, stdout: "[]", stderr: "" };
   };
   const turn = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
     agents,
