@@ -661,8 +661,9 @@ async function runInstall({
           "`metadata.opencode/autoinvoke: false`, so OpenCode drops it from the " +
           "model's skill list and the OpenCode plugin command owns /agent-loop. " +
           "The skill also runs the installed CLI by absolute path with " +
-          "`harness-check codex` and refuses to start from a Copilot or OpenCode " +
-          "session.",
+          "`harness-check codex`. It starts only when the nearest harness above the " +
+          "shell is Codex CLI. It stops for any other harness, and when the check " +
+          "cannot run or finds no harness ancestor.",
       });
     }
   }
@@ -677,8 +678,10 @@ async function runInstall({
         "OpenCode also discovers ~/.claude/skills, so it lists the Claude skill " +
         "to the model. The skill sets `metadata.opencode/autoinvoke: false`, so " +
         "OpenCode drops it from the model's skill list and the OpenCode plugin " +
-        "command owns /agent-loop. The skill also runs the installed CLI with " +
-        "`harness-check claude` and refuses to start from a foreign session.",
+        "command owns /agent-loop. The skill also runs the installed CLI by absolute " +
+        "path with `harness-check claude`. It starts only when the nearest harness " +
+        "above the shell is Claude Code. It stops for any other harness, and when " +
+        "the check cannot run or finds no harness ancestor.",
     });
   }
 
