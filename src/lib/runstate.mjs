@@ -280,7 +280,15 @@ function claimFileFor(rootLockFile, file, staleText) {
 // finds a live claim and exits as busy; a file that reads differently or cannot
 // be read is kept, and the caller's retry reports it as busy.
 // known-limit: a claim left by a crashed process stays until a contender hits
-// its stale file, and a chain of more than two crashed claims fails closed
+// its stale file. Decision (#377): no removal outside a takeover. A scan on lock
+// acquisition needs a guard that excludes every takeover contender, and the only
+// guard is another claim file. A parsed claim whose pid is alive never expires.
+// A claim file that is created but not yet written (the exclusive-create
+// fallback) or cannot be parsed reads as unparseable, and once it is older than
+// STALE_LOCK_GRACE_MS it is indistinguishable from a dead one. A guard in that
+// state can be taken from a running process, and two processes act on one
+// claim. A safe scan needs new lock machinery (a heartbeat or an OS
+// advisory lock) that this module avoids. A chain of more than two crashed claims fails closed
 // (MAX_CLAIM_DEPTH). A lock written without a nonce by an older version is
 // matched by content alone, so an older-version owner with the same pid and
 // start time in the same millisecond would be taken for it.
