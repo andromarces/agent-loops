@@ -122,6 +122,18 @@ test("first worker turn states that the work tree belongs to the parent", () => 
   );
 });
 
+// Usefulness: verifies the first worker turn forbids a background watcher and
+// requires the closing block for the whole turn as the last message after a late
+// event, so the one message the runtime parses never describes only the event
+// (issue #433).
+test("first worker turn keeps the closing block as the last message", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain("Start no background watcher, Monitor, or poller.");
+  expect(prompt).toContain(
+    "If a late event arrives after the closing block, end again with the closing block for the whole turn.",
+  );
+});
+
 // Usefulness: verifies later worker turns stay raw; the session already holds the instructions.
 test("later worker turns pass the prompt through unchanged", () => {
   expect(workerPrompt("next step", false)).toBe("next step");
