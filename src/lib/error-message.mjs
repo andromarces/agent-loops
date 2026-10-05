@@ -34,3 +34,12 @@ export function readableErrorMessage(err) {
     return UNREADABLE_MESSAGE;
   }
 }
+
+/** Reads `err[key]`, and returns `undefined` when the read throws, so a hostile getter never escapes an error path. */
+export function readProp(err, key) {
+  try {
+    return err?.[key];
+  } catch {
+    return undefined;
+  }
+}
