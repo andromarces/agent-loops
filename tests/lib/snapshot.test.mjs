@@ -297,6 +297,30 @@ test("reviewedState treats a deletion as exact and any other null hash as inexac
   expect(submodule.exact).toBe(false);
 });
 
+// Usefulness: verifies a staged gitlink makes the snapshot inexact. Needs real
+// `git`: only `git status` decides whether a gitlink is reported at all, so an
+// in-memory answer cannot show that the status call hides submodule changes. The
+// directory has no content hash, so the review gate must refuse it (issue #218,
+// issue #272, issue #448).
+test("snapshot reports a staged gitlink as an entry with no hash, so it is inexact", async () => {
+  const repo = await createTempRepo();
+  try {
+    const before = await snapshot(repo);
+    expect(reviewedState(before).exact).toBe(true);
+
+    await mkdir(join(repo, "sub"));
+    await execa("git", ["update-index", "--add", "--cacheinfo", "160000", before.head, "sub"], {
+      cwd: repo,
+    });
+    const after = await snapshot(repo);
+
+    expect(after.workTree).toEqual([{ path: "sub", status: "A ", hash: null }]);
+    expect(reviewedState(after).exact).toBe(false);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies the digest separates two different uncommitted states at
 // the same head and repeats for the same state (issue #217).
 test("reviewedState digest separates different states and repeats for the same state", () => {
