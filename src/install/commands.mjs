@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { readArgValue, readInlineValue, splitInlineFlag } from "../lib/args.mjs";
 import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.mjs";
 import { nearestHarness } from "../lib/process-ancestry.mjs";
-import { HARNESS_META, HARNESS_ORDER, isHarness } from "./harnesses.mjs";
+import { HARNESS_META, HARNESS_ORDER, harnessForCommand, isHarness } from "../lib/harnesses.mjs";
 import { detectHarnesses, install, stablePackageRoot, uninstall } from "./installer.mjs";
 import { readManifest, resolveHome } from "./manifest.mjs";
 
@@ -239,8 +239,6 @@ export async function runUninstallCommand(argv) {
   printReports(reports, options.dryRun);
 }
 
-const HARNESS_ALIASES = new Map([["agy", "antigravity"]]);
-
 /**
  * Exit code for a harness mismatch: the named harness is not the nearest
  * ancestor, so another harness owns the shell. Exit 0 means the names match;
@@ -258,7 +256,7 @@ export async function runHarnessCheckCommand(argv, { lookup = nearestHarness } =
     process.exitCode = 1;
     return;
   }
-  const harness = HARNESS_ALIASES.get(requested) ?? requested;
+  const harness = harnessForCommand(requested) ?? requested;
   if (!isHarness(harness)) {
     logError(`Unknown harness: ${requested}`);
     process.exitCode = 1;
