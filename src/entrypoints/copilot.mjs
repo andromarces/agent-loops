@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { isEntryPoint } from "../lib/entrypoint.mjs";
+import { redactedText } from "../lib/error-message.mjs";
 
 // Resolve the shipped instructions relative to this file, so the launcher works
 // from any directory, not only from a clone of this repository. The file lives
@@ -53,10 +54,28 @@ export async function main(argv = process.argv.slice(2)) {
   await execa(invocation.command, invocation.args, { stdio: "inherit" });
 }
 
+/**
+ * Prints the failure report. An execa error carries the whole command line, with the task
+ * arguments and their shell quoting, in `message` and `shortMessage`, so the report is built from
+ * the exit code, the signal, and the error code only. Any other error prints its own message. The
+ * text goes through the shared redaction either way (ADR 0017).
+ */
+export function reportFailure(error) {
+  let message;
+  if (typeof error?.shortMessage === "string") {
+    const causes = [
+      error.exitCode === undefined ? null : `exit code ${error.exitCode}`,
+      error.signal ? `signal ${error.signal}` : null,
+      error.code ? `error code ${error.code}` : null,
+    ].filter(Boolean);
+    message = `copilot failed${causes.length > 0 ? ` (${causes.join(", ")})` : ""}`;
+  } else {
+    message = String(redactedText(error?.message ?? error)).split("\n", 1)[0];
+  }
+  console.error(`agent-loop-copilot: ${redactedText(message)}`);
+  process.exitCode = 1;
+}
+
 if (isEntryPoint(import.meta.filename)) {
-  main().catch((error) => {
-    const message = String(error?.shortMessage ?? error?.message ?? error).split("\n", 1)[0];
-    console.error(`agent-loop-copilot: ${message}`);
-    process.exitCode = 1;
-  });
+  main().catch(reportFailure);
 }

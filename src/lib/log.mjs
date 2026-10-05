@@ -3,7 +3,10 @@
 // info and debug go to stdout, warn and error to stderr; debug is shown only when
 // the --verbose gate is on. Every line is length-bounded so untrusted content
 // (for example a model echo in a validation error) cannot flood a line; logInfoFull
-// prints a trusted, user-facing note in full instead.
+// prints a trusted, user-facing note in full instead. Every line has secret-named environment
+// values redacted first (ADR 0017), so a log line never echoes a secret that an error text held.
+import { redactEnvSecrets } from "./redact.mjs";
+
 const MAX_LENGTH = 300;
 
 let verbose = false;
@@ -23,6 +26,7 @@ export function setLogsToStderr(value) {
 }
 
 function truncate(message) {
+  message = redactEnvSecrets(message);
   return message.length > MAX_LENGTH ? `${message.slice(0, MAX_LENGTH)}...` : message;
 }
 
@@ -47,7 +51,7 @@ export function logInfo(message) {
  * apply.
  */
 export function logInfoFull(message) {
-  writeInfo(message);
+  writeInfo(redactEnvSecrets(message));
 }
 
 export function logWarn(message) {

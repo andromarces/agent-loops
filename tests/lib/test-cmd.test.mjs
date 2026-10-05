@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, test } from "vitest";
-import { TAIL_CHARS, redactEnvSecrets, runTestCmd } from "../../src/lib/test-cmd.mjs";
+import { redactEnvSecrets } from "../../src/lib/redact.mjs";
+import { TAIL_CHARS, runTestCmd } from "../../src/lib/test-cmd.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
 
 const dirs = [];
@@ -307,3 +308,30 @@ test("an abort signal cancels the command", async () => {
   controller.abort();
   await expect(pending).rejects.toMatchObject({ isCanceled: true });
 }, 20_000);
+
+// Usefulness: verifies the secret name test ignores case, so a Windows variable that the OS reports
+// as `Github_Token` is redacted like `GITHUB_TOKEN` (issue #431, ADR 0017).
+test("a secret-named value is redacted whatever the case of the variable name", () => {
+  expect(redactEnvSecrets("x synthetic-value-9a8b y", { My_Token: "synthetic-value-9a8b" })).toBe(
+    "x [redacted:My_Token] y",
+  );
+});
+
+// Usefulness: verifies the trade-off of ADR 0017: a secret-named value that is also a common word
+// is still redacted, and the marker names the variable, so a reader knows what the text masked.
+test("a common-word secret-named value stays redacted and the marker names the variable", () => {
+  const out = redactEnvSecrets("connect failed in production", { APP_AUTH_MODE: "production" });
+  expect(out).toBe("connect failed in [redacted:APP_AUTH_MODE]");
+});
+
+// Usefulness: verifies a value with a quote and a backslash is redacted in its JSON-escaped form too,
+// because a serialized error object holds the escaped text and a decoder recovers the value from it
+// (issue #431, ADR 0017).
+test("a value with a quote and a backslash is redacted in its JSON-escaped form", () => {
+  const value = 'synthetic"probe\\value-8f3a1c';
+  const env = { SYNTH_PROBE_TOKEN: value };
+  const escaped = JSON.stringify(value).slice(1, -1);
+  expect(redactEnvSecrets(`raw ${value} json ${escaped}`, env)).toBe(
+    "raw [redacted:SYNTH_PROBE_TOKEN] json [redacted:SYNTH_PROBE_TOKEN]",
+  );
+});
