@@ -124,12 +124,11 @@ test("a claim that a running process created but has not written is never taken 
   expect(await readdir(dir)).toEqual([]);
 });
 
-// Usefulness: verifies PID reuse cannot delete a live writer's marker. A new
-// process that reuses a pid starts its temp counter at zero, so a counter-only
-// name would collide with the marker of the earlier process; the cleanup of one
-// would then remove the other's marker, and the unwritten file of the live
-// writer would read as ownerless (review of #488). Two fresh module instances in
-// one process stand for two processes with the same pid.
+// Usefulness: verifies only that two processes with the same pid and a fresh
+// counter write their markers to different paths: one's own cleanup leaves the
+// other's marker in place. It does not cover a cleanup that deletes by pid
+// liveness; the older-version marker case is in runstate.test.mjs. Two fresh
+// module instances in one process stand for two processes with the same pid.
 test("a process that reuses a pid never removes another process's marker", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");

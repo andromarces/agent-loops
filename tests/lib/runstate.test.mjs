@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import {
   readState,
   readStatesForSession,
@@ -243,19 +243,50 @@ test("withStateLock keeps the claim file of a live process", async () => {
   expect(await readFile(join(dir, CLAIM_NAME), "utf8")).toBe(claim);
 });
 
-// Usefulness: verifies a lock temp file left by a crashed process (dead pid) is
-// pruned on the next acquisition, while a live contender's temp is preserved
-// (#178). Nothing else scans the lock directory, so this is the only cleanup.
+// Usefulness: verifies a marker left by a crashed process (dead pid, per-process
+// token in its name) is pruned on the next acquisition, while a live contender's
+// marker is preserved (#178). Nothing else scans the lock directory, so this is
+// the only cleanup.
 test("withStateLock prunes a dead owner's temp file and keeps a live one", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
-  const orphan = `state.lock.${await deadPid()}.0.tmp`;
-  const live = `state.lock.${process.pid}.900001.tmp`;
+  const orphan = `state.lock.${await deadPid()}.${MARKER_TOKEN}.0.tmp`;
+  const live = `state.lock.${process.pid}.${MARKER_TOKEN}.900001.tmp`;
   await writeFile(join(dir, orphan), "{}", "utf8");
   await writeFile(join(dir, live), "{}", "utf8");
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
   expect(await readdir(dir)).toEqual([live]);
+});
+
+// Usefulness: verifies the prune never deletes a marker that has no token in its
+// name (`<pid>.<n>.tmp`, written by an older version). That name is shared by every
+// process that reuses the pid, so a pid query cannot prove the file orphaned:
+// the query reads dead, the pid is reused and the new process writes its marker
+// at the same path, and the delete would remove a live writer's marker (review of
+// #488). The file holds the reusing process's marker, and every pid query reads
+// dead for that pid, which is the state the delete would act on.
+test("withStateLock never deletes a marker of an older version by pid liveness", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const pid = await deadPid();
+  const marker = join(dir, `state.lock.${pid}.0.tmp`);
+  await writeFile(marker, "reused", "utf8");
+  const realKill = process.kill.bind(process);
+  const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+    if (target === pid) {
+      throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+    }
+    return realKill(target, signal);
+  });
+
+  try {
+    await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  } finally {
+    kill.mockRestore();
+  }
+
+  expect(await readFile(marker, "utf8")).toBe("reused");
 });
 
 // Usefulness: verifies `--cwd` variants that differ only in the Windows drive

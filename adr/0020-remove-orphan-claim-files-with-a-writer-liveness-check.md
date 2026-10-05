@@ -56,9 +56,12 @@ running process. It also asks to check a reported PID-reuse window.
 5. **Unique marker names.** The marker name carries a token that is unique to the
    process, and a counter that is unique to the call. A later process that reuses a
    pid differs by token, so its marker never has the path of an earlier process's
-   marker. A cleanup (the creator's own removal, or the prune of a dead pid's temp)
-   can only remove a marker that it created or that names a dead process. The
-   `<pid>.<n>.tmp` name of an older version stays recognized for liveness and prune.
+   marker. The prune of a dead pid's temp files therefore removes only a marker
+   with a token: once that process is dead, no other process can write that path.
+   The `<pid>.<n>.tmp` name of an older version has no token and is shared by
+   every process that reuses the pid, so a pid query cannot prove it orphaned.
+   It counts as a marker for liveness and is never removed by this code. An older
+   version that crashes leaves one such file, and it stays on disk.
 6. **Scan.** After a successful root lock acquisition, `pruneOrphanClaims` lists the
    claims beside the lock and removes each orphan through the existing claimed
    removal. The guard is keyed by the claim's name and content, the same key a
@@ -71,16 +74,25 @@ running process. It also asks to check a reported PID-reuse window.
    process exits. This is fail-closed: reuse never reports a running owner as dead,
    so it cannot remove a running process's lock or claim, and a replacement owner
    never matches stale content because every acquisition writes a nonce (#363). The
-   marker race that reuse could cause with a counter-only name is closed by decision 5. Closing the stuck case needs the owner's start time, a platform-specific
-   process-table query. It is recorded as a `known-limit` in `src/lib/runstate.mjs`.
+   marker race that reuse could cause is closed for tokened markers by decision 5,
+   and an older version's marker is never removed. Closing the stuck case needs the
+   owner's start time, a platform-specific process-table query. It is recorded as a
+   `known-limit` in `src/lib/runstate.mjs`.
 
 ## Consequences
 
-- Orphaned claims, including a claim whose creator crashed inside the
-  exclusive-create window, are removed at the next lock acquisition, not only when
-  a contender meets the same stale lock.
-- A foreign or corrupt unparseable lock with no live marker is still stale after the
-  60 s grace window. A lock that cannot be read stays busy until it can be read.
+- A lock acquisition removes an orphaned claim, or a contender that meets its stale
+  file does. When, by kind of orphan:
+  - A parsed claim whose pid is dead: at the next acquisition.
+  - An unparseable claim with no live marker (its writer crashed inside the
+    exclusive-create window, or an older version wrote it): at the first
+    acquisition after the file is older than the 60 s grace window. A fresh one
+    stays until then.
+  - An unparseable claim with a live marker, and a claim whose pid is alive:
+    never, while that holds. A reused pid keeps one until that process exits.
+  - A claim that cannot be read: never, until it can be read.
+- A foreign or corrupt unparseable lock with no live marker is stale after the 60 s
+  grace window. A lock that cannot be read stays busy until it can be read.
 - The guarantees hold only when every contender runs this version or later. An older
   contender takes an unwritten file over after its grace window.
 - A running writer of an older version that leaves no marker keeps its unwritten file
