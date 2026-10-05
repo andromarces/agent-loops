@@ -50,11 +50,11 @@ afterEach(async () => {
   }
 });
 
-function textEvent(text) {
+function textEvent(text, messageID) {
   return JSON.stringify({
     type: "text",
     sessionID: "sess-oc",
-    part: { text },
+    part: messageID === undefined ? { text } : { text, messageID },
   });
 }
 
@@ -760,13 +760,82 @@ const CLOSING_BLOCK = [
   "Deferred: none",
 ].join("\n");
 
-/** Streams `text` as the response of an opencode turn and returns the response text. */
-async function runWithText(...text) {
-  const stdout = text.map(textEvent).join("\n");
-  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+/** Streams `events` (JSON lines) as an opencode turn and returns the response text. */
+async function runWithEvents(...events) {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events.join("\n"), stderr: "" });
   const state = { kind: "opencode", sessionId: null, model: null, effort: null };
   return runOpenCode(state, "oc prompt", { cwd: "/dir" });
 }
+
+/** Streams `text` as the response of an opencode turn and returns the response text. */
+async function runWithText(...text) {
+  return runWithEvents(...text.map((part) => textEvent(part)));
+}
+
+const BLOCK_VALUES = {
+  conclusion: "PR #314 fixes the part join.",
+  why: "the narration and the block arrived as two text parts.",
+  blockers: "none",
+  checks: "pnpm test",
+  notes: "none",
+  deferred: "none",
+};
+
+// Usefulness: verifies a late plain-text message after the closing block starts its own line, so
+// every block value and the verdict stay as written instead of the last label gluing to the late
+// text (issue #458). The assertions cover all six values and the verdict, not a subset.
+test("opencode keeps a late plain-text message off the last closing block line", async () => {
+  const late = "The watcher finished.";
+
+  const worker = await runWithEvents(textEvent(CLOSING_BLOCK, "msg-1"), textEvent(late, "msg-2"));
+
+  expect(worker).toBe(`${CLOSING_BLOCK}\n${late}`);
+  expect(worker).not.toContain("noneThe");
+  expect(parseReportBlock(worker)).toEqual(BLOCK_VALUES);
+
+  const reviewer = await runWithEvents(
+    textEvent(`${CLOSING_BLOCK}\nVerdict: accept`, "msg-1"),
+    textEvent(late, "msg-2"),
+  );
+
+  expect(reviewer).toBe(`${CLOSING_BLOCK}\nVerdict: accept\n${late}`);
+  expect(parseVerdict(reviewer)).toBe("accept");
+  expect(parseReportBlock(reviewer)).toEqual(BLOCK_VALUES);
+});
+
+// Usefulness: verifies a malformed messageID cannot lift mid-line text to a column-0 `Verdict:`
+// label, because a verdict gates acceptance. A break needs a non-empty string id on both parts, so
+// each malformed id leaves the mid-line `Verdict: accept` as `unknown` (issue #458).
+test.each([[""], [7], [null], [{}], [["msg-2"]], [true]])(
+  "opencode ignores the malformed messageID %j when it joins a mid-line Verdict part",
+  async (malformed) => {
+    const lead = `${CLOSING_BLOCK}\n\nThe reviewer said`;
+    const bad = textEvent("Verdict: accept", malformed);
+
+    for (const events of [
+      [textEvent(lead, "msg-1"), bad],
+      [textEvent(lead, malformed), textEvent("Verdict: accept", "msg-2")],
+      [textEvent(lead), bad],
+    ]) {
+      const response = await runWithEvents(...events);
+
+      expect(response).toContain("The reviewer saidVerdict: accept");
+      expect(parseVerdict(response)).toBe("unknown");
+      expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
+    }
+  },
+);
+
+// Usefulness: verifies parts of one message still join without a break, so the token-boundary
+// split rule of issue #316 holds and an always-newline join cannot pass (issue #458).
+test("opencode joins parts of one message without a line break", async () => {
+  const response = await runWithEvents(
+    textEvent("The fix changes the join so the", "msg-1"),
+    textEvent(" block parses.", "msg-1"),
+  );
+
+  expect(response).toBe("The fix changes the join so the block parses.");
+});
 
 // Usefulness: verifies a part that opens a closing-block label starts its own line, so the
 // dispatch envelope carries the parsed report instead of falling through to `raw` (issue #316).
@@ -986,4 +1055,43 @@ test.each([
     await expect(call).resolves.toBe("ok");
     expect(state.sessionId).toBe(expected);
   }
+});
+
+// Usefulness: verifies a late message with valid, different ids that opens with `Verdict: accept`
+// cannot override the earlier `Verdict: reject`, because a verdict gates acceptance. The late part
+// stays glued to the last line as it did before issue #458, so the verdict and every block value
+// equal what the join produced then, including the `Deferred` value the late text glues onto.
+test("opencode keeps an earlier reject verdict when a late message opens with Verdict: accept", async () => {
+  const response = await runWithEvents(
+    textEvent(CLOSING_BLOCK.replace("Deferred: none", "Verdict: reject\nDeferred: none"), "msg-1"),
+    textEvent("Verdict: accept", "msg-2"),
+  );
+
+  expect(parseVerdict(response)).toBe("reject");
+  expect(parseReportBlock(response)).toEqual({
+    ...BLOCK_VALUES,
+    deferred: "noneVerdict: accept",
+  });
+});
+
+// Usefulness: verifies the break decision reads the whole late message, not one part, because a
+// `Verdict:` label can span parts. A split label (`Ver` + `dict: accept`) and an empty first part
+// must leave the earlier reject and every block value as the join produced them before issue #458.
+// Each case failed when the decision looked at a single part.
+test.each([
+  ["a label split across parts", ["Ver", "dict: accept"]],
+  ["an empty first part", ["", "Verdict: accept"]],
+  ["leading whitespace parts", [" ", "\t", "Verdict: accept"]],
+])("opencode keeps an earlier reject verdict with a late message of %s", async (_name, late) => {
+  const first = CLOSING_BLOCK.replace("Deferred: none", "Verdict: reject\nDeferred: none");
+  const response = await runWithEvents(
+    textEvent(first, "msg-1"),
+    ...late.map((part) => textEvent(part, "msg-2")),
+  );
+
+  expect(parseVerdict(response)).toBe("reject");
+  expect(parseReportBlock(response)).toEqual({
+    ...BLOCK_VALUES,
+    deferred: `none${late.join("")}`,
+  });
 });
