@@ -22,9 +22,10 @@ import { logWarn } from "./log.mjs";
 
 export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
 
-// An unparseable lock younger than this is never treated as stale: a fresh
-// unreadable lock is a contender racing a removal, a foreign file, or (on the
-// exclusive-create fallback path) a half-written owner.
+// An unparseable lock or claim with no live marker (see `hasLiveWriter`) is
+// stale only once it is older than this. A writer of an older version that runs
+// the exclusive-create fallback leaves no marker, and its file cannot be told from
+// a dead one by anything but age. A file with a live marker never expires.
 export const STALE_LOCK_GRACE_MS = 60_000;
 
 /**
@@ -168,7 +169,8 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * owner with the same pid and start time in the same millisecond is taken for
  * it. A contender that finds a live claim exits as busy. A claim
  * left by a crashed process is removed the same way, under a claim keyed by its
- * own content. Returns the result of `fn`. `label`
+ * own content, and each successful acquisition also removes the orphaned claims
+ * beside the lock (see `ownerless`). Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
  * is locked instead of the generic default; `noun` is the same resource as a
  * lowercase phrase for the stale-removal warning.
@@ -183,8 +185,12 @@ export async function withStateLock(lockFile, fn, { label = "State", noun = "sta
   }
 }
 
-// Monotonic suffix for lock temp files; keeps same-process contenders that
-// share a pid on distinct paths so one's cleanup never removes another's.
+// Suffix for lock temp files (the writer marker of `hasLiveWriter`). The token is
+// unique to this process and the counter to this call, so no two writers share a
+// marker path: same-process contenders differ by counter, and a later process
+// that reuses a pid differs by token, so a cleanup never removes a marker that it
+// did not create.
+const LOCK_TEMP_TOKEN = randomUUID().replaceAll("-", "");
 let lockTempCounter = 0;
 
 // `link` is the atomic create primitive, but FAT/exFAT and some network mounts
@@ -207,8 +213,11 @@ const LINK_UNSUPPORTED = new Set([
 // Nesting bound for dead stale-removal claims; a deeper chain fails closed.
 const MAX_CLAIM_DEPTH = 3;
 
-// Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
-const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
+// Matches the `<pid>.<token>.<counter>.tmp` suffix of a lock temp file name, with
+// the `reap.<digest>.` part of a claim's name before it. Group 1 is the pid and
+// group 2 the token. The token is absent from the `<pid>.<counter>.tmp` name that
+// an older version writes; that name counts as a marker for liveness only.
+const LOCK_TEMP_SUFFIX = /^(?:reap\.[0-9a-f]{64}\.)?(\d+)\.(?:([0-9a-f]{32})\.)?\d+\.tmp$/;
 
 async function acquireLock(
   lockFile,
@@ -219,6 +228,9 @@ async function acquireLock(
     // and the link (#178). Runs while the lock is held and never touches a live
     // contender's temp, so it cannot break a racing acquisition.
     await pruneStaleLockTemps(lockFile);
+    if (depth === 0) {
+      await pruneOrphanClaims(lockFile, label);
+    }
     return;
   }
 
@@ -230,11 +242,11 @@ async function acquireLock(
     );
   }
 
-  if (!owner && (await lockAgeMs(lockFile)) < STALE_LOCK_GRACE_MS) {
-    // Unparseable and fresh: fail closed. On a link-capable filesystem creation
-    // is atomic, so this is a removal race (lockAgeMs reads 0 on ENOENT) or a
-    // foreign file; the exclusive-create fallback can leave a half-written
-    // owner, which this refusal also covers.
+  if (!owner && (lockText === null || !(await ownerless(lockFile)))) {
+    // Fail closed when the owner cannot be identified: the file is missing
+    // (a removal race) or cannot be read, or the exclusive-create fallback has
+    // created it and its writer has not written the content yet (a live marker,
+    // or a file younger than the grace window for a writer without a marker).
     throw new Error(`${label} is locked (the lock file is not readable yet; retry shortly).`);
   }
 
@@ -260,8 +272,7 @@ async function acquireLock(
 // JSON-encoded content: distinct inputs get distinct names up to SHA-256
 // collision resistance, not by a strict injective mapping, and a claim for a
 // claim differs from a first-level claim because the guarded name differs. The
-// JSON encoding keeps an unreadable file (null) and the literal text "null"
-// apart.
+// JSON encoding keeps an empty text and the literal text "null" apart.
 function claimFileFor(rootLockFile, file, staleText) {
   const id = sha256(JSON.stringify([basename(file), staleText]));
   return `${rootLockFile}.reap.${id}`;
@@ -277,22 +288,38 @@ function claimFileFor(rootLockFile, file, staleText) {
 // and removing it cannot delete a new owner's file (#363). Nothing is renamed, and no path is bare-removed unclaimed. A loser
 // finds a live claim and exits as busy; a file that reads differently or cannot
 // be read is kept, and the caller's retry reports it as busy.
-// known-limit: a claim left by a crashed process stays until a contender hits
-// its stale file. Decision (#377): no removal outside a takeover. A scan on lock
-// acquisition needs a guard that excludes every takeover contender, and the only
-// guard is another claim file. A parsed claim whose pid is alive never expires.
-// A claim file that is created but not yet written (the exclusive-create
-// fallback) or cannot be parsed reads as unparseable, and once it is older than
-// STALE_LOCK_GRACE_MS it is indistinguishable from a dead one. A guard in that
-// state can be taken from a running process, and two processes act on one
-// claim. A safe scan needs new lock machinery (a heartbeat or an OS
-// advisory lock) that this module avoids. A chain of more than two crashed claims fails closed
-// (MAX_CLAIM_DEPTH). A lock written without a nonce by an older version is
-// matched by content alone, so an older-version owner with the same pid and
-// start time in the same millisecond would be taken for it.
+// A claim left by a crashed process is removed in two ways, both through this
+// claimed removal: a contender that meets its stale file, and the scan that each
+// lock acquisition runs (`pruneOrphanClaims`, #452). Both key the guard by the
+// claim's name and content, so exactly one process acts on a claim. A file counts
+// as dead only when its parsed pid is dead, or when it is unparseable and
+// `ownerless` finds no live marker and an age past the grace window (ADR 0020).
+// When each orphan is removed (ADR 0020), by the first lock acquisition that
+// finds it, or by a contender that meets its stale file:
+// - a parsed claim whose pid is dead: at once.
+// - an unparseable claim with no live marker: once it is older than
+//   STALE_LOCK_GRACE_MS, so a fresh one stays until it has aged.
+// - an unparseable claim with a live marker, a claim whose pid is alive, and a
+//   file that cannot be read: never, while that stays true.
+// known-limit: pidAlive reports a live process for a pid that the OS reused, so
+// a lock or claim of a dead owner stays until that process exits. Reuse never
+// reports a live owner as dead, so it cannot remove a running process's lock or
+// claim; closing it needs the owner's start time, a platform-specific
+// process-table query that this module avoids. A chain of more than two crashed
+// claims fails closed (MAX_CLAIM_DEPTH). A lock written without a nonce by an
+// older version is matched by content alone, so an older-version owner with the
+// same pid and start time in the same millisecond would be taken for it.
+// known-limit: a writer of an older version that runs the exclusive-create
+// fallback leaves no marker, so its unwritten file is kept only while it is
+// younger than STALE_LOCK_GRACE_MS. A marker-less writer that stalls past the
+// window loses the file; upgrading every agent-loop process removes the case.
+// The `<pid>.<n>.tmp` marker of an older version is honored for liveness but
+// never removed (see pruneStaleLockTemps), so one that a crashed older version
+// left stays on disk.
 // Mixed versions: a contender that runs an older version removes a stale lock
-// with a bare rm, so it can still remove a new live lock exactly as before this
-// fix. The guarantee holds only when every contender runs this version or later.
+// with a bare rm, or takes an unwritten file over after its grace window, so it
+// can still remove a new live lock exactly as before this fix. The guarantee
+// holds only when every contender runs this version or later.
 async function removeStaleFile(file, staleText, { label, depth, rootLockFile }) {
   const claimFile = claimFileFor(rootLockFile, file, staleText);
   await acquireLock(claimFile, {
@@ -310,13 +337,102 @@ async function removeStaleFile(file, staleText, { label, depth, rootLockFile }) 
   }
 }
 
-// True when the lock still holds the content read as stale. An unparseable
-// lock must also still be older than the grace window.
-async function stillStale(lockFile, staleText) {
-  if ((await readLockText(lockFile)) !== staleText) {
+// True when the file still holds the content read as stale. A parsed owner's
+// content is unique (nonce), so equal content is the same file. An unparseable
+// file has no unique content, so it is stale only while the same file (same
+// identity before and after the reads) has no owner.
+async function stillStale(file, staleText) {
+  if (parseLockOwner(staleText) !== null) {
+    return (await readLockText(file)) === staleText;
+  }
+  const before = await fileStamp(file);
+  if (before === null || !(await ownerless(file, before))) {
     return false;
   }
-  return parseLockOwner(staleText) !== null || (await lockAgeMs(lockFile)) >= STALE_LOCK_GRACE_MS;
+  return (
+    (await readLockText(file)) === staleText &&
+    (await fileStamp(file))?.identity === before.identity
+  );
+}
+
+// Identity and age of a file, or null when it is missing. The identity tells a
+// file apart from a later file at the same path, which the equal text of an
+// unparseable file cannot.
+async function fileStamp(file) {
+  try {
+    const stats = await stat(file, { bigint: true });
+    return {
+      identity: `${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`,
+      ageMs: Date.now() - Number(stats.mtimeMs),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// True when no writer can still own the unparseable `file`: no live marker, and
+// the file is older than the grace window (the writer of an older version leaves
+// no marker). `stamp` is a stamp already taken for the same read.
+async function ownerless(file, stamp) {
+  const current = stamp ?? (await fileStamp(file));
+  return current !== null && current.ageMs >= STALE_LOCK_GRACE_MS && !(await hasLiveWriter(file));
+}
+
+// True when a running process may still be writing `file`. Before the content of
+// a lock or claim exists (the exclusive-create fallback), the creator's temp
+// file `<file>.<pid>.<token>.<n>.tmp` is the only trace of its owner: createLock
+// writes it before it creates `file` and removes it after the content is written.
+// A temp with a live pid therefore marks a file that must not be taken over, at
+// any age. Pid reuse can only report a live writer, never a dead one for a live
+// process, and the token keeps a reused pid's marker on its own path.
+async function hasLiveWriter(file) {
+  const prefix = `${basename(file)}.`;
+  let entries;
+  try {
+    entries = await readdir(dirname(file));
+  } catch {
+    return true;
+  }
+  return entries.some((entry) => {
+    const match = entry.startsWith(prefix) && LOCK_TEMP_SUFFIX.exec(entry.slice(prefix.length));
+    return match && pidAlive(Number(match[1]));
+  });
+}
+
+// Matches the name of a claim file beside the lock.
+const CLAIM_SUFFIX = /^\.reap\.[0-9a-f]{64}$/;
+
+// Removes the orphaned claims beside `lockFile`: a claim whose parsed pid is dead,
+// or an unparseable one that no running writer can own. Runs while the lock is
+// held, through the same claimed removal as a takeover, so one process acts on
+// each claim. A claim that is live, busy, or unreadable is kept. Best-effort: a
+// failure leaves the claim for the next acquisition and never fails the holder.
+async function pruneOrphanClaims(lockFile, label) {
+  try {
+    const dir = dirname(lockFile);
+    const prefix = basename(lockFile);
+    for (const entry of await readdir(dir)) {
+      if (!entry.startsWith(prefix) || !CLAIM_SUFFIX.test(entry.slice(prefix.length))) {
+        continue;
+      }
+      const claimFile = join(dir, entry);
+      try {
+        const text = await readLockText(claimFile);
+        const owner = parseLockOwner(text);
+        const orphaned = owner
+          ? !pidAlive(owner.pid)
+          : text !== null && (await ownerless(claimFile));
+        if (orphaned) {
+          logWarn(`removing orphaned stale-removal claim (dead pid ${owner?.pid ?? "unknown"})`);
+          await removeStaleFile(claimFile, text, { label, depth: 0, rootLockFile: lockFile });
+        }
+      } catch {
+        // A busy guard or a failed removal leaves this claim for a later scan.
+      }
+    }
+  } catch {
+    // The lock is already held; a failed scan leaves only claim files.
+  }
 }
 
 // Create the lock and its owner content. The owner JSON goes to a private temp
@@ -334,7 +450,7 @@ async function createLock(lockFile) {
     startedAt: new Date().toISOString(),
     nonce: randomUUID(),
   });
-  const tempFile = `${lockFile}.${process.pid}.${lockTempCounter++}.tmp`;
+  const tempFile = `${lockFile}.${process.pid}.${LOCK_TEMP_TOKEN}.${lockTempCounter++}.tmp`;
   // The write is inside the guard because it creates the temp file: a write cut
   // short leaves a partial temp behind, and the prune never removes a temp owned
   // by the running process, so nothing else would clean it (#353).
@@ -375,9 +491,13 @@ async function linkLock(tempFile, lockFile, owner) {
   }
 }
 
-// Removes lock temp files whose creating pid is gone. A live contender's temp
-// is never touched, so a concurrent acquisition is unaffected; failures are
-// ignored because cleanup is best-effort and must not fail the lock holder.
+// Removes lock temp files whose creating pid is gone. Only a marker with a token
+// is removed: its path belongs to one process, so once that process is dead no
+// other process can write it. A marker without a token (the `<pid>.<n>.tmp` name
+// of an older version) is shared by every process that reuses the pid, so a pid
+// query cannot prove it orphaned and it is never removed here. A live contender's
+// temp is never touched; failures are ignored because cleanup is best-effort and
+// must not fail the lock holder.
 async function pruneStaleLockTemps(lockFile) {
   try {
     const dir = dirname(lockFile);
@@ -387,7 +507,7 @@ async function pruneStaleLockTemps(lockFile) {
         continue;
       }
       const match = LOCK_TEMP_SUFFIX.exec(entry.slice(prefix.length));
-      if (match === null) {
+      if (match === null || match[2] === undefined) {
         continue;
       }
       const pid = Number(match[1]);
@@ -428,15 +548,6 @@ function parseLockOwner(text) {
     return value;
   } catch {
     return null;
-  }
-}
-
-async function lockAgeMs(lockFile) {
-  try {
-    const stats = await stat(lockFile);
-    return Date.now() - stats.mtimeMs;
-  } catch {
-    return 0;
   }
 }
 

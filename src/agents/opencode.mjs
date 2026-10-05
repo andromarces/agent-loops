@@ -2,7 +2,7 @@ import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { readProp } from "../lib/error-message.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
-import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
+import { REPORT_LABEL_NAMES, hasClosingBlockAttempt } from "../lib/report.mjs";
 import {
   asSessionId,
   keepFailedSessionId,
@@ -14,14 +14,6 @@ import {
 // so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
 // than becoming a verdict the model never wrote on its own line (issue #316).
 const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
-
-// A message that opens like a report line, with any indentation or markdown decoration before the
-// label. A later message that opens this way keeps its pre-#458 join, so it cannot add or change
-// a verdict or a block value that the earlier closing block carried.
-const REPORT_MESSAGE = new RegExp(
-  `^[^\\p{L}]*(?:Verdict|${REPORT_LABEL_NAMES.join("|")})[*_\`]{0,2}\\s*:`,
-  "iu",
-);
 
 // Bounds for a failure message, so a long provider message cannot reach the dispatch envelope or
 // the state file (issue #326). No part of stdout or stderr is allowed into the message: a stream
@@ -139,34 +131,50 @@ export async function runOpenCode(state, prompt, options = {}) {
  * Concatenates the text parts of a turn. The stream splits one response across parts at token
  * boundaries, so a part glues to the one before it. A part that opens a report label starts its
  * own line instead, because parseReportBlock (src/lib/report.mjs) matches each label plain at
- * column 0 and otherwise reads the whole block as `raw` (issue #316). Every other part, including
- * one that opens the reviewer's `Verdict:` line, keeps the text before it, so the join adds a line
- * break only before a report label.
+ * column 0 and otherwise reads the whole block as `raw` (issue #316). Within a message, every other
+ * part, including one that opens the reviewer's `Verdict:` line, keeps the text before it, so a
+ * mid-line `Verdict:` never becomes a verdict the model did not write on its own line.
  * A different assistant message also starts its own line, so a late message cannot join the last
- * line of the closing block (issue #458). Parts are first grouped into messages: a boundary needs a
- * valid, non-empty string `part.messageID` on both the previous and the current part, and the ids
- * must differ. Any other part joins the current message as before. The break decision reads the
- * whole text of the later message, because a label can span parts. No break precedes a message
- * that opens like a report line or holds no text, so a late message cannot add or change a verdict
- * or a block value.
+ * line of the closing block (issue #458). Parts are first grouped into messages by `part.messageID`
+ * across the whole stream: a valid, non-empty string id names one message, so its parts rejoin it
+ * even when another message came between (A/B/A). Every part without a valid id forms one
+ * unidentified message of its own, so it never joins an identified message. A stream with no valid
+ * id is one message. Messages keep the order of their first part, and the parts of one message join
+ * in stream order at that position. No break precedes a message that holds no text.
+ * The last closing block governs, and it governs alone (issue #467). Each message holds its parts at
+ * stream positions, and a message holds a closing block attempt (hasClosingBlockAttempt) when its
+ * whole text does. When the position spans of two attempt-holding messages overlap, the stream order
+ * of the blocks is ambiguous, so the join throws and the turn fails closed. Otherwise the spans are
+ * disjoint, the last attempt-holding message governs, and the join drops every earlier one. A late
+ * message that opens with a report label or `Verdict:` therefore never combines with the fields of
+ * the earlier block. Messages without an attempt stay: narration before the block and plain prose
+ * after it. This is the Codex and Copilot selection (lastClosingMessage, src/agents/shared.mjs) plus
+ * those kept messages.
+ * @throws {Error} when two messages that hold a closing block attempt interleave in the stream.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
 function joinTextParts(events) {
-  const messages = [];
-  let previousId;
-  for (const { part } of events) {
-    const id = isMessageId(part.messageID) ? part.messageID : undefined;
-    if (!messages.length || (previousId !== undefined && id !== undefined && id !== previousId)) {
-      messages.push([]);
-    }
-    messages.at(-1).push(part.text);
-    previousId = id;
-  }
+  const groups = new Map();
+  events.forEach(({ part }, position) => {
+    const key = isMessageId(part.messageID) ? part.messageID : null;
+    const group = groups.get(key) ?? { first: position, parts: [] };
+    group.last = position;
+    group.parts.push(part.text);
+    groups.set(key, group);
+  });
+  const messages = [...groups.values()];
 
-  return messages.reduce((text, parts) => {
+  const attempts = messages.filter((group) => hasClosingBlockAttempt(group.parts.join("")));
+  if (attempts.some((a) => attempts.some((b) => a !== b && a.first < b.last && b.first < a.last))) {
+    throw new Error("opencode returned closing block attempts from interleaved messages.");
+  }
+  const governing = attempts.at(-1);
+  const kept = messages.filter((group) => group === governing || !attempts.includes(group));
+
+  return kept.reduce((text, { parts }) => {
     const opening = parts.join("");
-    const breaks = text && opening && !REPORT_MESSAGE.test(opening) && !text.endsWith("\n");
+    const breaks = text && opening && !text.endsWith("\n");
     return parts.reduce(joinPart, breaks ? `${text}\n` : text);
   }, "");
 }

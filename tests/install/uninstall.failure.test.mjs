@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test, vi } from "vitest";
 import { main as cliMain } from "../../src/cli.mjs";
@@ -289,5 +289,29 @@ test("a regular file at a recorded path is kept and reported on any platform", a
     action: "skip",
   });
   expect(await readText(blocked)).toBe("user data\n");
+  expect(await readText(manifestPath(home))).toBe(null);
+});
+
+// Usefulness: verifies acceptance #477 — a recorded file whose parent became a
+// regular file (ENOTDIR on POSIX, ENOENT on Windows) is reported, the regular
+// file stays, and the record clears. Other uninstall tests only cover a
+// recorded directory path.
+test("a recorded file whose parent became a regular file is reported and the record clears", async () => {
+  const home = await makeHome();
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const recorded = (await readManifest(home)).harnesses.claude.files[0].path;
+  const parent = dirname(recorded);
+  await removePath(parent);
+  await writeFile(parent, "user data\n", "utf8");
+
+  const reports = await uninstall({ home });
+
+  expect(reports.find((entry) => entry.path === recorded)).toMatchObject({
+    kind: "file",
+    action: "missing",
+  });
+  expect(reports.some((entry) => entry.action === "failed")).toBe(false);
+  expect(await readText(parent)).toBe("user data\n");
   expect(await readText(manifestPath(home))).toBe(null);
 });

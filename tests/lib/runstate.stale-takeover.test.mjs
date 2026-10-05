@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { STALE_LOCK_GRACE_MS, withStateLock } from "../../src/lib/runstate.mjs";
+import { withStateLock } from "../../src/lib/runstate.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // The stale-lock race needs a second process to act between the owner read and
@@ -58,10 +58,9 @@ function afterLockRead(lockFile, interleave) {
   });
 }
 
-/** Ages a file past the grace window, so an unparseable lock counts as stale. */
+/** Ages a file far past the grace window, so an unparseable lock counts as stale. */
 async function ageFile(file) {
-  const past = new Date(Date.now() - 5 * STALE_LOCK_GRACE_MS);
-  await utimes(file, past, past);
+  await utimes(file, new Date(0), new Date(0));
 }
 
 /**
@@ -301,7 +300,7 @@ test("a new owner with the stale owner's pid and start time survives the takeove
   }
 });
 
-// Usefulness: verifies a stale lock whose content is the text "null" and a stale lock that cannot be read are guarded by different claims, so a live claim on one never blocks the takeover of the other (#363).
+// Usefulness: verifies a stale lock whose content is the text "null" and a stale lock with other unparseable content are guarded by different claims, so a live claim on one never blocks the takeover of the other (#363).
 test("stale locks with distinct content do not share a claim", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
@@ -309,14 +308,27 @@ test("stale locks with distinct content do not share a claim", async () => {
   await writeFile(lockFile, "unreadable", "utf8");
   await ageFile(lockFile);
   await writeFile(nullClaim, LIVE_OWNER, "utf8");
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+});
+
+// Usefulness: verifies a lock that cannot be read is never taken over, because its owner cannot be identified, so the contender exits as busy and removes nothing (#452).
+test("a lock that cannot be read is not taken over", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(lockFile, "unreadable", "utf8");
   vi.mocked(readFile).mockImplementation(async (file, ...rest) => {
     if (file === lockFile) {
       throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
     }
     return await realFs.readFile(file, ...rest);
   });
+  const fn = vi.fn(async () => "ran");
 
-  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  await expect(withStateLock(lockFile, fn)).rejects.toThrow(/not readable yet/);
+
+  expect(fn).not.toHaveBeenCalled();
+  expect(await realFs.readFile(lockFile, "utf8")).toBe("unreadable");
 });
 
 // Usefulness: verifies the claim name for a given stale lock never changes across versions, so a claim that an earlier version wrote is still found and honored (#446).
