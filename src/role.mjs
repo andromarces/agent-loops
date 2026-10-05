@@ -1,9 +1,9 @@
-// `agent-loop role`: run one worker or reviewer turn, or finish/abort/extend/adopt a run,
+// `agent-loop role`: run one worker or reviewer turn, or finish/abort/extend a run,
 // through the same guards as the headless loop, driven by a lifecycle state
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
 // envelope per invocation, except `--help`, which prints plain usage; all logs go
 // to stderr.
-import { readFile, appendFile, rename, rm } from "node:fs/promises";
+import { readFile, appendFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
@@ -52,16 +52,16 @@ import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, failedTestRun } from "./lib/test-cmd.
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
-const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "adopt", "wait-checks"]);
+const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "wait-checks"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
 class RoleError extends Error {}
 
 const ROLE_USAGE = [
-  "Usage: agent-loop role [dispatch|finish|abort|extend|adopt|wait-checks] [flags]",
+  "Usage: agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]",
   "",
-  "Runs one worker or reviewer turn, or ends, extends, or hands over a run, from a lifecycle",
+  "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
   "state file. One JSON object on stdout, except this help; logs on stderr.",
   "",
   "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",
@@ -95,7 +95,6 @@ export function parseRoleArgs(argv) {
     taskFile: null,
     mode: null,
     parentSession: null,
-    fromSession: null,
     worker: null,
     workerModel: null,
     workerEffort: null,
@@ -169,10 +168,6 @@ export function parseRoleArgs(argv) {
 
       case "--parent-session":
         args.parentSession = readInline(arg);
-        break;
-
-      case "--from-session":
-        args.fromSession = readInline(arg);
         break;
 
       case "--max-steps":
@@ -1124,75 +1119,6 @@ async function extend(args) {
 }
 
 /**
- * `adopt`: hands a non-terminal run to a new parent session, for a maintainer
- * who continues a run that another session started (#435). `--from-session` must
- * be the stored `parentSession` and `--parent-session` is the new one. The check
- * compares ids only, as `extend` does (ADR 0014 point 7), so a child that never
- * read the state file cannot take the run, and a caller that did can. The new
- * entry is written first, so no moment leaves the run without an entry; the old
- * entry is then removed, and the old session's guard already releases because
- * the guard matches the stored `parentSession`. The change is appended to
- * `parentChanges` (ADR 0019). The lifecycle, budget, and turns stay as they are.
- */
-async function adopt(args) {
-  if (args.role !== null) {
-    throw new RoleError("--role is only valid for dispatch.");
-  }
-  if (args.reason !== null) {
-    throw new RoleError("--reason is only valid for abort.");
-  }
-  rejectFinishOnlyFlags(args, "adopt");
-  if (args.fromSession === null) {
-    throw new RoleError(
-      "adopt requires --from-session (the harness session id the run was started with).",
-    );
-  }
-  if (args.parentSession === null) {
-    throw new RoleError("adopt requires --parent-session (the new parent session id).");
-  }
-
-  const paths = statePaths({ cwd: args.cwd });
-  const next = statePaths({ cwd: args.cwd, parentSession: args.parentSession });
-  return withStateLock(paths.lockFile, async () => {
-    const state = requireState(await readState(paths.stateFile), args.cwd);
-    // known-limit: the check compares the id only and does not identify the
-    // caller; the rule that a child never calls adopt rests on the orchestrator
-    // instructions.
-    if (args.fromSession !== state.parentSession) {
-      throw new RoleError("--from-session does not match the run's parent session.");
-    }
-    if (args.parentSession === state.parentSession) {
-      throw new RoleError("--parent-session is already the run's parent session.");
-    }
-    rejectInitFlagChanges(args, state, ["parentSession"]);
-    if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
-      throw new RoleError(`Run is already ${state.lifecycle}.`);
-    }
-    const previous = statePaths({ cwd: args.cwd, parentSession: state.parentSession });
-    if (!Array.isArray(state.parentChanges)) {
-      state.parentChanges = [];
-    }
-    state.parentChanges.push({
-      from: state.parentSession,
-      to: args.parentSession,
-      stepsUsed: state.stepsUsed,
-      at: new Date().toISOString(),
-    });
-    state.parentSession = args.parentSession;
-    await writeSessionEntry(next.sessionEntryFile, paths.stateFile);
-    await writeState(paths.stateFile, state);
-    try {
-      await rm(previous.sessionEntryFile, { force: true });
-    } catch (err) {
-      // The old guard already releases on the stored id, so a leftover entry is inert.
-      logInfo(`old session entry not removed: ${errorMessage(err)}`);
-    }
-    logInfo(`run handed to a new parent session (${state.stepsUsed} steps used)`);
-    return { exitCode: 0, payload: { status: "ok", lifecycle: state.lifecycle } };
-  });
-}
-
-/**
  * `wait-checks`: polls the required checks of `--pr` until none is pending or
  * the bound elapses, then prints the last check states with a `timedOut` flag.
  * It reads status only, so it touches no run state and needs no init, but it
@@ -1285,9 +1211,6 @@ async function withinBound(ms, work, message) {
  */
 export async function executeRoleCommand(args, deps = {}) {
   try {
-    if (args.fromSession !== null && args.operation !== "adopt") {
-      throw new RoleError("--from-session is only valid for adopt.");
-    }
     switch (args.operation) {
       case "dispatch":
         return await dispatch(args, deps);
@@ -1297,8 +1220,6 @@ export async function executeRoleCommand(args, deps = {}) {
         return await abort(args, deps);
       case "extend":
         return await extend(args);
-      case "adopt":
-        return await adopt(args);
       case "wait-checks":
         return await waitChecksOperation(args, deps);
       default:

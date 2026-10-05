@@ -106,8 +106,7 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `--task` only when its value differs from the stored task.
   Repeating any other init flag with its current value is accepted; changing
   one is rejected, so omit changed flags and never invent new values. The one
-  exceptions are the step budget, which only `role extend` changes, and the
-  parent session, which only `role adopt` changes (see below).
+  exception is the step budget, which only `role extend` changes (see below).
 
 ## Dispatch
 
@@ -980,21 +979,16 @@ the state file's `mode` and `lifecycle`, and continue from `stepsUsed` and
 dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
 to resume with `dispatch --resume-interrupted`.
 
-A run stores the `--parent-session` of the session that started it, and the
-parent-edit guard and `extend` match that id. A new session that continues a
-non-terminal run another session started does not match it, so the new session
-is unguarded and `extend` refuses its id. Dispatches cannot change the id: a
-changed `--parent-session` is refused. If the user asks you to take over such a
-run, call
-`agent-loop role adopt --cwd "<work tree>" --from-session "<stored parent session id>" --parent-session "<your session id>"`.
-Read the stored id from the state file's `parentSession` field. The call moves
-the run to your session: your guard then covers the run, the old session's guard
-releases it, and the state file records `{from, to, stepsUsed, at}` in
-`parentChanges`. It leaves the lifecycle, budget, and turns as they are, works
-from `active`, `dispatched`, and `interrupted`, and refuses a terminal run. A
-child role never runs `adopt`, and you run it only when the user asked for the
-takeover. The subcommand compares the id only, so a caller that read the id from
-the state file passes. The prompt rule is what keeps a child from calling it.
+A run stores the `--parent-session` of the session that started it. The
+parent-edit guard and `extend` match that id, and no call changes it: a changed
+`--parent-session` on a later call is refused. A run that a new session resumes
+is therefore unguarded for that session, and `extend` refuses the new session's
+id. `dispatch`, `finish`, and `abort` take no session check, so the new session
+can still run them. To get a guard and an extendable run, call `abort` and start a
+new run with the new session id. A new run starts every role on a new session
+(ADR 0019). Never copy the stored id from the state file to pass the `extend`
+check: a child role can do the same, and the prompt rule is the only thing that
+keeps a child from calling `extend`.
 
 ## Turn history
 
@@ -1017,9 +1011,6 @@ needed: the subcommand records each dispatched turn itself.
   recovery call records an already-charged step and charges none of its own, so
   it does not push the history past that bound. The entries are fixed-shape, so
   the history cannot grow with the text a child returns.
-- `parentChanges` holds one entry per `role adopt`: `from` and `to` (the old and
-  new parent session ids), `stepsUsed` when the change ran, and `at`. A run never
-  adopted has no `parentChanges`.
 - `budgetChanges` holds one entry per `role extend`: `from` and `to` (the old
   and new `maxSteps`), `stepsUsed` when the change ran, and `at`. It shows after
   which turn the budget changed. A run never extended has no `budgetChanges`.
