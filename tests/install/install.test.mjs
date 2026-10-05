@@ -1212,7 +1212,7 @@ test("CLI prints the manual snippet when a settings file does not parse", async 
 
 // Usefulness: verifies acceptance #200 — a post-install note longer than the
 // 300-character log cap prints in full, so its final sentence (that the skill
-// runs harness-check and refuses a foreign session) reaches the user.
+// stops when the check cannot run or finds no harness ancestor) reaches the user.
 test("CLI prints a post-install note past the log cap in full", async () => {
   const home = await makeHome();
   process.env.AGENT_LOOP_HOME = home;
@@ -1229,7 +1229,7 @@ test("CLI prints a post-install note past the log cap in full", async () => {
     // Isolate the Codex note line: a truncated one drops its final sentence.
     const note = logs.find((line) => line.includes("The Codex skill lives in the shared"));
     expect(note).toBeDefined();
-    expect(note.endsWith("refuses to start from a Copilot or OpenCode session.")).toBe(true);
+    expect(note.endsWith("finds no harness ancestor.")).toBe(true);
   } finally {
     console.log = originalLog;
     console.error = originalError;
