@@ -102,7 +102,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
 - Later dispatches read the configuration from the state file. Do not repeat
   `--task` or `--task-file` on a later dispatch: they key init detection, so a dispatch
   that carries either while a run is active fails instead of continuing the run.
-  `finish`, `abort`, and `extend` refuse both flags as well.
+  `finish`, `abort`, and `extend` always refuse `--task-file`. They refuse
+  `--task` only when its value differs from the stored task.
   Repeating any other init flag with its current value is accepted; changing
   one is rejected, so omit changed flags and never invent new values. The one
   exception is the step budget, which only `role extend` changes (see below).
