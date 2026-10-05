@@ -167,7 +167,8 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * owner with the same pid and start time in the same millisecond is taken for
  * it. A contender that finds a live claim exits as busy. A claim
  * left by a crashed process is removed the same way, under a claim keyed by its
- * own content. Returns the result of `fn`. `label`
+ * own content, either when a contender meets the stale lock it guards or when a
+ * later acquisition of the lock scans for claims with a dead owner (#377). Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
  * is locked instead of the generic default; `noun` is the same resource as a
  * lowercase phrase for the stale-removal warning.
@@ -209,6 +210,9 @@ const MAX_CLAIM_DEPTH = 3;
 // Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
 const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
 
+// Matches the `.reap.<digest>` suffix of a claim file name (see claimFileFor).
+const CLAIM_SUFFIX = /^\.reap\.[0-9a-f]{64}$/;
+
 async function acquireLock(
   lockFile,
   { retry = true, label = "State", noun = "state", depth = 0, rootLockFile = lockFile } = {},
@@ -218,6 +222,9 @@ async function acquireLock(
     // and the link (#178). Runs while the lock is held and never touches a live
     // contender's temp, so it cannot break a racing acquisition.
     await pruneStaleLockTemps(lockFile);
+    if (depth === 0) {
+      await pruneDeadClaims(lockFile, { label });
+    }
     return;
   }
 
@@ -278,9 +285,8 @@ function claimFileFor(rootLockFile, file, staleText) {
 // and removing it cannot delete a new owner's file (#363). Nothing is renamed, and no path is bare-removed unclaimed. A loser
 // finds a live claim and exits as busy; a file that reads differently or cannot
 // be read is kept, and the caller's retry reports it as busy.
-// known-limit: a claim left by a crashed process stays until a contender hits
-// its stale file, and a chain of more than two crashed claims fails closed
-// (MAX_CLAIM_DEPTH). A lock written without a nonce by an older version is
+// known-limit: a chain of more than two crashed claims fails closed
+// (MAX_CLAIM_DEPTH), and an unparseable claim is never pruned. A lock written without a nonce by an older version is
 // matched by content alone, so an older-version owner with the same pid and
 // start time in the same millisecond would be taken for it.
 // Mixed versions: a contender that runs an older version removes a stale lock
@@ -391,6 +397,39 @@ async function pruneStaleLockTemps(lockFile) {
     }
   } catch {
     // The lock is already held; a failed scan or unlink leaves only a temp file.
+  }
+}
+
+// Removes claim files whose owner is dead, so a claim left by a crashed process
+// does not wait for a contender to meet the same stale lock (#377). Runs while
+// the root lock is held, so no stale lock is left to guard. Each claim goes
+// through removeStaleFile, the same path as a stale-lock takeover: a claim that
+// holds a live pid, cannot be parsed, or changed since the read is kept, and a
+// contender that finds a live claim on the removal skips it. Failures are
+// ignored because cleanup is best-effort and must not fail the lock holder.
+async function pruneDeadClaims(lockFile, { label }) {
+  try {
+    const dir = dirname(lockFile);
+    const name = basename(lockFile);
+    for (const entry of await readdir(dir)) {
+      if (!entry.startsWith(name) || !CLAIM_SUFFIX.test(entry.slice(name.length))) {
+        continue;
+      }
+      const claimFile = join(dir, entry);
+      const claimText = await readLockText(claimFile);
+      const owner = parseLockOwner(claimText);
+      if (owner === null || pidAlive(owner.pid)) {
+        continue;
+      }
+      try {
+        logWarn(`removing orphan claim file (dead pid ${owner.pid})`);
+        await removeStaleFile(claimFile, claimText, { label, depth: 0, rootLockFile: lockFile });
+      } catch {
+        // Busy or too deeply nested: a later acquisition retries.
+      }
+    }
+  } catch {
+    // The lock is already held; a failed scan leaves only a claim file.
   }
 }
 

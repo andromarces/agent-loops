@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -130,6 +131,53 @@ test("withStateLock prunes a dead owner's temp file and keeps a live one", async
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
   expect(await readdir(dir)).toEqual([live]);
+});
+
+const CLAIM_ID = "a".repeat(64);
+
+async function deadOwnerText() {
+  return JSON.stringify({ pid: await deadPid(), startedAt: "old", nonce: "n" });
+}
+
+// Usefulness: verifies a claim file left by a crashed process is removed on the next acquisition even when no stale lock exists, so it no longer waits for a contender to meet the same stale lock (#377). A live claim, an unreadable claim, and a foreign file with a similar name stay.
+test("withStateLock removes a dead owner's orphan claim and keeps every other file", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const live = JSON.stringify({ pid: process.pid, startedAt: "now", nonce: "n" });
+  const keep = {
+    [`state.lock.reap.${"b".repeat(64)}`]: live,
+    [`state.lock.reap.${"c".repeat(64)}`]: "not json",
+    [`state.lock.reap.${"d".repeat(63)}`]: await deadOwnerText(),
+    [`other.lock.reap.${CLAIM_ID}`]: await deadOwnerText(),
+  };
+  await writeFile(join(dir, `state.lock.reap.${CLAIM_ID}`), await deadOwnerText(), "utf8");
+  for (const [name, text] of Object.entries(keep)) {
+    await writeFile(join(dir, name), text, "utf8");
+  }
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+
+  expect((await readdir(dir)).sort()).toEqual(Object.keys(keep).sort());
+});
+
+// Usefulness: verifies a dead claim that another contender is already removing (it holds the live claim on that removal) is left alone and never blocks the acquisition, so exactly one contender acts on each claim (#377).
+test("withStateLock leaves an orphan claim whose removal a live contender holds", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const claim = join(dir, `state.lock.reap.${CLAIM_ID}`);
+  const text = await deadOwnerText();
+  await writeFile(claim, text, "utf8");
+  const id = createHash("sha256")
+    .update(JSON.stringify([basename(claim), text]))
+    .digest("hex");
+  const holder = `state.lock.reap.${id}`;
+  const liveText = JSON.stringify({ pid: process.pid, startedAt: "now", nonce: "n" });
+  await writeFile(join(dir, holder), liveText, "utf8");
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+
+  expect((await readdir(dir)).sort()).toEqual([basename(claim), holder].sort());
+  expect(await readFile(join(dir, holder), "utf8")).toBe(liveText);
 });
 
 // Usefulness: verifies `--cwd` variants that differ only in the Windows drive
