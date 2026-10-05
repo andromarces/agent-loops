@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -428,4 +428,21 @@ export function cleanRepoGit(command, args, options) {
     return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0branch refs/heads/main\0\0`);
   }
   throw new Error(`unexpected git call: ${args.join(" ")}`);
+}
+
+// `cleanRepoGit` for a repo with no tracked files, whose `status` lists each regular
+// file in the top level of the directory as untracked, read from the real work tree
+// at call time. A write by the test command or an agent therefore shows up in the
+// next snapshot, as it does under real `git`, and no `git` process runs. Files in
+// subdirectories are not listed.
+export async function untrackedFilesGit(command, args, options) {
+  if (args[0] !== "status") {
+    return cleanRepoGit(command, args, options);
+  }
+  const entries = await readdir(options.cwd, { withFileTypes: true });
+  const stdout = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => `?? ${entry.name}\0`)
+    .join("");
+  return { exitCode: 0, stdout, stderr: "" };
 }
