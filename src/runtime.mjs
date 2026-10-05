@@ -1,13 +1,18 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
-import { readableErrorMessage } from "./lib/error-message.mjs";
+import { readableErrorMessage, readProp } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
-import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, runTestCmd } from "./lib/test-cmd.mjs";
+import {
+  carryTestRun,
+  DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
+  failedTestRun,
+  runTestCmd,
+} from "./lib/test-cmd.mjs";
 import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
@@ -162,25 +167,28 @@ export async function runChild(options) {
       ...(testRun ? { testRun } : {}),
     };
   } catch (err) {
-    if (err?.name === "MutationError" || err?.name === "SnapshotError" || err?.isCanceled) {
-      if (err?.isCanceled) {
+    const name = readProp(err, "name");
+    const isCanceled = readProp(err, "isCanceled");
+    if (name === "MutationError" || name === "SnapshotError" || isCanceled) {
+      if (isCanceled) {
         logError(`${roleName} canceled by signal`);
       }
       // A fatal error ends the turn, and the caller records it, so the result rides on it.
       // A cancel of the command itself already carries its own result.
-      testRun ??= err?.testRun ?? null;
+      testRun ??= failedTestRun(err) ?? null;
       if (testRun && err && typeof err === "object") {
-        err.testRun = testRun;
+        carryTestRun(err, testRun);
       }
       throw err;
     }
     // The result carries text, so a non-string message is its JSON form.
     const message = readableErrorMessage(err);
     let errorMessage = typeof message === "string" ? message : JSON.stringify(message);
-    if (err?.timedOut) {
+    const timedOut = readProp(err, "timedOut");
+    if (timedOut) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
     }
-    logWarn(err?.timedOut ? errorMessage : `${roleName}: ${errorMessage.split("\n")[0]}`);
+    logWarn(timedOut ? errorMessage : `${roleName}: ${errorMessage.split("\n")[0]}`);
     return {
       role: roleName,
       status: "error",
@@ -576,8 +584,15 @@ export async function runLoop(options) {
       // A fatal error ends the run with no result event, so the command result and the
       // work tree compare the runtime already read are emitted here, and the transcript
       // keeps them (ADR 0017).
-      if (err?.testRun) {
-        onEvent({ type: "test-run", role: roleName, testRun: err.testRun, fatal: true, stepsUsed });
+      const carried = failedTestRun(err);
+      if (carried) {
+        onEvent({
+          type: "test-run",
+          role: roleName,
+          testRun: carried,
+          fatal: true,
+          stepsUsed,
+        });
       }
       throw err;
     }

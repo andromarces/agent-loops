@@ -1004,6 +1004,78 @@ test("dispatch records the turn when reading the fatal error message throws", as
   expect(state.lastResult).toMatchObject({ status: "error" });
 });
 
+// Usefulness: verifies a fatal child error whose testRun getter throws still ends the turn with a
+// terminal lifecycle and a recorded turn, so the state file never keeps the dispatched lifecycle.
+test("dispatch records the turn when reading the fatal error testRun throws", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const fatal = Object.assign(new Error("fatal"), { name: "MutationError" });
+  Object.defineProperty(fatal, "testRun", {
+    get() {
+      throw new Error("testRun getter failed");
+    },
+  });
+  const agents = {
+    fake1: {
+      async run() {
+        throw fatal;
+      },
+    },
+    fake2: recordingAdapter([]),
+  };
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({ role: "worker", status: "error" });
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("halted");
+  expect(state.turns).toMatchObject([{ role: "worker", status: "error" }]);
+});
+
+// Usefulness: verifies a child error whose name or timedOut getter throws returns an error result
+// through the runtime, instead of the throw escaping the runtime catch block.
+test.each(["name", "timedOut"])(
+  "dispatch returns an error result when the child error %s getter throws",
+  async (property) => {
+    await setup();
+    const repo = await createTempRepo();
+    repos.push(repo);
+    const failure = new Error("child failed");
+    Object.defineProperty(failure, property, {
+      get() {
+        throw new Error(`${property} getter failed`);
+      },
+    });
+    const agents = {
+      fake1: {
+        async run() {
+          throw failure;
+        },
+      },
+      fake2: recordingAdapter([]),
+    };
+
+    const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+      agents,
+      stdin: stdinPrompt,
+    });
+
+    expect(result.payload).toMatchObject({
+      role: "worker",
+      status: "error",
+      error: "child failed",
+    });
+    const state = await readRepoState(repo);
+    expect(state.lifecycle).toBe("active");
+    expect(state.turns).toMatchObject([{ role: "worker", status: "error" }]);
+  },
+);
+
 // Usefulness: verifies a child error with a non-string message returns an error result through the
 // runtime, instead of the TypeError that splitting the message raised.
 test("dispatch returns an error result when a child error has a non-string message", async () => {

@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { readProp } from "./error-message.mjs";
 import { logInfo } from "./log.mjs";
 import { diffSnapshots, snapshot } from "./snapshot.mjs";
 
@@ -9,6 +10,25 @@ export const DEFAULT_TEST_CMD_TIMEOUT_SECONDS = 600;
 // secret cut at the left edge of the window never reaches the final tail.
 const CAPTURE_WINDOW_BYTES = 16 * 1024;
 export const TAIL_CHARS = 8 * 1024;
+
+// Results carried by an error object that cannot take the `testRun` property.
+const carriedTestRuns = new WeakMap();
+
+/**
+ * Carries the result on a fatal error as `err.testRun`. A frozen error or a throwing setter
+ * keeps the original error, and the result stays readable through `failedTestRun`.
+ */
+export function carryTestRun(err, testRun) {
+  carriedTestRuns.set(err, testRun);
+  try {
+    err.testRun = testRun;
+  } catch {}
+}
+
+/** Returns the result a fatal error carries, or `undefined` when it carries none. */
+export function failedTestRun(err) {
+  return carriedTestRuns.get(err) ?? readProp(err, "testRun");
+}
 const MAX_CHANGED_PATHS = 20;
 // Only an environment value this long is redacted; a shorter one would match
 // ordinary words and ruin the tail.

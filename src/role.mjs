@@ -29,7 +29,12 @@ import {
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
-import { errorMessage, readableErrorMessage, UNREADABLE_MESSAGE } from "./lib/error-message.mjs";
+import {
+  errorMessage,
+  readableErrorMessage,
+  readProp,
+  UNREADABLE_MESSAGE,
+} from "./lib/error-message.mjs";
 import { copyLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
@@ -43,7 +48,7 @@ import {
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { sha256 } from "./lib/hash.mjs";
-import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS } from "./lib/test-cmd.mjs";
+import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, failedTestRun } from "./lib/test-cmd.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
@@ -694,15 +699,13 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
       onEvent,
     });
   } catch (err) {
-    let canceled = false;
-    try {
-      canceled = Boolean(err?.isCanceled);
-    } catch {}
+    const canceled = Boolean(readProp(err, "isCanceled"));
+    const testRun = failedTestRun(err);
     const payload = {
       role: roleName,
       status: "error",
       error: readableErrorMessage(err),
-      ...(err?.testRun ? { testRun: err.testRun } : {}),
+      ...(testRun ? { testRun } : {}),
     };
     // A cancel or a fatal guard error can end the turn after the CLI reported its session, so
     // keep the id for the resume that follows. A null id records a session the fallback cleared.
@@ -744,10 +747,7 @@ function errorResult(err) {
     return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
   } catch (formatErr) {
     // Reading the message threw. Keep one envelope, and keep a cancel as exit 130.
-    let canceled = false;
-    try {
-      canceled = Boolean(formatErr?.isCanceled);
-    } catch {}
+    const canceled = Boolean(readProp(formatErr, "isCanceled"));
     return {
       exitCode: canceled ? 130 : 1,
       payload: {

@@ -286,3 +286,39 @@ test("a cancel during the command keeps the test result in the envelope and the 
   });
   expect((await readRepoState(repo)).lastResult.testRun).toMatchObject({ status: "canceled" });
 }, 20_000);
+
+// Error objects that cannot take the `testRun` property the runtime attaches to a fatal error.
+const UNATTACHABLE = [
+  ["frozen", (props) => Object.freeze(Object.assign(new Error("stopped"), props))],
+  [
+    "throwing setter",
+    (props) =>
+      Object.defineProperty(Object.assign(new Error("stopped"), props), "testRun", {
+        set() {
+          throw new Error("setter failed");
+        },
+      }),
+  ],
+];
+
+// Usefulness: verifies a canceled error that cannot take the test result still ends the turn as
+// an interrupted cancel and keeps the result in the envelope and lastResult (ADR 0017 decision 10).
+test.each(UNATTACHABLE)(
+  "a %s canceled error keeps the cancel and the test result after the command ran",
+  async (_label, makeError) => {
+    const cmd = node("console.log('ok')");
+    const { repo, agents } = await start(["--test-cmd", cmd]);
+    agents.fake2 = {
+      async run() {
+        throw makeError({ isCanceled: true });
+      },
+    };
+    const turn = await reviewerTurn(repo, agents, ["--test-cmd", cmd]);
+    expect(turn.exitCode).toBe(130);
+    expect(turn.payload).toMatchObject({ role: "reviewer", status: "error", error: "stopped" });
+    expect(turn.payload.testRun).toMatchObject({ status: "pass", exitCode: 0 });
+    const state = await readRepoState(repo);
+    expect(state.lifecycle).toBe("interrupted");
+    expect(state.lastResult.testRun).toMatchObject({ status: "pass" });
+  },
+);

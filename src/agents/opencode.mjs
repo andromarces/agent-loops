@@ -1,4 +1,5 @@
 import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
+import { readProp } from "../lib/error-message.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES } from "../lib/report.mjs";
@@ -251,7 +252,7 @@ function failureMessage(err, events, timeout) {
  * caller reads the same cause as it read before the adapter took the message over.
  */
 function failureCause(err, timeout) {
-  if (err?.timedOut) {
+  if (readProp(err, "timedOut")) {
     return typeof timeout === "number"
       ? `opencode timed out after ${timeout} seconds.`
       : "opencode timed out.";
