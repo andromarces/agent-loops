@@ -225,7 +225,9 @@ test("readState throws on a state file that is not a JSON object", async () => {
 // the SHA-256 of the canonical cwd, so existing run state stays reachable.
 test("statePaths names the state directory by the cwd SHA-256 prefix", () => {
   const cwd = resolve("/some/work/tree");
-  const expected = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
+  // Production lowercases a Windows drive letter before it hashes.
+  const canonical = cwd.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase());
+  const expected = createHash("sha256").update(canonical).digest("hex").slice(0, 12);
   expect(basename(statePaths({ cwd }).stateDir)).toBe(expected);
 });
 

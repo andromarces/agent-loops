@@ -517,7 +517,7 @@ async function dispatch(args, { agents, stdin = readStdin, signal, gh }) {
   rejectFinishOnlyFlags(args, "dispatch");
 
   await assertGitWorkTree(args.cwd);
-  const paths = statePaths({ cwd: args.cwd, parentSession: args.parentSession ?? undefined });
+  const paths = statePaths({ cwd: args.cwd, parentSession: args.parentSession || undefined });
   const onEvent = createEventSink(args.transcript);
 
   try {
