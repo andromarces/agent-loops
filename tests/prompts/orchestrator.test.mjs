@@ -1597,3 +1597,83 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
   expect(row("0019")).toMatch(/\|\s*accepted\s*\|/);
   expect(row("0019")).toMatch(/Supersedes ADR 0001/);
 });
+
+// A sentence that denies a check read or network to a Codex turn must say that the sandbox limit
+// covers shell commands, in the sentence or in the one after it, so an opted-in operator never
+// reads a denial of a channel that the sandbox does not cover. The positive-phrase tests above
+// cannot catch a contradicting sentence, so this one scans for the denials (issue #421).
+const NETWORK_DENIAL =
+  /cannot reach the network|blocks? (the )?(shell )?network|no turn (in (this|the) run )?can (read|reach) the|cannot either/i;
+const sentencesOf = (text) =>
+  text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.:;])\s+(?=[A-Z`-])/)
+    .map((sentence) => sentence.trim());
+
+function unqualifiedDenials(text) {
+  const sentences = sentencesOf(text);
+  return sentences.filter(
+    (sentence, i) =>
+      NETWORK_DENIAL.test(sentence) && !/shell/i.test(`${sentence} ${sentences[i + 1] ?? ""}`),
+  );
+}
+
+// Usefulness: verifies no all-channel denial of a check read or of network stays unqualified in
+// the rendered prompt of an opted-in gated run, for every gate rule and with and without a
+// declared PR, so the prompt never contradicts its own shell-only sandbox note.
+test.each([
+  ["codex", "codex", null],
+  ["codex", "codex", 42],
+])(
+  "the opted-in prompt qualifies every network denial (%s orchestrator, %s reviewer, pr %s)",
+  (orchestratorKind, reviewerKind, pr) => {
+    const prompt = initialPrompt({
+      task: "t",
+      maxSteps: 5,
+      requireCi: 42,
+      pr,
+      orchestratorKind,
+      reviewerKind,
+      reviewerWorkspaceWrite: true,
+    });
+    expect(prompt).toMatch(/cannot reach the network/);
+    expect(unqualifiedDenials(prompt)).toEqual([]);
+  },
+);
+
+// Usefulness: verifies the same for a codex orchestrator with a networked-CLI reviewer, where the
+// reviewer rule line denies the orchestrator network, so the third gate rule is covered.
+test("the opted-in prompt qualifies the orchestrator denial of the reviewer rule", () => {
+  const prompt = initialPrompt({
+    task: "t",
+    maxSteps: 5,
+    requireCi: 42,
+    orchestratorKind: "codex",
+    reviewerKind: "claude",
+    reviewerWorkspaceWrite: true,
+  });
+  expect(prompt).toMatch(/cannot reach the network/);
+  expect(unqualifiedDenials(prompt)).toEqual([]);
+});
+
+// Usefulness: verifies the default prompt keeps the origin/main wording, so the qualification is
+// opt-in and a run without the opt-in sees no change.
+test("a run without the opt-in keeps the unqualified denial lines", () => {
+  const prompt = initialPrompt({
+    task: "t",
+    maxSteps: 5,
+    requireCi: 42,
+    orchestratorKind: "codex",
+    reviewerKind: "codex",
+  });
+  expect(prompt).toContain(MAIN_NO_NETWORK_LINE);
+});
+
+// Usefulness: verifies the README and the orchestrator instructions carry no all-channel network
+// or check-read denial for the Codex sandbox without the shell-only qualification.
+test.each([
+  ["README.md", () => readRepoFile("README.md")],
+  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+])("%s qualifies every network denial of the Codex sandbox", async (_name, load) => {
+  expect(unqualifiedDenials(await load())).toEqual([]);
+});

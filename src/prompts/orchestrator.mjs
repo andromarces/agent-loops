@@ -116,9 +116,51 @@ function prGateBlock({
   reviewerKind,
   timeout = null,
   waitCommand,
+  reviewerWorkspaceWrite = false,
 }) {
   if (requireCi === null) return "";
-  return `\n${prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand }).join("\n")}`;
+  const lines = prGateLines({
+    pr,
+    requireCi,
+    orchestratorKind,
+    reviewerKind,
+    timeout,
+    waitCommand,
+  });
+  return `\n${(reviewerWorkspaceWrite ? qualifyShellOnlyDenials(lines) : lines).join("\n")}`;
+}
+
+// The sentence an opted-in run adds beside each all-channel denial of network or of a check read.
+// The sandbox network limit covers the shell commands the sandbox runs, so the denial must not
+// read as a block on a model-side tool or another channel (ADR 0019). A run without the opt-in
+// keeps the earlier lines byte for byte.
+const SHELL_ONLY_LIMIT =
+  "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything.";
+
+/**
+ * Rewrites the lines that deny network or a check read to a read-only turn, so each says that the
+ * denial is about the shell commands that the sandbox runs. Other lines pass through unchanged.
+ * @param {string[]} lines
+ * @returns {string[]}
+ */
+function qualifyShellOnlyDenials(lines) {
+  return lines.map((line) => {
+    if (!/cannot reach the network|no turn in this run can/.test(line)) return line;
+    return line
+      .replace(
+        "whose read-only turn cannot reach the network",
+        "whose read-only turn cannot reach the network from the shell commands that its sandbox runs",
+      )
+      .replace(
+        "no turn in this run can read the required checks",
+        "no turn in this run can read the required checks through a shell command that its sandbox runs",
+      )
+      .replace(
+        "no turn in this run can reach the checks for itself",
+        "no turn in this run can reach the checks for itself through a shell command that its sandbox runs",
+      )
+      .replace("Do not run gh pr checks", `${SHELL_ONLY_LIMIT} Do not run gh pr checks`);
+  });
 }
 
 function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand }) {
@@ -373,7 +415,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerWorkspaceWrite)}${continuedBlock(continued)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerWorkspaceWrite)}${continuedBlock(continued)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand, reviewerWorkspaceWrite })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.

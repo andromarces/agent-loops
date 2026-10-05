@@ -312,8 +312,8 @@ worker turn and no extra reviewer turn for that failure.
 
 ## The runtime supplies the required-check status
 
-A reviewer turn that cannot reach the network, for example a sandboxed Codex
-reviewer, could only report the status as unresolved before. A run that declares
+A reviewer turn whose shell commands cannot reach the network, for example a
+sandboxed Codex reviewer, could only report the status as unresolved before. A run that declares
 its PR with `--pr <pr>` knows the pull request before the first turn, so the
 runtime reads the required-check status for that PR head and supplies it to every
 reviewer prompt. The prompt adds two lines inside the required-check group, so
@@ -567,14 +567,18 @@ invocation keeps shell network access for `claude`, `agy`, `opencode`, and
 (not model-side tools), and it is the only adapter that does; see "Codex read-only network limit" in the README for the
 probe.
 
-- Orchestrator CLI keeps network: the orchestrator waits, at both points below.
-- Orchestrator CLI blocks network, reviewer CLI keeps it: the orchestrator cannot
-  wait. Every reviewer turn reads the required checks, as the reviewer scope
+- Orchestrator CLI keeps shell network: the orchestrator waits, at both points
+  below.
+- Orchestrator CLI blocks shell network, reviewer CLI keeps it: the orchestrator
+  cannot wait. Every reviewer turn reads the required checks, as the reviewer scope
   states, so name the required checks in the reviewer prompt and let the reviewer
   turn read them. Each further reviewer dispatch costs a step, so the step budget
   has to cover those dispatches.
-- Both CLIs block network: no turn in the run can read the required checks, so
-  the headless loop cannot wait. A run that declares its PR with `--pr <pr>` still
+- Both CLIs block shell network: no turn in the run can read the required checks
+  through a shell command that its sandbox runs, so the headless loop cannot
+  wait. The limit covers shell commands only: a model-side tool or another channel
+  outside the sandbox is not blocked, and the run counts on none of them for the
+  read. A run that declares its PR with `--pr <pr>` still
   supplies the status to each reviewer turn, because the runtime reads it outside
   every read-only turn, so the reviewer does not have to. A run that declares no
   PR gets no supplied status, because the runtime reads one only for `--pr`. That
