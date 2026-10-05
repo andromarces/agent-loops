@@ -1,4 +1,4 @@
-import { parseReportBlock } from "../lib/report.mjs";
+import { hasClosingBlockAttempt } from "../lib/report.mjs";
 
 /**
  * Sets `state.usage` to `usage`, or removes it when the CLI reported none (`undefined` or
@@ -83,11 +83,12 @@ export function asSessionId(value) {
 
 /**
  * Returns the message of a turn that carries the closing block the parent reads: the last
- * message whose closing block parses, so a late answer to an event after the block does not
- * replace the report of the turn (issue #449). When no message parses, the last message is
- * returned, as before, so a malformed block still reaches the caller as `raw`.
+ * message that holds a closing block attempt, so a late answer to an event after the block does
+ * not replace the report of the turn (issue #449). An attempt counts whether or not it parses,
+ * so a later malformed block still wins and reaches the caller as `raw`, and an earlier block
+ * never overrides it. When no message holds an attempt, the last message is returned.
  * @param {string[]} messages assistant messages of one turn, in order and non-empty
  */
 export function lastClosingMessage(messages) {
-  return messages.findLast((message) => parseReportBlock(message)) ?? messages.at(-1);
+  return messages.findLast(hasClosingBlockAttempt) ?? messages.at(-1);
 }

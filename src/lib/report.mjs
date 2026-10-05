@@ -78,6 +78,23 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // emphasis shapes above into `raw` and makes that loss loud.
 const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
+// A line that opens a closing-block label or the reviewer `Verdict:` line, plain or hidden by the
+// indentation and markdown decoration the parser also tolerates in DECORATED_LABEL_LINE.
+const LABEL_ATTEMPT_LINE = new RegExp(
+  `^\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]{0,2}\\s*:`,
+  "i",
+);
+
+/**
+ * True when the response holds a closing block attempt: a line that opens any report label or
+ * the `Verdict:` label, whether or not the block parses. A response without one is not a report.
+ * @param {string} response
+ * @returns {boolean}
+ */
+export function hasClosingBlockAttempt(response) {
+  return response.split(/\r?\n/).some((line) => LABEL_ATTEMPT_LINE.test(line));
+}
+
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
  * the response, or null when the response has no `Conclusion:` line at all.

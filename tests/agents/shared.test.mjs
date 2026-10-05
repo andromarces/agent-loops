@@ -37,13 +37,16 @@ test("setMainLoopUsage keeps an empty object and deletes on absent or null usage
 
 const CLOSING = "Conclusion: c.\nWhy: w.\nBlockers: none";
 
-// Usefulness: pins the selection rule the Codex and Copilot adapters share (issue #449): the last parseable block wins, and a turn with none keeps the last message.
-test("lastClosingMessage picks the last message with a parseable block, else the last message", () => {
+// Usefulness: pins the selection rule the Codex and Copilot adapters share (issue #449): the last message that holds a closing block attempt wins, parseable or not, and a turn with none keeps the last message.
+test("lastClosingMessage picks the last message with a closing block attempt, else the last message", () => {
   const first = `a\n${CLOSING}`;
   const second = `b\n${CLOSING.replace("c.", "later")}`;
 
   expect(lastClosingMessage([first, "late"])).toBe(first);
   expect(lastClosingMessage([first, second, "late"])).toBe(second);
-  expect(lastClosingMessage([first, "Conclusion: only"])).toBe(first);
+  expect(lastClosingMessage([first, "Conclusion: only"])).toBe("Conclusion: only");
+  expect(lastClosingMessage([first, "Blockers:\n- x"])).toBe("Blockers:\n- x");
+  expect(lastClosingMessage([first, "**Verdict**: reject"])).toBe("**Verdict**: reject");
+  expect(lastClosingMessage([first, "The conclusion: none yet."])).toBe(first);
   expect(lastClosingMessage(["x", "y"])).toBe("y");
 });
