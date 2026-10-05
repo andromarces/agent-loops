@@ -15,7 +15,7 @@ import { workerPrompt } from "./prompts/worker.mjs";
  * Every CLI call goes through here. Emits one `invocation` event per call, carrying the
  * usage the adapter exposed on `state.usage`, and clears that field so it never lingers.
  */
-async function invoke(agents, state, roleName, prompt, opts, onEvent, stepsUsed) {
+async function invoke({ agents, state, roleName, prompt, opts, onEvent, stepsUsed }) {
   delete state.usage;
   const emit = (status) => {
     const event = { type: "invocation", role: roleName, status, stepsUsed };
@@ -72,15 +72,15 @@ export async function runChild(options) {
   const readOnly = !isWorker;
 
   const invokeRole = (finalPrompt) =>
-    invoke(
+    invoke({
       agents,
-      role,
+      state: role,
       roleName,
-      finalPrompt,
-      { cwd, readOnly, timeout, signal },
+      prompt: finalPrompt,
+      opts: { cwd, readOnly, timeout, signal },
       onEvent,
       stepsUsed,
-    );
+    });
 
   // A resume that fails because the CLI has no such session leaves the stored id useless, and
   // every later turn would fail the same way. Clear the id and rerun the turn once as a first
@@ -343,7 +343,7 @@ export async function runLoop(options) {
   const orchAdapter = {
     async run(state, p, opts) {
       return withMutationCheck(cwd, "orchestrator", () =>
-        invoke(agents, state, "orchestrator", p, opts, onEvent, stepsUsed),
+        invoke({ agents, state, roleName: "orchestrator", prompt: p, opts, onEvent, stepsUsed }),
       );
     },
   };

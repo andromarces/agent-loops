@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import {
   STALE_LOCK_GRACE_MS,
@@ -218,4 +219,20 @@ test("readState throws on a state file that is not a JSON object", async () => {
       `State file is not a JSON object: ${stateFile}`,
     );
   }
+});
+
+// Usefulness: verifies the state directory name stays the first 12 hex digits of
+// the SHA-256 of the canonical cwd, so existing run state stays reachable.
+test("statePaths names the state directory by the cwd SHA-256 prefix", () => {
+  const cwd = resolve("/some/work/tree");
+  // Production lowercases a Windows drive letter before it hashes.
+  const canonical = cwd.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase());
+  const expected = createHash("sha256").update(canonical).digest("hex").slice(0, 12);
+  expect(basename(statePaths({ cwd }).stateDir)).toBe(expected);
+});
+
+// Usefulness: verifies null stays an invalid session id, so a caller must map
+// an absent session to undefined.
+test("statePaths rejects a null parentSession", () => {
+  expect(() => statePaths({ parentSession: null })).toThrow(/Invalid session id/);
 });

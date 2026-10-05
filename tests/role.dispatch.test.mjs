@@ -953,3 +953,20 @@ test("a canceled turn keeps the session id the CLI reported", async () => {
   expect(result.exitCode).toBe(130);
   expect((await readRepoState(repo)).roles.worker.sessionId).toBe("sess-canceled");
 });
+
+// Usefulness: verifies that an empty parentSession on a parsed init command
+// stays an unguarded run, as before the statePaths call-site cleanup (#189),
+// while statePaths itself still rejects a null session id.
+test("dispatch init with an empty parentSession succeeds without a session entry", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const args = { ...withRepo(dispatchArgv(INIT_OVERRIDES), repo), parentSession: "" };
+  const result = await executeRoleCommand(args, {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toMatchObject({ role: "worker", status: "ok" });
+});
