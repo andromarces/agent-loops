@@ -363,10 +363,12 @@ Role flags:
                                 orphan that left the group, or whose parent exited on Windows,
                                 can survive (ADR 0017). Requires --test-cmd.
   --reviewer-workspace-write    init only. Run each Codex reviewer turn in the workspace-write
-                                sandbox with network access off, instead of read-only. Needs
-                                --reviewer codex. The orchestrator turns stay read-only, and
-                                the mutation check still halts the run on a change (ADR 0019).
-                                Off by default.
+                                sandbox, instead of read-only, with network access off for the
+                                shell commands that the sandbox runs. That limit covers shell
+                                commands only: model-side tools such as web_search and other
+                                channels outside the sandbox are not blocked. Needs --reviewer
+                                codex. The orchestrator turns stay read-only, and the mutation
+                                check still halts the run on a change (ADR 0019). Off by default.
 
 Options:
 
@@ -462,11 +464,13 @@ Options:
                                 is killed at the bound, and the run reports timed out. An
                                 orphan that left the group, or whose parent exited on Windows,
                                 can survive (ADR 0017). Requires --test-cmd.
-  --reviewer-workspace-write    Run each Codex reviewer turn in the workspace-write sandbox
-                                with network access off, instead of read-only. Needs
-                                --reviewer codex. The orchestrator turns stay read-only, and
-                                the mutation check still halts the run on a change (ADR 0019).
-                                Off by default.
+  --reviewer-workspace-write    Run each Codex reviewer turn in the workspace-write sandbox,
+                                instead of read-only, with network access off for the shell
+                                commands that the sandbox runs. That limit covers shell
+                                commands only: model-side tools such as web_search and other
+                                channels outside the sandbox are not blocked. Needs --reviewer
+                                codex. The orchestrator turns stay read-only, and the mutation
+                                check still halts the run on a change (ADR 0019). Off by default.
 
   A value flag also accepts the inline form --flag=value, for example
   --task=-x, which allows a value that starts with a dash. A boolean flag,

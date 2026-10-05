@@ -256,12 +256,12 @@ function testCmdBlock(testCmd) {
 
 /**
  * The `--reviewer-workspace-write` line. The runtime runs each reviewer turn in
- * the Codex `workspace-write` sandbox with network off. Empty for a run without
+ * the Codex `workspace-write` sandbox with shell network off. Empty for a run without
  * the opt-in, so that prompt stays as before (ADR 0019).
  */
 function reviewerSandboxBlock(reviewerWorkspaceWrite) {
   if (!reviewerWorkspaceWrite) return "";
-  return "\n- This run lets the Codex reviewer run targeted tests and probes: the runtime runs each reviewer turn in the workspace-write sandbox with network access off. Your own turns stay read-only. The reviewer still must not change files: the runtime compares the work tree around every reviewer turn, and a change halts the run with no revert. The reviewer cannot reach GitHub.";
+  return "\n- This run lets the Codex reviewer run targeted tests and probes: the runtime runs each reviewer turn in the workspace-write sandbox, and the shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox. Your own turns stay read-only. The reviewer still must not change files: the runtime compares the work tree around every reviewer turn, and a change halts the run with no revert.";
 }
 
 /**

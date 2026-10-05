@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { describe, expect, test } from "vitest";
+import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import {
   initialPrompt,
   refusalPrompt,
@@ -1504,4 +1505,95 @@ test("the initial prompt describes the reviewer sandbox only when the run opted 
   expect(prompt).toContain("workspace-write");
   expect(prompt).toContain("network access off");
   expect(prompt).toContain("halts the run");
+});
+
+// Documentation of the opt-in Codex reviewer sandbox (issue #421, ADR 0019). Each test asserts
+// the content a reader relies on, as a short phrase, so a same-meaning reword passes.
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const adr19 = "adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md";
+const readRepoFile = (path) => readFile(join(repoRoot, path), "utf8");
+
+// The five accepted gaps of issue #421, each as the phrases that identify it.
+const SANDBOX_GAPS = [
+  ["detection-only enforcement", [/detective/i, /MutationError/, /no revert|does not revert/i]],
+  [
+    "snapshot blind spots",
+    [/ignored file/i, /outside the repository/i, /restores? before/i, /other refs/i],
+  ],
+  ["remote GitHub writes", [/remote/i, /push.*merge.*review.*comment/i, /#422/]],
+  ["prompt-injection blast radius", [/prompt-injection/i]],
+  ["unelevated Windows sandbox", [/unelevated Windows/i, /EPERM/, /docs\/parent-guard\.md/]],
+];
+
+// Usefulness: verifies ADR 0019 names all five accepted gaps of the issue, so the record of what
+// the opt-in gives up cannot lose one.
+test("ADR 0019 names the five accepted gaps", async () => {
+  const text = await readRepoFile(adr19);
+  for (const [, patterns] of SANDBOX_GAPS) {
+    for (const pattern of patterns) {
+      expect(text).toMatch(pattern);
+    }
+  }
+});
+
+// Usefulness: verifies the README and the orchestrator instructions describe the opt-in with the
+// ADR: the flag, the sandbox mode, the network option, the ADR, and each gap.
+test.each([
+  ["README.md", "README.md"],
+  ["docs/orchestrator-instructions.md", "docs/orchestrator-instructions.md"],
+])("%s describes the reviewer sandbox opt-in consistently with ADR 0019", async (_name, path) => {
+  const text = await readRepoFile(path);
+  expect(text).toContain("--reviewer-workspace-write");
+  expect(text).toContain("workspace-write");
+  expect(text).toContain("network_access=false");
+  expect(text).toMatch(/ADR 0019/);
+  expect(text).toMatch(/detect/i);
+  expect(text).toMatch(/ignored file/i);
+  expect(text).toMatch(/remote state/i);
+  expect(text).toMatch(/instruction/i);
+  expect(text).toMatch(/unelevated Windows/i);
+});
+
+// Usefulness: verifies every surface that states the network limit says what it covers, shell
+// commands that the sandbox runs, and does not claim it blocks model-side tools such as
+// web_search, so a reader never takes the limit for a block on every channel.
+test.each([
+  ["README.md", () => readRepoFile("README.md")],
+  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["ADR 0019", () => readRepoFile(adr19)],
+  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  ["reviewer prompt", async () => reviewerPrompt("x", null, null, true)],
+  [
+    "orchestrator prompt",
+    async () => initialPrompt({ task: "t", maxSteps: 5, reviewerWorkspaceWrite: true }),
+  ],
+])("%s qualifies the sandbox network limit as shell commands only", async (_name, load) => {
+  const text = await load();
+  expect(text).toMatch(/shell commands/i);
+  expect(text).toMatch(/model-side tools?|web_search|web search/i);
+});
+
+// Usefulness: verifies ADR 0019 supersedes ADR 0001 in both directions and in the index, and
+// restates the decisions of ADR 0001 that still hold, so no live decision is lost.
+test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
+  const adr1 = await readRepoFile("adr/0001-hybrid-orchestrator-runtime.md");
+  const text = await readRepoFile(adr19);
+  const index = await readRepoFile("adr/README.md");
+  expect(adr1).toMatch(/## Status\s+superseded/);
+  expect(adr1).toMatch(/Superseded by \[ADR 0019[^\]]*\]\(0019-/);
+  expect(text).toMatch(/## Status\s+accepted/);
+  expect(text).toMatch(/Supersedes \[ADR 0001[^\]]*\]\(0001-hybrid-orchestrator-runtime\.md\)/);
+  // The parts of ADR 0001 that still hold.
+  expect(text).toMatch(/read-only by default/i);
+  expect(text).toMatch(/orchestrator[^.]*read-only/i);
+  expect(text).toMatch(/two-layer/i);
+  expect(text).toMatch(/run_worker/);
+  expect(text).toMatch(/--max-steps/);
+  expect(text).toMatch(/one repair turn/i);
+  expect(text).toMatch(/changed, verified, deferred, notDone, open|`changed`, `verified`/);
+  const row = (n) => index.split("\n").find((line) => line.includes(`[${n}](`));
+  expect(row("0001")).toMatch(/\|\s*superseded\s*\|/);
+  expect(row("0001")).toMatch(/ADR 0019/);
+  expect(row("0019")).toMatch(/\|\s*accepted\s*\|/);
+  expect(row("0019")).toMatch(/Supersedes ADR 0001/);
 });

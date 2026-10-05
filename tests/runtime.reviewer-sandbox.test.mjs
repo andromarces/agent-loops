@@ -146,3 +146,20 @@ test("the reviewer prompt carries the sandbox line only with the opt-in on", asy
   expect(prompt).toMatch(/local binary/);
   expect(prompt).not.toMatch(/pnpm|vitest|npm|yarn|node_modules/);
 });
+
+// Usefulness: verifies the opt-in leaves the orchestrator mutation check in force, so an
+// orchestrator turn that changes the work tree still halts with a MutationError and the change
+// stays on disk (issue #421 acceptance 1).
+test("with the opt-in on an orchestrator edit still halts the run with a MutationError", async () => {
+  const repo = await createTempRepo();
+  repos.push(repo);
+  vi.mocked(exec).mockImplementation(async (_cmd, args) => {
+    expect(args.join(" ")).toContain(READ_ONLY);
+    await writeFile(join(repo, "orch-leak.txt"), "leak\n");
+    return reply(JSON.stringify({ action: "run_reviewer", prompt: "check it" }), "th-orch");
+  });
+  await expect(
+    runLoop({ task: "Task", cwd: repo, maxSteps: 5, roles, reviewerWorkspaceWrite: true }),
+  ).rejects.toThrow(MutationError);
+  await expect(readFile(join(repo, "orch-leak.txt"), "utf8")).resolves.toBe("leak\n");
+});

@@ -427,14 +427,18 @@ other reviewer is refused at init. The run is unchanged without it.
 
 - The runtime then starts each Codex reviewer turn with
   `sandbox_mode="workspace-write"` and `sandbox_workspace_write.network_access=false`.
-  Network stays off. The runtime sets it explicitly, because the mode takes
-  network from the user Codex config otherwise.
+  Network access stays off for the shell commands that the sandbox runs. The
+  runtime sets it explicitly, because the mode takes network from the user Codex
+  config otherwise. The limit covers shell commands only: it does not block
+  model-side tools such as Codex `web_search`, or any other channel outside the
+  sandbox.
 - Only reviewer turns change. Every orchestrator turn, every worker turn, and the
   other four adapters keep their invocations, and the runtime mutation check
   still wraps every reviewer turn.
-- The reviewer prompt gains one line: the turn has the sandbox and no network,
-  and a package manager that writes outside the work tree fails there, so the
-  reviewer calls the project's local binary. Without the opt-in the line is
+- The reviewer prompt gains one line: the turn has the sandbox, its shell
+  commands have no network, that covers shell commands only, and a package
+  manager that writes outside the work tree fails there, so the reviewer calls
+  the project's local binary. Without the opt-in the line is
   absent. The reviewer still must not change files. The headless initial prompt
   tells the orchestrator about the opt-in only for a run that set it.
 - Choose the opt-in at init, and never change it later. A later call may repeat
@@ -447,10 +451,13 @@ other reviewer is refused at init. The run is unchanged without it.
     `node_modules/`), a write outside the repository, a write that the turn
     restores before it ends, or Git state other than the index and `HEAD`
     (other refs, the stash, the config).
-  - Network is off, so the opt-in opens no remote-write path. If a run reaches
-    the network anyway, `gh` and `git` can change remote state, and the local
-    snapshot does not see that. Codex is the only adapter that blocks shell
-    network in a read-only turn today.
+  - Shell network is off, so the opt-in does not open the shell path for `gh`
+    and `git`. The sandbox does not block a channel outside it, for example a
+    GitHub app connector or another model-side tool. The local snapshot does
+    not see a remote write over any channel, so a push, a merge, a review, or a
+    comment could change remote state unseen. Codex is the only adapter that
+    blocks shell network in a read-only turn today. The rule against remote
+    writes (issue #422) is advisory and not enforced.
   - Reviewed content that holds an instruction can steer a command that writes,
     not only one that reads.
   - The unelevated Windows sandbox probably gives no gain: it blocks a child
@@ -556,8 +563,8 @@ the reason.
 The orchestrator CLI and the reviewer CLI are chosen independently, so each
 statement below names the role whose CLI performs the read. A read-only
 invocation keeps shell network access for `claude`, `agy`, `opencode`, and
-`copilot`. The `codex` read-only sandbox blocks network, and it is the only
-adapter that does; see "Codex read-only network limit" in the README for the
+`copilot`. The `codex` read-only sandbox blocks the network of shell commands
+(not model-side tools), and it is the only adapter that does; see "Codex read-only network limit" in the README for the
 probe.
 
 - Orchestrator CLI keeps network: the orchestrator waits, at both points below.
