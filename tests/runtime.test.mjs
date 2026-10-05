@@ -2613,6 +2613,9 @@ test("a declared PR finishes on a base branch with no required check", async () 
       maxSteps: 5,
       pr: 42,
       requireCi: 42,
+      // The init copy of local files is out of scope here, and its `git` calls
+      // have no answer in the double.
+      copyLocalFiles: false,
       gh: noRequiredCheckGh(CLEAN_HEAD),
       roles: gateRoles(),
       agents: {

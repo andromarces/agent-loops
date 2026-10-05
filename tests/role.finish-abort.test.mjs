@@ -856,10 +856,20 @@ function cleanRepoGit(command, args, options) {
     if (args.includes("--is-inside-work-tree")) {
       return answer("true\n");
     }
+    // The directory holds a `.git` directory, which is the common Git directory.
+    if (args.includes("--git-common-dir")) {
+      return answer(".git\n");
+    }
     return answer(args.includes("--show-toplevel") ? options.cwd : `${CLEAN_REPO_HEAD}\n`);
   }
+
   if (args[0] === "status" || args[0] === "ls-files") {
     return answer("");
+  }
+  // The directory is the only work tree, so the init copy of local files has no
+  // main work tree to copy from.
+  if (args[0] === "worktree") {
+    return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0\0`);
   }
   throw new Error(`unexpected git call: ${args.join(" ")}`);
 }
@@ -868,6 +878,7 @@ function cleanRepoGit(command, args, options) {
 // `git` setup.
 async function useAcceptedPrRun() {
   const repo = await mkdtemp(join(tmpdir(), "role-test-clean-repo-"));
+  await mkdir(join(repo, ".git"));
   repos.push(repo);
   await initPrRun(repo, 42);
   await dispatchReviewer(repo, ACCEPT);

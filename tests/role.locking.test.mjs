@@ -125,9 +125,12 @@ test("concurrent dispatches: exactly one child runs, the loser exits non-zero", 
     const repo = await mkdtemp(join(tmpdir(), "role-test-clean-repo-"));
     repos.push(repo);
 
-    const first = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-      ...basicDeps(),
-    });
+    // The init copy of local files is out of scope here, and its `git` calls have
+    // no answer in the double, so the run opts out.
+    const first = await executeRoleCommand(
+      withRepo(dispatchArgv([...INIT_OVERRIDES, "--no-copy-local-files"]), repo),
+      { ...basicDeps() },
+    );
     expect(first.exitCode).toBe(0);
 
     let release;

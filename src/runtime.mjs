@@ -1,6 +1,7 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
+import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
@@ -251,6 +252,10 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * work that no reviewer has accepted, so a finish under `requireAccept` needs a
  * reviewer accept in this run (#362).
  *
+ * With `copyLocalFiles` (default true), the run first copies the untracked, ignored
+ * local agent and environment files of the main work tree into a linked `cwd`,
+ * before the first turn and the first snapshot, and emits one `local-files`
+ * event with the copied and skipped path names (ADR 0018).
  * With `testCmd`, the runtime runs that command in `cwd` before each reviewer
  * turn and supplies the result to the reviewer prompt and the result event as
  * advisory `testRun` evidence; `testCmdTimeout` bounds one run in seconds
@@ -282,6 +287,7 @@ export async function runLoop(options) {
     testCmdTimeout = null,
     mode = null,
     continued = false,
+    copyLocalFiles = true,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -290,6 +296,15 @@ export async function runLoop(options) {
   const { orchestrator, worker, reviewer } = roles;
 
   logInfo(`agent loop started (cwd: ${cwd}, maxSteps: ${maxSteps})`);
+
+  // Before the first child spawn and the first snapshot, so the copied files are
+  // present for every turn. They are ignored, so no snapshot lists them.
+  if (copyLocalFiles) {
+    const report = await copyIntoWorkTree(cwd);
+    if (report) {
+      onEvent({ type: "local-files", ...report });
+    }
+  }
 
   function stopLoop(exitCode, detail) {
     // A recorded unresolved compare leaves the loop on 0 while the headless
