@@ -385,9 +385,9 @@ export async function runLoop(options) {
         options: { cwd, timeout, signal },
       });
     } catch (err) {
-      if (err?.name !== "MutationError") {
+      if (readProp(err, "name") !== "MutationError") {
         // A MutationError is already logged at the detection site in withMutationCheck.
-        logError(`orchestrator turn failed: ${String(err?.message ?? err).split("\n")[0]}`);
+        logError(`orchestrator turn failed: ${String(readableErrorMessage(err)).split("\n")[0]}`);
       }
       throw err;
     }
@@ -687,7 +687,7 @@ async function ciGate({ pr, reviewed, cwd, gh }) {
   try {
     gate = await checkCi({ pr, reviewed, cwd, gh });
   } catch (err) {
-    const detail = (err?.message ?? String(err)).split("\n")[0];
+    const detail = String(readableErrorMessage(err)).split("\n")[0];
     logError(`ci gate could not run: ${detail}`);
     return {
       refusal: {
