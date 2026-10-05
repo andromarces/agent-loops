@@ -1177,7 +1177,22 @@ export async function executeRoleCommand(args, deps = {}) {
         throw new RoleError(`Unsupported operation: ${args.operation}`);
     }
   } catch (err) {
-    return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
+    try {
+      return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
+    } catch (formatErr) {
+      // Reading the message threw. Keep one envelope, and keep a cancel as exit 130.
+      let canceled = false;
+      try {
+        canceled = Boolean(formatErr?.isCanceled);
+      } catch {}
+      return {
+        exitCode: canceled ? 130 : 1,
+        payload: {
+          status: "error",
+          error: canceled ? "Interrupted by SIGINT" : "Unreadable error",
+        },
+      };
+    }
   }
 }
 
@@ -1211,22 +1226,10 @@ export async function main(argv, { agents = defaultAgents } = {}) {
       return;
     }
 
-    let exitCode;
-    let payload;
-    try {
-      ({ exitCode, payload } = await executeRoleCommand(args, {
-        agents,
-        signal: controller.signal,
-      }));
-    } catch (err) {
-      if (err?.isCanceled) {
-        exitCode = 130;
-        payload = { status: "error", error: "Interrupted by SIGINT" };
-      } else {
-        exitCode = 1;
-        payload = { status: "error", error: errorMessage(err) };
-      }
-    }
+    const { exitCode, payload } = await executeRoleCommand(args, {
+      agents,
+      signal: controller.signal,
+    });
 
     console.log(JSON.stringify(payload));
     process.exitCode = exitCode;
