@@ -302,3 +302,27 @@ test.each([
     expect(state.sessionId).toBe(expected);
   }
 });
+
+const BLOCK = [
+  "Conclusion: done.",
+  "Why: tests pass.",
+  "Blockers: none",
+  "Checks: pnpm test, passed.",
+].join("\n");
+
+// Usefulness: verifies a late agent message with no closing block does not replace the earlier block of the turn (issue #449).
+test("codex returns the earlier closing block when the last message holds none", async () => {
+  const events = [
+    { type: "thread.started", thread_id: "th-1" },
+    { type: "item.completed", item: { type: "agent_message", text: `Work done.\n${BLOCK}` } },
+    { type: "item.completed", item: { type: "agent_message", text: "Noted the late event." } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events, stderr: "" });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const response = await runCodex(state, "p", { cwd: "/dir" });
+
+  expect(response).toBe(`Work done.\n${BLOCK}`);
+});

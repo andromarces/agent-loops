@@ -1,3 +1,5 @@
+import { parseReportBlock } from "../lib/report.mjs";
+
 /**
  * Sets `state.usage` to `usage`, or removes it when the CLI reported none (`undefined` or
  * `null`), so a turn that omits usage leaves no stale value behind. An empty object is kept.
@@ -77,4 +79,15 @@ export function flagMissingSession(err, requestedId, missingLine) {
  */
 export function asSessionId(value) {
   return typeof value === "string" && value ? value : undefined;
+}
+
+/**
+ * Returns the message of a turn that carries the closing block the parent reads: the last
+ * message whose closing block parses, so a late answer to an event after the block does not
+ * replace the report of the turn (issue #449). When no message parses, the last message is
+ * returned, as before, so a malformed block still reaches the caller as `raw`.
+ * @param {string[]} messages assistant messages of one turn, in order and non-empty
+ */
+export function lastClosingMessage(messages) {
+  return messages.findLast((message) => parseReportBlock(message)) ?? messages.at(-1);
 }

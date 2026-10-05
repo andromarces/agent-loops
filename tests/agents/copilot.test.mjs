@@ -430,3 +430,27 @@ test.each([
     expect(state.sessionId).toBe(expected);
   }
 });
+
+const BLOCK = [
+  "Conclusion: done.",
+  "Why: tests pass.",
+  "Blockers: none",
+  "Checks: pnpm test, passed.",
+].join("\n");
+
+// Usefulness: verifies a late assistant message with no closing block does not replace the earlier block of the turn (issue #449).
+test("copilot returns the earlier closing block when the last message holds none", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      JSON.stringify({ type: "assistant.message", data: { content: `Work done.\n${BLOCK}` } }),
+      JSON.stringify({ type: "assistant.message", data: { content: "Noted the late event." } }),
+      '{"type":"result","sessionId":"s-1","exitCode":0}',
+    ].join("\n"),
+    stderr: "",
+  });
+
+  const state = { kind: "copilot", sessionId: "s-1", model: null, effort: null };
+  const response = await runCopilot(state, "p", { cwd: "/dir" });
+
+  expect(response).toBe(`Work done.\n${BLOCK}`);
+});
