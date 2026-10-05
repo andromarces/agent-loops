@@ -5,6 +5,7 @@ import { logWarn } from "../lib/log.mjs";
 import {
   asSessionId,
   keepFailedSessionId,
+  lastClosingMessage,
   resumeMismatchError,
   setMainLoopUsage,
 } from "./shared.mjs";
@@ -65,13 +66,12 @@ export async function runCopilot(state, prompt, options = {}) {
     throw resumeMismatchError("Copilot", "session", requestedSessionId, returnedId);
   }
 
-  const message = events
+  const messages = events
     .filter((event) => event.type === "assistant.message")
     .map((event) => readAssistantMessage(event))
-    .filter(Boolean)
-    .at(-1);
+    .filter(Boolean);
 
-  if (!message) {
+  if (messages.length === 0) {
     throw new Error("Copilot did not return response text.");
   }
 
@@ -79,7 +79,7 @@ export async function runCopilot(state, prompt, options = {}) {
     logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
   }
 
-  return String(message).trim();
+  return String(lastClosingMessage(messages)).trim();
 }
 
 function findResultEvent(events) {

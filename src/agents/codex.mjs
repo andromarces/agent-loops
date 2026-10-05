@@ -4,6 +4,7 @@ import {
   asSessionId,
   flagMissingSession,
   keepFailedSessionId,
+  lastClosingMessage,
   resumeMismatchError,
   setMainLoopUsage,
 } from "./shared.mjs";
@@ -74,5 +75,5 @@ export async function runCodex(state, prompt, options = {}) {
     throw new Error("Codex did not return an agent message.");
   }
 
-  return String(messages.at(-1)).trim();
+  return String(lastClosingMessage(messages)).trim();
 }

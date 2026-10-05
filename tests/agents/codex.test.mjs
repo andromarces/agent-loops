@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { runCodex } from "../../src/agents/codex.mjs";
 import { exec } from "../../src/lib/exec.mjs";
+import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
@@ -301,4 +302,89 @@ test.each([
     await expect(call).resolves.toBe("ok");
     expect(state.sessionId).toBe(expected);
   }
+});
+
+const BLOCK = [
+  "Conclusion: done.",
+  "Why: tests pass.",
+  "Blockers: none",
+  "Checks: pnpm test, passed.",
+].join("\n");
+
+// Usefulness: verifies a late agent message with no closing block does not replace the earlier block of the turn (issue #449).
+test("codex returns the earlier closing block when the last message holds none", async () => {
+  const events = [
+    { type: "thread.started", thread_id: "th-1" },
+    { type: "item.completed", item: { type: "agent_message", text: `Work done.\n${BLOCK}` } },
+    { type: "item.completed", item: { type: "agent_message", text: "Noted the late event." } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events, stderr: "" });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const response = await runCodex(state, "p", { cwd: "/dir" });
+
+  expect(response).toBe(`Work done.\n${BLOCK}`);
+});
+
+// Usefulness: verifies a final malformed reject block wins over an earlier accept, so the parent sees it as raw and never an accept (issue #449).
+test("codex keeps a final unparseable reject block over an earlier accept block", async () => {
+  const accept = `${BLOCK}\nVerdict: accept`;
+  const reject = "Conclusion: no.\nWhy: bugs.\nBlockers:\n- one\n- two\nVerdict: reject";
+  const events = [
+    { type: "thread.started", thread_id: "th-1" },
+    { type: "item.completed", item: { type: "agent_message", text: accept } },
+    { type: "item.completed", item: { type: "agent_message", text: reject } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events, stderr: "" });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const response = await runCodex(state, "p", { cwd: "/dir" });
+
+  expect(response).toBe(reject);
+  expect(parseReportBlock(response)).toBeNull();
+  expect(parseVerdict(response)).not.toBe("accept");
+});
+
+// Usefulness: verifies a final spaceless numbered report that the parser cannot read still wins over an earlier accept and surfaces as raw (issue #449).
+test("codex keeps a final spaceless numbered report over an earlier accept block", async () => {
+  const accept = `${BLOCK}\nVerdict: accept`;
+  const numbered = "1.Conclusion: no.\n2.Why: bugs.\n3.Blockers: one\n4.Verdict: reject";
+  const events = [
+    { type: "thread.started", thread_id: "th-1" },
+    { type: "item.completed", item: { type: "agent_message", text: accept } },
+    { type: "item.completed", item: { type: "agent_message", text: numbered } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events, stderr: "" });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const response = await runCodex(state, "p", { cwd: "/dir" });
+
+  expect(response).toBe(numbered);
+  expect(parseVerdict(response)).not.toBe("accept");
+});
+
+// Usefulness: verifies a final report whose labels follow letters in list items still wins over an earlier accept and surfaces as raw (issue #449).
+test("codex keeps a final letter-prefixed list report over an earlier accept block", async () => {
+  const accept = `${BLOCK}\nVerdict: accept`;
+  const lettered = "a.Conclusion: ok.\nb.Why: w.\nc.Blockers: none\na) Verdict: accept";
+  const events = [
+    { type: "thread.started", thread_id: "th-1" },
+    { type: "item.completed", item: { type: "agent_message", text: accept } },
+    { type: "item.completed", item: { type: "agent_message", text: lettered } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events, stderr: "" });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const response = await runCodex(state, "p", { cwd: "/dir" });
+
+  expect(response).toBe(lettered);
+  expect(parseVerdict(response)).toBe("unknown");
 });

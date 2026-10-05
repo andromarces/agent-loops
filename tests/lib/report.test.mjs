@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
+import { hasClosingBlockAttempt, parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 
 const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
 
@@ -550,4 +550,56 @@ test("parseVerdict ignores a Verdict line outside the closing block", () => {
 // Usefulness: verifies a response without a Verdict line yields unknown.
 test("parseVerdict yields unknown without a Verdict line", () => {
   expect(parseVerdict("looks fine, but no verdict line here")).toBe("unknown");
+});
+
+const MALFORMED_SHAPES = [
+  "1.Conclusion: c\n2.Why: w\n3.Blockers: none",
+  "1) Conclusion: c\nWhy: w\nBlockers: none",
+  "1)Conclusion: c\nWhy: w\nBlockers: none",
+  "-Conclusion: c\n-Why: w\n-Blockers: none",
+  "- Conclusion: c\n- Why: w\n- Blockers: none",
+  "*Conclusion*: c\nWhy: w\nBlockers: none",
+  "**Conclusion**: c\n**Why**: w\n**Blockers**: none",
+  "### Conclusion: c\nWhy: w\nBlockers: none",
+  "###Conclusion: c\nWhy: w\nBlockers: none",
+  "> Conclusion: c\n> Why: w\n> Blockers: none",
+  ">Conclusion: c\nWhy: w\nBlockers: none",
+  "  Conclusion: c\n  Why: w\n  Blockers: none",
+  "Conclusion: c\nWhy: w\nBlockers:\n- one\n- two",
+  "Conclusion: c\nWhy: w\nBlockers: none\n1.Deferred: x",
+  "Conclusion: c\nWhy: w\nBlockers: none\n**Verdict**: reject",
+  "Conclusion: c\nWhy: w\nBlockers: none\n1.Verdict: reject",
+  "Conclusion: c\nWhy: w",
+  "Verdict: reject",
+  "  - 1.Verdict: accept",
+  "a.Conclusion: c\nb.Why: w\nc.Blockers: none",
+  "a) Verdict: accept",
+  "(a) Conclusion: c",
+  "Step one. Conclusion: c",
+  "see Verdict: reject",
+  "x**Why**: w",
+  "text conclusion : c",
+  REPORT,
+  `${REPORT}\nVerdict: accept`,
+];
+
+// Usefulness: ties the closing-block attempt rule to the parser (issue #449): whenever the parser sees a closing block or treats a label line as part of one, the response counts as an attempt, so a malformed final report is never replaced by an earlier one.
+test("hasClosingBlockAttempt holds for every malformed or parseable closing block shape", () => {
+  for (const shape of MALFORMED_SHAPES) {
+    expect(hasClosingBlockAttempt(shape), shape).toBe(true);
+  }
+});
+
+// Usefulness: keeps late prose, which is no report, outside the attempt rule so the earlier block still recovers (issue #449).
+test("hasClosingBlockAttempt is false for prose and lists with no label", () => {
+  for (const prose of [
+    "Noted the late event.",
+    "- one\n- two",
+    "1. first\n2. second",
+    "Conclusions follow later",
+    "The conclusion is none yet.",
+    "Notes about the verdict",
+  ]) {
+    expect(hasClosingBlockAttempt(prose), prose).toBe(false);
+  }
 });

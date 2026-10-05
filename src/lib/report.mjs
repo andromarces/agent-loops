@@ -78,6 +78,27 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // emphasis shapes above into `raw` and makes that loss loud.
 const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
+// A report label name or `Verdict`, in any case, anywhere in the text, followed by optional
+// emphasis or code marks and whitespace and then a colon. It has no lead-in condition on purpose:
+// every lead-in rule missed another list shape (issue #449), so the rule is the widest
+// one. It holds every label the strict match, DECORATED_LABEL_LINE, or LIST_LINE reads, and it
+// also holds a mid-sentence mention such as `the conclusion: none`. That mention fails closed.
+const LABEL_MENTION = new RegExp(
+  `(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]{0,2}\\s*:`,
+  "i",
+);
+
+/**
+ * True when the response holds a closing block attempt: any report label name or `Verdict`
+ * followed by a colon, anywhere in the text, whether or not the block parses. A response
+ * without one is plain prose, such as a late answer to an event after the closing block.
+ * @param {string} response
+ * @returns {boolean}
+ */
+export function hasClosingBlockAttempt(response) {
+  return LABEL_MENTION.test(response);
+}
+
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
  * the response, or null when the response has no `Conclusion:` line at all.
