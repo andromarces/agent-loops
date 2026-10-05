@@ -830,7 +830,9 @@ The version goes live only after approval. Staged publishing needs npm 11.15.0 o
 
 ## Manual smoke test
 
-Run against real CLI agents in a temporary Git repository:
+Run against real CLI agents in a temporary Git repository.
+
+Bash:
 
 ```bash
 # Prepare scratch repo
@@ -848,6 +850,29 @@ agent-loop \
   --transcript ./run.json \
   --task "Add a README line that names the project."
 ```
+
+PowerShell:
+
+```powershell
+# Prepare scratch repo
+$smokeRepo = Join-Path $env:TEMP "smoke-repo"
+New-Item -ItemType Directory -Force $smokeRepo | Out-Null
+Set-Location $smokeRepo
+git init
+git commit --allow-empty -m "init"
+
+# Run smoke test
+agent-loop `
+  --orchestrator codex `
+  --worker claude `
+  --reviewer agy `
+  --max-steps 4 `
+  --timeout 600 `
+  --transcript ./run.json `
+  --task "Add a README line that names the project."
+```
+
+A backtick must be the last character on its line, with no trailing space.
 
 ## Future additions
 
