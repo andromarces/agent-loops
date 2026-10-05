@@ -1,9 +1,9 @@
-import { link, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { link, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { withStateLock } from "../../src/lib/runstate.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // A filesystem without hard links (FAT/exFAT, some network mounts) makes every
 // `link` fail. Linux vfat reports EPERM and macOS reports ENOTSUP; Windows
@@ -11,8 +11,11 @@ import { removePath } from "../runtime-helpers.mjs";
 // (nodejs/node#65817). A partial module mock keeps the real filesystem for
 // every other call; this file exists separately because the mock applies to the
 // whole module and would break the real-fs cases in runstate.test.mjs (#178).
+const realFs = await vi.importActual("node:fs/promises");
+
 vi.mock("node:fs/promises", async (importOriginal) => ({
   ...(await importOriginal()),
+  writeFile: vi.fn(async (...args) => await realFs.writeFile(...args)),
   link: vi.fn(async () => {
     const err = new Error("hard links are unsupported");
     err.code = "ENOTSUP";
@@ -29,6 +32,7 @@ async function tempDir() {
 }
 
 afterEach(async () => {
+  vi.mocked(writeFile).mockImplementation(async (...args) => await realFs.writeFile(...args));
   for (const dir of dirs) {
     await removePath(dir);
   }
@@ -81,4 +85,41 @@ test("acquires the lock when link fails with the Windows EISDIR mapping", async 
 
   expect(JSON.parse(owner).pid).toBe(process.pid);
   await expect(readFile(lockFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+// Usefulness: verifies the rejected #445 failure stays closed: a contender that
+// meets a claim of a running process, created but not yet written, never takes it
+// over at any age, so two processes never act on one claim (#452). The claim
+// writer is paused inside the exclusive-create window.
+test("a claim that a running process created but has not written is never taken over", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const staleOwner = JSON.stringify({ pid: await deadPid(), startedAt: "old" });
+  await writeFile(lockFile, staleOwner, "utf8");
+  const created = Promise.withResolvers();
+  const resume = Promise.withResolvers();
+  let claimFile;
+  vi.mocked(writeFile).mockImplementation(async (file, data, options) => {
+    if (options?.flag !== "wx" || !file.includes(".reap.")) {
+      return await realFs.writeFile(file, data, options);
+    }
+    // The exclusive create of the claim: the file exists, empty, until resumed.
+    claimFile = file;
+    await realFs.writeFile(file, "", options);
+    created.resolve();
+    await resume.promise;
+    await realFs.writeFile(file, data, "utf8");
+  });
+  const owner = withStateLock(lockFile, async () => "ran");
+
+  await created.promise;
+  await utimes(claimFile, new Date(0), new Date(0));
+  const fn = vi.fn(async () => "ran");
+  await expect(withStateLock(lockFile, fn)).rejects.toThrow(/not readable yet/);
+
+  expect(fn).not.toHaveBeenCalled();
+  expect(await readFile(claimFile, "utf8")).toBe("");
+  resume.resolve();
+  await expect(owner).resolves.toBe("ran");
+  expect(await readdir(dir)).toEqual([]);
 });

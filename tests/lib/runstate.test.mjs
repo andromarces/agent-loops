@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import {
-  STALE_LOCK_GRACE_MS,
   readState,
   readStatesForSession,
   statePaths,
@@ -80,12 +79,16 @@ test("withStateLock rejects while a live pid holds the lock", async () => {
   expect(JSON.parse(await readFile(lockFile, "utf8")).pid).toBe(process.pid);
 });
 
-// Usefulness: verifies a fresh unparseable lock is never stolen — the contender
-// rejects and removes nothing (regression: an empty lock admitted a second owner).
-test("withStateLock never steals a fresh unreadable lock", async () => {
+// Usefulness: verifies an unwritten lock is never stolen while its writer is
+// still in flight, at any age: the writer's temp file (named with its live pid)
+// is the only evidence of the owner before the content exists (regression: an
+// empty lock admitted a second owner).
+test("withStateLock never steals an unwritten lock of a running writer", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
   await writeFile(lockFile, "", "utf8");
+  await writeFile(`${lockFile}.${process.pid}.900001.tmp`, "{}", "utf8");
+  await utimes(lockFile, new Date(0), new Date(0));
 
   await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(/not readable yet/);
   expect(await readFile(lockFile, "utf8")).toBe("");
@@ -105,17 +108,74 @@ test("withStateLock removes a dead-pid lock as stale", async () => {
   await expect(readFile(lockFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-// Usefulness: verifies an unreadable lock older than the grace window is
-// treated as stale, removed, and the call proceeds.
-test("withStateLock removes an old unreadable lock as stale", async () => {
+// Usefulness: verifies an unparseable lock that no running writer can own is
+// treated as stale at once, without a grace window, so a crashed or foreign
+// empty lock does not block the next contender.
+test("withStateLock removes an unparseable lock that has no running writer", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
   await writeFile(lockFile, "", "utf8");
-  const past = new Date(Date.now() - 5 * STALE_LOCK_GRACE_MS);
-  await utimes(lockFile, past, past);
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
   await expect(readFile(lockFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+const CLAIM_NAME = `state.lock.reap.${"a".repeat(64)}`;
+
+// Usefulness: verifies the issue #452 acceptance: a claim file left by a crashed
+// takeover is removed by a later acquisition that meets no stale lock, so the
+// leftover file does not outlive the next lock holder.
+test("withStateLock removes an orphaned claim file outside a takeover", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(
+    join(dir, CLAIM_NAME),
+    JSON.stringify({ pid: await deadPid(), startedAt: "2026-01-01T00:00:00Z", nonce: "n" }),
+    "utf8",
+  );
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  expect(await readdir(dir)).toEqual([]);
+});
+
+// Usefulness: verifies an unwritten claim file that no running process can be
+// writing is an orphan too, so a crash inside the exclusive-create window does
+// not leave a file that only a takeover removes.
+test("withStateLock removes an unwritten claim file that has no running writer", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(join(dir, CLAIM_NAME), "", "utf8");
+  await writeFile(join(dir, `${CLAIM_NAME}.${await deadPid()}.900001.tmp`), "{}", "utf8");
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  expect(await readdir(dir)).toEqual([]);
+});
+
+// Usefulness: verifies the issue #452 acceptance: the unwritten claim file of a
+// running process is kept at any age, because the scan has no grace window that
+// could expire it. Without this, two processes could act on one claim.
+test("withStateLock keeps an unwritten claim file of a running process at any age", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const claimFile = join(dir, CLAIM_NAME);
+  await writeFile(claimFile, "", "utf8");
+  await writeFile(`${claimFile}.${process.pid}.900001.tmp`, "{}", "utf8");
+  await utimes(claimFile, new Date(0), new Date(0));
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  expect(await readFile(claimFile, "utf8")).toBe("");
+});
+
+// Usefulness: verifies a written claim whose pid is alive is never removed by the
+// scan, so the claim of a running takeover keeps its exclusion.
+test("withStateLock keeps the claim file of a live process", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const claim = JSON.stringify({ pid: process.pid, startedAt: "2026-01-01T00:00:00Z" });
+  await writeFile(join(dir, CLAIM_NAME), claim, "utf8");
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  expect(await readFile(join(dir, CLAIM_NAME), "utf8")).toBe(claim);
 });
 
 // Usefulness: verifies a lock temp file left by a crashed process (dead pid) is
@@ -125,7 +185,7 @@ test("withStateLock prunes a dead owner's temp file and keeps a live one", async
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
   const orphan = `state.lock.${await deadPid()}.0.tmp`;
-  const live = `state.lock.${process.pid}.7.tmp`;
+  const live = `state.lock.${process.pid}.900001.tmp`;
   await writeFile(join(dir, orphan), "{}", "utf8");
   await writeFile(join(dir, live), "{}", "utf8");
 
