@@ -1057,41 +1057,74 @@ test.each([
   }
 });
 
-// Usefulness: verifies a late message with valid, different ids that opens with `Verdict: accept`
-// cannot override the earlier `Verdict: reject`, because a verdict gates acceptance. The late part
-// stays glued to the last line as it did before issue #458, so the verdict and every block value
-// equal what the join produced then, including the `Deferred` value the late text glues onto.
-test("opencode keeps an earlier reject verdict when a late message opens with Verdict: accept", async () => {
+// Decision (issue #467): the last closing block governs, as the parser and the Codex and Copilot
+// adapters already do. A later message that opens with a report label or `Verdict:` starts its own
+// line, so it never glues onto the earlier block and corrupts a value; it governs only as written.
+const REJECTED_BLOCK = CLOSING_BLOCK.replace("Blockers: none", "Blockers: b1").replace(
+  "Deferred: none",
+  "Verdict: reject",
+);
+
+// Usefulness: verifies a late `Verdict: accept` governs the verdict in both line-break shapes of the
+// earlier message, so the result never depends on a trailing newline (issue #467, table rows 1-2).
+test.each([
+  ["no trailing newline", REJECTED_BLOCK],
+  ["a trailing newline", `${REJECTED_BLOCK}\n`],
+])("opencode lets a late Verdict: accept govern after %s", async (_name, first) => {
   const response = await runWithEvents(
-    textEvent(CLOSING_BLOCK.replace("Deferred: none", "Verdict: reject\nDeferred: none"), "msg-1"),
+    textEvent(first, "msg-1"),
     textEvent("Verdict: accept", "msg-2"),
   );
 
-  expect(parseVerdict(response)).toBe("reject");
-  expect(parseReportBlock(response)).toEqual({
-    ...BLOCK_VALUES,
-    deferred: "noneVerdict: accept",
-  });
+  expect(parseVerdict(response)).toBe("accept");
+  expect(parseReportBlock(response)).toEqual({ ...BLOCK_VALUES, blockers: "b1", deferred: null });
 });
 
-// Usefulness: verifies the break decision reads the whole late message, not one part, because a
-// `Verdict:` label can span parts. A split label (`Ver` + `dict: accept`) and an empty first part
-// must leave the earlier reject and every block value as the join produced them before issue #458.
-// Each case failed when the decision looked at a single part.
-test.each([
-  ["a label split across parts", ["Ver", "dict: accept"]],
-  ["an empty first part", ["", "Verdict: accept"]],
-  ["leading whitespace parts", [" ", "\t", "Verdict: accept"]],
-])("opencode keeps an earlier reject verdict with a late message of %s", async (_name, late) => {
-  const first = CLOSING_BLOCK.replace("Deferred: none", "Verdict: reject\nDeferred: none");
+// Usefulness: verifies a late malformed block governs and fails closed: no report fields, so the
+// dispatch envelope carries `raw`, instead of the late text gluing onto the earlier `Deferred` value
+// (issue #467, table row 3).
+test("opencode reports a late partial block as unparseable", async () => {
   const response = await runWithEvents(
-    textEvent(first, "msg-1"),
-    ...late.map((part) => textEvent(part, "msg-2")),
+    textEvent(REJECTED_BLOCK, "msg-1"),
+    textEvent("Conclusion: late\nVerdict: accept", "msg-2"),
+  );
+
+  expect(parseReportBlock(response)).toBeNull();
+  expect(parseVerdict(response)).toBe("accept");
+});
+
+// Usefulness: verifies a late `Blockers: none` sets only the blocker value on its own line, so the
+// earlier `Deferred` value and the verdict stay as written (issue #467, table row 4).
+test("opencode lets a late Blockers line govern without touching other values", async () => {
+  const response = await runWithEvents(
+    textEvent(
+      REJECTED_BLOCK.replace("Verdict: reject", "Deferred: none\nVerdict: reject"),
+      "msg-1",
+    ),
+    textEvent("Blockers: none", "msg-2"),
   );
 
   expect(parseVerdict(response)).toBe("reject");
-  expect(parseReportBlock(response)).toEqual({
-    ...BLOCK_VALUES,
-    deferred: `none${late.join("")}`,
-  });
+  expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
+});
+
+// Usefulness: verifies the break decision reads the whole late message, because a `Verdict:` label
+// can span parts. A split label and an empty first part must read as a label line, and an indented
+// one must not (issue #467).
+test.each([
+  ["a label split across parts", ["Ver", "dict: accept"], "accept"],
+  ["an empty first part", ["", "Verdict: accept"], "accept"],
+  [
+    "leading whitespace parts, an indented non-label line",
+    [" ", "\t", "Verdict: accept"],
+    "reject",
+  ],
+])("opencode reads a late message of %s on its own line", async (_name, late, verdict) => {
+  const response = await runWithEvents(
+    textEvent(REJECTED_BLOCK, "msg-1"),
+    ...late.map((part) => textEvent(part, "msg-2")),
+  );
+
+  expect(parseVerdict(response)).toBe(verdict);
+  expect(parseReportBlock(response)).toEqual({ ...BLOCK_VALUES, blockers: "b1", deferred: null });
 });
