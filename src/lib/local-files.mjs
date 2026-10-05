@@ -47,7 +47,15 @@ export const MAX_WALKED_ENTRIES = 2000;
 const GIT_CONTROL_FILES = new Set([".gitignore", ".gitattributes"]);
 
 async function git(cwd, args, options = {}) {
-  const result = await execa("git", args, { cwd, reject: false, ...options });
+  // `stripFinalNewline: false` (execa, `lib/io/strip-newline.js`) keeps the output
+  // byte-exact. By default execa removes a final `\n` or `\r\n`, which can be part
+  // of a path.
+  const result = await execa("git", args, {
+    cwd,
+    reject: false,
+    stripFinalNewline: false,
+    ...options,
+  });
   if (result.exitCode !== 0 && !options.allowExit?.includes(result.exitCode)) {
     const detail = (result.stderr || result.shortMessage || "").trim();
     throw new Error(
@@ -127,10 +135,16 @@ async function hasBlockedAncestor(base, rel, blocked, create = false) {
 }
 
 /**
- * Removes the one end-of-line that Git prints after a single value, and nothing
- * else: a path can start or end with a space and can hold a newline.
+ * Removes the one line feed that Git prints after a single value, and nothing
+ * else: a path can end in a carriage return, a space, or a line feed of its own.
  */
-const stripEol = (text) => text.replace(/\r?\n$/, "");
+const stripLf = (text) => (text.endsWith("\n") ? text.slice(0, -1) : text);
+
+/** True when `path` holds a control character: a line feed, a carriage return, a tab, and so on. */
+const hasControlCharacter = (path) =>
+  Array.from(path, (character) => character.codePointAt(0)).some(
+    (code) => code < 0x20 || code === 0x7f,
+  );
 
 /**
  * Reads `git worktree list --porcelain -z` into `{ path, bare }` entries, in Git's
@@ -166,21 +180,29 @@ const isInside = (parent, child) => {
 /**
  * Returns the canonical path of the main work tree, or null when there is none for
  * this copy (decision 10 of ADR 0017). The main work tree is the first entry of
- * `git worktree list --porcelain -z`, taken only when all three hold: the entry is not
- * marked `bare`, its path is an existing directory, and its canonical path is
+ * `git worktree list --porcelain -z`, taken only when all three hold: the entry is
+ * not marked `bare`, its path is an existing directory, and its canonical path is
  * neither the common Git directory (`git rev-parse --git-common-dir`) nor inside
  * it. Every other layout has none: a bare repository, a plain separate Git
  * directory, and a submodule, where Git lists the Git directory first. A Git
- * command that fails throws.
+ * command that fails throws. A path with a control character is refused: the
+ * result is `{ refused }` and the caller copies nothing (decision 10).
  */
 async function findMainWorkTree(root, entries) {
   const first = entries[0];
   if (first === undefined || first.bare || !(await lstatOrNull(first.path))?.isDirectory()) {
-    return null;
+    return { main: null };
   }
-  const common = stripEol((await git(root, ["rev-parse", "--git-common-dir"])).stdout);
+  const common = stripLf((await git(root, ["rev-parse", "--git-common-dir"])).stdout);
+  const commonReal = await realpath(resolve(root, common));
   const main = await realpath(first.path);
-  return isInside(await realpath(resolve(root, common)), main) ? null : main;
+  if (hasControlCharacter(common) || hasControlCharacter(commonReal)) {
+    return { refused: "the common Git directory path" };
+  }
+  if (hasControlCharacter(main)) {
+    return { refused: "the main work tree path" };
+  }
+  return { main: isInside(commonReal, main) ? null : main };
 }
 
 /**
@@ -252,14 +274,37 @@ async function collect(ctx, rel, abs) {
  * @returns {Promise<{ copied: string[], skipped: string[] } | null>}
  */
 export async function copyLocalFiles(cwd, hooks = {}) {
-  const root = stripEol((await git(cwd, ["rev-parse", "--show-toplevel"])).stdout);
+  // A path with a control character is not trusted to survive a round trip through
+  // Git's output or a path comparison, so the copy refuses it and copies nothing.
+  const refuse = (what) => {
+    logInfo(`local files: ${what} holds a control character, so nothing is copied`);
+    return null;
+  };
+  if (hasControlCharacter(cwd)) {
+    return refuse("--cwd");
+  }
+  const top = stripLf((await git(cwd, ["rev-parse", "--show-toplevel"])).stdout);
+  if (hasControlCharacter(top)) {
+    return refuse("the work tree path");
+  }
+  // The operator's own `--cwd` names the work tree when Git names the same
+  // directory, so a Git echo of the path is not what the later commands run in.
+  const root = (await realpath(cwd)) === (await realpath(top)) ? cwd : top;
   const entries = await readWorkTrees(root);
-  const mainReal = await findMainWorkTree(root, entries);
+  if (entries.some((entry) => hasControlCharacter(entry.path))) {
+    return refuse("a registered work tree path");
+  }
+  const found = await findMainWorkTree(root, entries);
+  if (found.refused !== undefined) {
+    return refuse(found.refused);
+  }
+  const mainReal = found.main;
   if (mainReal === null) {
     logInfo("local files: no main work tree found, so nothing is copied");
     return null;
   }
   const rootReal = await realpath(root);
+
   if (mainReal === rootReal) {
     return null;
   }

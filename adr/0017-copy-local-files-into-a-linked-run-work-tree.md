@@ -157,10 +157,28 @@ worktree list` names (even when its `.git` entry is gone), every directory that
     path contains a newline, and a probe with Git 2.56.0 showed a path with a
     newline arriving whole, with each field ended by NUL. The same rule holds for
     every other Git output that the copy parses for paths: `git ls-files -z` and
-    `git check-ignore -z` already use it. The single-value outputs `git rev-parse
---show-toplevel` and `--git-common-dir` have no `-z`, so exactly one
-    end-of-line is removed from them and nothing else, because a path can start or
-    end with a space. The repository does not state a minimum Git version, and the
+    `git check-ignore -z` already use it. The single-value outputs of the Git command
+    `rev-parse` (`--show-toplevel` and `--git-common-dir`) have no `-z`, so they are
+    read byte-exact. Every Git command of the copy runs with execa's
+    `stripFinalNewline: false`, because execa removes a final line feed or
+    carriage return plus line feed by default (default `true` at
+    `node_modules/execa/lib/arguments/specific.js:103`, applied by `stripNewline`
+    at `node_modules/execa/lib/io/strip-newline.js:5`). A probe with execa 10.0.1
+    returned `x` for the output `x`, a carriage return and a line feed by default,
+    and the whole output with the option off. Exactly one line feed, the terminator
+    Git adds, is then removed from a single value, and nothing else, because a path
+    can start or end with a space, a carriage return, or a line feed of its own.
+    The operator's own `--cwd` names the work tree whenever Git names the same
+    directory, so the later Git commands run in the operator's string, not in Git's
+    echo of it.
+
+    Fail closed on a control character. When `--cwd`, the top level of the work
+    tree, a registered work tree path, the main work tree, or the common Git
+    directory (as printed or as resolved) holds a control character (a line feed, a
+    carriage return, a tab, another character below 0x20, or 0x7f), nothing is
+    copied, the init does not fail, and the run logs that a path holds a control
+    character. A path that tools downstream could cut or redirect is not trusted.
+    This also covers a work tree whose own name holds one. The repository does not state a minimum Git version, and the
     first Git release that accepts `-z` for `git worktree list` was not verified
     here. A Git that rejects the option makes the command fail, and the init fails
     with Git's error (decision 15). It never falls back to the plain format.

@@ -976,13 +976,67 @@ test("does not copy a tracked file through a different spelling of its path", as
   expect(await exists(join(linked, ".claude"))).toBe(false);
 });
 
-// Usefulness: verifies a main work tree whose path holds a newline is found whole, so
-// the copy reads from it and not from a directory named by the text before the
-// newline, which here is another repository's checkout.
-// Not redundant: no other test has a newline in a path. It is skipped on Windows, where
-// a path cannot hold one.
+// Usefulness: verifies a `--cwd` that ends in a control character is refused, not
+// redirected: the copy writes nothing, reports it, and does not write into the
+// directory with the same name without that character, which is a real work tree here.
+// Not redundant: each spelling is a different character that Git or the process
+// runner can drop from the end of a printed path.
+for (const [label, character] of [
+  ["a line feed", "\n"],
+  ["a carriage return", "\r"],
+  ["a tab", "\t"],
+]) {
+  test.skipIf(process.platform === "win32")(
+    `copies nothing and reports it for a --cwd ending in ${label} (not run on Windows, which cannot hold it)`,
+    async () => {
+      const { base, main, linked } = await createLinked({
+        ignore: [".env"],
+        linkedName: `linked${character}`,
+      });
+      await git(main, "worktree", "add", join(base, "linked"), "-b", "decoy");
+      await writeFile(join(main, ".env"), "A=1\n");
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      expect(await copyLocalFiles(linked)).toBeNull();
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("control character"));
+      expect(await exists(join(base, "linked", ".env"))).toBe(false);
+      expect(await exists(join(linked, ".env"))).toBe(false);
+    },
+  );
+}
+
+// Usefulness: verifies a `--cwd` that is itself clean, a symlink to a work tree whose
+// real path ends in a line feed, is refused: Git prints the real path with its final
+// line feed, which must survive, or the copy would run in the directory without it.
+// Not redundant: every other `--cwd` test puts the control character in `--cwd`
+// itself, which is refused before Git runs. Here only Git's own output has it. It is not
+// run on Windows, which cannot hold the character.
 test.skipIf(process.platform === "win32")(
-  "copies from a main work tree whose path holds a newline, not from its prefix",
+  "copies nothing and reports it for a --cwd symlink to a work tree ending in a line feed (not run on Windows, which cannot hold it)",
+  async () => {
+    const { base, main, linked } = await createLinked({
+      ignore: [".env"],
+      linkedName: "linked\n",
+    });
+    await git(main, "worktree", "add", join(base, "linked"), "-b", "decoy");
+    await writeFile(join(main, ".env"), "A=1\n");
+    const alias = join(base, "alias");
+    await symlink(linked, alias);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(await copyLocalFiles(alias)).toBeNull();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("control character"));
+    expect(await exists(join(base, "linked", ".env"))).toBe(false);
+  },
+);
+
+// Usefulness: verifies a main work tree whose path holds a newline is refused, not
+// replaced by the directory named by the text before the newline, which here is
+// another repository's checkout.
+// Not redundant: it puts the control character in the main work tree path, and the
+// tests above put it in `--cwd`. It is not run on Windows, where a path cannot hold one.
+test.skipIf(process.platform === "win32")(
+  "copies nothing and reports it when the main work tree path holds a newline",
   async () => {
     const { base, main, linked } = await createLinked({
       ignore: [".env"],
@@ -991,19 +1045,21 @@ test.skipIf(process.platform === "win32")(
     await writeFile(join(main, ".env"), "REAL\n");
     await mkdir(join(base, "repo"));
     await writeFile(join(base, "repo", ".env"), "DECOY\n");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const report = await copyLocalFiles(linked);
-
-    expect(report).toEqual({ copied: [".env"], skipped: [] });
-    expect(await readFile(join(linked, ".env"), "utf8")).toBe("REAL\n");
+    expect(await copyLocalFiles(linked)).toBeNull();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("control character"));
+    expect(await exists(join(linked, ".env"))).toBe(false);
   },
 );
 
-// Usefulness: verifies a registered work tree whose path holds a newline is excluded
-// from the source walk when its `.git` entry is gone, so nothing is read from it.
-// Not redundant: the other registered work tree test has a path without a newline.
+// Usefulness: verifies a registered work tree whose path holds a newline is refused,
+// whether or not its `.git` entry is still there, so no exclusion depends on parsing
+// such a path.
+// Not redundant: it puts the control character in a work tree that is neither the main
+// work tree nor `--cwd`. It is not run on Windows, where a path cannot hold one.
 test.skipIf(process.platform === "win32")(
-  "never copies from a registered work tree whose path holds a newline",
+  "copies nothing and reports it when a registered work tree path holds a newline",
   async () => {
     const { main, linked } = await createLinked({ ignore: [".agents/"] });
     await mkdir(join(main, ".agents"));
@@ -1012,32 +1068,11 @@ test.skipIf(process.platform === "win32")(
     await rm(join(nested, ".git"));
     await writeFile(join(nested, "inner.md"), "x\n");
     await writeFile(join(main, ".agents", "skill.md"), "s\n");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const report = await copyLocalFiles(linked);
-
-    expect(report).toEqual({ copied: [".agents/skill.md"], skipped: [] });
-  },
-);
-
-// Usefulness: verifies a registered work tree whose path holds a newline is excluded as
-// a destination when its `.git` entry is gone, so nothing is written into it.
-// Not redundant: the source test above covers the walk of the main work tree, and this
-// one the target directories of the linked work tree.
-test.skipIf(process.platform === "win32")(
-  "never writes inside a registered work tree whose path holds a newline",
-  async () => {
-    const { main, linked } = await createLinked({ ignore: [".agents/"] });
-    await mkdir(join(main, ".agents", "sub\nx"), { recursive: true });
-    await writeFile(join(main, ".agents", "sub\nx", "f.md"), "x\n");
-    await mkdir(join(linked, ".agents"));
-    const nested = join(linked, ".agents", "sub\nx");
-    await git(linked, "worktree", "add", nested, "-b", "inner");
-    await rm(join(nested, ".git"));
-
-    const report = await copyLocalFiles(linked);
-
-    expect(report).toEqual({ copied: [], skipped: [".agents/sub\nx/f.md"] });
-    expect(await exists(join(nested, "f.md"))).toBe(false);
+    expect(await copyLocalFiles(linked)).toBeNull();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("control character"));
+    expect(await exists(join(linked, ".agents"))).toBe(false);
   },
 );
 
