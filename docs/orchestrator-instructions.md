@@ -980,7 +980,7 @@ dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
 to resume with `dispatch --resume-interrupted`.
 
 A run stores the `--parent-session` of the session that started it. The
-parent-edit guard and `extend` match that id, and no call changes it. After init,
+parent-edit guard and `extend` match that id, and no later call changes it. After init,
 each subcommand treats `--parent-session` as follows:
 
 - `extend`: required. A missing value or any value other than the stored id is
