@@ -527,3 +527,29 @@ test("the role transcript and stdout failure warnings redact a secret value", as
     process.exitCode = origExitCode;
   }
 });
+
+// Usefulness: verifies a secret-named value that holds a quote and a backslash is redacted when a
+// thrown object carries it, so JSON escaping cannot hide it from the envelope and the state file
+// (issue #431, ADR 0017).
+test("a thrown object that holds a value with a quote and a backslash is redacted", async () => {
+  const value = 'synthetic"probe\\value-8f3a1c';
+  process.env.SYNTH_PROBE_TOKEN = value;
+  try {
+    const cmd = node("console.log('ok')");
+    const { repo, agents } = await start(["--test-cmd", cmd]);
+    const failing = {
+      async run() {
+        throw { message: { detail: value } };
+      },
+    };
+    const failed = await reviewerTurn(repo, { ...agents, fake2: failing }, ["--test-cmd", cmd]);
+    const state = JSON.stringify(await readRepoState(repo));
+    for (const text of [JSON.stringify(failed.payload), state]) {
+      expect(text).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+      expect(text).not.toContain(value);
+      expect(text).not.toContain(JSON.stringify(value).slice(1, -1));
+    }
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+  }
+});

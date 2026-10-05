@@ -7,8 +7,10 @@ const SECRET_NAME = /token|secret|passw|key|credential|auth/i;
 
 /**
  * Replaces every occurrence of the value of a secret-named environment variable
- * with `[redacted:NAME]`. Exact-value match only: a secret that the command
- * derives, encodes, or reads from a file is not found.
+ * with `[redacted:NAME]`, in its raw form and in its JSON-escaped form, because a
+ * serialized error holds the escaped text and a decoder recovers the value from it.
+ * Exact-value match only: a secret that the command derives, encodes, or reads from
+ * a file is not found.
  * @param {string} text
  * @param {NodeJS.ProcessEnv} env
  */
@@ -16,7 +18,12 @@ export function redactEnvSecrets(text, env = process.env) {
   let out = text;
   for (const [name, value] of Object.entries(env)) {
     if (SECRET_NAME.test(name) && typeof value === "string" && value.length >= MIN_SECRET_LENGTH) {
-      out = out.split(value).join(`[redacted:${name}]`);
+      const marker = `[redacted:${name}]`;
+      out = out.split(value).join(marker);
+      const escaped = JSON.stringify(value).slice(1, -1);
+      if (escaped !== value) {
+        out = out.split(escaped).join(marker);
+      }
     }
   }
   return out;

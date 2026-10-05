@@ -1774,3 +1774,45 @@ test("the headless transcript write warning redacts a secret value", async () =>
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies the headless stderr report and transcript redact a value with a quote and a
+// backslash that a thrown object carries (issue #431, ADR 0017).
+test("a headless thrown object that holds a value with a quote and a backslash is redacted", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const value = 'synthetic"probe\\value-8f3a1c';
+  process.env.SYNTH_PROBE_TOKEN = value;
+  const agents = {
+    codex: {
+      async run() {
+        throw { message: { detail: value } };
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main([...BASE, "--cwd", repo, "--transcript", transcriptPath], agents);
+    const transcript = await readFile(transcriptPath, "utf8");
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    for (const text of [transcript, report]) {
+      expect(text).not.toContain(JSON.stringify(value).slice(1, -1));
+    }
+    expect(report).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});

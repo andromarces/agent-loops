@@ -1,6 +1,18 @@
 import { isAbsolute } from "node:path";
-import { expect, test } from "vitest";
-import { buildCopilotInvocation } from "../../src/entrypoints/copilot.mjs";
+import { expect, test, vi } from "vitest";
+
+// The launcher runs `copilot`, which is not installed in the test environment. The stand-in runs
+// `node` with the same arguments, so execa builds its real failure message from the real command line.
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (_command, args, options) =>
+      real.execa("node", ["-e", "process.exit(3)", ...args], options),
+  };
+});
+
+import { buildCopilotInvocation, main, reportFailure } from "../../src/entrypoints/copilot.mjs";
 
 // Usefulness: verifies the Copilot launcher carries one session id into both
 // the CLI session and the first prompt's --parent-session instruction, grants
@@ -40,4 +52,25 @@ test("Copilot launcher passes no line breaks in its arguments", () => {
     expect(arg).not.toMatch(/[\r\n]/);
   }
   expect(invocation.args.at(-1)).toContain("Line one. Line two. Line three.");
+});
+
+// Usefulness: verifies the launcher failure report, which prints the command line with the task
+// arguments, shows a secret-named environment value in the task as `[redacted:NAME]` (issue #431,
+// ADR 0017).
+test("Copilot launcher failure report redacts a secret value in the task", async () => {
+  const synthetic = "synthetic-probe-value-8f3a1c";
+  process.env.SYNTH_PROBE_TOKEN = synthetic;
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await main([`Implement it with --test-cmd "run ${synthetic}"`]).catch(reportFailure);
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain("agent-loop-copilot: Command failed");
+    expect(report).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(report).not.toContain(synthetic);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
 });

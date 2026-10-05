@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { isEntryPoint } from "../lib/entrypoint.mjs";
+import { redactedText } from "../lib/error-message.mjs";
 
 // Resolve the shipped instructions relative to this file, so the launcher works
 // from any directory, not only from a clone of this repository. The file lives
@@ -53,10 +54,16 @@ export async function main(argv = process.argv.slice(2)) {
   await execa(invocation.command, invocation.args, { stdio: "inherit" });
 }
 
+/**
+ * Prints the failure report. The execa message holds the whole command line, and the task
+ * arguments in it can carry a secret-named environment value, so it is redacted (ADR 0017).
+ */
+export function reportFailure(error) {
+  const message = redactedText(error?.shortMessage ?? error?.message ?? error).split("\n", 1)[0];
+  console.error(`agent-loop-copilot: ${message}`);
+  process.exitCode = 1;
+}
+
 if (isEntryPoint(import.meta.filename)) {
-  main().catch((error) => {
-    const message = String(error?.shortMessage ?? error?.message ?? error).split("\n", 1)[0];
-    console.error(`agent-loop-copilot: ${message}`);
-    process.exitCode = 1;
-  });
+  main().catch(reportFailure);
 }

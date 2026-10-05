@@ -323,3 +323,15 @@ test("a common-word secret-named value stays redacted and the marker names the v
   const out = redactEnvSecrets("connect failed in production", { APP_AUTH_MODE: "production" });
   expect(out).toBe("connect failed in [redacted:APP_AUTH_MODE]");
 });
+
+// Usefulness: verifies a value with a quote and a backslash is redacted in its JSON-escaped form too,
+// because a serialized error object holds the escaped text and a decoder recovers the value from it
+// (issue #431, ADR 0017).
+test("a value with a quote and a backslash is redacted in its JSON-escaped form", () => {
+  const value = 'synthetic"probe\\value-8f3a1c';
+  const env = { SYNTH_PROBE_TOKEN: value };
+  const escaped = JSON.stringify(value).slice(1, -1);
+  expect(redactEnvSecrets(`raw ${value} json ${escaped}`, env)).toBe(
+    "raw [redacted:SYNTH_PROBE_TOKEN] json [redacted:SYNTH_PROBE_TOKEN]",
+  );
+});
