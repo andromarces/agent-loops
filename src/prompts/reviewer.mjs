@@ -4,7 +4,9 @@ import { reportBlock } from "./report.mjs";
 // model treats it as part of the mandatory block, not an optional extra. The
 // block already carries the Checks line since issue #310, so the reviewer does
 // not repeat it, and the reviewer Checks line stays the only one a gate reads.
+// The parent reads only this block, so each blocker must stand inside it (issue #434).
 const reviewerReportBlock = `${reportBlock}
+State each blocker concretely in the Blockers line. Never refer to text outside the block, for example "the defects above", because the reader sees only the block.
 Verdict: accept or reject. One word, nothing else on the line.`;
 
 // Fixed review scope every reviewer turn carries, so a parent prompt that
