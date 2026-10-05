@@ -160,24 +160,61 @@ test("withStateLock removes a dead owner's orphan claim and keeps every other fi
   expect((await readdir(dir)).sort()).toEqual(Object.keys(keep).sort());
 });
 
-// Usefulness: verifies a dead claim that another contender is already removing (it holds the live claim on that removal) is left alone and never blocks the acquisition, so exactly one contender acts on each claim (#377).
-test("withStateLock leaves an orphan claim whose removal a live contender holds", async () => {
+function guardNameFor(claimName, text) {
+  const id = createHash("sha256")
+    .update(JSON.stringify([claimName, text]))
+    .digest("hex");
+  return `state.lock.reap.${id}`;
+}
+
+// Usefulness: verifies the scan never takes over the guard claim of a dead claim, even when that guard is an unfilled file older than the grace window (a live contender that created it and has not yet written or finished). Taking it over would delete a live claim and let two contenders act on one claim (#377).
+test("withStateLock leaves a dead claim whose guard claim is unfilled and old", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
-  const claim = join(dir, `state.lock.reap.${CLAIM_ID}`);
+  const claimName = `state.lock.reap.${CLAIM_ID}`;
   const text = await deadOwnerText();
-  await writeFile(claim, text, "utf8");
-  const id = createHash("sha256")
-    .update(JSON.stringify([basename(claim), text]))
-    .digest("hex");
-  const holder = `state.lock.reap.${id}`;
-  const liveText = JSON.stringify({ pid: process.pid, startedAt: "now", nonce: "n" });
-  await writeFile(join(dir, holder), liveText, "utf8");
+  await writeFile(join(dir, claimName), text, "utf8");
+  const guard = join(dir, guardNameFor(claimName, text));
+  await writeFile(guard, "", "utf8");
+  const past = new Date(Date.now() - 5 * STALE_LOCK_GRACE_MS);
+  await utimes(guard, past, past);
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 
-  expect((await readdir(dir)).sort()).toEqual([basename(claim), holder].sort());
-  expect(await readFile(join(dir, holder), "utf8")).toBe(liveText);
+  expect((await readdir(dir)).sort()).toEqual([claimName, basename(guard)].sort());
+  expect(await readFile(guard, "utf8")).toBe("");
+});
+
+// Usefulness: verifies the scan leaves a dead claim whose guard claim is held by a live contender, so exactly one contender acts on each claim (#377).
+test("withStateLock leaves a dead claim whose guard claim a live contender holds", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const claimName = `state.lock.reap.${CLAIM_ID}`;
+  const text = await deadOwnerText();
+  await writeFile(join(dir, claimName), text, "utf8");
+  const guard = guardNameFor(claimName, text);
+  const liveText = JSON.stringify({ pid: process.pid, startedAt: "now", nonce: "n" });
+  await writeFile(join(dir, guard), liveText, "utf8");
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+
+  expect((await readdir(dir)).sort()).toEqual([claimName, guard].sort());
+  expect(await readFile(join(dir, guard), "utf8")).toBe(liveText);
+});
+
+// Usefulness: verifies a chain of dead claims, each guarding the one before it, is cleared from the guard end by one acquisition (#377).
+test("withStateLock clears a chain of dead claims", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const first = `state.lock.reap.${CLAIM_ID}`;
+  const firstText = await deadOwnerText();
+  const second = guardNameFor(first, firstText);
+  await writeFile(join(dir, first), firstText, "utf8");
+  await writeFile(join(dir, second), await deadOwnerText(), "utf8");
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+
+  expect(await readdir(dir)).toEqual([]);
 });
 
 // Usefulness: verifies `--cwd` variants that differ only in the Windows drive
