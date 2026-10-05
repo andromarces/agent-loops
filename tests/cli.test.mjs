@@ -1704,3 +1704,73 @@ test("a fatal headless error redacts a secret value in the stderr report and the
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a thrown value whose message is not a string, or that is not an Error,
+// reaches the headless stderr report and the transcript with a secret-named environment value
+// redacted, so a non-string message cannot bypass the shared sink (issue #431, ADR 0017).
+test.each([
+  ["an object message", (secret) => ({ message: { detail: secret } })],
+  ["an array message", (secret) => ({ message: [secret] })],
+  ["a thrown string", (secret) => secret],
+])("a headless thrown value with %s is redacted", async (_name, make) => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const synthetic = "synthetic-probe-value-8f3a1c";
+  process.env.SYNTH_PROBE_TOKEN = synthetic;
+  const agents = {
+    codex: {
+      async run() {
+        throw make(synthetic);
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main([...BASE, "--cwd", repo, "--transcript", transcriptPath], agents);
+    expect(process.exitCode).toBe(1);
+    const transcript = await readFile(transcriptPath, "utf8");
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(transcript).not.toContain(synthetic);
+    expect(report).not.toContain(synthetic);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the headless transcript write warning prints a secret-named environment
+// value in the transcript path or the error as `[redacted:NAME]` (issue #431, ADR 0017).
+test("the headless transcript write warning redacts a secret value", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const synthetic = "synthetic-probe-value-8f3a1c";
+  process.env.SYNTH_PROBE_TOKEN = synthetic;
+  try {
+    const blocker = join(repo, "blocker");
+    await writeFile(blocker, "x");
+    await main([...BASE, "--cwd", repo, "--transcript", join(blocker, synthetic, "t.json")], {});
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain("Failed to write transcript");
+    expect(report).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(report).not.toContain(synthetic);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});

@@ -449,3 +449,81 @@ test("a missing or changed --test-cmd refusal never prints the command", async (
     delete process.env.SYNTH_PROBE_TOKEN;
   }
 });
+
+// Usefulness: verifies a thrown value whose message is not a string, or that is not an Error,
+// reaches the interactive envelope and the state file with a secret-named environment value
+// redacted, so a non-string message cannot bypass the shared sink (issue #431, ADR 0017).
+test.each([
+  ["an object message", () => ({ message: { detail: SYNTHETIC_SECRET } })],
+  ["an array message", () => ({ message: [SYNTHETIC_SECRET] })],
+  ["a thrown string", () => SYNTHETIC_SECRET],
+])("a thrown value with %s is redacted in the envelope and the state", async (_name, make) => {
+  process.env.SYNTH_PROBE_TOKEN = SYNTHETIC_SECRET;
+  try {
+    const cmd = node("console.log('ok')");
+    const { repo, agents } = await start(["--test-cmd", cmd]);
+    const failing = {
+      async run() {
+        throw make();
+      },
+    };
+    const failed = await reviewerTurn(repo, { ...agents, fake2: failing }, ["--test-cmd", cmd]);
+    expect(failed.exitCode).toBe(1);
+    const state = JSON.stringify(await readRepoState(repo));
+    for (const text of [JSON.stringify(failed.payload), state]) {
+      expect(text).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+      expect(text).not.toContain(SYNTHETIC_SECRET);
+    }
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+  }
+});
+
+// Usefulness: verifies the transcript append warning and the stdout failure warning print a
+// secret-named environment value as `[redacted:NAME]`, because both print an error value or a
+// path directly (issue #431, ADR 0017).
+test("the role transcript and stdout failure warnings redact a secret value", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  process.env.SYNTH_PROBE_TOKEN = SYNTHETIC_SECRET;
+  try {
+    const dir = await scratchDir();
+    const blocker = join(dir, "blocker");
+    await writeFile(blocker, "x");
+    const promptFile = join(repo, "main-prompt.txt");
+    await writeFile(promptFile, "work it", "utf8");
+    const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+    const argv = [
+      "dispatch",
+      "--role",
+      "worker",
+      "--cwd",
+      repo,
+      ...INIT_OVERRIDES,
+      "--prompt-file",
+      promptFile,
+      "--transcript",
+      join(blocker, SYNTHETIC_SECRET, "t.jsonl"),
+    ];
+    const writeSpy = spyStdoutWrite({
+      failure: new Error(`write failed near ${SYNTHETIC_SECRET}`),
+    });
+    try {
+      await runRoleMain(argv, { agents });
+    } finally {
+      writeSpy.mockRestore();
+    }
+    const logged = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(logged).toContain("Failed to append transcript");
+    expect(logged).toContain("Failed to write the envelope to stdout");
+    expect(logged).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(logged).not.toContain(SYNTHETIC_SECRET);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});

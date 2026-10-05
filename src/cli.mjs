@@ -26,6 +26,7 @@ import {
 } from "./lib/args.mjs";
 import { carryEarlierEvents, readContinuation, restoreSessions } from "./lib/continuation.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
+import { readProp, redactedText } from "./lib/error-message.mjs";
 import {
   runHarnessCheckCommand,
   runInstallCommand,
@@ -34,16 +35,11 @@ import {
 import { setVerbose } from "./lib/log.mjs";
 import { writeFileAtomic } from "./lib/runstate.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
-import { redactEnvSecrets } from "./lib/redact.mjs";
 import { redactCommandText } from "./lib/test-cmd.mjs";
 import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
-
-// An error text as the headless entry point prints or records it: a refusal can echo an argument
-// that holds a secret-named environment value (ADR 0017).
-const shown = (text) => redactEnvSecrets(String(text));
 
 export function parseArgs(argv) {
   const options = {
@@ -519,7 +515,7 @@ export async function main(
       assertTask(options.task);
     }
   } catch (err) {
-    console.error(`\n${shown(err.message)}`);
+    console.error(`\n${redactedText(readProp(err, "message") ?? err)}`);
     process.exitCode = 1;
     return;
   }
@@ -550,7 +546,7 @@ export async function main(
       }
     } catch (err) {
       console.error(`
-${shown(err.message)}`);
+${redactedText(readProp(err, "message") ?? err)}`);
       process.exitCode = 1;
       return;
     }
@@ -587,7 +583,11 @@ ${shown(err.message)}`);
       // failed write must leave the earlier record whole.
       await writeFileAtomic(options.transcript, JSON.stringify(transcriptData, null, 2));
     } catch (err) {
-      console.error(`Warning: Failed to write transcript to ${options.transcript}: ${err.message}`);
+      console.error(
+        redactedText(
+          `Warning: Failed to write transcript to ${options.transcript}: ${redactedText(readProp(err, "message"))}`,
+        ),
+      );
     }
   };
 
@@ -598,10 +598,10 @@ ${shown(err.message)}`);
 
   const finish = async ({ exitCode, error }) => {
     transcriptData.exitCode = exitCode;
-    transcriptData.error = error ? shown(error.message ?? String(error)) : null;
+    transcriptData.error = error ? redactedText(readProp(error, "message") ?? error) : null;
     await writeTranscript();
     if (error) {
-      console.error(`\n${shown(error.message ?? error)}`);
+      console.error(`\n${redactedText(readProp(error, "message") ?? error)}`);
       if (fatalTestRun) {
         console.error(
           `\nTest command result before the failed turn (advisory):\n${JSON.stringify(fatalTestRun, null, 2)}`,
@@ -696,7 +696,9 @@ ${shown(err.message)}`);
 
 if (isEntryPoint(import.meta.filename)) {
   main().catch((error) => {
-    console.error(`\n${shown(error.stack ?? error.message ?? error)}`);
+    console.error(
+      `\n${redactedText(readProp(error, "stack") ?? readProp(error, "message") ?? error)}`,
+    );
     process.exitCode = 1;
   });
 }

@@ -316,3 +316,10 @@ test("a secret-named value is redacted whatever the case of the variable name", 
     "x [redacted:My_Token] y",
   );
 });
+
+// Usefulness: verifies the trade-off of ADR 0017: a secret-named value that is also a common word
+// is still redacted, and the marker names the variable, so a reader knows what the text masked.
+test("a common-word secret-named value stays redacted and the marker names the variable", () => {
+  const out = redactEnvSecrets("connect failed in production", { APP_AUTH_MODE: "production" });
+  expect(out).toBe("connect failed in [redacted:APP_AUTH_MODE]");
+});

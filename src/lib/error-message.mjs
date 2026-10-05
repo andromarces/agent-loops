@@ -23,9 +23,38 @@ export function errorMessage(err) {
   try {
     const serialized = JSON.parse(JSON.stringify({ error: message }));
     // A valid value, including null, is kept. Only an absent key means no value.
-    return Object.hasOwn(serialized, "error") ? serialized.error : UNSERIALIZABLE_MESSAGE;
+    return Object.hasOwn(serialized, "error")
+      ? redactJsonValue(serialized.error)
+      : UNSERIALIZABLE_MESSAGE;
   } catch {
-    return typeof message === "bigint" ? message.toString() : UNSERIALIZABLE_MESSAGE;
+    return typeof message === "bigint"
+      ? redactEnvSecrets(message.toString())
+      : UNSERIALIZABLE_MESSAGE;
+  }
+}
+
+// A plain JSON value keeps its shape unless it holds a secret-named environment value, which
+// turns it into its redacted JSON text.
+function redactJsonValue(value) {
+  const text = JSON.stringify(value);
+  const redacted = text === undefined ? text : redactEnvSecrets(text);
+  return redacted === text ? value : redacted;
+}
+
+/**
+ * Text for any thrown value or message, with secret-named environment values redacted (ADR 0017).
+ * A string passes through, any other value is serialized, and a value that cannot be read or
+ * serialized returns a fixed placeholder, so a hostile getter or `toString` never escapes a
+ * print path.
+ */
+export function redactedText(value) {
+  try {
+    if (typeof value === "string") return redactEnvSecrets(value);
+    const text =
+      typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+    return redactEnvSecrets(text ?? UNSERIALIZABLE_MESSAGE);
+  } catch {
+    return UNSERIALIZABLE_MESSAGE;
   }
 }
 
