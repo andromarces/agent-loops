@@ -772,23 +772,59 @@ async function runWithText(...text) {
   return runWithEvents(...text.map((part) => textEvent(part)));
 }
 
+const BLOCK_VALUES = {
+  conclusion: "PR #314 fixes the part join.",
+  why: "the narration and the block arrived as two text parts.",
+  blockers: "none",
+  checks: "pnpm test",
+  notes: "none",
+  deferred: "none",
+};
+
 // Usefulness: verifies a late plain-text message after the closing block starts its own line, so
-// the last label value and the verdict stay intact instead of gluing to the late text (issue #458).
+// every block value and the verdict stay as written instead of the last label gluing to the late
+// text (issue #458). The assertions cover all six values and the verdict, not a subset.
 test("opencode keeps a late plain-text message off the last closing block line", async () => {
   const late = "The watcher finished.";
 
   const worker = await runWithEvents(textEvent(CLOSING_BLOCK, "msg-1"), textEvent(late, "msg-2"));
 
   expect(worker).toBe(`${CLOSING_BLOCK}\n${late}`);
-  expect(parseReportBlock(worker).deferred).toBe("none");
+  expect(worker).not.toContain("noneThe");
+  expect(parseReportBlock(worker)).toEqual(BLOCK_VALUES);
 
   const reviewer = await runWithEvents(
-    textEvent("Conclusion: ok\nVerdict: accept", "msg-1"),
+    textEvent(`${CLOSING_BLOCK}\nVerdict: accept`, "msg-1"),
     textEvent(late, "msg-2"),
   );
 
-  expect(reviewer).toBe(`Conclusion: ok\nVerdict: accept\n${late}`);
+  expect(reviewer).toBe(`${CLOSING_BLOCK}\nVerdict: accept\n${late}`);
+  expect(parseVerdict(reviewer)).toBe("accept");
+  expect(parseReportBlock(reviewer)).toEqual(BLOCK_VALUES);
 });
+
+// Usefulness: verifies a malformed messageID cannot lift mid-line text to a column-0 `Verdict:`
+// label, because a verdict gates acceptance. A break needs a non-empty string id on both parts, so
+// each malformed id leaves the mid-line `Verdict: accept` as `unknown` (issue #458).
+test.each([[""], [7], [null], [{}], [["msg-2"]], [true]])(
+  "opencode ignores the malformed messageID %j when it joins a mid-line Verdict part",
+  async (malformed) => {
+    const lead = `${CLOSING_BLOCK}\n\nThe reviewer said`;
+    const bad = textEvent("Verdict: accept", malformed);
+
+    for (const events of [
+      [textEvent(lead, "msg-1"), bad],
+      [textEvent(lead, malformed), textEvent("Verdict: accept", "msg-2")],
+      [textEvent(lead), bad],
+    ]) {
+      const response = await runWithEvents(...events);
+
+      expect(response).toContain("The reviewer saidVerdict: accept");
+      expect(parseVerdict(response)).toBe("unknown");
+      expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
+    }
+  },
+);
 
 // Usefulness: verifies parts of one message still join without a break, so the token-boundary
 // split rule of issue #316 holds and an always-newline join cannot pass (issue #458).

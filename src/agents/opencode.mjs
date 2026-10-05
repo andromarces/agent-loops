@@ -134,22 +134,26 @@ export async function runOpenCode(state, prompt, options = {}) {
  * one that opens the reviewer's `Verdict:` line, keeps the text before it, so the join adds a line
  * break only before a report label. A part from a different assistant message, named by
  * `part.messageID`, also starts its own line, so a late message cannot join the last line of the
- * closing block (issue #458). A part with no `messageID` is treated as part of the current message.
+ * closing block (issue #458). The break needs a valid, non-empty string `messageID` on both the
+ * previous and the current part. A part with any other `messageID` joins as before.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
 function joinTextParts(events) {
-  let messageId;
+  let previousId;
   return events.reduce((text, event) => {
     const { text: part, messageID } = event.part;
+    const currentId = isMessageId(messageID) ? messageID : undefined;
     const newMessage =
-      messageID !== undefined && messageId !== undefined && messageID !== messageId;
-    messageId = messageID ?? messageId;
-    return (newMessage || LABEL_LINE.test(part)) && text && !text.endsWith("\n")
+      previousId !== undefined && currentId !== undefined && currentId !== previousId;
+    previousId = currentId;
+    return (newMessage || LABEL_LINE.test(part)) && !text.endsWith("\n")
       ? `${text}\n${part}`
       : `${text}${part}`;
   }, "");
 }
+
+const isMessageId = (value) => typeof value === "string" && value !== "";
 
 /**
  * Sets `state.usage` from the `step_finish` parts of the stream, or removes it when the stream
