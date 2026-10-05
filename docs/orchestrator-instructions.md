@@ -982,6 +982,29 @@ the state file's `mode` and `lifecycle`, and continue from `stepsUsed` and
 dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
 to resume with `dispatch --resume-interrupted`.
 
+A run stores the `--parent-session` of the session that started it. The
+parent-edit guard and `extend` match that id, and no later call changes it. After init,
+each subcommand treats `--parent-session` as follows:
+
+- `extend`: required. A missing value or any value other than the stored id is
+  refused, and the refusal does not name the stored id. The stored id is
+  accepted.
+- `dispatch`, `finish`, and `abort`: optional. When omitted, they check nothing
+  and run. When given, a different value is refused with the error
+  `--parent-session cannot be changed after init`, which names the stored id.
+  A value equal to the stored id is accepted. `dispatch` also refuses a malformed
+  id.
+- `wait-checks`: reads no run state and ignores the flag.
+
+A run that a new session resumes is therefore unguarded for that session. No
+call moves the stored id to the new session. The new session can run `dispatch`,
+`finish`, and `abort` by omitting `--parent-session`. It can run `extend` only by
+passing the stored id. `extend` compares the id only, so that call succeeds for
+any caller that holds the id, a child role included, and it gives no guard
+coverage. A child role never runs `extend`, and the prompt rule is the only thing
+that keeps it from doing so. To get a guard, call `abort` and start a new run with
+the new session id. A new run starts every role on a new session (ADR 0021).
+
 ## Turn history
 
 Every `agent-loop role` run keeps its own turn history. No `--transcript` flag is
