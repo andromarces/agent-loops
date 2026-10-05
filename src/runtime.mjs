@@ -1,6 +1,6 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
-import { readableErrorMessage, readProp } from "./lib/error-message.mjs";
+import { readableErrorText, readProp } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
@@ -193,8 +193,7 @@ export async function runChild(options) {
       throw err;
     }
     // The result carries text, so a non-string message is its JSON form.
-    const message = readableErrorMessage(err);
-    let errorMessage = typeof message === "string" ? message : JSON.stringify(message);
+    let errorMessage = readableErrorText(err);
     const timedOut = readProp(err, "timedOut");
     if (timedOut) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
@@ -401,9 +400,9 @@ export async function runLoop(options) {
         options: { cwd, timeout, signal },
       });
     } catch (err) {
-      if (err?.name !== "MutationError") {
+      if (readProp(err, "name") !== "MutationError") {
         // A MutationError is already logged at the detection site in withMutationCheck.
-        logError(`orchestrator turn failed: ${String(err?.message ?? err).split("\n")[0]}`);
+        logError(`orchestrator turn failed: ${readableErrorText(err).split("\n")[0]}`);
       }
       throw err;
     }
@@ -704,7 +703,7 @@ async function ciGate({ pr, reviewed, cwd, gh }) {
   try {
     gate = await checkCi({ pr, reviewed, cwd, gh });
   } catch (err) {
-    const detail = (err?.message ?? String(err)).split("\n")[0];
+    const detail = readableErrorText(err).split("\n")[0];
     logError(`ci gate could not run: ${detail}`);
     return {
       refusal: {

@@ -35,6 +35,15 @@ export function readableErrorMessage(err) {
   }
 }
 
+/**
+ * `readableErrorMessage` as text for a log line or a reason. A non-string message is its JSON
+ * form, because a plain string conversion of a parsed object with its own `toString` key throws.
+ */
+export function readableErrorText(err) {
+  const message = readableErrorMessage(err);
+  return typeof message === "string" ? message : JSON.stringify(message);
+}
+
 /** Reads `err[key]`, and returns `undefined` when the read throws, so a hostile getter never escapes an error path. */
 export function readProp(err, key) {
   try {
