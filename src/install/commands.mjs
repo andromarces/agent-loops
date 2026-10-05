@@ -237,6 +237,9 @@ export async function runUninstallCommand(argv) {
     return;
   }
   printReports(reports, options.dryRun);
+  if (reports.some((entry) => entry.action === "failed")) {
+    process.exitCode = 1;
+  }
 }
 
 /**

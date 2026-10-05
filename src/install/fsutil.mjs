@@ -118,18 +118,29 @@ export async function ensureDir(dir, created) {
 
 /**
  * Removes empty directories, deepest first. Missing and non-empty entries are
- * ignored; any other error propagates to the caller.
- * @returns {Promise<string[]>} the directories this call removed
+ * ignored. A path that is no longer a directory (ENOTDIR) is left in place and
+ * listed in `notDirs`, so a retry does not fail on it forever. Any other error
+ * propagates to the caller.
+ * @returns {Promise<{removed: string[], notDirs: string[]}>} the directories
+ *   this call removed and the paths it left in place as non-directories
  */
 export async function pruneEmptyDirs(dirs) {
   const ordered = [...new Set(dirs)].sort((a, b) => b.length - a.length);
   const removed = [];
+  const notDirs = [];
   for (const dir of ordered) {
-    if (await removeDirQuiet(dir)) {
-      removed.push(dir);
+    try {
+      if (await removeDirQuiet(dir)) {
+        removed.push(dir);
+      }
+    } catch (err) {
+      if (err.code !== "ENOTDIR") {
+        throw err;
+      }
+      notDirs.push(dir);
     }
   }
-  return removed;
+  return { removed, notDirs };
 }
 
 /** Structural equality for JSON-shaped values. Object key order is irrelevant. */
