@@ -1,5 +1,6 @@
 import { posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+import { actionFormats, SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
 
 // Shared rule source: docs/orchestrator-instructions.md states the role rules
@@ -294,6 +295,20 @@ function modeBlock(mode) {
 const REMOTE_WRITE_RULE =
   "You must NOT write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.";
 
+const INITIAL_FORMATS = actionFormats({
+  worker: "<instructions for worker>",
+  reviewer: "<instructions for reviewer>",
+  summary: "<summary>",
+  reason: "<explanation>",
+});
+
+const REPAIR_FORMATS = actionFormats({
+  worker: "<string>",
+  reviewer: "<string>",
+  summary: "<string>",
+  reason: "<string>",
+});
+
 export function initialPrompt({
   task,
   maxSteps,
@@ -327,20 +342,20 @@ Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported action formats:
 
 1. Dispatch worker:
-{"action": "run_worker", "prompt": "<instructions for worker>"}
+${INITIAL_FORMATS.runWorker}
 
 2. Dispatch reviewer:
-{"action": "run_reviewer", "prompt": "<instructions for reviewer>"}
+${INITIAL_FORMATS.runReviewer}
 
 3. Finish when the work is complete and verified, or to record an unresolved PR-head compare:
-{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}}
+${INITIAL_FORMATS.finish}
 For an unresolved PR-head compare, add the marker inside the same action object:
-{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}, "unresolvedCompare": true}
+${INITIAL_FORMATS.finishUnresolved}
 
 4. Abort if the task cannot proceed:
-{"action": "abort", "reason": "<explanation>"}
+${INITIAL_FORMATS.abort}
 
-The finish summary requires non-empty strings for all five keys: changed, verified, deferred, notDone, open.
+The finish summary requires non-empty strings for all five keys: ${SUMMARY_KEYS.join(", ")}.
 
 When you dispatch the reviewer, name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them. Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it.
 
@@ -433,11 +448,11 @@ ${REMOTE_WRITE_RULE}
 Respond with one valid JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported action formats:
 
-1. {"action": "run_worker", "prompt": "<string>"}
-2. {"action": "run_reviewer", "prompt": "<string>"}
-3. {"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}}
+1. ${REPAIR_FORMATS.runWorker}
+2. ${REPAIR_FORMATS.runReviewer}
+3. ${REPAIR_FORMATS.finish}
 For an unresolved PR-head compare, add the marker inside the same object:
-{"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}, "unresolvedCompare": true}
-4. {"action": "abort", "reason": "<string>"}
+${REPAIR_FORMATS.finishUnresolved}
+4. ${REPAIR_FORMATS.abort}
 `.trim();
 }
