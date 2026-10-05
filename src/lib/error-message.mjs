@@ -1,8 +1,11 @@
+import { redactEnvSecrets } from "./redact.mjs";
+
 export const UNSERIALIZABLE_MESSAGE = "[unserializable message]";
 export const UNREADABLE_MESSAGE = "Unreadable error";
 
 /**
- * Error value for an envelope. A string message returns unchanged. Any other
+ * Error value for an envelope. A string message returns with secret-named environment values
+ * redacted (ADR 0017), because a refusal can echo an argument that holds one. Any other
  * message is serialized once under the key `error`, as the envelope did before,
  * so a `toJSON` that redacts by key keeps its output and runs exactly once. The
  * returned plain JSON value serializes the same on every later call, so the
@@ -15,14 +18,43 @@ export const UNREADABLE_MESSAGE = "Unreadable error";
 export function errorMessage(err) {
   const message = err?.message ?? String(err);
   if (typeof message === "string") {
-    return message;
+    return redactEnvSecrets(message);
   }
   try {
     const serialized = JSON.parse(JSON.stringify({ error: message }));
     // A valid value, including null, is kept. Only an absent key means no value.
-    return Object.hasOwn(serialized, "error") ? serialized.error : UNSERIALIZABLE_MESSAGE;
+    return Object.hasOwn(serialized, "error")
+      ? redactJsonValue(serialized.error)
+      : UNSERIALIZABLE_MESSAGE;
   } catch {
-    return typeof message === "bigint" ? message.toString() : UNSERIALIZABLE_MESSAGE;
+    return typeof message === "bigint"
+      ? redactEnvSecrets(message.toString())
+      : UNSERIALIZABLE_MESSAGE;
+  }
+}
+
+// A plain JSON value keeps its shape unless it holds a secret-named environment value, which
+// turns it into its redacted JSON text.
+function redactJsonValue(value) {
+  const text = JSON.stringify(value);
+  const redacted = text === undefined ? text : redactEnvSecrets(text);
+  return redacted === text ? value : redacted;
+}
+
+/**
+ * Text for any thrown value or message, with secret-named environment values redacted (ADR 0017).
+ * A string passes through, any other value is serialized, and a value that cannot be read or
+ * serialized returns a fixed placeholder, so a hostile getter or `toString` never escapes a
+ * print path.
+ */
+export function redactedText(value) {
+  try {
+    if (typeof value === "string") return redactEnvSecrets(value);
+    const text =
+      typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+    return redactEnvSecrets(text ?? UNSERIALIZABLE_MESSAGE);
+  } catch {
+    return UNSERIALIZABLE_MESSAGE;
   }
 }
 
