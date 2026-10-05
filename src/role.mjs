@@ -705,14 +705,8 @@ function withLocalFiles(payload, localFiles) {
   return localFiles ? { ...payload, localFiles } : payload;
 }
 
-// Never throws: `executeRoleCommand` calls it from its catch block, so a throwing `message`
-// getter would otherwise escape `main` without an envelope.
 function errorMessage(err) {
-  try {
-    return err?.message ?? String(err);
-  } catch {
-    return "Unreadable error";
-  }
+  return err?.message ?? String(err);
 }
 
 /**
@@ -1183,7 +1177,22 @@ export async function executeRoleCommand(args, deps = {}) {
         throw new RoleError(`Unsupported operation: ${args.operation}`);
     }
   } catch (err) {
-    return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
+    try {
+      return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
+    } catch (formatErr) {
+      // Reading the message threw. Keep one envelope, and keep a cancel as exit 130.
+      let canceled = false;
+      try {
+        canceled = Boolean(formatErr?.isCanceled);
+      } catch {}
+      return {
+        exitCode: canceled ? 130 : 1,
+        payload: {
+          status: "error",
+          error: canceled ? "Interrupted by SIGINT" : "Unreadable error",
+        },
+      };
+    }
   }
 }
 
