@@ -737,24 +737,22 @@ function withLocalFiles(payload, localFiles) {
 }
 
 /**
- * Error text as a string, so the envelope stringifies for any thrown value. A
- * non-string message is serialized the way the envelope serialized it before:
- * through `JSON.stringify`, so a `toJSON` that redacts keeps its output and
- * `toString` is never read. A value that cannot serialize printed nothing
- * before, so it prints a fixed placeholder.
+ * Error text for the envelope. A string message, and a non-string message that
+ * serializes under the key `error`, return unchanged, so the envelope prints
+ * exactly what it printed before, including a `toJSON` that redacts by key. A
+ * message that cannot serialize printed nothing before, so it returns a fixed
+ * placeholder, or its digits for a BigInt, and the envelope stringifies.
  */
 function errorMessage(err) {
   const message = err?.message ?? String(err);
   if (typeof message === "string") {
     return message;
   }
-  if (typeof message === "bigint") {
-    return message.toString();
-  }
   try {
-    return JSON.stringify(message) ?? UNSERIALIZABLE_MESSAGE;
+    JSON.stringify({ error: message });
+    return message;
   } catch {
-    return UNSERIALIZABLE_MESSAGE;
+    return typeof message === "bigint" ? message.toString() : UNSERIALIZABLE_MESSAGE;
   }
 }
 

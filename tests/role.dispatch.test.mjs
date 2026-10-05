@@ -1004,6 +1004,48 @@ test.each([
   }
 });
 
+// Usefulness: verifies a non-string message prints exactly as the base envelope printed it, under
+// the key "error", so a toJSON that redacts by key still redacts and discloses nothing more.
+test("main serializes a non-string message under the error key like the base envelope", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const writeSpy = spyStdoutWrite();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const origExitCode = process.exitCode;
+
+  try {
+    const promptFile = join(repo, "main-prompt.txt");
+    await writeFile(promptFile, "work it", "utf8");
+    const agents = {
+      get fake1() {
+        throw { message: { toJSON: (key) => (key === "error" ? "[redacted]" : "LEAKED-CONTENT") } };
+      },
+      fake2: recordingAdapter([]),
+    };
+    await runRoleMain(
+      [
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        ...INIT_OVERRIDES,
+        "--prompt-file",
+        promptFile,
+      ],
+      { agents },
+    );
+    const printed = writeSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(printed).not.toContain("LEAKED-CONTENT");
+    expect(JSON.parse(printed)).toEqual({ status: "error", error: "[redacted]" });
+  } finally {
+    writeSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
 // Usefulness: verifies a stdout that errors asynchronously (closed pipe) leaves no unhandled
 // stream error, and that a failed write keeps a cancel exit 130 rather than turning it into 1.
 test.each([
