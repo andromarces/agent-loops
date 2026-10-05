@@ -132,14 +132,22 @@ export async function runOpenCode(state, prompt, options = {}) {
  * own line instead, because parseReportBlock (src/lib/report.mjs) matches each label plain at
  * column 0 and otherwise reads the whole block as `raw` (issue #316). Every other part, including
  * one that opens the reviewer's `Verdict:` line, keeps the text before it, so the join adds a line
- * break only before a report label.
- * @param {{ part?: { text?: string } }[]} events
+ * break only before a report label. A part from a different assistant message, named by
+ * `part.messageID`, also starts its own line, so a late message cannot join the last line of the
+ * closing block (issue #458). A part with no `messageID` is treated as part of the current message.
+ * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
 function joinTextParts(events) {
+  let messageId;
   return events.reduce((text, event) => {
-    const part = event.part.text;
-    return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
+    const { text: part, messageID } = event.part;
+    const newMessage =
+      messageID !== undefined && messageId !== undefined && messageID !== messageId;
+    messageId = messageID ?? messageId;
+    return (newMessage || LABEL_LINE.test(part)) && text && !text.endsWith("\n")
+      ? `${text}\n${part}`
+      : `${text}${part}`;
   }, "");
 }
 
