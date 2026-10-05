@@ -707,7 +707,7 @@ function uninstallReport(record, kind, action, detail) {
 async function restoreOrDelete(record, kind, dryRun) {
   if (record.existedBefore) {
     const backupFile = record.backupPath ?? backupPathFor(record.path);
-    const backup = await readTextOrNull(backupFile);
+    const backup = await readTextOrNull(backupFile, { notDirIsMissing: true });
     if (backup === null) {
       return uninstallReport(record, kind, "skip", "backup missing; left unchanged");
     }
@@ -726,7 +726,7 @@ async function restoreOrDelete(record, kind, dryRun) {
 }
 
 async function planSettingsRestore(record, dryRun) {
-  const current = await readTextOrNull(record.path);
+  const current = await readTextOrNull(record.path, { notDirIsMissing: true });
   if (current === null) {
     return uninstallReport(record, "settings", "missing");
   }
@@ -766,7 +766,7 @@ async function planSettingsRestore(record, dryRun) {
 }
 
 async function planFileRestore(record, dryRun) {
-  const current = await readTextOrNull(record.path);
+  const current = await readTextOrNull(record.path, { notDirIsMissing: true });
   if (current === null) {
     return uninstallReport(record, "file", "missing");
   }

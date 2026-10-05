@@ -18,15 +18,17 @@ import { dirname, resolve } from "node:path";
 export { sha256 } from "../lib/hash.mjs";
 
 /**
- * Reads a file as UTF-8; returns null when the path does not exist. A path
- * whose parent is not a directory (ENOTDIR on POSIX, ENOENT on Windows) does
- * not exist either. Every other error, such as EACCES or EPERM, throws.
+ * Reads a file as UTF-8; returns null when the path does not exist. With
+ * `notDirIsMissing`, a path whose parent is not a directory (ENOTDIR on POSIX)
+ * also reads as null. Uninstall sets it so a stale record can clear. Install
+ * leaves it off so an unusable location still fails before any write. Every
+ * other error, such as EACCES or EPERM, throws.
  */
-export async function readTextOrNull(path) {
+export async function readTextOrNull(path, { notDirIsMissing = false } = {}) {
   try {
     return await readFile(path, "utf8");
   } catch (err) {
-    if (err.code === "ENOENT" || err.code === "ENOTDIR") {
+    if (err.code === "ENOENT" || (notDirIsMissing && err.code === "ENOTDIR")) {
       return null;
     }
     throw err;
