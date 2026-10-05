@@ -13,6 +13,8 @@ import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
 const SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
 const REVIEW = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: none\nVerdict: accept";
 const node = (body) => `node -e "${body}"`;
+// Synthetic value for the secret-named environment variable of the redaction tests.
+const SYNTHETIC_SECRET = "synthetic-probe-value-8f3a1c";
 const roles = () => ({
   orchestrator: { kind: "orch", sessionId: null },
   worker: { kind: "work", sessionId: null },
@@ -335,6 +337,51 @@ test.each([
     expect(evidence).toMatchObject({ role: "reviewer", fatal: true, stepsUsed: 1 });
     expect(evidence.testRun).toMatchObject({ status: "pass", exitCode: 0 });
   } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a command text that holds the value of a secret-named environment
+// variable reaches the reviewer prompt, the result event, and the orchestrator prompt as
+// `[redacted:NAME]`, on a completed turn and on an adapter error (issue #431, ADR 0017).
+test("a secret value in the command text is redacted on every headless output path", async () => {
+  const repo = await createTempRepo();
+  process.env.SYNTH_PROBE_TOKEN = SYNTHETIC_SECRET;
+  try {
+    for (const reviewer of [
+      REVIEW,
+      () => {
+        throw new Error("reviewer CLI crashed");
+      },
+    ]) {
+      const orch = scripted([
+        JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+        JSON.stringify({ action: "finish", summary: SUMMARY }),
+      ]);
+      const rev = scripted([reviewer]);
+      const events = [];
+      await runLoop({
+        task: "Review the change.",
+        cwd: repo,
+        maxSteps: 5,
+        testCmd: `${node("console.log('ok')")} ${SYNTHETIC_SECRET}`,
+        roles: roles(),
+        agents: { orch, work: scripted([]), rev },
+        onEvent: (event) => events.push(event),
+      });
+      expect(rev.recorded[0].prompt).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+      expect(orch.recorded[1].prompt).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+      expect(JSON.stringify(events)).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+      for (const text of [
+        rev.recorded[0].prompt,
+        orch.recorded[1].prompt,
+        JSON.stringify(events),
+      ]) {
+        expect(text).not.toContain(SYNTHETIC_SECRET);
+      }
+    }
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
     await removePath(repo);
   }
 });

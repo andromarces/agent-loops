@@ -61,6 +61,15 @@ function stripControl(text) {
 }
 
 /**
+ * The command text as every output shows it (ADR 0017): secret-named environment values
+ * redacted and control characters removed. The runtime runs the original text.
+ * @param {string} command
+ */
+export function redactCommandText(command) {
+  return stripControl(redactEnvSecrets(command));
+}
+
+/**
  * Kills what the runtime owns and nothing else. execa starts the command as the
  * leader of a process group of its own on POSIX, so SIGKILL to that group reaches
  * the command and the descendants and orphans that stayed in the group. On Windows
@@ -178,7 +187,7 @@ export async function runTestCmd({
   logInfo(`test command finished in ${durationMs}ms: ${status}`);
 
   const testRun = {
-    command: stripControl(redactEnvSecrets(command)),
+    command: redactCommandText(command),
     status,
     exitCode,
     timedOut,

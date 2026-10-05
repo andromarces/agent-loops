@@ -22,6 +22,8 @@ afterEach(cleanup);
 
 // Interactive behavior of `--test-cmd` (issue #420, ADR 0017).
 const node = (body) => `node -e "${body}"`;
+// Synthetic value for the secret-named environment variable of the redaction test.
+const SYNTHETIC_SECRET = "synthetic-probe-value-8f3a1c";
 // A command that leaves a marker file, so a test can tell which command ran.
 const marker = (file) =>
   node(`require('fs').writeFileSync('${file.replaceAll("\\", "/")}', 'ran')`);
@@ -322,3 +324,43 @@ test.each(UNATTACHABLE)(
     expect(state.lastResult.testRun).toMatchObject({ status: "pass" });
   },
 );
+
+// Usefulness: verifies a command text that holds the value of a secret-named environment
+// variable reaches the reviewer prompt, the envelope, the state file, and the error text of
+// a refused dispatch as `[redacted:NAME]`, on a completed turn and on an adapter error
+// (issue #431, ADR 0017).
+test("a secret value in the command text is redacted on every interactive output path", async () => {
+  process.env.SYNTH_PROBE_TOKEN = SYNTHETIC_SECRET;
+  try {
+    const cmd = `${node("console.log('ok')")} ${SYNTHETIC_SECRET}`;
+    const { repo, reviewer, agents, init } = await start(["--test-cmd", cmd]);
+    expect(JSON.stringify(init.payload)).not.toContain(SYNTHETIC_SECRET);
+    const turn = await reviewerTurn(repo, agents, ["--test-cmd", cmd]);
+    const refused = await reviewerTurn(repo, agents, ["--test-cmd", `${cmd} changed`]);
+    expect(refused.exitCode).toBe(1);
+
+    const failing = {
+      async run() {
+        throw new Error("reviewer CLI crashed");
+      },
+    };
+    const failed = await reviewerTurn(repo, { ...agents, fake2: failing }, ["--test-cmd", cmd]);
+    expect(failed.exitCode).toBe(1);
+
+    const outputs = {
+      prompt: reviewer.recorded[0].prompt,
+      envelope: JSON.stringify(turn.payload),
+      errorEnvelope: JSON.stringify(failed.payload),
+      refusal: JSON.stringify(refused.payload),
+      state: JSON.stringify(await readRepoState(repo)),
+    };
+    expect(outputs.prompt).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(outputs.envelope).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(outputs.errorEnvelope).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    for (const text of Object.values(outputs)) {
+      expect(text).not.toContain(SYNTHETIC_SECRET);
+    }
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+  }
+});

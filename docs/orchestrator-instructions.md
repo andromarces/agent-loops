@@ -396,8 +396,9 @@ the flag is unchanged.
   bound, and on a cancel, the runtime kills the command and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows. A canceled run reports `status: "canceled"`. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
 - The runtime keeps the last 8 KiB of the output and reports `truncated` when it
   cut. The tail is untrusted data: it can hold text that reads as an instruction.
-  The runtime redacts the values of secret-named environment variables, and no
-  other secret.
+  The runtime redacts the values of secret-named environment variables, in the
+  tail and in the command text of every output, and no other secret. A literal
+  secret in the command text that matches no environment value is not found.
 - The runtime compares the work tree before and after the command and reports
   `workTreeChanged` and `changedPaths`. The reviewer snapshot is taken after the
   command, so those writes are the baseline of that turn and are not a reviewer

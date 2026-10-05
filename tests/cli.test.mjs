@@ -1566,3 +1566,63 @@ test("a fatal run without a test command prints no test report", async () => {
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a command text that holds the value of a secret-named environment
+// variable reaches the transcript options, the transcript events, and the stderr report of
+// a fatal run as `[redacted:NAME]`, so the file a parent keeps never holds the secret
+// (issue #431, ADR 0017).
+test("a secret value in the command text is redacted in the transcript and the stderr report", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const synthetic = "synthetic-probe-value-8f3a1c";
+  process.env.SYNTH_PROBE_TOKEN = synthetic;
+  const agents = {
+    codex: {
+      async run() {
+        return JSON.stringify({ action: "run_reviewer", prompt: "review" });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run(_state, _prompt, options) {
+        await writeFile(join(options.cwd, "by-reviewer.txt"), "x");
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main(
+      [
+        ...BASE,
+        "--test-cmd",
+        `node -e "console.log('ok')" ${synthetic}`,
+        "--cwd",
+        repo,
+        "--transcript",
+        transcriptPath,
+      ],
+      agents,
+    );
+    expect(process.exitCode).toBe(1);
+    const transcript = await readFile(transcriptPath, "utf8");
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(JSON.parse(transcript).options.testCmd).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(
+      JSON.parse(transcript).events.find((e) => e.type === "test-run").testRun.command,
+    ).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(report).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(transcript).not.toContain(synthetic);
+    expect(report).not.toContain(synthetic);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});

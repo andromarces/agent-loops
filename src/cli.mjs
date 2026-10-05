@@ -34,6 +34,7 @@ import {
 import { setVerbose } from "./lib/log.mjs";
 import { writeFileAtomic } from "./lib/runstate.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
+import { redactCommandText } from "./lib/test-cmd.mjs";
 import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
@@ -563,7 +564,7 @@ ${err.message}`);
       requireCi: options.requireCi,
       ...(options.testCmd === null
         ? {}
-        : { testCmd: options.testCmd, testCmdTimeout: options.testCmdTimeout }),
+        : { testCmd: redactCommandText(options.testCmd), testCmdTimeout: options.testCmdTimeout }),
       ...(options.mode === null ? {} : { mode: options.mode }),
       ...(options.continueFrom ? { continueFrom: options.continueFrom } : {}),
       ...(options.copyLocalFiles ? {} : { copyLocalFiles: false }),
