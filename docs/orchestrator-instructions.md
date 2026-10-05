@@ -509,10 +509,12 @@ the reason.
 
 The orchestrator CLI and the reviewer CLI are chosen independently, so each
 statement below names the role whose CLI performs the read. A read-only
-invocation keeps shell network access for `claude`, `agy`, `opencode`, and
-`copilot`. The `codex` read-only sandbox blocks network, and it is the only
-adapter that does; see "Codex read-only network limit" in the README for the
-probe.
+invocation keeps shell network access for `claude`, `agy`, and `opencode`. The
+`codex` read-only sandbox blocks network. A `copilot` read-only turn refuses most
+shell commands without approval: the issue #432 probe found `gh pr checks`
+allowed and `role wait-checks` refused, so a `copilot` orchestrator wait is
+unconfirmed. See "Codex read-only network limit" and "Remote writes" in the README
+for the probes.
 
 - Orchestrator CLI keeps network: the orchestrator waits, at both points below.
 - Orchestrator CLI blocks network, reviewer CLI keeps it: the orchestrator cannot

@@ -273,3 +273,22 @@ test("a malformed record field stops uninstall before it changes any file", asyn
   expect(await readText(b)).toBe("b\n");
   expect(await readText(manifestPath(home))).toBe(manifestBefore);
 });
+
+// Usefulness: verifies #477 stays scoped to uninstall — an unreadable manifest
+// location (a regular file where `.agent-loops` should be a directory) must stop
+// install before any harness write, so no write is left without a manifest.
+// Windows reports ENOENT for this layout, so the read cannot tell it from a fresh home.
+test.skipIf(process.platform === "win32")(
+  "install fails before any harness write when the manifest parent is a regular file",
+  async () => {
+    const home = await makeHome();
+    await writeFile(join(home, ".agent-loops"), "user data\n", "utf8");
+
+    await expect(
+      install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT }),
+    ).rejects.toThrow();
+
+    expect(existsSync(join(home, ".claude"))).toBe(false);
+    expect(await readText(join(home, ".agent-loops"))).toBe("user data\n");
+  },
+);

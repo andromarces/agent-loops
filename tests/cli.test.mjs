@@ -5,14 +5,14 @@ import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vitest";
 
 // Answers `git` from memory for the tests that switch it on (see
-// `withContinueRepo`); every other test reaches the real `execa`.
+// `withContinueRepo`); every other test, and every other command, reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execa: (command, args, options) =>
-      gitDouble.answer
+      gitDouble.answer && command === "git"
         ? gitDouble.answer(command, args, options)
         : real.execa(command, args, options),
   };
@@ -21,7 +21,7 @@ vi.mock("execa", async (importOriginal) => {
 import { execa } from "execa";
 import { main, parseArgs } from "../src/cli.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import { cleanRepoGit, createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { cleanRepoGit, createTempRepo, removePath, untrackedFilesGit } from "./runtime-helpers.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 
@@ -1432,28 +1432,26 @@ test("role help parses after an operation and rejects an inline value", () => {
 // tree compare when the run ends on a fatal error, here a reviewer mutation, so the
 // evidence the runtime read survives the exit 1 (issue #420 review of aa0b25e).
 test("a fatal run keeps the test command result in the transcript", async () => {
-  const repo = await createTempRepo();
-  const transcriptPath = join(repo, "transcript.json");
-  const origExitCode = process.exitCode;
-  const agents = {
-    codex: {
-      async run() {
-        return JSON.stringify({ action: "run_reviewer", prompt: "review" });
+  await withContinueRepo(async (repo, transcriptPath) => {
+    gitDouble.answer = untrackedFilesGit;
+    const agents = {
+      codex: {
+        async run() {
+          return JSON.stringify({ action: "run_reviewer", prompt: "review" });
+        },
       },
-    },
-    claude: {
-      async run() {
-        return "worker ok";
+      claude: {
+        async run() {
+          return "worker ok";
+        },
       },
-    },
-    agy: {
-      async run(_state, _prompt, options) {
-        await writeFile(join(options.cwd, "by-reviewer.txt"), "x");
-        return "reviewer ok";
+      agy: {
+        async run(_state, _prompt, options) {
+          await writeFile(join(options.cwd, "by-reviewer.txt"), "x");
+          return "reviewer ok";
+        },
       },
-    },
-  };
-  try {
+    };
     await main(
       [
         ...BASE,
@@ -1475,10 +1473,7 @@ test("a fatal run keeps the test command result in the transcript", async () => 
       workTreeChanged: true,
       changedPaths: ["generated.txt"],
     });
-  } finally {
-    process.exitCode = origExitCode;
-    await removePath(repo);
-  }
+  });
 });
 
 // Usefulness: verifies a headless run that ends on a fatal error reports the command
