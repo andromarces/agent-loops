@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { validateAction } from "../../src/contracts/orchestrator-action.mjs";
+import {
+  actionFormats,
+  SUMMARY_KEYS,
+  validateAction,
+} from "../../src/contracts/orchestrator-action.mjs";
 
 // Usefulness: verifies valid run_worker action shape is accepted and extra fields are pruned.
 test("validateAction accepts valid run_worker and drops unknown fields", () => {
@@ -191,4 +195,33 @@ describe("validateAction rejections", () => {
       expect(result.error).toBe("abort requires a non-empty string reason.");
     },
   );
+});
+
+// Usefulness: the prompt format lines come from the contract, so a rendered format that validateAction rejects fails here.
+describe("actionFormats", () => {
+  const formats = actionFormats({ worker: "w", reviewer: "r", summary: "s", reason: "x" });
+
+  test("renders every action format as JSON that validateAction accepts", () => {
+    const lines = [
+      formats.runWorker,
+      formats.runReviewer,
+      formats.finish,
+      formats.finishUnresolved,
+      formats.abort,
+    ];
+    for (const line of lines) {
+      expect(validateAction(JSON.parse(line)).ok, line).toBe(true);
+    }
+  });
+
+  test("renders one summary key per SUMMARY_KEYS entry, in order", () => {
+    expect(Object.keys(JSON.parse(formats.finish).summary)).toEqual(SUMMARY_KEYS);
+  });
+
+  test("adds only the unresolvedCompare marker to the finish format", () => {
+    expect(JSON.parse(formats.finishUnresolved)).toEqual({
+      ...JSON.parse(formats.finish),
+      unresolvedCompare: true,
+    });
+  });
 });

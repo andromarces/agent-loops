@@ -1,6 +1,25 @@
 import { isJsonObject } from "../lib/json.mjs";
 
-const SUMMARY_KEYS = ["changed", "verified", "deferred", "notDone", "open"];
+export const SUMMARY_KEYS = ["changed", "verified", "deferred", "notDone", "open"];
+
+/**
+ * The four action formats as one-line JSON, for the orchestrator prompts. Each
+ * prompt passes its own placeholder text, so the field set stays in this
+ * contract while the wording stays with the prompt. Keep in step with
+ * `validateAction` below.
+ * @param {{worker: string, reviewer: string, summary: string, reason: string}} placeholders
+ */
+export function actionFormats({ worker, reviewer, summary, reason }) {
+  const summaryJson = `{${SUMMARY_KEYS.map((key) => `"${key}": "${summary}"`).join(", ")}}`;
+  const finish = (tail) => `{"action": "finish", "summary": ${summaryJson}${tail}}`;
+  return {
+    runWorker: `{"action": "run_worker", "prompt": "${worker}"}`,
+    runReviewer: `{"action": "run_reviewer", "prompt": "${reviewer}"}`,
+    finish: finish(""),
+    finishUnresolved: finish(', "unresolvedCompare": true'),
+    abort: `{"action": "abort", "reason": "${reason}"}`,
+  };
+}
 
 export function validateAction(value) {
   if (!isJsonObject(value)) {
