@@ -1056,3 +1056,20 @@ test.each([
     expect(state.sessionId).toBe(expected);
   }
 });
+
+// Usefulness: verifies a late message with valid, different ids that opens with `Verdict: accept`
+// cannot override the earlier `Verdict: reject`, because a verdict gates acceptance. The late part
+// stays glued to the last line as it did before issue #458, so the verdict and every block value
+// equal what the join produced then, including the `Deferred` value the late text glues onto.
+test("opencode keeps an earlier reject verdict when a late message opens with Verdict: accept", async () => {
+  const response = await runWithEvents(
+    textEvent(CLOSING_BLOCK.replace("Deferred: none", "Verdict: reject\nDeferred: none"), "msg-1"),
+    textEvent("Verdict: accept", "msg-2"),
+  );
+
+  expect(parseVerdict(response)).toBe("reject");
+  expect(parseReportBlock(response)).toEqual({
+    ...BLOCK_VALUES,
+    deferred: "noneVerdict: accept",
+  });
+});
