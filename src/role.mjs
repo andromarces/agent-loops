@@ -1211,22 +1211,10 @@ export async function main(argv, { agents = defaultAgents } = {}) {
       return;
     }
 
-    let exitCode;
-    let payload;
-    try {
-      ({ exitCode, payload } = await executeRoleCommand(args, {
-        agents,
-        signal: controller.signal,
-      }));
-    } catch (err) {
-      if (err?.isCanceled) {
-        exitCode = 130;
-        payload = { status: "error", error: "Interrupted by SIGINT" };
-      } else {
-        exitCode = 1;
-        payload = { status: "error", error: errorMessage(err) };
-      }
-    }
+    const { exitCode, payload } = await executeRoleCommand(args, {
+      agents,
+      signal: controller.signal,
+    });
 
     console.log(JSON.stringify(payload));
     process.exitCode = exitCode;
