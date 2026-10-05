@@ -414,6 +414,12 @@ function rejectInitFlagChanges(args, state, allowed = []) {
       `--test-cmd cannot be changed after init (state holds: ${state.testCmdSha256 ? "a different command" : "null"}).`,
     );
   }
+  // A task file is read only at init, so a later call never holds it as `task`.
+  if (args.taskFile !== null) {
+    throw new RoleError(
+      `--task-file cannot be changed after init (state holds: ${JSON.stringify(state.task ?? null)}).`,
+    );
+  }
   const provided = [];
   for (const flag of INIT_FIELDS) {
     if (allowed.includes(flag)) {

@@ -101,3 +101,52 @@ test("role init with an empty task file fails and writes no state", async () => 
   expect(result.exitCode).toBe(1);
   expect(result.payload.error).toContain("Init requires --task");
 });
+
+// Usefulness: acceptance (#211, review) — `--task-file` is an init flag like `--task`, so
+// every later operation that refuses `--task` refuses it too, and the run stays untouched.
+test("--task-file after init is refused wherever --task is refused", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const deps = {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: async () => "continue working",
+  };
+  const init = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), deps);
+  expect(init.exitCode).toBe(0);
+  const taskFile = join(repo, "..", "later-task.md");
+  await writeFile(taskFile, "Other task.");
+
+  const operations = [
+    ["finish", []],
+    ["abort", ["--reason", "stop"]],
+    ["extend", ["--parent-session", "parent-sess-1", "--max-steps", "9"]],
+  ];
+  for (const [operation, flags] of operations) {
+    const argv = (taskFlag) => [operation, "--cwd", "<repo>", ...flags, ...taskFlag];
+    const withTask = await executeRoleCommand(
+      withRepo(argv(["--task", "Other task."]), repo),
+      deps,
+    );
+    const withFile = await executeRoleCommand(
+      withRepo(argv(["--task-file", taskFile]), repo),
+      deps,
+    );
+    expect(withTask.exitCode, operation).toBe(1);
+    expect(withFile.exitCode, operation).toBe(1);
+    expect(withTask.payload.error, operation).toContain("--task cannot be changed after init");
+    expect(withFile.payload.error, operation).toContain("--task-file cannot be changed after init");
+  }
+  const dispatched = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_WITHOUT_TASK, "--task-file", taskFile]), repo),
+    deps,
+  );
+  expect(dispatched.exitCode).toBe(1);
+  expect(dispatched.payload.error).toContain("Existing run is");
+
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("active");
+  expect(state.task).toBe("Fix the flaky test.");
+  expect(state.reason).toBeUndefined();
+  expect(state.maxSteps).not.toBe(9);
+});
