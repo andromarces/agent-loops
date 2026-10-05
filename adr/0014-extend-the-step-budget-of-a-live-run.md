@@ -41,7 +41,9 @@ history and provider prompt cache. `archiveState` keeps the old ids in
    otherwise. Point 7 states what the command enforces.
 7. `extend` requires `--parent-session` and refuses a value that differs from the
    stored `parentSession`, the id the parent-edit guard matches (ADR 0006). The
-   refusal does not name the stored id. The check compares the id only. It does
+   refusal does not name the stored id. A different `--parent-session` on `dispatch`,
+   `finish`, or `abort` is refused by the init-flag check, and that refusal does name
+   it. The check compares the id only. It does
    not identify the calling harness session, so any caller that passes the stored
    id is accepted, and a caller that read the id from the state file can pass it,
    a child role included. No child environment marker exists at spawn, and the
