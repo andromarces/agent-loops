@@ -645,6 +645,17 @@ Known limits:
 - Mutations reverted within the same turn are not detected.
 - A change anywhere in the repository that contains `--cwd` aborts a read-only turn, even outside `--cwd`.
 
+### Remote writes
+
+The mutation check reads only the local work tree, index, and `HEAD`, so the runtime does not detect a remote write in a reviewer or orchestrator turn. A rule in the reviewer prompt, the headless orchestrator prompt, and `docs/orchestrator-instructions.md` forbids a write to GitHub or any remote, for example a push, a merge, a review, or a comment. The rule is advisory and the runtime does not enforce it. A status read such as `agent-loop role wait-checks` or `gh pr checks` is not a write.
+
+Two paths can carry a remote write:
+
+- Shell network. The `claude`, `agy`, `opencode`, and `copilot` read-only invocations keep shell network access (see [Codex read-only network limit](#codex-read-only-network-limit)), so a turn on one of them can run `gh` or `git` and change remote state.
+- A GitHub app connector on Codex. A read-only Codex probe on 2026-10-04, codex-cli 0.162.0-alpha.9, listed GitHub write tools from the connector (server name `codex_apps`), for example `github_create_issue`, `github_update_issue`, `github_add_comment_to_issue`, and `github_merge_pull_request`. The probe observed only that the tools were listed in a read-only turn. A write through those tools was not probed, so whether it succeeds or is refused is unverified. The observation applies to a Codex session that has that connector.
+
+No adapter denial of either path is probed or claimed.
+
 ## Continue a run
 
 A headless run that ends on exit 2 (step limit) keeps its work tree, but a new invocation starts every role in a new session. `--continue-from <transcript>` resumes the earlier orchestrator, worker, and reviewer sessions instead, so each keeps its conversation history and provider prompt cache, and gives the run a new `--max-steps` budget:
