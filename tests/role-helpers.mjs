@@ -1,6 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { vi } from "vitest";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
 import { removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
@@ -83,3 +84,35 @@ export async function cleanup() {
   await removePath(runsRoot);
   runsRoot = undefined;
 }
+
+/**
+ * Replaces `process.stdout.write` with a recorder for the main entry point. A
+ * `failure` is reported the way a broken pipe is: through the write callback,
+ * or by throwing when `throws` is set. With `emitsErrorEvent`, the failure is
+ * also emitted as a stream 'error' event on the next tick, as Node does, and
+ * `spy.unhandledErrorEvents` counts the emits that had no listener. Restore
+ * with `spy.mockRestore()`.
+ */
+export function spyStdoutWrite({ failure = null, throws = false, emitsErrorEvent = false } = {}) {
+  const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk, callback) => {
+    if (failure && throws) {
+      throw failure;
+    }
+    callback?.(failure);
+    if (failure && emitsErrorEvent) {
+      process.nextTick(() => {
+        if (process.stdout.listenerCount("error") === 0) {
+          spy.unhandledErrorEvents++;
+        } else {
+          process.stdout.emit("error", failure);
+        }
+      });
+    }
+    return true;
+  });
+  spy.unhandledErrorEvents = 0;
+  return spy;
+}
+
+/** Waits past the next-tick queue and the immediate queue. */
+export const settleStreamEvents = () => new Promise((resolve) => setImmediate(resolve));
