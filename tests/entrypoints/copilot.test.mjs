@@ -1,14 +1,18 @@
 import { isAbsolute } from "node:path";
 import { expect, test, vi } from "vitest";
 
-// The launcher runs `copilot`, which is not installed in the test environment. The stand-in runs
-// `node` with the same arguments, so execa builds its real failure message from the real command line.
+// The launcher runs `copilot`, which is not installed in the test environment. The stand-in runs a
+// real child with the same arguments, so execa builds its real failure message from the real command
+// line: `node` exits 3, and a missing binary fails to spawn (ENOENT).
+const standIn = vi.hoisted(() => ({ binary: "node" }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execa: (_command, args, options) =>
-      real.execa("node", ["-e", "process.exit(3)", ...args], options),
+      standIn.binary === "node"
+        ? real.execa("node", ["-e", "process.exit(3)", "--", ...args], options)
+        : real.execa(standIn.binary, args, options),
   };
 });
 
@@ -54,18 +58,45 @@ test("Copilot launcher passes no line breaks in its arguments", () => {
   expect(invocation.args.at(-1)).toContain("Line one. Line two. Line three.");
 });
 
-// Usefulness: verifies the launcher failure report, which prints the command line with the task
-// arguments, shows a secret-named environment value in the task as `[redacted:NAME]` (issue #431,
-// ADR 0017).
-test("Copilot launcher failure report redacts a secret value in the task", async () => {
-  const synthetic = "synthetic-probe-value-8f3a1c";
+// Usefulness: verifies the launcher failure report is built from the exit code, the signal, and the
+// error code, never from the execa command line, so a secret-named environment value in the task
+// cannot reach it in any quoting, here a value with an apostrophe, a quote, and a backslash that
+// execa shell-quotes (issue #431, ADR 0017).
+test.each([
+  ["a non-zero exit", "node", "exit code 3"],
+  ["a missing binary", "agent-loop-missing-copilot-binary", "ENOENT"],
+])("Copilot launcher failure report for %s echoes no argument", async (_name, binary, expected) => {
+  const synthetic = "synth'etic\"probe\\value-8f3a1c";
   process.env.SYNTH_PROBE_TOKEN = synthetic;
+  standIn.binary = binary;
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
     await main([`Implement it with --test-cmd "run ${synthetic}"`]).catch(reportFailure);
     const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
-    expect(report).toContain("agent-loop-copilot: Command failed");
+    expect(report).toContain("agent-loop-copilot:");
+    expect(report).toContain(expected);
+    expect(report).not.toContain("8f3a1c");
+    expect(report).not.toContain("--test-cmd");
+    expect(process.exitCode).toBe(1);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    standIn.binary = "node";
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
+// Usefulness: verifies a launcher error that the launcher authored still goes through the shared
+// redaction, so a value that reaches its text prints as `[redacted:NAME]` (issue #431, ADR 0017).
+test("Copilot launcher failure report redacts a secret value in its own message", () => {
+  const synthetic = "synthetic-probe-value-8f3a1c";
+  process.env.SYNTH_PROBE_TOKEN = synthetic;
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    reportFailure(new Error(`bad input ${synthetic}`));
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
     expect(report).toContain("[redacted:SYNTH_PROBE_TOKEN]");
     expect(report).not.toContain(synthetic);
   } finally {

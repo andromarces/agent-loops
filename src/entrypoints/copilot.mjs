@@ -55,12 +55,24 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 /**
- * Prints the failure report. The execa message holds the whole command line, and the task
- * arguments in it can carry a secret-named environment value, so it is redacted (ADR 0017).
+ * Prints the failure report. An execa error carries the whole command line, with the task
+ * arguments and their shell quoting, in `message` and `shortMessage`, so the report is built from
+ * the exit code, the signal, and the error code only. Any other error prints its own message. The
+ * text goes through the shared redaction either way (ADR 0017).
  */
 export function reportFailure(error) {
-  const message = redactedText(error?.shortMessage ?? error?.message ?? error).split("\n", 1)[0];
-  console.error(`agent-loop-copilot: ${message}`);
+  let message;
+  if (typeof error?.shortMessage === "string") {
+    const causes = [
+      error.exitCode === undefined ? null : `exit code ${error.exitCode}`,
+      error.signal ? `signal ${error.signal}` : null,
+      error.code ? `error code ${error.code}` : null,
+    ].filter(Boolean);
+    message = `copilot failed${causes.length > 0 ? ` (${causes.join(", ")})` : ""}`;
+  } else {
+    message = String(redactedText(error?.message ?? error)).split("\n", 1)[0];
+  }
+  console.error(`agent-loop-copilot: ${redactedText(message)}`);
   process.exitCode = 1;
 }
 

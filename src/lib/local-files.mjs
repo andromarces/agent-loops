@@ -57,7 +57,8 @@ async function git(cwd, args, options = {}) {
     ...options,
   });
   if (result.exitCode !== 0 && !options.allowExit?.includes(result.exitCode)) {
-    const detail = (result.stderr || result.shortMessage || "").trim();
+    // `shortMessage` holds the whole command line, so the fallback is the error code.
+    const detail = (result.stderr || result.code || "").trim();
     throw new Error(
       `local files: git ${args[0]} failed (exit ${result.exitCode ?? "none"}): ${detail}`,
     );
