@@ -1816,6 +1816,22 @@ test("reads an unresolved status when the error message getter throws", async ()
   expect(read).toMatchObject({ status: "unresolved", checks: [] });
 });
 
+// Usefulness: verifies a `gh` rejection whose `message` is an object with its own
+// `toString` key still yields an unresolved status. The serialized message has no
+// callable `toString`, so a plain string conversion of it throws inside the catch
+// block (issue #475 review).
+test("reads an unresolved status when the error message is a non-string with a toString key", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: HEAD,
+    gh: async () => {
+      throw Object.assign(new Error("hidden"), { message: { toString: 1 } });
+    },
+  });
+  expect(read).toMatchObject({ status: "unresolved", checks: [] });
+});
+
 // Usefulness: verifies the real `gh` runner passes the installed execa only options
 // that it accepts, and that the command and arguments of the read reach the spawn
 // layer. The unit stubs accept any option shape, and the double in

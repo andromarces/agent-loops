@@ -858,6 +858,41 @@ test("orchestrator error with a throwing message getter stays the run result", a
   }
 });
 
+// Usefulness: verifies an orchestrator turn error whose `message` is an object with its
+// own `toString` key still reaches the caller as the original error. A plain string
+// conversion of the serialized message throws inside the catch block (issue #475
+// review).
+test("orchestrator error with a non-string toString-key message stays the run result", async () => {
+  const repo = await createTempRepo();
+  try {
+    const hostile = Object.assign(new Error("hidden"), { message: { toString: 1 } });
+
+    await expect(
+      runLoop({
+        task: "Task 475",
+        cwd: repo,
+        maxSteps: 5,
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: {
+          orch: scripted([
+            () => {
+              throw hostile;
+            },
+          ]),
+          work: scripted([]),
+          rev: scripted([]),
+        },
+      }),
+    ).rejects.toBe(hostile);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 15. Usefulness: verifies cancel signal aborts loop.
 test("cancel signal stops loop", async () => {
   const repo = await createTempRepo();
@@ -1996,6 +2031,46 @@ test("--require-ci refuses when the gh error message getter throws", async () =>
     const throwingGh = async (args) => {
       if (args.join(" ").includes("pr view 42")) {
         throw hostile;
+      }
+      return ciGateGh(head)(args);
+    };
+
+    const result = await runLoop({
+      task: "PR work: address issue 47 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: throwingGh,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_worker", prompt: "work" }),
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted(["worker pushed the change"]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("the PR gate could not be evaluated");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a `gh` rejection whose `message` is an object with its own
+// `toString` key still refuses the finish. A plain string conversion of the
+// serialized message throws inside the gate catch block (issue #475 review).
+test("--require-ci refuses when the gh error message is a non-string with a toString key", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const throwingGh = async (args) => {
+      if (args.join(" ").includes("pr view 42")) {
+        throw Object.assign(new Error("hidden"), { message: { toString: 1 } });
       }
       return ciGateGh(head)(args);
     };
