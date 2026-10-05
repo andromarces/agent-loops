@@ -649,7 +649,8 @@ async function runInstall({
         "The agent-loop parent guard stays inactive in Codex until the hook is trusted. " +
         "The hook is the PreToolUse entry in ~/.codex/hooks.json with the status message " +
         '"Checking parent orchestration guard". Its command runs parent-guard.mjs. ' +
-        "Run /hooks in Codex and trust that entry. " +
+        "Run /hooks in Codex. " +
+        "Trust that entry. " +
         "A changed hook command needs a new trust step.",
     });
     if (!dryRun) {
