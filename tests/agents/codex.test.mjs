@@ -368,3 +368,23 @@ test("codex keeps a final spaceless numbered report over an earlier accept block
   expect(response).toBe(numbered);
   expect(parseVerdict(response)).not.toBe("accept");
 });
+
+// Usefulness: verifies a final report whose labels follow letters in list items still wins over an earlier accept and surfaces as raw (issue #449).
+test("codex keeps a final letter-prefixed list report over an earlier accept block", async () => {
+  const accept = `${BLOCK}\nVerdict: accept`;
+  const lettered = "a.Conclusion: ok.\nb.Why: w.\nc.Blockers: none\na) Verdict: accept";
+  const events = [
+    { type: "thread.started", thread_id: "th-1" },
+    { type: "item.completed", item: { type: "agent_message", text: accept } },
+    { type: "item.completed", item: { type: "agent_message", text: lettered } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events, stderr: "" });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const response = await runCodex(state, "p", { cwd: "/dir" });
+
+  expect(response).toBe(lettered);
+  expect(parseVerdict(response)).toBe("unknown");
+});

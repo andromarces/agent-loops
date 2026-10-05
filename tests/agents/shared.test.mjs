@@ -47,6 +47,6 @@ test("lastClosingMessage picks the last message with a closing block attempt, el
   expect(lastClosingMessage([first, "Conclusion: only"])).toBe("Conclusion: only");
   expect(lastClosingMessage([first, "Blockers:\n- x"])).toBe("Blockers:\n- x");
   expect(lastClosingMessage([first, "**Verdict**: reject"])).toBe("**Verdict**: reject");
-  expect(lastClosingMessage([first, "The conclusion: none yet."])).toBe(first);
+  expect(lastClosingMessage([first, "The conclusion is none yet."])).toBe(first);
   expect(lastClosingMessage(["x", "y"])).toBe("y");
 });

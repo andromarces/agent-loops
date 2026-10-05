@@ -496,3 +496,23 @@ test("copilot keeps a final spaceless numbered report over an earlier accept blo
   expect(response).toBe(numbered);
   expect(parseVerdict(response)).not.toBe("accept");
 });
+
+// Usefulness: verifies a final report whose labels follow letters in list items still wins over an earlier accept and surfaces as raw (issue #449).
+test("copilot keeps a final letter-prefixed list report over an earlier accept block", async () => {
+  const accept = `${BLOCK}\nVerdict: accept`;
+  const lettered = "a.Conclusion: ok.\nb.Why: w.\nc.Blockers: none\na) Verdict: accept";
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      JSON.stringify({ type: "assistant.message", data: { content: accept } }),
+      JSON.stringify({ type: "assistant.message", data: { content: lettered } }),
+      '{"type":"result","sessionId":"s-1","exitCode":0}',
+    ].join("\n"),
+    stderr: "",
+  });
+
+  const state = { kind: "copilot", sessionId: "s-1", model: null, effort: null };
+  const response = await runCopilot(state, "p", { cwd: "/dir" });
+
+  expect(response).toBe(lettered);
+  expect(parseVerdict(response)).toBe("unknown");
+});

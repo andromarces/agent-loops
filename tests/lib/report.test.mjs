@@ -572,6 +572,13 @@ const MALFORMED_SHAPES = [
   "Conclusion: c\nWhy: w",
   "Verdict: reject",
   "  - 1.Verdict: accept",
+  "a.Conclusion: c\nb.Why: w\nc.Blockers: none",
+  "a) Verdict: accept",
+  "(a) Conclusion: c",
+  "Step one. Conclusion: c",
+  "see Verdict: reject",
+  "x**Why**: w",
+  "text conclusion : c",
   REPORT,
   `${REPORT}\nVerdict: accept`,
 ];
@@ -587,10 +594,11 @@ test("hasClosingBlockAttempt holds for every malformed or parseable closing bloc
 test("hasClosingBlockAttempt is false for prose and lists with no label", () => {
   for (const prose of [
     "Noted the late event.",
-    "The conclusion: none yet.",
     "- one\n- two",
     "1. first\n2. second",
     "Conclusions follow later",
+    "The conclusion is none yet.",
+    "Notes about the verdict",
   ]) {
     expect(hasClosingBlockAttempt(prose), prose).toBe(false);
   }

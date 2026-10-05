@@ -78,25 +78,25 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // emphasis shapes above into `raw` and makes that loss loud.
 const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
-// A line that opens a closing-block label or the reviewer `Verdict:` label after any run of
-// non-letter lead-in: indentation, quote, heading, bullet, or numbered marker, with or without a
-// space, and emphasis or code marks around the label. The lead-in is any non-letter run, not a
-// list of marker shapes, so it holds every line that the strict match, DECORATED_LABEL_LINE, or
-// LIST_LINE reads as a label line, and a marker shape those patterns do not name too. A line
-// that matches may not parse, and that is the point: an unparseable block is still an attempt.
-const LABEL_OPENER_LINE = new RegExp(
-  `^[^\\p{L}]*(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]{0,2}\\s*:`,
-  "iu",
+// A report label name or `Verdict`, in any case, anywhere in the text, followed by optional
+// emphasis or code marks and whitespace and then a colon. It has no lead-in condition on purpose:
+// every lead-in rule missed another list shape (issue #449), so the rule is the widest
+// one. It holds every label the strict match, DECORATED_LABEL_LINE, or LIST_LINE reads, and it
+// also holds a mid-sentence mention such as `the conclusion: none`. That mention fails closed.
+const LABEL_MENTION = new RegExp(
+  `(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]{0,2}\\s*:`,
+  "i",
 );
 
 /**
- * True when the response holds a closing block attempt: a line that opens any report label or
- * the `Verdict:` label, whether or not the block parses. A response without one is not a report.
+ * True when the response holds a closing block attempt: any report label name or `Verdict`
+ * followed by a colon, anywhere in the text, whether or not the block parses. A response
+ * without one is plain prose, such as a late answer to an event after the closing block.
  * @param {string} response
  * @returns {boolean}
  */
 export function hasClosingBlockAttempt(response) {
-  return response.split(/\r?\n/).some((line) => LABEL_OPENER_LINE.test(line));
+  return LABEL_MENTION.test(response);
 }
 
 /**
