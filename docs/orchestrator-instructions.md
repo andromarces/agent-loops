@@ -332,9 +332,9 @@ status it read beside the reviewer result, so compare it with the reviewer Check
 line.
 
 The reviewer's own read is never removed, and the head matters. A supplied status
-is evidence for that turn, not a gate: `gh pr checks` lists only the checks that
-already reported, so a supplied pass covers the listed checks only, and a failed
-read is an unresolved status rather than a turn failure. The runtime reports the
+is evidence for that turn, not a gate: it is a snapshot taken before the turn, so
+a check that starts or finishes later is not in it, and a failed read is an
+unresolved status rather than a turn failure. The runtime reports the
 status it read beside the reviewer result, in the dispatch envelope and in the
 state file, so compare it with the reviewer Checks line and act on a
 disagreement. A headless run renders the same status in the result prompt the
@@ -342,34 +342,24 @@ orchestrator receives after a reviewer turn, as `prChecks` beside the response a
 the reviewed state, so the orchestrator holds the status and the reviewer Checks
 line in one prompt. A turn that made no read carries no `prChecks` field.
 
-The runtime reads the PR head first and compares it with the local reviewed head,
-so a status is reported only for the head it describes. A read whose PR head
+The runtime reads the PR head and compares it with the local reviewed head, so a
+status is reported only for the head it describes. A read whose PR head
 differs from the local head, and a read with no local head to compare, are
 unresolved, and the prompt never reports a pass for a head the reviewer is not
 looking at. Every supplied status states the head it describes.
 
-The head and the checks are two separate reads, and the pull request can advance
-between them. `gh pr checks` reports no commit and cannot be asked for one, so
-the runtime reads the head again after the checks. A head that moved is
-unresolved, because the checks belong to a commit other than the one the status
-would name.
+The runtime reads the check runs and commit statuses of the reviewed commit by SHA,
+so a PR head that moves away and back during the read cannot put the checks of
+another commit in the status. The required checks come from the same resolution
+the `--require-ci` gate uses. Every supplied status still carries `advisory: true`
+and is a report, not a verdict: the reviewer treats it as evidence, and the
+finish gate re-reads GitHub and refuses the finish on the real condition. A status
+never replaces the gate.
 
-One window survives that re-read and is an accepted gap: a head that advances to
-another commit and returns between the two head reads leaves both reads naming
-the same commit while the checks describe the other one. No re-read separates
-that, and `gh api repos/{owner}/{repo}/commits/{sha}/check-runs` reports every
-check run on a commit rather than the required ones, so it would have to rebuild
-the required-name source from repository rulesets and classic protection. Every
-supplied status therefore carries `advisory: true` and is a report, not a
-verdict: the reviewer treats it as evidence, and the `--require-ci` finish gate
-re-reads GitHub and refuses the finish on the real condition. A status never
-replaces the gate.
-
-The status comes from the exit code the rule above names: 0 is a pass, 8 is a
-pending check, and 1 is a failing check, a pull request with no required check,
-or a read error. Exit 1 reports a failing check only when the reply lists a
-failing required check, the same evidence the rule requires before a blocker. A
-reply that is not a well-formed list, and any other exit code, are unresolved.
+The status is `failing` when a required check failed, `pending` when a required
+check is pending or has no run or status on the commit, and `pass` when every
+required check passed. A ruleset source that cannot be read, and a base branch
+with no required check, are unresolved.
 
 A run that declares no PR reads no status, and the reviewer keeps its own read.
 The read follows `--pr`, which is the PR input both paths know at dispatch. A

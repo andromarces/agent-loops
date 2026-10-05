@@ -1283,10 +1283,10 @@ test("the supplied-status rule states the same conditions in both surfaces", asy
   expect(instructions.indexOf("supplies it to every reviewer prompt")).toBeLessThan(
     instructions.indexOf("keeps its own read as the fallback"),
   );
-  // The moved-head gap is stated once, not twice, so the two surfaces cannot
-  // drift into two versions of the same accepted gap.
-  const movedMentions = instructions.match(/separate reads, and the pull request can advance/g);
-  expect(movedMentions).toHaveLength(1);
+  // The commit binding is stated once, so the two surfaces cannot drift into two
+  // versions of the same statement (issue #349).
+  const bound = instructions.match(/check runs and commit statuses of the reviewed commit by SHA/g);
+  expect(bound).toHaveLength(1);
 });
 
 // Usefulness: verifies a line that calls the finish gate the only check read is
