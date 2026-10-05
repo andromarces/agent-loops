@@ -927,6 +927,9 @@ test.each([
   ["a function", () => () => {}, "[unserializable message]"],
   ["a Symbol", () => Symbol("message"), "[unserializable message]"],
   ["an object whose toJSON returns undefined", () => ({ toJSON() {} }), "[unserializable message]"],
+  ["an object whose toJSON returns null", () => ({ toJSON: () => null }), null],
+  ["NaN", () => Number.NaN, null],
+  ["Infinity", () => Number.POSITIVE_INFINITY, null],
 ])("main prints one error envelope when the message is %s", async (_label, makeMessage, text) => {
   await setup();
   const repo = await createTempRepo();

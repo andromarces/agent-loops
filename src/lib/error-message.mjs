@@ -18,7 +18,9 @@ export function errorMessage(err) {
     return message;
   }
   try {
-    return JSON.parse(JSON.stringify({ error: message })).error ?? UNSERIALIZABLE_MESSAGE;
+    const serialized = JSON.parse(JSON.stringify({ error: message }));
+    // A valid value, including null, is kept. Only an absent key means no value.
+    return Object.hasOwn(serialized, "error") ? serialized.error : UNSERIALIZABLE_MESSAGE;
   } catch {
     return typeof message === "bigint" ? message.toString() : UNSERIALIZABLE_MESSAGE;
   }
