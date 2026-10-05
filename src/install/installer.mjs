@@ -28,6 +28,7 @@ import { HARNESS_META, HARNESS_ORDER } from "../lib/harnesses.mjs";
 import { buildTargets } from "./harnesses.mjs";
 import {
   manifestLockFile,
+  manifestPath,
   readManifest,
   removeManifest,
   resolveHome,
@@ -810,9 +811,9 @@ async function runUninstall({ harnesses, home = resolveHome(), dryRun = false } 
       reports.push(await planFileRestore({ ...file, harness }, dryRun));
     }
     if (!dryRun) {
-      let removedDirs;
+      let pruned;
       try {
-        removedDirs = await pruneEmptyDirs(record.dirs ?? []);
+        pruned = await pruneEmptyDirs(record.dirs ?? []);
       } catch (err) {
         // The file and settings targets above were already restored or
         // deleted, so keep only the directory list. Their stale records would
@@ -830,15 +831,30 @@ async function runUninstall({ harnesses, home = resolveHome(), dryRun = false } 
         });
         continue;
       }
+      for (const dir of pruned.notDirs) {
+        reports.push({
+          harness,
+          kind: "dir",
+          action: "skip",
+          path: dir,
+          detail: "not a directory; left in place",
+        });
+      }
       // A record kept only for its directories has no file or settings report,
-      // so name each directory this retry removed instead of printing nothing.
-      if (
-        removedDirs.length > 0 &&
-        (record.files ?? []).length === 0 &&
-        (record.settings ?? []).length === 0
-      ) {
-        for (const dir of removedDirs) {
+      // so name each directory this retry removed, or the cleared record when
+      // none remained, instead of printing nothing.
+      if ((record.files ?? []).length === 0 && (record.settings ?? []).length === 0) {
+        for (const dir of pruned.removed) {
           reports.push({ harness, kind: "dir", action: "delete", path: dir });
+        }
+        if (pruned.removed.length === 0 && pruned.notDirs.length === 0) {
+          reports.push({
+            harness,
+            kind: "record",
+            action: "clear",
+            path: manifestPath(home),
+            detail: "record kept only for directories; none left to remove",
+          });
         }
       }
     }

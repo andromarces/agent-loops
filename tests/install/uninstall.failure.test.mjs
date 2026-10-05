@@ -197,3 +197,97 @@ test("the uninstall CLI exits 1 when the install directory cannot be removed", a
     process.exitCode = 0;
   }
 });
+
+// Usefulness: verifies acceptance #199 item 1 — a retry that finds every
+// leftover directory already gone still names the cleared record, so the
+// command does not print "Nothing to change." while it clears the manifest.
+test("a retry with no leftover directory reports the cleared record", async () => {
+  const home = await makeHome();
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const dirs = (await readManifest(home)).harnesses.claude.dirs;
+  const blocked = deepestDir(dirs);
+  control.failures.set(blocked, "EPERM");
+  await uninstall({ home });
+  control.failures.clear();
+  for (const dir of dirs) {
+    await removePath(dir);
+  }
+
+  const reports = await uninstall({ home });
+  expect(reports).toHaveLength(1);
+  expect(reports[0]).toMatchObject({ harness: "claude", action: "clear" });
+  expect(reports[0].path).toBe(manifestPath(home));
+  expect(await readText(manifestPath(home))).toBe(null);
+});
+
+// Usefulness: verifies acceptance #199 item 2 at the command boundary — a
+// harness directory failure exits non-zero so a script can detect it, and the
+// record stays for a retry.
+test("the uninstall CLI exits 1 when a harness directory cannot be removed", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  const blocked = deepestDir((await readManifest(home)).harnesses.claude.dirs);
+  control.failures.set(blocked, "EPERM");
+
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    process.exitCode = 0;
+    await cliMain(["uninstall", "--yes"]);
+    expect(process.exitCode).toBe(1);
+    expect((await readManifest(home)).harnesses.claude.dirs).toContain(blocked);
+  } finally {
+    console.log = originalLog;
+    restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: verifies acceptance #199 item 3 — a recorded path that is now a
+// non-directory is left in place, reported, and its record clears, so retries
+// do not fail forever.
+test("a recorded path that is not a directory is reported and the record clears", async () => {
+  const home = await makeHome();
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const blocked = deepestDir((await readManifest(home)).harnesses.claude.dirs);
+  control.failures.set(blocked, "ENOTDIR");
+
+  const reports = await uninstall({ home });
+
+  const skipped = reports.find((entry) => entry.path === blocked);
+  expect(skipped).toMatchObject({ kind: "dir", action: "skip" });
+  expect(skipped.detail).toMatch(/not a directory/);
+  expect(reports.some((entry) => entry.action === "failed")).toBe(false);
+  expect(existsSync(blocked)).toBe(true);
+  expect(await readText(manifestPath(home))).toBe(null);
+});
+
+// Usefulness: verifies acceptance #199 item 3 with a real regular file — the
+// file survives, is reported, and the record clears whatever code rmdir
+// returns. The mock forces ENOENT, which Windows returns for a file, so the
+// check does not depend on the ENOTDIR code that POSIX returns.
+test("a regular file at a recorded path is kept and reported on any platform", async () => {
+  const home = await makeHome();
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+
+  const blocked = deepestDir((await readManifest(home)).harnesses.claude.dirs);
+  // A first uninstall fails on the directory, which leaves a directory-only
+  // record; the directory is then replaced by a file before the retry.
+  control.failures.set(blocked, "EPERM");
+  await uninstall({ home });
+  await removePath(blocked);
+  await writeFile(blocked, "user data\n", "utf8");
+  control.failures.set(blocked, "ENOENT");
+
+  const reports = await uninstall({ home });
+
+  expect(reports.find((entry) => entry.path === blocked)).toMatchObject({
+    kind: "dir",
+    action: "skip",
+  });
+  expect(await readText(blocked)).toBe("user data\n");
+  expect(await readText(manifestPath(home))).toBe(null);
+});
