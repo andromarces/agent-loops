@@ -924,6 +924,9 @@ test.each([
     }),
     "[unserializable message]",
   ],
+  ["a function", () => () => {}, "[unserializable message]"],
+  ["a Symbol", () => Symbol("message"), "[unserializable message]"],
+  ["an object whose toJSON returns undefined", () => ({ toJSON() {} }), "[unserializable message]"],
 ])("main prints one error envelope when the message is %s", async (_label, makeMessage, text) => {
   await setup();
   const repo = await createTempRepo();
@@ -962,6 +965,65 @@ test.each([
     errorSpy.mockRestore();
     process.exitCode = origExitCode;
   }
+});
+
+// Usefulness: verifies a fatal child error whose message getter throws still ends the turn with a
+// terminal lifecycle and a recorded turn, so the state file never keeps the dispatched lifecycle.
+test("dispatch records the turn when reading the fatal error message throws", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const fatal = Object.assign(new Error("fatal"), { name: "MutationError" });
+  Object.defineProperty(fatal, "message", {
+    get() {
+      throw new Error("message getter failed");
+    },
+  });
+  const agents = {
+    fake1: {
+      async run() {
+        throw fatal;
+      },
+    },
+    fake2: recordingAdapter([]),
+  };
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({ role: "worker", status: "error" });
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("halted");
+  expect(state.turns).toMatchObject([{ role: "worker", status: "error" }]);
+  expect(state.lastResult).toMatchObject({ status: "error" });
+});
+
+// Usefulness: verifies a child error with a non-string message returns an error result through the
+// runtime, instead of the TypeError that splitting the message raised.
+test("dispatch returns an error result when a child error has a non-string message", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const agents = {
+    fake1: {
+      async run() {
+        throw { message: { code: 42 } };
+      },
+    },
+    fake2: recordingAdapter([]),
+  };
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({ role: "worker", status: "error" });
+  expect(String(result.payload.error)).toContain("42");
 });
 
 // Usefulness: verifies a failed stdout write (callback error or a throw) is reported on stderr and

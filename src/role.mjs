@@ -29,6 +29,7 @@ import {
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
+import { errorMessage, readableErrorMessage, UNREADABLE_MESSAGE } from "./lib/error-message.mjs";
 import { copyLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
@@ -51,8 +52,6 @@ const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
 class RoleError extends Error {}
-
-const UNSERIALIZABLE_MESSAGE = "[unserializable message]";
 
 const ROLE_USAGE = [
   "Usage: agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]",
@@ -695,11 +694,14 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
       onEvent,
     });
   } catch (err) {
-    const canceled = Boolean(err?.isCanceled);
+    let canceled = false;
+    try {
+      canceled = Boolean(err?.isCanceled);
+    } catch {}
     const payload = {
       role: roleName,
       status: "error",
-      error: errorMessage(err),
+      error: readableErrorMessage(err),
       ...(err?.testRun ? { testRun: err.testRun } : {}),
     };
     // A cancel or a fatal guard error can end the turn after the CLI reported its session, so
@@ -736,27 +738,6 @@ function withLocalFiles(payload, localFiles) {
   return localFiles ? { ...payload, localFiles } : payload;
 }
 
-/**
- * Error value for the envelope. A string message returns unchanged. Any other
- * message is serialized once under the key `error`, as the envelope did before,
- * so a `toJSON` that redacts by key keeps its output and runs exactly once. The
- * returned plain JSON value serializes the same on every later call, so the
- * stdout envelope and the state file hold one value. A message that cannot
- * serialize printed nothing before, so it returns a fixed placeholder, or its
- * digits for a BigInt, and the envelope stringifies.
- */
-function errorMessage(err) {
-  const message = err?.message ?? String(err);
-  if (typeof message === "string") {
-    return message;
-  }
-  try {
-    return JSON.parse(JSON.stringify({ error: message })).error;
-  } catch {
-    return typeof message === "bigint" ? message.toString() : UNSERIALIZABLE_MESSAGE;
-  }
-}
-
 /** One error envelope for a thrown value. A cancel keeps exit 130. */
 function errorResult(err) {
   try {
@@ -771,7 +752,7 @@ function errorResult(err) {
       exitCode: canceled ? 130 : 1,
       payload: {
         status: "error",
-        error: canceled ? "Interrupted by SIGINT" : "Unreadable error",
+        error: canceled ? "Interrupted by SIGINT" : UNREADABLE_MESSAGE,
       },
     };
   }
