@@ -72,8 +72,9 @@ checks`, which reports no commit and could not separate that case.
    `unresolved`: a ruleset read that settles nothing, an empty set of required
    contexts, a failed read of the required names (any exit other than 0, or 1 or 8
    with a non-empty list, or the exact `no required checks reported` answer), a
-   merge state the gate refuses (BLOCKED, BEHIND, DIRTY, UNKNOWN, or a value the gate
-   does not know) when every required check passed, a check-run or commit-status
+   reviewed work tree that is not clean, a merge state the gate refuses (BLOCKED,
+   BEHIND, DIRTY, UNKNOWN, or a value the gate does not know) when every required
+   check passed, a check-run or commit-status
    reply that is not the paginated shape, an entry the judgment cannot read or
    order (an empty name or context, or an id or a timestamp that is missing or not
    a date), a classic

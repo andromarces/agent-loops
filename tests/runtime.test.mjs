@@ -3055,6 +3055,48 @@ test("a declared PR supplies the runtime-read required-check status to the revie
   }
 });
 
+// Usefulness: verifies the supplied status is not a pass for a reviewed work tree
+// that is not clean, because `--require-ci` refuses that tree, so the runtime must
+// hand the status read the clean flag of the reviewed snapshot (issue #349).
+test("a declared PR supplies no pass for a reviewed work tree that is not clean", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    await writeFile(join(repo, "uncommitted.txt"), "x");
+    const rev = scripted([REVIEW_ACCEPT]);
+    const events = [];
+
+    await runLoop({
+      task: "PR work: address issue 349 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      gh: reviewerReadGh(head, [PASSING_RUN]),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev,
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer");
+    expect(reviewed.result.reviewed.clean).toBe(false);
+    expect(reviewed.result.prChecks.status).not.toBe("pass");
+    expect(events.filter((e) => e.type === "refusal").map((e) => e.reason)).toContain(
+      "the reviewed work tree is not clean",
+    );
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a run that declares no PR reads no status and records
 // none, so the reviewer prompt never carries a read the runtime did not make
 // (issue #320).

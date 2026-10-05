@@ -366,7 +366,8 @@ required name wins over pending. These are unresolved: a ruleset source that can
 be read, a reply or an entry that cannot be parsed or ordered (an empty name
 included), a protection reply that cannot be interpreted, a failed read of the
 required names, a base branch with no required check, and a pass withheld for a
-merge state the gate refuses (blocked, behind, conflicting, or unknown).
+reviewed work tree that is not clean or a merge state the gate refuses (blocked,
+behind, conflicting, or unknown).
 
 A run that declares no PR reads no status, and the reviewer keeps its own read.
 The read follows `--pr`, which is the PR input both paths know at dispatch. A

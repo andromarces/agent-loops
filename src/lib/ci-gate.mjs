@@ -986,13 +986,19 @@ function oneLine(text) {
  * and `--require-ci` re-reads GitHub and enforces the condition. The status is a
  * snapshot taken before the turn, so a check that starts or finishes later is not
  * in it.
- * @param {{ pr: number, cwd: string, head?: string | null, gh?: Function, timeoutMs?: number }} options
+ * `clean` is whether the reviewed work tree is clean. The gate refuses a tree that
+ * is not clean, so a pass is withheld unless `clean` is true; the default is the
+ * safe one. Every other refusal the gate makes before it reads a check is a
+ * withheld pass here too: no reviewed head, a PR head other than the reviewed one,
+ * and a merge state it refuses.
+ * @param {{ pr: number, cwd: string, head?: string | null, clean?: boolean, gh?: Function, timeoutMs?: number }} options
  * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string, advisory: true }>}
  */
 export async function readRequiredChecks({
   pr,
   cwd,
   head = null,
+  clean = false,
   gh = runGh,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
 }) {
@@ -1081,9 +1087,11 @@ export async function readRequiredChecks({
       findings.filter(({ failure }) => failure && kinds.includes(failure.kind));
     const failing = ofKind("failing");
     const waiting = ofKind("pending", "missing");
-    // A pass is withheld for a merge state the gate refuses. A failing or pending
+    // A pass is withheld for a state the gate refuses: a work tree that is not clean,
+    // or a merge state. A failing or pending
     // status is already not a pass, so it keeps its own word.
-    const mergeRefusal =
+    const refusal =
+      (clean === true ? null : "the reviewed work tree is not clean") ??
       earlyMergeRefusal(info.mergeStateStatus) ??
       (info.mergeStateStatus === "BLOCKED"
         ? "the PR merge state is blocked (a required check, review, or other required rule is unmet)"
@@ -1105,8 +1113,8 @@ export async function readRequiredChecks({
         head,
       );
     }
-    if (mergeRefusal) {
-      return unresolved(`unread: ${mergeRefusal} on PR head ${head}`, head);
+    if (refusal) {
+      return unresolved(`unread: ${refusal} on PR head ${head}`, head);
     }
     return report(
       "pass",

@@ -1614,7 +1614,8 @@ function statusReadGh({ head = HEAD, ...rest } = {}) {
 const BOTH_PASS = [run("ci (ubuntu-latest)", "success"), run("ci (windows-latest)", "success")];
 
 // The read states the local head it compares against.
-const readOn = (head, gh) => readRequiredChecks({ pr: 42, cwd: ".", head, gh });
+const readOn = (head, gh, clean = true) =>
+  readRequiredChecks({ pr: 42, cwd: ".", head, clean, gh });
 
 // Usefulness: verifies the read reports a pass from the check runs of the
 // required contexts, so a reviewer prompt carries the status and the evidence
@@ -2107,6 +2108,7 @@ test.each([
     { headRuns: [run("ci (ubuntu-latest)", "failure")], mergeRuns: BOTH_PASS },
   ],
   ["a failing required check on the head", { headRuns: [run("ci (ubuntu-latest)", "failure")] }],
+  ["passing checks on a work tree that is not clean", { headRuns: BOTH_PASS, clean: false }],
   ...[
     "CLEAN",
     "UNSTABLE",
@@ -2126,14 +2128,19 @@ test.each([
   ]),
 ])(
   "the supplied status agrees with the finish gate on %s",
-  async (_name, { statusPages, ...options }) => {
+  async (_name, { statusPages, clean = true, ...options }) => {
     const table = routes(options).map(([match, value]) =>
       statusPages && match === `commits/${HEAD}/status --paginate`
         ? [match, statusPages]
         : [match, value],
     );
-    const read = await readOn(HEAD, fakeGh(table));
-    const gate = await checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh: fakeGh(table) });
+    const read = await readOn(HEAD, fakeGh(table), clean);
+    const gate = await checkCi({
+      pr: 42,
+      reviewed: { ...REVIEWED, clean },
+      cwd: ".",
+      gh: fakeGh(table),
+    });
     expect(read.status === "pass").toBe(gate.ok);
   },
 );
