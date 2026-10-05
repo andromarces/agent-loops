@@ -1,6 +1,22 @@
 import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";
+
+// Answers `git` from memory for the one test that switches it on (see
+// `cleanRepoGit` below); every other test reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
@@ -2556,21 +2572,48 @@ function noRequiredCheckGh(headRefOid, calls = []) {
   };
 }
 
+const CLEAN_HEAD = "1111111111111111111111111111111111111111";
+
+// A clean repo at `CLEAN_HEAD`, answered from memory. The real snapshot code still
+// runs over these answers; only the `git` processes are gone.
+function cleanRepoGit(cwd) {
+  return async (command, args) => {
+    expect(command).toBe("git");
+    const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
+    switch (args[0]) {
+      case "rev-parse":
+        return answer(args.includes("--show-toplevel") ? cwd : `${CLEAN_HEAD}\n`);
+      case "status":
+      case "ls-files":
+        return answer("");
+      default:
+        throw new Error(`unexpected git call: ${args.join(" ")}`);
+    }
+  };
+}
+
 // Usefulness: verifies a headless declared run finishes on a base branch with no
 // required check and emits a `no-required-checks` event, so the recorded run says
 // it verified no check instead of reading as a pass on a checked branch (issue
 // #336).
+//
+// `git` is answered from memory, not spawned. Run alone, the test started 34 `git`
+// processes: a repo and the snapshots around its turns. The same cost made the
+// finish tests in role.finish-abort.test.mjs time out under load (issue #385). This
+// test was not observed to fail (issue #399). The behavior under test is the finish
+// gate over the `gh` answers, and the snapshot code has its own tests on real repos.
 test("a declared PR finishes on a base branch with no required check", async () => {
-  const repo = await createTempRepo();
+  const cwd = tmpdir();
+  gitDouble.answer = cleanRepoGit(cwd);
   try {
     const events = [];
     const result = await runLoop({
       task: "PR work: address issue #336 through PR 42.",
-      cwd: repo,
+      cwd,
       maxSteps: 5,
       pr: 42,
       requireCi: 42,
-      gh: noRequiredCheckGh((await snapshot(repo)).head),
+      gh: noRequiredCheckGh(CLEAN_HEAD),
       roles: gateRoles(),
       agents: {
         orch: scripted([
@@ -2590,7 +2633,7 @@ test("a declared PR finishes on a base branch with no required check", async () 
     // base branch had no required check rather than that the gate ran.
     expect(events.filter((e) => e.type === "refusal")).toEqual([]);
   } finally {
-    await removePath(repo);
+    gitDouble.answer = null;
   }
 });
 
