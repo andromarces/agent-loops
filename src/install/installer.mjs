@@ -24,7 +24,8 @@ import {
   sha256,
   writeTextAtomic,
 } from "./fsutil.mjs";
-import { buildTargets, HARNESS_META, HARNESS_ORDER } from "./harnesses.mjs";
+import { HARNESS_META, HARNESS_ORDER } from "../lib/harnesses.mjs";
+import { buildTargets } from "./harnesses.mjs";
 import {
   manifestLockFile,
   readManifest,

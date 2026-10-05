@@ -6,20 +6,6 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const HARNESS_ORDER = ["claude", "codex", "opencode", "copilot", "antigravity"];
-
-export const HARNESS_META = {
-  claude: { label: "Claude Code", commands: ["claude"] },
-  codex: { label: "Codex CLI", commands: ["codex"] },
-  opencode: { label: "OpenCode", commands: ["opencode"] },
-  copilot: { label: "GitHub Copilot CLI", commands: ["copilot"] },
-  antigravity: { label: "Antigravity CLI", commands: ["agy", "antigravity"] },
-};
-
-export function isHarness(value) {
-  return Object.hasOwn(HARNESS_META, value);
-}
-
 function forwardSlashes(path) {
   return path.replaceAll("\\", "/");
 }

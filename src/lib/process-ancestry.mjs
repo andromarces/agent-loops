@@ -6,18 +6,9 @@
 // registering the wrong parent.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { harnessForCommand } from "./harnesses.mjs";
 
 const execFileAsync = promisify(execFile);
-
-// Process basename (lowercased, extension stripped) to harness id.
-const HARNESS_BY_PROCESS = new Map([
-  ["claude", "claude"],
-  ["codex", "codex"],
-  ["copilot", "copilot"],
-  ["opencode", "opencode"],
-  ["agy", "antigravity"],
-  ["antigravity", "antigravity"],
-]);
 
 export function harnessForProcessName(name) {
   if (typeof name !== "string" || name.trim() === "") {
@@ -29,7 +20,7 @@ export function harnessForProcessName(name) {
     .pop()
     .toLowerCase()
     .replace(/\.(exe|cmd|bat|com)$/, "");
-  return HARNESS_BY_PROCESS.get(normalized) ?? null;
+  return harnessForCommand(normalized) ?? null;
 }
 
 async function readWindowsProcesses() {

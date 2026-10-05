@@ -7,7 +7,8 @@ import { afterEach, expect, test } from "vitest";
 import { main as cliMain } from "../../src/cli.mjs";
 import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install/commands.mjs";
 import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
-import { buildTargets, HARNESS_ORDER } from "../../src/install/harnesses.mjs";
+import { buildTargets } from "../../src/install/harnesses.mjs";
+import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";
 import { detectHarnesses, install, uninstall } from "../../src/install/installer.mjs";
 import {
   installRoot,
