@@ -138,35 +138,41 @@ export async function runOpenCode(state, prompt, options = {}) {
  * line of the closing block (issue #458). Parts are first grouped into messages by `part.messageID`
  * across the whole stream: a valid, non-empty string id names one message, so its parts rejoin it
  * even when another message came between (A/B/A). Every part without a valid id forms one
- * unidentified message of its own, so it never joins an identified message and never redirects a
- * later part. A stream with no valid id is one message. Messages keep the order of their first
- * part, and the parts of one message join in stream order at that position. No break precedes a
- * message that holds no text.
- * The last closing block governs, and it governs alone (issue #467). A message that holds a closing
- * block attempt (hasClosingBlockAttempt) supersedes every earlier message that holds one, so the
- * join drops those earlier messages. A late message that opens with a report label or `Verdict:`
- * therefore never combines with the fields of the earlier block, and a late bare `Verdict: accept`
- * pairs with no earlier `Checks` line. Messages without an attempt stay: narration before the block
- * and plain prose after it. This is the Codex and Copilot selection (lastClosingMessage,
- * src/agents/shared.mjs) plus those kept messages. The attempt test reads the whole message, because
- * a label can span parts.
+ * unidentified message of its own, so it never joins an identified message. A stream with no valid
+ * id is one message. Messages keep the order of their first part, and the parts of one message join
+ * in stream order at that position. No break precedes a message that holds no text.
+ * The last closing block governs, and it governs alone (issue #467). Each message holds its parts at
+ * stream positions, and a message holds a closing block attempt (hasClosingBlockAttempt) when its
+ * whole text does. When the position spans of two attempt-holding messages overlap, the stream order
+ * of the blocks is ambiguous, so the join throws and the turn fails closed. Otherwise the spans are
+ * disjoint, the last attempt-holding message governs, and the join drops every earlier one. A late
+ * message that opens with a report label or `Verdict:` therefore never combines with the fields of
+ * the earlier block. Messages without an attempt stay: narration before the block and plain prose
+ * after it. This is the Codex and Copilot selection (lastClosingMessage, src/agents/shared.mjs) plus
+ * those kept messages.
+ * @throws {Error} when two messages that hold a closing block attempt interleave in the stream.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
 function joinTextParts(events) {
   const groups = new Map();
-  for (const { part } of events) {
+  events.forEach(({ part }, position) => {
     const key = isMessageId(part.messageID) ? part.messageID : null;
-    groups.set(key, [...(groups.get(key) ?? []), part.text]);
-  }
+    const group = groups.get(key) ?? { first: position, parts: [] };
+    group.last = position;
+    group.parts.push(part.text);
+    groups.set(key, group);
+  });
   const messages = [...groups.values()];
 
-  const lastAttempt = messages.findLastIndex((parts) => hasClosingBlockAttempt(parts.join("")));
-  const kept = messages.filter(
-    (parts, i) => i >= lastAttempt || !hasClosingBlockAttempt(parts.join("")),
-  );
+  const attempts = messages.filter((group) => hasClosingBlockAttempt(group.parts.join("")));
+  if (attempts.some((a) => attempts.some((b) => a !== b && a.first < b.last && b.first < a.last))) {
+    throw new Error("opencode returned closing block attempts from interleaved messages.");
+  }
+  const governing = attempts.at(-1);
+  const kept = messages.filter((group) => group === governing || !attempts.includes(group));
 
-  return kept.reduce((text, parts) => {
+  return kept.reduce((text, { parts }) => {
     const opening = parts.join("");
     const breaks = text && opening && !text.endsWith("\n");
     return parts.reduce(joinPart, breaks ? `${text}\n` : text);

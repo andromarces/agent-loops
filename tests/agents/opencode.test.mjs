@@ -1168,19 +1168,47 @@ test("opencode keeps the only complete block of a message whose parts another me
   expect(parseReportBlock(response)).toMatchObject({ blockers: "b1", checks: "pnpm test" });
 });
 
-// Usefulness: verifies an invalid-id part never redirects a later part: with an empty invalid-id part
-// between them, A's `Verdict: accept` stays in message A, so it cannot join B's reject block and
-// pair with B's `Checks` line. B's reject governs and no acceptance passes (issue #467).
-test("opencode keeps a valid-id part in its own message after an invalid-id part", async () => {
-  const response = await runWithEvents(
-    textEvent("Working on it.", "msg-a"),
-    textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
-    textEvent("", 7),
-    textEvent("Verdict: accept", "msg-a"),
-  );
+const ACCEPTED_BLOCK = `${CLOSING_BLOCK}\nVerdict: accept`;
+const INTERLEAVED = "opencode returned closing block attempts from interleaved messages.";
 
-  expect(parseVerdict(response)).toBe("reject");
-  expect(parseReportBlock(response)).toMatchObject({ blockers: "b1", checks: "pnpm test" });
+// Usefulness: verifies the reviewer's stream fails closed: unidentified narration comes first, A holds
+// a full accept block with `Checks`, and a later unidentified part holds a reject block. The two
+// attempt-holding messages interleave in the stream, so no block can be said to govern and the
+// turn errors instead of returning the accept (issue #467).
+test("opencode refuses a stream whose unidentified block interleaves an identified block", async () => {
+  await expect(
+    runWithEvents(
+      textEvent("Working on it."),
+      textEvent(ACCEPTED_BLOCK, "msg-a"),
+      textEvent(`${REJECTED_BLOCK}\n`),
+    ),
+  ).rejects.toThrow(INTERLEAVED);
+});
+
+// Usefulness: verifies an invalid-id part cannot pull A's verdict out of A: A's parts surround B's
+// reject block, so both messages hold an attempt and interleave. The turn errors, so no accept can
+// pair with B's `Checks` line (issue #467).
+test("opencode refuses two blocks whose messages interleave across an invalid-id part", async () => {
+  await expect(
+    runWithEvents(
+      textEvent("Working on it.", "msg-a"),
+      textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+      textEvent("", 7),
+      textEvent("Verdict: accept", "msg-a"),
+    ),
+  ).rejects.toThrow(INTERLEAVED);
+});
+
+// Usefulness: verifies one block split across A's parts, with another message's block between them,
+// is ambiguous and errors rather than letting either block govern (issue #467).
+test("opencode refuses a block split across parts that another block interrupts", async () => {
+  await expect(
+    runWithEvents(
+      textEvent(REJECTED_BLOCK.slice(0, 60), "msg-a"),
+      textEvent(LATE_FULL_BLOCK, "msg-b"),
+      textEvent(REJECTED_BLOCK.slice(60), "msg-a"),
+    ),
+  ).rejects.toThrow(INTERLEAVED);
 });
 
 // Usefulness: verifies a new valid id after an invalid-id part still starts its own message: its
