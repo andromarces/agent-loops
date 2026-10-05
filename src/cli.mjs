@@ -173,7 +173,7 @@ export function parseArgs(argv) {
   for (const role of ROLES) {
     assertOpenCodeOptions(role, options[role], options[`${role}Model`], options[`${role}Effort`]);
   }
-  if (options.task === null || options.task === undefined || String(options.task).trim() === "") {
+  if (options.task === null || String(options.task).trim() === "") {
     throw new Error(
       'Missing required --task. Provide the task, for example --task "Implement the change."',
     );

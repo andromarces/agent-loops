@@ -16,6 +16,7 @@ import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "nod
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { sha256 } from "./hash.mjs";
 import { isJsonObject } from "./json.mjs";
 import { logWarn } from "./log.mjs";
 
@@ -68,7 +69,7 @@ function stateRoot() {
 }
 
 function cwdHash(cwd) {
-  return createHash("sha256").update(canonicalCwd(cwd)).digest("hex").slice(0, 12);
+  return sha256(canonicalCwd(cwd)).slice(0, 12);
 }
 
 function canonicalCwd(cwd) {
