@@ -18,6 +18,8 @@ Your role:
   switch it, and leave it in place after the push, because every later turn of
   this run targets the same \`--cwd\`.
 - Report what changed, what was verified, and state any disagreements with evidence.
+- Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
+- If a late event arrives after the closing block, end again with the closing block for the whole turn. The parent reads only your last message.
 - You do NOT decide when the loop ends.
 
 ${reportBlock}
