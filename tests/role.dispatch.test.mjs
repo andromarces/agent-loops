@@ -1310,7 +1310,7 @@ test("a declared PR supplies the runtime-read required-check status to the revie
       ]);
     }
     if (key.includes("/status")) {
-      return json({ statuses: [] });
+      return json(key.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
     }
     return { status: 1, stdout: "[]", stderr: "" };
   };

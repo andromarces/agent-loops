@@ -55,17 +55,22 @@ the reviewer `Checks` line.
    the read. A head that moves from A to B and back to A cannot put the checks of
    B in the status (issue #349). This replaces the head re-read around `gh pr
 checks`, which reports no commit and could not separate that case.
-5. Every supplied status still carries `advisory: true`. The commit binding is
-   exact, but the status is a snapshot taken before the turn, it judges the head
-   commit and not the test merge commit the gate may select, and a required check
-   with no run or status on the commit reads as pending. The status is a report,
-   the reviewer treats it as evidence, and the `--require-ci` finish gate
-   re-reads GitHub and enforces the condition. A status never replaces the gate.
+5. Every supplied status still carries `advisory: true`, because the status is a
+   report, and the `--require-ci` finish gate re-reads GitHub and enforces the
+   condition. The commit binding is exact, but the status is a snapshot taken
+   before the turn, it judges the head commit and not the test merge commit the
+   gate may select, and a check that starts or finishes later is not in it. The
+   reviewer treats the status as evidence. A status never replaces the gate.
 6. The status comes from the per-context judgment the gate uses. A failing
    required check makes the status `failing`. Otherwise a pending check, or a
    required check with no run or status on the commit, makes it `pending`.
-   Otherwise it is `pass`. A ruleset read that settles nothing, and an empty set
-   of required contexts, are `unresolved`, the same refusals the gate makes.
+   Otherwise it is `pass`. A pending commit status is pending, not failing. A
+   ruleset read that settles nothing, and an empty set of required contexts, are
+   `unresolved`, the same refusals the gate makes. The check-run and commit-status
+   replies are read strictly, every page of each. A reply that is not the paginated
+   shape, an entry the judgment cannot read, and a ruleset or protection source
+   that answers success with a body that is not JSON are `unresolved`, so a
+   malformed reply never reads as a pass. The gate keeps its own lenient reads.
 7. `checks` names the required contexts the status covers, with the app id for an
    app-qualified context.
 8. The read is bounded in time, and the bound terminates the child, so a `gh`
@@ -111,8 +116,9 @@ checks`, which reports no commit and could not separate that case.
   mismatch is unresolved rather than a pass on the wrong commit. The checks
   are read by commit SHA, so a head that moves, even away and back, cannot name
   one head for checks that belong to another (issue #349).
-- Every status keeps `advisory: true`, because it is a pre-turn snapshot and the
-  `--require-ci` gate re-reads GitHub and enforces the condition.
+- Every status keeps `advisory: true`, because it is a report and the
+  `--require-ci` gate re-reads GitHub and enforces the condition. The status is a
+  pre-turn snapshot of the head commit.
 - The parent can compare two independent reads of the same status, so a
   disagreement between the runtime and the reviewer is visible.
 - Every reviewer turn in a declared-PR run costs more `gh` calls than the former

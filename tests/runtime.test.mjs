@@ -1739,7 +1739,8 @@ function ciGateGh(headRefOid, calls = [], runs = [PASSING_RUN]) {
       return json([{ check_runs: runs }]);
     }
     if (key.includes("/status")) {
-      return json({ statuses: [] });
+      // The status read paginates, so its reply is an array of pages.
+      return json(key.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
     }
     return { status: 1, stdout: "", stderr: `unmatched: ${key}` };
   };

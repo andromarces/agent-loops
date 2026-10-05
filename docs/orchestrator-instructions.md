@@ -349,17 +349,20 @@ unresolved, and the prompt never reports a pass for a head the reviewer is not
 looking at. Every supplied status states the head it describes.
 
 The runtime reads the check runs and commit statuses of the reviewed commit by SHA,
-so a PR head that moves away and back during the read cannot put the checks of
-another commit in the status. The required checks come from the same resolution
-the `--require-ci` gate uses. Every supplied status still carries `advisory: true`
-and is a report, not a verdict: the reviewer treats it as evidence, and the
-finish gate re-reads GitHub and refuses the finish on the real condition. A status
-never replaces the gate.
+every page of each, so a PR head that moves away and back during the read cannot
+put the checks of another commit in the status. The required checks come from the
+same resolution the `--require-ci` gate uses. Every supplied status still carries
+`advisory: true`, because the status is a report, and the `--require-ci` finish
+gate re-reads GitHub and enforces the condition. The status is a snapshot taken
+before the turn, it judges the head commit and not the test merge commit the gate
+may select, and a check that starts or finishes later is not in it. The reviewer
+treats the status as evidence. A status never replaces the gate.
 
 The status is `failing` when a required check failed, `pending` when a required
-check is pending or has no run or status on the commit, and `pass` when every
-required check passed. A ruleset source that cannot be read, and a base branch
-with no required check, are unresolved.
+check or commit status is pending or has no run or status on the commit, and
+`pass` when every required check passed. A ruleset source that cannot be read, a
+reply that cannot be parsed, and a base branch with no required check are
+unresolved.
 
 A run that declares no PR reads no status, and the reviewer keeps its own read.
 The read follows `--pr`, which is the PR input both paths know at dispatch. A

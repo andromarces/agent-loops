@@ -175,7 +175,7 @@ async function ghApi(gh, args, cwd) {
  *   for repository rulesets, whose endpoint does not write it.
  * @param {(data: unknown) => ({ state: string, contexts: object[] })} options.classify
  *   the classification of a successful reply body.
- * @returns {Promise<{ state: string, contexts: { name: string, appId: number | null }[] }>}
+ * @returns {Promise<{ state: string, contexts: { name: string, appId: number | null }[], unparsed?: boolean }>}
  */
 async function readRequiredSource(gh, args, cwd, { absentOnError, classify }) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
@@ -190,16 +190,19 @@ async function readRequiredSource(gh, args, cwd, { absentOnError, classify }) {
   }
   const text = stdout.trim();
   if (text === "") {
-    return { state: UNKNOWN, contexts: [] };
+    return { state: UNKNOWN, contexts: [], unparsed: true };
   }
   let body;
   try {
     body = JSON.parse(text);
   } catch {
-    return { state: UNKNOWN, contexts: [] };
+    return { state: UNKNOWN, contexts: [], unparsed: true };
   }
   const { state, contexts } = classify(body);
-  return { state, contexts };
+  // `unparsed` marks a successful reply that is not the JSON object or array the
+  // endpoint returns. The gate ignores it. The status read refuses on it, because
+  // that reply may hide a required context (issue #349).
+  return { state, contexts, unparsed: typeof body !== "object" || body === null };
 }
 
 // The classifications a required-check configuration source reply can carry.
@@ -465,6 +468,7 @@ function addContext(contexts, name, appId = null) {
 async function requiredContexts(gh, slug, base, pr, cwd) {
   const contexts = new Map();
   const unknown = [];
+  const unparsed = [];
 
   const rules = await readRequiredSource(
     gh,
@@ -479,6 +483,9 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   if (rules.state === UNKNOWN) {
     unknown.push(RULESETS);
   }
+  if (rules.unparsed) {
+    unparsed.push(RULESETS);
+  }
   for (const context of rules.contexts) {
     addContext(contexts, context.name, context.appId);
   }
@@ -490,6 +497,9 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   );
   if (protection.state === UNKNOWN) {
     unknown.push(PROTECTION);
+  }
+  if (protection.unparsed) {
+    unparsed.push(PROTECTION);
   }
   for (const context of protection.contexts) {
     addContext(contexts, context.name, context.appId);
@@ -509,6 +519,7 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   );
   return {
     unknown,
+    unparsed,
     // The ruleset state is carried separately from `unknown`, because an empty read
     // is neither an absence nor a refusal: it contributes no contexts and leaves the
     // per-check path to the other sources, exactly as origin/main did (issue #336
@@ -540,6 +551,72 @@ async function checkRuns(gh, slug, sha, cwd) {
 async function commitStatuses(gh, slug, sha, cwd) {
   const data = await ghApi(gh, [`repos/${slug}/commits/${sha}/status`], cwd);
   return data?.statuses ?? [];
+}
+
+const CHECK_RUN_STATUSES = new Set([
+  "queued",
+  "in_progress",
+  "completed",
+  "waiting",
+  "requested",
+  "pending",
+]);
+const COMMIT_STATUS_STATES = new Set(["error", "failure", "pending", "success"]);
+
+// The status read parses the check-run and commit-status replies strictly, where
+// the gate's `checkRuns` and `commitStatuses` accept a missing or malformed field
+// as an empty list. A reply that is not the paginated shape, or that holds an
+// entry the judgment cannot read, throws, and the read reports it as unresolved
+// instead of judging the entries that did parse (issue #349).
+function pagesOf(data, field, what) {
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error(`malformed ${what} reply`);
+  }
+  return data.flatMap((page) => {
+    if (!isJsonObject(page) || !Array.isArray(page[field])) {
+      throw new Error(`malformed ${what} reply`);
+    }
+    return page[field];
+  });
+}
+
+async function readCheckRuns(gh, slug, sha, cwd) {
+  const data = await ghApi(
+    gh,
+    [`repos/${slug}/commits/${sha}/check-runs`, "--paginate", "--slurp"],
+    cwd,
+  );
+  const runs = pagesOf(data, "check_runs", "check-runs");
+  for (const run of runs) {
+    if (
+      !isJsonObject(run) ||
+      typeof run.name !== "string" ||
+      !CHECK_RUN_STATUSES.has(run.status) ||
+      (run.status === "completed" && typeof run.conclusion !== "string")
+    ) {
+      throw new Error("malformed check-runs reply");
+    }
+  }
+  return runs;
+}
+
+async function readCommitStatuses(gh, slug, sha, cwd) {
+  const data = await ghApi(
+    gh,
+    [`repos/${slug}/commits/${sha}/status`, "--paginate", "--slurp"],
+    cwd,
+  );
+  const statuses = pagesOf(data, "statuses", "commit status");
+  for (const status of statuses) {
+    if (
+      !isJsonObject(status) ||
+      typeof status.context !== "string" ||
+      !COMMIT_STATUS_STATES.has(status.state)
+    ) {
+      throw new Error("malformed commit status reply");
+    }
+  }
+  return statuses;
 }
 
 // The commit GitHub evaluates: the test merge commit when it carries a check
@@ -623,7 +700,8 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
     const status = latestStatus(matchingStatuses);
     if (status.state !== "success") {
       return {
-        kind: "failing",
+        // A pending commit status has not failed: the reason text stays the gate's.
+        kind: status.state === "pending" ? "pending" : "failing",
         reason: `required check ${label} failed (commit status ${status.state})`,
       };
     }
@@ -799,10 +877,11 @@ function oneLine(text) {
  * It never throws. A failed read is `unresolved`, because the reviewer keeps its
  * own read as the fallback and a turn must not fail over supplied evidence.
  *
- * Every status carries `advisory: true`. The commit binding is exact, but the
- * read is a snapshot taken before the turn: a check that starts or finishes later
- * is not in it, it judges the head commit and not the test merge commit the gate
- * may select, and `--require-ci` re-reads GitHub and enforces the condition.
+ * Every status carries `advisory: true`, for one reason: the status is a report,
+ * and `--require-ci` re-reads GitHub and enforces the condition. The commit
+ * binding is exact, but the status is a snapshot taken before the turn, it judges
+ * the head commit and not the test merge commit the gate may select, and a check
+ * that starts or finishes later is not in it.
  * @param {{ pr: number, cwd: string, head?: string | null, gh?: Function, timeoutMs?: number }} options
  * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string, advisory: true }>}
  */
@@ -849,7 +928,7 @@ export async function readRequiredChecks({
       );
     }
     const slug = await repoSlug(call, cwd);
-    const { unknown, rulesetState, contexts } = await requiredContexts(
+    const { unknown, unparsed, rulesetState, contexts } = await requiredContexts(
       call,
       slug,
       info.baseRefName,
@@ -864,12 +943,21 @@ export async function readRequiredChecks({
         head,
       );
     }
+    // A successful reply that is not parseable JSON may hide a required context,
+    // so it is unresolved whatever the other source names. An unreadable source
+    // (a 404 or 403) is not this case: it is a reply the gate also accepts.
+    if (unparsed.length > 0) {
+      return unresolved(
+        `unread: ${unparsed.join(" and ")} returned a reply that could not be parsed for PR ${pr} on PR head ${head}`,
+        head,
+      );
+    }
     if (contexts.length === 0) {
       const sources = unknown.length > 0 ? ` (${unknown.join(" and ")} settled nothing)` : "";
       return unresolved(`unread: no required checks were found for PR ${pr}${sources}`, head);
     }
-    const runs = await checkRuns(call, slug, head, cwd);
-    const statuses = await commitStatuses(call, slug, head, cwd);
+    const runs = await readCheckRuns(call, slug, head, cwd);
+    const statuses = await readCommitStatuses(call, slug, head, cwd);
     const findings = contexts.map((context) => ({
       context,
       failure: evaluateContext(context, head, runs, statuses),

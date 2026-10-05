@@ -123,6 +123,9 @@ function routes({
     [`commits/${MERGE}/check-runs`, [{ check_runs: mergeRuns }]],
     [`commits/${MERGE}/status`, { statuses: mergeStatuses }],
     [`commits/${HEAD}/check-runs`, [{ check_runs: headRuns }]],
+    // The status read paginates; the gate's single-page read does not. The more
+    // specific route comes first.
+    [`commits/${HEAD}/status --paginate`, [{ statuses: headStatuses }]],
     [`commits/${HEAD}/status`, { statuses: headStatuses }],
   ];
 }
@@ -1839,42 +1842,133 @@ describe("the gh runner against the installed execa", () => {
   });
 });
 
-// Usefulness: verifies the status describes the reviewed commit when the PR head
-// moves from A to B and back to A during the read, because the check runs are
-// read for the reviewed commit and never for the head GitHub names at that
-// moment. Commit B carries a failing run here, so a read that followed the moving
-// head would report it (issue #349).
+// Usefulness: verifies the status describes the reviewed commit A when the PR
+// head moves from A to B and back to A during the read. The stub models the race
+// itself: every head read returns A, while the `gh pr checks` list, the only
+// read that took no commit, describes B and fails. The old read reported that
+// failure for A. The new read takes the check runs of A by SHA, so it reports A's
+// pass and never asks for B (issue #349).
 test("binds the status to the reviewed commit when the PR head moves A to B to A", async () => {
   const other = "2222222222222222222222222222222222222222";
-  const heads = [HEAD, other, HEAD];
-  const base = routes({ headRuns: BOTH_PASS });
   const calls = [];
   const gh = async (args) => {
     const key = args.join(" ");
     calls.push(key);
-    if (key.startsWith("pr view 42")) {
+    if (key === "pr checks 42 --required --json name,bucket") {
       return {
-        status: 0,
-        stdout: JSON.stringify(prInfo({ headRefOid: heads.shift() ?? HEAD })),
+        status: 1,
+        stdout: JSON.stringify([{ name: "ci (ubuntu-latest)", bucket: "fail" }]),
         stderr: "",
       };
     }
     if (key.includes(`commits/${other}/`)) {
-      return {
-        status: 0,
-        stdout: JSON.stringify(
-          key.endsWith("/status")
-            ? { statuses: [] }
-            : [{ check_runs: [run("ci (ubuntu-latest)", "failure")] }],
-        ),
-        stderr: "",
-      };
+      return { status: 1, stdout: "", stderr: "the read asked for commit B" };
     }
-    return fakeGh(base)(args);
+    return statusReadGh({ headRuns: BOTH_PASS })(args);
   };
   const read = await readOn(HEAD, gh);
   expect(read).toMatchObject({ status: "pass", head: HEAD });
   expect(calls.filter((call) => call.includes(other))).toEqual([]);
+});
+
+// Usefulness: verifies a reply the read cannot parse is unresolved and never a
+// pass, because a lenient parse would read a missing check-run list, a missing
+// status list, or an unreadable context source as no objection (issue #349).
+test.each([
+  ["a null check-runs reply", "check-runs", "null"],
+  ["a check-runs reply that is not paginated", "check-runs", { check_runs: [] }],
+  ["a check-runs page with no list", "check-runs", [{}]],
+  [
+    "a check run with no name",
+    "check-runs",
+    [{ check_runs: [{ status: "completed", conclusion: "success" }] }],
+  ],
+  [
+    "a completed check run with no conclusion",
+    "check-runs",
+    [{ check_runs: [{ name: "ci (ubuntu-latest)", status: "completed" }] }],
+  ],
+  [
+    "a check run with an unknown status",
+    "check-runs",
+    [{ check_runs: [{ name: "ci (ubuntu-latest)", status: "weird" }] }],
+  ],
+  ["a null status reply", "status --paginate", "null"],
+  ["a status reply that is not paginated", "status --paginate", { statuses: [] }],
+  ["a status page with no list", "status --paginate", [{}]],
+  [
+    "a status with an unknown state",
+    "status --paginate",
+    [{ statuses: [{ context: "ci (ubuntu-latest)", state: "weird" }] }],
+  ],
+  ["a status with no context", "status --paginate", [{ statuses: [{ state: "success" }] }]],
+  ["a ruleset reply that is not JSON", "rules/branches", "not json"],
+  ["an empty ruleset reply", "rules/branches", ""],
+  ["a protection reply that is not JSON", "branches/main/protection", "<html>"],
+])("reads an unresolved status for %s", async (_name, endpoint, body) => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match.includes(endpoint) ? [match, body] : [match, value],
+    ),
+  );
+  const read = await readOn(HEAD, gh);
+  expect(read.status).toBe("unresolved");
+  expect(read.checks).toEqual([]);
+});
+
+// Usefulness: verifies the read follows every page of the commit status reply, as
+// the check-run read does, so a failing required status on a later page is not
+// missed (issue #349).
+test("reads a failing status from a later page of the commit status reply", async () => {
+  const gh = fakeGh(
+    routes({ headRuns: [run("ci (ubuntu-latest)", "success")] }).map(([match, value]) =>
+      match === `commits/${HEAD}/status --paginate`
+        ? [
+            match,
+            [
+              { statuses: [{ context: "unrelated", state: "success" }] },
+              { statuses: [{ context: "ci (windows-latest)", state: "failure" }] },
+            ],
+          ]
+        : [match, value],
+    ),
+  );
+  const read = await readOn(HEAD, gh);
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+});
+
+// Usefulness: verifies a pending commit status reads as pending, not failing,
+// because it has not failed, while the gate keeps its refusal (issue #349).
+test("reads a pending status for a pending commit status", async () => {
+  const read = await readOn(
+    HEAD,
+    statusReadGh({
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      headStatuses: [{ context: "ci (windows-latest)", state: "pending" }],
+    }),
+  );
+  expect(read).toMatchObject({ status: "pending", checks: ["ci (windows-latest)"] });
+});
+
+// Usefulness: verifies the finish gate refuses a pending commit status with its
+// existing reason, so the read's classification does not change the gate
+// (issue #349).
+test("refuses a pending required commit status with the unchanged reason", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+        headStatuses: [{ context: "ci (windows-latest)", state: "pending" }],
+      }),
+    ),
+  });
+  expect(result).toEqual({
+    ok: false,
+    reason: 'required check "ci (windows-latest)" failed (commit status pending)',
+  });
 });
 
 // Usefulness: verifies every supplied status stays advisory after the commit
