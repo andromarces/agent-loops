@@ -10,7 +10,8 @@ import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.m
 // Orchestrator CLIs whose read-only turn keeps shell network access, so the turn
 // itself can read the required checks. The reviewer turn is read-only under the
 // same flag, so this one set decides the read for both roles. The `codex`
-// read-only sandbox blocks network, so a codex turn cannot read the checks; an
+// read-only sandbox blocks the network of the shell commands it runs, so a codex turn cannot read
+// the checks through one; an
 // unknown CLI is treated the same way, because a wait it cannot perform costs a
 // run.
 const NETWORKED_READ_ONLY_ORCHESTRATORS = new Set(["claude", "agy", "opencode", "copilot"]);
@@ -116,52 +117,19 @@ function prGateBlock({
   reviewerKind,
   timeout = null,
   waitCommand,
-  reviewerWorkspaceWrite = false,
 }) {
   if (requireCi === null) return "";
-  const lines = prGateLines({
-    pr,
-    requireCi,
-    orchestratorKind,
-    reviewerKind,
-    timeout,
-    waitCommand,
-  });
-  return `\n${(reviewerWorkspaceWrite ? qualifyShellOnlyDenials(lines) : lines).join("\n")}`;
+  return `\n${prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand }).join("\n")}`;
 }
 
-// The sentence an opted-in run adds beside each all-channel denial of network or of a check read.
-// The sandbox network limit covers the shell commands the sandbox runs, so the denial must not
-// read as a block on a model-side tool or another channel (ADR 0019). A run without the opt-in
-// keeps the earlier lines byte for byte.
+// What the Codex read-only sandbox blocks is the network of the shell commands that it runs. The
+// denial lines below say so, because a model-side tool or another channel outside the sandbox is
+// not blocked, and no line may read as an all-channel denial (ADR 0019). The run counts on no such
+// channel, and only the --require-ci finish gate enforces anything.
+const SHELL_NETWORK = "from the shell commands that its sandbox runs";
+const SHELL_READ = "through a shell command that its sandbox runs";
 const SHELL_ONLY_LIMIT =
   "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything.";
-
-/**
- * Rewrites the lines that deny network or a check read to a read-only turn, so each says that the
- * denial is about the shell commands that the sandbox runs. Other lines pass through unchanged.
- * @param {string[]} lines
- * @returns {string[]}
- */
-function qualifyShellOnlyDenials(lines) {
-  return lines.map((line) => {
-    if (!/cannot reach the network|no turn in this run can/.test(line)) return line;
-    return line
-      .replace(
-        "whose read-only turn cannot reach the network",
-        "whose read-only turn cannot reach the network from the shell commands that its sandbox runs",
-      )
-      .replace(
-        "no turn in this run can read the required checks",
-        "no turn in this run can read the required checks through a shell command that its sandbox runs",
-      )
-      .replace(
-        "no turn in this run can reach the checks for itself",
-        "no turn in this run can reach the checks for itself through a shell command that its sandbox runs",
-      )
-      .replace("Do not run gh pr checks", `${SHELL_ONLY_LIMIT} Do not run gh pr checks`);
-  });
-}
 
 function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand }) {
   const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed.${noRequiredCheckClause()} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
@@ -196,7 +164,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
   if (rule === "reviewer") {
     return [
       gate,
-      `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, so you cannot read the required checks and the status-read exception does not apply to you. Do not run gh pr checks.`,
+      `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, so you cannot read the required checks ${SHELL_READ} and the status-read exception does not apply to you. ${SHELL_ONLY_LIMIT} Do not run gh pr checks.`,
       `- The reviewer of this run is ${reviewerKind}, whose read-only turn keeps shell network, so every reviewer turn reads the required checks, as the reviewer scope states. The reviewer turn is where the wait happens: before you dispatch the reviewer on a new PR head, name the required checks in the reviewer prompt so that turn reads and reports them.`,
       "- When a reviewer turn reports a pending required check, wait for it through another reviewer turn: dispatch the reviewer again until it reports the check complete, or abort with the pending check named in the reason. A required check still pending after a reviewer turn is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check. Each of those reviewer dispatches costs a step, so the step budget has to cover them.",
     ];
@@ -210,14 +178,14 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
   if (pr === null) {
     return [
       gate,
-      `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can read the required checks and the headless loop cannot wait. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.`,
+      `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can read the required checks ${SHELL_READ} and the headless loop cannot wait. ${SHELL_ONLY_LIMIT} Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.`,
       "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
     ];
   }
 
   return [
     gate,
-    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself and the headless loop cannot wait. Do not run gh pr checks.${suppliedRead(pr)}`,
+    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself ${SHELL_READ} and the headless loop cannot wait. ${SHELL_ONLY_LIMIT} Do not run gh pr checks.${suppliedRead(pr)}`,
     // The advisory clause is rendered only for a declared PR, because the runtime
     // reads the status only for a declared PR. A gated run that declares none
     // gets the origin/main gate claim, which already calls the gate the only read.
@@ -243,7 +211,7 @@ function advisoryQualifier(pr) {
 
 /**
  * The clause a run that declares its PR adds to the line that says no turn in
- * the run can read the checks. The runtime reads the status outside every
+ * the run can read the checks through a shell command. The runtime reads the status outside every
  * read-only turn and supplies it to the reviewer prompt as advisory evidence in
  * place of the reviewer reading the checks; the reviewer keeps its own read as
  * the fallback, and the `--require-ci` finish gate enforces the condition
@@ -415,7 +383,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerWorkspaceWrite)}${continuedBlock(continued)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand, reviewerWorkspaceWrite })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerWorkspaceWrite)}${continuedBlock(continued)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.
@@ -424,7 +392,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
 - Treat an accept without a Checks line as not accepted.
-- When the PR head cannot be resolved, for example a read-only turn with no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.
+- When the PR head cannot be resolved, for example a read-only turn whose shell commands have no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.
 - When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event and the headless run exits 4 instead of 0, so the recorded finish stays machine-distinct from a verified one. That marker is the only machine-readable record of the compare, and nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.
 
 Map the report fields into the finish summary:

@@ -1413,21 +1413,20 @@ test("the result prompt carries no check status without one on the result", () =
   expect(prompt).not.toMatch(/prChecks/);
 });
 
-// The two lines origin/main renders for a gated run that declares no PR, pinned
-// verbatim. A run with no `--pr` gets no supplied read, so the qualification the
-// declared-PR prompt needs does not apply and must not be applied there: the
-// undeclared gated prompt stays byte-identical to the one origin/main sends
-// (issue #320 review, sixth round).
+// The two lines a gated run that declares no PR renders, pinned verbatim. A run with no `--pr`
+// gets no supplied read, so the declared-PR wording must not be applied there (issue #320 review,
+// sixth round). The network denial in the first line carries the shell-only qualification of
+// ADR 0019, so it no longer matches origin/main word for word.
 const MAIN_NO_NETWORK_LINE =
-  "- You orchestrate through codex, whose read-only turn cannot reach the network, and your reviewer codex, so no turn in this run can read the required checks and the headless loop cannot wait. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.";
+  "- You orchestrate through codex, whose read-only turn cannot reach the network from the shell commands that its sandbox runs, and your reviewer codex, so no turn in this run can read the required checks through a shell command that its sandbox runs and the headless loop cannot wait. That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything. Do not run gh pr checks, and do not expect a reviewer turn to read the checks for you.";
 const MAIN_GATE_LINE =
   "- The --require-ci finish gate is the only check read in this run, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.";
 
 // Usefulness: verifies a gated run that declares no PR renders exactly the two
-// lines origin/main renders, because a run with no `--pr` makes no supplied
+// pinned lines, because a run with no `--pr` makes no supplied
 // read and must not carry wording about one, and a reworded line there changes a
 // run this PR does not otherwise touch (issue #320 review, sixth round).
-test("an undeclared gated prompt renders the origin/main lines unchanged", () => {
+test("an undeclared gated prompt renders its pinned lines", () => {
   const lines = initialPrompt({
     task: "Implement feature X",
     maxSteps: 10,
@@ -1598,16 +1597,28 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
   expect(row("0019")).toMatch(/Supersedes ADR 0001/);
 });
 
-// A sentence that denies a check read or network to a Codex turn must say that the sandbox limit
-// covers shell commands, in the sentence or in the one after it, so an opted-in operator never
-// reads a denial of a channel that the sandbox does not cover. The positive-phrase tests above
-// cannot catch a contradicting sentence, so this one scans for the denials (issue #421).
-const NETWORK_DENIAL =
-  /cannot reach the network|blocks? (the )?(shell )?network|no turn (in (this|the) run )?can (read|reach) the|cannot either/i;
+// A sentence that denies network, GitHub, or a check read to a turn must say that the limit
+// covers shell commands, in the sentence or in the one after it, so a reader never takes the
+// Codex sandbox for a block on a model-side tool or another channel. The positive-phrase tests
+// above cannot catch a contradicting sentence, so this scan reads every sentence of every surface
+// that states such a limit (issue #421, ADR 0019). A denial is a negation near network, GitHub, or
+// the required checks: `cannot reach ... network`, `no turn can read the checks`, `blocks
+// network`, `cannot run gh`, `with no network access`.
+const NETWORK_DENIAL = new RegExp(
+  [
+    String.raw`\b(cannot|can not|unable to|never)\b[^.;:]*\b(reach|read|run|connect|wait)\b[^.;:]*(network|GitHub|\bgh\b|credential)`,
+    String.raw`\bno turn\b[^.;:]*\bcan\b[^.;:]*\b(read|reach)\b`,
+    String.raw`\bblocks?\b[^.;:]*network`,
+    String.raw`\b(no|without|off)\s+(\w+\s+)?network\b`,
+    String.raw`\bnetwork( access)?\s+(is |stays )?off\b`,
+    String.raw`cannot either`,
+  ].join("|"),
+  "i",
+);
 const sentencesOf = (text) =>
   text
     .replace(/\s+/g, " ")
-    .split(/(?<=[.:;])\s+(?=[A-Z`-])/)
+    .split(/(?<=[.:;])\s+(?=[A-Z`-])|\s\|\s/)
     .map((sentence) => sentence.trim());
 
 function unqualifiedDenials(text) {
@@ -1618,62 +1629,65 @@ function unqualifiedDenials(text) {
   );
 }
 
-// Usefulness: verifies no all-channel denial of a check read or of network stays unqualified in
-// the rendered prompt of an opted-in gated run, for every gate rule and with and without a
-// declared PR, so the prompt never contradicts its own shell-only sandbox note.
-test.each([
-  ["codex", "codex", null],
-  ["codex", "codex", 42],
-])(
-  "the opted-in prompt qualifies every network denial (%s orchestrator, %s reviewer, pr %s)",
-  (orchestratorKind, reviewerKind, pr) => {
-    const prompt = initialPrompt({
-      task: "t",
-      maxSteps: 5,
-      requireCi: 42,
-      pr,
-      orchestratorKind,
-      reviewerKind,
-      reviewerWorkspaceWrite: true,
-    });
-    expect(prompt).toMatch(/cannot reach the network/);
+const gated = (extra) => initialPrompt({ task: "t", maxSteps: 5, requireCi: 42, ...extra });
+
+// Usefulness: verifies no denial of network or of a check read stays unqualified in the rendered
+// orchestrator prompt, for the default run and the opted-in run, for every gate rule, with and
+// without a declared PR, so the prompt never overstates what the Codex sandbox isolates.
+describe.each([
+  ["default", false],
+  ["opted-in", true],
+])("the %s orchestrator prompt qualifies every network denial", (_name, reviewerWorkspaceWrite) => {
+  test.each([
+    ["codex", "codex", null],
+    ["codex", "codex", 42],
+    ["codex", "claude", null],
+    ["codex", "claude", 42],
+    ["claude", "codex", null],
+    ["claude", "claude", 42],
+    [null, null, null],
+  ])("%s orchestrator, %s reviewer, pr %s", (orchestratorKind, reviewerKind, pr) => {
+    const prompt = gated({ orchestratorKind, reviewerKind, pr, reviewerWorkspaceWrite });
     expect(unqualifiedDenials(prompt)).toEqual([]);
-  },
-);
-
-// Usefulness: verifies the same for a codex orchestrator with a networked-CLI reviewer, where the
-// reviewer rule line denies the orchestrator network, so the third gate rule is covered.
-test("the opted-in prompt qualifies the orchestrator denial of the reviewer rule", () => {
-  const prompt = initialPrompt({
-    task: "t",
-    maxSteps: 5,
-    requireCi: 42,
-    orchestratorKind: "codex",
-    reviewerKind: "claude",
-    reviewerWorkspaceWrite: true,
   });
-  expect(prompt).toMatch(/cannot reach the network/);
-  expect(unqualifiedDenials(prompt)).toEqual([]);
+
+  test("the ungated prompt", () => {
+    expect(
+      unqualifiedDenials(initialPrompt({ task: "t", maxSteps: 5, reviewerWorkspaceWrite })),
+    ).toEqual([]);
+  });
 });
 
-// Usefulness: verifies the default prompt keeps the origin/main wording, so the qualification is
-// opt-in and a run without the opt-in sees no change.
-test("a run without the opt-in keeps the unqualified denial lines", () => {
-  const prompt = initialPrompt({
-    task: "t",
-    maxSteps: 5,
-    requireCi: 42,
-    orchestratorKind: "codex",
-    reviewerKind: "codex",
-  });
-  expect(prompt).toContain(MAIN_NO_NETWORK_LINE);
+// Usefulness: verifies the scan finds the denial wordings it exists for, so a pass means the
+// surfaces are clean and not that the detector is blind.
+test("the network denial scan flags an unqualified denial and accepts a qualified one", () => {
+  for (const bad of [
+    "The orchestrator cannot reach a credential or a network itself.",
+    "- You orchestrate through codex, whose read-only turn cannot reach the network, so no turn in this run can read the required checks.",
+    "The sandbox blocks network access.",
+    "A Codex reviewer turn cannot run `gh` either.",
+    "Both CLIs block network: no turn in the run can read the required checks.",
+  ]) {
+    expect(unqualifiedDenials(bad), bad).toHaveLength(1);
+  }
+  expect(
+    unqualifiedDenials(
+      "Its shell commands cannot reach the network. That limit covers shell commands only.",
+    ),
+  ).toEqual([]);
 });
 
-// Usefulness: verifies the README and the orchestrator instructions carry no all-channel network
-// or check-read denial for the Codex sandbox without the shell-only qualification.
+// Usefulness: verifies the reviewer prompt, the README, the orchestrator instructions, the other
+// docs, the help text, and ADR 0019 carry no unqualified denial, so the prompt and the docs state
+// one rule about what the Codex sandbox blocks.
 test.each([
   ["README.md", () => readRepoFile("README.md")],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
-])("%s qualifies every network denial of the Codex sandbox", async (_name, load) => {
+  ["docs/parent-guard.md", () => readRepoFile("docs/parent-guard.md")],
+  ["ADR 0019", () => readRepoFile(adr19)],
+  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  ["default reviewer prompt", async () => reviewerPrompt("x", null, null, false)],
+  ["opted-in reviewer prompt", async () => reviewerPrompt("x", null, null, true)],
+])("%s qualifies every network denial", async (_name, load) => {
   expect(unqualifiedDenials(await load())).toEqual([]);
 });

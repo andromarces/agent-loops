@@ -663,13 +663,13 @@ Reviewer and orchestrator turns run in read-only mode to prevent unintended repo
 #### Codex read-only network limit
 
 `-c sandbox_mode="read-only"` restricts network access of the shell commands that the sandbox runs, as well as writes. It does not block model-side tools: the Codex `web_search` tool ran and returned results in a read-only probe on 2026-10-04 (issue #421). A
-Codex orchestrator turn cannot run `gh` to resolve a PR head, so a
+Codex orchestrator turn cannot run `gh` from its sandboxed shell to resolve a PR head, so a
 Codex-orchestrated PR run must abort, or record the unresolved compare under
 `notDone` and `open` with `"unresolvedCompare": true`, instead of finishing as
 verified, unless the run carries `--require-ci <pr>`. That gate runs in the
 runtime process, which the Codex sandbox does not cover, so it resolves the PR
 head without the orchestrator needing network access (#293). A Codex reviewer turn
-cannot run `gh` either, for example to check a PR's CI status. Read-only file
+cannot run `gh` from its sandboxed shell either, for example to check a PR's CI status. Read-only file
 protection stays in place on every adapter: the Codex sandbox flag remains, and
 the pre/post mutation check still aborts on a detected change. The other
 adapters' read-only invocations keep shell network access.
@@ -689,7 +689,7 @@ four adapters keep their invocations, and the mutation check still wraps every r
 
 Shell network is off on purpose. The option is set explicitly, because a probe on 2026-10-05
 (macOS, codex-cli 0.162.0-alpha.14) showed that `workspace-write` takes network from the
-user Codex config when the command line does not set it. With network off, the same probe
+user Codex config when the command line does not set it. With shell network off, the same probe
 ran `./node_modules/.bin/vitest run` to exit 0 (66 files passed, 1 skipped), failed
 `curl https://api.github.com` with `Could not resolve host`, and failed `gh pr checks` with
 `error connecting to api.github.com`, and the work tree stayed clean. `pnpm exec vitest run`
@@ -795,7 +795,7 @@ Two different things are cleared here, and the wording keeps them apart. Any chi
 
 A re-finish after a marker-only refusal is still a repeat in the bookkeeping sense: if anything else refuses it, the flag is still set and the run ends on exit 1. That is rare, and it is the price of not spending a step on a turn the marker did not need.
 
-A `gh` failure inside the gate is a refusal, not a crash, so a transient credential or network failure is refused on the ordinary path with the work of that attempt intact, and the run ends on exit 1 when the failure recurs with no child turn in between. The orchestrator cannot reach a credential or a network itself, so the only retry it owns is a reviewer turn that re-runs the gate, and that costs a step like any other.
+A `gh` failure inside the gate is a refusal, not a crash, so a transient credential or network failure is refused on the ordinary path with the work of that attempt intact, and the run ends on exit 1 when the failure recurs with no child turn in between. The orchestrator does not run the gate or hold its credential, so the only retry it owns is a reviewer turn that re-runs the gate, and that costs a step like any other.
 
 An `unresolved-compare` event records a `finish` whose action set `"unresolvedCompare": true`, the case where the parent records an unresolved PR-head compare under `notDone` and `open` instead of verifying it (#266). The event follows the finish `action` event and carries `stepsUsed`. The same finish exits `4` instead of `0` and keeps the same summary, so the recorded finish stays distinguishable without a transcript: a consumer that reads only the exit code sees `4` for a recorded unresolved compare and `0` for a verified finish (#279). A run without `--require-ci` has no PR input, so only the parent can report the condition, through that field, and a `finish` that records the compare and omits the field produces no event and exits `0` (issue #286). With `--require-ci <pr>` the runtime resolves the PR head itself, so the marker is refused rather than recorded and the omission leaves nothing to detect (#293). With `--pr <pr>` the run declares that PR, so the gate for that PR is required and the marker is refused with the missing gate (issue #302).
 

@@ -203,8 +203,7 @@ Apply these parent rules:
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.
-- When the PR head cannot be resolved, for example a read-only turn with no
-  network access, do not finish as verified: abort, or record the unresolved
+- When the PR head cannot be resolved, for example a read-only turn whose shell commands have no network access, do not finish as verified: abort, or record the unresolved
   compare under notDone and open in the finish summary. A recorded compare also
   sets the marker described under Finish output, so the record never reads the
   same as a verified finish. That marker is the only machine-readable record of
@@ -302,7 +301,7 @@ rule below belongs to that one condition, so the prompt nests them under it:
     the listed checks.
   - The read reflects the PR head on GitHub. When that head differs from the
     local reviewed head, the mismatch goes in `Checks`.
-  - When `gh` cannot read the checks, for example no `gh` or no network, the
+  - When `gh` cannot read the checks, for example the shell has no `gh` or no network, the
     status is unresolved and goes in `Checks`. A pass is reported only when the
     read shows one.
 
