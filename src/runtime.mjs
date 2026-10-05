@@ -7,7 +7,12 @@ import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
-import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, runTestCmd } from "./lib/test-cmd.mjs";
+import {
+  carryTestRun,
+  DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
+  failedTestRun,
+  runTestCmd,
+} from "./lib/test-cmd.mjs";
 import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
@@ -170,12 +175,9 @@ export async function runChild(options) {
       }
       // A fatal error ends the turn, and the caller records it, so the result rides on it.
       // A cancel of the command itself already carries its own result.
-      testRun ??= readProp(err, "testRun") ?? null;
+      testRun ??= failedTestRun(err) ?? null;
       if (testRun && err && typeof err === "object") {
-        // A frozen error or a throwing setter keeps the original error and its classification.
-        try {
-          err.testRun = testRun;
-        } catch {}
+        carryTestRun(err, testRun);
       }
       throw err;
     }
@@ -582,12 +584,12 @@ export async function runLoop(options) {
       // A fatal error ends the run with no result event, so the command result and the
       // work tree compare the runtime already read are emitted here, and the transcript
       // keeps them (ADR 0017).
-      const failedTestRun = readProp(err, "testRun");
-      if (failedTestRun) {
+      const carried = failedTestRun(err);
+      if (carried) {
         onEvent({
           type: "test-run",
           role: roleName,
-          testRun: failedTestRun,
+          testRun: carried,
           fatal: true,
           stepsUsed,
         });

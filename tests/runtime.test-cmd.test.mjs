@@ -293,3 +293,48 @@ test("a fatal reviewer error emits the test result as an event before the run en
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a fatal error that cannot take the `testRun` property still keeps its
+// class and still emits the test-run event, so the transcript and the stderr report keep the
+// result (ADR 0017 decision 10).
+test.each([
+  ["frozen", (e) => Object.freeze(e)],
+  [
+    "throwing setter",
+    (e) =>
+      Object.defineProperty(e, "testRun", {
+        set() {
+          throw new Error("setter failed");
+        },
+      }),
+  ],
+])("a %s fatal reviewer error keeps its class and emits the test result", async (_label, seal) => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const fatal = seal(Object.assign(new Error("fatal"), { name: "MutationError" }));
+    const error = await runLoop({
+      task: "Review the change.",
+      cwd: repo,
+      maxSteps: 5,
+      testCmd: node("console.log('9 passed')"),
+      roles: roles(),
+      agents: {
+        orch: scripted([JSON.stringify({ action: "run_reviewer", prompt: "review" })]),
+        work: scripted([]),
+        rev: scripted([
+          async () => {
+            throw fatal;
+          },
+        ]),
+      },
+      onEvent: (event) => events.push(event),
+    }).catch((err) => err);
+    expect(error).toBe(fatal);
+    const evidence = events.find((e) => e.type === "test-run");
+    expect(evidence).toMatchObject({ role: "reviewer", fatal: true, stepsUsed: 1 });
+    expect(evidence.testRun).toMatchObject({ status: "pass", exitCode: 0 });
+  } finally {
+    await removePath(repo);
+  }
+});
