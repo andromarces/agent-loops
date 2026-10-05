@@ -1285,7 +1285,7 @@ test("the supplied-status rule states the same conditions in both surfaces", asy
   );
   // The commit binding is stated once, so the two surfaces cannot drift into two
   // versions of the same statement (issue #349).
-  const bound = instructions.match(/check runs and commit statuses of the reviewed commit by SHA/g);
+  const bound = instructions.match(/check runs and commit statuses by SHA, every page of each/g);
   expect(bound).toHaveLength(1);
 });
 
