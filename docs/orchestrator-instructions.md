@@ -89,6 +89,10 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
 - Always pass `--cwd`. It defaults to the current directory, which for an
   interactive parent is normally not the target work tree.
 - Pass the child prompt on stdin. No prompt files.
+- `--task-file <path>` can replace `--task` on the init call, and the two cannot
+  be combined. `--task-file -` reads the task from stdin, which also carries the
+  prompt here. Stdin carries only one input, so pass `--prompt-file` for the
+  prompt with `--task-file -`. Init refuses `--task-file -` without it.
 - A parent session can drive several runs at once, one per work tree. Init
   registers each run under the session as its own entry keyed by the work tree,
   so a second run in a different work tree does not replace the first. A new
@@ -96,8 +100,9 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   previous run is terminal; the subcommand archives that work tree's previous
   state file and rejects init over a non-terminal run there.
 - Later dispatches read the configuration from the state file. Do not repeat
-  `--task` on a later dispatch: `--task` keys init detection, so a dispatch
-  that carries it while a run is active fails instead of continuing the run.
+  `--task` or `--task-file` on a later dispatch: they key init detection, so a dispatch
+  that carries either while a run is active fails instead of continuing the run.
+  `finish`, `abort`, and `extend` refuse both flags as well.
   Repeating any other init flag with its current value is accepted; changing
   one is rejected, so omit changed flags and never invent new values. The one
   exception is the step budget, which only `role extend` changes (see below).

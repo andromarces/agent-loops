@@ -17,12 +17,14 @@ import {
   assertOpenCodeOptions,
   modeError,
   readArgValue,
+  readTaskFile,
   readInlineValue,
   readMaxSteps,
   readNonNegativeInt,
   readPositiveInt,
   roleFlags,
   splitInlineFlag,
+  TASK_SOURCE_CONFLICT,
   testCmdError,
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
@@ -57,6 +59,7 @@ const ROLE_USAGE = [
   "state file. One JSON object on stdout, except this help; logs on stderr.",
   "",
   "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",
+  "Init task: --task <text> or --task-file <path|-> (- reads stdin; then pass --prompt-file).",
   "",
   "-h, --help  Show this help. Run agent-loop --help for every role flag.",
 ].join("\n");
@@ -83,6 +86,7 @@ export function parseRoleArgs(argv) {
     cwd: process.cwd(),
     role: null,
     task: null,
+    taskFile: null,
     mode: null,
     parentSession: null,
     worker: null,
@@ -114,16 +118,16 @@ export function parseRoleArgs(argv) {
     index = 1;
   }
 
-  const readValue = (flag, i) => readArgValue(argv, flag, i);
+  const readValue = (flag, i, allowDash) => readArgValue(argv, flag, i, allowDash);
 
   for (; index < argv.length; index++) {
     const raw = argv[index];
     const inline = splitInlineFlag(raw);
     const arg = inline ? inline.flag : raw;
     let inlineUsed = false;
-    const readInline = (flag) => {
+    const readInline = (flag, allowDash) => {
       if (!inline) {
-        return readValue(flag, ++index);
+        return readValue(flag, ++index, allowDash);
       }
       inlineUsed = true;
       return readInlineValue(inline, flag);
@@ -143,6 +147,10 @@ export function parseRoleArgs(argv) {
 
       case "--task":
         args.task = readInline(arg);
+        break;
+
+      case "--task-file":
+        args.taskFile = readInline(arg, true);
         break;
 
       case "--mode":
@@ -229,6 +237,10 @@ export function parseRoleArgs(argv) {
     if (inline && !inlineUsed) {
       throw new RoleError(`${arg} does not take a value.`);
     }
+  }
+
+  if (args.task !== null && args.taskFile !== null) {
+    throw new RoleError(TASK_SOURCE_CONFLICT);
   }
 
   return args;
@@ -402,6 +414,12 @@ function rejectInitFlagChanges(args, state, allowed = []) {
       `--test-cmd cannot be changed after init (state holds: ${state.testCmdSha256 ? "a different command" : "null"}).`,
     );
   }
+  // A task file is read only at init, so a later call never holds it as `task`.
+  if (args.taskFile !== null) {
+    throw new RoleError(
+      `--task-file cannot be changed after init (state holds: ${JSON.stringify(state.task ?? null)}).`,
+    );
+  }
   const provided = [];
   for (const flag of INIT_FIELDS) {
     if (allowed.includes(flag)) {
@@ -515,6 +533,17 @@ async function dispatch(args, { agents, stdin = readStdin, signal, gh }) {
     throw new RoleError("--reason is only valid for abort.");
   }
   rejectFinishOnlyFlags(args, "dispatch");
+
+  // The task file becomes `--task`, so init detection and the init checks see one source.
+  if (args.taskFile !== null) {
+    // Stdin holds one input, so a task on stdin leaves the prompt to --prompt-file.
+    if (args.taskFile === "-" && !args.promptFile) {
+      throw new RoleError(
+        "--task-file - reads stdin, which the prompt also uses. Pass --prompt-file.",
+      );
+    }
+    args.task = await readTaskFile(args.taskFile, () => stdin(args));
+  }
 
   await assertGitWorkTree(args.cwd);
   const paths = statePaths({ cwd: args.cwd, parentSession: args.parentSession || undefined });

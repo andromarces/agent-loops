@@ -1,14 +1,20 @@
 // Shared CLI argument readers and agent option validation, used by both the
 // headless loop (src/cli.mjs) and the role subcommand (src/role.mjs).
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { normalizeAgent } from "../agents/index.mjs";
 
 function missingValue(flag) {
   return new Error(`Missing value for ${flag}.`);
 }
 
-export function readArgValue(argv, flag, index) {
+/**
+ * Reads the value that follows `flag`. A value that starts with `-` is refused,
+ * except a lone `-` where `allowDash` is set (stdin for `--task-file`).
+ */
+export function readArgValue(argv, flag, index, allowDash = false) {
   const value = argv[index];
-  if (!value || value.startsWith("-")) {
+  if (!value || (value.startsWith("-") && !(allowDash && value === "-"))) {
     throw missingValue(flag);
   }
   return value;
@@ -23,6 +29,39 @@ export function readInlineValue(inline, flag) {
     throw missingValue(flag);
   }
   return inline.value;
+}
+
+export const TASK_SOURCE_CONFLICT = "--task and --task-file cannot be combined.";
+
+/**
+ * Reads the task for `--task-file`: the file at `path`, or stdin through
+ * `readStdin` when `path` is `-`. The text is returned verbatim, so the caller
+ * applies the empty-task check.
+ */
+export async function readTaskFile(path, readStdin) {
+  if (path === "-") {
+    return readStdin();
+  }
+  try {
+    return await readFile(resolve(path), "utf8");
+  } catch (err) {
+    throw new Error(`Cannot read --task-file ${path}: ${err.code ?? err.message}`, { cause: err });
+  }
+}
+
+/** Reads all of stdin as text. Refuses a terminal, which would wait for typed input. */
+export async function readStdinText() {
+  if (process.stdin.isTTY) {
+    throw new Error(
+      "--task-file - reads the task from stdin, but stdin is a terminal. Pipe the task.",
+    );
+  }
+  process.stdin.setEncoding("utf8");
+  let data = "";
+  for await (const chunk of process.stdin) {
+    data += chunk;
+  }
+  return data;
 }
 
 /**
