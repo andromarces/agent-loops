@@ -127,21 +127,35 @@ async function hasBlockedAncestor(base, rel, blocked, create = false) {
 }
 
 /**
- * Reads `git worktree list --porcelain` into `{ path, bare }` entries, in Git's
- * order. The porcelain format starts each record with a `worktree <path>` line and
- * marks a bare repository with a `bare` line. An entry that Git still lists counts
- * as a work tree even when its `.git` entry is gone.
+ * Removes the one end-of-line that Git prints after a single value, and nothing
+ * else: a path can start or end with a space and can hold a newline.
+ */
+const stripEol = (text) => text.replace(/\r?\n$/, "");
+
+/**
+ * Reads `git worktree list --porcelain -z` into `{ path, bare }` entries, in Git's
+ * order. With `-z` Git ends every field with NUL, so a path that holds a newline
+ * arrives whole; the Git documentation states that this makes the output parseable
+ * for such a path. A record is a run of `<label> <value>` fields (`worktree <path>`
+ * first, a bare `bare` field for a bare repository) closed by an empty field. A Git
+ * that rejects `-z` fails the command, which fails the init. An entry that Git still
+ * lists counts as a work tree even when its `.git` entry is gone.
  */
 async function readWorkTrees(root) {
-  const { stdout } = await git(root, ["worktree", "list", "--porcelain"]);
-  return stdout
-    .split(/\r?\n\r?\n/)
-    .map((block) => block.split(/\r?\n/).filter(Boolean))
-    .map((lines) => ({
-      path: lines.find((line) => line.startsWith("worktree "))?.slice(9),
-      bare: lines.includes("bare"),
-    }))
-    .filter((entry) => entry.path !== undefined);
+  const { stdout } = await git(root, ["worktree", "list", "--porcelain", "-z"]);
+  const entries = [];
+  let current = null;
+  for (const field of stdout.split("\0")) {
+    if (field === "") {
+      current = null;
+    } else if (field.startsWith("worktree ")) {
+      current = { path: field.slice(9), bare: false };
+      entries.push(current);
+    } else if (field === "bare" && current !== null) {
+      current.bare = true;
+    }
+  }
+  return entries;
 }
 
 const isInside = (parent, child) => {
@@ -152,7 +166,7 @@ const isInside = (parent, child) => {
 /**
  * Returns the canonical path of the main work tree, or null when there is none for
  * this copy (decision 10 of ADR 0017). The main work tree is the first entry of
- * `git worktree list --porcelain`, taken only when all three hold: the entry is not
+ * `git worktree list --porcelain -z`, taken only when all three hold: the entry is not
  * marked `bare`, its path is an existing directory, and its canonical path is
  * neither the common Git directory (`git rev-parse --git-common-dir`) nor inside
  * it. Every other layout has none: a bare repository, a plain separate Git
@@ -164,7 +178,7 @@ async function findMainWorkTree(root, entries) {
   if (first === undefined || first.bare || !(await lstatOrNull(first.path))?.isDirectory()) {
     return null;
   }
-  const common = (await git(root, ["rev-parse", "--git-common-dir"])).stdout.trim();
+  const common = stripEol((await git(root, ["rev-parse", "--git-common-dir"])).stdout);
   const main = await realpath(first.path);
   return isInside(await realpath(resolve(root, common)), main) ? null : main;
 }
@@ -238,7 +252,7 @@ async function collect(ctx, rel, abs) {
  * @returns {Promise<{ copied: string[], skipped: string[] } | null>}
  */
 export async function copyLocalFiles(cwd, hooks = {}) {
-  const root = (await git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();
+  const root = stripEol((await git(cwd, ["rev-parse", "--show-toplevel"])).stdout);
   const entries = await readWorkTrees(root);
   const mainReal = await findMainWorkTree(root, entries);
   if (mainReal === null) {

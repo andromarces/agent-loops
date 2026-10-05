@@ -975,3 +975,105 @@ test("does not copy a tracked file through a different spelling of its path", as
   expect(report).toEqual({ copied: [], skipped: [] });
   expect(await exists(join(linked, ".claude"))).toBe(false);
 });
+
+// Usefulness: verifies a main work tree whose path holds a newline is found whole, so
+// the copy reads from it and not from a directory named by the text before the
+// newline, which here is another repository's checkout.
+// Not redundant: no other test has a newline in a path. It is skipped on Windows, where
+// a path cannot hold one.
+test.skipIf(process.platform === "win32")(
+  "copies from a main work tree whose path holds a newline, not from its prefix",
+  async () => {
+    const { base, main, linked } = await createLinked({
+      ignore: [".env"],
+      mainName: "repo\nmain",
+    });
+    await writeFile(join(main, ".env"), "REAL\n");
+    await mkdir(join(base, "repo"));
+    await writeFile(join(base, "repo", ".env"), "DECOY\n");
+
+    const report = await copyLocalFiles(linked);
+
+    expect(report).toEqual({ copied: [".env"], skipped: [] });
+    expect(await readFile(join(linked, ".env"), "utf8")).toBe("REAL\n");
+  },
+);
+
+// Usefulness: verifies a registered work tree whose path holds a newline is excluded
+// from the source walk when its `.git` entry is gone, so nothing is read from it.
+// Not redundant: the other registered work tree test has a path without a newline.
+test.skipIf(process.platform === "win32")(
+  "never copies from a registered work tree whose path holds a newline",
+  async () => {
+    const { main, linked } = await createLinked({ ignore: [".agents/"] });
+    await mkdir(join(main, ".agents"));
+    const nested = join(main, ".agents", "wt\nx");
+    await git(main, "worktree", "add", nested, "-b", "nested");
+    await rm(join(nested, ".git"));
+    await writeFile(join(nested, "inner.md"), "x\n");
+    await writeFile(join(main, ".agents", "skill.md"), "s\n");
+
+    const report = await copyLocalFiles(linked);
+
+    expect(report).toEqual({ copied: [".agents/skill.md"], skipped: [] });
+  },
+);
+
+// Usefulness: verifies a registered work tree whose path holds a newline is excluded as
+// a destination when its `.git` entry is gone, so nothing is written into it.
+// Not redundant: the source test above covers the walk of the main work tree, and this
+// one the target directories of the linked work tree.
+test.skipIf(process.platform === "win32")(
+  "never writes inside a registered work tree whose path holds a newline",
+  async () => {
+    const { main, linked } = await createLinked({ ignore: [".agents/"] });
+    await mkdir(join(main, ".agents", "sub\nx"), { recursive: true });
+    await writeFile(join(main, ".agents", "sub\nx", "f.md"), "x\n");
+    await mkdir(join(linked, ".agents"));
+    const nested = join(linked, ".agents", "sub\nx");
+    await git(linked, "worktree", "add", nested, "-b", "inner");
+    await rm(join(nested, ".git"));
+
+    const report = await copyLocalFiles(linked);
+
+    expect(report).toEqual({ copied: [], skipped: [".agents/sub\nx/f.md"] });
+    expect(await exists(join(nested, "f.md"))).toBe(false);
+  },
+);
+
+// Usefulness: verifies a linked work tree whose directory name ends in a space is used
+// as it is: the top level that Git prints is not trimmed.
+// Not redundant: every other test has a work tree name without surrounding space. It is
+// skipped on Windows, where a trailing space is dropped from a name.
+test.skipIf(process.platform === "win32")(
+  "copies into a linked work tree whose name ends in a space",
+  async () => {
+    const { main, linked } = await createLinked({ ignore: [".env"], linkedName: "linked " });
+    await writeFile(join(main, ".env"), "A=1\n");
+
+    const report = await copyLocalFiles(linked);
+
+    expect(report).toEqual({ copied: [".env"], skipped: [] });
+  },
+);
+
+// Usefulness: verifies a file whose name holds a newline is listed, checked against
+// the ignore rules, and copied as one path, and that a tracked file with such a name
+// is not copied.
+// Not redundant: no other test has a newline in a file name, which the NUL separated
+// output of `git ls-files -z` and `git check-ignore -z` keeps whole.
+test.skipIf(process.platform === "win32")(
+  "copies a file whose name holds a newline and skips a tracked one",
+  async () => {
+    const { main, linked } = await createLinked({ ignore: [".claude/"] });
+    await mkdir(join(main, ".claude"));
+    await writeFile(join(main, ".claude", "a\nb.json"), "{}\n");
+    await writeFile(join(main, ".claude", "t\nu.json"), "{}\n");
+    await git(main, "add", "-f", ".claude/t\nu.json");
+    await git(main, "commit", "-m", "track");
+
+    const report = await copyLocalFiles(linked);
+
+    expect(report).toEqual({ copied: [".claude/a\nb.json"], skipped: [] });
+  },
+);

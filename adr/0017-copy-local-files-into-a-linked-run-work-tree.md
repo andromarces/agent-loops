@@ -24,7 +24,7 @@ files is a new runtime contract, and it handles files that can hold secrets.
 
 1. **Scope.** At init, when `--cwd` is a linked work tree, the runtime copies a file
    from the main work tree into `--cwd`. The main work tree is the first entry of
-   `git worktree list --porcelain` under the rule of decision 10. The copy happens once, before the first child spawn and the
+   `git worktree list --porcelain -z` under the rule of decision 10. The copy happens once, before the first child spawn and the
    first snapshot. It is on by default.
 2. **Three conditions.** A file is copied only when all three hold:
    1. It exists in the main work tree.
@@ -128,8 +128,8 @@ worktree list` names (even when its `.git` entry is gone), every directory that
       inside the window, and a file that such a swap redirects is still reported as
       copied. The runtime claims no more protection than that.
 10. **Finding the main work tree.** Decided by the repository owner on 2026-10-05.
-    The main work tree is the first entry of `git worktree list --porcelain`, and
-    only when all three hold: the entry is not marked `bare`, its path is an
+    The main work tree is the first entry of `git worktree list --porcelain -z`,
+    and only when all three hold: the entry is not marked `bare`, its path is an
     existing directory, and its canonical path (`fs.promises.realpath`) is neither
     the common Git directory (`git rev-parse --git-common-dir`, canonical) nor
     inside it. Every other layout has no main work tree for this copy: a bare
@@ -138,16 +138,33 @@ worktree list` names (even when its `.git` entry is gone), every directory that
     Git directory. In each of them nothing is copied, the init does not fail, and
     the run logs `no main work tree found, so nothing is copied`. This is an
     approved rule, not a limit that Git forces: a lookup through the Git
-    configuration or the name of the Git directory was removed to keep one rule that follows the
-    first entry. A Git command that fails while the list or the common Git
-    directory is read fails the init (decision 15). Evidence, probed on
+    configuration or the name of the Git directory was removed to keep one rule
+    that follows the first entry. A Git command that fails while the list or the
+    common Git directory is read fails the init (decision 15). Evidence, probed on
     2026-10-05 with Git 2.56.0 and checked against the Git documentation for
     `git worktree list --porcelain`: each record starts with a `worktree <path>`
-    line, a `bare` line appears only for a bare repository, and records end with an
-    empty line. For a normal clone the first entry is the checkout. For a bare
+    field, a `bare` field appears only for a bare repository, and an empty field
+    ends the record. For a normal clone the first entry is the checkout. For a bare
     repository it is the repository, marked `bare`. For a repository with a
     separate Git directory it is the Git directory. When `--cwd` is the main work
     tree, nothing is copied and nothing is reported.
+
+    Paths are read NUL-safe. A path can hold a newline, and the plain porcelain
+    output would cut it there, which could select another directory (a main path
+    `/repo` followed by a newline and `main` read as `/repo`) or leave a registered
+    work tree unexcluded. The list is therefore read with `-z`. The Git
+    documentation describes `-z` as making the output parseable when a worktree
+    path contains a newline, and a probe with Git 2.56.0 showed a path with a
+    newline arriving whole, with each field ended by NUL. The same rule holds for
+    every other Git output that the copy parses for paths: `git ls-files -z` and
+    `git check-ignore -z` already use it. The single-value outputs `git rev-parse
+--show-toplevel` and `--git-common-dir` have no `-z`, so exactly one
+    end-of-line is removed from them and nothing else, because a path can start or
+    end with a space. The repository does not state a minimum Git version, and the
+    first Git release that accepts `-z` for `git worktree list` was not verified
+    here. A Git that rejects the option makes the command fail, and the init fails
+    with Git's error (decision 15). It never falls back to the plain format.
+
 11. **Opt-out.** `--no-copy-local-files` is an init field of `agent-loop role` and
     a flag of the headless `agent-loop` command. With it, nothing is copied and
     the behavior is as before. The role init stores `copyLocalFiles` (a boolean) in

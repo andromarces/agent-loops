@@ -869,7 +869,7 @@ function cleanRepoGit(command, args, options) {
   // The directory is the only work tree, so the init copy of local files has no
   // main work tree to copy from.
   if (args[0] === "worktree") {
-    return answer(`worktree ${options.cwd}\nHEAD ${CLEAN_REPO_HEAD}\n\n`);
+    return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0\0`);
   }
   throw new Error(`unexpected git call: ${args.join(" ")}`);
 }

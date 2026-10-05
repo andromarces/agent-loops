@@ -28,7 +28,7 @@ afterEach(async () => {
 
 /**
  * Answers the three Git commands that find the main checkout: the top level of the
- * linked work tree, `git worktree list --porcelain`, and `git rev-parse
+ * linked work tree, `git worktree list --porcelain -z`, and `git rev-parse
  * --git-common-dir`. A command in `failing` exits 128. Any other command is an error.
  */
 function answerGit({ root, list, common, failing = [] }) {
@@ -46,7 +46,8 @@ function answerGit({ root, list, common, failing = [] }) {
     if (failing.includes(name)) {
       return { exitCode: 128, stdout: "", stderr: "fatal: simulated failure" };
     }
-    return { exitCode: 0, stdout: `${reply}\n`, stderr: "" };
+    // The worktree list is a NUL separated stream; the other answers end in a newline.
+    return { exitCode: 0, stdout: name === "worktree list" ? reply : `${reply}\n`, stderr: "" };
   });
 }
 
@@ -60,7 +61,7 @@ async function makeBase() {
   return { base, root, gitDir };
 }
 
-const entry = (path) => `worktree ${path}\nHEAD 0000000000000000000000000000000000000000\n\n`;
+const entry = (path) => `worktree ${path}\0HEAD 0000000000000000000000000000000000000000\0\0`;
 
 // Usefulness: verifies a first worktree entry that lies inside the common Git
 // directory is not taken as the main checkout: nothing is copied and the run says so.
