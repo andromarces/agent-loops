@@ -137,8 +137,11 @@ export async function runOpenCode(state, prompt, options = {}) {
  * A different assistant message also starts its own line, so a late message cannot join the last
  * line of the closing block (issue #458). Parts are first grouped into messages: a boundary needs a
  * valid, non-empty string `part.messageID` on both the previous and the current part, and the ids
- * must differ. Any other part joins the current message as before. No break precedes a message that
- * holds no text.
+ * must differ. Any other part joins the current message as before. A valid id names one message
+ * across the whole stream, so a part whose id appeared earlier rejoins that message even when
+ * another message came between (A/B/A). Messages keep the order of their first part, and the parts
+ * of one message join in stream order at that position. No break precedes a message that holds no
+ * text.
  * The last closing block governs, and it governs alone (issue #467). A message that holds a closing
  * block attempt (hasClosingBlockAttempt) supersedes every earlier message that holds one, so the
  * join drops those earlier messages. A late message that opens with a report label or `Verdict:`
@@ -152,13 +155,21 @@ export async function runOpenCode(state, prompt, options = {}) {
  */
 function joinTextParts(events) {
   const messages = [];
+  const byId = new Map();
+  let current;
   let previousId;
   for (const { part } of events) {
     const id = isMessageId(part.messageID) ? part.messageID : undefined;
-    if (!messages.length || (previousId !== undefined && id !== undefined && id !== previousId)) {
-      messages.push([]);
+    if (!current || (previousId !== undefined && id !== undefined && id !== previousId)) {
+      current = (id !== undefined && byId.get(id)) || [];
+      if (!messages.includes(current)) {
+        messages.push(current);
+      }
     }
-    messages.at(-1).push(part.text);
+    if (id !== undefined && !byId.has(id)) {
+      byId.set(id, current);
+    }
+    current.push(part.text);
     previousId = id;
   }
 

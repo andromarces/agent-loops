@@ -1147,6 +1147,22 @@ test("opencode keeps narration and late prose around the governing block", async
   expect(parseVerdict(response)).toBe("reject");
 });
 
+// Usefulness: verifies parts of one message stay one message when another message comes between
+// them (A/B/A order): the only complete block, split across A's parts, is not dropped as superseded
+// by its own later part, so its report and verdict survive (issue #467).
+test("opencode keeps the only complete block of a message whose parts another message interrupts", async () => {
+  const [head, tail] = [REJECTED_BLOCK.slice(0, 60), REJECTED_BLOCK.slice(60)];
+  const response = await runWithEvents(
+    textEvent(head, "msg-a"),
+    textEvent("A side note.", "msg-b"),
+    textEvent(tail, "msg-a"),
+  );
+
+  expect(response).toBe(`${REJECTED_BLOCK}\nA side note.`);
+  expect(parseVerdict(response)).toBe("reject");
+  expect(parseReportBlock(response)).toMatchObject({ blockers: "b1", checks: "pnpm test" });
+});
+
 // Usefulness: verifies the attempt test reads the whole late message, because a `Verdict:` label can
 // span parts. A split label, an empty first part, and an indented label all hold an attempt, so each
 // supersedes the earlier block and governs alone (issue #467).
