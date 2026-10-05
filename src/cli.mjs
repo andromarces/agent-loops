@@ -17,8 +17,11 @@ import {
   readMaxSteps,
   readNonNegativeInt,
   readPositiveInt,
+  readStdinText,
+  readTaskFile,
   roleFlags,
   splitInlineFlag,
+  TASK_SOURCE_CONFLICT,
   testCmdError,
 } from "./lib/args.mjs";
 import { carryEarlierEvents, readContinuation, restoreSessions } from "./lib/continuation.mjs";
@@ -40,6 +43,7 @@ export function parseArgs(argv) {
   const options = {
     cwd: process.cwd(),
     task: null,
+    taskFile: null,
     maxSteps: DEFAULT_MAX_STEPS,
     timeout: DEFAULT_TIMEOUT,
     transcript: null,
@@ -59,16 +63,16 @@ export function parseArgs(argv) {
     options[`${role}Effort`] = null;
   }
 
-  const readValue = (flag, index) => readArgValue(argv, flag, index);
+  const readValue = (flag, index, allowDash) => readArgValue(argv, flag, index, allowDash);
 
   for (let i = 0; i < argv.length; i++) {
     const raw = argv[i];
     const inline = splitInlineFlag(raw);
     const arg = inline ? inline.flag : raw;
     let inlineUsed = false;
-    const readInline = (flag) => {
+    const readInline = (flag, allowDash) => {
       if (!inline) {
-        return readValue(flag, ++i);
+        return readValue(flag, ++i, allowDash);
       }
       inlineUsed = true;
       return readInlineValue(inline, flag);
@@ -86,6 +90,10 @@ export function parseArgs(argv) {
 
       case "--task":
         options.task = readInline(arg);
+        break;
+
+      case "--task-file":
+        options.taskFile = readInline(arg, true);
         break;
 
       case "--max-steps":
@@ -173,10 +181,12 @@ export function parseArgs(argv) {
   for (const role of ROLES) {
     assertOpenCodeOptions(role, options[role], options[`${role}Model`], options[`${role}Effort`]);
   }
-  if (options.task === null || String(options.task).trim() === "") {
-    throw new Error(
-      'Missing required --task. Provide the task, for example --task "Implement the change."',
-    );
+  if (options.task !== null && options.taskFile !== null) {
+    throw new Error(TASK_SOURCE_CONFLICT);
+  }
+  // A task file is read in `main`, which then applies the same check.
+  if (options.taskFile === null) {
+    assertTask(options.task);
   }
 
   const testCmdRefusal = testCmdError(options.testCmd, options.testCmdTimeout);
@@ -208,6 +218,14 @@ export function parseArgs(argv) {
   }
 
   return options;
+}
+
+function assertTask(task) {
+  if (task === null || String(task).trim() === "") {
+    throw new Error(
+      'Missing required --task. Provide the task, for example --task "Implement the change."',
+    );
+  }
 }
 
 function printHelp() {
@@ -279,7 +297,7 @@ Role flags:
                                 session id the parent-edit guard matches; later calls
                                 reject a changed value, and extend refuses a mismatch. The headless form (no subcommand) is the explicit
                                 unguarded path.
-  --task / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files
+  --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files
                                 First (init) call only. Later calls read these from the
                                 state file and reject any attempt to change them.
                                 Only extend takes --max-steps after init.
@@ -350,7 +368,9 @@ Options:
   model is rejected.
 
   --cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
-  --task <text>                 Task description. Required.
+  --task <text>                 Task description. Required, unless --task-file is given.
+  --task-file <path|->          Read the task from a file, or from stdin for -. Replaces --task,
+                                and the two cannot be combined. An empty file is refused.
   --mode <mode>                 Loop policy: work-first, review-first, or review-only, the
                                 same values the role subcommand takes. review-only
                                 dispatches no worker, so it takes neither --pr, nor
@@ -453,7 +473,11 @@ function formatSummary(summary) {
   ].join("\n");
 }
 
-export async function main(argv = process.argv.slice(2), agents = defaultAgents) {
+export async function main(
+  argv = process.argv.slice(2),
+  agents = defaultAgents,
+  { stdin = readStdinText } = {},
+) {
   if (argv[0] === "--version" || argv[0] === "-V") {
     // Read on demand: install fixtures copy src without package.json.
     const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url)));
@@ -484,6 +508,10 @@ export async function main(argv = process.argv.slice(2), agents = defaultAgents)
   let options;
   try {
     options = parseArgs(argv);
+    if (options.taskFile !== null) {
+      options.task = await readTaskFile(options.taskFile, stdin);
+      assertTask(options.task);
+    }
   } catch (err) {
     console.error(`\n${err.message}`);
     process.exitCode = 1;

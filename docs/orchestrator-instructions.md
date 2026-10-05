@@ -96,7 +96,7 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   previous run is terminal; the subcommand archives that work tree's previous
   state file and rejects init over a non-terminal run there.
 - Later dispatches read the configuration from the state file. Do not repeat
-  `--task` on a later dispatch: `--task` keys init detection, so a dispatch
+  `--task` or `--task-file` on a later dispatch: they key init detection, so a dispatch
   that carries it while a run is active fails instead of continuing the run.
   Repeating any other init flag with its current value is accepted; changing
   one is rejected, so omit changed flags and never invent new values. The one
