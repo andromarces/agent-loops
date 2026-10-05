@@ -1693,6 +1693,7 @@ test("review-only finish with the marker records the event", async () => {
 });
 
 const PASSING_RUN = {
+  id: 1,
   name: "ci (ubuntu-latest)",
   status: "completed",
   conclusion: "success",
@@ -1720,6 +1721,9 @@ function ciGateGh(headRefOid, calls = [], runs = [PASSING_RUN]) {
     }
     if (key.includes("repo view")) {
       return { status: 0, stdout: "owner/repo", stderr: "" };
+    }
+    if (key.startsWith("pr checks 42")) {
+      return json([]);
     }
     if (key.includes("rules/branches/main")) {
       // The ruleset read is paginated, so its body is an array of pages.

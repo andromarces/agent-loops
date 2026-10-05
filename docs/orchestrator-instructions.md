@@ -348,14 +348,15 @@ differs from the local head, and a read with no local head to compare, are
 unresolved, and the prompt never reports a pass for a head the reviewer is not
 looking at. Every supplied status states the head it describes.
 
-The runtime reads the check runs and commit statuses of the reviewed commit by SHA,
-every page of each, so a PR head that moves away and back during the read cannot
+The runtime reads the check runs and commit statuses by SHA, every page of each, for
+the commit the gate evaluates (the test merge commit when it carries a check,
+otherwise the head), so a PR head that moves away and back during the read cannot
 put the checks of another commit in the status. The required checks come from the
-same resolution the `--require-ci` gate uses. Every supplied status still carries
+same resolution the `--require-ci` gate uses, and a status never passes a state the
+gate refuses. Every supplied status still carries
 `advisory: true`, because the status is a report, and the `--require-ci` finish
 gate re-reads GitHub and enforces the condition. The status is a snapshot taken
-before the turn, it judges the head commit and not the test merge commit the gate
-may select, and a check that starts or finishes later is not in it. The reviewer
+before the turn, so a check that starts or finishes later is not in it. The reviewer
 treats the status as evidence. A status never replaces the gate.
 
 The status is `failing` when a required check failed, `pending` when a required

@@ -1306,7 +1306,17 @@ test("a declared PR supplies the runtime-read required-check status to the revie
     }
     if (key.includes("/check-runs")) {
       return json([
-        { check_runs: [{ name: "ci (macos-latest)", status: "completed", conclusion: "failure" }] },
+        {
+          check_runs: [
+            {
+              id: 1,
+              name: "ci (macos-latest)",
+              status: "completed",
+              conclusion: "failure",
+              started_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
       ]);
     }
     if (key.includes("/status")) {

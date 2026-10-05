@@ -50,27 +50,33 @@ the reviewer `Checks` line.
    local head to compare, are `unresolved`, so the prompt never supplies a pass
    for a head the reviewer is not looking at. Every supplied status states the
    head it describes.
-4. The check runs and commit statuses are read for the reviewed commit by SHA, so
-   the status describes that commit whatever the pull request head does during
-   the read. A head that moves from A to B and back to A cannot put the checks of
+4. The check runs and commit statuses are read by SHA, every page, for the commit
+   the gate evaluates (the test merge commit when it carries a check, otherwise the
+   head), so the status describes that commit whatever the pull request head does
+   during the read, and never passes a state the gate refuses. The gate reads
+   every page of the commit statuses too, so the two reads see the same entries. A head that moves from A to B and back to A cannot put the checks of
    B in the status (issue #349). This replaces the head re-read around `gh pr
 checks`, which reports no commit and could not separate that case.
 5. Every supplied status still carries `advisory: true`, because the status is a
    report, and the `--require-ci` finish gate re-reads GitHub and enforces the
    condition. The commit binding is exact, but the status is a snapshot taken
-   before the turn, it judges the head commit and not the test merge commit the
-   gate may select, and a check that starts or finishes later is not in it. The
+   before the turn, so a check that starts or finishes later is not in it. The
    reviewer treats the status as evidence. A status never replaces the gate.
 6. The status comes from the per-context judgment the gate uses. A failing
-   required check makes the status `failing`. Otherwise a pending check, or a
-   required check with no run or status on the commit, makes it `pending`.
-   Otherwise it is `pass`. A pending commit status is pending, not failing. A
-   ruleset read that settles nothing, and an empty set of required contexts, are
-   `unresolved`, the same refusals the gate makes. The check-run and commit-status
-   replies are read strictly, every page of each. A reply that is not the paginated
-   shape, an entry the judgment cannot read, and a ruleset or protection source
-   that answers success with a body that is not JSON are `unresolved`, so a
-   malformed reply never reads as a pass. The gate keeps its own lenient reads.
+   required check makes the status `failing`. A failure among entries that share a
+   required name, for example a check run and a commit status, or an earlier run
+   beside a pending one, wins over pending. Otherwise a pending check or commit
+   status, or a required check with no run or status on the commit, makes it
+   `pending`. Otherwise it is `pass`.
+   The read is stricter than the gate where it can be, and each of these is
+   `unresolved`: a ruleset read that settles nothing, an empty set of required
+   contexts, a failed read of the required names, a check-run or commit-status
+   reply that is not the paginated shape, an entry the judgment cannot read or
+   order (an id or a timestamp that is missing or not a date), a classic
+   protection reply whose shape cannot be interpreted, and a ruleset or protection
+   source that answers success with a body that is not JSON. A malformed reply
+   never reads as a pass. The gate keeps its lenient reads of an entry, so the
+   read can report unresolved where the gate passes, and never the reverse.
 7. `checks` names the required contexts the status covers, with the app id for an
    app-qualified context.
 8. The read is bounded in time, and the bound terminates the child, so a `gh`

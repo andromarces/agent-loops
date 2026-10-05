@@ -39,14 +39,33 @@ const REQUIRED = [
   },
 ];
 
+let nextId = 1;
+
 function run(name, conclusion) {
   return {
+    id: nextId++,
     name,
     status: "completed",
     conclusion,
     started_at: "2026-01-01T00:00:00Z",
   };
 }
+
+// A run that has not completed, and a commit status, with the fields the status
+// read orders entries by.
+const openRun = (name, status = "in_progress") => ({
+  id: nextId++,
+  name,
+  status,
+  conclusion: null,
+  started_at: "2026-01-01T00:00:00Z",
+});
+const commitStatus = (context, state, updatedAt = "2026-01-01T00:00:00Z") => ({
+  id: nextId++,
+  context,
+  state,
+  updated_at: updatedAt,
+});
 
 // Routes a `gh` call by a substring of its arguments. A `hidden` value answers
 // with the 404 a token without repository admin receives, a `forbidden` value
@@ -121,6 +140,7 @@ function routes({
     ["rules/branches/main", requiredPages ?? (Array.isArray(required) ? [required] : required)],
     ["branches/main/protection", protection],
     [`commits/${MERGE}/check-runs`, [{ check_runs: mergeRuns }]],
+    [`commits/${MERGE}/status --paginate`, [{ statuses: mergeStatuses }]],
     [`commits/${MERGE}/status`, { statuses: mergeStatuses }],
     [`commits/${HEAD}/check-runs`, [{ check_runs: headRuns }]],
     // The status read paginates; the gate's single-page read does not. The more
@@ -1621,7 +1641,7 @@ test("reads a passing status when a required check is a commit status", async ()
     HEAD,
     statusReadGh({
       headRuns: [run("ci (ubuntu-latest)", "success")],
-      headStatuses: [{ context: "ci (windows-latest)", state: "success" }],
+      headStatuses: [commitStatus("ci (windows-latest)", "success")],
     }),
   );
   expect(read).toMatchObject({ status: "pass" });
@@ -1647,10 +1667,7 @@ test("reads a pending status with the name of the pending required check", async
   const read = await readOn(
     HEAD,
     statusReadGh({
-      headRuns: [
-        run("ci (ubuntu-latest)", "success"),
-        { name: "ci (windows-latest)", status: "in_progress", conclusion: null },
-      ],
+      headRuns: [run("ci (ubuntu-latest)", "success"), openRun("ci (windows-latest)")],
     }),
   );
   expect(read).toMatchObject({ status: "pending", checks: ["ci (windows-latest)"] });
@@ -1673,10 +1690,7 @@ test("reads a failing status when a pending check sits beside a failing one", as
   const read = await readOn(
     HEAD,
     statusReadGh({
-      headRuns: [
-        run("ci (ubuntu-latest)", "failure"),
-        { name: "ci (windows-latest)", status: "queued", conclusion: null },
-      ],
+      headRuns: [run("ci (ubuntu-latest)", "failure"), openRun("ci (windows-latest)", "queued")],
     }),
   );
   expect(read).toMatchObject({ status: "failing", checks: ["ci (ubuntu-latest)"] });
@@ -1849,7 +1863,7 @@ describe("the gh runner against the installed execa", () => {
 // failure for A. The new read takes the check runs of A by SHA, so it reports A's
 // pass and never asks for B (issue #349).
 test("binds the status to the reviewed commit when the PR head moves A to B to A", async () => {
-  const other = "2222222222222222222222222222222222222222";
+  const other = "3333333333333333333333333333333333333333";
   const calls = [];
   const gh = async (args) => {
     const key = args.join(" ");
@@ -1926,8 +1940,8 @@ test("reads a failing status from a later page of the commit status reply", asyn
         ? [
             match,
             [
-              { statuses: [{ context: "unrelated", state: "success" }] },
-              { statuses: [{ context: "ci (windows-latest)", state: "failure" }] },
+              { statuses: [commitStatus("unrelated", "success")] },
+              { statuses: [commitStatus("ci (windows-latest)", "failure")] },
             ],
           ]
         : [match, value],
@@ -1944,7 +1958,7 @@ test("reads a pending status for a pending commit status", async () => {
     HEAD,
     statusReadGh({
       headRuns: [run("ci (ubuntu-latest)", "success")],
-      headStatuses: [{ context: "ci (windows-latest)", state: "pending" }],
+      headStatuses: [commitStatus("ci (windows-latest)", "pending")],
     }),
   );
   expect(read).toMatchObject({ status: "pending", checks: ["ci (windows-latest)"] });
@@ -1961,7 +1975,7 @@ test("refuses a pending required commit status with the unchanged reason", async
     gh: fakeGh(
       routes({
         headRuns: [run("ci (ubuntu-latest)", "success")],
-        headStatuses: [{ context: "ci (windows-latest)", state: "pending" }],
+        headStatuses: [commitStatus("ci (windows-latest)", "pending")],
       }),
     ),
   });
@@ -1969,6 +1983,178 @@ test("refuses a pending required commit status with the unchanged reason", async
     ok: false,
     reason: 'required check "ci (windows-latest)" failed (commit status pending)',
   });
+});
+
+// Usefulness: verifies an entry the read cannot order, and a classic protection
+// reply it cannot interpret, read as unresolved and never as a pass, because the
+// latest entry per name decides and a pass could outrank a newer failure, and an
+// uninterpreted protection reply may hide a required check (issue #349).
+test.each([
+  [
+    "a check run with no id",
+    "check-runs",
+    [
+      {
+        check_runs: [
+          {
+            name: "ci (ubuntu-latest)",
+            status: "completed",
+            conclusion: "success",
+            started_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      },
+    ],
+  ],
+  [
+    "a check run with a start time that is not a date",
+    "check-runs",
+    [{ check_runs: [{ ...run("ci (ubuntu-latest)", "success"), started_at: "zzz" }] }],
+  ],
+  [
+    "a commit status with no update time",
+    "status --paginate",
+    [{ statuses: [{ id: 1, context: "ci (ubuntu-latest)", state: "success" }] }],
+  ],
+  [
+    "a commit status with an update time that is not a date",
+    "status --paginate",
+    [{ statuses: [{ ...commitStatus("ci (ubuntu-latest)", "success"), updated_at: "later" }] }],
+  ],
+  ["a protection reply that is an array", "branches/main/protection", []],
+  [
+    "a protection reply with a required-check list that is not an object",
+    "branches/main/protection",
+    { required_status_checks: "ci" },
+  ],
+  [
+    "a protection reply with contexts that are not a list",
+    "branches/main/protection",
+    { required_status_checks: { contexts: "ci" } },
+  ],
+  [
+    "a protection reply with a check that names no context",
+    "branches/main/protection",
+    { required_status_checks: { checks: [{}] } },
+  ],
+])("reads an unresolved status for %s", async (_name, endpoint, body) => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match.includes(endpoint) ? [match, body] : [match, value],
+    ),
+  );
+  const read = await readOn(HEAD, gh);
+  expect(read.status).toBe("unresolved");
+  expect(read.checks).toEqual([]);
+});
+
+// Usefulness: verifies a protection reply with no required-check list is
+// interpretable, so the uninterpretable-shape refusal does not reject a branch
+// that is protected without a required check (issue #349).
+test("reads a status when classic protection names no required check", async () => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match.includes("branches/main/protection")
+        ? [match, { required_pull_request_reviews: {} }]
+        : [match, value],
+    ),
+  );
+  expect((await readOn(HEAD, gh)).status).toBe("pass");
+});
+
+// Usefulness: verifies a failed read of the required names reads as unresolved,
+// because the list may name a required check that no configuration source did,
+// while the `no required checks` answer still reads (issue #349).
+test.each([
+  ["a failed call", "stderr: gh: HTTP 502", "unresolved"],
+  ["a reply that is not JSON", "not json", "unresolved"],
+  ["a list with an entry that names nothing", [{}], "unresolved"],
+  [
+    "the no required checks answer",
+    "stderr: no required checks reported on the 'main' branch",
+    "pass",
+  ],
+])("reads the required names from %s", async (_name, reply, expected) => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match === "pr checks 42" ? [match, reply] : [match, value],
+    ),
+  );
+  expect((await readOn(HEAD, gh)).status).toBe(expected);
+});
+
+// Usefulness: verifies the supplied status never passes a state the finish gate
+// refuses, because the read and the gate judge the same pages and the same
+// evaluated commit: a success on page two decides for both, and a failing test
+// merge commit refuses both (issue #349).
+test.each([
+  [
+    "a later success on page two of the commit statuses",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      statusPages: [
+        { statuses: [commitStatus("ci (windows-latest)", "failure", "2026-01-01T00:00:00Z")] },
+        { statuses: [commitStatus("ci (windows-latest)", "success", "2026-01-02T00:00:00Z")] },
+      ],
+    },
+  ],
+  [
+    "a failing check run on the test merge commit",
+    { headRuns: BOTH_PASS, mergeRuns: [run("ci (ubuntu-latest)", "failure")] },
+  ],
+  [
+    "a passing test merge commit over a failing head",
+    { headRuns: [run("ci (ubuntu-latest)", "failure")], mergeRuns: BOTH_PASS },
+  ],
+  ["a failing required check on the head", { headRuns: [run("ci (ubuntu-latest)", "failure")] }],
+])(
+  "the supplied status agrees with the finish gate on %s",
+  async (_name, { statusPages, ...options }) => {
+    const table = routes(options).map(([match, value]) =>
+      statusPages && match === `commits/${HEAD}/status --paginate`
+        ? [match, statusPages]
+        : [match, value],
+    );
+    const read = await readOn(HEAD, fakeGh(table));
+    const gate = await checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh: fakeGh(table) });
+    expect(read.status === "pass").toBe(gate.ok);
+  },
+);
+
+// Usefulness: verifies a failure wins over pending when entries share a required
+// name, so a rerun, another run, or a commit status that has not finished cannot
+// mask a failure beside it (issue #349).
+test.each([
+  [
+    "a check run and a commit status",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success"), openRun("ci (windows-latest)")],
+      headStatuses: [commitStatus("ci (windows-latest)", "failure")],
+    },
+  ],
+  [
+    "several check runs",
+    {
+      headRuns: [
+        run("ci (ubuntu-latest)", "success"),
+        { ...run("ci (windows-latest)", "failure"), started_at: "2026-01-01T00:00:00Z" },
+        { ...openRun("ci (windows-latest)"), started_at: "2026-01-02T00:00:00Z" },
+      ],
+    },
+  ],
+  [
+    "several commit statuses",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      headStatuses: [
+        commitStatus("ci (windows-latest)", "error", "2026-01-01T00:00:00Z"),
+        commitStatus("ci (windows-latest)", "pending", "2026-01-02T00:00:00Z"),
+      ],
+    },
+  ],
+])("reads a failing status over a pending one for %s", async (_name, options) => {
+  const read = await readOn(HEAD, statusReadGh(options));
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
 });
 
 // Usefulness: verifies every supplied status stays advisory after the commit
