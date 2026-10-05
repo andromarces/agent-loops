@@ -394,12 +394,19 @@ export async function expectAbortKillsShim(command, start) {
 
 // A clean repo at `CLEAN_REPO_HEAD`, answered from memory for a test that routes
 // `execa` through a double. The real snapshot code still runs over these answers;
-// only the `git` processes are gone. Any other `git` call throws.
+// only the `git` processes are gone. Each reply holds the bytes `git` prints, and
+// `answer` applies the `stripFinalNewline` option as execa does. Any other `git`
+// call throws.
 export const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
 
 export function cleanRepoGit(command, args, options) {
   assert.equal(command, "git");
-  const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
+  // execa strips one final newline from stdout unless `stripFinalNewline` is false.
+  const answer = (stdout) => ({
+    exitCode: 0,
+    stdout: options?.stripFinalNewline === false ? stdout : stdout.replace(/\r?\n$/, ""),
+    stderr: "",
+  });
   if (args[0] === "rev-parse") {
     if (args.includes("--is-inside-work-tree")) {
       return answer("true\n");
