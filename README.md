@@ -461,11 +461,13 @@ Operations: `dispatch` (default), `finish`, `abort`, `extend`, `wait-checks`.
 
 Stdout carries exactly one JSON envelope, except for `role --help` and `role -h`, which print plain usage text and exit 0. All logs go to stderr.
 
-A string error message prints unchanged. A message of `null` or `undefined` is not serialized. The error is then the text of the whole error value, for example `Error: null` for an `Error` and `[object Object]` for a plain object. Outside a handled child error, any other message value serializes once under the key `error`, exactly as the envelope serialized it before. Its JSON type and its `toJSON` redaction are kept, and the state file holds the same value. A message that serializes to `null`, such as `NaN`, `Infinity`, or a `toJSON` that returns `null`, then prints JSON `null`.
+A string error message prints unchanged. A message of `null` or `undefined` is not serialized. The error is then the text of the whole error value, for example `Error: null` for an `Error` and `[object Object]` for a plain object. Outside a handled child error, any other message value serializes once under the key `error`, exactly as the envelope serialized it before. Its JSON type and its `toJSON` redaction are kept, and a state file that records the result holds the same value. A message that serializes to `null`, such as `NaN`, `Infinity`, or a `toJSON` that returns `null`, then prints JSON `null`.
 
 A value that cannot serialize, or that serializes to nothing (a function, a Symbol, or a `toJSON` that returns `undefined`), prints a fixed text instead. The fixed text is `[unserializable message]`, or the digits of a BigInt. The envelope therefore never fails to stringify, and an error envelope always carries `error`.
 
-A handled child error result carries text, not a JSON value. A non-string value that the serialization yields prints as its JSON text, so `null` prints the string `"null"`. A string value, such as one that a `toJSON` returns, prints unchanged. A message that throws when read prints `Unreadable error`, and the turn still ends with a recorded result in the state file.
+A handled child error result carries text, not a JSON value. A non-string value that the serialization yields prints as its JSON text, so `null` prints the string `"null"`. A string value, such as one that a `toJSON` returns, prints unchanged. A timed out child turn prints `<role> timed out after <seconds> seconds` instead of its message.
+
+A message that throws when read prints `Unreadable error`, except for a timed out child turn. Before the child turn starts, a message that throws a canceled error prints `Interrupted by SIGINT` instead. Only a message that throws after the child turn starts ends with a recorded result in the state file.
 
 If the stdout write itself fails, for example on a closed pipe, no envelope can be delivered. The command then writes `Failed to write the envelope to stdout: <code>` to stderr. It exits 1 when the command outcome was exit 0, otherwise it keeps that non-zero exit code:
 
