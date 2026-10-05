@@ -23,8 +23,8 @@ files is a new runtime contract, and it handles files that can hold secrets.
 ## Decision
 
 1. **Scope.** At init, when `--cwd` is a linked work tree, the runtime copies a file
-   from the main work tree into `--cwd`. The main work tree is the checkout that
-   Git records for the shared Git directory (decision 10). The copy happens once, before the first child spawn and the
+   from the main work tree into `--cwd`. The main work tree is the first entry of
+   `git worktree list --porcelain` under the rule of decision 10. The copy happens once, before the first child spawn and the
    first snapshot. It is on by default.
 2. **Three conditions.** A file is copied only when all three hold:
    1. It exists in the main work tree.
@@ -127,23 +127,27 @@ worktree list` names (even when its `.git` entry is gone), every directory that
       and detect a swap that is in place when they run. They do not prevent a swap
       inside the window, and a file that such a swap redirects is still reported as
       copied. The runtime claims no more protection than that.
-10. **Finding the main work tree.** Git is asked, in this order. The command
-    `git rev-parse --git-common-dir` names the shared Git directory. The main work
-    tree is `core.worktree` of that Git directory (relative to it), or the parent
-    of a Git directory named `.git`. A bare repository has neither. The candidate
-    must exist, and `git rev-parse` run there must report the same common Git
-    directory, or it is not the main work tree. A `core.worktree` that names the
-    Git directory itself is taken as written. The command `git worktree list` is not used for this,
-    because Git lists the Git directory first when the Git directory is separate. Probed on
-    2026-10-04 with Git 2.56.0: for a normal repository the method returns the main
-    checkout; for a submodule, `core.worktree` of its Git directory names the
-    checkout; for a repository made with `git init --separate-git-dir`, the Git
-    directory records no checkout path (`core.worktree` is unset, `core.bare` is
-    false), and the checkout only points at the Git directory, so no Git command
-    names it. In that case, and for a bare repository, nothing is copied and the
-    run logs `no main work tree found, so nothing is copied`. That is a limit of
-    what Git records, not a choice. When `--cwd` is the main work tree, nothing is
-    copied and nothing is reported.
+10. **Finding the main work tree.** Decided by the repository owner on 2026-10-05.
+    The main work tree is the first entry of `git worktree list --porcelain`, and
+    only when all three hold: the entry is not marked `bare`, its path is an
+    existing directory, and its canonical path (`fs.promises.realpath`) is neither
+    the common Git directory (`git rev-parse --git-common-dir`, canonical) nor
+    inside it. Every other layout has no main work tree for this copy: a bare
+    repository (including one named `.git`), a plain separate Git directory made
+    by `git init --separate-git-dir`, a submodule, and a first entry inside the
+    Git directory. In each of them nothing is copied, the init does not fail, and
+    the run logs `no main work tree found, so nothing is copied`. This is an
+    approved rule, not a limit that Git forces: a lookup through the Git
+    configuration or the name of the Git directory was removed to keep one rule that follows the
+    first entry. A Git command that fails while the list or the common Git
+    directory is read fails the init (decision 15). Evidence, probed on
+    2026-10-05 with Git 2.56.0 and checked against the Git documentation for
+    `git worktree list --porcelain`: each record starts with a `worktree <path>`
+    line, a `bare` line appears only for a bare repository, and records end with an
+    empty line. For a normal clone the first entry is the checkout. For a bare
+    repository it is the repository, marked `bare`. For a repository with a
+    separate Git directory it is the Git directory. When `--cwd` is the main work
+    tree, nothing is copied and nothing is reported.
 11. **Opt-out.** `--no-copy-local-files` is an init field of `agent-loop role` and
     a flag of the headless `agent-loop` command. With it, nothing is copied and
     the behavior is as before. The role init stores `copyLocalFiles` (a boolean) in

@@ -28,13 +28,11 @@ function cleanRepoGit(cwd) {
     switch (args[0]) {
       case "rev-parse":
         if (args.includes("--git-common-dir")) {
-          // The directory holds a `.git` directory, so it is its own main work tree.
+          // The directory holds a `.git` directory, which is the common Git directory.
           return answer(".git\n");
         }
         return answer(args.includes("--show-toplevel") ? cwd : `${HEAD}\n`);
-      // No `core.worktree` is set.
-      case "config":
-        return { exitCode: 1, stdout: "", stderr: "" };
+
       case "status":
       case "ls-files":
         return answer("");

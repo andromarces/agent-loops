@@ -5,7 +5,7 @@
 // is a path name.
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execa } from "execa";
 import { logInfo, logWarn } from "./log.mjs";
 
@@ -127,60 +127,46 @@ async function hasBlockedAncestor(base, rel, blocked, create = false) {
 }
 
 /**
- * Lists every registered work tree from `git worktree list` as canonical paths. A
- * path that Git still lists counts as a work tree even when its `.git` entry is
- * gone. For a repository with a separate Git directory Git lists that directory
- * first, so the list is not used to find the main work tree.
+ * Reads `git worktree list --porcelain` into `{ path, bare }` entries, in Git's
+ * order. The porcelain format starts each record with a `worktree <path>` line and
+ * marks a bare repository with a `bare` line. An entry that Git still lists counts
+ * as a work tree even when its `.git` entry is gone.
  */
-async function listWorkTrees(root) {
+async function readWorkTrees(root) {
   const { stdout } = await git(root, ["worktree", "list", "--porcelain"]);
-  const paths = stdout
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("worktree "))
-    .map((line) => line.slice(9));
-  return await Promise.all(paths.map((path) => realpath(path).catch(() => resolve(path))));
+  return stdout
+    .split(/\r?\n\r?\n/)
+    .map((block) => block.split(/\r?\n/).filter(Boolean))
+    .map((lines) => ({
+      path: lines.find((line) => line.startsWith("worktree "))?.slice(9),
+      bare: lines.includes("bare"),
+    }))
+    .filter((entry) => entry.path !== undefined);
 }
 
+const isInside = (parent, child) => {
+  const rel = relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+};
+
 /**
- * Finds the main work tree the way Git records it. Returns its canonical path, or
- * null when Git names none: a bare repository, or a Git directory that records no
- * checkout path. `git init --separate-git-dir` records none (the main work tree
- * only points at the Git directory), and Git then lists the Git directory as the
- * first work tree, so no Git command names the checkout. A submodule's Git
- * directory records it in `core.worktree`.
- * 1. `git rev-parse --git-common-dir` names the Git directory shared by all work
- *    trees.
- * 2. The checkout is `core.worktree` of that Git directory, relative to it, or the
- *    parent of a Git directory named `.git`. A bare repository has neither.
- * 3. `git rev-parse` run in the checkout must report the same common Git
- *    directory. A Git command that fails there throws.
+ * Returns the canonical path of the main work tree, or null when there is none for
+ * this copy (decision 10 of ADR 0017). The main work tree is the first entry of
+ * `git worktree list --porcelain`, taken only when all three hold: the entry is not
+ * marked `bare`, its path is an existing directory, and its canonical path is
+ * neither the common Git directory (`git rev-parse --git-common-dir`) nor inside
+ * it. Every other layout has none: a bare repository, a plain separate Git
+ * directory, and a submodule, where Git lists the Git directory first. A Git
+ * command that fails throws.
  */
-async function findMainWorkTree(root) {
-  const commonDir = resolve(
-    root,
-    (await git(root, ["rev-parse", "--git-common-dir"])).stdout.trim(),
-  );
-  const readConfig = async (args) =>
-    (
-      await git(root, ["config", "--file", join(commonDir, "config"), ...args], {
-        allowExit: [1],
-      })
-    ).stdout.trim();
-  const configured = await readConfig(["--get", "core.worktree"]);
-  let candidate = null;
-  if (configured) {
-    candidate = resolve(commonDir, configured);
-  } else if (basename(commonDir) === ".git") {
-    candidate = dirname(commonDir);
-  }
-  if (candidate === null || (await lstatOrNull(candidate)) === null) {
+async function findMainWorkTree(root, entries) {
+  const first = entries[0];
+  if (first === undefined || first.bare || !(await lstatOrNull(first.path))?.isDirectory()) {
     return null;
   }
-  const common = (await git(candidate, ["rev-parse", "--git-common-dir"])).stdout.trim();
-  if ((await realpath(resolve(candidate, common))) !== (await realpath(commonDir))) {
-    return null;
-  }
-  return await realpath(candidate);
+  const common = (await git(root, ["rev-parse", "--git-common-dir"])).stdout.trim();
+  const main = await realpath(first.path);
+  return isInside(await realpath(resolve(root, common)), main) ? null : main;
 }
 
 /**
@@ -234,9 +220,9 @@ async function collect(ctx, rel, abs) {
  * folded, which can only skip more; paths are compared as canonical strings from
  * `realpath`. Returns `{ copied, skipped }` as sorted root-relative path names, or
  * null when there is no main work tree to copy from (`cwd` is the main work tree,
- * or Git names no main work tree: a bare repository, or a Git directory that
- * records no checkout), where nothing is copied. A Git command that fails while
- * the main work tree is looked up or probed throws, and fails the init. An untracked file that is not
+ * or the main work tree rule of `findMainWorkTree` finds none), where nothing is
+ * copied. A Git command that fails while the main work tree is looked up throws,
+ * and fails the init. An untracked file that is not
  * copied is in `skipped`. A listed directory that holds more than
  * `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and none of its files
  * is copied. A file whose check fails is in `skipped`.
@@ -253,7 +239,8 @@ async function collect(ctx, rel, abs) {
  */
 export async function copyLocalFiles(cwd, hooks = {}) {
   const root = (await git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();
-  const mainReal = await findMainWorkTree(root);
+  const entries = await readWorkTrees(root);
+  const mainReal = await findMainWorkTree(root, entries);
   if (mainReal === null) {
     logInfo("local files: no main work tree found, so nothing is copied");
     return null;
@@ -265,7 +252,9 @@ export async function copyLocalFiles(cwd, hooks = {}) {
   // A registered work tree is never read from (inside the main work tree) and
   // never written into (inside the linked work tree), whether or not its `.git`
   // entry is still there.
-  const trees = await listWorkTrees(root);
+  const trees = await Promise.all(
+    entries.map((entry) => realpath(entry.path).catch(() => resolve(entry.path))),
+  );
   const sourceBlocked = new Set(trees);
   sourceBlocked.delete(mainReal);
   const targetBlocked = new Set([mainReal, ...trees]);

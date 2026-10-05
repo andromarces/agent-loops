@@ -856,16 +856,13 @@ function cleanRepoGit(command, args, options) {
     if (args.includes("--is-inside-work-tree")) {
       return answer("true\n");
     }
-    // The directory holds a `.git` directory, so it is its own main work tree.
+    // The directory holds a `.git` directory, which is the common Git directory.
     if (args.includes("--git-common-dir")) {
       return answer(".git\n");
     }
     return answer(args.includes("--show-toplevel") ? options.cwd : `${CLEAN_REPO_HEAD}\n`);
   }
-  // No `core.worktree` is set.
-  if (args[0] === "config") {
-    return { exitCode: 1, stdout: "", stderr: "" };
-  }
+
   if (args[0] === "status" || args[0] === "ls-files") {
     return answer("");
   }
