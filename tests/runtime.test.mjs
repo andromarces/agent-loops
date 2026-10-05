@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";
 
-// Answers `git` from memory for the one test that switches it on (see
+// Answers `git` from memory for the tests that switch it on (see
 // `cleanRepoGit` below); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
@@ -740,8 +740,14 @@ test("child adapter failure surfaces to orchestrator", async () => {
 });
 
 // 13. Usefulness: verifies child timeout surfaces as timeout message in error result.
+//
+// `git` is answered from memory, not spawned: a repo and the snapshots around the
+// turns cost about ten `git` processes, and a loaded Windows runner outlasted the
+// test limit on them (issue #430). The behavior under test is the timeout message,
+// and the snapshot code has its own tests on real repos.
 test("child timeout surfaces with timeout message", async () => {
-  const repo = await createTempRepo();
+  const cwd = tmpdir();
+  gitDouble.answer = cleanRepoGit(cwd);
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_reviewer", prompt: "hang please" }),
@@ -759,7 +765,9 @@ test("child timeout surfaces with timeout message", async () => {
 
     const result = await runLoop({
       task: "Task 13",
-      cwd: repo,
+      cwd,
+      // The init copy of local files has no `git` answers in the double.
+      copyLocalFiles: false,
       maxSteps: 5,
       timeout: 10,
       roles: {
@@ -773,7 +781,7 @@ test("child timeout surfaces with timeout message", async () => {
     expect(result.exitCode).toBe(0);
     expect(orchAdapter.recorded[1].prompt).toContain("reviewer timed out after 10 seconds");
   } finally {
-    await removePath(repo);
+    gitDouble.answer = null;
   }
 });
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // Answers `git` from memory for the tests that switch it on (see `cleanRepoGit`
-// below); every other test reaches the real `execa`.
+// in runtime-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -33,7 +33,7 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { CLEAN_REPO_HEAD, cleanRepoGit, createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -770,46 +770,6 @@ test("a declared PR with no gate reports the marker and the gate in one refusal"
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 
-// Usefulness: verifies the same collect-then-report rule covers the completion
-// rule, so a declared PR run learns about the unmet reviewer turn and the missing
-// gate from one `finish` call (#302).
-test("a declared PR with no gate reports the completion rule and the gate in one refusal", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-  await initPrRun(repo, 42);
-
-  const result = await finishCall(repo, ["--require-accept"], {
-    gh: async () => {
-      throw new Error("gh must not run: no gate was requested.");
-    },
-  });
-
-  const gate =
-    "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
-  expect(result.exitCode).toBe(1);
-  expect(result.payload.error).toBe(
-    `Finish refused: no reviewer turn after the latest worker turn; ${gate}.`,
-  );
-  expect((await readRepoState(repo)).lifecycle).toBe("active");
-});
-
-// Usefulness: verifies a run that declares a PR and gates the same PR behaves as
-// a gated run does today, so the declaration adds no second enforcement path
-// (#302).
-test("a declared PR with a matching gate finishes as the gate allows", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-  await initPrRun(repo, 42);
-  await dispatchReviewer(repo, ACCEPT);
-  const head = (await snapshot(repo)).head;
-
-  const result = await finishCall(repo, ["--require-ci", "42"], { gh: cleanPrGh(head) });
-  expect(result.exitCode).toBe(0);
-  expect((await readRepoState(repo)).lifecycle).toBe("finished");
-});
-
 // A `gh` runner for a ruleset-only base branch with no required check: the ruleset
 // read returns a non-empty array of well-formed rules with no
 // required-status-check rule, and classic protection answers the exact 404 that
@@ -840,52 +800,30 @@ function noRequiredCheckGh(head) {
   };
 }
 
-// The two finishes below run on a repo whose `git` is answered from memory. A
+// The finishes below run on a repo whose `git` is answered from memory. A
 // declared run with one accepted reviewer turn takes about twenty `git`
 // processes to reach the finish (a repo, then a snapshot around each turn), and a
 // loaded Windows runner outlasted a test limit on that before the finish under
 // test started (issue #385). The `role` code is real: the double replaces only
 // the `git` child, so the dispatches, the snapshots, and the finish gate all run
 // over the answers. Snapshot behavior against a real repo keeps its own tests.
-const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
-
-function cleanRepoGit(command, args, options) {
-  expect(command).toBe("git");
-  const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
-  if (args[0] === "rev-parse") {
-    if (args.includes("--is-inside-work-tree")) {
-      return answer("true\n");
-    }
-    // The directory holds a `.git` directory, which is the common Git directory.
-    if (args.includes("--git-common-dir")) {
-      return answer(".git\n");
-    }
-    return answer(args.includes("--show-toplevel") ? options.cwd : `${CLEAN_REPO_HEAD}\n`);
-  }
-
-  if (args[0] === "status" || args[0] === "ls-files") {
-    return answer("");
-  }
-  // The directory is the only work tree, so the init copy of local files has no
-  // main work tree to copy from.
-  if (args[0] === "worktree") {
-    return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0\0`);
-  }
-  throw new Error(`unexpected git call: ${args.join(" ")}`);
-}
-
 // A directory stands in for the repo: the double answers for it, so it needs no
 // `git` setup.
-async function useAcceptedPrRun() {
+async function useDeclaredPrRun() {
   const repo = await mkdtemp(join(tmpdir(), "role-test-clean-repo-"));
   await mkdir(join(repo, ".git"));
   repos.push(repo);
   await initPrRun(repo, 42);
-  await dispatchReviewer(repo, ACCEPT);
   return { repo, head: CLEAN_REPO_HEAD };
 }
 
-describe("a declared PR whose reviewer turn was accepted", () => {
+async function useAcceptedPrRun() {
+  const run = await useDeclaredPrRun();
+  await dispatchReviewer(run.repo, ACCEPT);
+  return run;
+}
+
+describe("a declared PR run on a repo answered from memory", () => {
   beforeEach(() => {
     gitDouble.answer = cleanRepoGit;
   });
@@ -922,6 +860,40 @@ describe("a declared PR whose reviewer turn was accepted", () => {
     expect(result.exitCode).toBe(0);
     expect(result.payload.noRequiredChecks).toBeUndefined();
     expect((await readRepoState(repo)).noRequiredChecks).toBeUndefined();
+  });
+
+  // Usefulness: verifies the same collect-then-report rule covers the completion
+  // rule, so a declared PR run learns about the unmet reviewer turn and the missing
+  // gate from one `finish` call (#302).
+  test("a declared PR with no gate reports the completion rule and the gate in one refusal", async () => {
+    await setup();
+    const { repo } = await useDeclaredPrRun();
+
+    const result = await finishCall(repo, ["--require-accept"], {
+      gh: async () => {
+        throw new Error("gh must not run: no gate was requested.");
+      },
+    });
+
+    const gate =
+      "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toBe(
+      `Finish refused: no reviewer turn after the latest worker turn; ${gate}.`,
+    );
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  });
+
+  // Usefulness: verifies a run that declares a PR and gates the same PR behaves as
+  // a gated run does today, so the declaration adds no second enforcement path
+  // (#302).
+  test("a declared PR with a matching gate finishes as the gate allows", async () => {
+    await setup();
+    const { repo, head } = await useAcceptedPrRun();
+
+    const result = await finishCall(repo, ["--require-ci", "42"], { gh: cleanPrGh(head) });
+    expect(result.exitCode).toBe(0);
+    expect((await readRepoState(repo)).lifecycle).toBe("finished");
   });
 });
 
