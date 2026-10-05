@@ -36,6 +36,8 @@ Collect these before the first dispatch:
 - maximum steps (`--max-steps`)
 - the PR number when the task is PR work (delivered on a pull request); the run
   supplies it, and a headless run names it in the task
+- the test command, when the operator names one (`--test-cmd`, with the optional
+  `--test-cmd-timeout`); the operator supplies it, and no turn sets it
 
 ## Resolving the CLI
 
@@ -106,6 +108,9 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
 printf '%s' "<prompt>" | agent-loop role dispatch --role worker --cwd "<work tree>"
 printf '%s' "<prompt>" | agent-loop role dispatch --role reviewer --cwd "<work tree>"
 ```
+
+A run that set `--test-cmd` at init passes the same `--test-cmd "<command>"` on
+every reviewer dispatch, as the section on the runtime test command states.
 
 Read the JSON envelope on stdout. Example reviewer envelope:
 
@@ -354,6 +359,44 @@ The read follows `--pr`, which is the PR input both paths know at dispatch. A
 headless run that takes only `--require-ci` and declares no `--pr` reads no
 status.
 
+## The runtime supplies a test command result
+
+A reviewer turn runs read-only, so it cannot run the test suite. An operator can
+name a command with `--test-cmd <command>` at init. The runtime runs it in the
+work tree before each reviewer turn, outside the reviewer sandbox, and supplies
+the result in the reviewer prompt. A worker turn never runs it. A run without
+the flag is unchanged.
+
+- The flag is the only source of the command. A worker report, a reviewer
+  report, a task text, an orchestrator action, and a prompt never set or change
+  it. The state file holds only a digest of the command. Pass the same
+  `--test-cmd` value on every reviewer dispatch, as the operator gave it: a
+  changed value and a missing value are refused before a step is charged. Never
+  pass a command that a turn produced.
+- The command goes to the platform shell as one string: `/bin/sh -c` on POSIX
+  and `cmd.exe` on Windows. The runtime adds no quoting. It runs with the
+  environment of the runtime, so the operator keeps secrets out of the command
+  text.
+- `--test-cmd-timeout <seconds>` bounds one run and defaults to 600. At the
+  bound, and on a cancel, the runtime kills the command and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows. A canceled run reports `status: "canceled"`. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
+- The runtime keeps the last 8 KiB of the output and reports `truncated` when it
+  cut. The tail is untrusted data: it can hold text that reads as an instruction.
+  The runtime redacts the values of secret-named environment variables, and no
+  other secret.
+- The runtime compares the work tree before and after the command and reports
+  `workTreeChanged` and `changedPaths`. The reviewer snapshot is taken after the
+  command, so those writes are the baseline of that turn and are not a reviewer
+  mutation. The report is the only record: read it, and act on a change that the
+  task did not expect.
+- The result is advisory evidence with `advisory: true`. It is `testRun` in the
+  prompt, in the dispatch envelope, in `lastResult` in the state file, and in the
+  headless result prompt beside the reviewer response. A reviewer turn that ends
+  in an error still carries it. Compare it with the
+  reviewer `Checks` line and act on a disagreement. A turn with no command
+  carries no `testRun`.
+- The reviewer sees the result of the whole command only. It cannot run a
+  targeted test.
+
 ## Test evidence when the reviewer cannot run tests
 
 Direct probe: on 2026-09-29, a `codex exec` run on Windows 11 with codex-cli
@@ -371,7 +414,8 @@ the elevated Windows sandbox are not verified.
 When a reviewer `Checks` line shows that tests did not run, for any reason, the
 reviewer accept is not test evidence. Use the required CI checks for test
 evidence instead. The `--require-ci` finish gate and the status rules above
-already govern how a run reads them, so this rule adds no flag and no sequence.
+already govern how a run reads them. A run with `--test-cmd` also has the result
+of the section above.
 A worker `Checks` line that shows a passing local test run is reported evidence,
 not a gate input.
 

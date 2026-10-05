@@ -1,0 +1,288 @@
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, test } from "vitest";
+import { sha256 } from "../src/lib/hash.mjs";
+import { statePaths } from "../src/lib/runstate.mjs";
+import { executeRoleCommand } from "../src/role.mjs";
+import {
+  cleanup,
+  dispatchArgv,
+  INIT_OVERRIDES,
+  readRepoState,
+  recordingAdapter,
+  repos,
+  setup,
+  stdinPrompt,
+  withRepo,
+} from "./role-helpers.mjs";
+import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+
+afterEach(cleanup);
+
+// Interactive behavior of `--test-cmd` (issue #420, ADR 0017).
+const node = (body) => `node -e "${body}"`;
+// A command that leaves a marker file, so a test can tell which command ran.
+const marker = (file) =>
+  node(`require('fs').writeFileSync('${file.replaceAll("\\", "/")}', 'ran')`);
+const exists = (file) =>
+  access(file).then(
+    () => true,
+    () => false,
+  );
+const scratch = [];
+async function scratchDir() {
+  const dir = await mkdtemp(join(tmpdir(), "role-test-cmd-"));
+  scratch.push(dir);
+  return dir;
+}
+afterEach(async () => {
+  for (const dir of scratch.splice(0)) {
+    await removePath(dir);
+  }
+});
+
+async function start(extra = []) {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const reviewer = recordingAdapter([]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+  const init = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, ...extra], "worker"), repo),
+    { agents, stdin: stdinPrompt },
+  );
+  return { repo, reviewer, agents, init };
+}
+
+const reviewerTurn = (repo, agents, overrides = []) =>
+  executeRoleCommand(withRepo(dispatchArgv(overrides, "reviewer"), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+
+// Usefulness: verifies the init call records only a digest of the command and
+// its bound, so a later dispatch can check the flag against it and the state file
+// never holds the command text (issue #420, ADR 0017).
+test("init records a digest of the test command and its bound, not the command", async () => {
+  const { repo, init } = await start([
+    "--test-cmd",
+    "pnpm test --token-ish",
+    "--test-cmd-timeout",
+    "90",
+  ]);
+  expect(init.exitCode).toBe(0);
+  const state = await readRepoState(repo);
+  expect(state.testCmdTimeout).toBe(90);
+  expect(state.testCmdSha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(JSON.stringify(state)).not.toContain("pnpm test");
+});
+
+// Usefulness: verifies a run with no `--test-cmd` writes none of the fields, so
+// the state file keeps the shape a consumer already reads (issue #420).
+test("a run without --test-cmd records no test command fields", async () => {
+  const { repo } = await start();
+  const state = await readRepoState(repo);
+  expect(state).not.toHaveProperty("testCmdSha256");
+  expect(state).not.toHaveProperty("testCmdTimeout");
+});
+
+// Usefulness: verifies a reviewer dispatch that passes the flag runs that
+// command, supplies the result in the prompt, and reports it in the envelope and
+// the state file, so the parent can compare it with the reviewer Checks line
+// (issue #420).
+test("a reviewer dispatch supplies the test result in the prompt, envelope, and state", async () => {
+  const cmd = node("console.log('5 passed')");
+  const { repo, reviewer, agents } = await start(["--test-cmd", cmd]);
+  const turn = await reviewerTurn(repo, agents, ["--test-cmd", cmd]);
+  expect(turn.exitCode).toBe(0);
+  expect(reviewer.recorded[0].prompt).toContain("5 passed");
+  expect(reviewer.recorded[0].prompt).toContain("Result: exit 0.");
+  expect(turn.payload.testRun).toMatchObject({ status: "pass", exitCode: 0, advisory: true });
+  expect((await readRepoState(repo)).lastResult.testRun).toMatchObject({ status: "pass" });
+});
+
+// Usefulness: verifies the operator flag is the only source of the command on a
+// later dispatch: a command written into the state file by something else, as a
+// plain field or with a digest that matches it, never runs (issue #420, ADR 0017).
+test("a command substituted in the state file never runs", async () => {
+  const dir = await scratchDir();
+  const operator = join(dir, "operator.txt");
+  const substitute = join(dir, "substitute.txt");
+  const { repo, agents } = await start(["--test-cmd", marker(operator)]);
+
+  const stateFile = statePaths({ cwd: repo }).stateFile;
+  const state = await readRepoState(repo);
+  // Both shapes a turn could write: the plain field a reader might trust, and a
+  // digest that matches the substitute.
+  state.testCmd = marker(substitute);
+  state.testCmdSha256 = sha256(marker(substitute));
+  await writeFile(stateFile, JSON.stringify(state));
+
+  const withFlag = await reviewerTurn(repo, agents, ["--test-cmd", marker(operator)]);
+  expect(withFlag.exitCode).toBe(1);
+  expect(withFlag.payload.error).toContain("--test-cmd cannot be changed after init");
+  const withoutFlag = await reviewerTurn(repo, agents);
+  expect(withoutFlag.exitCode).toBe(1);
+  expect(await exists(substitute)).toBe(false);
+  expect(await exists(operator)).toBe(false);
+});
+
+// Usefulness: verifies a reviewer dispatch with no flag on a run that set one is
+// refused before it charges a step, so no path runs a command the flag did not
+// name, including a resume (issue #420, ADR 0017).
+test("a reviewer dispatch without the flag is refused and charges no step", async () => {
+  const dir = await scratchDir();
+  const operator = join(dir, "operator.txt");
+  const { repo, agents } = await start(["--test-cmd", marker(operator)]);
+  const before = (await readRepoState(repo)).stepsUsed;
+  const turn = await reviewerTurn(repo, agents);
+  expect(turn.exitCode).toBe(1);
+  expect(turn.payload.error).toContain("--test-cmd is required");
+  expect((await readRepoState(repo)).stepsUsed).toBe(before);
+  expect(await exists(operator)).toBe(false);
+});
+
+// Usefulness: verifies a resumed interrupted run takes the command from the flag
+// as well: the resume dispatch runs the flag command and ignores a substituted
+// state field (issue #420, ADR 0017).
+test("a resumed dispatch runs the flag command and not a state field", async () => {
+  const dir = await scratchDir();
+  const operator = join(dir, "operator.txt");
+  const substitute = join(dir, "substitute.txt");
+  const { repo, agents } = await start(["--test-cmd", marker(operator)]);
+  const stateFile = statePaths({ cwd: repo }).stateFile;
+  const state = await readRepoState(repo);
+  state.lifecycle = "interrupted";
+  state.testCmd = marker(substitute);
+  await writeFile(stateFile, JSON.stringify(state));
+
+  const resumed = await reviewerTurn(repo, agents, [
+    "--resume-interrupted",
+    "--test-cmd",
+    marker(operator),
+  ]);
+  expect(resumed.exitCode).toBe(0);
+  expect(await readFile(operator, "utf8")).toBe("ran");
+  expect(await exists(substitute)).toBe(false);
+});
+
+// Usefulness: verifies a worker dispatch runs no command and carries no result,
+// because the command belongs to reviewer turns only (issue #420).
+test("a worker dispatch runs no test command", async () => {
+  const cmd = node("console.log('ran')");
+  const { repo, agents } = await start(["--test-cmd", cmd]);
+  const state = await readRepoState(repo);
+  expect(state.lastResult).not.toHaveProperty("testRun");
+  const second = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(second.payload).not.toHaveProperty("testRun");
+});
+
+// Usefulness: verifies a timed-out command reports as timed out in the envelope
+// and the turn still completes, so a slow suite does not end the run (issue #420).
+test("a timed-out command is reported in the envelope and the turn completes", async () => {
+  const cmd = node("setTimeout(() => {}, 60000)");
+  const { repo, agents } = await start(["--test-cmd", cmd, "--test-cmd-timeout", "1"]);
+  const turn = await reviewerTurn(repo, agents, ["--test-cmd", cmd]);
+  expect(turn.exitCode).toBe(0);
+  expect(turn.payload.testRun).toMatchObject({ status: "timed-out", timedOut: true });
+}, 20_000);
+
+// Usefulness: verifies a later call cannot change or add the command, so only
+// the init flag sets it, and the refusal never prints the stored command
+// (issue #420, ADR 0017).
+test("a later call rejects a changed or added test command", async () => {
+  const { repo, agents } = await start(["--test-cmd", "pnpm test"]);
+  const changed = await reviewerTurn(repo, agents, ["--test-cmd", "rm -rf /"]);
+  expect(changed.exitCode).toBe(1);
+  expect(changed.payload.error).toContain("--test-cmd cannot be changed after init");
+  expect(changed.payload.error).not.toContain("pnpm test");
+
+  const plain = await start();
+  const added = await reviewerTurn(plain.repo, plain.agents, ["--test-cmd", "pnpm test"]);
+  expect(added.payload.error).toContain("--test-cmd cannot be changed after init");
+});
+
+// Usefulness: verifies a reviewer turn that ends in an adapter error still
+// reports the command result and its work tree change in the envelope and the
+// state file, so a failed turn does not lose evidence the runtime already read
+// (issue #420, ADR 0017).
+test("an adapter error keeps the test result in the envelope and the state", async () => {
+  const cmd = node("require('fs').writeFileSync('generated.txt', 'x'); console.log('9 passed')");
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const failing = {
+    async run() {
+      throw new Error("reviewer CLI crashed");
+    },
+  };
+  const agents = { fake1: recordingAdapter([]), fake2: failing };
+  await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--test-cmd", cmd], "worker"), repo),
+    { agents, stdin: stdinPrompt },
+  );
+  const turn = await reviewerTurn(repo, agents, ["--test-cmd", cmd]);
+  expect(turn.exitCode).toBe(1);
+  expect(turn.payload).toMatchObject({ status: "error" });
+  expect(turn.payload.testRun).toMatchObject({
+    status: "pass",
+    workTreeChanged: true,
+    changedPaths: ["generated.txt"],
+  });
+  expect((await readRepoState(repo)).lastResult.testRun).toMatchObject({ status: "pass" });
+});
+
+// Usefulness: verifies init refuses a bound with no command and a blank command,
+// so a run never starts with a half-set pair (issue #420).
+test("init refuses a bound without a command and a blank command", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const deps = { agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) } };
+  for (const [extra, message] of [
+    [["--test-cmd-timeout", "5"], "--test-cmd-timeout requires --test-cmd."],
+    [["--test-cmd", "  "], "--test-cmd must not be blank."],
+  ]) {
+    const result = await executeRoleCommand(
+      withRepo(dispatchArgv([...INIT_OVERRIDES, ...extra], "worker"), repo),
+      { ...deps, stdin: stdinPrompt },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain(message);
+  }
+});
+
+// Usefulness: verifies an interactive cancel during the command keeps the result and the
+// work tree compare in the envelope and the state file, so the parent sees what the
+// command wrote before the cancel (issue #420 review of aa0b25e).
+test("a cancel during the command keeps the test result in the envelope and the state", async () => {
+  const dir = await scratchDir();
+  const started = join(dir, "started.txt");
+  const cmd = node(
+    `require('fs').writeFileSync('early.txt', 'x'); require('fs').writeFileSync('${started.replaceAll("\\", "/")}', 'y'); setTimeout(() => {}, 60000)`,
+  );
+  const { repo, agents } = await start(["--test-cmd", cmd]);
+  const controller = new AbortController();
+  const pending = executeRoleCommand(
+    withRepo(dispatchArgv(["--test-cmd", cmd], "reviewer"), repo),
+    { agents, stdin: stdinPrompt, signal: controller.signal },
+  );
+  const deadline = Date.now() + 10_000;
+  while (!(await exists(started))) {
+    expect(Date.now() < deadline, "the command never started").toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  controller.abort();
+  const turn = await pending;
+  expect(turn.exitCode).toBe(130);
+  expect(turn.payload.testRun).toMatchObject({
+    status: "canceled",
+    workTreeChanged: true,
+    changedPaths: ["early.txt"],
+  });
+  expect((await readRepoState(repo)).lastResult.testRun).toMatchObject({ status: "canceled" });
+}, 20_000);

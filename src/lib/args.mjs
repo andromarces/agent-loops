@@ -73,6 +73,21 @@ export function readMaxSteps(value) {
   return readPositiveInt("--max-steps", value);
 }
 
+/**
+ * The `--test-cmd` pair, validated once for both paths (ADR 0017). The command
+ * must be non-blank, and the bound has no meaning without it.
+ * @returns {string | null} the refusal, or null when the pair is valid
+ */
+export function testCmdError(testCmd, testCmdTimeout) {
+  if (testCmd !== null && testCmd.trim() === "") {
+    return "--test-cmd must not be blank.";
+  }
+  if (testCmd === null && testCmdTimeout !== null) {
+    return "--test-cmd-timeout requires --test-cmd.";
+  }
+  return null;
+}
+
 // Defaults shared by the headless CLI, the role subcommand, and the loop runtime.
 export const DEFAULT_MAX_STEPS = 20;
 export const DEFAULT_TIMEOUT = 3600;
