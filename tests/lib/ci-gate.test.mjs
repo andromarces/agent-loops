@@ -1795,6 +1795,43 @@ test("reads an unresolved status when the gh call exceeds the time bound", async
   expect(read.summary).toMatch(/timed out|abort/i);
 });
 
+// Usefulness: verifies a `gh` rejection whose `message` getter throws still yields an
+// unresolved status. A getter that throws inside the catch block would replace the
+// read result with a throw and fail the dispatch (issue #475).
+test("reads an unresolved status when the error message getter throws", async () => {
+  const hostile = new Error("hidden");
+  Object.defineProperty(hostile, "message", {
+    get() {
+      throw new Error("message getter");
+    },
+  });
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: HEAD,
+    gh: async () => {
+      throw hostile;
+    },
+  });
+  expect(read).toMatchObject({ status: "unresolved", checks: [] });
+});
+
+// Usefulness: verifies a `gh` rejection whose `message` is an object with its own
+// `toString` key still yields an unresolved status. The serialized message has no
+// callable `toString`, so a plain string conversion of it throws inside the catch
+// block (issue #475 review).
+test("reads an unresolved status when the error message is a non-string with a toString key", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: HEAD,
+    gh: async () => {
+      throw Object.assign(new Error("hidden"), { message: { toString: 1 } });
+    },
+  });
+  expect(read).toMatchObject({ status: "unresolved", checks: [] });
+});
+
 // Usefulness: verifies the real `gh` runner passes the installed execa only options
 // that it accepts, and that the command and arguments of the read reach the spawn
 // layer. The unit stubs accept any option shape, and the double in

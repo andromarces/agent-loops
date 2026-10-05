@@ -6,6 +6,7 @@
 // The `gh` runner is injected so a caller can run the gate against captured
 // responses. The default runner shells out to the `gh` CLI.
 import { execa } from "execa";
+import { readableErrorText } from "./error-message.mjs";
 import { isJsonObject } from "./json.mjs";
 
 // A check run passes with one of these conclusions; every other conclusion and
@@ -1125,7 +1126,7 @@ export async function readRequiredChecks({
   } catch (err) {
     const detail = controller.signal.aborted
       ? `the read timed out after ${timeoutMs}ms`
-      : oneLine(err?.message ?? err);
+      : oneLine(readableErrorText(err));
     return unresolved(`unread: ${detail}`, prHead);
   } finally {
     clearTimeout(timer);
