@@ -360,3 +360,15 @@ test.each([
   expect(prompt).toContain("merge, push");
   expect(prompt).toContain("A read-only query changes nothing, so it stays allowed.");
 });
+
+// Usefulness: verifies the reviewer prompt requires each blocker inside the Blockers line itself,
+// because the parent reads only the closing block and cannot follow a pointer such as "the defects
+// above" to body text it never receives (issue #434).
+test("reviewer prompt requires each blocker stated inside the Blockers line", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    'State each blocker concretely in the Blockers line. Never refer to text outside the block, for example "the defects above", because the reader sees only the block.',
+  );
+  expect(prompt.indexOf("State each blocker")).toBeGreaterThan(prompt.indexOf("Deferred:"));
+  expect(prompt.split("Blockers:")).toHaveLength(2);
+});
