@@ -17,6 +17,11 @@ rule.
   with `--require-ci` allows, as the waiting rules below state. A status read is
   not a review, not a test, and not an edit, and `agent-loop role wait-checks` is
   the only command it covers.
+- Never write to GitHub or any remote: do not create, edit, comment on, review,
+  merge, push, or otherwise change an issue, a pull request, a branch, or any
+  other remote state. A status read, such as `agent-loop role wait-checks`,
+  changes nothing, so it is not a write. The runtime does not detect a remote
+  write, so this rule is advisory.
 - Read only the JSON envelope the subcommand prints on stdout. Child stderr
   logs and child response text beyond the envelope are not input.
 

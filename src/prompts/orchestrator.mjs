@@ -140,7 +140,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
   if (rule === "wait") {
     return [
       gate,
-      "- This run excepts one read from the role rule above: you may read the pull request check status yourself. A status read is not a review, not a test, and not an edit, and agent-loop role wait-checks is the only command it covers.",
+      "- This run excepts one read from the role rule above: you may read the pull request check status yourself. A status read is not a review, not a test, not an edit, and not a remote write, and agent-loop role wait-checks is the only command it covers.",
       "- Wait for the required checks at two points:",
       "  - Before you dispatch the reviewer on a new PR head, wait for the required checks on that head to complete.",
       "  - When a reviewer turn reports a pending required check, wait for that check to complete before you finish. A check still pending after a wait is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check, so dispatch the reviewer again, or wait again on a later turn, or abort with the pending check named in the reason.",
@@ -286,6 +286,14 @@ function modeBlock(mode) {
   return `\n- This run is ${mode}: ${rules[mode]}`;
 }
 
+// The remote-write rule rides on every orchestrator turn prompt, not only the
+// first. A resumed session can lose its initial prompt when a CLI opens a new
+// conversation in its place (the agy known-limit), so each follow-up carries the
+// rule itself. The runtime mutation check reads only the local work tree, so the
+// rule is advisory (issue #422).
+const REMOTE_WRITE_RULE =
+  "You must NOT write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.";
+
 export function initialPrompt({
   task,
   maxSteps,
@@ -305,6 +313,7 @@ export function initialPrompt({
 You are the orchestrator in an automated multi-agent coding loop.
 Your role is to direct the workflow to complete the user task.
 You must NOT edit files, and you must NOT run agent CLIs or background processes directly. The one exception is a pull request check status read, which a gated run allows; the PR gate block below states it.
+${REMOTE_WRITE_RULE}
 
 You have two child roles:
 - worker: Implements changes, runs checks and tests, and reports findings and progress.
@@ -389,6 +398,8 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
 Role execution result:
 ${JSON.stringify(payload, null, 2)}
 
+${REMOTE_WRITE_RULE}
+
 Choose the next action.
 Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported actions: run_worker, run_reviewer, finish, abort.
@@ -404,6 +415,8 @@ export function refusalPrompt(reason) {
   return `
 ${reason}
 
+${REMOTE_WRITE_RULE}
+
 Choose the next action.
 Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported actions: run_worker, run_reviewer, finish, abort.
@@ -414,6 +427,8 @@ export function repairPrompt(error) {
   return `
 Your previous response could not be accepted due to the following validation error:
 ${error}
+
+${REMOTE_WRITE_RULE}
 
 Respond with one valid JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported action formats:

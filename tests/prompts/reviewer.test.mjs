@@ -345,3 +345,18 @@ test("the test group states the timed-out and work-tree-change rules", () => {
   expect(prompt).toContain("The command changed the work tree: a.txt, b.txt and 3 more.");
   expect(prompt).toContain("not your mutation");
 });
+
+// Usefulness: verifies every reviewer turn forbids a remote write while read-only
+// queries stay allowed, for a run with a PR input, one without, and one with a
+// supplied required-check status, because the runtime mutation check does not see
+// a remote write (issue #422).
+test.each([
+  ["a PR input", () => reviewerPrompt("review PR 422")],
+  ["no PR input", () => reviewerPrompt("review the change")],
+  ["a supplied status", () => reviewerPrompt("review PR 422", FAILING_READ)],
+])("reviewer prompt forbids a remote write with %s", (_name, render) => {
+  const prompt = render();
+  expect(prompt).toContain("Do not write to GitHub or any remote");
+  expect(prompt).toContain("merge, push");
+  expect(prompt).toContain("A read-only query changes nothing, so it stays allowed.");
+});

@@ -67,11 +67,18 @@ function testRunLines(testRun) {
   return lines;
 }
 
+// A reviewer turn never writes to a remote. The runtime mutation check reads only
+// the local work tree, so this rule is advisory and the runtime does not detect a
+// breach (issue #422).
+const remoteWriteRule =
+  "Do not write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A read-only query changes nothing, so it stays allowed.";
+
 export function reviewerPrompt(prompt, prChecks = null, testRun = null) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
   return `
 Do not implement, fix, edit, or change any file. Review, assess, and verify only. Live probes and read-only queries are authorized.
+${remoteWriteRule}
 
 ${reviewerRules}${supplied}${tests}
 

@@ -52,6 +52,30 @@ test("runGh hands the spawn layer the caller's abort signal", async () => {
   expect(options).not.toHaveProperty("timeout");
 });
 
+// Usefulness: verifies a status read through the `gh` runner returns the answer the
+// spawn layer produced while it passes the bound and the abort signal on, so a
+// runner that stops returning the answer fails here. No `gh` process starts, and
+// the installed execa accepts the options in ci-gate.test.mjs (issues #320, #399).
+test("runGh answers a read through the bound and signal the read passes", async () => {
+  execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: "gh version 2.0.0\n", stderr: "" });
+  const controller = new AbortController();
+  const reply = await runGh(["--version"], ".", {
+    signal: controller.signal,
+    timeoutMs: 60_000,
+  });
+  expect(reply).toEqual({
+    status: 0,
+    stdout: "gh version 2.0.0\n",
+    stderr: "",
+    timedOut: false,
+  });
+  expect(spawnedWith()).toMatchObject({
+    timeout: 60_000,
+    forceKillAfterDelay: FORCE_KILL_AFTER_DELAY_MS,
+    cancelSignal: controller.signal,
+  });
+});
+
 // Usefulness: verifies the work-tree probe passes the configured bound to the
 // spawn layer as the timeout and the force-kill delay, so a hung `git` cannot add
 // its own time to a caller's total limit.
