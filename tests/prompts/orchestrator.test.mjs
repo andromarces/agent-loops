@@ -1086,6 +1086,21 @@ test("the README states the remote-write limit", async () => {
   expect(readme).toContain("A write through those tools was not probed");
 });
 
+// Usefulness: verifies the README records a probe result for every adapter and
+// states that the runtime enables no denial, so a later denial needs a README
+// and test update together (issue #432).
+test("the README records the denial probe for every adapter", async () => {
+  const readme = (await readFile(join(dirname(instructionsPath), "../README.md"), "utf8")).replace(
+    /\s+/g,
+    " ",
+  );
+  const section = readme.slice(readme.indexOf("#### Denial probe (issue #432)"));
+  for (const adapter of ["`claude` (", "`codex` (", "`agy` (", "`opencode` (", "`copilot` ("]) {
+    expect(section).toContain(adapter);
+  }
+  expect(section).toContain("The runtime enables no denial.");
+});
+
 // The refused-`--cwd` rule both parent paths state the same way. It is the
 // decision, not a repair procedure: a parent ends the run and a maintainer
 // decides what happens to the work tree. The mechanism behind it differs by
