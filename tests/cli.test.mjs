@@ -204,6 +204,28 @@ test("--pr declares the run PR and takes a positive integer", () => {
   }
 });
 
+// Usefulness: verifies the headless loop takes the test command and its bound,
+// defaults both off, and refuses a blank command, a bound with no command, and a
+// bound that is not a positive integer, so a bad value fails at parse time and
+// the run never starts with a command it cannot run (issue #420).
+test("--test-cmd and --test-cmd-timeout parse and refuse bad values", () => {
+  expect(parseArgs(BASE)).toMatchObject({ testCmd: null, testCmdTimeout: null });
+  expect(parseArgs([...BASE, "--test-cmd", "pnpm test"]).testCmd).toBe("pnpm test");
+  expect(parseArgs([...BASE, "--test-cmd=pnpm test", "--test-cmd-timeout", "90"])).toMatchObject({
+    testCmd: "pnpm test",
+    testCmdTimeout: 90,
+  });
+  expect(() => parseArgs([...BASE, "--test-cmd", "   "])).toThrow("--test-cmd must not be blank.");
+  expect(() => parseArgs([...BASE, "--test-cmd-timeout", "90"])).toThrow(
+    "--test-cmd-timeout requires --test-cmd.",
+  );
+  for (const bad of ["0", "abc"]) {
+    expect(() => parseArgs([...BASE, "--test-cmd", "x", "--test-cmd-timeout", bad])).toThrow(
+      "--test-cmd-timeout must be a positive integer.",
+    );
+  }
+});
+
 // Usefulness: verifies the headless path refuses a gate for another pull request
 // at parse time, before any child turn runs and before the prompt is built. Both
 // flags arrive on one command line there, so a run that could never be gated
@@ -1384,4 +1406,143 @@ test.each(["--help", "-h"])("role %s prints usage and exits 0", async (flag) => 
 test("role help parses after an operation and rejects an inline value", () => {
   expect(parseRoleArgs(["finish", "-h"]).help).toBe(true);
   expect(() => parseRoleArgs(["--help=1"])).toThrow("--help does not take a value.");
+});
+
+// Usefulness: verifies the headless transcript keeps the --test-cmd result and its work
+// tree compare when the run ends on a fatal error, here a reviewer mutation, so the
+// evidence the runtime read survives the exit 1 (issue #420 review of aa0b25e).
+test("a fatal run keeps the test command result in the transcript", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const agents = {
+    codex: {
+      async run() {
+        return JSON.stringify({ action: "run_reviewer", prompt: "review" });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run(_state, _prompt, options) {
+        await writeFile(join(options.cwd, "by-reviewer.txt"), "x");
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main(
+      [
+        ...BASE,
+        "--test-cmd",
+        `node -e "require('fs').writeFileSync('generated.txt', 'x'); console.log('9 passed')"`,
+        "--cwd",
+        repo,
+        "--transcript",
+        transcriptPath,
+      ],
+      agents,
+    );
+    expect(process.exitCode).toBe(1);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(transcript.error).toContain("Mutation detected during reviewer turn");
+    const evidence = transcript.events.find((e) => e.type === "test-run");
+    expect(evidence.testRun).toMatchObject({
+      status: "pass",
+      workTreeChanged: true,
+      changedPaths: ["generated.txt"],
+    });
+  } finally {
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a headless run that ends on a fatal error reports the command
+// result and its work tree compare on stderr when no --transcript is given, so the
+// parent that reads only the exit report still gets the evidence the runtime read
+// (issue #420 review of 9ec667e).
+test("a fatal run reports the test command result on stderr without a transcript", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const agents = {
+    codex: {
+      async run() {
+        return JSON.stringify({ action: "run_reviewer", prompt: "review" });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run(_state, _prompt, options) {
+        await writeFile(join(options.cwd, "by-reviewer.txt"), "x");
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main(
+      [
+        ...BASE,
+        "--test-cmd",
+        `node -e "require('fs').writeFileSync('generated.txt', 'x'); console.log('9 passed')"`,
+        "--cwd",
+        repo,
+      ],
+      agents,
+    );
+    expect(process.exitCode).toBe(1);
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain("Mutation detected during reviewer turn");
+    expect(report).toContain("Test command result");
+    expect(report).toContain("9 passed");
+    expect(report).toContain("generated.txt");
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a fatal run with no --test-cmd prints no test report, so the
+// error report keeps its earlier shape when the flag is absent (issue #420).
+test("a fatal run without a test command prints no test report", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const agents = {
+    codex: {
+      async run() {
+        return JSON.stringify({ action: "run_reviewer", prompt: "review" });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run(_state, _prompt, options) {
+        await writeFile(join(options.cwd, "by-reviewer.txt"), "x");
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main([...BASE, "--cwd", repo], agents);
+    expect(process.exitCode).toBe(1);
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).not.toContain("Test command result");
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
 });

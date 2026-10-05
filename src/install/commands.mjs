@@ -132,7 +132,7 @@ function printReports(reports, dryRun) {
 /**
  * Parses flags, prints `usage` for --help, and applies --verbose. Returns the
  * options, or null when the command already finished: a parse error sets exit
- * code 1, and --help exits 0.
+ * code 1, and --help leaves `process.exitCode` unchanged.
  */
 function parseCommand(argv, usage) {
   let options;

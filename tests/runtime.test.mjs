@@ -1,6 +1,22 @@
 import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";
+
+// Answers `git` from memory for the one test that switches it on (see
+// `cleanRepoGit` below); every other test reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
@@ -458,6 +474,58 @@ test("a review-only run refuses a finish with no reviewer report", async () => {
     expect(refusalPrompt).toContain("Finish refused");
     expect(refusalPrompt).toContain("no reviewer turn has run");
     expect(refusalPrompt).toContain("run_reviewer");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies every orchestrator turn prompt of a headless run carries the
+// no-remote-write rule and keeps the wait-checks status read allowed: the repair
+// turn, the finish refusal, and the result turn each stand alone, because a
+// resumed session can open a new conversation without the initial prompt, which
+// the agy fallback does (issue #422).
+test("every orchestrator turn prompt carries the remote-write rule", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orchAdapter = scripted([
+      "not json",
+      finish,
+      JSON.stringify({ action: "run_reviewer", prompt: "inspect the repo" }),
+      finish,
+    ]);
+
+    const result = await runLoop({
+      task: "Review only.",
+      cwd: repo,
+      maxSteps: 5,
+      mode: "review-only",
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: {
+        orch: orchAdapter,
+        work: scripted([]),
+        rev: scripted(["Conclusion: done\nWhy: read\nBlockers: none\nVerdict: accept"]),
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    // Initial, repair, refusal, and result prompts.
+    const prompts = orchAdapter.recorded.map((call) => call.prompt);
+    expect(prompts).toHaveLength(4);
+    expect(prompts[1]).toContain("validation error");
+    expect(prompts[2]).toContain("Finish refused");
+    expect(prompts[3]).toContain("Role execution result");
+    for (const prompt of prompts) {
+      expect(prompt).toContain("You must NOT write to GitHub or any remote");
+      expect(prompt).toContain("agent-loop role wait-checks stays allowed");
+    }
   } finally {
     await removePath(repo);
   }
@@ -2504,21 +2572,51 @@ function noRequiredCheckGh(headRefOid, calls = []) {
   };
 }
 
+const CLEAN_HEAD = "1111111111111111111111111111111111111111";
+
+// A clean repo at `CLEAN_HEAD`, answered from memory. The real snapshot code still
+// runs over these answers; only the `git` processes are gone.
+function cleanRepoGit(cwd) {
+  return async (command, args) => {
+    expect(command).toBe("git");
+    const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
+    switch (args[0]) {
+      case "rev-parse":
+        return answer(args.includes("--show-toplevel") ? cwd : `${CLEAN_HEAD}\n`);
+      case "status":
+      case "ls-files":
+        return answer("");
+      default:
+        throw new Error(`unexpected git call: ${args.join(" ")}`);
+    }
+  };
+}
+
 // Usefulness: verifies a headless declared run finishes on a base branch with no
 // required check and emits a `no-required-checks` event, so the recorded run says
 // it verified no check instead of reading as a pass on a checked branch (issue
 // #336).
+//
+// `git` is answered from memory, not spawned. Run alone, the test started 34 `git`
+// processes: a repo and the snapshots around its turns. The same cost made the
+// finish tests in role.finish-abort.test.mjs time out under load (issue #385). This
+// test was not observed to fail (issue #399). The behavior under test is the finish
+// gate over the `gh` answers, and the snapshot code has its own tests on real repos.
 test("a declared PR finishes on a base branch with no required check", async () => {
-  const repo = await createTempRepo();
+  const cwd = tmpdir();
+  gitDouble.answer = cleanRepoGit(cwd);
   try {
     const events = [];
     const result = await runLoop({
       task: "PR work: address issue #336 through PR 42.",
-      cwd: repo,
+      cwd,
       maxSteps: 5,
       pr: 42,
       requireCi: 42,
-      gh: noRequiredCheckGh((await snapshot(repo)).head),
+      // The init copy of local files is out of scope here, and its `git` calls
+      // have no answer in the double.
+      copyLocalFiles: false,
+      gh: noRequiredCheckGh(CLEAN_HEAD),
       roles: gateRoles(),
       agents: {
         orch: scripted([
@@ -2538,7 +2636,7 @@ test("a declared PR finishes on a base branch with no required check", async () 
     // base branch had no required check rather than that the gate ran.
     expect(events.filter((e) => e.type === "refusal")).toEqual([]);
   } finally {
-    await removePath(repo);
+    gitDouble.answer = null;
   }
 });
 

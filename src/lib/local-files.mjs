@@ -1,5 +1,5 @@
 // Copies untracked, ignored local agent and environment files from the main work
-// tree into a linked run work tree (ADR 0017). Each file is copied with
+// tree into a linked run work tree (ADR 0018). Each file is copied with
 // `copyFile` and `COPYFILE_EXCL`, so an existing file is never replaced or
 // deleted. The module never prints, logs, or returns file content: every report
 // is a path name.
@@ -43,7 +43,7 @@ export const MAX_WALKED_ENTRIES = 2000;
 
 // Files that change how Git reads a work tree. Copying one can un-ignore a file
 // that was copied or change its line endings, so the snapshot would list it and
-// the run's reviewed state would shift (ADR 0017).
+// the run's reviewed state would shift (ADR 0018).
 const GIT_CONTROL_FILES = new Set([".gitignore", ".gitattributes"]);
 
 async function git(cwd, args, options = {}) {
@@ -179,7 +179,7 @@ const isInside = (parent, child) => {
 
 /**
  * Returns the canonical path of the main work tree, or null when there is none for
- * this copy (decision 10 of ADR 0017). The main work tree is the first entry of
+ * this copy (decision 10 of ADR 0018). The main work tree is the first entry of
  * `git worktree list --porcelain -z`, taken only when all three hold: the entry is
  * not marked `bare`, its path is an existing directory, and its canonical path is
  * neither the common Git directory (`git rev-parse --git-common-dir`) nor inside
@@ -263,7 +263,7 @@ async function collect(ctx, rel, abs) {
  * `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and none of its files
  * is copied. A file whose check fails is in `skipped`.
  *
- * Approved limit (ADR 0017): Node has no descriptor-relative open, so a directory
+ * Approved limit (ADR 0018): Node has no descriptor-relative open, so a directory
  * or link swapped between a check and the `copyFile` call can redirect that read
  * or write. A swap needs local write access to the work trees during init.
  *

@@ -1039,6 +1039,53 @@ test("the status-read exception covers the wait-checks command", () => {
   expect(exception).toMatch(/wait-checks/);
 });
 
+// Usefulness: verifies the headless prompt forbids a remote write and keeps the
+// `role wait-checks` status read allowed as not a write, so the rule never blocks
+// the bounded wait (issue #422).
+test("the headless prompt forbids a remote write and keeps the wait-checks read allowed", () => {
+  const prompt = gatedPrompt("claude").replace(/\s+/g, " ");
+  expect(prompt).toContain("You must NOT write to GitHub or any remote");
+  expect(prompt).toContain(
+    "A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed",
+  );
+  expect(prompt).toContain(
+    "not an edit, and not a remote write, and agent-loop role wait-checks is the only command it covers",
+  );
+  expect(prompt).toMatch(/role wait-checks --cwd/);
+  expect(prompt).not.toMatch(/do not run agent-loop role wait-checks/i);
+});
+
+// Usefulness: verifies a run with no PR gate carries the rule too (issue #422).
+test("the headless prompt forbids a remote write without a PR gate", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).toContain("You must NOT write to GitHub or any remote");
+});
+
+// Usefulness: verifies the interactive instructions state the same remote-write
+// rule and the same status-read carve-out as the headless prompt (issue #422).
+test("the interactive instructions forbid a remote write and allow a status read", async () => {
+  const text = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expect(text).toContain("Never write to GitHub or any remote");
+  expect(text).toContain(
+    "A status read, such as `agent-loop role wait-checks`, changes nothing, so it is not a write.",
+  );
+});
+
+// Usefulness: verifies the README states that the runtime does not see a remote
+// write, names both paths, and says the connector write was not probed (issue #422).
+test("the README states the remote-write limit", async () => {
+  const readme = (await readFile(join(dirname(instructionsPath), "../README.md"), "utf8")).replace(
+    /\s+/g,
+    " ",
+  );
+  expect(readme).toContain(
+    "the runtime does not detect a remote write in a reviewer or orchestrator turn",
+  );
+  expect(readme).toContain("Shell network.");
+  expect(readme).toContain("`codex_apps`");
+  expect(readme).toContain("A write through those tools was not probed");
+});
+
 // The refused-`--cwd` rule both parent paths state the same way. It is the
 // decision, not a repair procedure: a parent ends the run and a maintainer
 // decides what happens to the work tree. The mechanism behind it differs by
@@ -1408,4 +1455,40 @@ describe("continued run prompt", () => {
     expect(initialPrompt(base)).not.toContain("continues an earlier run");
     expect(initialPrompt({ ...base, continued: false })).toBe(initialPrompt(base));
   });
+});
+
+// Usefulness: verifies the headless orchestrator sees the test result beside the
+// reviewer response, and a worker result carries none, so the comparison with the
+// reviewer Checks line has both in one prompt (issue #420, ADR 0017).
+test("the result prompt carries the runtime-run test result only when the result has one", () => {
+  const withRun = resultPrompt({
+    result: {
+      role: "reviewer",
+      status: "ok",
+      response: "Verdict: accept",
+      testRun: { status: "fail", exitCode: 1, advisory: true },
+    },
+    stepsUsed: 1,
+    maxSteps: 5,
+  });
+  expect(withRun).toMatch(/"testRun"/);
+  expect(withRun).toMatch(/"exitCode": 1/);
+  const without = resultPrompt({
+    result: { role: "worker", status: "ok", response: "done" },
+    stepsUsed: 1,
+    maxSteps: 5,
+  });
+  expect(without).not.toMatch(/testRun/);
+});
+
+// Usefulness: verifies the initial prompt names the test command only for a run
+// that has one, and a run without the flag keeps its prompt, so the prompt never
+// describes a result that will not arrive (issue #420).
+test("the initial prompt describes the test command only when the run has one", () => {
+  const base = { task: "t", maxSteps: 5 };
+  expect(initialPrompt(base)).toBe(initialPrompt({ ...base, testCmd: false }));
+  expect(initialPrompt(base)).not.toContain("--test-cmd");
+  const prompt = initialPrompt({ ...base, testCmd: true });
+  expect(prompt).toContain("This run has a test command (--test-cmd).");
+  expect(prompt).toContain("A status of timed-out is neither a pass nor a failure.");
 });

@@ -19,6 +19,7 @@ import {
   readPositiveInt,
   roleFlags,
   splitInlineFlag,
+  testCmdError,
 } from "./lib/args.mjs";
 import { carryEarlierEvents, readContinuation, restoreSessions } from "./lib/continuation.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
@@ -46,6 +47,8 @@ export function parseArgs(argv) {
     requireAccept: false,
     pr: null,
     requireCi: null,
+    testCmd: null,
+    testCmdTimeout: null,
     mode: null,
     continueFrom: null,
     copyLocalFiles: true,
@@ -119,6 +122,14 @@ export function parseArgs(argv) {
         options.requireCi = readPositiveInt("--require-ci", readInline("--require-ci"));
         break;
 
+      case "--test-cmd":
+        options.testCmd = readInline(arg);
+        break;
+
+      case "--test-cmd-timeout":
+        options.testCmdTimeout = readPositiveInt(arg, readInline(arg));
+        break;
+
       case "--continue-from":
         options.continueFrom = resolve(readInline(arg));
         break;
@@ -166,6 +177,11 @@ export function parseArgs(argv) {
     throw new Error(
       'Missing required --task. Provide the task, for example --task "Implement the change."',
     );
+  }
+
+  const testCmdRefusal = testCmdError(options.testCmd, options.testCmdTimeout);
+  if (testCmdRefusal) {
+    throw new Error(testCmdRefusal);
   }
 
   // A review-only run dispatches no worker, so it gates no PR: neither
@@ -300,6 +316,20 @@ Role flags:
                                 reviewed tree, and the merge state, and the run
                                 records the absence. Refuses a
                                 finish that also sets unresolvedCompare.
+  --test-cmd <command>          init only. Run this command through the platform shell
+                                (/bin/sh -c, or cmd.exe on Windows) in --cwd before each
+                                reviewer turn, outside the reviewer sandbox, and supply the
+                                exit code and an output tail to the reviewer prompt as
+                                advisory evidence. This flag is the only source of the
+                                command. It runs with the environment of the runtime, so keep
+                                secrets out of the command text. The state file holds only a
+                                digest, so pass the same --test-cmd on every reviewer dispatch;
+                                a changed or missing value is refused.
+  --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. The command and its
+                                command's own process group (POSIX) or process tree (Windows)
+                                is killed at the bound, and the run reports timed out. An
+                                orphan that left the group, or whose parent exited on Windows,
+                                can survive (ADR 0017). Requires --test-cmd.
 
 Options:
 
@@ -381,6 +411,18 @@ Options:
   -h, --help                    Show help. Also valid after role.
   -V, --version                 Print the package version and exit. Must be the first
                                 argument.
+  --test-cmd <command>          Run this command through the platform shell (/bin/sh -c, or
+                                cmd.exe on Windows) in --cwd before each reviewer turn, outside
+                                the reviewer sandbox, and supply the exit code and an output
+                                tail to the reviewer prompt as advisory evidence. This flag is
+                                the only source of the command. It runs with the environment
+                                of the runtime, so keep secrets out of the command text.
+                                Optional.
+  --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. The command and its
+                                command's own process group (POSIX) or process tree (Windows)
+                                is killed at the bound, and the run reports timed out. An
+                                orphan that left the group, or whose parent exited on Windows,
+                                can survive (ADR 0017). Requires --test-cmd.
 
   A value flag also accepts the inline form --flag=value, for example
   --task=-x, which allows a value that starts with a dash. A boolean flag,
@@ -491,6 +533,9 @@ ${err.message}`);
       requireAccept: options.requireAccept,
       pr: options.pr,
       requireCi: options.requireCi,
+      ...(options.testCmd === null
+        ? {}
+        : { testCmd: options.testCmd, testCmdTimeout: options.testCmdTimeout }),
       ...(options.mode === null ? {} : { mode: options.mode }),
       ...(options.continueFrom ? { continueFrom: options.continueFrom } : {}),
       ...(options.copyLocalFiles ? {} : { copyLocalFiles: false }),
@@ -512,12 +557,22 @@ ${err.message}`);
     }
   };
 
+  // The command result and work tree compare of a turn that ended in a fatal error. The
+  // run has no result event for that turn, so the error report carries them, and a parent
+  // that gave no --transcript still receives the evidence the runtime read (ADR 0017).
+  let fatalTestRun = null;
+
   const finish = async ({ exitCode, error }) => {
     transcriptData.exitCode = exitCode;
     transcriptData.error = error ? (error.message ?? String(error)) : null;
     await writeTranscript();
     if (error) {
       console.error(`\n${error.message ?? error}`);
+      if (fatalTestRun) {
+        console.error(
+          `\nTest command result before the failed turn (advisory):\n${JSON.stringify(fatalTestRun, null, 2)}`,
+        );
+      }
     }
     process.exitCode = exitCode;
   };
@@ -537,6 +592,9 @@ ${err.message}`);
     }
 
     const onEvent = (event) => {
+      if (event.type === "test-run") {
+        fatalTestRun = event.testRun;
+      }
       if (options.transcript) {
         events.push({
           ...event,
@@ -568,6 +626,8 @@ ${err.message}`);
         requireAccept: options.requireAccept,
         pr: options.pr,
         requireCi: options.requireCi,
+        testCmd: options.testCmd,
+        testCmdTimeout: options.testCmdTimeout,
         mode: options.mode,
         continued: Boolean(options.continueFrom),
         copyLocalFiles: options.copyLocalFiles,
