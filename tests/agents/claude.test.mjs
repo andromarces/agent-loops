@@ -316,3 +316,23 @@ test.each([
     expect(state.sessionId).toBe(expected);
   }
 });
+
+// Usefulness: verifies the reviewer-only Codex sandbox input changes no claude invocation, so the
+// opt-in reaches Codex alone (issue #421).
+test("claude invocation is identical with the reviewer sandbox input on and off", async () => {
+  vi.mocked(exec).mockClear();
+  const reply = { stdout: JSON.stringify({ session_id: "s1", result: "ok" }), stderr: "" };
+  vi.mocked(exec).mockResolvedValueOnce(reply).mockResolvedValueOnce(reply);
+  const turn = (extra) =>
+    runClaude({ kind: "claude", sessionId: null, model: null, effort: null }, "p", {
+      cwd: "/dir",
+      readOnly: true,
+      ...extra,
+    });
+
+  await turn({});
+  await turn({ sandbox: "workspace-write" });
+
+  const [off, on] = vi.mocked(exec).mock.calls;
+  expect(on).toEqual(off);
+});

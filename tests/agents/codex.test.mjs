@@ -388,3 +388,35 @@ test("codex keeps a final letter-prefixed list report over an earlier accept blo
   expect(response).toBe(lettered);
   expect(parseVerdict(response)).toBe("unknown");
 });
+
+// Usefulness: verifies the reviewer-only sandbox input gives a Codex turn the workspace-write
+// sandbox with network access set off explicitly, so a user config that turns it on cannot widen
+// the turn (issue #421). A readOnly turn with no sandbox input keeps read-only (tests above).
+test.each([
+  ["initial", null, ["exec"]],
+  ["resume", "th-1", ["exec", "resume", "th-1"]],
+])("codex %s turn with the workspace-write sandbox input", async (_name, sessionId, head) => {
+  vi.mocked(exec).mockClear();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      { type: "thread.started", thread_id: "th-1" },
+      { type: "item.completed", item: { type: "agent_message", text: "ok" } },
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n"),
+    stderr: "",
+  });
+
+  const state = { kind: "codex", sessionId, model: null, effort: null };
+  await runCodex(state, "p", { cwd: "/dir", readOnly: true, sandbox: "workspace-write" });
+
+  expect(vi.mocked(exec).mock.calls[0][1]).toEqual([
+    ...head,
+    "-c",
+    'sandbox_mode="workspace-write"',
+    "-c",
+    "sandbox_workspace_write.network_access=false",
+    "--json",
+    ...(sessionId ? ["-"] : []),
+  ]);
+});

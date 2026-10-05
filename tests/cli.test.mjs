@@ -241,6 +241,23 @@ test("--test-cmd and --test-cmd-timeout parse and refuse bad values", () => {
   }
 });
 
+// Usefulness: verifies the headless loop takes the reviewer sandbox opt-in, defaults it off, and
+// refuses it for a reviewer that is not Codex, so the opt-in never silently does nothing while the
+// prompt says it is on (issue #421).
+test("--reviewer-workspace-write parses, defaults off, and needs a Codex reviewer", () => {
+  expect(parseArgs(BASE).reviewerWorkspaceWrite).toBe(false);
+  const codexReviewer = BASE.map((v) => (v === "agy" ? "codex" : v));
+  expect(parseArgs([...codexReviewer, "--reviewer-workspace-write"]).reviewerWorkspaceWrite).toBe(
+    true,
+  );
+  expect(() => parseArgs([...BASE, "--reviewer-workspace-write"])).toThrow(
+    "--reviewer-workspace-write requires --reviewer codex.",
+  );
+  expect(() => parseArgs([...codexReviewer, "--reviewer-workspace-write=1"])).toThrow(
+    "--reviewer-workspace-write does not take a value.",
+  );
+});
+
 // Usefulness: verifies the headless path refuses a gate for another pull request
 // at parse time, before any child turn runs and before the prompt is built. Both
 // flags arrive on one command line there, so a run that could never be gated

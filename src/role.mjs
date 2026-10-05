@@ -25,6 +25,7 @@ import {
   roleFlags,
   splitInlineFlag,
   TASK_SOURCE_CONFLICT,
+  reviewerWorkspaceWriteError,
   testCmdError,
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
@@ -114,6 +115,7 @@ export function parseRoleArgs(argv) {
     pr: null,
     testCmd: null,
     testCmdTimeout: null,
+    reviewerWorkspaceWrite: false,
     verbose: false,
     timeoutProvided: false,
     help: false,
@@ -212,6 +214,10 @@ export function parseRoleArgs(argv) {
 
       case "--test-cmd":
         args.testCmd = readInline(arg);
+        break;
+
+      case "--reviewer-workspace-write":
+        args.reviewerWorkspaceWrite = true;
         break;
 
       case "--test-cmd-timeout":
@@ -315,6 +321,13 @@ function validateInitFlags(args, agents = {}) {
   if (testCmdRefusal) {
     throw new RoleError(testCmdRefusal);
   }
+  const sandboxRefusal = reviewerWorkspaceWriteError(
+    args.reviewerWorkspaceWrite,
+    args.reviewer === null ? null : normalizeAgent(args.reviewer),
+  );
+  if (sandboxRefusal) {
+    throw new RoleError(sandboxRefusal);
+  }
   // review-only dispatches no worker and rejects --require-ci at finish, so a
   // declared PR there could never be gated. The run would refuse every finish, so
   // the declaration is refused at init instead (#302).
@@ -360,6 +373,8 @@ function initialState(args) {
     lifecycle: "active",
     pr: args.pr,
     copyLocalFiles: !args.noCopyLocalFiles,
+    // Stored only when on, so a run without the opt-in keeps the earlier state shape (ADR 0019).
+    ...(args.reviewerWorkspaceWrite ? { reviewerWorkspaceWrite: true } : {}),
     // The state file holds a digest of the command and never the command: the
     // flag on each reviewer dispatch is the only source of what runs, and the
     // digest only detects a changed flag (ADR 0017). A run with no command
@@ -419,6 +434,13 @@ function rejectInitFlagChanges(args, state, allowed = []) {
   if (args.testCmd !== null && sha256(args.testCmd) !== (state.testCmdSha256 ?? null)) {
     throw new RoleError(
       `--test-cmd cannot be changed after init (state holds: ${state.testCmdSha256 ? "a different command" : "null"}).`,
+    );
+  }
+  // The opt-in is fixed at init, so a later call cannot widen the sandbox of a read-only run.
+  // Omitting the flag is not a change: the stored value governs.
+  if (args.reviewerWorkspaceWrite && state.reviewerWorkspaceWrite !== true) {
+    throw new RoleError(
+      "--reviewer-workspace-write cannot be changed after init (state holds: null).",
     );
   }
   // A task file is read only at init, so a later call never holds it as `task`.
@@ -689,6 +711,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
       // required-check status the runtime read (#320). A run that declares no PR
       // reads nothing, and the reviewer keeps its own read.
       pr: state.pr ?? null,
+      reviewerWorkspaceWrite: state.reviewerWorkspaceWrite === true,
       // The command is the flag value, which init stored a digest of or the digest
       // check above matched. Nothing the state file holds is run.
       testCmd:

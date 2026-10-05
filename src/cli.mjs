@@ -22,6 +22,7 @@ import {
   roleFlags,
   splitInlineFlag,
   TASK_SOURCE_CONFLICT,
+  reviewerWorkspaceWriteError,
   testCmdError,
 } from "./lib/args.mjs";
 import { carryEarlierEvents, readContinuation, restoreSessions } from "./lib/continuation.mjs";
@@ -55,6 +56,7 @@ export function parseArgs(argv) {
     requireCi: null,
     testCmd: null,
     testCmdTimeout: null,
+    reviewerWorkspaceWrite: false,
     mode: null,
     continueFrom: null,
     copyLocalFiles: true,
@@ -140,6 +142,10 @@ export function parseArgs(argv) {
         options.testCmdTimeout = readPositiveInt(arg, readInline(arg));
         break;
 
+      case "--reviewer-workspace-write":
+        options.reviewerWorkspaceWrite = true;
+        break;
+
       case "--continue-from":
         options.continueFrom = resolve(readInline(arg));
         break;
@@ -194,6 +200,14 @@ export function parseArgs(argv) {
   const testCmdRefusal = testCmdError(options.testCmd, options.testCmdTimeout);
   if (testCmdRefusal) {
     throw new Error(testCmdRefusal);
+  }
+
+  const sandboxRefusal = reviewerWorkspaceWriteError(
+    options.reviewerWorkspaceWrite,
+    options.reviewer,
+  );
+  if (sandboxRefusal) {
+    throw new Error(sandboxRefusal);
   }
 
   // A review-only run dispatches no worker, so it gates no PR: neither
@@ -350,6 +364,13 @@ Role flags:
                                 is killed at the bound, and the run reports timed out. An
                                 orphan that left the group, or whose parent exited on Windows,
                                 can survive (ADR 0017). Requires --test-cmd.
+  --reviewer-workspace-write    init only. Run each Codex reviewer turn in the workspace-write
+                                sandbox, instead of read-only, with network access off for the
+                                shell commands that the sandbox runs. That limit covers shell
+                                commands only: model-side tools such as web_search and other
+                                channels outside the sandbox are not blocked. Needs --reviewer
+                                codex. The orchestrator turns stay read-only, and the mutation
+                                check still halts the run on a change (ADR 0019). Off by default.
 
 Options:
 
@@ -445,6 +466,13 @@ Options:
                                 is killed at the bound, and the run reports timed out. An
                                 orphan that left the group, or whose parent exited on Windows,
                                 can survive (ADR 0017). Requires --test-cmd.
+  --reviewer-workspace-write    Run each Codex reviewer turn in the workspace-write sandbox,
+                                instead of read-only, with network access off for the shell
+                                commands that the sandbox runs. That limit covers shell
+                                commands only: model-side tools such as web_search and other
+                                channels outside the sandbox are not blocked. Needs --reviewer
+                                codex. The orchestrator turns stay read-only, and the mutation
+                                check still halts the run on a change (ADR 0019). Off by default.
 
   A value flag also accepts the inline form --flag=value, for example
   --task=-x, which allows a value that starts with a dash. A boolean flag,
@@ -566,6 +594,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
       ...(options.testCmd === null
         ? {}
         : { testCmd: redactCommandText(options.testCmd), testCmdTimeout: options.testCmdTimeout }),
+      ...(options.reviewerWorkspaceWrite ? { reviewerWorkspaceWrite: true } : {}),
       ...(options.mode === null ? {} : { mode: options.mode }),
       ...(options.continueFrom ? { continueFrom: options.continueFrom } : {}),
       ...(options.copyLocalFiles ? {} : { copyLocalFiles: false }),
@@ -662,6 +691,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         requireCi: options.requireCi,
         testCmd: options.testCmd,
         testCmdTimeout: options.testCmdTimeout,
+        reviewerWorkspaceWrite: options.reviewerWorkspaceWrite,
         mode: options.mode,
         continued: Boolean(options.continueFrom),
         copyLocalFiles: options.copyLocalFiles,

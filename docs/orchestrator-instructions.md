@@ -38,6 +38,9 @@ Collect these before the first dispatch:
   supplies it, and a headless run names it in the task
 - the test command, when the operator names one (`--test-cmd`, with the optional
   `--test-cmd-timeout`); the operator supplies it, and no turn sets it
+- whether the Codex reviewer runs in the `workspace-write` sandbox
+  (`--reviewer-workspace-write`, off by default); the operator supplies it, and
+  no turn sets it
 
 ## Resolving the CLI
 
@@ -117,6 +120,8 @@ printf '%s' "<prompt>" | agent-loop role dispatch --role reviewer --cwd "<work t
 
 A run that set `--test-cmd` at init passes the same `--test-cmd "<command>"` on
 every reviewer dispatch, as the section on the runtime test command states.
+A run that set `--reviewer-workspace-write` at init needs no flag on a later
+dispatch: the state file holds the choice.
 
 Read the JSON envelope on stdout. Example reviewer envelope:
 
@@ -198,8 +203,7 @@ Apply these parent rules:
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.
-- When the PR head cannot be resolved, for example a read-only turn with no
-  network access, do not finish as verified: abort, or record the unresolved
+- When the PR head cannot be resolved, for example a read-only turn whose shell commands have no network access, do not finish as verified: abort, or record the unresolved
   compare under notDone and open in the finish summary. A recorded compare also
   sets the marker described under Finish output, so the record never reads the
   same as a verified finish. That marker is the only machine-readable record of
@@ -297,7 +301,7 @@ rule below belongs to that one condition, so the prompt nests them under it:
     the listed checks.
   - The read reflects the PR head on GitHub. When that head differs from the
     local reviewed head, the mismatch goes in `Checks`.
-  - When `gh` cannot read the checks, for example no `gh` or no network, the
+  - When `gh` cannot read the checks, for example the shell has no `gh` or no network, the
     status is unresolved and goes in `Checks`. A pass is reported only when the
     read shows one.
 
@@ -307,8 +311,8 @@ worker turn and no extra reviewer turn for that failure.
 
 ## The runtime supplies the required-check status
 
-A reviewer turn that cannot reach the network, for example a sandboxed Codex
-reviewer, could only report the status as unresolved before. A run that declares
+A reviewer turn whose shell commands cannot reach the network, for example a
+sandboxed Codex reviewer, could only report the status as unresolved before. A run that declares
 its PR with `--pr <pr>` knows the pull request before the first turn, so the
 runtime reads the required-check status for that PR head and supplies it to every
 reviewer prompt. The prompt adds two lines inside the required-check group, so
@@ -376,8 +380,8 @@ status.
 
 ## The runtime supplies a test command result
 
-A reviewer turn runs read-only, so it cannot run the test suite. An operator can
-name a command with `--test-cmd <command>` at init. The runtime runs it in the
+A reviewer turn runs read-only by default, so it cannot run the test suite. An
+operator can name a command with `--test-cmd <command>` at init. The runtime runs it in the
 work tree before each reviewer turn, outside the reviewer sandbox, and supplies
 the result in the reviewer prompt. A worker turn never runs it. A run without
 the flag is unchanged.
@@ -411,7 +415,56 @@ the flag is unchanged.
   reviewer `Checks` line and act on a disagreement. A turn with no command
   carries no `testRun`.
 - The reviewer sees the result of the whole command only. It cannot run a
-  targeted test.
+  targeted test, unless the run also set `--reviewer-workspace-write` (next
+  section).
+
+## The Codex reviewer can run in the workspace-write sandbox
+
+A Codex reviewer turn runs with `sandbox_mode="read-only"` and cannot run a
+targeted test or a probe. An operator can opt in at init with
+`--reviewer-workspace-write` (ADR 0019). It needs `--reviewer codex`, and any
+other reviewer is refused at init. The run is unchanged without it.
+
+- The runtime then starts each Codex reviewer turn with
+  `sandbox_mode="workspace-write"` and `sandbox_workspace_write.network_access=false`.
+  Network access stays off for the shell commands that the sandbox runs. The
+  runtime sets it explicitly, because the mode takes network from the user Codex
+  config otherwise. The limit covers shell commands only: it does not block
+  model-side tools such as Codex `web_search`, or any other channel outside the
+  sandbox.
+- Only reviewer turns change. Every orchestrator turn, every worker turn, and the
+  other four adapters keep their invocations, and the runtime mutation check
+  still wraps every reviewer turn.
+- The reviewer prompt gains one line: the turn has the sandbox, its shell
+  commands have no network, that covers shell commands only, and a package
+  manager that writes outside the work tree fails there, so the reviewer calls
+  the project's local binary. Without the opt-in the line is
+  absent. The reviewer still must not change files. The headless initial prompt
+  tells the orchestrator about the opt-in only for a run that set it.
+- Choose the opt-in at init, and never change it later. A later call may repeat
+  the flag or omit it. A call that turns it on after init is refused. No turn
+  sets it.
+- Read the accepted gaps before you rely on it:
+  - The sandbox no longer prevents a reviewer edit. An edit succeeds, and the run
+    then halts with a `MutationError`, exit 1, and the runtime does not revert it.
+  - The snapshot does not see a write to an ignored file (for example `.env` or
+    `node_modules/`), a write outside the repository, a write that the turn
+    restores before it ends, or Git state other than the index and `HEAD`
+    (other refs, the stash, the config).
+  - Shell network is off, so the opt-in does not open the shell path for `gh`
+    and `git`. The sandbox does not block a channel outside it, for example a
+    GitHub app connector or another model-side tool. The local snapshot does
+    not see a remote write over any channel, so a push, a merge, a review, or a
+    comment could change remote state unseen. Codex is the only adapter that
+    blocks shell network in a read-only turn today. The rule against remote
+    writes (issue #422) is advisory and not enforced.
+  - Reviewed content that holds an instruction can steer a command that writes,
+    not only one that reads.
+  - The unelevated Windows sandbox probably gives no gain: it blocks a child
+    spawn with `EPERM` under `workspace-write`. Not verified for a test runner.
+- A reviewer `Checks` line that shows a local test run under this opt-in is the
+  reviewer's own report. Compare it with `testRun` and with the required CI
+  checks.
 
 ## Test evidence when the reviewer cannot run tests
 
@@ -510,20 +563,25 @@ the reason.
 The orchestrator CLI and the reviewer CLI are chosen independently, so each
 statement below names the role whose CLI performs the read. A read-only
 invocation keeps shell network access for `claude`, `agy`, and `opencode`. The
-`codex` read-only sandbox blocks network. A `copilot` read-only turn refuses most
+`codex` read-only sandbox blocks the network of shell
+commands (not model-side tools). A `copilot` read-only turn refuses most
 shell commands without approval: the issue #432 probe found `gh pr checks`
 allowed and `role wait-checks` refused, so a `copilot` orchestrator wait is
 unconfirmed. See "Codex read-only network limit" and "Remote writes" in the README
 for the probes.
 
-- Orchestrator CLI keeps network: the orchestrator waits, at both points below.
-- Orchestrator CLI blocks network, reviewer CLI keeps it: the orchestrator cannot
-  wait. Every reviewer turn reads the required checks, as the reviewer scope
+- Orchestrator CLI keeps shell network: the orchestrator waits, at both points
+  below.
+- Orchestrator CLI blocks shell network, reviewer CLI keeps it: the orchestrator
+  cannot wait. Every reviewer turn reads the required checks, as the reviewer scope
   states, so name the required checks in the reviewer prompt and let the reviewer
   turn read them. Each further reviewer dispatch costs a step, so the step budget
   has to cover those dispatches.
-- Both CLIs block network: no turn in the run can read the required checks, so
-  the headless loop cannot wait. A run that declares its PR with `--pr <pr>` still
+- Both CLIs block shell network: no turn in the run can read the required checks
+  through a shell command that its sandbox runs, so the headless loop cannot
+  wait. The limit covers shell commands only: a model-side tool or another channel
+  outside the sandbox is not blocked, and the run counts on none of them for the
+  read. A run that declares its PR with `--pr <pr>` still
   supplies the status to each reviewer turn, because the runtime reads it outside
   every read-only turn, so the reviewer does not have to. A run that declares no
   PR gets no supplied status, because the runtime reads one only for `--pr`. That

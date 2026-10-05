@@ -75,14 +75,24 @@ function testRunLines(testRun) {
 const remoteWriteRule =
   "Do not write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A read-only query changes nothing, so it stays allowed.";
 
-export function reviewerPrompt(prompt, prChecks = null, testRun = null) {
+// Present only when the operator opted in to the `workspace-write` reviewer sandbox (ADR 0019).
+// The line fits any repository: it names no tool or path, only the sandbox limit that makes a
+// package manager fail and the local binary that does not.
+const workspaceWriteLine = [
+  "Sandbox note, supplied by the runtime:",
+  "- This turn runs in a workspace-write sandbox. The shell commands that you run have no network access, so you can run a targeted test or a probe in the work tree. That limit covers shell commands only: it does not block model-side tools, such as web search, or any other channel outside the sandbox. A package manager that writes to a store or cache outside the work tree fails here: call the project's local binary directly instead.",
+  "- The rule against file changes still holds. The runtime compares the work tree before and after this turn, and a change halts the run.",
+].join("\n");
+
+export function reviewerPrompt(prompt, prChecks = null, testRun = null, workspaceWrite = false) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
+  const sandbox = workspaceWrite ? `\n\n${workspaceWriteLine}` : "";
   return `
 Do not implement, fix, edit, or change any file. Review, assess, and verify only. Live probes and read-only queries are authorized.
 ${remoteWriteRule}
 
-${reviewerRules}${supplied}${tests}
+${reviewerRules}${supplied}${tests}${sandbox}
 
 ${reviewerReportBlock}
 

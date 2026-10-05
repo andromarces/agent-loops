@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0019: Opt in to a workspace-write sandbox for the Codex reviewer](0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md). ADR 0019 restates the decisions of this ADR that still hold and adds an operator opt-in that runs a Codex reviewer turn in `workspace-write`.
 
 ## Date
 
@@ -50,4 +52,5 @@ Andro Marces
 
 - [Issue #14: Hybrid orchestrator and deterministic runtime](https://github.com/andromarces/agent-loops/issues/14)
 - [Pull Request #18: feat: hybrid orchestrator with deterministic runtime](https://github.com/andromarces/agent-loops/pull/18)
+- Superseded by [ADR 0019: Opt in to a workspace-write sandbox for the Codex reviewer](0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)
 - [ADR Index](README.md)

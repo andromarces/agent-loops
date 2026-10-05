@@ -1259,3 +1259,23 @@ test.each([
   expect(response).toBe(late.join("").trim());
   expect(parseReportBlock(response)).toBeNull();
 });
+
+// Usefulness: verifies the reviewer-only Codex sandbox input changes no opencode invocation, so the
+// opt-in reaches Codex alone (issue #421).
+test("opencode invocation is identical with the reviewer sandbox input on and off", async () => {
+  vi.mocked(exec).mockClear();
+  const reply = { stdout: textEvent("ok"), stderr: "" };
+  vi.mocked(exec).mockResolvedValueOnce(reply).mockResolvedValueOnce(reply);
+  const turn = (extra) =>
+    runOpenCode({ kind: "opencode", sessionId: null, model: null, effort: null }, "p", {
+      cwd: "/dir",
+      readOnly: true,
+      ...extra,
+    });
+
+  await turn({});
+  await turn({ sandbox: "workspace-write" });
+
+  const [off, on] = vi.mocked(exec).mock.calls;
+  expect(on).toEqual(off);
+});

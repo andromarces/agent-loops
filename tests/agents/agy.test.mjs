@@ -193,3 +193,26 @@ test.each([
   );
   expect(resumed.sessionId).toBe("stored");
 });
+
+// Usefulness: verifies the reviewer-only Codex sandbox input changes no agy invocation, so the
+// opt-in reaches Codex alone (issue #421).
+test("agy invocation is identical with the reviewer sandbox input on and off", async () => {
+  vi.mocked(exec).mockClear();
+  const reply = {
+    stdout: JSON.stringify({ conversation_id: "conv-1", response: "ok" }),
+    stderr: "",
+  };
+  vi.mocked(exec).mockResolvedValueOnce(reply).mockResolvedValueOnce(reply);
+  const turn = (extra) =>
+    runAgy({ kind: "agy", sessionId: null, model: null, effort: null }, "p", {
+      cwd: "/dir",
+      readOnly: true,
+      ...extra,
+    });
+
+  await turn({});
+  await turn({ sandbox: "workspace-write" });
+
+  const [off, on] = vi.mocked(exec).mock.calls;
+  expect(on).toEqual(off);
+});

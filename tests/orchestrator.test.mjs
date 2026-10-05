@@ -122,3 +122,26 @@ test("decide logs a warn line when taking a repair turn", async () => {
   const lines = errorSpy.mock.calls.map((call) => call.join(" "));
   expect(lines.some((line) => line.includes("repair turn"))).toBe(true);
 });
+
+// Usefulness: verifies decide never passes a sandbox input and keeps readOnly true on the first
+// and the repair turn, so a reviewer-only sandbox opt-in cannot reach the orchestrator (issue #421).
+test("decide passes readOnly true and no sandbox input on the first and repair turn", async () => {
+  const seen = [];
+  const agent = fakeAgent([
+    (_state, _prompt, options) => (seen.push(options), "not json"),
+    (_state, _prompt, options) => (seen.push(options), '{"action": "abort", "reason": "stop"}'),
+  ]);
+  await decide({
+    agent,
+    state: { kind: "fake", sessionId: "s" },
+    prompt: "initial",
+    options: { cwd: "/dir", sandbox: "workspace-write", reviewerSandbox: "workspace-write" },
+  });
+
+  expect(seen).toHaveLength(2);
+  for (const options of seen) {
+    expect(options.readOnly).toBe(true);
+    expect(options).not.toHaveProperty("sandbox");
+    expect(options).not.toHaveProperty("reviewerSandbox");
+  }
+});
