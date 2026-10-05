@@ -1692,11 +1692,20 @@ test("review-only finish with the marker records the event", async () => {
   }
 });
 
+const PASSING_RUN = {
+  id: 1,
+  name: "ci (ubuntu-latest)",
+  status: "completed",
+  conclusion: "success",
+  started_at: "2026-01-01T00:00:00Z",
+};
+
 // Answers the `--require-ci` gate the way the shared `checkCi` gate reads `gh`:
 // the PR view, the repository slug, the two required-check sources, and the
 // check runs and commit statuses GitHub evaluates. `headRefOid` is the PR head
-// the gate compares with the reviewed commit.
-function ciGateGh(headRefOid, calls = []) {
+// the gate compares with the reviewed commit. `runs` are the check runs every
+// commit carries.
+function ciGateGh(headRefOid, calls = [], runs = [PASSING_RUN]) {
   return async (args) => {
     const key = args.join(" ");
     calls.push(key);
@@ -1713,6 +1722,9 @@ function ciGateGh(headRefOid, calls = []) {
     if (key.includes("repo view")) {
       return { status: 0, stdout: "owner/repo", stderr: "" };
     }
+    if (key.startsWith("pr checks 42")) {
+      return json([]);
+    }
     if (key.includes("rules/branches/main")) {
       // The ruleset read is paginated, so its body is an array of pages.
       return json([
@@ -1728,21 +1740,11 @@ function ciGateGh(headRefOid, calls = []) {
       return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
     }
     if (key.includes("/check-runs")) {
-      return json([
-        {
-          check_runs: [
-            {
-              name: "ci (ubuntu-latest)",
-              status: "completed",
-              conclusion: "success",
-              started_at: "2026-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]);
+      return json([{ check_runs: runs }]);
     }
     if (key.includes("/status")) {
-      return json({ statuses: [] });
+      // The status read paginates, so its reply is an array of pages.
+      return json(key.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
     }
     return { status: 1, stdout: "", stderr: `unmatched: ${key}` };
   };
@@ -1750,21 +1752,11 @@ function ciGateGh(headRefOid, calls = []) {
 
 const OTHER_HEAD = "1".repeat(40);
 
-// The calls the status read makes, keyed by the exact argument list it uses. A
-// gate read is a call that is not one of these, so a refused finish is asserted
-// on by excluding the status read's own two endpoints rather than by
-// subtracting whatever the run happened to call (#320 review).
-const STATUS_READ_CALLS = [
-  "pr view 42 --json headRefOid",
-  "pr checks 42 --required --json name,bucket",
-];
-
 // The GitHub state reads the shared `checkCi` gate makes, named by the argument
 // that identifies each one. A refused finish must read none of them, so the
 // assertion names the gate's own reads rather than subtracting whatever else the
-// run happens to call. The gate's PR view asks for a different field list than
-// the status read's, and its required-names read asks for `--json name` alone,
-// which is the endpoint the first list omitted.
+// run happens to call. The runtime status read makes the same reads for the
+// reviewed commit (issue #349).
 // Matched as a prefix of the call, because the gate passes extra arguments to
 // several of them (`api repos/{slug}/...` and the field list on its PR view).
 const GATE_READ_PREFIXES = [
@@ -1776,10 +1768,7 @@ const GATE_READ_PREFIXES = [
   "mergeStateStatus",
 ];
 
-// Matched whole, because the gate's required-names read
-// (`pr checks 42 --required --json name`) is a prefix of the status read's
-// (`... --json name,bucket`), and matching that one loosely would read the
-// status read as a gate read.
+// Matched whole, so a longer `pr checks` call is not read as the required-names read.
 const GATE_READ_EXACT = ["pr checks 42 --required --json name"];
 
 // The gate's own GitHub state reads, selected by endpoint so the assertion does
@@ -2734,11 +2723,11 @@ test("a run that declares a PR refuses a gate for a different PR", async () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.reason).toContain("declares PR 42");
-    // The gate is never read, so a wrong PR never costs a GitHub state read. The
-    // reviewer status read is not a gate read: it names the declared PR 42 and
-    // asks only for the check status (#320). The assertion names the gate's own
-    // endpoints, so it still holds if the status read changes shape (#320 review).
-    expect(gateReads(calls)).toEqual([]);
+    // The gate for PR 7 is never read. The reviewer status read names the declared
+    // PR 42 and makes the gate's reads for it (#320, #349), so the assertion is that
+    // no call names PR 7.
+    expect(calls.filter((key) => /\b7\b/.test(key))).toEqual([]);
+    expect(calls.some((key) => key.includes("pr view 42"))).toBe(true);
   } finally {
     await removePath(repo);
   }
@@ -3015,29 +3004,9 @@ test("a gh-failure refusal does not claim the run is out of attempts", async () 
   }
 });
 
-// Answers the runtime read of the required checks for PR 42 and defers every
-// other call to the shared gate fixture, so one stub covers the reviewer read
-// and the finish gate.
-function reviewerReadGh(headRefOid, checks) {
-  const gate = ciGateGh(headRefOid);
-  return async (args, cwd, options) => {
-    const key = args.join(" ");
-    // The status read resolves the PR head first, then lists the required
-    // checks. `gh` reports a failing check with exit 1.
-    if (key === "pr view 42 --json headRefOid") {
-      return { status: 0, stdout: JSON.stringify({ headRefOid }), stderr: "" };
-    }
-    if (key === "pr checks 42 --required --json name,bucket") {
-      const failing = checks.some((check) => check.bucket === "fail");
-      return {
-        status: failing ? 1 : 0,
-        stdout: JSON.stringify(checks),
-        stderr: "",
-      };
-    }
-    return gate(args, cwd, options);
-  };
-}
+// Answers the runtime read of the required checks for PR 42 and the finish gate
+// from the shared gate fixture, with `runs` as the check runs of every commit.
+const reviewerReadGh = (headRefOid, runs) => ciGateGh(headRefOid, [], runs);
 
 // Usefulness: verifies a run that declares a PR supplies the required-check
 // status the runtime read to the reviewer turn and records that read in the
@@ -3057,7 +3026,12 @@ test("a declared PR supplies the runtime-read required-check status to the revie
       maxSteps: 5,
       pr: 42,
       requireCi: 42,
-      gh: reviewerReadGh(head, [{ name: "ci (macos-latest)", bucket: "fail" }]),
+      // The check fails for the status read before the turn and passes for the finish
+      // gate after it, so the run can finish while the reviewer holds the failure.
+      gh: (args, cwd, options) =>
+        reviewerReadGh(head, [
+          rev.recorded.length === 0 ? { ...PASSING_RUN, conclusion: "failure" } : PASSING_RUN,
+        ])(args, cwd, options),
       roles: gateRoles(),
       agents: {
         orch: scripted([
@@ -3072,10 +3046,52 @@ test("a declared PR supplies the runtime-read required-check status to the revie
     });
 
     expect(result.exitCode).toBe(0);
-    expect(rev.recorded[0].prompt).toContain("ci (macos-latest)");
+    expect(rev.recorded[0].prompt).toContain("ci (ubuntu-latest)");
     expect(rev.recorded[0].prompt).toContain("42");
     const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer");
     expect(reviewed.result.prChecks).toMatchObject({ pr: 42, status: "failing" });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the supplied status is not a pass for a reviewed work tree
+// that is not clean, because `--require-ci` refuses that tree, so the runtime must
+// hand the status read the clean flag of the reviewed snapshot (issue #349).
+test("a declared PR supplies no pass for a reviewed work tree that is not clean", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    await writeFile(join(repo, "uncommitted.txt"), "x");
+    const rev = scripted([REVIEW_ACCEPT]);
+    const events = [];
+
+    await runLoop({
+      task: "PR work: address issue 349 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      pr: 42,
+      requireCi: 42,
+      gh: reviewerReadGh(head, [PASSING_RUN]),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev,
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer");
+    expect(reviewed.result.reviewed.clean).toBe(false);
+    expect(reviewed.result.prChecks.status).not.toBe("pass");
+    expect(events.filter((e) => e.type === "refusal").map((e) => e.reason)).toContain(
+      "the reviewed work tree is not clean",
+    );
   } finally {
     await removePath(repo);
   }
@@ -3142,9 +3158,9 @@ test("a hung required-check read yields an unresolved status and a completed tur
       readTimeoutMs: 25,
       gh: (args, cwd, options) => {
         const key = args.join(" ");
-        // Only the check list stalls: the head resolves, so the read reaches the
+        // Only the ruleset read stalls: the head resolves, so the read reaches the
         // call a hung `gh` would hold open.
-        if (key === "pr checks 42 --required --json name,bucket") {
+        if (rev.recorded.length === 0 && key.includes("rules/branches/main")) {
           return new Promise((resolve, reject) => {
             options.signal.addEventListener("abort", () => reject(new Error("read timed out")));
           });
@@ -3207,11 +3223,9 @@ test("the refusal assertion covers every endpoint the finish gate reads", async 
       },
     });
 
-    // Every call the gate made, apart from the status read's own endpoints, is
-    // covered by the list the refusal tests assert on, so a refused finish
-    // cannot slip a gate read past them.
-    const gateOnly = calls.filter((key) => !STATUS_READ_CALLS.includes(key));
-    const uncovered = gateOnly.filter((key) => gateReads([key]).length === 0);
+    // Every call the run made is covered by the list the refusal tests assert on,
+    // so a refused finish cannot slip a gate read past them.
+    const uncovered = calls.filter((key) => gateReads([key]).length === 0);
     expect(uncovered).toEqual([]);
     // The gate really does read several endpoints, so the list is not vacuous.
     expect(gateReads(calls).length).toBeGreaterThan(1);

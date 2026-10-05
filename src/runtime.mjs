@@ -114,7 +114,8 @@ export async function runChild(options) {
 
   /**
    * Reads the required-check status a declared-PR run supplies to the reviewer,
-   * using the pre-turn snapshot head as the local head. A failed read, a
+   * using the pre-turn snapshot head as the local head, and its `clean` flag so a
+   * pass is withheld for a tree the finish gate refuses. A failed read, a
    * mismatched head, and a stalled read are all an unresolved status rather than
    * a turn failure, and the reviewer keeps its own read as the fallback
    * (issue #320). The status covers the PR head on GitHub, so it is evidence
@@ -124,11 +125,11 @@ export async function runChild(options) {
    * `--pr` reads no status, because `pr` is the PR input both paths know at
    * dispatch. The reviewer's own read stays the source there.
    */
-  const readStatus = async (head) => {
+  const readStatus = async ({ head, clean }) => {
     if (roleName !== "reviewer" || pr === null) {
       return null;
     }
-    const status = await readRequiredChecks({ pr, cwd, head, gh, timeoutMs: readTimeoutMs });
+    const status = await readRequiredChecks({ pr, cwd, head, clean, gh, timeoutMs: readTimeoutMs });
     logInfo(`runtime read the required checks for PR ${pr}: ${status.summary}`);
     return status;
   };
@@ -153,7 +154,7 @@ export async function runChild(options) {
           // child response, so the child cannot misreport it.
           if (roleName === "reviewer") {
             reviewed = reviewedState(before);
-            prChecks = await readStatus(reviewed.head);
+            prChecks = await readStatus(reviewed);
           }
           return runFn(isWorker ? workerFinalPrompt : reviewerPrompt(prompt, prChecks, testRun));
         })

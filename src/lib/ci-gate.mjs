@@ -173,11 +173,18 @@ async function ghApi(gh, args, cwd) {
  *   reply that proves this source holds no required check, compared whole.
  *   `isNotProtected404` for classic protection, and a predicate that never matches
  *   for repository rulesets, whose endpoint does not write it.
+ * @param {(data: unknown) => boolean} [options.malformed] whether a parsed body has a
+ *   shape the classification cannot interpret; read by the status read only.
  * @param {(data: unknown) => ({ state: string, contexts: object[] })} options.classify
  *   the classification of a successful reply body.
- * @returns {Promise<{ state: string, contexts: { name: string, appId: number | null }[] }>}
+ * @returns {Promise<{ state: string, contexts: { name: string, appId: number | null }[], unparsed?: boolean }>}
  */
-async function readRequiredSource(gh, args, cwd, { absentOnError, classify }) {
+async function readRequiredSource(
+  gh,
+  args,
+  cwd,
+  { absentOnError, classify, malformed = () => false },
+) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
   if (status !== 0) {
     if (absentOnError(stderr)) {
@@ -190,16 +197,24 @@ async function readRequiredSource(gh, args, cwd, { absentOnError, classify }) {
   }
   const text = stdout.trim();
   if (text === "") {
-    return { state: UNKNOWN, contexts: [] };
+    return { state: UNKNOWN, contexts: [], unparsed: true };
   }
   let body;
   try {
     body = JSON.parse(text);
   } catch {
-    return { state: UNKNOWN, contexts: [] };
+    return { state: UNKNOWN, contexts: [], unparsed: true };
   }
   const { state, contexts } = classify(body);
-  return { state, contexts };
+  // `unparsed` marks a successful reply that is not the JSON object or array the
+  // endpoint returns, or whose shape `malformed` cannot interpret. The gate
+  // ignores it. The status read refuses on it, because that reply may hide a
+  // required context (issue #349).
+  return {
+    state,
+    contexts,
+    unparsed: typeof body !== "object" || body === null || malformed(body),
+  };
 }
 
 // The classifications a required-check configuration source reply can carry.
@@ -389,6 +404,54 @@ function classifyProtection(data) {
   return { state: HAS_CONTEXTS, contexts };
 }
 
+// Whether a classic protection body has a shape the status read cannot interpret.
+// A body with no `required_status_checks` is interpretable: the branch is
+// protected without a required check. Any other shape that is not an object, a
+// list of names, or a list of `{ context }` entries is not (issue #349).
+function isProtectionMalformed(data) {
+  if (!isJsonObject(data)) {
+    return true;
+  }
+  const required = data.required_status_checks;
+  if (required === undefined || required === null) {
+    return false;
+  }
+  if (!isJsonObject(required)) {
+    return true;
+  }
+  const { contexts = [], checks = [] } = required;
+  return (
+    !Array.isArray(contexts) ||
+    !Array.isArray(checks) ||
+    contexts.some((context) => typeof context !== "string" || context === "") ||
+    checks.some((check) => typeof check?.context !== "string" || check.context === "")
+  );
+}
+
+// The merge-state refusals the gate makes before it reads any check: behind its
+// base, merge conflicts, and a state the gate cannot read. `UNKNOWN`, which GitHub
+// computes lazily, a missing state, and a value outside `MERGE_STATES` are all the
+// last kind. Shared with the status read so it cannot report a pass for a state the
+// gate refuses (issue #349).
+function earlyMergeRefusal(mergeState) {
+  if (mergeState === "BEHIND") {
+    return "the PR is behind its base branch";
+  }
+  if (mergeState === "DIRTY") {
+    return "the PR has merge conflicts (merge state DIRTY)";
+  }
+  // The merge state is validated before either path, so the relaxed absence path
+  // applies exactly the same merge-state condition as the per-check path. A state
+  // that is missing, null, empty, or not one GitHub documents settles nothing, and
+  // a state the gate cannot read is not a clean one, so it refuses on both paths
+  // rather than passing the absence path on a reply it never understood
+  // (issue #336 review).
+  if (!MERGE_STATES.has(mergeState)) {
+    return "GitHub reports the PR merge state as unknown (computed lazily; retry shortly)";
+  }
+  return null;
+}
+
 async function prInfo(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(
     [
@@ -423,14 +486,37 @@ async function repoSlug(gh, cwd) {
 // reported, so the output is parsed leniently and an unparseable result
 // contributes no names. This source carries no app qualifier, so every name it
 // yields is unqualified.
+//
+// `ok` is true only for a read that succeeded, whatever its stdout holds: exit 0
+// with a list of named checks, exit 1 or 8 (a failing or pending check) with a
+// non-empty list of named checks, or the exact `no required checks reported`
+// answer on exit 1 with no stdout. Any other exit, an empty list on a non-zero
+// exit, and an error text that merely contains those words are a failed read. The
+// gate ignores `ok`. The status read refuses on it, because the list may name a
+// required check no configuration source did (issue #349).
+const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' branch$/;
+
 async function ghRequiredNames(gh, pr, cwd) {
-  const { stdout } = await gh(["pr", "checks", String(pr), "--required", "--json", "name"], cwd);
+  const { status, stdout, stderr } = await gh(
+    ["pr", "checks", String(pr), "--required", "--json", "name"],
+    cwd,
+  );
+  let parsed = null;
   try {
-    const parsed = JSON.parse(stdout);
-    return Array.isArray(parsed) ? parsed.map((check) => check?.name).filter(Boolean) : [];
+    parsed = JSON.parse(stdout);
   } catch {
-    return [];
+    // Not JSON: judged below.
   }
+  if (Array.isArray(parsed)) {
+    const named = parsed.every((check) => typeof check?.name === "string" && check.name !== "");
+    const succeeded = status === 0 || ((status === 1 || status === 8) && parsed.length > 0);
+    return {
+      names: parsed.map((check) => check?.name).filter(Boolean),
+      ok: named && succeeded,
+    };
+  }
+  const none = stdout.trim() === "" && status === 1 && NO_REQUIRED_CHECKS.test(stderr.trim());
+  return { names: [], ok: none };
 }
 
 // A required status context: its name, plus the id of the app whose check run
@@ -465,6 +551,7 @@ function addContext(contexts, name, appId = null) {
 async function requiredContexts(gh, slug, base, pr, cwd) {
   const contexts = new Map();
   const unknown = [];
+  const unparsed = [];
 
   const rules = await readRequiredSource(
     gh,
@@ -479,6 +566,9 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   if (rules.state === UNKNOWN) {
     unknown.push(RULESETS);
   }
+  if (rules.unparsed) {
+    unparsed.push(RULESETS);
+  }
   for (const context of rules.contexts) {
     addContext(contexts, context.name, context.appId);
   }
@@ -486,16 +576,24 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
     gh,
     [`repos/${slug}/branches/${base}/protection`],
     cwd,
-    { absentOnError: isNotProtected404, classify: classifyProtection },
+    {
+      absentOnError: isNotProtected404,
+      classify: classifyProtection,
+      malformed: isProtectionMalformed,
+    },
   );
   if (protection.state === UNKNOWN) {
     unknown.push(PROTECTION);
+  }
+  if (protection.unparsed) {
+    unparsed.push(PROTECTION);
   }
   for (const context of protection.contexts) {
     addContext(contexts, context.name, context.appId);
   }
 
-  for (const name of await ghRequiredNames(gh, pr, cwd)) {
+  const listed = await ghRequiredNames(gh, pr, cwd);
+  for (const name of listed.names) {
     addContext(contexts, name);
   }
 
@@ -509,6 +607,8 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   );
   return {
     unknown,
+    unparsed,
+    namesRead: listed.ok,
     // The ruleset state is carried separately from `unknown`, because an empty read
     // is neither an absence nor a refusal: it contributes no contexts and leaves the
     // per-check path to the other sources, exactly as origin/main did (issue #336
@@ -525,38 +625,114 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   };
 }
 
-async function checkRuns(gh, slug, sha, cwd) {
+const CHECK_RUN_STATUSES = new Set([
+  "queued",
+  "in_progress",
+  "completed",
+  "waiting",
+  "requested",
+  "pending",
+]);
+const COMMIT_STATUS_STATES = new Set(["error", "failure", "pending", "success"]);
+
+// The status read parses the check-run and commit-status replies strictly. The
+// gate accepts a missing or malformed field as an empty list. A reply that is not
+// the paginated shape, or that holds an entry the judgment cannot read, throws in
+// strict mode, and the read reports it as unresolved instead of judging the
+// entries that did parse. The latest entry for a name decides, so an id or a
+// timestamp that cannot be ordered is malformed too: it could rank an old pass
+// above a newer failure (issue #349).
+function pagesOf(data, field, what) {
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error(`malformed ${what} reply`);
+  }
+  return data.flatMap((page) => {
+    if (!isJsonObject(page) || !Array.isArray(page[field])) {
+      throw new Error(`malformed ${what} reply`);
+    }
+    return page[field];
+  });
+}
+
+const isOrderable = (entry, fields) =>
+  Number.isFinite(entry.id) &&
+  fields.some(
+    (field) => typeof entry[field] === "string" && !Number.isNaN(Date.parse(entry[field])),
+  ) &&
+  fields.every((field) => entry[field] == null || !Number.isNaN(Date.parse(entry[field])));
+
+/** The check runs of `sha`, every page. `strict` makes a malformed reply throw. */
+async function checkRuns(gh, slug, sha, cwd, strict = false) {
   const pages = await ghApi(
     gh,
     [`repos/${slug}/commits/${sha}/check-runs`, "--paginate", "--slurp"],
     cwd,
   );
-  if (!Array.isArray(pages)) {
-    return [];
+  if (!strict) {
+    return Array.isArray(pages) ? pages.flatMap((page) => page?.check_runs ?? []) : [];
   }
-  return pages.flatMap((page) => page?.check_runs ?? []);
+  const runs = pagesOf(pages, "check_runs", "check-runs");
+  for (const run of runs) {
+    if (
+      !isJsonObject(run) ||
+      typeof run.name !== "string" ||
+      run.name === "" ||
+      !CHECK_RUN_STATUSES.has(run.status) ||
+      (run.status === "completed" && typeof run.conclusion !== "string") ||
+      // A queued run has not started, so it may carry no start time.
+      !(run.status === "completed" || run.status === "in_progress"
+        ? isOrderable(run, ["started_at", "completed_at"])
+        : Number.isFinite(run.id))
+    ) {
+      throw new Error("malformed check-runs reply");
+    }
+  }
+  return runs;
 }
 
-async function commitStatuses(gh, slug, sha, cwd) {
-  const data = await ghApi(gh, [`repos/${slug}/commits/${sha}/status`], cwd);
-  return data?.statuses ?? [];
+/** The commit statuses of `sha`, every page. `strict` makes a malformed reply throw. */
+async function commitStatuses(gh, slug, sha, cwd, strict = false) {
+  const pages = await ghApi(
+    gh,
+    [`repos/${slug}/commits/${sha}/status`, "--paginate", "--slurp"],
+    cwd,
+  );
+  if (!strict) {
+    if (Array.isArray(pages)) {
+      return pages.flatMap((page) => page?.statuses ?? []);
+    }
+    return pages?.statuses ?? [];
+  }
+  const statuses = pagesOf(pages, "statuses", "commit status");
+  for (const status of statuses) {
+    if (
+      !isJsonObject(status) ||
+      typeof status.context !== "string" ||
+      status.context === "" ||
+      !COMMIT_STATUS_STATES.has(status.state) ||
+      !isOrderable(status, ["updated_at", "created_at"])
+    ) {
+      throw new Error("malformed commit status reply");
+    }
+  }
+  return statuses;
 }
 
 // The commit GitHub evaluates: the test merge commit when it carries a check
 // run or a commit status, the head commit otherwise. The same selection yields
 // the result GitHub shows for the pull request.
-async function evaluatedState(gh, slug, info, cwd) {
+async function evaluatedState(gh, slug, info, cwd, strict = false) {
   const head = info.headRefOid;
   const merge = info.potentialMergeCommit?.oid ?? null;
   if (merge && merge !== head) {
-    const runs = await checkRuns(gh, slug, merge, cwd);
-    const statuses = await commitStatuses(gh, slug, merge, cwd);
+    const runs = await checkRuns(gh, slug, merge, cwd, strict);
+    const statuses = await commitStatuses(gh, slug, merge, cwd, strict);
     if (runs.length > 0 || statuses.length > 0) {
       return { commit: merge, runs, statuses };
     }
   }
-  const runs = await checkRuns(gh, slug, head, cwd);
-  const statuses = await commitStatuses(gh, slug, head, cwd);
+  const runs = await checkRuns(gh, slug, head, cwd, strict);
+  const statuses = await commitStatuses(gh, slug, head, cwd, strict);
   return { commit: head, runs, statuses };
 }
 
@@ -585,8 +761,8 @@ function latestStatus(statuses) {
   return latest?.status ?? null;
 }
 
-// Null when the required context passes, or a reason that names the failing
-// condition. An app-qualified context is satisfied only by a check run from that
+// Null when the required context passes, or `{ kind, reason }` where `kind` is
+// `missing`, `pending`, or `failing` and `reason` names the condition. An app-qualified context is satisfied only by a check run from that
 // app; an unqualified context is satisfied by a check run or a commit status
 // with the name, and both types must pass when both carry an unqualified name.
 function evaluateContext({ name, appId }, commit, runs, statuses) {
@@ -600,27 +776,48 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
     appId === null ? statuses.filter((status) => status.context === name) : [];
 
   if (matchingRuns.length === 0 && matchingStatuses.length === 0) {
-    return `required check ${label} is missing on ${commit}`;
+    return { kind: "missing", reason: `required check ${label} is missing on ${commit}` };
   }
 
+  // The reason is the first unmet condition, which is what the gate reports. The
+  // kind is the worst condition among all entries that share the name: a pending
+  // latest entry does not hide a failing entry beside it, whether that entry is
+  // another run, an earlier run, or a commit status (issue #349).
+  let problem = null;
   if (matchingRuns.length > 0) {
     const run = latestRun(matchingRuns);
     if (run.status !== "completed") {
-      return `required check ${label} is pending (check run status ${run.status})`;
-    }
-    if (!PASS_CHECK_CONCLUSIONS.has(run.conclusion)) {
-      return `required check ${label} failed (check run conclusion ${run.conclusion})`;
+      problem = {
+        kind: "pending",
+        reason: `required check ${label} is pending (check run status ${run.status})`,
+      };
+    } else if (!PASS_CHECK_CONCLUSIONS.has(run.conclusion)) {
+      problem = {
+        kind: "failing",
+        reason: `required check ${label} failed (check run conclusion ${run.conclusion})`,
+      };
     }
   }
 
   if (matchingStatuses.length > 0) {
     const status = latestStatus(matchingStatuses);
-    if (status.state !== "success") {
-      return `required check ${label} failed (commit status ${status.state})`;
+    if (status.state !== "success" && problem === null) {
+      problem = {
+        // A pending commit status has not failed: the reason text stays the gate's.
+        kind: status.state === "pending" ? "pending" : "failing",
+        reason: `required check ${label} failed (commit status ${status.state})`,
+      };
     }
   }
 
-  return null;
+  if (problem === null) {
+    return null;
+  }
+  const anyFailure =
+    matchingRuns.some(
+      (run) => run.status === "completed" && !PASS_CHECK_CONCLUSIONS.has(run.conclusion),
+    ) || matchingStatuses.some((status) => status.state === "error" || status.state === "failure");
+  return anyFailure ? { ...problem, kind: "failing" } : problem;
 }
 
 /**
@@ -657,20 +854,9 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   }
 
   const info = await prInfo(gh, pr, cwd);
-  if (info.mergeStateStatus === "BEHIND") {
-    return fail("the PR is behind its base branch");
-  }
-  if (info.mergeStateStatus === "DIRTY") {
-    return fail("the PR has merge conflicts (merge state DIRTY)");
-  }
-  // The merge state is validated before either path, so the relaxed absence path
-  // applies exactly the same merge-state condition as the per-check path. A state
-  // that is missing, null, empty, or not one GitHub documents settles nothing, and
-  // a state the gate cannot read is not a clean one, so it refuses on both paths
-  // rather than passing the absence path on a reply it never understood
-  // (issue #336 review).
-  if (!MERGE_STATES.has(info.mergeStateStatus)) {
-    return fail("GitHub reports the PR merge state as unknown (computed lazily; retry shortly)");
+  const early = earlyMergeRefusal(info.mergeStateStatus);
+  if (early) {
+    return fail(early);
   }
   if (info.headRefOid !== reviewed.head) {
     return fail("the PR head differs from the reviewed commit");
@@ -728,9 +914,9 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   }
   const { commit, runs, statuses } = await evaluatedState(gh, slug, info, cwd);
   for (const context of required) {
-    const reason = evaluateContext(context, commit, runs, statuses);
-    if (reason) {
-      return fail(reason);
+    const failure = evaluateContext(context, commit, runs, statuses);
+    if (failure) {
+      return fail(failure.reason);
     }
   }
   // Run this after the per-check pass so a named check refusal keeps its name.
@@ -758,14 +944,6 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   return { ok: true, commit };
 }
 
-// The buckets `gh pr checks --required --json name,bucket` reports. `pass` and
-// `skipping` read as a pass, the same conclusions the gate accepts; `fail` and
-// `cancel` are failures; `pending` is neither. A bucket outside this set is not
-// a status this read knows, so it is unresolved rather than a guess.
-const PASS_BUCKETS = new Set(["pass", "skipping"]);
-const FAILING_BUCKETS = new Set(["fail", "cancel"]);
-const KNOWN_BUCKETS = new Set([...PASS_BUCKETS, ...FAILING_BUCKETS, "pending"]);
-
 /**
  * The default bound on a status read. The read sits in front of a child turn
  * that has its own much longer `--timeout`, so it needs its own bound: a `gh`
@@ -781,136 +959,69 @@ function oneLine(text) {
 }
 
 /**
- * The listed checks, or null when the reply is not a wholly well-formed list.
- * Every entry must be an object with a non-empty string `name` and a known
- * string `bucket`. A lenient parse that drops the malformed entries would read
- * as a pass whenever a pass entry sits beside a malformed one, so any malformed
- * entry rejects the whole reply (#320 review).
- */
-function parseListedChecks(stdout) {
-  let parsed;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    return null;
-  }
-  for (const check of parsed) {
-    if (!isJsonObject(check)) {
-      return null;
-    }
-    if (typeof check.name !== "string" || oneLine(check.name) === "") {
-      return null;
-    }
-    if (typeof check.bucket !== "string" || !KNOWN_BUCKETS.has(check.bucket)) {
-      return null;
-    }
-  }
-  return parsed;
-}
-
-const names = (checks) => checks.map((check) => check.name).join(", ");
-
-/**
- * Resolves the PR head, the commit GitHub evaluates the required checks for. A
- * separate read from the check list, because `gh pr checks --json` reports no
- * commit: the status is meaningless without the head it describes, and the
- * reviewer must be able to compare it with the local head.
- * @param {{ pr: number, cwd: string, gh: Function, signal: AbortSignal }} context
- * @returns {Promise<string | null>} the head, or null when it cannot be read
- */
-async function readPrHead({ pr, cwd, gh, signal }) {
-  try {
-    const { status, stdout } = await gh(["pr", "view", String(pr), "--json", "headRefOid"], cwd, {
-      signal,
-    });
-    if (status !== 0) {
-      return null;
-    }
-    const head = JSON.parse(stdout)?.headRefOid;
-    return typeof head === "string" && head !== "" ? head : null;
-  } catch (err) {
-    // An aborted read stopped on the time bound, which is a different condition
-    // from a head that cannot be read, and the summary must name it.
-    if (signal.aborted) {
-      throw err;
-    }
-    return null;
-  }
-}
-
-/**
- * Reads the required-check status for the PR head, which a declared-PR run
- * supplies to each reviewer prompt (issue #320). The read is evidence for the
- * reviewer, not a gate: `gh pr checks` lists only the checks that already
- * reported, so a pass here covers the listed checks only.
+ * Reads the required-check status for the reviewed commit, which a declared-PR
+ * run supplies to each reviewer prompt (issue #320). The read is evidence for the
+ * reviewer, not a gate.
+ *
+ * The status is bound to `head`, the local reviewed commit. The PR is read once,
+ * and the check runs and commit statuses come from `commits/{sha}` by SHA, so a PR
+ * head that moves away and back cannot put another commit's checks in the status
+ * (issue #349). A PR head that differs from `head`, or a read with no local
+ * `head`, is unresolved, because the gate would judge the other commit.
+ *
+ * The read judges what the gate judges: the required contexts come from
+ * `requiredContexts`, the commit from `evaluatedState` (the test merge commit when
+ * it carries a check, otherwise the head), every page of both replies, and each
+ * context from `evaluateContext`. A pass therefore never describes a state the gate
+ * refuses. The read is stricter where it can be: a reply it cannot parse or
+ * interpret, a failed read of the required names, a ruleset source that settles
+ * nothing, and no required context are unresolved. A failing entry wins over a
+ * pending one for the same name, and a required check with no run or status reads
+ * as pending.
  *
  * It never throws. A failed read is `unresolved`, because the reviewer keeps its
  * own read as the fallback and a turn must not fail over supplied evidence.
  *
- * The status comes from the exit code, which is the contract the reviewer rules
- * and `docs/orchestrator-instructions.md` already state: 0 is a pass, 8 is a
- * pending check, and 1 covers a failing check, a pull request with no required
- * check, and a read error. Exit 1 reports failing only when the reply lists a
- * failing required check, which is the same evidence the reviewer rule requires
- * before it calls a blocker. Every other exit code, and any reply that is not a
- * wholly well-formed list, is unresolved.
- *
- * A status is reported only for the head it describes. `head` is the local
- * reviewed head, and a read whose PR head differs from it, or a read with no
- * local head to compare, is unresolved, because a status on one head says
- * nothing about the other. The head is read again after the checks, because the
- * two reads are separate calls and the PR can advance between them: `gh pr
- * checks` reports no commit, so a head that moved is the only signal that the
- * checks belong to a different commit, and it is unresolved.
- *
- * known-limit: every status carries `advisory: true`, because one window survives
- * the re-read. A head that advances to another commit and returns between the
- * two head reads leaves both reads naming the same commit while the checks
- * describe the other one, and no re-read separates that. The alternative,
- * reading check runs for the exact commit, needs `gh api
- * repos/{owner}/{repo}/commits/{sha}/check-runs`, which reports every check run
- * on that commit rather than the required ones, so it would have to rebuild the
- * required-name source from repository rulesets and classic protection. That is
- * the gate's own resolution and duplicating it here would drift from the gate,
- * which is the one read that enforces. The supplied status is therefore advisory
- * evidence: the reviewer treats it as a report, and `--require-ci` re-reads
- * GitHub and refuses the finish on the real condition. Ceiling: one reviewer
- * turn whose `Checks` line reports a pass for a commit other than the reviewed
- * head, in a run where the PR head moved away and back within the read. Upgrade
- * path: read the required contexts and the check runs for the exact commit, and
- * share that resolution with `checkCi` so the two cannot drift.
- * @param {{ pr: number, cwd: string, head?: string | null, gh?: Function, timeoutMs?: number }} options
+ * Every status carries `advisory: true`, for one reason: the status is a report,
+ * and `--require-ci` re-reads GitHub and enforces the condition. The status is a
+ * snapshot taken before the turn, so a check that starts or finishes later is not
+ * in it.
+ * `clean` is whether the reviewed work tree is clean. The gate refuses a tree that
+ * is not clean, so a pass is withheld unless `clean` is true; the default is the
+ * safe one. Every other refusal the gate makes before it reads a check is a
+ * withheld pass here too: no reviewed head, a PR head other than the reviewed one,
+ * and a merge state it refuses.
+ * @param {{ pr: number, cwd: string, head?: string | null, clean?: boolean, gh?: Function, timeoutMs?: number }} options
  * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string, advisory: true }>}
  */
 export async function readRequiredChecks({
   pr,
   cwd,
   head = null,
+  clean = false,
   gh = runGh,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
 }) {
-  const unresolved = (summary, prHead = null) => ({
+  const report = (status, checks, summary, prHead = null) => ({
     pr,
     head: prHead,
-    status: "unresolved",
-    checks: [],
+    status,
+    checks,
     summary,
     advisory: true,
   });
+  const unresolved = (summary, prHead = null) => report("unresolved", [], summary, prHead);
 
   // The read is bounded, and the signal terminates the child, so a hung `gh`
   // cannot stall the dispatch or outlive it. An external abort is reported as a
   // timeout here, because from the read's side the call simply stopped.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const call = (args) => gh(args, cwd, { signal: controller.signal, timeoutMs });
-  let reply;
-  let prHead;
+  const call = (args, callCwd) => gh(args, callCwd, { signal: controller.signal, timeoutMs });
+  let prHead = null;
   try {
-    prHead = await readPrHead({ pr, cwd, gh, signal: controller.signal });
+    const info = await prInfo(call, pr, cwd);
+    prHead = typeof info.headRefOid === "string" && info.headRefOid !== "" ? info.headRefOid : null;
     if (prHead === null) {
       return unresolved(`unread: the PR head for PR ${pr} could not be resolved`);
     }
@@ -926,79 +1037,97 @@ export async function readRequiredChecks({
         prHead,
       );
     }
-    reply = await call(["pr", "checks", String(pr), "--required", "--json", "name,bucket"]);
-    // The check read is a second call, so the PR can advance between the two.
-    // `gh pr checks` reports no commit, so the only way to bind the checks to a
-    // commit is to read the head again and refuse a head that moved. Without
-    // this the checks describe the new head while the summary names the old one,
-    // and a pass would describe a commit the reviewer is not looking at.
-    const after = await readPrHead({ pr, cwd, gh, signal: controller.signal });
-    if (after === null) {
+    const slug = await repoSlug(call, cwd);
+    const { unknown, unparsed, namesRead, rulesetState, contexts } = await requiredContexts(
+      call,
+      slug,
+      info.baseRefName,
+      pr,
+      cwd,
+    );
+    // The same refusals the gate makes: a ruleset read that settled nothing may
+    // hide a required check, and an empty union is no status to report.
+    if (rulesetState === UNKNOWN) {
       return unresolved(
-        `unread: the PR head for PR ${pr} could not be re-read after the checks`,
-        prHead,
+        `unread: the repository rulesets could not be read for PR ${pr} on PR head ${head}`,
+        head,
       );
     }
-    if (after !== prHead) {
+    // A successful reply that is not parseable JSON may hide a required context,
+    // so it is unresolved whatever the other source names. An unreadable source
+    // (a 404 or 403) is not this case: it is a reply the gate also accepts.
+    if (unparsed.length > 0) {
       return unresolved(
-        `unread: PR ${pr} head moved from ${prHead} to ${after} while the checks were read`,
-        after,
+        `unread: ${unparsed.join(" and ")} returned a reply that could not be parsed for PR ${pr} on PR head ${head}`,
+        head,
       );
     }
+    // A failed read of the required names may have dropped a required check no
+    // other source names, so it is unresolved whatever the rest of the union holds.
+    if (!namesRead) {
+      return unresolved(
+        `unread: the required check names for PR ${pr} could not be read on PR head ${head}`,
+        head,
+      );
+    }
+    if (contexts.length === 0) {
+      const sources = unknown.length > 0 ? ` (${unknown.join(" and ")} settled nothing)` : "";
+      return unresolved(`unread: no required checks were found for PR ${pr}${sources}`, head);
+    }
+    // The commit is the gate's own selection, so the read judges the state the
+    // gate judges and cannot pass a state the gate refuses.
+    const { commit, runs, statuses } = await evaluatedState(call, slug, info, cwd, true);
+    const findings = contexts.map((context) => ({
+      context,
+      failure: evaluateContext(context, commit, runs, statuses),
+    }));
+    const label = ({ context }) =>
+      context.appId === null ? context.name : `${context.name} (app ${context.appId})`;
+    const ofKind = (...kinds) =>
+      findings.filter(({ failure }) => failure && kinds.includes(failure.kind));
+    const failing = ofKind("failing");
+    const waiting = ofKind("pending", "missing");
+    // A pass is withheld for a state the gate refuses: a work tree that is not clean,
+    // or a merge state. A failing or pending
+    // status is already not a pass, so it keeps its own word.
+    const refusal =
+      (clean === true ? null : "the reviewed work tree is not clean") ??
+      earlyMergeRefusal(info.mergeStateStatus) ??
+      (info.mergeStateStatus === "BLOCKED"
+        ? "the PR merge state is blocked (a required check, review, or other required rule is unmet)"
+        : null);
+    const on = `on PR head ${head}${commit === head ? "" : ` (evaluated on test merge commit ${commit})`}`;
+    if (failing.length > 0) {
+      return report(
+        "failing",
+        failing.map(label),
+        `failing required checks ${on}: ${failing.map(label).join(", ")}`,
+        head,
+      );
+    }
+    if (waiting.length > 0) {
+      return report(
+        "pending",
+        waiting.map(label),
+        `a required check is pending or has not reported ${on}: ${waiting.map(label).join(", ")}`,
+        head,
+      );
+    }
+    if (refusal) {
+      return unresolved(`unread: ${refusal} on PR head ${head}`, head);
+    }
+    return report(
+      "pass",
+      findings.map(label),
+      `all ${findings.length} required checks passed ${on}`,
+      head,
+    );
   } catch (err) {
     const detail = controller.signal.aborted
       ? `the read timed out after ${timeoutMs}ms`
       : oneLine(err?.message ?? err);
-    return unresolved(`unread: ${detail}`, prHead ?? null);
+    return unresolved(`unread: ${detail}`, prHead);
   } finally {
     clearTimeout(timer);
   }
-
-  const { status, stdout, stderr } = reply;
-  const failure = oneLine(stderr) || `exit ${status}`;
-  const on = (head) => `on PR head ${head}`;
-  const listed = parseListedChecks(stdout);
-  if (listed === null) {
-    return unresolved(`unread: ${failure} ${on(prHead)}`, prHead);
-  }
-  const failing = listed.filter((check) => FAILING_BUCKETS.has(check.bucket));
-  const pending = listed.filter((check) => check.bucket === "pending");
-  const pass = listed.filter((check) => PASS_BUCKETS.has(check.bucket));
-
-  if (status === 0 && failing.length === 0 && pending.length === 0) {
-    return {
-      pr,
-      head: prHead,
-      status: "pass",
-      checks: pass.map((check) => check.name),
-      summary: `all ${pass.length} listed required checks passed ${on(prHead)}`,
-      advisory: true,
-    };
-  }
-  // Exit 8 is a pending check whatever the buckets say. The list names the
-  // pending checks when it has them; the exit code is what makes the status
-  // pending, so a list whose buckets disagree does not change the status.
-  if (status === 8 && failing.length === 0) {
-    return {
-      pr,
-      head: prHead,
-      status: "pending",
-      checks: pending.map((check) => check.name),
-      summary: `a required check is pending ${on(prHead)}${
-        pending.length > 0 ? `: ${names(pending)}` : ""
-      }`,
-      advisory: true,
-    };
-  }
-  if (status === 1 && failing.length > 0) {
-    return {
-      pr,
-      head: prHead,
-      status: "failing",
-      checks: failing.map((check) => check.name),
-      summary: `failing required checks ${on(prHead)}: ${names(failing)}`,
-      advisory: true,
-    };
-  }
-  return unresolved(`unread: ${failure} ${on(prHead)}`, prHead);
 }

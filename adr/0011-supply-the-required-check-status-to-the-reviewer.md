@@ -30,13 +30,13 @@ the reviewer `Checks` line.
 
 ## Decision
 
-1. A run that declares a PR reads the required-check status for that PR head
-   before each reviewer turn and supplies it in the reviewer prompt. The read is
-   three `gh` calls in the run's work tree, through the same injected `gh` runner
-   the `--require-ci` gate uses: `gh pr view <pr> --json headRefOid` to resolve
-   the head, `gh pr checks <pr> --required --json name,bucket` to list the
-   required checks, and `gh pr view <pr> --json headRefOid` again to confirm the
-   head did not move while the checks were read (item 4).
+1. A run that declares a PR reads the required-check status for the reviewed
+   commit before each reviewer turn and supplies it in the reviewer prompt. The
+   read goes through the same injected `gh` runner the `--require-ci` gate uses,
+   and reuses the gate's required-context resolution (`requiredContexts`) and
+   per-context judgment (`evaluateContext`). It reads the pull request once,
+   then the repository, the rulesets, the classic protection, and the check runs
+   and commit statuses of `commits/{head}` for the reviewed head (item 4).
 2. The read is keyed on `--pr`, which is the PR input both paths know at
    dispatch. A run that declares no PR reads nothing. A headless run that takes
    only `--require-ci` and declares no `--pr` reads nothing, because the gate
@@ -50,31 +50,40 @@ the reviewer `Checks` line.
    local head to compare, are `unresolved`, so the prompt never supplies a pass
    for a head the reviewer is not looking at. Every supplied status states the
    head it describes.
-4. The head and the checks are two separate calls, and the pull request can
-   advance between them, so the head is read again after the checks. `gh pr
-checks` reports no commit and accepts no commit argument, so a re-read is the
-   only way to detect a head that moved: a head that moved is `unresolved`. This
-   makes three calls per reviewer turn. A single call cannot, because the command
-   exposes no field that names the commit the checks belong to.
-5. Every supplied status carries `advisory: true`, and one window survives that
-   re-read. A head that advances to another commit and returns between the two
-   head reads leaves both reads naming the same commit while the checks describe
-   the other one, and no re-read separates that case. This is an accepted gap,
-   stated here, in `docs/orchestrator-instructions.md`, and in the reviewer
-   prompt: the status is a report, the reviewer treats it as evidence, and the
-   `--require-ci` finish gate re-reads GitHub and enforces the condition. A
-   status never replaces the gate.
-6. The status comes from the exit code the reviewer rules and
-   `docs/orchestrator-instructions.md` already name: 0 is a pass, 8 is a pending
-   check, and 1 is a failing check, a pull request with no required check, or a
-   read error. Exit 1 reports failing only when the reply lists a failing
-   required check, the same evidence the reviewer rule requires before it calls a
-   blocker. Every other exit code is `unresolved`.
-7. The reply is parsed strictly. Every listed entry must be an object with a
-   non-empty string `name` and a known string `bucket`, and any malformed entry
-   rejects the whole reply as `unresolved`. A lenient parse that drops malformed
-   entries reports a pass whenever a pass entry sits beside a malformed one, so
-   it fails open on the one input that must not pass.
+4. The check runs and commit statuses are read by SHA, every page, for the commit
+   the gate evaluates (the test merge commit when it carries a check, otherwise the
+   head), so the status describes that commit whatever the pull request head does
+   during the read, and never passes a state the gate refuses. The gate reads
+   every page of the commit statuses too, so the two reads see the same entries. A head that moves from A to B and back to A cannot put the checks of
+   B in the status (issue #349). This replaces the head re-read around `gh pr
+checks`, which reports no commit and could not separate that case.
+5. Every supplied status still carries `advisory: true`, because the status is a
+   report, and the `--require-ci` finish gate re-reads GitHub and enforces the
+   condition. The commit binding is exact, but the status is a snapshot taken
+   before the turn, so a check that starts or finishes later is not in it. The
+   reviewer treats the status as evidence. A status never replaces the gate.
+6. The status comes from the per-context judgment the gate uses. A failing
+   required check makes the status `failing`. A failure among entries that share a
+   required name, for example a check run and a commit status, or an earlier run
+   beside a pending one, wins over pending. Otherwise a pending check or commit
+   status, or a required check with no run or status on the commit, makes it
+   `pending`. Otherwise it is `pass`.
+   The read is stricter than the gate where it can be, and each of these is
+   `unresolved`: a ruleset read that settles nothing, an empty set of required
+   contexts, a failed read of the required names (any exit other than 0, or 1 or 8
+   with a non-empty list, or the exact `no required checks reported` answer), a
+   reviewed work tree that is not clean, a merge state the gate refuses (BLOCKED,
+   BEHIND, DIRTY, UNKNOWN, or a value the gate does not know) when every required
+   check passed, a check-run or commit-status
+   reply that is not the paginated shape, an entry the judgment cannot read or
+   order (an empty name or context, or an id or a timestamp that is missing or not
+   a date), a classic
+   protection reply whose shape cannot be interpreted, and a ruleset or protection
+   source that answers success with a body that is not JSON. A malformed reply
+   never reads as a pass. The gate keeps its lenient reads of an entry, so the
+   read can report unresolved where the gate passes, and never the reverse.
+7. `checks` names the required contexts the status covers, with the app id for an
+   app-qualified context.
 8. The read is bounded in time, and the bound terminates the child, so a `gh`
    that hangs cannot stall the dispatch or outlive it. A read that exceeds the
    bound is `unresolved` and never fails or halts the dispatch, because the
@@ -88,11 +97,11 @@ checks` reports no commit and accepts no commit argument, so a re-read is the
    and the headless orchestrator prompt state the rule in the same words, and a
    test reads both to keep them from drifting.
 10. The reviewer's own read is never removed. The supplied status is evidence for
-    one turn, not a gate: `gh pr checks` lists only the checks that already
-    reported, so a supplied pass covers the listed checks only.
+    one turn, not a gate: it is a pre-turn snapshot, so a check that starts or
+    finishes later is not in it.
 11. The read never fails a turn. A `gh` failure, an unreadable head, a mismatched
-    head, a moved head, a malformed reply, an unexpected exit code, and a
-    stalled call are all `unresolved`, which the prompt rule already sends back
+    head, an unreadable ruleset source, an empty set of required checks,
+    and a stalled call are all `unresolved`, which the prompt rule already sends back
     to the reviewer's own read.
 12. The status is reported with the reviewer result in three places, so a parent
     can compare it with the reviewer `Checks` line on either path: as `prChecks`
@@ -115,19 +124,18 @@ checks` reports no commit and accepts no commit argument, so a re-read is the
 - A reviewer whose CLI cannot reach the network sees the failing check on the PR
   head, so the run no longer needs a worker turn and a reviewer turn to learn it.
 - A status is never supplied for a head the reviewer is not looking at, so a
-  mismatch is unresolved rather than a pass on the wrong commit. A head that
-  moves between the two reads is unresolved too, so a race cannot name one head
-  for checks that belong to another.
-- One window survives: a head that advances away and back within the read. Every
-  status carries `advisory: true` for it, and the ceiling is one reviewer turn
-  whose `Checks` line reports a pass for a commit other than the reviewed head.
-  The `--require-ci` gate re-reads GitHub, so the run still cannot finish on a
-  false pass.
+  mismatch is unresolved rather than a pass on the wrong commit. The checks
+  are read by commit SHA, so a head that moves, even away and back, cannot name
+  one head for checks that belong to another (issue #349).
+- Every status keeps `advisory: true`, because it is a report and the
+  `--require-ci` gate re-reads GitHub and enforces the condition. The status is a
+  pre-turn snapshot of the head commit.
 - The parent can compare two independent reads of the same status, so a
   disagreement between the runtime and the reviewer is visible.
-- Every reviewer turn in a declared-PR run costs three `gh` calls, the head, the
-  check list, and the head again. All are status reads that change nothing, and
-  the reviewer prompt already asks the reviewer to make the second.
+- Every reviewer turn in a declared-PR run costs more `gh` calls than the former
+  three: the pull request, the repository, the ruleset and protection sources,
+  the required names, and the check runs and statuses of the commit. All are
+  status reads that change nothing.
 - A stalled `gh` cannot hold a dispatch open, because the read is bounded and the
   bound terminates the child.
 - The status is a point-in-time read, taken before the turn. A check that starts
@@ -164,23 +172,14 @@ checks` reports no commit and accepts no commit argument, so a re-read is the
 7. **Ask `gh pr checks` for a commit SHA**: it takes a pull request, a URL, or a
    branch, and reports `no pull requests found for branch "<sha>"` for a commit,
    so the check results cannot be bound to the reviewed commit in one call.
-   Measured live against this repository. Rejected; the head is re-read after the
-   checks instead.
-8. **Trust the first head read and let the reviewer's own read catch a race**:
-   the prompt already keeps the reviewer's read as the fallback, so a race
-   resolves to the reviewer reading the checks itself. Rejected for the supplied
-   status: the reviewer's read is the fallback for an unresolved status, and a
-   status that misnames its own head is worse than no status, so the race is
-   refused in the runtime where it happens.
-9. **Read the check runs for the exact commit through
-   `gh api repos/{owner}/{repo}/commits/{sha}/check-runs`**: the endpoint takes a
-   commit, so it closes every window, including the one a re-read cannot. It
-   reports every check run on that commit rather than the required ones, so the
-   required-name source would have to be rebuilt from repository rulesets and
-   classic protection, which is `checkCi`'s own resolution. Rejected; duplicating
-   the gate's resolution here would drift from the one read that enforces, and
-   the window it closes is a misreported `Checks` line on one reviewer turn in a
-   run whose finish the gate still refuses or passes on the real condition.
+   Measured live against this repository. Rejected; the check runs are read by
+   SHA through `gh api` instead.
+8. **Re-read the head around `gh pr checks`**: the first design of issue #320. It
+   detects a head that moved once, and it cannot detect a head that moved away and
+   back. Superseded by item 4 of the decision (issue #349).
+9. **Rebuild the required-name source for the read**: the read would drift from
+   the gate. Rejected; the read calls the gate's `requiredContexts` and
+   `evaluateContext`.
 
 ## Authors
 

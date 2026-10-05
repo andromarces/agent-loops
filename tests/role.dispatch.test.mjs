@@ -1351,20 +1351,51 @@ test("a declared PR supplies the runtime-read required-check status to the revie
   const init = dispatchArgv([...INIT_OVERRIDES, "--pr", "42"], "worker");
   await executeRoleCommand(withRepo(init, repo), { agents, stdin: stdinPrompt });
 
-  // The status read resolves the PR head first and compares it with the local
-  // reviewed head, then lists the required checks. `gh` reports a failing check
-  // with exit 1.
+  // The status read resolves the PR head and compares it with the local reviewed
+  // head, then judges the required contexts on the check runs of that commit.
   const localHead = (await snapshot(repo)).head;
+  const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
   const gh = async (args) => {
     const key = args.join(" ");
-    if (key === "pr view 42 --json headRefOid") {
-      return { status: 0, stdout: JSON.stringify({ headRefOid: localHead }), stderr: "" };
+    if (key.startsWith("pr view 42")) {
+      return json({ headRefOid: localHead, baseRefName: "main", mergeStateStatus: "CLEAN" });
     }
-    return {
-      status: 1,
-      stdout: JSON.stringify([{ name: "ci (macos-latest)", bucket: "fail" }]),
-      stderr: "",
-    };
+    if (key.startsWith("repo view")) {
+      return { status: 0, stdout: "owner/repo", stderr: "" };
+    }
+    if (key.includes("rules/branches/main")) {
+      return json([
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ci (macos-latest)" }] },
+          },
+        ],
+      ]);
+    }
+    if (key.includes("branches/main/protection")) {
+      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
+    }
+    if (key.includes("/check-runs")) {
+      return json([
+        {
+          check_runs: [
+            {
+              id: 1,
+              name: "ci (macos-latest)",
+              status: "completed",
+              conclusion: "failure",
+              started_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      ]);
+    }
+    if (key.includes("/status")) {
+      return json(key.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
+    }
+    // `gh pr checks` names no check beyond the ruleset.
+    return { status: 0, stdout: "[]", stderr: "" };
   };
   const turn = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
     agents,

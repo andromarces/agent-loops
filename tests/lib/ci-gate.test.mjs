@@ -39,14 +39,33 @@ const REQUIRED = [
   },
 ];
 
+let nextId = 1;
+
 function run(name, conclusion) {
   return {
+    id: nextId++,
     name,
     status: "completed",
     conclusion,
     started_at: "2026-01-01T00:00:00Z",
   };
 }
+
+// A run that has not completed, and a commit status, with the fields the status
+// read orders entries by.
+const openRun = (name, status = "in_progress") => ({
+  id: nextId++,
+  name,
+  status,
+  conclusion: null,
+  started_at: "2026-01-01T00:00:00Z",
+});
+const commitStatus = (context, state, updatedAt = "2026-01-01T00:00:00Z") => ({
+  id: nextId++,
+  context,
+  state,
+  updated_at: updatedAt,
+});
 
 // Routes a `gh` call by a substring of its arguments. A `hidden` value answers
 // with the 404 a token without repository admin receives, a `forbidden` value
@@ -121,8 +140,12 @@ function routes({
     ["rules/branches/main", requiredPages ?? (Array.isArray(required) ? [required] : required)],
     ["branches/main/protection", protection],
     [`commits/${MERGE}/check-runs`, [{ check_runs: mergeRuns }]],
+    [`commits/${MERGE}/status --paginate`, [{ statuses: mergeStatuses }]],
     [`commits/${MERGE}/status`, { statuses: mergeStatuses }],
     [`commits/${HEAD}/check-runs`, [{ check_runs: headRuns }]],
+    // The status read paginates; the gate's single-page read does not. The more
+    // specific route comes first.
+    [`commits/${HEAD}/status --paginate`, [{ statuses: headStatuses }]],
     [`commits/${HEAD}/status`, { statuses: headStatuses }],
   ];
 }
@@ -1580,38 +1603,28 @@ test.each([
   expect(calls).toEqual([]);
 });
 
-// A status-read stub: it answers the PR head the read resolves first, then the
-// required-check list. `checks` is the list body, `status` the exit code `gh`
-// reports with it, and `head` the PR head the stub claims, so a test can place
-// the read on a head that matches or does not match the local one.
-function statusReadGh({ checks = [], status = 0, head = HEAD, stderr = "" } = {}) {
-  return async (args) => {
-    const key = args.join(" ");
-    if (key === "pr view 42 --json headRefOid") {
-      return { status: 0, stdout: JSON.stringify({ headRefOid: head }), stderr: "" };
-    }
-    if (key === "pr checks 42 --required --json name,bucket") {
-      return { status, stdout: JSON.stringify(checks), stderr };
-    }
-    return { status: 1, stdout: "", stderr: `unmatched gh call: ${key}` };
-  };
+// A status-read stub over the gate's own fixtures: the read resolves the PR head,
+// the required contexts, and the check runs and statuses of the reviewed commit.
+// `head` is the PR head the stub claims, so a test can place the read on a head
+// that matches or does not match the local one.
+function statusReadGh({ head = HEAD, ...rest } = {}) {
+  return fakeGh(routes({ info: prInfo({ headRefOid: head }), ...rest }));
 }
 
-// The read resolves the PR head before the check list, so every status test
-// states the local head it compares against.
-const readOn = (head, gh) => readRequiredChecks({ pr: 42, cwd: ".", head, gh });
+const BOTH_PASS = [run("ci (ubuntu-latest)", "success"), run("ci (windows-latest)", "success")];
 
-// Usefulness: verifies the read reports a pass from a reply that lists the
-// required checks, so a reviewer prompt carries the status and the evidence
+// The read states the local head it compares against.
+const readOn = (head, gh, clean = true) =>
+  readRequiredChecks({ pr: 42, cwd: ".", head, clean, gh });
+
+// Usefulness: verifies the read reports a pass from the check runs of the
+// required contexts, so a reviewer prompt carries the status and the evidence
 // behind it rather than a bare word (issue #320).
-test("reads a passing status with the names of the listed required checks", async () => {
+test("reads a passing status with the names of the required checks", async () => {
   const read = await readOn(
     HEAD,
     statusReadGh({
-      checks: [
-        { name: "ci (ubuntu-latest)", bucket: "pass" },
-        { name: "ci (windows-latest)", bucket: "skipping" },
-      ],
+      headRuns: [run("ci (ubuntu-latest)", "success"), run("ci (windows-latest)", "skipped")],
     }),
   );
   expect(read).toMatchObject({
@@ -1621,6 +1634,20 @@ test("reads a passing status with the names of the listed required checks", asyn
   });
 });
 
+// Usefulness: verifies the read judges a required check by its commit status as
+// well as by a check run, because the gate accepts both and the read must not
+// disagree with it (issue #349).
+test("reads a passing status when a required check is a commit status", async () => {
+  const read = await readOn(
+    HEAD,
+    statusReadGh({
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      headStatuses: [commitStatus("ci (windows-latest)", "success")],
+    }),
+  );
+  expect(read).toMatchObject({ status: "pass" });
+});
+
 // Usefulness: verifies the read names the failing check, so a reviewer that
 // cannot reach the network still sees which required check failed on the PR
 // head (issue #320).
@@ -1628,17 +1655,11 @@ test("reads a failing status with the name of the failing required check", async
   const read = await readOn(
     HEAD,
     statusReadGh({
-      // Exit 1 is how `gh` reports a failing check, alongside a pass and a
-      // pending one in the same list.
-      status: 1,
-      checks: [
-        { name: "ci (macos-latest)", bucket: "fail" },
-        { name: "ci (ubuntu-latest)", bucket: "pass" },
-      ],
+      headRuns: [run("ci (ubuntu-latest)", "success"), run("ci (windows-latest)", "failure")],
     }),
   );
-  expect(read).toMatchObject({ status: "failing", checks: ["ci (macos-latest)"] });
-  expect(read.summary).toContain("ci (macos-latest)");
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+  expect(read.summary).toContain("ci (windows-latest)");
 });
 
 // Usefulness: verifies a pending check reads as pending and not as a failure,
@@ -1647,12 +1668,19 @@ test("reads a pending status with the name of the pending required check", async
   const read = await readOn(
     HEAD,
     statusReadGh({
-      status: 8,
-      checks: [
-        { name: "ci (ubuntu-latest)", bucket: "pass" },
-        { name: "ci (windows-latest)", bucket: "pending" },
-      ],
+      headRuns: [run("ci (ubuntu-latest)", "success"), openRun("ci (windows-latest)")],
     }),
+  );
+  expect(read).toMatchObject({ status: "pending", checks: ["ci (windows-latest)"] });
+});
+
+// Usefulness: verifies a required check that has not reported reads as pending
+// with its name, never as a pass, because the gate refuses a missing check
+// (issue #349).
+test("reads a pending status for a required check that has not reported", async () => {
+  const read = await readOn(
+    HEAD,
+    statusReadGh({ headRuns: [run("ci (ubuntu-latest)", "success")] }),
   );
   expect(read).toMatchObject({ status: "pending", checks: ["ci (windows-latest)"] });
 });
@@ -1663,67 +1691,44 @@ test("reads a failing status when a pending check sits beside a failing one", as
   const read = await readOn(
     HEAD,
     statusReadGh({
-      status: 1,
-      checks: [
-        { name: "ci (macos-latest)", bucket: "fail" },
-        { name: "ci (windows-latest)", bucket: "pending" },
-      ],
+      headRuns: [run("ci (ubuntu-latest)", "failure"), openRun("ci (windows-latest)", "queued")],
     }),
   );
-  expect(read).toMatchObject({ status: "failing", checks: ["ci (macos-latest)"] });
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (ubuntu-latest)"] });
 });
 
-// Usefulness: verifies a reply that lists no check reads as unresolved, so an
-// empty required set never reaches a reviewer prompt as a pass (issue #320).
-test("reads an unresolved status when the reply lists no required check", async () => {
-  const read = await readOn(HEAD, statusReadGh({ checks: [] }));
+// Usefulness: verifies a base branch with no required check reads as unresolved,
+// so an empty required set never reaches a reviewer prompt as a pass (issue #320).
+test("reads an unresolved status when no required check exists", async () => {
+  const read = await readOn(HEAD, statusReadGh({ required: [], headRuns: BOTH_PASS }));
   expect(read).toMatchObject({ status: "unresolved", checks: [] });
 });
 
-// Usefulness: verifies a non-zero reply with no JSON reads as unresolved, so a
-// read error or a repository with no required check never reads as a pass
-// (issue #320).
-test("reads an unresolved status when gh cannot list the required checks", async () => {
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    head: HEAD,
-    gh: statusReadGhRaw({ status: 1, stdout: "", stderr: "no required checks" }),
-  });
+// Usefulness: verifies a ruleset read that settles nothing reads as unresolved,
+// because that reply may hide a required check the read never judged, the same
+// refusal the gate makes (issue #349).
+test("reads an unresolved status when the repository rulesets cannot be read", async () => {
+  const read = await readOn(
+    HEAD,
+    fakeGh(
+      routes({ headRuns: BOTH_PASS }).map(([m, v]) =>
+        m.startsWith("rules/") ? [m, "hidden"] : [m, v],
+      ),
+    ),
+  );
   expect(read).toMatchObject({ status: "unresolved", checks: [] });
-  expect(read.summary).toContain("no required checks");
+  expect(read.summary).toContain("rulesets");
 });
-
-// A stub that answers the check list with a raw body, for a reply that is not
-// the JSON the read asks for.
-function statusReadGhRaw({ status, stdout, stderr }) {
-  return async (args) => {
-    const key = args.join(" ");
-    if (key === "pr view 42 --json headRefOid") {
-      return { status: 0, stdout: JSON.stringify({ headRefOid: HEAD }), stderr: "" };
-    }
-    if (key === "pr checks 42 --required --json name,bucket") {
-      return { status, stdout, stderr };
-    }
-    return { status: 1, stdout: "", stderr: `unmatched gh call: ${key}` };
-  };
-}
 
 // Usefulness: verifies a gh failure that throws reads as unresolved instead of
 // failing the reviewer turn, because the read is supplied evidence and the
 // reviewer keeps its own read (issue #320).
 test("reads an unresolved status when the gh runner fails", async () => {
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    head: HEAD,
-    gh: async (args) => {
-      const key = args.join(" ");
-      if (key === "pr view 42 --json headRefOid") {
-        return { status: 0, stdout: JSON.stringify({ headRefOid: HEAD }), stderr: "" };
-      }
-      throw new Error("spawn gh ENOENT");
-    },
+  const read = await readOn(HEAD, async (args) => {
+    if (args.join(" ").startsWith("pr view 42")) {
+      return { status: 0, stdout: JSON.stringify(prInfo()), stderr: "" };
+    }
+    throw new Error("spawn gh ENOENT");
   });
   expect(read).toMatchObject({ status: "unresolved", checks: [] });
   expect(read.summary).toContain("spawn gh ENOENT");
@@ -1735,10 +1740,7 @@ test("reads an unresolved status when the gh runner fails", async () => {
 // describes (issue #320 review).
 test("never reports a pass when the PR head differs from the local reviewed head", async () => {
   const local = "2222222222222222222222222222222222222222";
-  const read = await readOn(
-    local,
-    statusReadGh({ checks: [{ name: "ci (ubuntu-latest)", bucket: "pass" }] }),
-  );
+  const read = await readOn(local, statusReadGh({ headRuns: BOTH_PASS }));
   expect(read.status).toBe("unresolved");
   expect(read.summary).toContain(HEAD);
   expect(read.summary).toContain(local);
@@ -1747,10 +1749,7 @@ test("never reports a pass when the PR head differs from the local reviewed head
 // Usefulness: verifies a matching head still reports its status, so the head
 // comparison refuses only a mismatch and not every read (issue #320 review).
 test("reports the status for a read whose PR head matches the local reviewed head", async () => {
-  const read = await readOn(
-    HEAD,
-    statusReadGh({ checks: [{ name: "ci (ubuntu-latest)", bucket: "pass" }] }),
-  );
+  const read = await readOn(HEAD, statusReadGh({ headRuns: BOTH_PASS }));
   expect(read).toMatchObject({ status: "pass", head: HEAD });
   expect(read.summary).toContain(HEAD);
 });
@@ -1758,18 +1757,15 @@ test("reports the status for a read whose PR head matches the local reviewed hea
 // Usefulness: verifies every supplied status states the head it describes, so a
 // reviewer and a parent can tell which commit the status covers (issue #320
 // review).
-test("states the PR head in the summary of every status", async () => {
-  for (const [bucket, exit, status] of [
-    ["pass", 0, "pass"],
-    ["fail", 1, "failing"],
-    ["pending", 8, "pending"],
+test("states the reviewed head in the summary of every status", async () => {
+  for (const [headRuns, status] of [
+    [BOTH_PASS, "pass"],
+    [[run("ci (ubuntu-latest)", "failure"), run("ci (windows-latest)", "success")], "failing"],
+    [[run("ci (ubuntu-latest)", "success")], "pending"],
   ]) {
-    const read = await readOn(
-      HEAD,
-      statusReadGh({ checks: [{ name: "ci", bucket }], status: exit }),
-    );
-    expect(read.status, bucket).toBe(status);
-    expect(read.summary, bucket).toContain(HEAD);
+    const read = await readOn(HEAD, statusReadGh({ headRuns }));
+    expect(read.status, status).toBe(status);
+    expect(read.summary, status).toContain(HEAD);
   }
 });
 
@@ -1777,58 +1773,8 @@ test("states the PR head in the summary of every status", async () => {
 // a pass, because the runtime cannot show the status belongs to the reviewed
 // commit (issue #320 review).
 test("reads an unresolved status when no local head is available to compare", async () => {
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    head: null,
-    gh: statusReadGh({ checks: [{ name: "ci (ubuntu-latest)", bucket: "pass" }] }),
-  });
+  const read = await readOn(null, statusReadGh({ headRuns: BOTH_PASS }));
   expect(read.status).toBe("unresolved");
-});
-
-// Usefulness: verifies malformed output reads as unresolved rather than as a
-// pass, because a lenient parse drops the malformed entries and keeps the
-// passing ones, so a reply that is not wholly well-formed must not report a
-// status (issue #320 review).
-test("reads an unresolved status when the reply mixes a pass entry with malformed entries", async () => {
-  for (const stdout of [
-    '[{"name":"ci","bucket":"pass"},"junk"]',
-    '[{"name":"ci","bucket":"pass"},null]',
-    '[{"name":"ci","bucket":"pass"},{"name":7,"bucket":"pass"}]',
-    '[{"name":"ci","bucket":"pass"},{"name":"x","bucket":true}]',
-  ]) {
-    const read = await readOn(HEAD, statusReadGhRaw({ status: 0, stdout, stderr: "" }));
-    expect(read.status, stdout).toBe("unresolved");
-  }
-});
-
-// Usefulness: verifies every status is read from the exit code the documented
-// contract names, so a reply that carries a different exit code never reports a
-// status the exit code contradicts (issue #320 review).
-test("reads the status the documented exit code names, and unresolved otherwise", async () => {
-  const listed = JSON.stringify([{ name: "ci", bucket: "pass" }]);
-  for (const [status, expected] of [
-    [0, "pass"],
-    [8, "pending"],
-    [1, "unresolved"],
-    [2, "unresolved"],
-    [null, "unresolved"],
-    [undefined, "unresolved"],
-  ]) {
-    const read = await readOn(HEAD, statusReadGhRaw({ status, stdout: listed, stderr: "" }));
-    expect(read.status, `exit ${status}`).toBe(expected);
-  }
-});
-
-// Usefulness: verifies exit code 1 with a listed failing check reports failing,
-// because that combination is how `gh` reports a failing check, and the read must
-// not lose the name the finish gate would refuse on (issue #320 review).
-test("reads a failing status from exit code 1 with a listed failing check", async () => {
-  const read = await readOn(
-    HEAD,
-    statusReadGh({ status: 1, checks: [{ name: "ci (macos-latest)", bucket: "fail" }] }),
-  );
-  expect(read).toMatchObject({ status: "failing", checks: ["ci (macos-latest)"] });
 });
 
 // Usefulness: verifies a read that exceeds its time bound yields unresolved
@@ -1911,135 +1857,407 @@ describe("the gh runner against the installed execa", () => {
   });
 });
 
-// Usefulness: verifies a read whose PR head moves between the head read and the
-// check read reports nothing, because the checks that came back describe the new
-// head while the first head read named the old one, so a status bound to the
-// first read would describe a commit the reviewer is not looking at
-// (issue #320 review, second round).
-test("reads no status when the PR head moves between the head read and the check read", async () => {
-  const local = "1111111111111111111111111111111111111111";
-  const advanced = "2222222222222222222222222222222222222222";
-  let headReads = 0;
-
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    head: local,
-    gh: async (args) => {
-      const key = args.join(" ");
-      if (key === "pr view 42 --json headRefOid") {
-        headReads += 1;
-        // The first read matches the local head; the PR advances before the
-        // checks are read, so the second read names a different commit.
-        return {
-          status: 0,
-          stdout: JSON.stringify({ headRefOid: headReads === 1 ? local : advanced }),
-          stderr: "",
-        };
-      }
-      if (key === "pr checks 42 --required --json name,bucket") {
-        return {
-          status: 0,
-          stdout: JSON.stringify([{ name: "ci", bucket: "pass" }]),
-          stderr: "",
-        };
-      }
-      return { status: 1, stdout: "", stderr: `unmatched gh call: ${key}` };
-    },
-  });
-
-  // A stable head is re-read, so the race is detectable at all.
-  expect(headReads).toBeGreaterThan(1);
-  expect(read.status).toBe("unresolved");
-  expect(read.checks).toEqual([]);
-  expect(read.summary).toMatch(/(moved|changed|differs)/i);
-});
-
-// Usefulness: verifies a head that advances to a commit which then matches the
-// local reviewed head is still unresolved, because the checks were read for a
-// different commit than the one the status would name
-// (issue #320 review, second round).
-test("reads no status when the head moves even to a head the checks then describe", async () => {
-  const local = "1111111111111111111111111111111111111111";
-  const advanced = "2222222222222222222222222222222222222222";
-  let headReads = 0;
-
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    head: local,
-    gh: async (args) => {
-      const key = args.join(" ");
-      if (key === "pr view 42 --json headRefOid") {
-        headReads += 1;
-        return {
-          status: 0,
-          stdout: JSON.stringify({ headRefOid: headReads === 1 ? local : advanced }),
-          stderr: "",
-        };
-      }
-      return { status: 0, stdout: JSON.stringify([{ name: "ci", bucket: "pass" }]), stderr: "" };
-    },
-  });
-
-  expect(read.status).toBe("unresolved");
-});
-
-// Usefulness: verifies a head that does not move still reports its status, so
-// the re-read refuses only a real race and not every read
-// (issue #320 review, second round).
-test("still reports the status when the PR head does not move", async () => {
-  const read = await readOn(HEAD, statusReadGh({ checks: [{ name: "ci", bucket: "pass" }] }));
-  expect(read).toMatchObject({ status: "pass", head: HEAD });
-});
-
-// Usefulness: verifies every supplied status is marked advisory, because the head
-// and the checks are separate calls: a head that advances to another commit and
-// returns between them leaves both head reads naming the same commit while the
-// checks describe the other one, and no number of re-reads separates that case.
-// `gh pr checks` reports no commit, and reading check runs for the exact commit
-// would replace the required-name source with three ruleset and protection reads.
-// The status is therefore advisory evidence the reviewer and the `--require-ci`
-// gate settle, never a status a consumer can read as verified
-// (issue #320 review, third round).
-test("every supplied status is marked advisory", async () => {
-  for (const [checks, status] of [
-    [[{ name: "ci", bucket: "pass" }], "pass"],
-    [[{ name: "ci", bucket: "fail" }], "failing"],
-    [[{ name: "ci", bucket: "pending" }], "pending"],
-  ]) {
-    const exit = status === "failing" ? 1 : status === "pending" ? 8 : 0;
-    const read = await readOn(HEAD, statusReadGh({ checks, status: exit }));
-    expect(read.status, status).toBe(status);
-    // Marked advisory, so no consumer can read it as a verified status, and the
-    // marker survives a read that reached the checks through the window above.
-    expect(read.advisory, status).toBe(true);
-  }
-});
-
-// Usefulness: verifies the status is advisory in the one case the head re-read
-// cannot catch, so the mark is not a decoration that only well-behaved reads
-// carry (issue #320 review, third round).
-test("a status read through the A-to-B-to-A window is still marked advisory", async () => {
-  const read = await readRequiredChecks({
-    pr: 42,
-    cwd: ".",
-    head: HEAD,
-    gh: async (args) => {
-      const key = args.join(" ");
-      if (key === "pr view 42 --json headRefOid") {
-        return { status: 0, stdout: JSON.stringify({ headRefOid: HEAD }), stderr: "" };
-      }
+// Usefulness: verifies the status describes the reviewed commit A when the PR
+// head moves from A to B and back to A during the read. The stub models the race
+// itself: every head read returns A, while the `gh pr checks` list, the only
+// read that took no commit, describes B and fails. The old read reported that
+// failure for A. The new read takes the check runs of A by SHA, so it reports A's
+// pass and never asks for B (issue #349).
+test("binds the status to the reviewed commit when the PR head moves A to B to A", async () => {
+  const other = "3333333333333333333333333333333333333333";
+  const calls = [];
+  const gh = async (args) => {
+    const key = args.join(" ");
+    calls.push(key);
+    if (key === "pr checks 42 --required --json name,bucket") {
       return {
-        status: 0,
-        stdout: JSON.stringify([{ name: "ci-on-B", bucket: "pass" }]),
+        status: 1,
+        stdout: JSON.stringify([{ name: "ci (ubuntu-latest)", bucket: "fail" }]),
         stderr: "",
       };
-    },
+    }
+    if (key.includes(`commits/${other}/`)) {
+      return { status: 1, stdout: "", stderr: "the read asked for commit B" };
+    }
+    return statusReadGh({ headRuns: BOTH_PASS })(args);
+  };
+  const read = await readOn(HEAD, gh);
+  expect(read).toMatchObject({ status: "pass", head: HEAD });
+  expect(calls.filter((call) => call.includes(other))).toEqual([]);
+});
+
+// Usefulness: verifies a reply the read cannot parse is unresolved and never a
+// pass, because a lenient parse would read a missing check-run list, a missing
+// status list, or an unreadable context source as no objection (issue #349).
+test.each([
+  ["a null check-runs reply", "check-runs", "null"],
+  ["a check-runs reply that is not paginated", "check-runs", { check_runs: [] }],
+  ["a check-runs page with no list", "check-runs", [{}]],
+  [
+    "a check run with no name",
+    "check-runs",
+    [{ check_runs: [{ status: "completed", conclusion: "success" }] }],
+  ],
+  [
+    "a completed check run with no conclusion",
+    "check-runs",
+    [{ check_runs: [{ name: "ci (ubuntu-latest)", status: "completed" }] }],
+  ],
+  [
+    "a check run with an unknown status",
+    "check-runs",
+    [{ check_runs: [{ name: "ci (ubuntu-latest)", status: "weird" }] }],
+  ],
+  ["a null status reply", "status --paginate", "null"],
+  ["a status reply that is not paginated", "status --paginate", { statuses: [] }],
+  ["a status page with no list", "status --paginate", [{}]],
+  [
+    "a status with an unknown state",
+    "status --paginate",
+    [{ statuses: [{ context: "ci (ubuntu-latest)", state: "weird" }] }],
+  ],
+  ["a status with no context", "status --paginate", [{ statuses: [{ state: "success" }] }]],
+  ["a ruleset reply that is not JSON", "rules/branches", "not json"],
+  ["an empty ruleset reply", "rules/branches", ""],
+  ["a protection reply that is not JSON", "branches/main/protection", "<html>"],
+])("reads an unresolved status for %s", async (_name, endpoint, body) => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match.includes(endpoint) ? [match, body] : [match, value],
+    ),
+  );
+  const read = await readOn(HEAD, gh);
+  expect(read.status).toBe("unresolved");
+  expect(read.checks).toEqual([]);
+});
+
+// Usefulness: verifies the read follows every page of the commit status reply, as
+// the check-run read does, so a failing required status on a later page is not
+// missed (issue #349).
+test("reads a failing status from a later page of the commit status reply", async () => {
+  const gh = fakeGh(
+    routes({ headRuns: [run("ci (ubuntu-latest)", "success")] }).map(([match, value]) =>
+      match === `commits/${HEAD}/status --paginate`
+        ? [
+            match,
+            [
+              { statuses: [commitStatus("unrelated", "success")] },
+              { statuses: [commitStatus("ci (windows-latest)", "failure")] },
+            ],
+          ]
+        : [match, value],
+    ),
+  );
+  const read = await readOn(HEAD, gh);
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+});
+
+// Usefulness: verifies a pending commit status reads as pending, not failing,
+// because it has not failed, while the gate keeps its refusal (issue #349).
+test("reads a pending status for a pending commit status", async () => {
+  const read = await readOn(
+    HEAD,
+    statusReadGh({
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      headStatuses: [commitStatus("ci (windows-latest)", "pending")],
+    }),
+  );
+  expect(read).toMatchObject({ status: "pending", checks: ["ci (windows-latest)"] });
+});
+
+// Usefulness: verifies the finish gate refuses a pending commit status with its
+// existing reason, so the read's classification does not change the gate
+// (issue #349).
+test("refuses a pending required commit status with the unchanged reason", async () => {
+  const result = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: fakeGh(
+      routes({
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+        headStatuses: [commitStatus("ci (windows-latest)", "pending")],
+      }),
+    ),
   });
-  // The checks belong to a commit the head reads cannot name, so the read may
-  // report a status; what it must never do is report one as verified.
-  expect(read.advisory).toBe(true);
+  expect(result).toEqual({
+    ok: false,
+    reason: 'required check "ci (windows-latest)" failed (commit status pending)',
+  });
+});
+
+// Usefulness: verifies an entry the read cannot order, and a classic protection
+// reply it cannot interpret, read as unresolved and never as a pass, because the
+// latest entry per name decides and a pass could outrank a newer failure, and an
+// uninterpreted protection reply may hide a required check (issue #349).
+test.each([
+  [
+    "a check run with no id",
+    "check-runs",
+    [
+      {
+        check_runs: [
+          {
+            name: "ci (ubuntu-latest)",
+            status: "completed",
+            conclusion: "success",
+            started_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      },
+    ],
+  ],
+  [
+    "a check run with a start time that is not a date",
+    "check-runs",
+    [{ check_runs: [{ ...run("ci (ubuntu-latest)", "success"), started_at: "zzz" }] }],
+  ],
+  [
+    "a commit status with no update time",
+    "status --paginate",
+    [{ statuses: [{ id: 1, context: "ci (ubuntu-latest)", state: "success" }] }],
+  ],
+  [
+    "a commit status with an update time that is not a date",
+    "status --paginate",
+    [{ statuses: [{ ...commitStatus("ci (ubuntu-latest)", "success"), updated_at: "later" }] }],
+  ],
+  ["a protection reply that is an array", "branches/main/protection", []],
+  [
+    "a protection reply with a required-check list that is not an object",
+    "branches/main/protection",
+    { required_status_checks: "ci" },
+  ],
+  [
+    "a protection reply with contexts that are not a list",
+    "branches/main/protection",
+    { required_status_checks: { contexts: "ci" } },
+  ],
+  [
+    "a protection reply with a check that names no context",
+    "branches/main/protection",
+    { required_status_checks: { checks: [{}] } },
+  ],
+])("reads an unresolved status for %s", async (_name, endpoint, body) => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match.includes(endpoint) ? [match, body] : [match, value],
+    ),
+  );
+  const read = await readOn(HEAD, gh);
+  expect(read.status).toBe("unresolved");
+  expect(read.checks).toEqual([]);
+});
+
+// Usefulness: verifies a protection reply with no required-check list is
+// interpretable, so the uninterpretable-shape refusal does not reject a branch
+// that is protected without a required check (issue #349).
+test("reads a status when classic protection names no required check", async () => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match.includes("branches/main/protection")
+        ? [match, { required_pull_request_reviews: {} }]
+        : [match, value],
+    ),
+  );
+  expect((await readOn(HEAD, gh)).status).toBe("pass");
+});
+
+// Usefulness: verifies a failed read of the required names reads as unresolved,
+// because the list may name a required check that no configuration source did,
+// while the `no required checks` answer still reads (issue #349).
+test.each([
+  ["a failed call", "stderr: gh: HTTP 502", "unresolved"],
+  ["a reply that is not JSON", "not json", "unresolved"],
+  ["a list with an entry that names nothing", [{}], "unresolved"],
+  [
+    "the no required checks answer",
+    "stderr: no required checks reported on the 'main' branch",
+    "pass",
+  ],
+])("reads the required names from %s", async (_name, reply, expected) => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match === "pr checks 42" ? [match, reply] : [match, value],
+    ),
+  );
+  expect((await readOn(HEAD, gh)).status).toBe(expected);
+});
+
+// Usefulness: verifies the supplied status never passes a state the finish gate
+// refuses, because the read and the gate judge the same pages and the same
+// evaluated commit: a success on page two decides for both, and a failing test
+// merge commit refuses both (issue #349).
+test.each([
+  [
+    "a later success on page two of the commit statuses",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      statusPages: [
+        { statuses: [commitStatus("ci (windows-latest)", "failure", "2026-01-01T00:00:00Z")] },
+        { statuses: [commitStatus("ci (windows-latest)", "success", "2026-01-02T00:00:00Z")] },
+      ],
+    },
+  ],
+  [
+    "a failing check run on the test merge commit",
+    { headRuns: BOTH_PASS, mergeRuns: [run("ci (ubuntu-latest)", "failure")] },
+  ],
+  [
+    "a passing test merge commit over a failing head",
+    { headRuns: [run("ci (ubuntu-latest)", "failure")], mergeRuns: BOTH_PASS },
+  ],
+  ["a failing required check on the head", { headRuns: [run("ci (ubuntu-latest)", "failure")] }],
+  ["passing checks on a work tree that is not clean", { headRuns: BOTH_PASS, clean: false }],
+  ...[
+    "CLEAN",
+    "UNSTABLE",
+    "HAS_HOOKS",
+    "DRAFT",
+    "BLOCKED",
+    "BEHIND",
+    "DIRTY",
+    "UNKNOWN",
+    "SOMETHING_NEW",
+    "",
+    null,
+    undefined,
+  ].map((mergeStateStatus) => [
+    `passing checks with merge state ${JSON.stringify(mergeStateStatus) ?? "missing"}`,
+    { headRuns: BOTH_PASS, info: prInfo({ mergeStateStatus }) },
+  ]),
+])(
+  "the supplied status agrees with the finish gate on %s",
+  async (_name, { statusPages, clean = true, ...options }) => {
+    const table = routes(options).map(([match, value]) =>
+      statusPages && match === `commits/${HEAD}/status --paginate`
+        ? [match, statusPages]
+        : [match, value],
+    );
+    const read = await readOn(HEAD, fakeGh(table), clean);
+    const gate = await checkCi({
+      pr: 42,
+      reviewed: { ...REVIEWED, clean },
+      cwd: ".",
+      gh: fakeGh(table),
+    });
+    expect(read.status === "pass").toBe(gate.ok);
+  },
+);
+
+// Usefulness: verifies an empty check-run name or an empty status context reads as
+// unresolved and never as a pass, because an entry that names nothing cannot be
+// matched to a required check and must not be skipped (issue #349).
+test.each([
+  ["an empty check-run name", "check-runs", [{ check_runs: [...BOTH_PASS, run("", "success")] }]],
+  ["an empty status context", "status --paginate", [{ statuses: [commitStatus("", "success")] }]],
+])("reads an unresolved status for %s", async (_name, endpoint, body) => {
+  const gh = fakeGh(
+    routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
+      match.includes(endpoint) ? [match, body] : [match, value],
+    ),
+  );
+  expect((await readOn(HEAD, gh)).status).toBe("unresolved");
+});
+
+// Usefulness: verifies a required-name read that did not succeed reads as
+// unresolved whatever its stdout holds, while the documented exit 1 and exit 8
+// answers that carry a list still read (issue #349).
+const NAMES = '[{"name":"ci (ubuntu-latest)"}]';
+const NO_CHECKS = "no required checks reported on the 'main' branch";
+test.each([
+  ["exit 2 with a JSON list", { status: 2, stdout: NAMES, stderr: "" }, "unresolved"],
+  ["exit 1 with an empty JSON list", { status: 1, stdout: "[]", stderr: "" }, "unresolved"],
+  ["exit 4 with the no-checks text", { status: 4, stdout: "", stderr: NO_CHECKS }, "unresolved"],
+  [
+    "exit 1 with an error that quotes the no-checks text",
+    { status: 1, stdout: "", stderr: `gh: HTTP 502: ${NO_CHECKS} (retry)` },
+    "unresolved",
+  ],
+  ["exit 1 with a list", { status: 1, stdout: NAMES, stderr: "" }, "pass"],
+  ["exit 8 with a list", { status: 8, stdout: NAMES, stderr: "" }, "pass"],
+  [
+    "exit 1 with the exact no-checks answer",
+    { status: 1, stdout: "", stderr: `${NO_CHECKS}\n` },
+    "pass",
+  ],
+])("reads the required names from %s", async (_name, reply, expected) => {
+  const table = fakeGh(routes({ headRuns: BOTH_PASS }));
+  const gh = async (args, ...rest) =>
+    args.join(" ") === "pr checks 42 --required --json name" ? reply : table(args, ...rest);
+  expect((await readOn(HEAD, gh)).status).toBe(expected);
+});
+
+// Usefulness: verifies a merge state the finish gate refuses withholds the pass, so
+// the status never reports a pass for a state the gate refuses, while a failing
+// check keeps its own word (issue #349).
+test.each(["BLOCKED", "BEHIND", "DIRTY", "UNKNOWN", "SOMETHING_NEW"])(
+  "reads a non-pass status for merge state %s",
+  async (mergeStateStatus) => {
+    const info = prInfo({ mergeStateStatus });
+    const read = await readOn(HEAD, statusReadGh({ headRuns: BOTH_PASS, info }));
+    expect(read.status).toBe("unresolved");
+    expect(read.summary).toContain(HEAD);
+    const failing = await readOn(
+      HEAD,
+      statusReadGh({
+        headRuns: [run("ci (ubuntu-latest)", "failure"), run("ci (windows-latest)", "success")],
+        info,
+      }),
+    );
+    expect(failing.status).toBe("failing");
+  },
+);
+
+// Usefulness: verifies a failure wins over pending when entries share a required
+// name, so a rerun, another run, or a commit status that has not finished cannot
+// mask a failure beside it (issue #349).
+test.each([
+  [
+    "a check run and a commit status",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success"), openRun("ci (windows-latest)")],
+      headStatuses: [commitStatus("ci (windows-latest)", "failure")],
+    },
+  ],
+  [
+    "several check runs",
+    {
+      headRuns: [
+        run("ci (ubuntu-latest)", "success"),
+        { ...run("ci (windows-latest)", "failure"), started_at: "2026-01-01T00:00:00Z" },
+        { ...openRun("ci (windows-latest)"), started_at: "2026-01-02T00:00:00Z" },
+      ],
+    },
+  ],
+  [
+    "several commit statuses",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      headStatuses: [
+        commitStatus("ci (windows-latest)", "error", "2026-01-01T00:00:00Z"),
+        commitStatus("ci (windows-latest)", "pending", "2026-01-02T00:00:00Z"),
+      ],
+    },
+  ],
+])("reads a failing status over a pending one for %s", async (_name, options) => {
+  const read = await readOn(HEAD, statusReadGh(options));
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+});
+
+// Usefulness: verifies every supplied status stays advisory after the commit
+// binding, because the read is a pre-turn snapshot and the `--require-ci` gate
+// re-reads GitHub and enforces the condition (issue #349).
+test("every supplied status is marked advisory", async () => {
+  for (const [headRuns, status] of [
+    [BOTH_PASS, "pass"],
+    [[run("ci (ubuntu-latest)", "failure"), run("ci (windows-latest)", "success")], "failing"],
+    [[run("ci (ubuntu-latest)", "success")], "pending"],
+  ]) {
+    const read = await readOn(HEAD, statusReadGh({ headRuns }));
+    expect(read.status, status).toBe(status);
+    expect(read.advisory, status).toBe(true);
+  }
 });
 
 // Usefulness: verifies the `gh` runner terminates the child when its bound
