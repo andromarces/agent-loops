@@ -1,16 +1,17 @@
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { sha256 } from "../src/lib/hash.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
-import { executeRoleCommand } from "../src/role.mjs";
+import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";
 import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
   readRepoState,
   recordingAdapter,
+  spyStdoutWrite,
   repos,
   setup,
   stdinPrompt,
@@ -359,6 +360,90 @@ test("a secret value in the command text is redacted on every interactive output
     expect(outputs.errorEnvelope).toContain("[redacted:SYNTH_PROBE_TOKEN]");
     for (const text of Object.values(outputs)) {
       expect(text).not.toContain(SYNTHETIC_SECRET);
+    }
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+  }
+});
+
+// Usefulness: verifies each interactive refusal that echoes an argument prints a secret-named
+// environment value as `[redacted:NAME]` in the envelope on stdout: parser refusals, an init
+// refusal, a changed or missing --test-cmd, and an adapter error (issue #431, ADR 0017).
+test.each([
+  ["an unknown flag with a value", ["--bogus=SECRET"]],
+  ["a stray argument from an unquoted command", ["--test-cmd", "node", "SECRET"]],
+  ["a bad --role value", ["--role=SECRET"]],
+  ["a bad --mode value", ["--mode=SECRET"]],
+  [
+    "a malformed --test-cmd-timeout beside the command",
+    ["--test-cmd", "echo SECRET", "--test-cmd-timeout=SECRET"],
+  ],
+  ["an unsupported worker at init", ["--worker=SECRET"]],
+])("an interactive refusal for %s redacts the secret", async (_name, extra) => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const origExitCode = process.exitCode;
+  const writeSpy = spyStdoutWrite();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const synthetic = "synthetic-probe-value-8f3a1c";
+  process.env.SYNTH_PROBE_TOKEN = synthetic;
+  try {
+    const argv = [...dispatchArgv(INIT_OVERRIDES, "worker"), ...extra].map((arg) =>
+      arg === "<repo>" ? repo : arg.replaceAll("SECRET", synthetic),
+    );
+    await runRoleMain(argv, {
+      agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    });
+    const printed = writeSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(JSON.parse(printed).status).toBe("error");
+    expect(printed).not.toContain(synthetic);
+    const logged = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(logged).not.toContain(synthetic);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    writeSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
+// Usefulness: verifies an adapter error whose text holds a secret-named environment value reaches
+// the envelope and the state file as `[redacted:NAME]` (issue #431, ADR 0017).
+test("an adapter error text redacts a secret value in the envelope and the state", async () => {
+  process.env.SYNTH_PROBE_TOKEN = SYNTHETIC_SECRET;
+  try {
+    const cmd = node("console.log('ok')");
+    const { repo, agents } = await start(["--test-cmd", cmd]);
+    const failing = {
+      async run() {
+        throw new Error(`reviewer CLI crashed near ${SYNTHETIC_SECRET}`);
+      },
+    };
+    const failed = await reviewerTurn(repo, { ...agents, fake2: failing }, ["--test-cmd", cmd]);
+    expect(failed.payload.error).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    const state = JSON.stringify(await readRepoState(repo));
+    expect(state).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    for (const text of [JSON.stringify(failed.payload), state]) {
+      expect(text).not.toContain(SYNTHETIC_SECRET);
+    }
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+  }
+});
+
+// Usefulness: verifies a missing --test-cmd on a later dispatch of a run that set one is refused
+// without printing the command, so the refusal path never echoes a stored or supplied value.
+test("a missing or changed --test-cmd refusal never prints the command", async () => {
+  process.env.SYNTH_PROBE_TOKEN = SYNTHETIC_SECRET;
+  try {
+    const cmd = `${node("console.log('ok')")} ${SYNTHETIC_SECRET}`;
+    const { repo, agents } = await start(["--test-cmd", cmd]);
+    const missing = await reviewerTurn(repo, agents);
+    const changed = await reviewerTurn(repo, agents, ["--test-cmd", `${cmd} changed`]);
+    for (const turn of [missing, changed]) {
+      expect(turn.exitCode).toBe(1);
+      expect(JSON.stringify(turn.payload)).not.toContain(SYNTHETIC_SECRET);
     }
   } finally {
     delete process.env.SYNTH_PROBE_TOKEN;

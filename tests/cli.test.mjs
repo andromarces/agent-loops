@@ -1626,3 +1626,81 @@ test("a secret value in the command text is redacted in the transcript and the s
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies each headless refusal that echoes an argument prints a secret-named
+// environment value as `[redacted:NAME]`, so a command passed unquoted, a mistyped flag, or a bad
+// value never puts the secret on stderr (issue #431, ADR 0017).
+test.each([
+  ["an unknown flag with a value", ["--bogus=SECRET"]],
+  [
+    "an unquoted command that leaves the secret as a stray argument",
+    ["--test-cmd", "node", "SECRET"],
+  ],
+  ["a bad --mode value", ["--mode", "SECRET"]],
+  ["an unsupported worker", ["--worker", "SECRET"]],
+  [
+    "a malformed --test-cmd-timeout beside the command",
+    ["--test-cmd", "echo SECRET", "--test-cmd-timeout", "SECRET"],
+  ],
+  ["an unreadable --task-file", ["--task-file", "SECRET"]],
+])("a headless refusal for %s redacts the secret", async (_name, extra) => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const synthetic = "synthetic-probe-value-8f3a1c";
+  process.env.SYNTH_PROBE_TOKEN = synthetic;
+  try {
+    const argv = [...BASE, ...extra].map((arg) => arg.replaceAll("SECRET", synthetic));
+    const withoutTask = extra[0] === "--task-file" ? argv.filter((_a, i) => i < 6 || i > 7) : argv;
+    await main(withoutTask, {});
+    expect(process.exitCode).toBe(1);
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).not.toContain(synthetic);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
+// Usefulness: verifies a fatal headless error whose text holds a secret-named environment value
+// reaches the stderr report and the transcript error as `[redacted:NAME]` (issue #431, ADR 0017).
+test("a fatal headless error redacts a secret value in the stderr report and the transcript", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const synthetic = "synthetic-probe-value-8f3a1c";
+  process.env.SYNTH_PROBE_TOKEN = synthetic;
+  const agents = {
+    codex: {
+      async run() {
+        throw new Error(`orchestrator crashed near ${synthetic}`);
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main([...BASE, "--cwd", repo, "--transcript", transcriptPath], agents);
+    expect(process.exitCode).toBe(1);
+    const transcript = await readFile(transcriptPath, "utf8");
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(transcript).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(report).toContain("[redacted:SYNTH_PROBE_TOKEN]");
+    expect(transcript).not.toContain(synthetic);
+    expect(report).not.toContain(synthetic);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});

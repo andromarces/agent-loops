@@ -34,11 +34,16 @@ import {
 import { setVerbose } from "./lib/log.mjs";
 import { writeFileAtomic } from "./lib/runstate.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
+import { redactEnvSecrets } from "./lib/redact.mjs";
 import { redactCommandText } from "./lib/test-cmd.mjs";
 import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
+
+// An error text as the headless entry point prints or records it: a refusal can echo an argument
+// that holds a secret-named environment value (ADR 0017).
+const shown = (text) => redactEnvSecrets(String(text));
 
 export function parseArgs(argv) {
   const options = {
@@ -514,7 +519,7 @@ export async function main(
       assertTask(options.task);
     }
   } catch (err) {
-    console.error(`\n${err.message}`);
+    console.error(`\n${shown(err.message)}`);
     process.exitCode = 1;
     return;
   }
@@ -545,7 +550,7 @@ export async function main(
       }
     } catch (err) {
       console.error(`
-${err.message}`);
+${shown(err.message)}`);
       process.exitCode = 1;
       return;
     }
@@ -593,10 +598,10 @@ ${err.message}`);
 
   const finish = async ({ exitCode, error }) => {
     transcriptData.exitCode = exitCode;
-    transcriptData.error = error ? (error.message ?? String(error)) : null;
+    transcriptData.error = error ? shown(error.message ?? String(error)) : null;
     await writeTranscript();
     if (error) {
-      console.error(`\n${error.message ?? error}`);
+      console.error(`\n${shown(error.message ?? error)}`);
       if (fatalTestRun) {
         console.error(
           `\nTest command result before the failed turn (advisory):\n${JSON.stringify(fatalTestRun, null, 2)}`,
@@ -691,7 +696,7 @@ ${err.message}`);
 
 if (isEntryPoint(import.meta.filename)) {
   main().catch((error) => {
-    console.error(`\n${error.stack ?? error.message ?? error}`);
+    console.error(`\n${shown(error.stack ?? error.message ?? error)}`);
     process.exitCode = 1;
   });
 }

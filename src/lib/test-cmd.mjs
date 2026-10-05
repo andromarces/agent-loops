@@ -1,6 +1,7 @@
 import { execa } from "execa";
 import { readProp } from "./error-message.mjs";
 import { logInfo } from "./log.mjs";
+import { redactEnvSecrets } from "./redact.mjs";
 import { diffSnapshots, snapshot } from "./snapshot.mjs";
 
 // ADR 0017. The command is the operator's `--test-cmd`, run by the runtime in
@@ -30,28 +31,6 @@ export function failedTestRun(err) {
   return carriedTestRuns.get(err) ?? readProp(err, "testRun");
 }
 const MAX_CHANGED_PATHS = 20;
-// Only an environment value this long is redacted; a shorter one would match
-// ordinary words and ruin the tail.
-const MIN_SECRET_LENGTH = 8;
-const SECRET_NAME = /token|secret|passw|key|credential|auth/i;
-
-/**
- * Replaces every occurrence of the value of a secret-named environment variable
- * with `[redacted:NAME]`. Exact-value match only: a secret that the command
- * derives, encodes, or reads from a file is not found.
- * @param {string} text
- * @param {NodeJS.ProcessEnv} env
- */
-export function redactEnvSecrets(text, env = process.env) {
-  let out = text;
-  for (const [name, value] of Object.entries(env)) {
-    if (SECRET_NAME.test(name) && typeof value === "string" && value.length >= MIN_SECRET_LENGTH) {
-      out = out.split(value).join(`[redacted:${name}]`);
-    }
-  }
-  return out;
-}
-
 // Control characters other than newline and tab never help a reviewer and can
 // hide text in a terminal, so they are dropped.
 function stripControl(text) {

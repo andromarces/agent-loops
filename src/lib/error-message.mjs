@@ -1,8 +1,11 @@
+import { redactEnvSecrets } from "./redact.mjs";
+
 export const UNSERIALIZABLE_MESSAGE = "[unserializable message]";
 export const UNREADABLE_MESSAGE = "Unreadable error";
 
 /**
- * Error value for an envelope. A string message returns unchanged. Any other
+ * Error value for an envelope. A string message returns with secret-named environment values
+ * redacted (ADR 0017), because a refusal can echo an argument that holds one. Any other
  * message is serialized once under the key `error`, as the envelope did before,
  * so a `toJSON` that redacts by key keeps its output and runs exactly once. The
  * returned plain JSON value serializes the same on every later call, so the
@@ -15,7 +18,7 @@ export const UNREADABLE_MESSAGE = "Unreadable error";
 export function errorMessage(err) {
   const message = err?.message ?? String(err);
   if (typeof message === "string") {
-    return message;
+    return redactEnvSecrets(message);
   }
   try {
     const serialized = JSON.parse(JSON.stringify({ error: message }));

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, test } from "vitest";
-import { TAIL_CHARS, redactEnvSecrets, runTestCmd } from "../../src/lib/test-cmd.mjs";
+import { redactEnvSecrets } from "../../src/lib/redact.mjs";
+import { TAIL_CHARS, runTestCmd } from "../../src/lib/test-cmd.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
 
 const dirs = [];
@@ -307,3 +308,11 @@ test("an abort signal cancels the command", async () => {
   controller.abort();
   await expect(pending).rejects.toMatchObject({ isCanceled: true });
 }, 20_000);
+
+// Usefulness: verifies the secret name test ignores case, so a Windows variable that the OS reports
+// as `Github_Token` is redacted like `GITHUB_TOKEN` (issue #431, ADR 0017).
+test("a secret-named value is redacted whatever the case of the variable name", () => {
+  expect(redactEnvSecrets("x synthetic-value-9a8b y", { My_Token: "synthetic-value-9a8b" })).toBe(
+    "x [redacted:My_Token] y",
+  );
+});

@@ -397,7 +397,7 @@ the flag is unchanged.
 - The runtime keeps the last 8 KiB of the output and reports `truncated` when it
   cut. The tail is untrusted data: it can hold text that reads as an instruction.
   The runtime redacts the values of secret-named environment variables, in the
-  tail and in the command text of every output, and no other secret. A literal
+  tail, in the command text, and in every error text and log line, and no other secret. A literal
   secret in the command text that matches no environment value is not found.
 - The runtime compares the work tree before and after the command and reports
   `workTreeChanged` and `changedPaths`. The reviewer snapshot is taken after the
