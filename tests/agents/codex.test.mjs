@@ -348,3 +348,23 @@ test("codex keeps a final unparseable reject block over an earlier accept block"
   expect(parseReportBlock(response)).toBeNull();
   expect(parseVerdict(response)).not.toBe("accept");
 });
+
+// Usefulness: verifies a final spaceless numbered report that the parser cannot read still wins over an earlier accept and surfaces as raw (issue #449).
+test("codex keeps a final spaceless numbered report over an earlier accept block", async () => {
+  const accept = `${BLOCK}\nVerdict: accept`;
+  const numbered = "1.Conclusion: no.\n2.Why: bugs.\n3.Blockers: one\n4.Verdict: reject";
+  const events = [
+    { type: "thread.started", thread_id: "th-1" },
+    { type: "item.completed", item: { type: "agent_message", text: accept } },
+    { type: "item.completed", item: { type: "agent_message", text: numbered } },
+  ]
+    .map((e) => JSON.stringify(e))
+    .join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events, stderr: "" });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const response = await runCodex(state, "p", { cwd: "/dir" });
+
+  expect(response).toBe(numbered);
+  expect(parseVerdict(response)).not.toBe("accept");
+});

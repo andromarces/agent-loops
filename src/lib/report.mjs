@@ -78,11 +78,15 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // emphasis shapes above into `raw` and makes that loss loud.
 const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
-// A line that opens a closing-block label or the reviewer `Verdict:` line, plain or hidden by the
-// indentation and markdown decoration the parser also tolerates in DECORATED_LABEL_LINE.
-const LABEL_ATTEMPT_LINE = new RegExp(
-  `^\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]{0,2}\\s*:`,
-  "i",
+// A line that opens a closing-block label or the reviewer `Verdict:` label after any run of
+// non-letter lead-in: indentation, quote, heading, bullet, or numbered marker, with or without a
+// space, and emphasis or code marks around the label. The lead-in is any non-letter run, not a
+// list of marker shapes, so it holds every line that the strict match, DECORATED_LABEL_LINE, or
+// LIST_LINE reads as a label line, and a marker shape those patterns do not name too. A line
+// that matches may not parse, and that is the point: an unparseable block is still an attempt.
+const LABEL_OPENER_LINE = new RegExp(
+  `^[^\\p{L}]*(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]{0,2}\\s*:`,
+  "iu",
 );
 
 /**
@@ -92,7 +96,7 @@ const LABEL_ATTEMPT_LINE = new RegExp(
  * @returns {boolean}
  */
 export function hasClosingBlockAttempt(response) {
-  return response.split(/\r?\n/).some((line) => LABEL_ATTEMPT_LINE.test(line));
+  return response.split(/\r?\n/).some((line) => LABEL_OPENER_LINE.test(line));
 }
 
 /**
