@@ -66,6 +66,7 @@ Andro Marces
 - [Issue #384: Verify the Codex read-only test-runner spawn on macOS, Linux, and the elevated Windows sandbox](https://github.com/andromarces/agent-loops/issues/384)
 - [Issue #420: Run a --test-cmd before each reviewer turn and supply the result to the reviewer](https://github.com/andromarces/agent-loops/issues/420)
 - [Issue #422: Forbid GitHub and remote writes in every reviewer and orchestrator turn](https://github.com/andromarces/agent-loops/issues/422)
+- [Pull Request #487: feat: add an opt-in workspace-write sandbox for the Codex reviewer](https://github.com/andromarces/agent-loops/pull/487)
 - Implementation: the `sandbox` option in `src/agents/codex.mjs`, `reviewerWorkspaceWrite` in `runChild` and `runLoop` in `src/runtime.mjs`, `workspaceWriteLine` in `src/prompts/reviewer.mjs`, `reviewerSandboxBlock` in `src/prompts/orchestrator.mjs`, the init field in `src/role.mjs`, the flag in `src/cli.mjs` and `src/lib/args.mjs`; tests in `tests/agents/`, `tests/runtime.reviewer-sandbox.test.mjs`, `tests/role.reviewer-sandbox.test.mjs`, `tests/orchestrator.test.mjs`, `tests/cli.test.mjs`, and `tests/prompts/`; documented in `docs/orchestrator-instructions.md` and `README.md`
 - [ADR 0001: Hybrid orchestrator with deterministic runtime](0001-hybrid-orchestrator-runtime.md)
 - [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md)
