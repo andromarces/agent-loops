@@ -1,6 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { vi } from "vitest";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
 import { removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
@@ -82,4 +83,19 @@ export async function cleanup() {
   repos.length = 0;
   await removePath(runsRoot);
   runsRoot = undefined;
+}
+
+/**
+ * Replaces `process.stdout.write` with a recorder for the main entry point. A
+ * `failure` is reported the way a broken pipe is: through the write callback,
+ * or by throwing when `throws` is set. Restore with `spy.mockRestore()`.
+ */
+export function spyStdoutWrite({ failure = null, throws = false } = {}) {
+  return vi.spyOn(process.stdout, "write").mockImplementation((chunk, callback) => {
+    if (failure && throws) {
+      throw failure;
+    }
+    callback?.(failure);
+    return true;
+  });
 }

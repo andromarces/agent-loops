@@ -734,8 +734,30 @@ function withLocalFiles(payload, localFiles) {
   return localFiles ? { ...payload, localFiles } : payload;
 }
 
+/** Error text as a string, so the envelope stringifies for any thrown value. */
 function errorMessage(err) {
-  return err?.message ?? String(err);
+  const message = err?.message ?? String(err);
+  return typeof message === "string" ? message : String(message);
+}
+
+/** One error envelope for a thrown value. A cancel keeps exit 130. */
+function errorResult(err) {
+  try {
+    return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
+  } catch (formatErr) {
+    // Reading the message threw. Keep one envelope, and keep a cancel as exit 130.
+    let canceled = false;
+    try {
+      canceled = Boolean(formatErr?.isCanceled);
+    } catch {}
+    return {
+      exitCode: canceled ? 130 : 1,
+      payload: {
+        status: "error",
+        error: canceled ? "Interrupted by SIGINT" : "Unreadable error",
+      },
+    };
+  }
 }
 
 /**
@@ -1206,29 +1228,43 @@ export async function executeRoleCommand(args, deps = {}) {
         throw new RoleError(`Unsupported operation: ${args.operation}`);
     }
   } catch (err) {
+    return errorResult(err);
+  }
+}
+
+/**
+ * Writes the envelope as one stdout line and sets the exit code. A failed write
+ * cannot be retried on the same stream, so it is reported on stderr and turns a
+ * zero exit code into 1. `console.log` swallows a write error, so the write
+ * callback is the only place the failure shows.
+ */
+async function printEnvelope(payload, exitCode) {
+  let line;
+  try {
+    line = JSON.stringify(payload);
+  } catch {
+    line = JSON.stringify({ status: "error", error: "Unserializable envelope" });
+    exitCode ||= 1;
+  }
+  const failure = await new Promise((resolve) => {
     try {
-      return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
-    } catch (formatErr) {
-      // Reading the message threw. Keep one envelope, and keep a cancel as exit 130.
-      let canceled = false;
-      try {
-        canceled = Boolean(formatErr?.isCanceled);
-      } catch {}
-      return {
-        exitCode: canceled ? 130 : 1,
-        payload: {
-          status: "error",
-          error: canceled ? "Interrupted by SIGINT" : "Unreadable error",
-        },
-      };
+      process.stdout.write(`${line}\n`, resolve);
+    } catch (err) {
+      resolve(err);
     }
+  });
+  process.exitCode = exitCode;
+  if (failure) {
+    console.error(`Failed to write the envelope to stdout: ${failure.code ?? failure.message}`);
+    process.exitCode ||= 1;
   }
 }
 
 /**
  * Entry point for `agent-loop role ...`. Prints exactly one JSON envelope on
  * stdout and sets the process exit code, except `--help`, which prints plain
- * usage and exits 0. All lifecycle logging goes to stderr.
+ * usage and exits 0. All lifecycle logging goes to stderr. A stdout write that
+ * fails leaves no envelope to print, so it exits non-zero with a stderr message.
  */
 export async function main(argv, { agents = defaultAgents } = {}) {
   setLogsToStderr(true);
@@ -1245,8 +1281,8 @@ export async function main(argv, { agents = defaultAgents } = {}) {
       args = parseRoleArgs(argv);
       setVerbose(args.verbose);
     } catch (err) {
-      console.log(JSON.stringify({ status: "error", error: errorMessage(err) }));
-      process.exitCode = 1;
+      const { payload } = errorResult(err);
+      await printEnvelope(payload, 1);
       return;
     }
 
@@ -1260,8 +1296,7 @@ export async function main(argv, { agents = defaultAgents } = {}) {
       signal: controller.signal,
     });
 
-    console.log(JSON.stringify(payload));
-    process.exitCode = exitCode;
+    await printEnvelope(payload, exitCode);
   } finally {
     process.removeListener("SIGINT", onSigInt);
   }

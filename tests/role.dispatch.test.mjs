@@ -15,6 +15,7 @@ import {
   REPORT,
   repos,
   setup,
+  spyStdoutWrite,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
@@ -807,7 +808,7 @@ test("main prints exactly one JSON object on stdout on success and error paths",
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const logSpy = spyStdoutWrite();
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const origExitCode = process.exitCode;
 
@@ -857,7 +858,7 @@ test.each([
     await setup();
     const repo = await createTempRepo();
     repos.push(repo);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const logSpy = spyStdoutWrite();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const origExitCode = process.exitCode;
 
@@ -899,6 +900,108 @@ test.each([
     }
   },
 );
+
+// Usefulness: verifies a thrown value whose message is not a string (BigInt, circular object,
+// throwing toJSON) still yields one JSON error envelope through main instead of a stringify crash.
+test.each([
+  ["a BigInt", () => 10n, "10"],
+  [
+    "a circular object",
+    () => {
+      const loop = {};
+      loop.self = loop;
+      return loop;
+    },
+    "[object Object]",
+  ],
+  [
+    "an object whose toJSON throws",
+    () => ({
+      toJSON() {
+        throw new Error("toJSON failed");
+      },
+    }),
+    "[object Object]",
+  ],
+])("main prints one error envelope when the message is %s", async (_label, makeMessage, text) => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const writeSpy = spyStdoutWrite();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const origExitCode = process.exitCode;
+
+  try {
+    const promptFile = join(repo, "main-prompt.txt");
+    await writeFile(promptFile, "work it", "utf8");
+    const agents = {
+      get fake1() {
+        throw { message: makeMessage() };
+      },
+      fake2: recordingAdapter([]),
+    };
+    await runRoleMain(
+      [
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        ...INIT_OVERRIDES,
+        "--prompt-file",
+        promptFile,
+      ],
+      { agents },
+    );
+    expect(writeSpy.mock.calls.length).toBe(1);
+    expect(JSON.parse(writeSpy.mock.calls[0][0])).toEqual({ status: "error", error: text });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    writeSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
+// Usefulness: verifies a failed stdout write (callback error or a throw) is reported on stderr and
+// in a non-zero exit code, so a lost envelope never looks like a clean exit 0.
+test.each([
+  ["through the write callback", false],
+  ["by throwing", true],
+])("main reports a failed stdout write %s", async (_label, throws) => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const failure = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+  const writeSpy = spyStdoutWrite({ failure, throws });
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const origExitCode = process.exitCode;
+
+  try {
+    const promptFile = join(repo, "main-prompt.txt");
+    await writeFile(promptFile, "work it", "utf8");
+    process.exitCode = 0;
+    await runRoleMain(
+      [
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        ...INIT_OVERRIDES,
+        "--prompt-file",
+        promptFile,
+      ],
+      { agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) } },
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain("EPIPE");
+  } finally {
+    writeSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
 
 // Usefulness: verifies acceptance — a run that declared a PR supplies the
 // required-check status the runtime read to the reviewer turn and reports that
