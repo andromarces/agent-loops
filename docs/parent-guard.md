@@ -39,6 +39,7 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
   terminal. During `interrupted` it stays engaged, and
   `dispatch --resume-interrupted` keeps it engaged because the resumed run is
   non-terminal again.
+- A new session takes over a non-terminal run with `agent-loop role adopt` (ADR 0019). It writes the entry under the new session, rewrites the stored `parentSession`, and removes the old entry, so the new session is denied and the old one is released by the same match. Without it, a session that continues another session's run is unguarded.
 - Everything else allows: a worker dispatched by `role` in the same cwd (a different session id), a second interactive session in the same cwd, a state without `parentSession`, and a missing or corrupt entry or state file. One corrupt entry never hides another active run, and a missing, unreadable, or corrupt record never denies on its own. The guard fails open by design: it supplements the prompt-only rule, so an unknown record never blocks a tool call.
 - Without a registered run the hook reads the per-run entry directory and the legacy index, finds nothing, prints nothing, and exits 0; the normal permission flow applies. The deny reason names orchestrator mode and points at `role dispatch` / `finish` / `abort`.
 - The installed Claude entry is a shell-form `command` with no `args`,

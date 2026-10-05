@@ -249,7 +249,7 @@ The runtime enforces step limits and mutation boundaries.
 
 Subcommands:
 
-  agent-loop role               Run a single worker or reviewer turn, or finish/abort/extend
+  agent-loop role               Run a single worker or reviewer turn, or finish/abort/extend/adopt
                                 a run, from a lifecycle state file (see below). One JSON
                                 object on stdout, except --help, which prints plain
                                 usage; logs on stderr.
@@ -277,6 +277,11 @@ Role operations:
                                 stepsUsed and the current budget. The caller
                                 must pass the run's stored --parent-session id; the
                                 check compares that id only.
+  adopt                         Hand a non-terminal run to a new parent session:
+                                --from-session is the run's stored parent session id,
+                                --parent-session the new one. The new session's guard
+                                then covers the run and the old one releases it. The
+                                check compares the stored id only. Refuses a terminal run.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
                                 timedOut flag. The bound starts at command entry
@@ -293,10 +298,12 @@ Role flags:
   --role worker|reviewer        Role to dispatch. Required for dispatch.
   --cwd <directory>             Target work tree. Must be inside a Git work tree.
                                 Defaults to the current directory.
-  --parent-session <id>         Required on the init call and on extend. The harness
-                                session id the parent-edit guard matches; later calls
-                                reject a changed value, and extend refuses a mismatch. The headless form (no subcommand) is the explicit
-                                unguarded path.
+  --parent-session <id>         Required on the init call, on extend, and on adopt. The
+                                harness session id the parent-edit guard matches; later
+                                calls reject a changed value, and extend refuses a
+                                mismatch. On adopt it is the new parent. The headless form
+                                (no subcommand) is the explicit unguarded path.
+  --from-session <id>           adopt only: the run's stored parent session id.
   --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files
                                 First (init) call only. Later calls read these from the
                                 state file and reject any attempt to change them.
