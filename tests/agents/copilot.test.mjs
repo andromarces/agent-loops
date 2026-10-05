@@ -516,3 +516,29 @@ test("copilot keeps a final letter-prefixed list report over an earlier accept b
   expect(response).toBe(lettered);
   expect(parseVerdict(response)).toBe("unknown");
 });
+
+// Usefulness: verifies the reviewer-only Codex sandbox input changes no copilot invocation, so the
+// opt-in reaches Codex alone (issue #421).
+test("copilot invocation is identical with the reviewer sandbox input on and off", async () => {
+  vi.mocked(exec).mockClear();
+  const reply = {
+    stdout: [
+      '{"type":"assistant.message","data":{"content":"ok"}}',
+      '{"type":"result","sessionId":"copilot-sess-1","exitCode":0}',
+    ].join("\n"),
+    stderr: "",
+  };
+  vi.mocked(exec).mockResolvedValueOnce(reply).mockResolvedValueOnce(reply);
+  const turn = (extra) =>
+    runCopilot({ kind: "copilot", sessionId: "copilot-sess-1", model: null, effort: null }, "p", {
+      cwd: "/dir",
+      readOnly: true,
+      ...extra,
+    });
+
+  await turn({});
+  await turn({ sandbox: "workspace-write" });
+
+  const [off, on] = vi.mocked(exec).mock.calls;
+  expect(on).toEqual(off);
+});

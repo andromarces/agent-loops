@@ -1492,3 +1492,16 @@ test("the initial prompt describes the test command only when the run has one", 
   expect(prompt).toContain("This run has a test command (--test-cmd).");
   expect(prompt).toContain("A status of timed-out is neither a pass nor a failure.");
 });
+
+// Usefulness: verifies the initial prompt tells the orchestrator about the opt-in reviewer sandbox
+// only for a run that set it, and says the reviewer still never edits, so the prompt never
+// describes a sandbox that the run does not have (issue #421).
+test("the initial prompt describes the reviewer sandbox only when the run opted in", () => {
+  const base = { task: "t", maxSteps: 5 };
+  expect(initialPrompt(base)).toBe(initialPrompt({ ...base, reviewerWorkspaceWrite: false }));
+  expect(initialPrompt(base)).not.toContain("workspace-write");
+  const prompt = initialPrompt({ ...base, reviewerWorkspaceWrite: true });
+  expect(prompt).toContain("workspace-write");
+  expect(prompt).toContain("network access off");
+  expect(prompt).toContain("halts the run");
+});

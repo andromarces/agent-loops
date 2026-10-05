@@ -38,6 +38,9 @@ Collect these before the first dispatch:
   supplies it, and a headless run names it in the task
 - the test command, when the operator names one (`--test-cmd`, with the optional
   `--test-cmd-timeout`); the operator supplies it, and no turn sets it
+- whether the Codex reviewer runs in the `workspace-write` sandbox
+  (`--reviewer-workspace-write`, off by default); the operator supplies it, and
+  no turn sets it
 
 ## Resolving the CLI
 
@@ -117,6 +120,8 @@ printf '%s' "<prompt>" | agent-loop role dispatch --role reviewer --cwd "<work t
 
 A run that set `--test-cmd` at init passes the same `--test-cmd "<command>"` on
 every reviewer dispatch, as the section on the runtime test command states.
+A run that set `--reviewer-workspace-write` at init needs no flag on a later
+dispatch: the state file holds the choice.
 
 Read the JSON envelope on stdout. Example reviewer envelope:
 
@@ -376,8 +381,8 @@ status.
 
 ## The runtime supplies a test command result
 
-A reviewer turn runs read-only, so it cannot run the test suite. An operator can
-name a command with `--test-cmd <command>` at init. The runtime runs it in the
+A reviewer turn runs read-only by default, so it cannot run the test suite. An
+operator can name a command with `--test-cmd <command>` at init. The runtime runs it in the
 work tree before each reviewer turn, outside the reviewer sandbox, and supplies
 the result in the reviewer prompt. A worker turn never runs it. A run without
 the flag is unchanged.
@@ -410,7 +415,49 @@ the flag is unchanged.
   reviewer `Checks` line and act on a disagreement. A turn with no command
   carries no `testRun`.
 - The reviewer sees the result of the whole command only. It cannot run a
-  targeted test.
+  targeted test, unless the run also set `--reviewer-workspace-write` (next
+  section).
+
+## The Codex reviewer can run in the workspace-write sandbox
+
+A Codex reviewer turn runs with `sandbox_mode="read-only"` and cannot run a
+targeted test or a probe. An operator can opt in at init with
+`--reviewer-workspace-write` (ADR 0019). It needs `--reviewer codex`, and any
+other reviewer is refused at init. The run is unchanged without it.
+
+- The runtime then starts each Codex reviewer turn with
+  `sandbox_mode="workspace-write"` and `sandbox_workspace_write.network_access=false`.
+  Network stays off. The runtime sets it explicitly, because the mode takes
+  network from the user Codex config otherwise.
+- Only reviewer turns change. Every orchestrator turn, every worker turn, and the
+  other four adapters keep their invocations, and the runtime mutation check
+  still wraps every reviewer turn.
+- The reviewer prompt gains one line: the turn has the sandbox and no network,
+  and a package manager that writes outside the work tree fails there, so the
+  reviewer calls the project's local binary. Without the opt-in the line is
+  absent. The reviewer still must not change files. The headless initial prompt
+  tells the orchestrator about the opt-in only for a run that set it.
+- Choose the opt-in at init, and never change it later. A later call may repeat
+  the flag or omit it. A call that turns it on after init is refused. No turn
+  sets it.
+- Read the accepted gaps before you rely on it:
+  - The sandbox no longer prevents a reviewer edit. An edit succeeds, and the run
+    then halts with a `MutationError`, exit 1, and the runtime does not revert it.
+  - The snapshot does not see a write to an ignored file (for example `.env` or
+    `node_modules/`), a write outside the repository, a write that the turn
+    restores before it ends, or Git state other than the index and `HEAD`
+    (other refs, the stash, the config).
+  - Network is off, so the opt-in opens no remote-write path. If a run reaches
+    the network anyway, `gh` and `git` can change remote state, and the local
+    snapshot does not see that. Codex is the only adapter that blocks shell
+    network in a read-only turn today.
+  - Reviewed content that holds an instruction can steer a command that writes,
+    not only one that reads.
+  - The unelevated Windows sandbox probably gives no gain: it blocks a child
+    spawn with `EPERM` under `workspace-write`. Not verified for a test runner.
+- A reviewer `Checks` line that shows a local test run under this opt-in is the
+  reviewer's own report. Compare it with `testRun` and with the required CI
+  checks.
 
 ## Test evidence when the reviewer cannot run tests
 

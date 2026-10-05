@@ -372,3 +372,19 @@ test("reviewer prompt requires each blocker stated inside the Blockers line", ()
   expect(prompt.indexOf("State each blocker")).toBeGreaterThan(prompt.indexOf("Deferred:"));
   expect(prompt.split("Blockers:")).toHaveLength(2);
 });
+
+// Usefulness: verifies the sandbox line is present only for an opted-in turn, tells the reviewer
+// to call the project's local binary because a package manager writes outside the work tree, keeps
+// the edit ban, and names no repository-specific tool, so it fits any repository (issue #421).
+test("reviewer prompt carries the workspace-write line only when the opt-in is on", () => {
+  const off = reviewerPrompt("check the fix");
+  expect(reviewerPrompt("check the fix", null, null, false)).toBe(off);
+  expect(off).not.toContain("workspace-write");
+
+  const on = reviewerPrompt("check the fix", null, null, true);
+  expect(on).toContain("workspace-write");
+  expect(on).toContain("local binary");
+  expect(on).toContain("outside the work tree");
+  expect(on).toContain("Do not implement, fix, edit, or change any file.");
+  expect(on).not.toMatch(/pnpm|npm|yarn|vitest|jest|node_modules|agent-loop/i);
+});

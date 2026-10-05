@@ -14,10 +14,19 @@ const missingSession = (id) =>
   `Error: thread/resume: thread/resume failed: no rollout found for thread id ${id} (code -32600)`;
 
 export async function runCodex(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal, role } = options;
+  const { cwd, readOnly, sandbox, timeout, signal, role } = options;
   const configArgs = [];
 
-  if (readOnly) {
+  // `sandbox` is the reviewer-only input of the opt-in `--reviewer-workspace-write` (ADR 0019).
+  // Network access is set off explicitly, because the user config can turn it on for this mode.
+  if (sandbox === "workspace-write") {
+    configArgs.push(
+      "-c",
+      'sandbox_mode="workspace-write"',
+      "-c",
+      "sandbox_workspace_write.network_access=false",
+    );
+  } else if (readOnly) {
     configArgs.push("-c", 'sandbox_mode="read-only"');
   }
 

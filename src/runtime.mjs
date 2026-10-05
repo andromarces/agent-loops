@@ -54,6 +54,8 @@ async function invoke({ agents, state, roleName, prompt, opts, onEvent, stepsUse
  * operator's `--test-cmd` that the runtime ran before the turn (ADR 0017). A
  * handled error result keeps `testRun`, and a fatal error carries it as
  * `err.testRun`, so a turn that fails after the command ran loses no evidence.
+ * `reviewerWorkspaceWrite` passes the reviewer-only `sandbox: "workspace-write"` input to a
+ * reviewer turn and adds the matching prompt line; no other role receives it (ADR 0019).
  * @param {object} options
  * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, testRun?: object }>}
  */
@@ -69,6 +71,7 @@ export async function runChild(options) {
     stepsUsed = 0,
     pr = null,
     testCmd = null,
+    reviewerWorkspaceWrite = false,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -76,6 +79,9 @@ export async function runChild(options) {
 
   const isWorker = roleName === "worker";
   const readOnly = !isWorker;
+  // The opt-in reaches the reviewer turn only. `readOnly` stays true there, so the mutation check
+  // below still wraps the turn, and the orchestrator path never sets this input (ADR 0019).
+  const sandbox = roleName === "reviewer" && reviewerWorkspaceWrite ? "workspace-write" : null;
 
   const invokeRole = (finalPrompt) =>
     invoke({
@@ -83,7 +89,7 @@ export async function runChild(options) {
       state: role,
       roleName,
       prompt: finalPrompt,
-      opts: { cwd, readOnly, timeout, signal },
+      opts: { cwd, readOnly, ...(sandbox ? { sandbox } : {}), timeout, signal },
       onEvent,
       stepsUsed,
     });
@@ -156,7 +162,11 @@ export async function runChild(options) {
             reviewed = reviewedState(before);
             prChecks = await readStatus(reviewed);
           }
-          return runFn(isWorker ? workerFinalPrompt : reviewerPrompt(prompt, prChecks, testRun));
+          return runFn(
+            isWorker
+              ? workerFinalPrompt
+              : reviewerPrompt(prompt, prChecks, testRun, sandbox !== null),
+          );
         })
       : await runFn(workerFinalPrompt);
     return {
@@ -272,6 +282,10 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * turn and supplies the result to the reviewer prompt and the result event as
  * advisory `testRun` evidence; `testCmdTimeout` bounds one run in seconds
  * (ADR 0017).
+ * With `reviewerWorkspaceWrite`, a Codex reviewer turn runs in the `workspace-write`
+ * sandbox with network off, and the reviewer prompt says so. The orchestrator turns
+ * and the worker turns are unchanged, and the mutation check still wraps every
+ * reviewer turn (ADR 0019).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -297,6 +311,7 @@ export async function runLoop(options) {
     requireCi = null,
     testCmd: testCmdText = null,
     testCmdTimeout = null,
+    reviewerWorkspaceWrite = false,
     mode = null,
     continued = false,
     copyLocalFiles = true,
@@ -367,6 +382,7 @@ export async function runLoop(options) {
     pr,
     requireCi,
     testCmd: testCmdText !== null,
+    reviewerWorkspaceWrite,
     mode,
     continued,
     timeout,
@@ -577,6 +593,7 @@ export async function runLoop(options) {
                 command: testCmdText,
                 timeoutSeconds: testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
               },
+        reviewerWorkspaceWrite,
         gh,
         readTimeoutMs,
         onEvent,

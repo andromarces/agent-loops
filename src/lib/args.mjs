@@ -127,6 +127,19 @@ export function testCmdError(testCmd, testCmdTimeout) {
   return null;
 }
 
+/**
+ * The `--reviewer-workspace-write` opt-in, validated once for both paths (ADR 0019). Only the
+ * Codex adapter reads the reviewer sandbox input, so any other reviewer would run read-only
+ * while the prompt said otherwise.
+ * @returns {string | null} the refusal, or null when the opt-in is off or valid
+ */
+export function reviewerWorkspaceWriteError(reviewerWorkspaceWrite, reviewerKind) {
+  if (reviewerWorkspaceWrite && reviewerKind !== "codex") {
+    return "--reviewer-workspace-write requires --reviewer codex.";
+  }
+  return null;
+}
+
 // Defaults shared by the headless CLI, the role subcommand, and the loop runtime.
 export const DEFAULT_MAX_STEPS = 20;
 export const DEFAULT_TIMEOUT = 3600;

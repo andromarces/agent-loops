@@ -255,6 +255,16 @@ function testCmdBlock(testCmd) {
 }
 
 /**
+ * The `--reviewer-workspace-write` line. The runtime runs each reviewer turn in
+ * the Codex `workspace-write` sandbox with network off. Empty for a run without
+ * the opt-in, so that prompt stays as before (ADR 0019).
+ */
+function reviewerSandboxBlock(reviewerWorkspaceWrite) {
+  if (!reviewerWorkspaceWrite) return "";
+  return "\n- This run lets the Codex reviewer run targeted tests and probes: the runtime runs each reviewer turn in the workspace-write sandbox with network access off. Your own turns stay read-only. The reviewer still must not change files: the runtime compares the work tree around every reviewer turn, and a change halts the run with no revert. The reviewer cannot reach GitHub.";
+}
+
+/**
  * The `--continue-from` line. A continued run resumes the earlier sessions, so
  * the orchestrator holds the earlier conversation and needs the two facts that
  * changed: the budget is new, and no reviewer accept carries over. Empty for a
@@ -316,6 +326,7 @@ export function initialPrompt({
   pr = null,
   requireCi = null,
   testCmd = false,
+  reviewerWorkspaceWrite = false,
   mode = null,
   continued = false,
   orchestratorKind = null,
@@ -362,7 +373,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${testCmdBlock(testCmd)}${continuedBlock(continued)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerWorkspaceWrite)}${continuedBlock(continued)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.
