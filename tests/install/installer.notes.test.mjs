@@ -59,7 +59,8 @@ test.each([{ dryRun: true }, { dryRun: false }])(
     expect(note.detail).toContain("parent-guard.mjs");
     expect(note.detail).toContain("Checking parent orchestration guard");
     expect(note.detail).toContain("/hooks");
-    expect(note.detail).toMatch(/guard stays inactive/);
+    expect(note.detail).toContain("PreToolUse entry");
+    expect(note.detail).toMatch(/guard stays inactive in Codex until the hook is trusted/);
     expect(note.detail).toContain("A changed hook command needs a new trust step.");
   },
 );
