@@ -32,6 +32,7 @@ import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import {
   errorMessage,
   readableErrorMessage,
+  redactedText,
   readProp,
   UNREADABLE_MESSAGE,
 } from "./lib/error-message.mjs";
@@ -520,7 +521,11 @@ function createEventSink(transcriptFile) {
       await appendFile(transcriptFile, text, "utf8");
     } catch (err) {
       // Transcript failures must not change the command outcome.
-      console.error(`Warning: Failed to append transcript to ${transcriptFile}: ${err.message}`);
+      console.error(
+        redactedText(
+          `Warning: Failed to append transcript to ${transcriptFile}: ${redactedText(readProp(err, "message"))}`,
+        ),
+      );
     }
     events.length = 0;
   };
@@ -1258,7 +1263,11 @@ async function printEnvelope(payload, exitCode) {
   setImmediate(() => process.stdout.off("error", consume));
   process.exitCode = exitCode;
   if (failure) {
-    console.error(`Failed to write the envelope to stdout: ${failure.code ?? failure.message}`);
+    console.error(
+      redactedText(
+        `Failed to write the envelope to stdout: ${redactedText(readProp(failure, "code") ?? readProp(failure, "message"))}`,
+      ),
+    );
     process.exitCode ||= 1;
   }
 }
