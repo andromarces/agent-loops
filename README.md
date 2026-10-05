@@ -835,12 +835,9 @@ Run against real CLI agents in a temporary Git repository.
 Bash:
 
 ```bash
-# Prepare scratch repo
-mkdir /tmp/smoke-repo && cd /tmp/smoke-repo
-git init
-git -c user.name=smoke -c user.email=smoke@example.invalid commit --allow-empty -m "init"
-
-# Run smoke test
+mkdir /tmp/smoke-repo && cd /tmp/smoke-repo &&
+git init &&
+git -c user.name=smoke -c user.email=smoke@example.invalid commit --allow-empty -m "init" &&
 agent-loop \
   --orchestrator codex \
   --worker claude \
@@ -854,25 +851,27 @@ agent-loop \
 PowerShell:
 
 ```powershell
-# Prepare scratch repo
-$smokeRepo = Join-Path $env:TEMP "smoke-repo"
-New-Item -ItemType Directory $smokeRepo -ErrorAction Stop | Out-Null
-Set-Location $smokeRepo
-git init
-git -c user.name=smoke -c user.email=smoke@example.invalid commit --allow-empty -m "init"
-
-# Run smoke test
-agent-loop `
-  --orchestrator codex `
-  --worker claude `
-  --reviewer agy `
-  --max-steps 4 `
-  --timeout 600 `
-  --transcript ./run.json `
-  --task "Add a README line that names the project."
+& {
+  $ErrorActionPreference = "Stop"
+  $smokeRepo = Join-Path $env:TEMP "smoke-repo"
+  New-Item -ItemType Directory $smokeRepo | Out-Null
+  Set-Location $smokeRepo
+  git init
+  if ($LASTEXITCODE -ne 0) { throw "git init failed" }
+  git -c user.name=smoke -c user.email=smoke@example.invalid commit --allow-empty -m "init"
+  if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
+  agent-loop `
+    --orchestrator codex `
+    --worker claude `
+    --reviewer agy `
+    --max-steps 4 `
+    --timeout 600 `
+    --transcript ./run.json `
+    --task "Add a README line that names the project."
+}
 ```
 
-A backtick must be the last character on its line, with no trailing space.
+Both blocks stop at the first failed step, so `agent-loop` never runs in an unintended directory. An existing `smoke-repo` directory is a failure: remove it before a rerun. In PowerShell, a backtick must be the last character on its line, with no trailing space.
 
 ## Future additions
 
