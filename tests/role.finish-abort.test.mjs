@@ -823,7 +823,7 @@ async function useAcceptedPrRun() {
   return run;
 }
 
-describe("a declared PR run on a repo answered from memory", () => {
+describe("finish on a run that declares a PR", () => {
   beforeEach(() => {
     gitDouble.answer = cleanRepoGit;
   });

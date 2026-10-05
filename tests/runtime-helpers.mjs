@@ -408,16 +408,17 @@ export function cleanRepoGit(command, args, options) {
     if (args.includes("--git-common-dir")) {
       return answer(".git\n");
     }
-    return answer(args.includes("--show-toplevel") ? options.cwd : `${CLEAN_REPO_HEAD}\n`);
+    return answer(`${args.includes("--show-toplevel") ? options.cwd : CLEAN_REPO_HEAD}\n`);
   }
 
   if (args[0] === "status" || args[0] === "ls-files") {
     return answer("");
   }
-  // The directory is the only work tree, so the init copy of local files has no
-  // main work tree to copy from.
+  // The directory is the only work tree, on branch `main`, in the `--porcelain -z`
+  // format: NUL-ended `worktree`, `HEAD`, and `branch` fields, then an empty field.
+  // The init copy of local files has no main work tree to copy from.
   if (args[0] === "worktree") {
-    return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0\0`);
+    return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0branch refs/heads/main\0\0`);
   }
   throw new Error(`unexpected git call: ${args.join(" ")}`);
 }
