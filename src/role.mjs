@@ -705,8 +705,14 @@ function withLocalFiles(payload, localFiles) {
   return localFiles ? { ...payload, localFiles } : payload;
 }
 
+// Never throws: `executeRoleCommand` calls it from its catch block, so a throwing `message`
+// getter would otherwise escape `main` without an envelope.
 function errorMessage(err) {
-  return err?.message ?? String(err);
+  try {
+    return err?.message ?? String(err);
+  } catch {
+    return "Unreadable error";
+  }
 }
 
 /**

@@ -846,6 +846,53 @@ test("main prints exactly one JSON object on stdout on success and error paths",
   }
 });
 
+// Usefulness: verifies an error whose message cannot be read still yields one JSON envelope and
+// exit 1 through main; the catch of executeRoleCommand must not throw.
+test("main prints one error envelope when the thrown error has a throwing message getter", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const origExitCode = process.exitCode;
+
+  try {
+    const promptFile = join(repo, "main-prompt.txt");
+    await writeFile(promptFile, "work it", "utf8");
+    const unreadable = {
+      get message() {
+        throw Object.assign(new Error("message getter failed"), { isCanceled: true });
+      },
+    };
+    const agents = {
+      get fake1() {
+        throw unreadable;
+      },
+      fake2: recordingAdapter([]),
+    };
+    await runRoleMain(
+      [
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        ...INIT_OVERRIDES,
+        "--prompt-file",
+        promptFile,
+      ],
+      { agents },
+    );
+    expect(logSpy.mock.calls.length).toBe(1);
+    expect(JSON.parse(logSpy.mock.calls[0][0])).toMatchObject({ status: "error" });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
 // Usefulness: verifies acceptance — a run that declared a PR supplies the
 // required-check status the runtime read to the reviewer turn and reports that
 // read in the envelope and in the state file, so the parent can compare it with
