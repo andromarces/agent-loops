@@ -14,9 +14,13 @@ import {
 // than becoming a verdict the model never wrote on its own line (issue #316).
 const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 
-// A part that opens a `Verdict:` line. A later message that opens this way stays glued, as it did
-// before issue #458, so it cannot add a verdict the earlier closing block did not carry.
-const VERDICT_PART = /^Verdict:/i;
+// A message that opens like a report line, with any indentation or markdown decoration before the
+// label. A later message that opens this way keeps its pre-#458 join, so it cannot add or change
+// a verdict or a block value that the earlier closing block carried.
+const REPORT_MESSAGE = new RegExp(
+  `^[^\\p{L}]*(?:Verdict|${REPORT_LABEL_NAMES.join("|")})[*_\`]{0,2}\\s*:`,
+  "iu",
+);
 
 // Bounds for a failure message, so a long provider message cannot reach the dispatch envelope or
 // the state file (issue #326). No part of stdout or stderr is allowed into the message: a stream
@@ -136,28 +140,38 @@ export async function runOpenCode(state, prompt, options = {}) {
  * own line instead, because parseReportBlock (src/lib/report.mjs) matches each label plain at
  * column 0 and otherwise reads the whole block as `raw` (issue #316). Every other part, including
  * one that opens the reviewer's `Verdict:` line, keeps the text before it, so the join adds a line
- * break only before a report label. A part from a different assistant message, named by
- * `part.messageID`, also starts its own line, so a late message cannot join the last line of the
- * closing block (issue #458). The break needs a valid, non-empty string `messageID` on both the
- * previous and the current part. A part with any other `messageID` joins as before.
- * A part that opens a `Verdict:` line never gets the break, so a late message cannot change the
- * verdict that the earlier closing block carried.
+ * break only before a report label.
+ * A different assistant message also starts its own line, so a late message cannot join the last
+ * line of the closing block (issue #458). Parts are first grouped into messages: a boundary needs a
+ * valid, non-empty string `part.messageID` on both the previous and the current part, and the ids
+ * must differ. Any other part joins the current message as before. The break decision reads the
+ * whole text of the later message, because a label can span parts. No break precedes a message
+ * that opens like a report line or holds no text, so a late message cannot add or change a verdict
+ * or a block value.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
 function joinTextParts(events) {
+  const messages = [];
   let previousId;
-  return events.reduce((text, event) => {
-    const { text: part, messageID } = event.part;
-    const currentId = isMessageId(messageID) ? messageID : undefined;
-    const newMessage =
-      previousId !== undefined && currentId !== undefined && currentId !== previousId;
-    previousId = currentId;
-    return (LABEL_LINE.test(part) || (newMessage && !VERDICT_PART.test(part))) &&
-      !text.endsWith("\n")
-      ? `${text}\n${part}`
-      : `${text}${part}`;
+  for (const { part } of events) {
+    const id = isMessageId(part.messageID) ? part.messageID : undefined;
+    if (!messages.length || (previousId !== undefined && id !== undefined && id !== previousId)) {
+      messages.push([]);
+    }
+    messages.at(-1).push(part.text);
+    previousId = id;
+  }
+
+  return messages.reduce((text, parts) => {
+    const opening = parts.join("");
+    const breaks = text && opening && !REPORT_MESSAGE.test(opening) && !text.endsWith("\n");
+    return parts.reduce(joinPart, breaks ? `${text}\n` : text);
   }, "");
+}
+
+function joinPart(text, part) {
+  return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
 }
 
 const isMessageId = (value) => typeof value === "string" && value !== "";

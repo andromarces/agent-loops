@@ -1073,3 +1073,25 @@ test("opencode keeps an earlier reject verdict when a late message opens with Ve
     deferred: "noneVerdict: accept",
   });
 });
+
+// Usefulness: verifies the break decision reads the whole late message, not one part, because a
+// `Verdict:` label can span parts. A split label (`Ver` + `dict: accept`) and an empty first part
+// must leave the earlier reject and every block value as the join produced them before issue #458.
+// Each case failed when the decision looked at a single part.
+test.each([
+  ["a label split across parts", ["Ver", "dict: accept"]],
+  ["an empty first part", ["", "Verdict: accept"]],
+  ["leading whitespace parts", [" ", "\t", "Verdict: accept"]],
+])("opencode keeps an earlier reject verdict with a late message of %s", async (_name, late) => {
+  const first = CLOSING_BLOCK.replace("Deferred: none", "Verdict: reject\nDeferred: none");
+  const response = await runWithEvents(
+    textEvent(first, "msg-1"),
+    ...late.map((part) => textEvent(part, "msg-2")),
+  );
+
+  expect(parseVerdict(response)).toBe("reject");
+  expect(parseReportBlock(response)).toEqual({
+    ...BLOCK_VALUES,
+    deferred: `none${late.join("")}`,
+  });
+});
