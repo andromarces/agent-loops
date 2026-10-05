@@ -803,25 +803,30 @@ test("opencode keeps a late plain-text message off the last closing block line",
   expect(parseReportBlock(reviewer)).toEqual(BLOCK_VALUES);
 });
 
-// Usefulness: verifies a malformed messageID cannot lift mid-line text to a column-0 `Verdict:`
-// label, because a verdict gates acceptance. A break needs a non-empty string id on both parts, so
-// each malformed id leaves the mid-line `Verdict: accept` as `unknown` (issue #458).
+// Usefulness: verifies a malformed messageID cannot lift a `Verdict:` to a verdict that gates
+// acceptance. Parts that share no valid id are one unidentified message, so the mid-line text stays
+// glued and `unknown`. A malformed id on either side of a valid id makes a separate message whose
+// `Verdict: accept` supersedes the earlier block, so it pairs with no earlier field (issues #458
+// and #467).
 test.each([[""], [7], [null], [{}], [["msg-2"]], [true]])(
-  "opencode ignores the malformed messageID %j when it joins a mid-line Verdict part",
+  "opencode never lifts a Verdict part with the malformed messageID %j",
   async (malformed) => {
     const lead = `${CLOSING_BLOCK}\n\nThe reviewer said`;
-    const bad = textEvent("Verdict: accept", malformed);
+
+    const glued = await runWithEvents(textEvent(lead), textEvent("Verdict: accept", malformed));
+    expect(glued).toContain("The reviewer saidVerdict: accept");
+    expect(parseVerdict(glued)).toBe("unknown");
+    expect(parseReportBlock(glued)).toEqual(BLOCK_VALUES);
 
     for (const events of [
-      [textEvent(lead, "msg-1"), bad],
+      [textEvent(lead, "msg-1"), textEvent("Verdict: accept", malformed)],
       [textEvent(lead, malformed), textEvent("Verdict: accept", "msg-2")],
-      [textEvent(lead), bad],
     ]) {
       const response = await runWithEvents(...events);
 
-      expect(response).toContain("The reviewer saidVerdict: accept");
+      expect(response).toBe("Verdict: accept");
+      expect(parseReportBlock(response)).toBeNull();
       expect(parseVerdict(response)).toBe("unknown");
-      expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
     }
   },
 );
@@ -1162,6 +1167,53 @@ test("opencode keeps the only complete block of a message whose parts another me
   expect(parseVerdict(response)).toBe("reject");
   expect(parseReportBlock(response)).toMatchObject({ blockers: "b1", checks: "pnpm test" });
 });
+
+// Usefulness: verifies an invalid-id part never redirects a later part: with an empty invalid-id part
+// between them, A's `Verdict: accept` stays in message A, so it cannot join B's reject block and
+// pair with B's `Checks` line. B's reject governs and no acceptance passes (issue #467).
+test("opencode keeps a valid-id part in its own message after an invalid-id part", async () => {
+  const response = await runWithEvents(
+    textEvent("Working on it.", "msg-a"),
+    textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+    textEvent("", 7),
+    textEvent("Verdict: accept", "msg-a"),
+  );
+
+  expect(parseVerdict(response)).toBe("reject");
+  expect(parseReportBlock(response)).toMatchObject({ blockers: "b1", checks: "pnpm test" });
+});
+
+// Usefulness: verifies a new valid id after an invalid-id part still starts its own message: its
+// `Verdict: accept` supersedes the earlier block instead of joining it and pairing with the earlier
+// `Checks` line, so the report fails closed (issue #467).
+test("opencode does not bridge a new valid-id message into the block before an invalid-id part", async () => {
+  const response = await runWithEvents(
+    textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+    textEvent("", 7),
+    textEvent("Verdict: accept", "msg-c"),
+  );
+
+  expect(response).toBe("Verdict: accept");
+  expect(parseReportBlock(response)).toBeNull();
+  expect(parseVerdict(response)).toBe("unknown");
+});
+
+// Usefulness: verifies a part with no valid id never joins a message that has one: a late
+// `Verdict: accept` without an id supersedes the earlier block instead of landing on its own line
+// inside it and pairing with its `Checks` line (issue #467).
+test.each([[undefined], [""], [null]])(
+  "opencode keeps a part with messageID %j out of the block message",
+  async (messageID) => {
+    const response = await runWithEvents(
+      textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+      textEvent("Verdict: accept", messageID),
+    );
+
+    expect(response).toBe("Verdict: accept");
+    expect(parseReportBlock(response)).toBeNull();
+    expect(parseVerdict(response)).toBe("unknown");
+  },
+);
 
 // Usefulness: verifies the attempt test reads the whole late message, because a `Verdict:` label can
 // span parts. A split label, an empty first part, and an indented label all hold an attempt, so each

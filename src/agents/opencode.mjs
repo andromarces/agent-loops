@@ -135,13 +135,13 @@ export async function runOpenCode(state, prompt, options = {}) {
  * part, including one that opens the reviewer's `Verdict:` line, keeps the text before it, so a
  * mid-line `Verdict:` never becomes a verdict the model did not write on its own line.
  * A different assistant message also starts its own line, so a late message cannot join the last
- * line of the closing block (issue #458). Parts are first grouped into messages: a boundary needs a
- * valid, non-empty string `part.messageID` on both the previous and the current part, and the ids
- * must differ. Any other part joins the current message as before. A valid id names one message
- * across the whole stream, so a part whose id appeared earlier rejoins that message even when
- * another message came between (A/B/A). Messages keep the order of their first part, and the parts
- * of one message join in stream order at that position. No break precedes a message that holds no
- * text.
+ * line of the closing block (issue #458). Parts are first grouped into messages by `part.messageID`
+ * across the whole stream: a valid, non-empty string id names one message, so its parts rejoin it
+ * even when another message came between (A/B/A). Every part without a valid id forms one
+ * unidentified message of its own, so it never joins an identified message and never redirects a
+ * later part. A stream with no valid id is one message. Messages keep the order of their first
+ * part, and the parts of one message join in stream order at that position. No break precedes a
+ * message that holds no text.
  * The last closing block governs, and it governs alone (issue #467). A message that holds a closing
  * block attempt (hasClosingBlockAttempt) supersedes every earlier message that holds one, so the
  * join drops those earlier messages. A late message that opens with a report label or `Verdict:`
@@ -154,24 +154,12 @@ export async function runOpenCode(state, prompt, options = {}) {
  * @returns {string}
  */
 function joinTextParts(events) {
-  const messages = [];
-  const byId = new Map();
-  let current;
-  let previousId;
+  const groups = new Map();
   for (const { part } of events) {
-    const id = isMessageId(part.messageID) ? part.messageID : undefined;
-    if (!current || (previousId !== undefined && id !== undefined && id !== previousId)) {
-      current = (id !== undefined && byId.get(id)) || [];
-      if (!messages.includes(current)) {
-        messages.push(current);
-      }
-    }
-    if (id !== undefined && !byId.has(id)) {
-      byId.set(id, current);
-    }
-    current.push(part.text);
-    previousId = id;
+    const key = isMessageId(part.messageID) ? part.messageID : null;
+    groups.set(key, [...(groups.get(key) ?? []), part.text]);
   }
+  const messages = [...groups.values()];
 
   const lastAttempt = messages.findLastIndex((parts) => hasClosingBlockAttempt(parts.join("")));
   const kept = messages.filter(
