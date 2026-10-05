@@ -321,6 +321,28 @@ test("snapshot reports a staged gitlink as an entry with no hash, so it is inexa
   }
 });
 
+// Usefulness: verifies a change to a file inside a new untracked directory is
+// detected. Needs real `git`: only `git status` decides whether a new directory is
+// reported as one entry or as each file in it, so an in-memory answer cannot show
+// that the status call lists the files (issue #460).
+test("snapshot lists each file inside a new untracked directory, so a change to one is detected", async () => {
+  const repo = await createTempRepo();
+  try {
+    await mkdir(join(repo, "newdir"));
+    await writeFile(join(repo, "newdir", "a.txt"), "one\n");
+    const before = await snapshot(repo);
+
+    expect(before.workTree.map((e) => e.path)).toEqual(["newdir/a.txt"]);
+
+    await writeFile(join(repo, "newdir", "a.txt"), "two\n");
+    const after = await snapshot(repo);
+
+    expect(diffSnapshots(before, after)).toEqual(["newdir/a.txt"]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies the digest separates two different uncommitted states at
 // the same head and repeats for the same state (issue #217).
 test("reviewedState digest separates different states and repeats for the same state", () => {
