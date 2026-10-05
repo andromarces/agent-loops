@@ -167,10 +167,7 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
  * owner with the same pid and start time in the same millisecond is taken for
  * it. A contender that finds a live claim exits as busy. A claim
  * left by a crashed process is removed the same way, under a claim keyed by its
- * own content when a contender meets the stale lock it guards. A later
- * acquisition of the lock also removes a claim with a dead pid when it creates
- * the guard claim itself, and leaves the claim if that guard already exists
- * (#377). Returns the result of `fn`. `label`
+ * own content. Returns the result of `fn`. `label`
  * names the guarded resource in a refusal, so an installer refusal can say what
  * is locked instead of the generic default; `noun` is the same resource as a
  * lowercase phrase for the stale-removal warning.
@@ -212,9 +209,6 @@ const MAX_CLAIM_DEPTH = 3;
 // Matches the `<pid>.<counter>.tmp` suffix of a lock temp file name.
 const LOCK_TEMP_SUFFIX = /^(\d+)\.\d+\.tmp$/;
 
-// Matches the `.reap.<digest>` suffix of a claim file name (see claimFileFor).
-const CLAIM_SUFFIX = /^\.reap\.[0-9a-f]{64}$/;
-
 async function acquireLock(
   lockFile,
   { retry = true, label = "State", noun = "state", depth = 0, rootLockFile = lockFile } = {},
@@ -224,9 +218,6 @@ async function acquireLock(
     // and the link (#178). Runs while the lock is held and never touches a live
     // contender's temp, so it cannot break a racing acquisition.
     await pruneStaleLockTemps(lockFile);
-    if (depth === 0) {
-      await pruneDeadClaims(lockFile);
-    }
     return;
   }
 
@@ -287,10 +278,15 @@ function claimFileFor(rootLockFile, file, staleText) {
 // and removing it cannot delete a new owner's file (#363). Nothing is renamed, and no path is bare-removed unclaimed. A loser
 // finds a live claim and exits as busy; a file that reads differently or cannot
 // be read is kept, and the caller's retry reports it as busy.
-// known-limit: a chain of more than two crashed claims fails closed
-// (MAX_CLAIM_DEPTH). The acquisition scan (pruneDeadClaims) never removes an
-// unparseable claim or a claim whose guard claim already exists, so an orphan
-// claim in either state stays until a contender meets the stale lock it guards. A lock written without a nonce by an older version is
+// known-limit: a claim left by a crashed process stays until a contender hits
+// its stale file. Decision (#377): no removal outside a takeover. A scan on lock
+// acquisition needs a guard that excludes every takeover contender, and the only
+// guard is another claim file. A claim file that is created but not yet filled,
+// or whose owner stalls past STALE_LOCK_GRACE_MS, is indistinguishable from a
+// dead one, so a guard can be taken from a running process and two processes act
+// on one claim. A safe scan needs new lock machinery (a heartbeat or an OS
+// advisory lock) that this module avoids. A chain of more than two crashed claims fails closed
+// (MAX_CLAIM_DEPTH). A lock written without a nonce by an older version is
 // matched by content alone, so an older-version owner with the same pid and
 // start time in the same millisecond would be taken for it.
 // Mixed versions: a contender that runs an older version removes a stale lock
@@ -401,64 +397,6 @@ async function pruneStaleLockTemps(lockFile) {
     }
   } catch {
     // The lock is already held; a failed scan or unlink leaves only a temp file.
-  }
-}
-
-// Removes claim files whose owner is dead, so a claim left by a crashed process
-// does not wait for a contender to meet the same stale lock (#377). Runs while
-// the root lock is held, so no stale lock is left to guard. A claim is removed
-// only when it parses to a dead pid and the guard claim keyed by its own content
-// (the one a takeover contender takes, see claimFileFor) is created fresh by
-// this call. An existing guard is never taken over here: a guard that is live,
-// dead, or unfinished (created but not yet filled) is left in place, because
-// this scan cannot tell an unfinished live guard from a dead one. The pass
-// repeats while it removes a claim, so a chain of dead claims clears from the
-// guard end. Failures are ignored because cleanup is best-effort and must not
-// fail the lock holder.
-async function pruneDeadClaims(lockFile) {
-  try {
-    const dir = dirname(lockFile);
-    const name = basename(lockFile);
-    let removed = true;
-    while (removed) {
-      removed = false;
-      for (const entry of await readdir(dir)) {
-        if (!entry.startsWith(name) || !CLAIM_SUFFIX.test(entry.slice(name.length))) {
-          continue;
-        }
-        removed = (await removeDeadClaim(join(dir, entry), lockFile)) || removed;
-      }
-    }
-  } catch {
-    // The lock is already held; a failed scan leaves only a claim file.
-  }
-}
-
-async function removeDeadClaim(claimFile, rootLockFile) {
-  const claimText = await readLockText(claimFile);
-  const owner = parseLockOwner(claimText);
-  if (owner === null || pidAlive(owner.pid)) {
-    return false;
-  }
-  const guardFile = claimFileFor(rootLockFile, claimFile, claimText);
-  try {
-    if (!(await createLock(guardFile))) {
-      return false;
-    }
-  } catch {
-    return false;
-  }
-  try {
-    // The guard blocks every takeover of this claim, so a read that still
-    // matches is the claim that was read as dead (nonce, see createLock).
-    if ((await readLockText(claimFile)) !== claimText) {
-      return false;
-    }
-    logWarn(`removing orphan claim file (dead pid ${owner.pid})`);
-    await rm(claimFile, { force: true });
-    return true;
-  } finally {
-    await rm(guardFile, { force: true });
   }
 }
 
