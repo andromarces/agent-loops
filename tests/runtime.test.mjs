@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";
 
-// Answers `git` from memory for the one test that switches it on (see
-// `cleanRepoGit` below); every other test reaches the real `execa`.
+// Answers `git` from memory for the tests that switch it on (see
+// `cleanRepoGit` in runtime-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -21,7 +21,13 @@ import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
-import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+import {
+  CLEAN_REPO_HEAD,
+  cleanRepoGit,
+  createTempRepo,
+  removePath,
+  scripted,
+} from "./runtime-helpers.mjs";
 
 // 1. Usefulness: verifies orchestrator dispatches worker first.
 test("orchestrator dispatches worker first", async () => {
@@ -740,8 +746,14 @@ test("child adapter failure surfaces to orchestrator", async () => {
 });
 
 // 13. Usefulness: verifies child timeout surfaces as timeout message in error result.
+//
+// `git` is answered from memory, not spawned: a repo and the snapshots around the
+// turns cost about ten `git` processes, and a loaded Windows runner outlasted the
+// test limit on them (issue #430). The behavior under test is the timeout message,
+// and the snapshot code has its own tests on real repos.
 test("child timeout surfaces with timeout message", async () => {
-  const repo = await createTempRepo();
+  const cwd = tmpdir();
+  gitDouble.answer = cleanRepoGit;
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_reviewer", prompt: "hang please" }),
@@ -759,7 +771,9 @@ test("child timeout surfaces with timeout message", async () => {
 
     const result = await runLoop({
       task: "Task 13",
-      cwd: repo,
+      cwd,
+      // The init copy of local files has no `git` answers in the double.
+      copyLocalFiles: false,
       maxSteps: 5,
       timeout: 10,
       roles: {
@@ -773,7 +787,7 @@ test("child timeout surfaces with timeout message", async () => {
     expect(result.exitCode).toBe(0);
     expect(orchAdapter.recorded[1].prompt).toContain("reviewer timed out after 10 seconds");
   } finally {
-    await removePath(repo);
+    gitDouble.answer = null;
   }
 });
 
@@ -2572,26 +2586,6 @@ function noRequiredCheckGh(headRefOid, calls = []) {
   };
 }
 
-const CLEAN_HEAD = "1111111111111111111111111111111111111111";
-
-// A clean repo at `CLEAN_HEAD`, answered from memory. The real snapshot code still
-// runs over these answers; only the `git` processes are gone.
-function cleanRepoGit(cwd) {
-  return async (command, args) => {
-    expect(command).toBe("git");
-    const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
-    switch (args[0]) {
-      case "rev-parse":
-        return answer(args.includes("--show-toplevel") ? cwd : `${CLEAN_HEAD}\n`);
-      case "status":
-      case "ls-files":
-        return answer("");
-      default:
-        throw new Error(`unexpected git call: ${args.join(" ")}`);
-    }
-  };
-}
-
 // Usefulness: verifies a headless declared run finishes on a base branch with no
 // required check and emits a `no-required-checks` event, so the recorded run says
 // it verified no check instead of reading as a pass on a checked branch (issue
@@ -2604,7 +2598,7 @@ function cleanRepoGit(cwd) {
 // gate over the `gh` answers, and the snapshot code has its own tests on real repos.
 test("a declared PR finishes on a base branch with no required check", async () => {
   const cwd = tmpdir();
-  gitDouble.answer = cleanRepoGit(cwd);
+  gitDouble.answer = cleanRepoGit;
   try {
     const events = [];
     const result = await runLoop({
@@ -2616,7 +2610,7 @@ test("a declared PR finishes on a base branch with no required check", async () 
       // The init copy of local files is out of scope here, and its `git` calls
       // have no answer in the double.
       copyLocalFiles: false,
-      gh: noRequiredCheckGh(CLEAN_HEAD),
+      gh: noRequiredCheckGh(CLEAN_REPO_HEAD),
       roles: gateRoles(),
       agents: {
         orch: scripted([

@@ -391,3 +391,41 @@ export async function expectAbortKillsShim(command, start) {
     await removePath(dir);
   }
 }
+
+// A clean repo at `CLEAN_REPO_HEAD`, answered from memory for a test that routes
+// `execa` through a double. The real snapshot code still runs over these answers;
+// only the `git` processes are gone. Each reply holds the bytes `git` prints, and
+// `answer` applies the `stripFinalNewline` option as execa does. Any other `git`
+// call throws.
+export const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
+
+export function cleanRepoGit(command, args, options) {
+  assert.equal(command, "git");
+  // execa strips one final newline from stdout unless `stripFinalNewline` is false.
+  const answer = (stdout) => ({
+    exitCode: 0,
+    stdout: options?.stripFinalNewline === false ? stdout : stdout.replace(/\r?\n$/, ""),
+    stderr: "",
+  });
+  if (args[0] === "rev-parse") {
+    if (args.includes("--is-inside-work-tree")) {
+      return answer("true\n");
+    }
+    // The directory holds a `.git` directory, which is the common Git directory.
+    if (args.includes("--git-common-dir")) {
+      return answer(".git\n");
+    }
+    return answer(`${args.includes("--show-toplevel") ? options.cwd : CLEAN_REPO_HEAD}\n`);
+  }
+
+  if (args[0] === "status" || args[0] === "ls-files") {
+    return answer("");
+  }
+  // The directory is the only work tree, on branch `main`, in the `--porcelain -z`
+  // format: NUL-ended `worktree`, `HEAD`, and `branch` fields, then an empty field.
+  // The init copy of local files has no main work tree to copy from.
+  if (args[0] === "worktree") {
+    return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0branch refs/heads/main\0\0`);
+  }
+  throw new Error(`unexpected git call: ${args.join(" ")}`);
+}
