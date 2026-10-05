@@ -1000,7 +1000,7 @@ passing the stored id. `extend` compares the id only, so that call succeeds for
 any caller that holds the id, a child role included, and it gives no guard
 coverage. A child role never runs `extend`, and the prompt rule is the only thing
 that keeps it from doing so. To get a guard, call `abort` and start a new run with
-the new session id. A new run starts every role on a new session (ADR 0019).
+the new session id. A new run starts every role on a new session (ADR 0021).
 
 ## Turn history
 

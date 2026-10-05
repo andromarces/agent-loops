@@ -1,4 +1,4 @@
-# 0019. Do not let a new session take over a run
+# 0021. Do not let a new session take over a run
 
 ## Status
 
@@ -109,6 +109,7 @@ Andro Marces
 ## Links
 
 - [Issue #435](https://github.com/andromarces/agent-loops/issues/435)
+- [PR #486](https://github.com/andromarces/agent-loops/pull/486)
 - Documented in `docs/orchestrator-instructions.md` under recovery
 - [ADR 0006](0006-require-parent-session-for-interactive-runs.md),
   [ADR 0014](0014-extend-the-step-budget-of-a-live-run.md)
