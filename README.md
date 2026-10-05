@@ -838,7 +838,7 @@ Bash:
 # Prepare scratch repo
 mkdir /tmp/smoke-repo && cd /tmp/smoke-repo
 git init
-git commit --allow-empty -m "init"
+git -c user.name=smoke -c user.email=smoke@example.invalid commit --allow-empty -m "init"
 
 # Run smoke test
 agent-loop \
@@ -856,10 +856,10 @@ PowerShell:
 ```powershell
 # Prepare scratch repo
 $smokeRepo = Join-Path $env:TEMP "smoke-repo"
-New-Item -ItemType Directory -Force $smokeRepo | Out-Null
+New-Item -ItemType Directory $smokeRepo -ErrorAction Stop | Out-Null
 Set-Location $smokeRepo
 git init
-git commit --allow-empty -m "init"
+git -c user.name=smoke -c user.email=smoke@example.invalid commit --allow-empty -m "init"
 
 # Run smoke test
 agent-loop `
