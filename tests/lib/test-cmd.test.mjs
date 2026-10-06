@@ -335,3 +335,55 @@ test("a value with a quote and a backslash is redacted in its JSON-escaped form"
     "raw [redacted:SYNTH_PROBE_TOKEN] json [redacted:SYNTH_PROBE_TOKEN]",
   );
 });
+
+// Usefulness: verifies no fragment of a secret survives when one value is a prefix of another,
+// the case that a per-value replacement order leaves open (issue #521, ADR 0017).
+test("a secret that is a prefix of another secret leaves no fragment", () => {
+  const env = { A_TOKEN: "prefixvalue", B_TOKEN: "prefixvalue-TAILSUFFIX" };
+  const out = redactEnvSecrets("x prefixvalue-TAILSUFFIX y", env);
+  expect(out).not.toContain("TAILSUFFIX");
+  expect(out).not.toContain("prefixvalue");
+});
+
+// Usefulness: verifies two secrets that cross without one holding the other leave no fragment (issue #521).
+test("two crossing secret occurrences leave no fragment", () => {
+  const env = { A_TOKEN: "aaaa-SHARED-1", B_TOKEN: "SHARED-1-zzzz9" };
+  const out = redactEnvSecrets("x aaaa-SHARED-1-zzzz9 y", env);
+  expect(out).not.toContain("SHARED");
+  expect(out).not.toContain("zzzz9");
+  expect(out).not.toContain("aaaa");
+  expect(out.startsWith("x [redacted:")).toBe(true);
+  expect(out.endsWith("] y")).toBe(true);
+});
+
+// Usefulness: verifies overlapping occurrences of one value are masked as one run (issue #521).
+test("a self-overlapping secret occurrence leaves no fragment", () => {
+  const out = redactEnvSecrets("x abcabcabcabc y", { SELF_TOKEN: "abcabcabc" });
+  expect(out).toBe("x [redacted:SELF_TOKEN] y");
+});
+
+// Usefulness: verifies the raw and the JSON-escaped forms of one value overlap without a fragment (issue #521).
+test("raw and JSON-escaped forms that overlap leave no fragment", () => {
+  const value = '"abcdefg';
+  const escaped = JSON.stringify(value).slice(1, -1);
+  expect(redactEnvSecrets(`x ${escaped} y`, { RAW_TOKEN: value })).toBe("x [redacted:RAW_TOKEN] y");
+});
+
+// Usefulness: verifies a marker never holds a secret value, even when a variable name does (issue #521, ADR 0017).
+test("a marker does not hold a secret value that is part of its variable name", () => {
+  const env = { LONG_SECRETVALUE_NAME_TOKEN: "synthetic-aaa-1", SHORT_TOKEN: "SECRETVALUE" };
+  const out = redactEnvSecrets("a synthetic-aaa-1 b", env);
+  expect(out).not.toContain("SECRETVALUE");
+  expect(out).not.toContain("synthetic-aaa-1");
+  expect(out).toContain("a [");
+});
+
+// Usefulness: verifies a long text with a long repetitive value finishes in bounded time (issue #521).
+test("a long repetitive text with a long secret value redacts in bounded time", () => {
+  const value = "a".repeat(64 * 1024);
+  const text = "a".repeat(128 * 1024);
+  const start = performance.now();
+  const out = redactEnvSecrets(text, { BIG_TOKEN: value });
+  expect(performance.now() - start).toBeLessThan(500);
+  expect(out).toBe("[redacted:BIG_TOKEN]");
+});
