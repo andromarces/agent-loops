@@ -277,3 +277,107 @@ test("Copilot launcher failure report never serializes a thrown object without a
     process.exitCode = origExitCode;
   }
 });
+
+function captureReport(thrown) {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(() => reportFailure(thrown)).not.toThrow();
+    expect(process.exitCode).toBe(1);
+    return errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+}
+
+// Usefulness: ADR 0017 — a function-valued `message` never prints its source.
+test("Copilot launcher failure report never prints a function-valued message", () => {
+  const report = captureReport({
+    message: function () {
+      return "ARGUMENT_CANARY";
+    },
+  });
+  expect(report).toContain("[unserializable message]");
+  expect(report).not.toContain("ARGUMENT_CANARY");
+});
+
+// Usefulness: ADR 0017 — an execa-like value whose `shortMessage` reads as undefined still gets
+// the fixed report, so the command arguments in its `message` never print.
+test("Copilot launcher failure report never reads message of an execa-like value without shortMessage", () => {
+  const fields = {
+    shortMessage: undefined,
+    message: "Command failed: copilot ARGUMENT_CANARY",
+    exitCode: 2,
+  };
+  const report = captureReport(new Proxy({}, { get: (_target, key) => fields[key] }));
+  expect(report).toContain("copilot failed (exit code 2)");
+  expect(report).not.toContain("ARGUMENT_CANARY");
+});
+
+// Usefulness: ADR 0017 — no hostile shape (throwing traps, function fields, getters, Symbols,
+// nested argv) leaks a canary into the report or makes the report throw.
+test.each([
+  [
+    "a Proxy with throwing traps",
+    new Proxy(
+      {},
+      {
+        get() {
+          throw new Error("get");
+        },
+        has() {
+          throw new Error("has");
+        },
+      },
+    ),
+  ],
+  [
+    "function fields",
+    {
+      shortMessage: () => "ARGUMENT_CANARY",
+      exitCode: () => "ARGUMENT_CANARY",
+      signal: () => "ARGUMENT_CANARY",
+      code: () => "ARGUMENT_CANARY",
+    },
+  ],
+  [
+    "getter fields",
+    {
+      get command() {
+        return "ARGUMENT_CANARY";
+      },
+      get message() {
+        return { argv: ["ARGUMENT_CANARY"] };
+      },
+    },
+  ],
+  [
+    "Symbol fields",
+    {
+      shortMessage: "x",
+      exitCode: Symbol("ARGUMENT_CANARY"),
+      signal: Symbol("ARGUMENT_CANARY"),
+      code: Symbol("ARGUMENT_CANARY"),
+    },
+  ],
+  [
+    "nested argv",
+    {
+      exitCode: { argv: ["ARGUMENT_CANARY"] },
+      message: { argv: ["ARGUMENT_CANARY"] },
+      escapedCommand: ["ARGUMENT_CANARY"],
+    },
+  ],
+  [
+    "command-bearing message with escapedCommand",
+    {
+      escapedCommand: "copilot ARGUMENT_CANARY",
+      message: "Command failed: copilot ARGUMENT_CANARY",
+    },
+  ],
+  ["array message", { message: ["ARGUMENT_CANARY"] }],
+  ["a function value", Object.assign(() => "ARGUMENT_CANARY", { argv: ["ARGUMENT_CANARY"] })],
+])("Copilot launcher failure report keeps canary out for %s", (_name, thrown) => {
+  expect(captureReport(thrown)).not.toContain("ARGUMENT_CANARY");
+});

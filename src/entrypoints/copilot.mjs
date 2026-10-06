@@ -54,7 +54,20 @@ export async function main(argv = process.argv.slice(2)) {
   await execa(invocation.command, invocation.args, { stdio: "inherit" });
 }
 
-// Only a number or a string prints, because an object can hold the command arguments (ADR 0017).
+const EXECA_MARKERS = ["shortMessage", "exitCode", "signal", "code", "command", "escapedCommand"];
+
+// A throwing trap counts as present, so a hostile value takes the fixed report.
+function isExecaFailure(error) {
+  return EXECA_MARKERS.some((key) => {
+    try {
+      return key in error || error[key] !== undefined;
+    } catch {
+      return true;
+    }
+  });
+}
+
+// Only a number or a string prints, because any other value can hold the command arguments.
 function printable(value) {
   return typeof value === "number" || typeof value === "string"
     ? redactedText(value)
@@ -62,40 +75,35 @@ function printable(value) {
 }
 
 /**
- * Prints the failure report. An execa error carries the whole command line, with the task
- * arguments and their shell quoting, in `message` and `shortMessage`, so the report is built from
- * the exit code, the signal, and the error code only. Any other error prints its own message. The
- * text goes through the shared redaction either way (ADR 0017).
+ * Prints the failure report from an allowlist, so no unlisted content reaches it (ADR 0017).
+ * An execa error carries the whole command line, with the task arguments and their shell quoting,
+ * in `message`, `shortMessage`, `command`, and `escapedCommand`. A value with any execa field
+ * prints a fixed description plus the exit code, the signal, and the error code, each only when it
+ * is a number or a string. Any other object prints its `message` only when that is a string.
+ * A thrown primitive prints its text. Nothing here throws, and the text goes through the shared
+ * redaction.
  */
 export function reportFailure(error) {
   let message;
-  let isExeca;
-  try {
-    isExeca = typeof error?.shortMessage === "string";
-  } catch {
-    // An unreadable `shortMessage` marks an execa error, so the report never falls back to `message`.
-    isExeca = true;
-  }
-  if (isExeca) {
-    const exitCode = readProp(error, "exitCode");
-    const signal = readProp(error, "signal");
-    const code = readProp(error, "code");
-    const causes = [
-      exitCode === undefined ? null : `exit code ${printable(exitCode)}`,
-      signal ? `signal ${printable(signal)}` : null,
-      code ? `error code ${printable(code)}` : null,
-    ].filter(Boolean);
-    message = `copilot failed${causes.length > 0 ? ` (${causes.join(", ")})` : ""}`;
+  if ((typeof error === "object" && error !== null) || typeof error === "function") {
+    if (isExecaFailure(error)) {
+      const exitCode = readProp(error, "exitCode");
+      const signal = readProp(error, "signal");
+      const code = readProp(error, "code");
+      const causes = [
+        exitCode === undefined ? null : `exit code ${printable(exitCode)}`,
+        signal ? `signal ${printable(signal)}` : null,
+        code ? `error code ${printable(code)}` : null,
+      ].filter(Boolean);
+      message = `copilot failed${causes.length > 0 ? ` (${causes.join(", ")})` : ""}`;
+    } else {
+      const text = readProp(error, "message");
+      message = typeof text === "string" ? redactedText(text) : UNSERIALIZABLE_MESSAGE;
+    }
   } else {
-    const text = readProp(error, "message") ?? error;
-    // An object without a string message never serializes, because its content can hold argv.
-    message = (
-      typeof text === "string" || typeof text !== "object" || text === null
-        ? redactedText(text)
-        : UNSERIALIZABLE_MESSAGE
-    ).split("\n", 1)[0];
+    message = redactedText(error);
   }
-  console.error(`agent-loop-copilot: ${redactedText(message)}`);
+  console.error(`agent-loop-copilot: ${redactedText(message.split("\n", 1)[0])}`);
   process.exitCode = 1;
 }
 
