@@ -69,15 +69,74 @@ running process. It also asks to check a reported PID-reuse window.
    claim that is live, busy, or unreadable is kept, and any failure is swallowed:
    the scan never fails the lock holder. Claim temp files are pruned like lock temp
    files.
-7. **PID reuse.** The OS can give the pid of a dead owner to an unrelated process.
-   `pidAlive` then reports a live owner, so the lock or claim stays until that
-   process exits. This is fail-closed: reuse never reports a running owner as dead,
-   so it cannot remove a running process's lock or claim, and a replacement owner
-   never matches stale content because every acquisition writes a nonce (#363). The
-   marker race that reuse could cause is closed for tokened markers by decision 5,
-   and an older version's marker is never removed. Closing the stuck case needs the
-   owner's start time, a platform-specific process-table query. It is recorded as a
-   `known-limit` in `src/lib/runstate.mjs`.
+7. **PID reuse and owner start time.** The OS can give the pid of a dead owner to an
+   unrelated process, and `pidAlive` then reports a live owner. Issue #498 takes the
+   upgrade path that this ADR named (Alternative 4), so this decision is amended in
+   place: the writer liveness check, the claims, and the invariants of decisions 1 to
+   6 do not change, and no new ADR supersedes this one. Each lock and claim records
+   a start-time stamp `<kind>:<value>` of the owner (field `startTime`) with its pid.
+   `ownerAlive` reads a live pid as dead only when the recorded stamp and the stamp of
+   the process now at that pid are of the same kind and differ.
+   - Sources, by platform (`processStartTime`). No native dependency is added.
+     - Linux, `linux-proc:<PID namespace>:<boot id>:<ticks>`: the inode in the target
+       of `/proc/self/ns/pid`, the boot id, and field 22 of `/proc/<pid>/stat` (clock
+       ticks since boot). No spawn, no timeout, and independent of the wall clock, so a
+       clock step (NTP, a manual set, a suspend) never changes it. In one namespace, a
+       stamp of the same boot with other ticks, or of another boot, is a different
+       process. Stamps of different namespaces are never compared. The stamp is read only
+       when the `NSpid` line of `/proc/self/status` has exactly one entry and that
+       entry equals `process.pid`. proc_pid_status(5) (Linux 4.1 and later) defines
+       the entries as the pid in each PID namespace that the process belongs to: the
+       leftmost in the namespace of the process that mounted the procfs, then one for
+       each nested inner namespace. One entry therefore means the `/proc` mount is a
+       view of the namespace of the caller. Two or more entries mean a mount of an
+       ancestor namespace, where `/proc/<pid>/stat` can describe an unrelated process
+       (pids are allocated per namespace, so even a `/proc/self` link can equal
+       `process.pid` there by coincidence). The check proves only that the mounter
+       namespace is the caller namespace. A missing `NSpid` line (a kernel older than
+       4.1), an unreadable status, a malformed line, or any other value gives no
+       stamp, on the writer and on the reader.
+     - macOS, `darwin-lstart`: epoch seconds of `ps -o lstart=` under `TZ=UTC` and
+       `LC_ALL=C`, with a 5 s timeout. The line must name a date that exists.
+     - Windows, `win32-creation`: epoch seconds of the process creation time from
+       `powershell.exe`, with a 5 s timeout.
+     - Any other platform has no source and records no stamp.
+   - Clock behavior. `ps` on Linux derives `lstart` from the boot time, which moves
+     with a wall-clock step, so Linux does not use it. The macOS and Windows kernels
+     store the creation time once at process creation, and the tools format it, so a
+     clock step afterward should not change it. This comes from the platform
+     documentation and source, and no test steps a clock, so it is unverified. The
+     kinds `darwin-lstart` and `win32-creation` compare with a 2 s tolerance that
+     covers their one-second resolution only, not a clock step.
+   - Validity. A stamp is valid only in exactly the forms above: digits for the
+     namespace and the ticks, a UUID for the boot id, and 1 to 15 digits for epoch
+     seconds (no sign, fraction, exponent, or non-finite value). Both the recorded and
+     the fresh stamp must be valid.
+   - Every other case reads as alive, so an unknown stamp never frees a lock: no
+     recorded stamp (a lock of an older version, or the number of an earlier
+     revision), an invalid stamp, a kind mismatch, an unknown kind, a Linux PID
+     namespace mismatch or an unreadable namespace, a `/proc` view that fails the
+     `NSpid` check, and a current read that fails,
+     times out, is empty, or does not parse. The decision stays fail-closed.
+   - PID namespaces. `pidAlive` looks the pid up in the namespace of the reader before
+     any stamp is read, so a lock of another namespace that shares the runs root (a
+     container) reads as alive when its pid is alive here, and as dead when it is not,
+     whatever its stamp says. This pid-only ambiguity predates the stamp and is a
+     `known-limit`; the stamp adds no takeover across namespaces.
+   - Cost. A contender queries a pid only for a parsed owner with a live pid and a
+     recorded stamp. A process reads its own stamp once, on its first lock creation:
+     no spawn on Linux, one `ps` on macOS, and one `powershell.exe` startup on
+     Windows. The Windows latency is not measured, it is bounded by the 5 s timeout,
+     and Node has no cheaper source (`process.uptime()` stops during a system sleep on
+     POSIX). It is a `known-limit`.
+   - The replacement owner never matches stale content because every acquisition
+     writes a nonce (#363). The marker name carries only a pid, so `hasLiveWriter`
+     stays pid-only; decision 5 closes the marker race for tokened markers, and an
+     older version's marker is never removed.
+   - Remaining limits (`known-limit` in `src/lib/runstate.mjs`): the one-second
+     resolution on macOS and Windows, a file without a stamp, the unverified
+     clock-step behavior on macOS and Windows, the Windows startup cost, and the
+     pid-only ambiguity across PID namespaces.
 
 ## Consequences
 
@@ -88,8 +147,12 @@ running process. It also asks to check a reported PID-reuse window.
     exclusive-create window, or an older version wrote it): at the first
     acquisition after the file is older than the 60 s grace window. A fresh one
     stays until then.
-  - An unparseable claim with a live marker, and a claim whose pid is alive:
-    never, while that holds. A reused pid keeps one until that process exits.
+  - An unparseable claim with a live marker, and a claim whose owner does not read as
+    dead: never, while that holds. The owner reads as dead only when its pid is dead,
+    or alive with a valid stamp of the same kind (and Linux PID namespace) that
+    differs (decision 7). A claim without a valid stamp, with a stamp of another kind
+    or namespace, or whose current stamp cannot be read keeps the pid-only check, so
+    a reused pid keeps it until that process exits.
   - A claim that cannot be read: never, until it can be read.
 - A foreign or corrupt unparseable lock with no live marker is stale after the 60 s
   grace window. A lock that cannot be read stays busy until it can be read.
@@ -98,8 +161,9 @@ running process. It also asks to check a reported PID-reuse window.
 - A running writer of an older version that leaves no marker keeps its unwritten file
   only for the grace window. A stall past it loses the file. This is a known limit
   that upgrading every process removes.
-- Windows and POSIX use the same code: `process.kill(pid, 0)` and file names are the
-  only OS contracts. No native dependency is added.
+- Windows and POSIX use the same code, except the start-time query: `process.kill(pid, 0)`
+  and file names are the shared OS contracts, and the start-time stamp uses `/proc` on Linux and `ps` or PowerShell elsewhere (decision
+  7). No native dependency is added.
 - A writer whose temp file an outside process deleted reads as dead. Only this module
   creates and removes those files.
 
@@ -116,9 +180,9 @@ running process. It also asks to check a reported PID-reuse window.
    short limit (104 bytes on macOS) that a long temp directory can exceed, and a
    POSIX socket file is itself an orphan after a crash. The two platforms use
    different endpoint kinds.
-4. **Pid plus process start time**: rejected for now. It closes the PID-reuse stuck
-   case, but needs `ps` and PowerShell queries per platform. It stays the upgrade
-   path if reuse is ever observed in practice.
+4. **Pid plus process start time**: first rejected as the upgrade path to take if reuse
+   were ever observed. Issue #498 took it, and decision 7 records the result. Pid alone
+   left a lock or claim of a dead owner stuck while an unrelated process held the pid.
 5. **Keep the claim files (the #377 decision)**: rejected. Issue #452 asks for the
    removal, and the writer evidence meets the invariants that blocked it. No ADR
    recorded #377; its reasoning is in PR #445.
@@ -130,9 +194,10 @@ Andro Marces
 ## Links
 
 - [Issue #452](https://github.com/andromarces/agent-loops/issues/452)
+- [Issue #498](https://github.com/andromarces/agent-loops/issues/498): owner start time
 - [Issue #377](https://github.com/andromarces/agent-loops/issues/377), [PR #445](https://github.com/andromarces/agent-loops/pull/445), [Issue #363](https://github.com/andromarces/agent-loops/issues/363), [PR #370](https://github.com/andromarces/agent-loops/pull/370)
-- Implementation: `hasLiveWriter`, `stillStale`, and `pruneOrphanClaims` in
-  `src/lib/runstate.mjs`; tests in `tests/lib/runstate.test.mjs`,
+- Implementation: `hasLiveWriter`, `stillStale`, `pruneOrphanClaims`, `ownerAlive`, and
+  `processStartTime` in `src/lib/runstate.mjs`; tests in `tests/lib/runstate.test.mjs`,
   `tests/lib/runstate.stale-takeover.test.mjs`, and
   `tests/lib/runstate.link-fallback.test.mjs`
 - [ADR Index](README.md)

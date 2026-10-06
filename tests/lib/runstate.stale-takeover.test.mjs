@@ -47,14 +47,31 @@ async function staleOwner() {
   return JSON.stringify({ pid: await deadPid(), startedAt: "old" });
 }
 
-/** Runs `interleave` once, right after the first read of `lockFile` returns. */
+/**
+ * Runs `interleave` once, right after the first read of `lockFile` returns. Reads of
+ * other files (the /proc stamp read of the first lock creation on Linux) pass through.
+ */
 function afterLockRead(lockFile, interleave) {
-  vi.mocked(readFile).mockImplementationOnce(async (file, ...rest) => {
+  let done = false;
+  vi.mocked(readFile).mockImplementation(async (file, ...rest) => {
     const text = await realFs.readFile(file, ...rest);
-    if (file === lockFile) {
+    if (!done && file === lockFile) {
+      done = true;
       await interleave();
     }
     return text;
+  });
+}
+
+/** Makes the next read of `file` fail with `code`; other reads pass through. */
+function failNextRead(file, code, message) {
+  let done = false;
+  vi.mocked(readFile).mockImplementation(async (path, ...rest) => {
+    if (!done && path === file) {
+      done = true;
+      throw Object.assign(new Error(message), { code });
+    }
+    return await realFs.readFile(path, ...rest);
   });
 }
 
@@ -163,9 +180,7 @@ test("a lock that cannot be re-read during stale removal is kept", async () => {
   await writeFile(lockFile, await staleOwner(), "utf8");
   afterLockRead(lockFile, async () => {
     await replaceWithLiveLock(lockFile);
-    vi.mocked(readFile).mockImplementationOnce(async () => {
-      throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
-    });
+    failNextRead(lockFile, "EPERM", "EPERM: operation not permitted");
   });
   const fn = vi.fn(async () => "ran");
 

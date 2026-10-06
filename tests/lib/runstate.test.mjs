@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import {
+  processStartTime,
   readState,
   readStatesForSession,
   statePaths,
@@ -392,3 +393,186 @@ test("statePaths names the state directory by the cwd SHA-256 prefix", () => {
 test("statePaths rejects a null parentSession", () => {
   expect(() => statePaths({ parentSession: null })).toThrow(/Invalid session id/);
 });
+
+// A stamp of another process: the last number of a real stamp (epoch seconds, or
+// clock ticks on Linux) moved by a day, so the kind and the boot id stay the same.
+async function otherProcessStamp() {
+  return (await processStartTime(process.pid)).replace(/\d+$/, (n) => String(Number(n) + 86_400));
+}
+
+// Usefulness: verifies the issue #498 acceptance: a lock whose pid is alive but
+// whose recorded start time differs is a reused pid, so it is taken over. Without
+// the start time, a dead owner's lock stays until the unrelated process exits.
+test("withStateLock takes over a lock whose live pid has a different start time", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(
+    lockFile,
+    JSON.stringify({ pid: process.pid, startedAt: "old", startTime: await otherProcessStamp() }),
+    "utf8",
+  );
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+});
+
+// Usefulness: verifies a lock whose pid and start time both match a running
+// process stays busy, so the start-time check never removes a live owner's lock.
+test("withStateLock keeps a lock whose live pid has the same start time", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const startTime = await processStartTime(process.pid);
+  expect(startTime).toMatch(/^(linux-proc|darwin-lstart|win32-creation):/);
+  await writeFile(
+    lockFile,
+    JSON.stringify({ pid: process.pid, startedAt: "old", startTime }),
+    "utf8",
+  );
+  const fn = vi.fn(async () => "ran");
+
+  await expect(withStateLock(lockFile, fn)).rejects.toThrow(/locked by a live process/);
+  expect(fn).not.toHaveBeenCalled();
+});
+
+// Usefulness: verifies a lock of an older version, written without a start time,
+// keeps the pid-only check, so an upgrade never frees a live owner's lock.
+test("withStateLock keeps a lock without a start time while its pid is alive", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(lockFile, JSON.stringify({ pid: process.pid, startedAt: "old" }), "utf8");
+
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
+  );
+});
+
+// Usefulness: verifies a new lock records the owner's start time, so a later
+// contender can tell a reused pid from the owner.
+test("withStateLock records the owner start time in the lock", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+
+  const content = await withStateLock(lockFile, async () => readFile(lockFile, "utf8"));
+
+  expect(JSON.parse(content).startTime).toBe(await processStartTime(process.pid));
+});
+
+// Usefulness: verifies the orphan-claim scan applies the same reuse check, so a
+// claim of a dead owner whose pid was reused is removed (issue #498).
+test("withStateLock removes a claim whose live pid has a different start time", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(
+    join(dir, CLAIM_NAME),
+    JSON.stringify({
+      pid: process.pid,
+      startedAt: "old",
+      nonce: "n",
+      startTime: await otherProcessStamp(),
+    }),
+    "utf8",
+  );
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  expect(await readdir(dir)).toEqual([]);
+});
+
+// Usefulness: verifies the start time does not depend on the caller's time zone, so
+// a lock written under one TZ is never read as a reused pid under another (a live
+// lock must survive a TZ change between write and compare).
+test("processStartTime is the same under different TZ values", async () => {
+  const saved = process.env.TZ;
+  try {
+    process.env.TZ = "Pacific/Kiritimati";
+    const east = await processStartTime(process.pid);
+    process.env.TZ = "America/Los_Angeles";
+    const west = await processStartTime(process.pid);
+    expect(east).toEqual(expect.any(String));
+    expect(west).toBe(east);
+  } finally {
+    if (saved === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = saved;
+    }
+  }
+});
+
+// Usefulness: verifies a live lock written under one TZ stays busy when a contender
+// compares under another, the reviewer's macOS failure of the first design.
+test("withStateLock keeps a live lock across a TZ change between write and compare", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const saved = process.env.TZ;
+  try {
+    process.env.TZ = "Pacific/Kiritimati";
+    await writeFile(
+      lockFile,
+      JSON.stringify({
+        pid: process.pid,
+        startedAt: "old",
+        startTime: await processStartTime(process.pid),
+      }),
+      "utf8",
+    );
+    process.env.TZ = "America/Los_Angeles";
+
+    await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+      /locked by a live process/,
+    );
+  } finally {
+    if (saved === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = saved;
+    }
+  }
+});
+
+// Usefulness: verifies a recorded start time that is not a number (an unknown
+// format) reads as alive, so a stamp that cannot be compared never frees a lock.
+// A number is the stamp format of an earlier revision; "other-kind" is a kind that this
+// platform never reads.
+test.each([
+  "Thu Jan  1 00:00:00 1970",
+  "",
+  null,
+  Number.NaN,
+  86_400,
+  "other-kind:1",
+  "darwin-lstart:x",
+])("withStateLock keeps a live lock whose recorded start time is %j", async (startTime) => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(
+    lockFile,
+    JSON.stringify({ pid: process.pid, startedAt: "old", startTime }),
+    "utf8",
+  );
+
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
+  );
+});
+
+// Usefulness: verifies a start time within the one-second resolution of the source
+// still reads as the owner, so a rounding difference never frees a live lock.
+// Linux stamps are exact ticks, so the tolerance applies to the other kinds only.
+test.skipIf(process.platform === "linux")(
+  "withStateLock keeps a live lock whose start time differs by one second",
+  async () => {
+    const dir = await tempDir();
+    const lockFile = join(dir, "state.lock");
+    const startTime = (await processStartTime(process.pid)).replace(/\d+$/, (n) =>
+      String(Number(n) + 1),
+    );
+    await writeFile(
+      lockFile,
+      JSON.stringify({ pid: process.pid, startedAt: "old", startTime }),
+      "utf8",
+    );
+
+    await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+      /locked by a live process/,
+    );
+  },
+);
