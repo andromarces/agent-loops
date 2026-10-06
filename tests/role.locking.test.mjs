@@ -105,7 +105,7 @@ function cleanRepoGit(command, args, options) {
   if (args[0] === "status" || args[0] === "ls-files") {
     return answer("");
   }
-  throw new Error(`unexpected git call: ${args.join(" ")}`);
+  throw new Error(`unexpected git call: ${JSON.stringify(args)}`);
 }
 
 // Usefulness: verifies acceptance — two concurrent calls: exactly one runs a
@@ -172,4 +172,18 @@ test("concurrent dispatches: exactly one child runs, the loser exits non-zero", 
   } finally {
     gitDouble.answer = null;
   }
+});
+
+// Usefulness: acceptance (#522) — a merged-argument call reads differently from the split call in the error.
+test("cleanRepoGit error for a merged-argument call differs from the split call text", () => {
+  const message = (args) => {
+    try {
+      cleanRepoGit("git", args, { cwd: tmpdir() });
+    } catch (error) {
+      return error.message;
+    }
+    return undefined;
+  };
+  expect(message(["branch", "--show-current"])).toBeDefined();
+  expect(message(["branch --show-current"])).not.toBe(message(["branch", "--show-current"]));
 });
