@@ -104,7 +104,7 @@ export async function runChild(options) {
     try {
       return await invokeRole(finalPrompt);
     } catch (err) {
-      if (!resumedId || !err?.sessionMissing) {
+      if (!resumedId || !readProp(err, "sessionMissing")) {
         throw err;
       }
       logWarn(`${roleName}: session ${resumedId} is missing; rerunning the turn as a first turn`);

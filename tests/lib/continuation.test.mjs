@@ -1,13 +1,29 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import {
   carryEarlierEvents,
   readContinuation,
   restoreSessions,
 } from "../../src/lib/continuation.mjs";
 import { removePath } from "../runtime-helpers.mjs";
+
+// Value that the mocked `readFile` throws while `active`; otherwise it reads the real file.
+const readControl = vi.hoisted(() => ({ active: false, value: undefined }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    readFile: vi.fn(async (...args) => {
+      if (readControl.active) {
+        throw readControl.value;
+      }
+      return actual.readFile(...args);
+    }),
+  };
+});
 
 const CWD = resolve("work-tree");
 
@@ -203,4 +219,36 @@ test("carryEarlierEvents adds only the boundary for a transcript with no events"
   carryEarlierEvents(events, {});
   expect(events).toHaveLength(1);
   expect(events[0].earlier).toEqual({ exitCode: null, error: null, maxSteps: null });
+});
+
+// Usefulness: acceptance (#490) — a read failure that is `null`, `undefined`, or has a throwing
+// `message` getter still ends in the documented read error instead of a second error.
+test.each([
+  ["null", null],
+  ["undefined", undefined],
+  [
+    "a throwing message getter",
+    {
+      get message() {
+        throw new Error("getter");
+      },
+    },
+  ],
+])("readContinuation reports a read failure that throws %s", async (_name, thrown) => {
+  readControl.active = true;
+  readControl.value = thrown;
+  try {
+    await expect(readContinuation("run.json")).rejects.toThrow(
+      "--continue-from cannot read run.json:",
+    );
+  } finally {
+    readControl.active = false;
+  }
+});
+
+// Usefulness: acceptance (#490) — an ordinary read failure keeps its message in the error text.
+test("readContinuation keeps the message of an ordinary read failure", async () => {
+  await expect(readContinuation("no-such-490-file.json")).rejects.toThrow(
+    /cannot read no-such-490-file\.json: .*ENOENT/,
+  );
 });

@@ -3515,6 +3515,82 @@ test("a missing worker session reruns the turn as a first turn in the same step"
   }
 });
 
+// Usefulness: acceptance (#490) — the resume fallback reruns the turn as a first turn only for a
+// thrown value whose `sessionMissing` reads truthy. A value without it, including `null`,
+// `undefined`, and primitives, surfaces as the worker error. A throwing getter surfaces the
+// worker's own error with no rerun, and never replaces it with the getter error.
+const throwingSessionMissing = new Error("worker failed");
+Object.defineProperty(throwingSessionMissing, "sessionMissing", {
+  get() {
+    throw new Error("sessionMissing getter");
+  },
+});
+test.each([
+  ["null", null, false],
+  ["undefined", undefined, false],
+  ["a string", "worker failed", false],
+  ["a number", 42, false],
+  ["a plain object without sessionMissing", { message: "worker failed" }, false],
+  ["a plain object with sessionMissing false", { sessionMissing: false }, false],
+  [
+    "a plain object with sessionMissing true",
+    { message: "worker failed", sessionMissing: true },
+    true,
+  ],
+  ["an Error without sessionMissing", new Error("worker failed"), false],
+  [
+    "an Error with sessionMissing true",
+    Object.assign(new Error("worker failed"), { sessionMissing: true }),
+    true,
+  ],
+  ["a throwing sessionMissing getter", throwingSessionMissing, false],
+])("resume fallback for a worker that throws %s", async (_name, thrown, reruns) => {
+  const repo = await createTempRepo();
+  try {
+    let workerCalls = 0;
+    const orch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "do it" }),
+      JSON.stringify({ action: "abort", reason: "worker failed" }),
+    ]);
+
+    await runLoop({
+      task: "Task 490",
+      cwd: repo,
+      maxSteps: 1,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: "resumed" },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: {
+        orch,
+        work: {
+          async run(state) {
+            workerCalls += 1;
+            if (workerCalls === 1) {
+              throw thrown;
+            }
+            state.sessionId = "fresh";
+            return "worker done";
+          },
+        },
+        rev: scripted([]),
+      },
+    });
+
+    expect(workerCalls).toBe(reruns ? 2 : 1);
+    if (!reruns) {
+      const lastOrchestratorPrompt = orch.recorded.at(-1).prompt;
+      expect(lastOrchestratorPrompt).not.toContain("sessionMissing getter");
+      if (thrown === throwingSessionMissing) {
+        expect(lastOrchestratorPrompt).toContain("worker failed");
+      }
+    }
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a continued run resets the completion gate conservatively
 // (#362). The earlier run's worker turn is unknown here, so --require-accept
 // treats the tree as changed and unreviewed: a finish with no reviewer turn in

@@ -1,6 +1,7 @@
 import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
+import { readableErrorText } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
 
@@ -130,7 +131,9 @@ export async function snapshot(cwd) {
     try {
       hash = await sha256File(fullPath);
     } catch (err) {
-      throw new SnapshotError(`failed to hash ${filePath}: ${err.message}`, { cause: err });
+      throw new SnapshotError(`failed to hash ${filePath}: ${readableErrorText(err)}`, {
+        cause: err,
+      });
     }
     entries.push({ path: filePath, status, hash });
   }

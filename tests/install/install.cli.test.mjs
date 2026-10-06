@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main as cliMain } from "../../src/cli.mjs";
 import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install/commands.mjs";
 import { restoreAgentLoopHome } from "../runtime-helpers.mjs";
@@ -314,6 +314,41 @@ test("CLI prints a post-install note past the log cap in full", async () => {
     console.log = originalLog;
     console.error = originalError;
     restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: acceptance (#490) — a process-table failure that is `null`, `undefined`, or has a
+// throwing `message` getter still reaches the error log, and an ordinary Error keeps its message.
+test.each([
+  ["null", null, "null"],
+  ["undefined", undefined, "undefined"],
+  [
+    "a throwing message getter",
+    {
+      get message() {
+        throw new Error("getter");
+      },
+    },
+    "could not read the process table",
+  ],
+  ["an ordinary Error", new Error("table gone"), "table gone"],
+])("harness-check reports a lookup failure that throws %s", async (_name, thrown, expected) => {
+  const errors = [];
+  const errorSpy = vi
+    .spyOn(console, "error")
+    .mockImplementation((text) => errors.push(String(text)));
+  try {
+    process.exitCode = 0;
+    await runHarnessCheckCommand(["claude"], {
+      lookup: async () => {
+        throw thrown;
+      },
+    });
+    expect(errors.join("\n")).toContain(expected);
+    expect(process.exitCode).toBe(1);
+  } finally {
+    errorSpy.mockRestore();
     process.exitCode = 0;
   }
 });

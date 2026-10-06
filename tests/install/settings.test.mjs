@@ -1,4 +1,4 @@
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { parseSettings, validateLocator } from "../../src/install/settings.mjs";
 
 // Usefulness: verifies a settings root that is not a JSON object is refused with its path; no other test reaches this error path.
@@ -28,4 +28,26 @@ test("validateLocator refuses a container that is not an object", () => {
     reason: "expected an object at hooks",
   });
   expect(validateLocator({ hooks: { PreToolUse: [] } }, locator)).toEqual({ ok: true });
+});
+
+// Usefulness: acceptance (#490) — a parse failure with an unreadable message still throws the
+// settings error that names the file, so the original failure is not replaced by a getter error.
+test("parseSettings names the file when the parse error has an unreadable message", () => {
+  const spy = vi.spyOn(JSON, "parse").mockImplementationOnce(() => {
+    throw {
+      get message() {
+        throw new Error("getter");
+      },
+    };
+  });
+  try {
+    expect(() => parseSettings("{}", "/home/settings.json")).toThrow(
+      "Settings file does not parse: /home/settings.json",
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(() => parseSettings("{nope", "/home/settings.json")).toThrow(
+    /Settings file does not parse: \/home\/settings\.json \(.+\)/,
+  );
 });
