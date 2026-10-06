@@ -1,5 +1,6 @@
 import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { readProp } from "../lib/error-message.mjs";
+import { redactEnvSecrets } from "../lib/redact.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES, hasClosingBlockAttempt, parseVerdict } from "../lib/report.mjs";
@@ -158,9 +159,10 @@ export async function runOpenCode(state, prompt, options = {}) {
  * whole in one part never throws, whatever earlier parts mention (issue #509). The turn
  * then ends as an error, never as a report, so no accept can come from it. The first line of
  * the message names the cause. The lines after it hold every message joined as above, so the
- * envelope carries what the model wrote (issue #493). That text keeps its last 4000 characters. A
- * longer text is cut at the start, and a second line states the cut and the original length
- * (issue #510).
+ * envelope carries what the model wrote (issue #493). Only the interleaved stream error bounds that
+ * text (issue #510): the text is redacted (ADR 0017) first, then keeps its last 4000 code units,
+ * cut on a code point boundary. A longer text is cut at the start, and a second line states the
+ * cut and the original length. The unidentified part error carries the whole text.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
@@ -178,7 +180,7 @@ function joinTextParts(events) {
 
   const attempts = messages.filter((group) => hasClosingBlockAttempt(group.parts.join("")));
   if (attempts.some((a) => attempts.some((b) => a !== b && a.first < b.last && b.first < a.last))) {
-    throw errorWithText(INTERLEAVED_MESSAGE, messages);
+    throw interleavedError(messages);
   }
   const governing = attempts.at(-1);
   if (
@@ -186,7 +188,7 @@ function joinTextParts(events) {
     parseVerdict(joinMessages([governing])) === "accept" &&
     labelLinePartCount(governing.parts) > 1
   ) {
-    throw errorWithText(UNIDENTIFIED_MESSAGE, messages);
+    throw new Error(`${UNIDENTIFIED_MESSAGE}\n${joinMessages(messages)}`);
   }
 
   return joinMessages(messages.filter((group) => group === governing || !attempts.includes(group)));
@@ -195,15 +197,22 @@ function joinTextParts(events) {
 const INTERLEAVED_MESSAGE = "opencode returned closing block attempts from interleaved messages.";
 const UNIDENTIFIED_MESSAGE = "opencode returned a closing block that spans unidentified parts.";
 
-// Upper bound, in characters, on the joined text that a fail-closed error carries (issue #510).
+// Upper bound, in UTF-16 code units, on the joined text of the interleaved stream error (issue #510).
 const ERROR_TEXT_LIMIT = 4000;
 
-/** Builds the error: the cause, then the joined text, cut to its last ERROR_TEXT_LIMIT characters and marked as cut. */
-function errorWithText(cause, messages) {
-  const text = joinMessages(messages);
-  if (text.length <= ERROR_TEXT_LIMIT) return new Error(`${cause}\n${text}`);
-  const note = `[text cut: the last ${ERROR_TEXT_LIMIT} of ${text.length} characters follow]`;
-  return new Error(`${cause}\n${note}\n${text.slice(-ERROR_TEXT_LIMIT)}`);
+/**
+ * Builds the interleaved stream error: the cause, then the joined text. The text is redacted
+ * first (ADR 0017), because a cut inside a secret value leaves a suffix that exact-value
+ * redaction no longer matches. A longer text keeps its last ERROR_TEXT_LIMIT code units, cut on a
+ * code point boundary, after a line that states the cut.
+ */
+function interleavedError(messages) {
+  const text = redactEnvSecrets(joinMessages(messages));
+  if (text.length <= ERROR_TEXT_LIMIT) return new Error(`${INTERLEAVED_MESSAGE}\n${text}`);
+  let tail = text.slice(-ERROR_TEXT_LIMIT);
+  if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1);
+  const note = `[text cut: the last ${tail.length} of ${text.length} characters follow]`;
+  return new Error(`${INTERLEAVED_MESSAGE}\n${note}\n${tail}`);
 }
 
 function joinMessages(messages) {
