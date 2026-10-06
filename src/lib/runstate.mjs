@@ -607,15 +607,29 @@ async function queryOutput(command, args) {
 // a pid of another PID namespace, such as a container that shares the runs root, from
 // being compared with a process of this one. The command name (field 2) can hold
 // spaces and parentheses, so fields count from the last ")".
-// The /proc mount must belong to the PID namespace that `process.kill(pid, 0)` and the
-// lock content use: in a mount view from another namespace, /proc/<pid>/stat can
-// describe an unrelated process, and the namespace of /proc/self would still equal the
-// caller's. The link /proc/self is the pid of the caller in the namespace of the mount,
-// so it equals `process.pid` only for a matching view; otherwise, or when it cannot be
-// read, there is no stamp, and the owner reads as alive (the pid-only check). The guard
-// applies to the writer (own stamp) and the reader (stamp of the owner pid) alike.
+// The /proc mount must be a view of the PID namespace of this process, the one that
+// `process.kill(pid, 0)` and the lock content use: in a mount of an ancestor namespace,
+// /proc/<pid>/stat can describe an unrelated process, because pids are allocated per
+// namespace (and a /proc/self link can equal `process.pid` there by coincidence).
+// `ownProcView` checks the NSpid line of /proc/self/status. proc_pid_status(5) (man7.org,
+// "NSpid", since Linux 4.1) states that the entries are the pid in each PID namespace of
+// which the process is a member, the leftmost with respect to the namespace of the process
+// that mounted the procfs, followed by the value in each nested inner namespace. A single
+// entry therefore means the mount's namespace is the namespace of this process, and the
+// entry is the pid in it. The check is on the writer (own stamp) and the reader (stamp of
+// the owner pid) alike. It proves that the namespace of the mounter equals the namespace of
+// this process, and nothing more: it does not prove that `pid` in /proc is the lock owner
+// (that is the stamp comparison), and it does not cover a kernel that lacks NSpid.
+// A missing NSpid line, an unreadable status, and any other form give no stamp, and the
+// owner reads as alive (the pid-only check).
+async function ownProcView() {
+  const status = await readFile("/proc/self/status", "utf8");
+  const entries = /^NSpid:[ \t]*(.*)$/m.exec(status)?.[1].trim().split(/\s+/);
+  return entries?.length === 1 && entries[0] === String(process.pid);
+}
+
 async function linuxProcStamp(pid) {
-  if ((await readlink("/proc/self")) !== String(process.pid)) {
+  if (!(await ownProcView())) {
     return null;
   }
   const stat = await readFile(`/proc/${pid}/stat`, "utf8");

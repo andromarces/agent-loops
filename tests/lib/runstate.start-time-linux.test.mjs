@@ -14,7 +14,6 @@ const BOOT_ID = "0b6f3b86-6f1c-4c2e-9d57-3c1f0a5d2e10";
 const NAMESPACE = "4026531836";
 let proc = {};
 let namespaceLink = `pid:[${NAMESPACE}]`;
-let selfLink = String(process.pid);
 
 vi.mock("node:fs/promises", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -22,12 +21,6 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
     String(file).startsWith("/proc/") ? procFile(String(file)) : realFs.readFile(file, ...rest),
   ),
   readlink: vi.fn(async (file, ...rest) => {
-    if (file === "/proc/self") {
-      if (selfLink === null) {
-        throw Object.assign(new Error("ENOENT /proc/self"), { code: "ENOENT" });
-      }
-      return selfLink;
-    }
     if (file !== "/proc/self/ns/pid") {
       return await realFs.readlink(file, ...rest);
     }
@@ -56,10 +49,18 @@ function statLine(ticks, comm = "node (a b)") {
   return `${process.pid} (${comm}) S 1 1 1 0 -1 4194560 1 0 0 0 1 2 0 0 20 0 1 0 ${ticks} 1000 1`;
 }
 
+// /proc/self/status as the kernel prints it (tab after the key), with `nspid` as the
+// value of the NSpid line, or without that line when `nspid` is null.
+function statusFile(nspid = String(process.pid)) {
+  return `Name:\tnode\nUmask:\t0022\nTgid:\t${process.pid}\n${
+    nspid === null ? "" : `NSpid:\t${nspid}\n`
+  }NSpgid:\t1\n`;
+}
+
 function setProc(ticks, bootId = BOOT_ID) {
   namespaceLink = `pid:[${NAMESPACE}]`;
-  selfLink = String(process.pid);
   proc = {
+    "/proc/self/status": statusFile(),
     [`/proc/${process.pid}/stat`]: statLine(ticks),
     "/proc/sys/kernel/random/boot_id": `${bootId}\n`,
   };
@@ -132,7 +133,11 @@ test.each([
   ["a missing /proc entry", {}, `linux-proc:${NAMESPACE}:${BOOT_ID}:111`],
   [
     "a malformed stat",
-    { [`/proc/${process.pid}/stat`]: "garbage", "/proc/sys/kernel/random/boot_id": BOOT_ID },
+    {
+      "/proc/self/status": statusFile(),
+      [`/proc/${process.pid}/stat`]: "garbage",
+      "/proc/sys/kernel/random/boot_id": BOOT_ID,
+    },
     `linux-proc:${NAMESPACE}:${BOOT_ID}:111`,
   ],
   ["a kind mismatch", null, "darwin-lstart:100"],
@@ -200,15 +205,36 @@ test.each([
   );
 });
 
-// Usefulness: verifies a /proc mount of another PID namespace gives no stamp, so the
-// stat of an unrelated process is never taken for the owner and a live lock is kept:
-// the stamp differs from the recorded one, and only the guard keeps the lock.
+// Usefulness: verifies a /proc view that is not the caller's PID namespace gives no
+// stamp, so the stat of an unrelated process is never taken for the owner and a live lock
+// is kept. The self link equals process.pid in every case, so only the NSpid check
+// (proc_pid_status(5): the leftmost entry is the pid in the namespace of the procfs mount,
+// followed by each nested inner namespace) can refuse the two-entry ancestor view.
 test.each([
-  ["a self link of another pid", "4242"],
-  ["an unreadable self link", null],
-])("a live lock is kept when /proc has %s", async (_name, link) => {
+  ["an ancestor view (two NSpid entries)", `${process.pid}\t77`],
+  ["an ancestor view of three namespaces", `${process.pid}\t77\t1`],
+  ["a single entry of another pid", "4242"],
+  ["a missing NSpid line", null],
+  ["an empty NSpid line", ""],
+  ["a malformed NSpid line", "abc"],
+  ["a signed NSpid entry", `+${process.pid}`],
+  ["a padded NSpid entry", `0${process.pid}`],
+])("a live lock is kept when /proc/self/status has %s", async (_name, nspid) => {
   setProc(987_654);
-  selfLink = link;
+  proc["/proc/self/status"] = statusFile(nspid);
+  const lockFile = await lockWith(`linux-proc:${NAMESPACE}:${BOOT_ID}:111`);
+
+  await expect(processStartTime(process.pid)).resolves.toBeNull();
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
+  );
+});
+
+// Usefulness: verifies an unreadable /proc/self/status gives no stamp, so the owner reads
+// as alive.
+test("a live lock is kept when /proc/self/status cannot be read", async () => {
+  setProc(987_654);
+  delete proc["/proc/self/status"];
   const lockFile = await lockWith(`linux-proc:${NAMESPACE}:${BOOT_ID}:111`);
 
   await expect(processStartTime(process.pid)).resolves.toBeNull();
