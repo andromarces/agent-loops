@@ -1349,3 +1349,36 @@ test.each([["Remember that the Verdict: line is required."], ["Checks: will foll
     expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
   },
 );
+
+// Usefulness: verifies a line terminator alone never makes a later unidentified part count as block
+// content: a whole accept block in one part still parses as accept when the next part starts with
+// CRLF, LF, or CR, as it does on main (issue #509, reviewer probe 3).
+test.each([["\r\nThe watcher finished.\r\n"], ["\nThe watcher finished."], ["\r\n"]])(
+  "opencode accepts a whole unidentified block before a part that starts with a line terminator %j",
+  async (late) => {
+    const response = await runWithEvents(textEvent(ACCEPTED_BLOCK), textEvent(late));
+
+    expect(parseVerdict(response)).toBe("accept");
+    expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
+  },
+);
+
+// Usefulness: verifies a bare CR part is no new error: it glues to the Verdict line and the verdict
+// reads `unknown` as on main, never accept (issue #509, reviewer probe 3).
+test("opencode reads a whole unidentified block before a bare CR part as unknown", async () => {
+  const response = await runWithEvents(textEvent(ACCEPTED_BLOCK), textEvent("\rThe watcher."));
+
+  expect(parseVerdict(response)).toBe("unknown");
+});
+
+// Usefulness: verifies a Verdict value cut across parts still fails closed when a CRLF follows, so
+// the terminator fix of issue #509 does not reopen the split-label bypass.
+test("opencode refuses a Verdict value split across parts before a CRLF", async () => {
+  const error = await runWithEvents(
+    textEvent(`${CLOSING_BLOCK}\nVerdict: acc`),
+    textEvent("ept\r\n"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});

@@ -207,7 +207,8 @@ const BLOCK_LABEL_LINE = new RegExp(`^(?:${[...REPORT_LABEL_NAMES, "Verdict"].jo
 /**
  * Counts the parts that a label line of the closing block touches, in the join of `parts`. The
  * block starts at the last `Conclusion:` line, as parseReportBlock reads it. A label line touches
- * every part that holds one of its characters, so a label cut across parts counts both. Text before
+ * every part that holds one of its characters, so a label cut across parts counts both. A line
+ * terminator or trailing space is no character of the line. Text before
  * the block and plain prose after it touch no label line.
  */
 function labelLinePartCount(parts) {
@@ -220,7 +221,7 @@ function labelLinePartCount(parts) {
 
   let offset = 0;
   const lines = text.split("\n").map((line) => {
-    const span = [offset, offset + line.length];
+    const span = [offset, offset + line.trimEnd().length];
     offset += line.length + 1;
     return { line, span };
   });
