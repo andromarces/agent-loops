@@ -228,8 +228,32 @@ test("Copilot launcher failure report survives a field value that cannot convert
   try {
     expect(() => reportFailure(thrown)).not.toThrow();
     const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
-    expect(report).toContain("copilot failed (exit code Symbol(boom)");
+    expect(report).toContain("copilot failed (exit code [unprintable]");
     expect(report).toContain("error code EX");
+    expect(process.exitCode).toBe(1);
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
+// Usefulness: ADR 0017 — an object, array, or function in `exitCode`, `signal`, or `code` can hold
+// argv, so only a number or a string prints and any other type prints a fixed placeholder.
+test("Copilot launcher failure report keeps command arguments out of object-valued fields", () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const thrown = {
+    shortMessage: "Command failed",
+    exitCode: { argv: ["copilot", "--secret-arg"] },
+    signal: ["copilot", "task words"],
+    code: Object.assign(() => {}, { command: "copilot --secret-arg" }),
+  };
+  try {
+    reportFailure(thrown);
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain("exit code [unprintable]");
+    expect(report).not.toContain("secret-arg");
+    expect(report).not.toContain("task words");
     expect(process.exitCode).toBe(1);
   } finally {
     errorSpy.mockRestore();

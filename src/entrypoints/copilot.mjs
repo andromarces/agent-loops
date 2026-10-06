@@ -54,6 +54,13 @@ export async function main(argv = process.argv.slice(2)) {
   await execa(invocation.command, invocation.args, { stdio: "inherit" });
 }
 
+// Only a number or a string prints, because an object can hold the command arguments (ADR 0017).
+function printable(value) {
+  return typeof value === "number" || typeof value === "string"
+    ? redactedText(value)
+    : "[unprintable]";
+}
+
 /**
  * Prints the failure report. An execa error carries the whole command line, with the task
  * arguments and their shell quoting, in `message` and `shortMessage`, so the report is built from
@@ -74,9 +81,9 @@ export function reportFailure(error) {
     const signal = readProp(error, "signal");
     const code = readProp(error, "code");
     const causes = [
-      exitCode === undefined ? null : `exit code ${redactedText(exitCode)}`,
-      signal ? `signal ${redactedText(signal)}` : null,
-      code ? `error code ${redactedText(code)}` : null,
+      exitCode === undefined ? null : `exit code ${printable(exitCode)}`,
+      signal ? `signal ${printable(signal)}` : null,
+      code ? `error code ${printable(code)}` : null,
     ].filter(Boolean);
     message = `copilot failed${causes.length > 0 ? ` (${causes.join(", ")})` : ""}`;
   } else {
