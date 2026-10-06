@@ -16,17 +16,18 @@ afterEach(async () => {
 
 /**
  * Creates a Git repository that holds a copy of the guard and a stub
- * `vite-plus` whose `bin/vp` exits with `vpExit`. Git reads an empty global
- * config file and no system config, so a test sets each scope explicitly.
+ * `vite-plus` whose `bin/vp` runs `vpScript` (`null` leaves no `bin/vp`). Git
+ * reads an empty global config file and no system config, so a test sets each
+ * scope explicitly.
  */
-async function setup({ vpExit = 0 } = {}) {
+async function setup({ vpScript = "process.exit(0);" } = {}) {
   dir = await mkdtemp(join(tmpdir(), "vite-hooks-guard-"));
   const repo = join(dir, "repo");
   const vitePlus = join(repo, "node_modules", "vite-plus");
   await mkdir(join(vitePlus, "bin"), { recursive: true });
   await mkdir(join(repo, ".vite-hooks"));
   await writeFile(join(vitePlus, "package.json"), '{ "name": "vite-plus" }\n');
-  await writeFile(join(vitePlus, "bin", "vp"), `process.exit(${vpExit});\n`);
+  if (vpScript !== null) await writeFile(join(vitePlus, "bin", "vp"), `${vpScript}\n`);
   await copyFile(GUARD, join(repo, ".vite-hooks", "install.mjs"));
   const globalConfig = join(dir, "global.gitconfig");
   await writeFile(globalConfig, "");
@@ -42,15 +43,29 @@ async function setup({ vpExit = 0 } = {}) {
   return { repo, git, prepare };
 }
 
-// Usefulness: verifies that `prepare` never fails an install when the hook
-// dispatcher fails, which no other test covers (ADR 0004 guard contract).
-test("prepare exits 0 and warns when vp config fails", async () => {
-  const { prepare } = await setup({ vpExit: 3 });
+const failures = [
+  {
+    name: "vp config exits non-zero",
+    vpScript: 'console.log("child stdout"); console.error("child stderr"); process.exit(3);',
+  },
+  { name: "vp config is missing", vpScript: null },
+  { name: "vp config ends on a signal", vpScript: 'process.kill(process.pid, "SIGTERM");' },
+  { name: "the git probe fails", env: { GIT_DIR: "missing-git-dir" } },
+];
 
-  const result = await prepare();
+// Usefulness: verifies the warning-only `prepare` contract on every failure path
+// (exit 0, no stdout, one warning line of its own, no stack), which keeps a
+// consumer install clean; no other test checks the output streams.
+test.each(failures)("prepare only warns when $name", async ({ vpScript, env }) => {
+  const { prepare } = await setup({ vpScript });
+
+  const result = await prepare(env);
 
   expect(result.exitCode).toBe(0);
-  expect(result.stderr).toMatch(/hooks/i);
+  expect(result.stdout).toBe("");
+  const lines = result.stderr.split(/\r?\n/);
+  expect(lines.filter((line) => line.startsWith("prepare:"))).toHaveLength(1);
+  expect(lines.filter((line) => /^\s+at\s/.test(line))).toEqual([]);
 });
 
 // Usefulness: verifies that the Husky migration leaves every core.hooksPath that

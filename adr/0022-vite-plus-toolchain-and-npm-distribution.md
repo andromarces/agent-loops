@@ -60,9 +60,11 @@ Node `^22.18.0 || ^24.11.0 || >=26.0.0`.
    (`CI=true`), in production (`NODE_ENV=production`), with `VP_GIT_HOOKS=0`, and
    when `vite-plus` is absent, so a registry or Git URL install never requires it.
    Otherwise it runs `vp config --no-agent` with the current Node binary. `--no-agent`
-   keeps `vp config` away from `AGENTS.md` and `CLAUDE.md`. Any other failure,
-   including a failed `vp config`, only warns on stderr, so `prepare` never fails an
-   install. `vp config` skips the install when `core.hooksPath` points elsewhere, so
+   keeps `vp config` away from `AGENTS.md` and `CLAUDE.md`. The guard always exits
+   0 and writes nothing to stdout: the `vp config` stdout goes to stderr. Any other
+   failure (a failed Git probe, a missing `bin/vp`, a non-zero exit, a spawn error,
+   or a signal) writes one warning line to stderr that names the failed step and
+   the rerun command, and no stack. `vp config` skips the install when `core.hooksPath` points elsewhere, so
    the guard first unsets the local `core.hooksPath` of a Husky clone: only a local
    value that resolves to `<repo>/.husky/_` in any spelling (trailing separator,
    `./` prefix, Windows backslashes, absolute path), removed with `--fixed-value`
