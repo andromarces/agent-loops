@@ -1,10 +1,14 @@
 // Lifecycle logging at operational boundaries (AGENTS.md logging guideline).
 // Every line is tagged with its level: "[agent-loop] <level>: <message>".
 // info and debug go to stdout, warn and error to stderr; debug is shown only when
-// the --verbose gate is on. Every line is length-bounded so untrusted content
-// (for example a model echo in a validation error) cannot flood a line; logInfoFull
-// prints a trusted, user-facing note in full instead. Every line has secret-named environment
+// the --verbose gate is on. Info, warn, and debug lines are length-bounded so untrusted content
+// (for example a model echo in a validation error) cannot flood a line. logInfoFull prints a
+// trusted, user-facing note in full, and logError prints an error in full, so a long path
+// never hides the action the message asks for (#515). Every line has secret-named environment
 // values redacted first (ADR 0017), so a log line never echoes a secret that an error text held.
+// known-limit: error lines are unbounded, so the redaction limits of redact.mjs (overlapping or prefix
+// secret values, a secret value inside a variable name) can show text past character 300 that the
+// old cut hid. Upgrade path: redaction hardening.
 import { redactEnvSecrets } from "./redact.mjs";
 
 const MAX_LENGTH = 300;
@@ -58,6 +62,7 @@ export function logWarn(message) {
   console.error(`[agent-loop] warn: ${truncate(message)}`);
 }
 
+/** Prints an error line in full, without the 300-character bound; redaction still applies. */
 export function logError(message) {
-  console.error(`[agent-loop] error: ${truncate(message)}`);
+  console.error(`[agent-loop] error: ${redactEnvSecrets(message)}`);
 }

@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { logDebug, logError, logInfo, logWarn, setVerbose } from "../../src/lib/log.mjs";
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   setVerbose(false);
   vi.restoreAllMocks();
 });
@@ -45,18 +46,26 @@ test("logInfo truncates messages beyond 300 characters", () => {
   expect(logSpy).toHaveBeenCalledWith(`[agent-loop] info: ${"x".repeat(300)}...`);
 });
 
-// Usefulness: verifies warn and error lines are length-bounded, so model-controlled content
+// Usefulness: verifies warn lines stay length-bounded, so model-controlled content
 // (for example an unsupported-action echo in a repair warn) cannot flood a log line.
-test("logWarn and logError truncate messages beyond 300 characters", () => {
+test("logWarn truncates messages beyond 300 characters", () => {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  const long = "x".repeat(400);
 
-  logWarn(long);
-  logError(long);
+  logWarn("x".repeat(400));
 
-  const truncated = `[agent-loop] warn: ${"x".repeat(300)}...`;
-  expect(errorSpy.mock.calls.map((call) => call[0])).toEqual([
-    truncated,
-    `[agent-loop] error: ${"x".repeat(300)}...`,
-  ]);
+  expect(errorSpy).toHaveBeenCalledWith(`[agent-loop] warn: ${"x".repeat(300)}...`);
+});
+
+// Usefulness: verifies acceptance #515 — an error line keeps its full text, so a long path
+// never hides the final instruction, and an env secret in that text is still redacted.
+test("logError keeps the full message and redacts env secrets", () => {
+  vi.stubEnv("AGENT_TEST_SECRET", "s3cr3t-value-123");
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const message = `Install directory ${"/long".repeat(200)} s3cr3t-value-123 failed. Remove the directory manually.`;
+
+  logError(message);
+
+  expect(errorSpy).toHaveBeenCalledWith(
+    `[agent-loop] error: ${message.replace("s3cr3t-value-123", "[redacted:AGENT_TEST_SECRET]")}`,
+  );
 });
