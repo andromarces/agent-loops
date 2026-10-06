@@ -70,21 +70,31 @@ running process. It also asks to check a reported PID-reuse window.
    the scan never fails the lock holder. Claim temp files are pruned like lock temp
    files.
 7. **PID reuse and owner start time.** The OS can give the pid of a dead owner to an
-   unrelated process, and `pidAlive` then reports a live owner. Each lock and claim
-   therefore records the owner's `startTime` with its pid (issue #498). `ownerAlive`
-   reads a live pid as dead when its recorded `startTime` differs from the start time
-   of the process now at that pid. The read needs no native dependency:
-   `ps -o lstart=` on macOS and Linux, and PowerShell `Process.StartTime` on Windows.
-   The value is an opaque string, compared for equality. Without a recorded
-   `startTime` (a lock of an older version, or an owner that could not read its own),
-   and when the start time of the pid cannot be read now, the pid-only check holds.
-   This stays fail-closed: an unreadable start time never reads a running owner as
-   dead. The replacement owner never matches stale content because every acquisition
-   writes a nonce (#363). The marker name carries only a pid, so `hasLiveWriter` stays
-   pid-only; decision 5 closes the marker race for tokened markers, and an older
-   version's marker is never removed. The remaining limits are in `src/lib/runstate.mjs`
-   as a `known-limit`: the one-second resolution of `lstart`, and a file without a
-   `startTime`.
+   unrelated process, and `pidAlive` then reports a live owner. Issue #498 takes the
+   upgrade path that this ADR named (Alternative 4), so this decision is amended in
+   place: the writer liveness check, the claims, and the invariants of decisions 1 to
+   6 do not change, and no new ADR supersedes this one. Each lock and claim records
+   the owner's `startTime` (epoch seconds) with its pid. `ownerAlive` reads a live
+   pid as dead only when the recorded `startTime` differs, by more than 2 seconds,
+   from the start time of the process now at that pid.
+   - The value does not depend on the time zone or the locale of the reader.
+     `ps -o lstart=` runs under `TZ=UTC` and `LC_ALL=C` and its line is parsed to
+     epoch seconds on macOS and Linux. PowerShell returns a number on Windows. No
+     native dependency is added.
+   - Every other case reads as alive: no recorded `startTime` (a lock of an older
+     version), a recorded value that is not a number, and a query that fails, times
+     out (5 s), or returns nothing parseable. An unknown start time never frees a
+     lock, so the decision stays fail-closed.
+   - The query runs on contention only for a parsed owner with a live pid, and once
+     per process for the own start time, on the first lock creation. The latter costs
+     one `ps` on POSIX and one PowerShell startup on Windows (not measured). Node has
+     no cheaper source: `process.uptime()` stops during a system sleep on POSIX.
+   - The replacement owner never matches stale content because every acquisition
+     writes a nonce (#363). The marker name carries only a pid, so `hasLiveWriter`
+     stays pid-only; decision 5 closes the marker race for tokened markers, and an
+     older version's marker is never removed.
+   - Remaining limits (`known-limit` in `src/lib/runstate.mjs`): the one-second
+     resolution, a file without a `startTime`, and the Windows startup cost.
 
 ## Consequences
 
@@ -126,8 +136,9 @@ running process. It also asks to check a reported PID-reuse window.
    short limit (104 bytes on macOS) that a long temp directory can exceed, and a
    POSIX socket file is itself an orphan after a crash. The two platforms use
    different endpoint kinds.
-4. **Pid alone**: superseded by decision 7 (issue #498). It left a lock or claim of a
-   dead owner stuck while an unrelated process held the reused pid.
+4. **Pid plus process start time**: first rejected as the upgrade path to take if reuse
+   were ever observed. Issue #498 took it, and decision 7 records the result. Pid alone
+   left a lock or claim of a dead owner stuck while an unrelated process held the pid.
 5. **Keep the claim files (the #377 decision)**: rejected. Issue #452 asks for the
    removal, and the writer evidence meets the invariants that blocked it. No ADR
    recorded #377; its reasoning is in PR #445.

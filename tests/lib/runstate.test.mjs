@@ -394,7 +394,7 @@ test("statePaths rejects a null parentSession", () => {
   expect(() => statePaths({ parentSession: null })).toThrow(/Invalid session id/);
 });
 
-const REUSED_START = "Thu Jan  1 00:00:00 1970";
+const REUSED_START = 86_400;
 
 // Usefulness: verifies the issue #498 acceptance: a lock whose pid is alive but
 // whose recorded start time differs is a reused pid, so it is taken over. Without
@@ -417,7 +417,7 @@ test("withStateLock keeps a lock whose live pid has the same start time", async 
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
   const startTime = await processStartTime(process.pid);
-  expect(startTime).toEqual(expect.any(String));
+  expect(startTime).toEqual(expect.any(Number));
   await writeFile(
     lockFile,
     JSON.stringify({ pid: process.pid, startedAt: "old", startTime }),
@@ -465,4 +465,92 @@ test("withStateLock removes a claim whose live pid has a different start time", 
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
   expect(await readdir(dir)).toEqual([]);
+});
+
+// Usefulness: verifies the start time does not depend on the caller's time zone, so
+// a lock written under one TZ is never read as a reused pid under another (a live
+// lock must survive a TZ change between write and compare).
+test("processStartTime is the same under different TZ values", async () => {
+  const saved = process.env.TZ;
+  try {
+    process.env.TZ = "Pacific/Kiritimati";
+    const east = await processStartTime(process.pid);
+    process.env.TZ = "America/Los_Angeles";
+    const west = await processStartTime(process.pid);
+    expect(east).toEqual(expect.any(Number));
+    expect(west).toBe(east);
+  } finally {
+    if (saved === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = saved;
+    }
+  }
+});
+
+// Usefulness: verifies a live lock written under one TZ stays busy when a contender
+// compares under another, the reviewer's macOS failure of the first design.
+test("withStateLock keeps a live lock across a TZ change between write and compare", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const saved = process.env.TZ;
+  try {
+    process.env.TZ = "Pacific/Kiritimati";
+    await writeFile(
+      lockFile,
+      JSON.stringify({
+        pid: process.pid,
+        startedAt: "old",
+        startTime: await processStartTime(process.pid),
+      }),
+      "utf8",
+    );
+    process.env.TZ = "America/Los_Angeles";
+
+    await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+      /locked by a live process/,
+    );
+  } finally {
+    if (saved === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = saved;
+    }
+  }
+});
+
+// Usefulness: verifies a recorded start time that is not a number (an unknown
+// format) reads as alive, so a stamp that cannot be compared never frees a lock.
+test.each(["Thu Jan  1 00:00:00 1970", "", null, Number.NaN])(
+  "withStateLock keeps a live lock whose recorded start time is %j",
+  async (startTime) => {
+    const dir = await tempDir();
+    const lockFile = join(dir, "state.lock");
+    await writeFile(
+      lockFile,
+      JSON.stringify({ pid: process.pid, startedAt: "old", startTime }),
+      "utf8",
+    );
+
+    await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+      /locked by a live process/,
+    );
+  },
+);
+
+// Usefulness: verifies a start time within the one-second resolution of the source
+// still reads as the owner, so a rounding difference never frees a live lock.
+test("withStateLock keeps a live lock whose start time differs by one second", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const startTime = (await processStartTime(process.pid)) + 1;
+  await writeFile(
+    lockFile,
+    JSON.stringify({ pid: process.pid, startedAt: "old", startTime }),
+    "utf8",
+  );
+
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
+  );
 });
