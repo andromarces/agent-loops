@@ -5,6 +5,7 @@
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { readArgValue, readInlineValue, splitInlineFlag } from "../lib/args.mjs";
+import { readableErrorText, readProp } from "../lib/error-message.mjs";
 import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.mjs";
 import { nearestHarness } from "../lib/process-ancestry.mjs";
 import { HARNESS_META, HARNESS_ORDER, harnessForCommand, isHarness } from "../lib/harnesses.mjs";
@@ -139,7 +140,7 @@ function parseCommand(argv, usage) {
   try {
     options = parseFlags(argv);
   } catch (err) {
-    logError(err.message);
+    logError(readableErrorText(err));
     process.exitCode = 1;
     return null;
   }
@@ -189,9 +190,12 @@ export async function runInstallCommand(argv) {
       dryRun: options.dryRun,
     });
   } catch (err) {
-    logError(err.path ? `${err.path}: ${err.message}` : err.message);
-    if (err.snippet) {
-      console.log(err.snippet);
+    const path = readProp(err, "path");
+    const text = readableErrorText(err);
+    logError(path ? `${path}: ${text}` : text);
+    const snippet = readProp(err, "snippet");
+    if (snippet) {
+      console.log(snippet);
     }
     process.exitCode = 1;
     return;
@@ -216,7 +220,7 @@ export async function runUninstallCommand(argv) {
     try {
       manifest = await readManifest(resolveHome());
     } catch (err) {
-      logError(err.message);
+      logError(readableErrorText(err));
       process.exitCode = 1;
       return;
     }
@@ -232,7 +236,7 @@ export async function runUninstallCommand(argv) {
   try {
     reports = await uninstall({ harnesses, home: resolveHome(), dryRun: options.dryRun });
   } catch (err) {
-    logError(err.message);
+    logError(readableErrorText(err));
     process.exitCode = 1;
     return;
   }
@@ -270,7 +274,7 @@ export async function runHarnessCheckCommand(argv, { lookup = nearestHarness } =
   try {
     found = await lookup();
   } catch (err) {
-    logError(`could not read the process table: ${err.message}`);
+    logError(`could not read the process table: ${readableErrorText(err)}`);
     process.exitCode = 1;
     return;
   }

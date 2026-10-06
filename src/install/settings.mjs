@@ -8,6 +8,7 @@
 // The visible entry is the only ownership key: find and remove compare the
 // recorded entry by deep equality, so a package move or an upgrade that changes
 // a path still finds the old record.
+import { readableErrorText } from "../lib/error-message.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 import { deepEqual } from "./fsutil.mjs";
 
@@ -16,7 +17,7 @@ export function parseSettings(text, path) {
   try {
     value = JSON.parse(text);
   } catch (err) {
-    throw new Error(`Settings file does not parse: ${path} (${err.message})`);
+    throw new Error(`Settings file does not parse: ${path} (${readableErrorText(err)})`);
   }
   if (!isJsonObject(value)) {
     throw new Error(`Settings file is not a JSON object: ${path}`);

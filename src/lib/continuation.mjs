@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { normalizeAgent } from "../agents/index.mjs";
+import { readableErrorText } from "./error-message.mjs";
 import { ROLE_KINDS } from "./args.mjs";
 
 /**
@@ -15,7 +16,7 @@ export async function readContinuation(path) {
   try {
     text = await readFile(path, "utf8");
   } catch (err) {
-    throw new Error(`--continue-from cannot read ${path}: ${err.message}`);
+    throw new Error(`--continue-from cannot read ${path}: ${readableErrorText(err)}`);
   }
   let transcript;
   try {

@@ -120,3 +120,26 @@ test("help lists --task-file", async () => {
   origExit.mockRestore();
   expect(lines.join("\n")).toContain("--task-file <path|->");
 });
+
+// Usefulness: acceptance (#490) — a stdin read that throws `null` or a value with a throwing
+// `message` getter still ends in the CLI error path, not in a second error from the catch block.
+test.each([
+  ["null", null, "null"],
+  [
+    "a throwing message getter",
+    {
+      get message() {
+        throw new Error("getter");
+      },
+    },
+    "[object Object]",
+  ],
+])("--task-file - reports a stdin failure that throws %s", async (_name, thrown) => {
+  const run = await runHeadless(["--task-file", "-"], {
+    stdin: async () => {
+      throw thrown;
+    },
+  });
+  expect(run.calls).toBe(0);
+  expect(run.exitCode).toBe(1);
+});

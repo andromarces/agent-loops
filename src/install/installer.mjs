@@ -12,6 +12,7 @@
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
+import { readableErrorText } from "../lib/error-message.mjs";
 import { logWarn } from "../lib/log.mjs";
 import { withStateLock } from "../lib/runstate.mjs";
 import {
@@ -350,7 +351,13 @@ async function planSettingsWrite(target, previous) {
   try {
     settings = current === null ? {} : parseSettings(current, target.path);
   } catch (err) {
-    return { kind: "settings", action: "refuse", path: target.path, detail: err.message, snippet };
+    return {
+      kind: "settings",
+      action: "refuse",
+      path: target.path,
+      detail: readableErrorText(err),
+      snippet,
+    };
   }
 
   const shape = validateLocator(settings, target.locator);

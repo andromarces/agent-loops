@@ -110,3 +110,31 @@ test("Copilot launcher failure report redacts a secret value in its own message"
     process.exitCode = origExitCode;
   }
 });
+
+// Usefulness: acceptance (#490) — a launcher failure that is `null` or has a throwing `message`
+// getter still prints one line and sets the exit code, and an ordinary Error keeps its message.
+test.each([
+  ["null", null, "null"],
+  [
+    "a throwing message getter",
+    {
+      get message() {
+        throw new Error("getter");
+      },
+    },
+    "unserializable",
+  ],
+  ["an ordinary Error", new Error("plain failure"), "plain failure"],
+])("Copilot launcher failure report survives %s", (_name, thrown, expected) => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(() => reportFailure(thrown)).not.toThrow();
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain(expected);
+    expect(process.exitCode).toBe(1);
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});

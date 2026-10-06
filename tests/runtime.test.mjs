@@ -3515,6 +3515,53 @@ test("a missing worker session reruns the turn as a first turn in the same step"
   }
 });
 
+// Usefulness: acceptance (#490) — a worker error whose `sessionMissing` getter throws skips the
+// resume fallback and is reported as the worker's own error, not replaced by the getter error.
+test("worker error with a throwing sessionMissing getter is reported as the worker error", async () => {
+  const repo = await createTempRepo();
+  try {
+    const hostile = new Error("worker failed");
+    Object.defineProperty(hostile, "sessionMissing", {
+      get() {
+        throw new Error("sessionMissing getter");
+      },
+    });
+    let workerCalls = 0;
+    const orch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "do it" }),
+      JSON.stringify({ action: "abort", reason: "worker failed" }),
+    ]);
+
+    await runLoop({
+      task: "Task 490",
+      cwd: repo,
+      maxSteps: 1,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: "resumed" },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: {
+        orch,
+        work: {
+          async run() {
+            workerCalls += 1;
+            throw hostile;
+          },
+        },
+        rev: scripted([]),
+      },
+    });
+
+    expect(workerCalls).toBe(1);
+    const lastOrchestratorPrompt = orch.recorded.at(-1).prompt;
+    expect(lastOrchestratorPrompt).toContain("worker failed");
+    expect(lastOrchestratorPrompt).not.toContain("sessionMissing getter");
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a continued run resets the completion gate conservatively
 // (#362). The earlier run's worker turn is unknown here, so --require-accept
 // treats the tree as changed and unreviewed: a finish with no reviewer turn in

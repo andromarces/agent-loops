@@ -2,6 +2,7 @@
 // headless loop (src/cli.mjs) and the role subcommand (src/role.mjs).
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { readableErrorText, readProp } from "./error-message.mjs";
 import { normalizeAgent } from "../agents/index.mjs";
 
 function missingValue(flag) {
@@ -45,7 +46,10 @@ export async function readTaskFile(path, readStdin) {
   try {
     return await readFile(resolve(path), "utf8");
   } catch (err) {
-    throw new Error(`Cannot read --task-file ${path}: ${err.code ?? err.message}`, { cause: err });
+    throw new Error(
+      `Cannot read --task-file ${path}: ${readProp(err, "code") ?? readableErrorText(err)}`,
+      { cause: err },
+    );
   }
 }
 
