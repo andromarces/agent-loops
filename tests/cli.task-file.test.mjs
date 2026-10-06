@@ -19,7 +19,9 @@ afterEach(async () => {
 async function runHeadless(flags, { stdin } = {}) {
   const repo = await createTempRepo();
   created.push(repo);
-  const transcript = join(repo, "..", `${Date.now()}-${Math.random()}.json`);
+  const transcriptDir = await mkdtemp(join(tmpdir(), "transcript-"));
+  created.push(transcriptDir);
+  const transcript = join(transcriptDir, "transcript.json");
   const errors = [];
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation((message) => errors.push(String(message)));
