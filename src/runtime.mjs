@@ -4,6 +4,7 @@ import { readableErrorText, readProp } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
+import { matchingGate } from "./lib/continuation.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
@@ -315,6 +316,7 @@ export async function runLoop(options) {
     reviewerWorkspaceWrite = false,
     mode = null,
     continued = false,
+    earlierGate = null,
     copyLocalFiles = true,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
@@ -339,34 +341,42 @@ export async function runLoop(options) {
     // process exits UNRESOLVED_COMPARE_EXIT, so the log names it (#279).
     const marker = detail.unresolvedCompare ? ", unresolved compare recorded" : "";
     logInfo(`agent loop stopped (exit ${exitCode}${marker})`);
-    return { exitCode, ...detail };
+    // The gate state travels with the result for the transcript, so a continued
+    // run can restore it on an unchanged tree (#393).
+    return {
+      exitCode,
+      ...detail,
+      gate: { workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed },
+    };
   }
 
   let stepsUsed = 0;
   // Completion gate state (#234). The headless loop has no mode: a worker turn
   // marks work mode and needs a later reviewer accept; no worker turn maps to
   // review-only and needs at least one reviewer report.
-  // A continued run resets this state conservatively (#362): the earlier run's
-  // turns are not persisted, so the tree counts as changed and unreviewed. A
-  // reviewer accept on the current state is then what `--require-accept` needs,
-  // and `reviewerRan`, `lastReviewed`, and the review-only turn flag start empty,
-  // so every gate reads only evidence from this run.
-  let workerRan = continued;
-  let reviewerRan = false;
+  // A continued run restores the earlier run's gate state only when the current
+  // work tree is the state that run's last reviewer turn reviewed (#393).
+  // Otherwise it resets conservatively (#362): the tree counts as changed and
+  // unreviewed, so a reviewer accept on the current state is what
+  // `--require-accept` needs, and `reviewerRan`, `lastReviewed`, and the
+  // review-only turn flag start empty, so every gate reads only this run.
+  const restoredGate = continued ? await matchingGate(earlierGate, cwd) : null;
+  let workerRan = restoredGate?.workerRan ?? continued;
+  let reviewerRan = restoredGate?.reviewerRan ?? false;
   // A reviewer turn that was dispatched, whatever it returned. `reviewerRan`
   // counts only a turn that ended `ok`, because `--require-accept` reads that
   // one. A `review-only` run needs the turn itself, not a successful one: the
   // interactive path accepts its finish from `active` after any reviewer turn,
   // including one that ended in a handled error, and the summary records what
   // the turn returned (#337).
-  let reviewerTurnDispatched = false;
-  let acceptedSinceWorker = false;
+  let reviewerTurnDispatched = restoredGate?.reviewerTurnDispatched ?? false;
+  let acceptedSinceWorker = restoredGate?.acceptedSinceWorker ?? false;
   let finishRefused = false;
   // The reviewed state the `--require-ci` gate reads: the runtime-owned identity
   // of the last reviewer turn, reset to none by any later turn, so a change made
   // after that review cannot be gated against the older head (#293). It mirrors
   // the interactive `lastResult.reviewed` the role gate reads.
-  let lastReviewed = null;
+  let lastReviewed = restoredGate?.lastReviewed ?? null;
 
   const orchAdapter = {
     async run(state, p, opts) {
@@ -386,6 +396,7 @@ export async function runLoop(options) {
     reviewerWorkspaceWrite,
     mode,
     continued,
+    gateRestored: restoredGate !== null,
     timeout,
     cwd,
     orchestratorKind: orchestrator?.kind ?? null,

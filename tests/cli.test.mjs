@@ -777,9 +777,10 @@ test("a mode-free run writes the origin/main transcript shape", async () => {
   };
 
   const modeFree = await runOnce([]);
-  // origin/main wrote these keys, and no more, for a run that names no mode.
+  // origin/main wrote these keys, and no more, for a run that names no mode, plus the
+  // `gate` record that #393 added.
   expect(Object.keys(modeFree).sort()).toEqual(
-    ["cwd", "error", "events", "exitCode", "options", "roles", "task"].sort(),
+    ["cwd", "error", "events", "exitCode", "gate", "options", "roles", "task"].sort(),
   );
   expect(Object.keys(modeFree.options).sort()).toEqual(
     ["maxSteps", "pr", "requireAccept", "requireCi", "timeout"].sort(),
@@ -1250,6 +1251,65 @@ test("--continue-from resumes the earlier role sessions with a new budget", asyn
     expect(transcript.options.maxSteps).toBe(3);
     expect(transcript.roles.worker.sessionId).toBe("claude-session");
   });
+});
+
+// Usefulness: verifies the transcript carries the gate state across --continue-from through the
+// CLI (#393): a reviewer accept recorded by the first run satisfies --require-accept in the
+// continued run on the unchanged tree, so the continued run dispatches no reviewer.
+test("--continue-from restores the recorded reviewer accept on an unchanged tree", async () => {
+  const repo = await createTempRepo();
+  // Outside the work tree: a transcript inside it is an untracked file that changes the tree.
+  const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
+  const transcriptPath = join(transcriptDir, "run.json");
+  const origExitCode = process.exitCode;
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const accept = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
+    const reviewerCalls = [];
+    const agents = (orchReplies, reviewerReply) => {
+      let call = 0;
+      return {
+        codex: { run: async () => orchReplies[call++] },
+        claude: { run: async () => "worker ok" },
+        agy: {
+          run: async () => {
+            reviewerCalls.push(reviewerReply);
+            return reviewerReply;
+          },
+        },
+      };
+    };
+    const args = [
+      ...CONTINUE_BASE,
+      "--cwd",
+      repo,
+      "--require-accept",
+      "--transcript",
+      transcriptPath,
+    ];
+    await main(
+      args,
+      agents(
+        [
+          JSON.stringify({ action: "run_worker", prompt: "w" }),
+          JSON.stringify({ action: "run_reviewer", prompt: "r" }),
+          FINISH,
+        ],
+        accept,
+      ),
+    );
+    expect(process.exitCode).toBe(0);
+    expect(reviewerCalls.length).toBe(1);
+
+    await main([...args, "--continue-from", transcriptPath], agents([FINISH], accept));
+    expect(process.exitCode).toBe(0);
+    expect(reviewerCalls.length).toBe(1);
+  } finally {
+    process.exitCode = origExitCode;
+    logSpy.mockRestore();
+    await removePath(repo);
+    await removePath(transcriptDir);
+  }
 });
 
 // Usefulness: verifies a changed role kind or model is refused before any turn

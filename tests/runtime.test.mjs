@@ -3627,6 +3627,103 @@ test("a continued --require-accept run needs a reviewer accept before finish", a
   }
 });
 
+// Usefulness: verifies the gate state a headless run ends with restores on a continued run
+// whose tree is unchanged (#393): the earlier reviewer accept still satisfies --require-accept,
+// so the finish needs no new reviewer turn. Distinct from the reset test above, which has no
+// earlier gate to restore.
+test("a continued --require-accept run restores the earlier accept on an unchanged tree", async () => {
+  const repo = await createTempRepo();
+  try {
+    const first = await runLoop({
+      task: "Task 393",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_worker", prompt: "work" }),
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted(["worked"]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+    });
+    expect(first.exitCode).toBe(0);
+
+    const reviewer = scripted([]);
+    const second = await runLoop({
+      task: "Task 393",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      continued: true,
+      earlierGate: structuredClone(first.gate),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([JSON.stringify({ action: "finish", summary: SUMMARY })]),
+        work: scripted([]),
+        rev: reviewer,
+      },
+    });
+    expect(second.exitCode).toBe(0);
+    expect(reviewer.recorded.length).toBe(0);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a changed tree keeps the reset (#393): the earlier accept describes a
+// state that no longer exists, so the finish is refused until a reviewer turn runs.
+test("a continued --require-accept run resets the gate when the tree changed", async () => {
+  const repo = await createTempRepo();
+  try {
+    const first = await runLoop({
+      task: "Task 393",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_worker", prompt: "work" }),
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted(["worked"]),
+        rev: scripted([REVIEW_ACCEPT]),
+      },
+    });
+    expect(first.exitCode).toBe(0);
+    await writeFile(join(repo, "edited-between-runs.txt"), "new\n");
+
+    const reviewer = scripted([REVIEW_ACCEPT]);
+    const second = await runLoop({
+      task: "Task 393",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      continued: true,
+      earlierGate: structuredClone(first.gate),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: reviewer,
+      },
+    });
+    expect(second.exitCode).toBe(0);
+    expect(reviewer.recorded.length).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a failure that is not a missing session is not retried, and a failed rerun
 // is reported once with the cleared id, so the loop cannot retry without bound.
 test("only a missing session reruns, and the rerun happens once", async () => {

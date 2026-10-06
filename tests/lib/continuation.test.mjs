@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import {
   carryEarlierEvents,
+  matchingGate,
   readContinuation,
   restoreSessions,
 } from "../../src/lib/continuation.mjs";
@@ -251,4 +252,14 @@ test("readContinuation keeps the message of an ordinary read failure", async () 
   await expect(readContinuation("no-such-490-file.json")).rejects.toThrow(
     /cannot read no-such-490-file\.json: .*ENOENT/,
   );
+});
+
+// Usefulness: a hand-edited or old transcript with no usable gate record falls back to the
+// reset instead of throwing, which keeps --continue-from working on a transcript of any version (#393).
+test("matchingGate returns null for an absent or malformed gate", async () => {
+  expect(await matchingGate(undefined, CWD)).toBeNull();
+  expect(await matchingGate({}, CWD)).toBeNull();
+  expect(
+    await matchingGate({ lastReviewed: { exact: true, head: "h", digest: "d" } }, CWD),
+  ).toBeNull();
 });

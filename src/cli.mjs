@@ -560,12 +560,14 @@ export async function main(
       sessionId: null,
     };
   }
+  let earlierGate = null;
   // A refused continuation writes no transcript: --transcript may name the
   // --continue-from file, and a refusal must not overwrite the sessions it holds.
   if (options.continueFrom) {
     try {
       const earlier = await readContinuation(options.continueFrom);
       restoreSessions(roles, earlier, options.cwd);
+      earlierGate = earlier.gate ?? null;
       // --transcript rewrites its file at exit, so a run that names the file it
       // continues carries the earlier events into the rewrite, then a boundary
       // event that keeps the earlier outcome the rewrite replaces.
@@ -694,6 +696,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         reviewerWorkspaceWrite: options.reviewerWorkspaceWrite,
         mode: options.mode,
         continued: Boolean(options.continueFrom),
+        earlierGate,
         copyLocalFiles: options.copyLocalFiles,
         signal: controller.signal,
         roles: transcriptData.roles,
@@ -701,6 +704,10 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         onEvent,
       });
 
+      // The gate state at the end of the run, so a later --continue-from can
+      // restore it on an unchanged tree (#393). A run that ends on a thrown
+      // error records none, and its continuation resets.
+      transcriptData.gate = result.gate;
       if (result.exitCode === 0) {
         // A recorded unresolved PR-head compare keeps the summary and gains its
         // own exit code, so a consumer that reads only the exit code can tell it

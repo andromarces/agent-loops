@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { normalizeAgent } from "../agents/index.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { ROLE_KINDS } from "./args.mjs";
+import { reviewedState, snapshot } from "./snapshot.mjs";
 
 /**
  * Reads the earlier headless run from its `--transcript` file, the only record
@@ -9,7 +10,7 @@ import { ROLE_KINDS } from "./args.mjs";
  * unreadable, not JSON, has `events` that are not a list, or is missing a role
  * with a string `kind` and a string or null `sessionId`.
  * @param {string} path
- * @returns {Promise<{ cwd: string, roles: object }>}
+ * @returns {Promise<{ cwd: string, roles: object, gate?: object }>}
  */
 export async function readContinuation(path) {
   let text;
@@ -87,6 +88,44 @@ export function restoreSessions(roles, earlier, cwd) {
 function describe(value) {
   return value ? JSON.stringify(value) : "(omitted)";
 }
+
+/**
+ * Returns the earlier run's persisted gate state (#393) when the current work
+ * tree is the state its last reviewer turn reviewed, otherwise null, which keeps
+ * the reset. The state matches only when the persisted `lastReviewed` is an exact
+ * snapshot and the current snapshot is exact with the same head and digest. A
+ * transcript with no usable gate, or a snapshot that cannot be read, gives null:
+ * the reset is always safe, because it only costs a reviewer turn.
+ * @param {object | null | undefined} earlierGate the `gate` of the earlier transcript
+ * @param {string} cwd
+ * @returns {Promise<{ workerRan: boolean, reviewerRan: boolean, reviewerTurnDispatched: boolean, acceptedSinceWorker: boolean, lastReviewed: object } | null>}
+ */
+export async function matchingGate(earlierGate, cwd) {
+  const reviewed = earlierGate?.lastReviewed;
+  if (
+    !reviewed?.exact ||
+    typeof reviewed.head !== "string" ||
+    typeof reviewed.digest !== "string" ||
+    GATE_FLAGS.some((flag) => typeof earlierGate[flag] !== "boolean")
+  ) {
+    return null;
+  }
+  let current;
+  try {
+    current = reviewedState(await snapshot(cwd));
+  } catch {
+    return null;
+  }
+  if (!current.exact || current.head !== reviewed.head || current.digest !== reviewed.digest) {
+    return null;
+  }
+  return {
+    ...Object.fromEntries(GATE_FLAGS.map((flag) => [flag, earlierGate[flag]])),
+    lastReviewed: reviewed,
+  };
+}
+
+const GATE_FLAGS = ["workerRan", "reviewerRan", "reviewerTurnDispatched", "acceptedSinceWorker"];
 
 /**
  * Appends the earlier run's events to `events`, then one `continued` event that

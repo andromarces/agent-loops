@@ -1455,6 +1455,14 @@ describe("continued run prompt", () => {
     expect(initialPrompt(base)).not.toContain("continues an earlier run");
     expect(initialPrompt({ ...base, continued: false })).toBe(initialPrompt(base));
   });
+
+  // Usefulness: a restored gate must not be described as a reset, or the orchestrator would
+  // dispatch a reviewer the runtime no longer requires (#393).
+  test("states the restore instead of the reset when the gate was restored", () => {
+    const prompt = initialPrompt({ ...base, continued: true, gateRestored: true });
+    expect(prompt).toContain("restored that run's completion gate state");
+    expect(prompt).not.toContain("carries over no reviewer accept");
+  });
 });
 
 // Usefulness: verifies the headless orchestrator sees the test result beside the
