@@ -21,3 +21,17 @@ test("a name outside the registry resolves to no harness", () => {
   expect(harnessForCommand("nonexistent")).toBeUndefined();
   expect(harnessForCommand("constructor")).toBeUndefined();
 });
+
+// Usefulness: verifies #185 — a harness note carries the data the installer needs, and only
+// harnesses with a note declare one.
+test("each registry note names a path, text, and dry-run behavior", () => {
+  const withNotes = HARNESS_ORDER.filter((harness) => HARNESS_META[harness].notes);
+  expect(withNotes.toSorted()).toEqual(["claude", "codex"]);
+  for (const harness of withNotes) {
+    for (const note of HARNESS_META[harness].notes) {
+      expect(Array.isArray(note.path)).toBe(true);
+      expect(note.detail.length).toBeGreaterThan(0);
+      expect(typeof note.dryRun).toBe("boolean");
+    }
+  }
+});
