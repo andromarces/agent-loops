@@ -137,9 +137,9 @@ export async function runOpenCode(state, prompt, options = {}) {
  * A different assistant message also starts its own line, so a late message cannot join the last
  * line of the closing block (issue #458). Parts are first grouped into messages by `part.messageID`
  * across the whole stream: a valid, non-empty string id names one message, so its parts rejoin it
- * even when another message came between (A/B/A). Every part without a valid id forms one
- * unidentified message of its own, so it never joins an identified message. A stream with no valid
- * id is one message. Messages keep the order of their first part, and the parts of one message join
+ * even when another message came between (A/B/A). Every part without a valid id joins one
+ * unidentified message for the whole stream, even when identified parts come between them, so it
+ * never joins an identified message. A stream with no valid id is one message. Messages keep the order of their first part, and the parts of one message join
  * in stream order at that position. No break precedes a message that holds no text.
  * The last closing block governs, and it governs alone (issue #467). Each message holds its parts at
  * stream positions, and a message holds a closing block attempt (hasClosingBlockAttempt) when its
