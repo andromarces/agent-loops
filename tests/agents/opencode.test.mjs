@@ -1214,6 +1214,30 @@ test("opencode keeps the joined assistant text on the interleaved-stream error",
   expect(error.message).toContain(`Working on it.Verdict: accept\n${REJECTED_BLOCK}`);
 });
 
+// Usefulness: verifies the error of an interleaved stream has a fixed upper size however long the
+// model text is, keeps the cause on the first line and the tail of the text, and marks the cut, so
+// the envelope and the state file cannot grow without a limit (issue #510).
+test("opencode bounds and marks the joined text on the interleaved-stream error", async () => {
+  const filler = "x".repeat(150_000);
+  const run = (text) =>
+    runWithEvents(
+      textEvent(text, "msg-a"),
+      textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+      textEvent("Verdict: accept", "msg-a"),
+    ).catch((err) => err);
+
+  const small = await run("Working on it.");
+  const large = await run(filler);
+  const larger = await run(filler.repeat(3));
+
+  expect(large.message.split("\n")[0]).toBe(INTERLEAVED);
+  expect(large.message.length).toBeLessThan(10_000);
+  expect(larger.message.length).toBe(large.message.length);
+  expect(large.message.split("\n")[1]).toMatch(/cut/i);
+  expect(large.message.trimEnd().endsWith(REJECTED_BLOCK.trimEnd())).toBe(true);
+  expect(small.message).not.toMatch(/cut/i);
+});
+
 // Usefulness: verifies one block split across A's parts, with another message's block between them,
 // is ambiguous and errors rather than letting either block govern (issue #467).
 test("opencode refuses a block split across parts that another block interrupts", async () => {

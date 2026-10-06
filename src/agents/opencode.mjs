@@ -157,8 +157,10 @@ export async function runOpenCode(state, prompt, options = {}) {
  * another, so a `Verdict:` part cannot be trusted to belong to the `Checks` line before it. A block
  * whole in one part never throws, whatever earlier parts mention (issue #509). The turn
  * then ends as an error, never as a report, so no accept can come from it. The first line of
- * the message names the cause, and the lines after it hold every message joined as above with
- * nothing dropped, so the envelope carries what the model wrote (issue #493).
+ * the message names the cause. The lines after it hold every message joined as above, so the
+ * envelope carries what the model wrote (issue #493). That text keeps its last 4000 characters. A
+ * longer text is cut at the start, and a second line states the cut and the original length
+ * (issue #510).
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
@@ -176,7 +178,7 @@ function joinTextParts(events) {
 
   const attempts = messages.filter((group) => hasClosingBlockAttempt(group.parts.join("")));
   if (attempts.some((a) => attempts.some((b) => a !== b && a.first < b.last && b.first < a.last))) {
-    throw new Error(`${INTERLEAVED_MESSAGE}\n${joinMessages(messages)}`);
+    throw errorWithText(INTERLEAVED_MESSAGE, messages);
   }
   const governing = attempts.at(-1);
   if (
@@ -184,7 +186,7 @@ function joinTextParts(events) {
     parseVerdict(joinMessages([governing])) === "accept" &&
     labelLinePartCount(governing.parts) > 1
   ) {
-    throw new Error(`${UNIDENTIFIED_MESSAGE}\n${joinMessages(messages)}`);
+    throw errorWithText(UNIDENTIFIED_MESSAGE, messages);
   }
 
   return joinMessages(messages.filter((group) => group === governing || !attempts.includes(group)));
@@ -192,6 +194,17 @@ function joinTextParts(events) {
 
 const INTERLEAVED_MESSAGE = "opencode returned closing block attempts from interleaved messages.";
 const UNIDENTIFIED_MESSAGE = "opencode returned a closing block that spans unidentified parts.";
+
+// Upper bound, in characters, on the joined text that a fail-closed error carries (issue #510).
+const ERROR_TEXT_LIMIT = 4000;
+
+/** Builds the error: the cause, then the joined text, cut to its last ERROR_TEXT_LIMIT characters and marked as cut. */
+function errorWithText(cause, messages) {
+  const text = joinMessages(messages);
+  if (text.length <= ERROR_TEXT_LIMIT) return new Error(`${cause}\n${text}`);
+  const note = `[text cut: the last ${ERROR_TEXT_LIMIT} of ${text.length} characters follow]`;
+  return new Error(`${cause}\n${note}\n${text.slice(-ERROR_TEXT_LIMIT)}`);
+}
 
 function joinMessages(messages) {
   return messages.reduce((text, { parts }) => {
