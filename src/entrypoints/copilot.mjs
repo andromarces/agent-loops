@@ -74,9 +74,9 @@ export function reportFailure(error) {
     const signal = readProp(error, "signal");
     const code = readProp(error, "code");
     const causes = [
-      exitCode === undefined ? null : `exit code ${exitCode}`,
-      signal ? `signal ${signal}` : null,
-      code ? `error code ${code}` : null,
+      exitCode === undefined ? null : `exit code ${redactedText(exitCode)}`,
+      signal ? `signal ${redactedText(signal)}` : null,
+      code ? `error code ${redactedText(code)}` : null,
     ].filter(Boolean);
     message = `copilot failed${causes.length > 0 ? ` (${causes.join(", ")})` : ""}`;
   } else {

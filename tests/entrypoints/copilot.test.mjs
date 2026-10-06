@@ -208,3 +208,31 @@ test("Copilot launcher failure report keeps command arguments out when shortMess
     process.exitCode = origExitCode;
   }
 });
+
+// Usefulness: acceptance (#523) — a thrown value whose field cannot convert to text (a Symbol
+// `exitCode`, a throwing `toString`) still prints the fixed report instead of throwing.
+test("Copilot launcher failure report survives a field value that cannot convert to text", () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const fields = {
+    shortMessage: "Command failed",
+    exitCode: Symbol("boom"),
+    signal: {
+      toString() {
+        throw new Error("toString");
+      },
+    },
+    code: "EX",
+  };
+  const thrown = new Proxy({}, { get: (_target, key) => fields[key] });
+  try {
+    expect(() => reportFailure(thrown)).not.toThrow();
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain("copilot failed (exit code Symbol(boom)");
+    expect(report).toContain("error code EX");
+    expect(process.exitCode).toBe(1);
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
