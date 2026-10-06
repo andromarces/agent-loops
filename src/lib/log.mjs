@@ -1,13 +1,15 @@
 // Lifecycle logging at operational boundaries (AGENTS.md logging guideline).
 // Every line is tagged with its level: "[agent-loop] <level>: <message>".
 // info and debug go to stdout, warn and error to stderr; debug is shown only when
-// the --verbose gate is on. Every line is length-bounded so untrusted content
+// the --verbose gate is on. Every line is length-bounded (an error keeps its tail) so untrusted content
 // (for example a model echo in a validation error) cannot flood a line; logInfoFull
 // prints a trusted, user-facing note in full instead. Every line has secret-named environment
 // values redacted first (ADR 0017), so a log line never echoes a secret that an error text held.
 import { redactEnvSecrets } from "./redact.mjs";
 
 const MAX_LENGTH = 300;
+// An error keeps its last characters, where the action for the user usually sits.
+const ERROR_TAIL_LENGTH = 100;
 
 let verbose = false;
 let stderrOnly = false;
@@ -25,9 +27,13 @@ export function setLogsToStderr(value) {
   stderrOnly = Boolean(value);
 }
 
-function truncate(message) {
+function truncate(message, tailLength = 0) {
   message = redactEnvSecrets(message);
-  return message.length > MAX_LENGTH ? `${message.slice(0, MAX_LENGTH)}...` : message;
+  if (message.length <= MAX_LENGTH) {
+    return message;
+  }
+  const tail = tailLength > 0 ? message.slice(-tailLength) : "";
+  return `${message.slice(0, MAX_LENGTH - tailLength)}...${tail}`;
 }
 
 export function logDebug(message) {
@@ -59,5 +65,5 @@ export function logWarn(message) {
 }
 
 export function logError(message) {
-  console.error(`[agent-loop] error: ${truncate(message)}`);
+  console.error(`[agent-loop] error: ${truncate(message, ERROR_TAIL_LENGTH)}`);
 }

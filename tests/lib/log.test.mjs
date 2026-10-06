@@ -45,7 +45,8 @@ test("logInfo truncates messages beyond 300 characters", () => {
   expect(logSpy).toHaveBeenCalledWith(`[agent-loop] info: ${"x".repeat(300)}...`);
 });
 
-// Usefulness: verifies warn and error lines are length-bounded, so model-controlled content
+// Usefulness: verifies warn and error lines are length-bounded (an error keeps its last 100
+// characters, see #515), so model-controlled content
 // (for example an unsupported-action echo in a repair warn) cannot flood a log line.
 test("logWarn and logError truncate messages beyond 300 characters", () => {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -57,6 +58,21 @@ test("logWarn and logError truncate messages beyond 300 characters", () => {
   const truncated = `[agent-loop] warn: ${"x".repeat(300)}...`;
   expect(errorSpy.mock.calls.map((call) => call[0])).toEqual([
     truncated,
-    `[agent-loop] error: ${"x".repeat(300)}...`,
+    `[agent-loop] error: ${"x".repeat(200)}...${"x".repeat(100)}`,
   ]);
+});
+
+// Usefulness: verifies acceptance #515 — an error whose long path pushes its final instruction
+// past the cap still ends with that instruction, so the user sees the action to take. The cut
+// falls in the middle and the line stays bounded.
+test("logError keeps the final instruction of a message beyond 300 characters", () => {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const message = `Install directory ${"/long".repeat(80)} could not be removed (EPERM). remove the directory manually.`;
+
+  logError(message);
+
+  const line = errorSpy.mock.calls[0][0];
+  expect(line.startsWith("[agent-loop] error: Install directory /long")).toBe(true);
+  expect(line.endsWith("remove the directory manually.")).toBe(true);
+  expect(line.length).toBeLessThan("[agent-loop] error: ".length + 310);
 });

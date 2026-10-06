@@ -44,6 +44,15 @@ async function makeHome() {
   return home;
 }
 
+// Home under a path longer than the 300-character log bound, whatever TMPDIR is.
+async function makeLongPathHome() {
+  const parent = await mkdtemp(join(tmpdir(), "agent-loop-uninstall-long-"));
+  homes.push(parent);
+  const home = join(parent, "a".repeat(120), "b".repeat(120), "home");
+  await mkdir(home, { recursive: true });
+  return home;
+}
+
 afterEach(async () => {
   control.failures.clear();
   for (const home of homes) {
@@ -172,9 +181,10 @@ test("an install directory removal failure names the directory and asks for manu
 });
 
 // Usefulness: verifies acceptance #192 path 2 at the command boundary — the
-// uninstall CLI reports the leftover install directory and exits 1.
+// uninstall CLI reports the leftover install directory and exits 1. The path is
+// longer than the log bound, so the manual-cleanup instruction must survive the cut (#515).
 test("the uninstall CLI exits 1 when the install directory cannot be removed", async () => {
-  const home = await makeHome();
+  const home = await makeLongPathHome();
   process.env.AGENT_LOOP_HOME = home;
   await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
   control.failures.set(installRoot(home), "EPERM");
@@ -188,8 +198,9 @@ test("the uninstall CLI exits 1 when the install directory cannot be removed", a
     process.exitCode = 0;
     await cliMain(["uninstall", "--yes"]);
     expect(process.exitCode).toBe(1);
-    expect(logs.join("\n")).toContain(installRoot(home));
-    expect(logs.join("\n")).toMatch(/manually/);
+    expect(installRoot(home).length).toBeGreaterThan(300);
+    expect(logs.join("\n")).toContain("Install directory");
+    expect(logs.join("\n")).toMatch(/remove the directory manually\.$/);
   } finally {
     console.log = originalLog;
     console.error = originalError;
