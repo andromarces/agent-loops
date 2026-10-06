@@ -302,14 +302,16 @@ function claimFileFor(rootLockFile, file, staleText) {
 //   STALE_LOCK_GRACE_MS, so a fresh one stays until it has aged.
 // - an unparseable claim with a live marker, a claim whose pid is alive (see
 //   `ownerAlive`), and a file that cannot be read: never, while that stays true.
-// known-limit: a lock or claim records the owner's start time (epoch seconds) with
-// its pid, and a live pid whose start time differs beyond START_TIME_TOLERANCE_S
-// reads as dead (a reused pid). Any other case reads as alive, so a reused pid keeps
-// the file until that process exits: no recorded start time (an older version, or
-// an owner that could not read its own), and a failed, timed-out, or unparseable
-// query for the start time now. The start time has a resolution of one second, so a
-// reuse within the tolerance of the owner's start reads as the owner. A marker file
-// name carries only a pid, so `hasLiveWriter` stays pid-only. A chain of more than
+// known-limit: a lock or claim records a start-time stamp of the owner with its pid
+// (`processStartTime`), and a live pid whose current stamp is of the same kind and
+// differs reads as dead (a reused pid). Any other case reads as alive, so a reused
+// pid keeps the file until that process exits: no recorded stamp (an older version,
+// or an owner that could not read its own), a platform with no source, a kind
+// mismatch, and a current read that failed, timed out (5 s), or did not parse. The
+// Linux stamp is clock independent. The macOS and Windows stamps are fixed at process
+// creation and compared with a 2 s tolerance that covers only their one-second
+// resolution, so a reuse within it reads as the owner. A marker file name carries only
+// a pid, so `hasLiveWriter` stays pid-only. A chain of more than
 // two crashed claims fails closed (MAX_CLAIM_DEPTH). A lock written without a nonce by an
 // older version is matched by content alone, so an older-version owner with the
 // same pid and start time in the same millisecond would be taken for it.
@@ -539,7 +541,8 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const LSTART = /^[A-Za-z]{3} ([A-Za-z]{3}) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4})$/;
 
 // Epoch seconds of a `ps -o lstart=` line read under TZ=UTC and LC_ALL=C, or null
-// when the line is not in that format.
+// when the line is not in that format or names a date that does not exist (the 31st
+// of a 30-day month): `Date.UTC` normalizes such fields, so each must round-trip.
 function parseLstart(text) {
   const match = LSTART.exec(text);
   const month = match === null ? -1 : MONTHS.indexOf(match[1]);
@@ -547,33 +550,25 @@ function parseLstart(text) {
     return null;
   }
   const [day, hour, minute, second, year] = match.slice(2).map(Number);
-  return Date.UTC(year, month, day, hour, minute, second) / 1000;
+  const ms = Date.UTC(year, month, day, hour, minute, second);
+  const date = new Date(ms);
+  const roundTrips =
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second;
+  return roundTrips ? ms / 1000 : null;
 }
 
-// Upper bound on one start-time query, so a hung `ps` or PowerShell cannot hold a
-// lock acquisition.
+// Upper bound on one `ps` or PowerShell query, so a hung one cannot hold a lock
+// acquisition. The Linux read of /proc spawns nothing and has no bound.
 const START_TIME_QUERY_MS = 5000;
 
-/**
- * Start time of the process `pid` in epoch seconds, or null when it cannot be read
- * (a failed, timed-out, empty, or unparseable query). The value does not depend on
- * the time zone or the locale of the caller: the query pins `TZ=UTC` and `LC_ALL=C`
- * (`ps -o lstart=` on POSIX) or returns a number (PowerShell on Windows). No native
- * dependency; each call spawns one process.
- */
-export async function processStartTime(pid) {
-  const [command, args] =
-    process.platform === "win32"
-      ? [
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `[DateTimeOffset]::new([System.Diagnostics.Process]::GetProcessById(${pid}).StartTime).ToUnixTimeSeconds()`,
-          ],
-        ]
-      : ["ps", ["-o", "lstart=", "-p", String(pid)]];
+// Output of `command` run under TZ=UTC and LC_ALL=C, trimmed; "" when the command
+// fails, times out after START_TIME_QUERY_MS, or prints nothing.
+async function queryOutput(command, args) {
   const stdout = await new Promise((resolve) => {
     try {
       execFile(
@@ -590,44 +585,114 @@ export async function processStartTime(pid) {
       resolve("");
     }
   });
-  const text = stdout.trim();
-  const time =
-    process.platform === "win32" && /^\d+$/.test(text) ? Number(text) : parseLstart(text);
-  return Number.isFinite(time) ? time : null;
+  return stdout.trim();
+}
+
+// Field 22 (starttime, clock ticks since boot) of /proc/<pid>/stat, joined with the
+// boot id. Both are independent of the wall clock, so a clock step (NTP, a manual
+// set, a suspend) never changes the stamp of a running process, and the boot id
+// keeps the ticks of one boot from matching another. The command name (field 2) can
+// hold spaces and parentheses, so fields count from the last ")".
+async function linuxProcStamp(pid) {
+  const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+  return /^\d+$/.test(fields[19] ?? "") && /^[0-9a-f-]{36}$/i.test(bootId)
+    ? `linux-proc:${bootId}:${fields[19]}`
+    : null;
+}
+
+/**
+ * Start-time stamp of the process `pid`, `<kind>:<value>`, or null when it cannot
+ * be read (a missing platform source, or a failed, timed-out, empty, or unparseable
+ * read). Callers compare only stamps of one kind. The kind is chosen by platform:
+ * - `linux-proc`: /proc stat ticks and boot id (no spawn, clock independent).
+ * - `darwin-lstart`: epoch seconds of `ps -o lstart=` under TZ=UTC and LC_ALL=C. The
+ *   kernel stores the start time (`p_starttime`) once at process creation and `ps`
+ *   formats it, so a clock step afterward does not change it (from the XNU source;
+ *   not exercised here, since the test machine cannot step its clock).
+ * - `win32-creation`: epoch seconds of the process creation time, from PowerShell
+ *   (`Process.StartTime`, the creation FILETIME that Windows stores at creation;
+ *   likewise not exercised under a clock step).
+ * Any other platform has no stamp, and its locks read as alive. No native dependency.
+ */
+export async function processStartTime(pid) {
+  try {
+    if (process.platform === "linux") {
+      return await linuxProcStamp(pid);
+    }
+    if (process.platform === "darwin") {
+      const time = parseLstart(await queryOutput("ps", ["-o", "lstart=", "-p", String(pid)]));
+      return time === null ? null : `darwin-lstart:${time}`;
+    }
+    if (process.platform === "win32") {
+      const text = await queryOutput("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `[DateTimeOffset]::new([System.Diagnostics.Process]::GetProcessById(${pid}).StartTime).ToUnixTimeSeconds()`,
+      ]);
+      return /^\d{1,15}$/.test(text) ? `win32-creation:${text}` : null;
+    }
+  } catch {
+    // An unreadable source has no stamp.
+  }
+  return null;
 }
 
 let ownStartTimeQuery;
 
-// The start time of this process, read once on the first lock creation: the lock
-// content of every acquisition carries it, and the query spawns a process.
-// known-limit: on Windows that spawn is a PowerShell startup (not measured here)
-// paid once by each process that takes a lock; Node has no cheaper source of the
-// OS start time (`process.uptime()` stops during a system sleep on POSIX, so
-// `Date.now()` minus it is not the start time).
+// The start time stamp of this process, read once on the first lock creation: the
+// lock content of every acquisition carries it. Linux reads /proc; macOS spawns one
+// `ps`; Windows spawns one PowerShell (a startup that was not measured, bounded by
+// START_TIME_QUERY_MS). Node has no cheaper source of the OS start time:
+// `process.uptime()` stops during a system sleep on POSIX, so `Date.now()` minus it
+// is not the start time.
+// known-limit: the Windows spawn is paid once by each process that takes a lock.
 function ownStartTime() {
-  ownStartTimeQuery ??= processStartTime(process.pid).then((time) => time ?? undefined);
+  ownStartTimeQuery ??= processStartTime(process.pid).then((stamp) => stamp ?? undefined);
   return ownStartTimeQuery;
 }
 
-// Two reads of one process differ by at most this many seconds; the sources have a
-// resolution of one second. A larger gap is a different process.
+// Two reads of one process on the fixed-at-creation sources differ by at most this
+// many seconds: it covers their one-second resolution only, not a clock step.
 const START_TIME_TOLERANCE_S = 2;
 
-// True when the owner of a lock or claim still runs. A live pid whose recorded start
-// time (epoch seconds) differs from the start time of the process now at that pid
-// beyond the tolerance is a reused pid, so the owner is dead. Every other case reads
-// as alive: no recorded start time or one that is not a finite number (an older
-// version, or an owner that could not read its own), and a query for the current
-// start time that fails, times out, or returns nothing parseable.
+// True when two stamps of one kind name different processes. A kind mismatch, an
+// unknown kind, and a stamp that does not parse are not different: the caller reads
+// them as alive.
+function startTimesDiffer(recorded, current) {
+  const [, kind, value] = /^([a-z0-9-]+):(.+)$/.exec(recorded) ?? [];
+  const [, currentKind, currentValue] = /^([a-z0-9-]+):(.+)$/.exec(current) ?? [];
+  if (kind === undefined || kind !== currentKind) {
+    return false;
+  }
+  if (kind === "linux-proc") {
+    return value !== currentValue;
+  }
+  if (kind === "darwin-lstart" || kind === "win32-creation") {
+    return Math.abs(Number(value) - Number(currentValue)) > START_TIME_TOLERANCE_S;
+  }
+  return false;
+}
+
+// True when the owner of a lock or claim still runs. A live pid is dead only when
+// its recorded stamp and the stamp of the process now at that pid are of one kind and
+// differ (see `startTimesDiffer`): the pid was reused. Every other case reads as
+// alive: no recorded stamp (an older version, or an owner that could not read its
+// own), a recorded value that is not a string, a kind mismatch, and a current read
+// that is null (failed, timed out, empty, or unparseable). A value of a fixed-at-creation
+// kind that is not a number compares as not different, so a corrupt value never
+// frees a lock.
 async function ownerAlive(owner) {
   if (!pidAlive(owner.pid)) {
     return false;
   }
-  if (typeof owner.startTime !== "number" || !Number.isFinite(owner.startTime)) {
+  if (typeof owner.startTime !== "string") {
     return true;
   }
   const current = await processStartTime(owner.pid);
-  return current === null || Math.abs(current - owner.startTime) <= START_TIME_TOLERANCE_S;
+  return current === null || !startTimesDiffer(owner.startTime, current);
 }
 
 // Raw lock content, or null when the lock cannot be read.

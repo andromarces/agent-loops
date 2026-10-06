@@ -74,27 +74,43 @@ running process. It also asks to check a reported PID-reuse window.
    upgrade path that this ADR named (Alternative 4), so this decision is amended in
    place: the writer liveness check, the claims, and the invariants of decisions 1 to
    6 do not change, and no new ADR supersedes this one. Each lock and claim records
-   the owner's `startTime` (epoch seconds) with its pid. `ownerAlive` reads a live
-   pid as dead only when the recorded `startTime` differs, by more than 2 seconds,
-   from the start time of the process now at that pid.
-   - The value does not depend on the time zone or the locale of the reader.
-     `ps -o lstart=` runs under `TZ=UTC` and `LC_ALL=C` and its line is parsed to
-     epoch seconds on macOS and Linux. PowerShell returns a number on Windows. No
-     native dependency is added.
-   - Every other case reads as alive: no recorded `startTime` (a lock of an older
-     version), a recorded value that is not a number, and a query that fails, times
-     out (5 s), or returns nothing parseable. An unknown start time never frees a
-     lock, so the decision stays fail-closed.
-   - The query runs on contention only for a parsed owner with a live pid, and once
-     per process for the own start time, on the first lock creation. The latter costs
-     one `ps` on POSIX and one PowerShell startup on Windows (not measured). Node has
-     no cheaper source: `process.uptime()` stops during a system sleep on POSIX.
+   a start-time stamp `<kind>:<value>` of the owner (field `startTime`) with its pid.
+   `ownerAlive` reads a live pid as dead only when the recorded stamp and the stamp of
+   the process now at that pid are of the same kind and differ.
+   - Sources, by platform (`processStartTime`). No native dependency is added.
+     - Linux, `linux-proc`: field 22 of `/proc/<pid>/stat` (clock ticks since boot)
+       with the boot id. No spawn, no timeout, and independent of the wall clock, so a
+       clock step (NTP, a manual set, a suspend) never changes it. A stamp of the same
+       boot with other ticks, or of another boot, is a different process.
+     - macOS, `darwin-lstart`: epoch seconds of `ps -o lstart=` under `TZ=UTC` and
+       `LC_ALL=C`, with a 5 s timeout. The line must name a date that exists.
+     - Windows, `win32-creation`: epoch seconds of the process creation time from
+       `powershell.exe`, with a 5 s timeout.
+     - Any other platform has no source and records no stamp.
+   - Clock behavior. `ps` on Linux derives `lstart` from the boot time, which moves
+     with a wall-clock step, so Linux does not use it. The macOS and Windows kernels
+     store the creation time once at process creation, and the tools format it, so a
+     clock step afterward should not change it. This comes from the platform
+     documentation and source, and no test steps a clock, so it is unverified. The
+     kinds `darwin-lstart` and `win32-creation` compare with a 2 s tolerance that
+     covers their one-second resolution only, not a clock step.
+   - Every other case reads as alive, so an unknown stamp never frees a lock: no
+     recorded stamp (a lock of an older version, or the number of an earlier
+     revision), a kind mismatch, an unknown kind, and a current read that fails, times
+     out, is empty, or does not parse. The decision stays fail-closed.
+   - Cost. A contender queries a pid only for a parsed owner with a live pid and a
+     recorded stamp. A process reads its own stamp once, on its first lock creation:
+     no spawn on Linux, one `ps` on macOS, and one `powershell.exe` startup on
+     Windows. The Windows latency is not measured, it is bounded by the 5 s timeout,
+     and Node has no cheaper source (`process.uptime()` stops during a system sleep on
+     POSIX). It is a `known-limit`.
    - The replacement owner never matches stale content because every acquisition
      writes a nonce (#363). The marker name carries only a pid, so `hasLiveWriter`
      stays pid-only; decision 5 closes the marker race for tokened markers, and an
      older version's marker is never removed.
    - Remaining limits (`known-limit` in `src/lib/runstate.mjs`): the one-second
-     resolution, a file without a `startTime`, and the Windows startup cost.
+     resolution on macOS and Windows, a file without a stamp, the unverified
+     clock-step behavior on macOS and Windows, and the Windows startup cost.
 
 ## Consequences
 
@@ -118,8 +134,8 @@ running process. It also asks to check a reported PID-reuse window.
   only for the grace window. A stall past it loses the file. This is a known limit
   that upgrading every process removes.
 - Windows and POSIX use the same code, except the start-time query: `process.kill(pid, 0)`
-  and file names are the shared OS contracts, and the query uses `ps` or PowerShell,
-  which ship with the OS. No native dependency is added.
+  and file names are the shared OS contracts, and the start-time stamp uses `/proc` on Linux and `ps` or PowerShell elsewhere (decision
+  7). No native dependency is added.
 - A writer whose temp file an outside process deleted reads as dead. Only this module
   creates and removes those files.
 
