@@ -1199,6 +1199,21 @@ test("opencode refuses two blocks whose messages interleave across an invalid-id
   ).rejects.toThrow(INTERLEAVED);
 });
 
+// Usefulness: verifies the error of an interleaved stream carries the assistant text of every
+// message, joined as an uninterleaved stream would be, so the orchestrator and the user can read
+// what the model wrote while no accept can come from the turn (issue #493).
+test("opencode keeps the joined assistant text on the interleaved-stream error", async () => {
+  const error = await runWithEvents(
+    textEvent("Working on it.", "msg-a"),
+    textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+    textEvent("Verdict: accept", "msg-a"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(INTERLEAVED);
+  expect(error.message).toContain(`Working on it.Verdict: accept\n${REJECTED_BLOCK}`);
+});
+
 // Usefulness: verifies one block split across A's parts, with another message's block between them,
 // is ambiguous and errors rather than letting either block govern (issue #467).
 test("opencode refuses a block split across parts that another block interrupts", async () => {
