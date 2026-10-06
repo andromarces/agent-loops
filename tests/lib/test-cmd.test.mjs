@@ -653,3 +653,34 @@ test("two variables with the same value give the main output", () => {
   expect(redactEnvSecretsOnMain(text, env)).toBe("x [redacted:A_TOKEN] y");
   expect(redactEnvSecrets(text, env)).toBe("x [redacted:A_TOKEN] y");
 });
+
+// Usefulness: verifies the setup and the marker choice stay near-linear in the number of unique values,
+// so an environment with many secret-named variables does not slow every redaction (issue #521).
+test("many unique values redact in bounded time", () => {
+  const env = {};
+  const parts = [];
+  for (let i = 0; i < 20_000; i++) {
+    env[`VAR_${i}_TOKEN`] = `value-${i}-synthetic-secret`;
+    if (i < 100) parts.push(`value-${i}-synthetic-secret`);
+  }
+  const start = performance.now();
+  const out = redactEnvSecrets(parts.join(" "), env);
+  expect(performance.now() - start).toBeLessThan(1000);
+  expect(out).not.toContain("synthetic-secret");
+});
+
+// Usefulness: pins the fourth difference from the main output in ADR 0017: a variable whose name holds the
+// value of another variable. Main nests a marker in the marker, head prints `[*]`, and no value stays in
+// either output (issue #521).
+test("a variable name that holds another value gives [*] where main nests a marker", () => {
+  const env = { LONG_SECRETVALUE_TOKEN: "synthetic-aaa-1", SHORT_KEY: "SECRETVALUE" };
+  const text = "a synthetic-aaa-1 b";
+  const onMain = redactEnvSecretsOnMain(text, env);
+  expect(onMain).toBe("a [redacted:LONG_[redacted:SHORT_KEY]_TOKEN] b");
+  const out = redactEnvSecrets(text, env);
+  expect(out).toBe("a [*] b");
+  for (const form of formsOf(env)) {
+    expect(onMain).not.toContain(form);
+    expect(out).not.toContain(form);
+  }
+});

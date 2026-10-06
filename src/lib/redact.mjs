@@ -84,9 +84,11 @@ function replaceRuns(text, runs, markerOf) {
  * Two variables with one value share one match, named for the first variable in the environment.
  * Compared with the replacement of one value after the other, the result is equal for text
  * in which no occurrence overlaps another and the earlier result holds no complete value. It
- * differs in three cases: the earlier result holds a complete value, the earlier result holds
- * a piece of an overlapping occurrence, or overlapping occurrences that the earlier result masks
- * fully, as a value `abcabcabc` in the text `abc` repeated six times, give one marker for the merged run.
+ * differs in four cases, and no complete value stays in either result in the last two:
+ * the earlier result holds a complete value, or a piece of an overlapping occurrence; overlapping
+ * occurrences that the earlier result masks fully, as a value `abcabcabc` in the text `abc`
+ * repeated six times, give one marker for the merged run; and a variable whose name holds the
+ * value of another variable gets `[*]`, where the earlier result nested a marker in the marker.
  *
  * Exact-value match only: a secret that the command derives, encodes, or reads from
  * a file is not found. A later change of the result, such as a cut, removal of control
@@ -96,23 +98,37 @@ function replaceRuns(text, runs, markerOf) {
  * @param {{ shrink?: boolean }} [options]
  */
 export function redactEnvSecrets(text, env = process.env, { shrink = false } = {}) {
-  const patterns = [];
+  // Keyed by form text: the first variable in the environment owns a form that two variables share.
+  const owners = new Map();
   for (const [name, value] of Object.entries(env)) {
     if (SECRET_NAME.test(name) && typeof value === "string" && value.length >= MIN_SECRET_LENGTH) {
       const escaped = JSON.stringify(value).slice(1, -1);
       for (const form of escaped.includes(value) ? [value] : [value, escaped]) {
-        // The first variable in the environment owns a form that two variables share.
-        if (!patterns.some((p) => p.text === form)) {
-          patterns.push({ name, text: form });
+        if (!owners.has(form)) {
+          owners.set(form, name);
         }
       }
     }
   }
+  const patterns = [...owners].map(([form, name]) => ({ name, text: form }));
+  const formsByLength = new Map();
+  for (const form of owners.keys()) {
+    formsByLength.set(form.length, (formsByLength.get(form.length) ?? new Set()).add(form));
+  }
+  // Only a form no longer than the marker can sit inside it.
+  const holdsForm = (marker) => {
+    for (const [length, forms] of formsByLength) {
+      for (let i = 0; i + length <= marker.length; i++) {
+        if (forms.has(marker.slice(i, i + length))) return true;
+      }
+    }
+    return false;
+  };
   const markers = new Map();
   const markerFor = (name) => {
     if (!markers.has(name)) {
       const named = `[redacted:${name}]`;
-      markers.set(name, patterns.some((p) => named.includes(p.text)) ? SHRINK_MARKER : named);
+      markers.set(name, holdsForm(named) ? SHRINK_MARKER : named);
     }
     return markers.get(name);
   };
