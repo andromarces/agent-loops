@@ -1,7 +1,22 @@
-import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the tests that switch it on (see
+// `gitWhileDotGitExists` in runtime-helpers.mjs); every other test reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";
@@ -20,9 +35,20 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { createTempRepo, gitWhileDotGitExists, removePath } from "./runtime-helpers.mjs";
 
-afterEach(cleanup);
+// A directory that `gitWhileDotGitExists` treats as a work tree. Callers remove it
+// with `removePath`.
+async function createDotGitDir() {
+  const dir = await mkdtemp(join(tmpdir(), "role-dispatch-dotgit-"));
+  await mkdir(join(dir, ".git"));
+  return dir;
+}
+
+afterEach(async () => {
+  gitDouble.answer = null;
+  await cleanup();
+});
 
 // Usefulness: verifies acceptance — two consecutive worker dispatches resume
 // the same worker session; the adapter receives the persisted session id on
@@ -181,20 +207,28 @@ test("a dispatch in a Git work tree whose path contains spaces is not refused", 
 // must reach the initialized run: the state file is named after the resolved
 // `--cwd`, so a check against another path would read no state at all and prove
 // nothing (issue #327).
+//
+// `git` is answered from memory, not spawned: two real repos cost this test the
+// 15 s limit on a loaded Windows runner (issue #492). The double answers as a work
+// tree only while the directory holds `.git`, so the refusal still follows from
+// the work tree state on disk. The removed path fails as execa reports a missing
+// `cwd` (no exit code, ENOENT), and the lost `.git` exits 128 as git does.
 test("a later dispatch at the live run's own --cwd is refused and changes no run state", async () => {
   await setup();
-  const goneRepo = await createTempRepo();
+  gitDouble.answer = gitWhileDotGitExists;
+  const goneRepo = await createDotGitDir();
   repos.push(goneRepo);
-  const brokenRepo = await createTempRepo();
+  const brokenRepo = await createDotGitDir();
   repos.push(brokenRepo);
   const worker = recordingAdapter([]);
   const agents = { fake1: worker, fake2: recordingAdapter([]) };
 
   for (const repo of [goneRepo, brokenRepo]) {
-    const init = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-      agents,
-      stdin: stdinPrompt,
-    });
+    // The init copy of local files has no `git` answers in the double.
+    const init = await executeRoleCommand(
+      withRepo(dispatchArgv([...INIT_OVERRIDES, "--no-copy-local-files"]), repo),
+      { agents, stdin: stdinPrompt },
+    );
     expect(init.exitCode, repo).toBe(0);
   }
   // The worker's turn removed its work tree in one run, and in the other left the
@@ -213,8 +247,7 @@ test("a later dispatch at the live run's own --cwd is refused and changes no run
     expect(result.payload, repo).toMatchObject({ status: "error" });
     expect(result.payload.error, repo).toContain("--cwd must be inside a Git work tree");
     const after = await readRepoState(repo);
-    expect(after.stepsUsed, repo).toBe(before[index].stepsUsed);
-    expect(after.lifecycle, repo).toBe(before[index].lifecycle);
+    expect(after, repo).toEqual(before[index]);
   }
   // The two init turns ran, and no later dispatch reached a child.
   expect(worker.recorded.length).toBe(2);
