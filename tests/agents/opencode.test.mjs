@@ -1278,18 +1278,48 @@ test.each(["", "x"])(
   },
 );
 
-// Usefulness: verifies the unidentified-part error keeps the whole joined text, because the issue
-// #510 bound applies to the interleaved stream error only (issue #509 contract).
-test("opencode keeps the whole text on the unidentified-part error", async () => {
-  const text = "x".repeat(20_000);
-  const error = await runWithEvents(
-    textEvent(`${text}\n${CLOSING_BLOCK}\n`),
-    textEvent("Verdict: accept"),
-  ).catch((err) => err);
+// Usefulness: verifies the unidentified-part error has a fixed upper size however long the model
+// text is, keeps the cause on the first line and the tail of the text, and marks the cut, so the
+// envelope and the state file cannot grow without a limit (issue #529). The turn still errors, so
+// no accept can come from it (issue #509).
+test("opencode bounds and marks the joined text on the unidentified-part error", async () => {
+  const run = (text) =>
+    runWithEvents(textEvent(`${text}\n${CLOSING_BLOCK}\n`), textEvent("Verdict: accept")).catch(
+      (err) => err,
+    );
 
-  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
-  expect(error.message).toContain(text);
-  expect(error.message).not.toMatch(/cut/i);
+  const small = await run("Working on it.");
+  const large = await run("x".repeat(150_000));
+  const larger = await run("x".repeat(450_000));
+
+  expect(large.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(large.message.length).toBeLessThan(10_000);
+  expect(larger.message.length).toBe(large.message.length);
+  expect(large.message.split("\n")[1]).toMatch(/cut/i);
+  expect(large.message.trimEnd().endsWith("Verdict: accept")).toBe(true);
+  expect(small.message).toContain("Working on it.");
+  expect(small.message).not.toMatch(/cut/i);
+});
+
+// Usefulness: verifies the cut never leaves a fragment of a secret-named environment value on the
+// unidentified-part error, as on the interleaved error (issue #529).
+test("opencode leaves no secret fragment on a cut unidentified-part error", async () => {
+  const secret = "s3cr3t-value-0123456789-abcdefghijklmnopqrstuvwxyz";
+  vi.stubEnv("OPENCODE_TEST_TOKEN", secret);
+  try {
+    const tail = `\n${CLOSING_BLOCK}\n`;
+    const after = tail.length + "Verdict: accept".length;
+    const padding = "x".repeat(3980 - after);
+    const error = await runWithEvents(
+      textEvent(`${"p".repeat(10_000)}${secret}${padding}${tail}`),
+      textEvent("Verdict: accept"),
+    ).catch((err) => err);
+
+    expect(error.message.split("\n")[1]).toMatch(/cut/i);
+    expect(error.message).not.toContain(secret.slice(-12));
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 // Usefulness: verifies one block split across A's parts, with another message's block between them,
