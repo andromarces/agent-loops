@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { expect, test, vi } from "vite-plus/test";
 import { runAgy } from "../../src/agents/agy.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 

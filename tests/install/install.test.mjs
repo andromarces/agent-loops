@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test } from "vite-plus/test";
 import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
 import { buildTargets } from "../../src/install/harnesses.mjs";
 import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";

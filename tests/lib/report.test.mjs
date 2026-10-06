@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 import { hasClosingBlockAttempt, parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 
 const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";

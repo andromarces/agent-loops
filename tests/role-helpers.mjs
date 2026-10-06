@@ -1,7 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
 import { removePath, restoreRunsRoot } from "./runtime-helpers.mjs";

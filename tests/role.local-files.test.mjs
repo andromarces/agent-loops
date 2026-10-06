@@ -1,6 +1,6 @@
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role.mjs";
 import {
   basicDeps,

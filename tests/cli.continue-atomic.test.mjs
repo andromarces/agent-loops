@@ -1,6 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main } from "../src/cli.mjs";
 import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 

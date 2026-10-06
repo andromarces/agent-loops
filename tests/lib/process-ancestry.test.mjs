@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 import { harnessForProcessName, nearestHarness } from "../../src/lib/process-ancestry.mjs";
 
 // Usefulness: verifies the process-ancestry mechanism — the nearest harness

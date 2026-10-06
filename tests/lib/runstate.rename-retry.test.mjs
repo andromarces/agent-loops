@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { writeSessionEntry } from "../../src/lib/runstate.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 

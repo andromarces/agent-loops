@@ -1,4 +1,4 @@
-import { test, expect } from "vitest";
+import { test, expect } from "vite-plus/test";
 import { extractJsonObject } from "../../src/lib/json.mjs";
 
 // Usefulness: verifies extractJsonObject parses bare JSON objects without fences.

@@ -1,7 +1,7 @@
 import { access, mkdtemp, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { cleanup, repos, setup } from "./role-helpers.mjs";

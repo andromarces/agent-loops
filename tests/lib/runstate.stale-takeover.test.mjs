@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { withStateLock } from "../../src/lib/runstate.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 

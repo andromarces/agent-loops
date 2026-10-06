@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { expect, test, vi } from "vitest";
+import { expect, test, vi } from "vite-plus/test";
 
 // The launcher runs `copilot`, which is not installed in the test environment. The stand-in runs a
 // real child with the same arguments, so execa builds its real failure message from the real command

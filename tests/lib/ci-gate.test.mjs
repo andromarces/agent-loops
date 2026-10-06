@@ -3,7 +3,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
-import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 import { checkCi, readRequiredChecks, runGh } from "../../src/lib/ci-gate.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,

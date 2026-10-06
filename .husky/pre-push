@@ -1,11 +1,11 @@
 # Push gate: repo-wide formatting check, then lint the JS/TS files changed
 # in the commit range that is being pushed.
 
-# Check formatting repo-wide. oxfmt covers Markdown, which lint-staged
+# Check formatting repo-wide. vp fmt covers Markdown, which vp staged
 # (JS/TS-only on pre-commit) never sees, so CI is otherwise the first place
 # a formatting failure surfaces. This runs the same check CI runs; it is a
 # check, not a formatter, so it processes no files.
-pnpm exec oxfmt --check || exit 1
+pnpm exec vp fmt --check || exit 1
 
 zero='0000000000000000000000000000000000000000'
 
@@ -32,14 +32,14 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
       '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx')" ]; then
       git diff -z --name-only --diff-filter=ACMR "$base" "$local_sha" -- \
         '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx' \
-        | xargs -0 pnpm exec oxlint || exit 1
+        | xargs -0 pnpm exec vp lint || exit 1
     fi
   else
     if [ -n "$(git ls-files -- \
       '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx')" ]; then
       git ls-files -z -- \
         '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx' \
-        | xargs -0 pnpm exec oxlint || exit 1
+        | xargs -0 pnpm exec vp lint || exit 1
     fi
   fi
 done

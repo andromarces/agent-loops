@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test } from "vite-plus/test";
 import { redactEnvSecrets } from "../../src/lib/redact.mjs";
 import { TAIL_CHARS, runTestCmd } from "../../src/lib/test-cmd.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";

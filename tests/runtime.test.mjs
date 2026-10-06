@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { expect, test, vi } from "vitest";
+import { expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `cleanRepoGit` in runtime-helpers.mjs); every other test reaches the real `execa`.

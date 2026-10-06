@@ -1,6 +1,6 @@
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
 import { createLinkedWorkTree, removePath } from "./runtime-helpers.mjs";
 
