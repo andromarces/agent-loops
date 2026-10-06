@@ -83,7 +83,13 @@ running process. It also asks to check a reported PID-reuse window.
        ticks since boot). No spawn, no timeout, and independent of the wall clock, so a
        clock step (NTP, a manual set, a suspend) never changes it. In one namespace, a
        stamp of the same boot with other ticks, or of another boot, is a different
-       process. Stamps of different namespaces are never compared.
+       process. Stamps of different namespaces are never compared. The stamp is read only
+       when the `/proc` mount belongs to the PID namespace of the caller: the link
+       `/proc/self` must equal `process.pid`, the pid that `process.kill(pid, 0)` and
+       the lock content use. In a mount view of another namespace, `/proc/<pid>/stat`
+       can describe an unrelated process while the namespace of `/proc/self` still
+       equals the caller's. A mismatch or an unreadable link gives no stamp, on the
+       writer and on the reader.
      - macOS, `darwin-lstart`: epoch seconds of `ps -o lstart=` under `TZ=UTC` and
        `LC_ALL=C`, with a 5 s timeout. The line must name a date that exists.
      - Windows, `win32-creation`: epoch seconds of the process creation time from
@@ -103,7 +109,8 @@ running process. It also asks to check a reported PID-reuse window.
    - Every other case reads as alive, so an unknown stamp never frees a lock: no
      recorded stamp (a lock of an older version, or the number of an earlier
      revision), an invalid stamp, a kind mismatch, an unknown kind, a Linux PID
-     namespace mismatch or an unreadable namespace, and a current read that fails,
+     namespace mismatch or an unreadable namespace, a `/proc` view that fails the
+     `/proc/self` guard, and a current read that fails,
      times out, is empty, or does not parse. The decision stays fail-closed.
    - PID namespaces. `pidAlive` looks the pid up in the namespace of the reader before
      any stamp is read, so a lock of another namespace that shares the runs root (a

@@ -607,7 +607,17 @@ async function queryOutput(command, args) {
 // a pid of another PID namespace, such as a container that shares the runs root, from
 // being compared with a process of this one. The command name (field 2) can hold
 // spaces and parentheses, so fields count from the last ")".
+// The /proc mount must belong to the PID namespace that `process.kill(pid, 0)` and the
+// lock content use: in a mount view from another namespace, /proc/<pid>/stat can
+// describe an unrelated process, and the namespace of /proc/self would still equal the
+// caller's. The link /proc/self is the pid of the caller in the namespace of the mount,
+// so it equals `process.pid` only for a matching view; otherwise, or when it cannot be
+// read, there is no stamp, and the owner reads as alive (the pid-only check). The guard
+// applies to the writer (own stamp) and the reader (stamp of the owner pid) alike.
 async function linuxProcStamp(pid) {
+  if ((await readlink("/proc/self")) !== String(process.pid)) {
+    return null;
+  }
   const stat = await readFile(`/proc/${pid}/stat`, "utf8");
   const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
   const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();

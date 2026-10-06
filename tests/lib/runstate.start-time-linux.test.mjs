@@ -14,6 +14,7 @@ const BOOT_ID = "0b6f3b86-6f1c-4c2e-9d57-3c1f0a5d2e10";
 const NAMESPACE = "4026531836";
 let proc = {};
 let namespaceLink = `pid:[${NAMESPACE}]`;
+let selfLink = String(process.pid);
 
 vi.mock("node:fs/promises", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -21,6 +22,12 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
     String(file).startsWith("/proc/") ? procFile(String(file)) : realFs.readFile(file, ...rest),
   ),
   readlink: vi.fn(async (file, ...rest) => {
+    if (file === "/proc/self") {
+      if (selfLink === null) {
+        throw Object.assign(new Error("ENOENT /proc/self"), { code: "ENOENT" });
+      }
+      return selfLink;
+    }
     if (file !== "/proc/self/ns/pid") {
       return await realFs.readlink(file, ...rest);
     }
@@ -51,6 +58,7 @@ function statLine(ticks, comm = "node (a b)") {
 
 function setProc(ticks, bootId = BOOT_ID) {
   namespaceLink = `pid:[${NAMESPACE}]`;
+  selfLink = String(process.pid);
   proc = {
     [`/proc/${process.pid}/stat`]: statLine(ticks),
     "/proc/sys/kernel/random/boot_id": `${bootId}\n`,
@@ -187,6 +195,23 @@ test.each([
   setProc(987_654);
   const lockFile = await lockWith(recorded);
 
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
+  );
+});
+
+// Usefulness: verifies a /proc mount of another PID namespace gives no stamp, so the
+// stat of an unrelated process is never taken for the owner and a live lock is kept:
+// the stamp differs from the recorded one, and only the guard keeps the lock.
+test.each([
+  ["a self link of another pid", "4242"],
+  ["an unreadable self link", null],
+])("a live lock is kept when /proc has %s", async (_name, link) => {
+  setProc(987_654);
+  selfLink = link;
+  const lockFile = await lockWith(`linux-proc:${NAMESPACE}:${BOOT_ID}:111`);
+
+  await expect(processStartTime(process.pid)).resolves.toBeNull();
   await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
     /locked by a live process/,
   );
