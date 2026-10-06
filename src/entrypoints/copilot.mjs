@@ -62,7 +62,14 @@ export async function main(argv = process.argv.slice(2)) {
  */
 export function reportFailure(error) {
   let message;
-  if (typeof readProp(error, "shortMessage") === "string") {
+  let isExeca;
+  try {
+    isExeca = typeof error?.shortMessage === "string";
+  } catch {
+    // An unreadable `shortMessage` marks an execa error, so the report never falls back to `message`.
+    isExeca = true;
+  }
+  if (isExeca) {
     const exitCode = readProp(error, "exitCode");
     const signal = readProp(error, "signal");
     const code = readProp(error, "code");

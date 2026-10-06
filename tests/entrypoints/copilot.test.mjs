@@ -181,3 +181,30 @@ test("Copilot launcher failure report prints exit code, signal, and error code o
     process.exitCode = origExitCode;
   }
 });
+
+// Usefulness: ADR 0017 — an execa-like failure whose `shortMessage` getter throws still prints the
+// fixed report, so the command arguments in `message`, `command`, and `escapedCommand` never reach the output.
+test("Copilot launcher failure report keeps command arguments out when shortMessage is unreadable", () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const thrown = {
+    message: "Command failed: copilot --secret-arg 'task words'",
+    command: "copilot --secret-arg 'task words'",
+    escapedCommand: "copilot --secret-arg 'task words'",
+    exitCode: 2,
+    get shortMessage() {
+      throw new Error("getter");
+    },
+  };
+  try {
+    reportFailure(thrown);
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain("copilot failed (exit code 2)");
+    expect(report).not.toContain("secret-arg");
+    expect(report).not.toContain("task words");
+    expect(process.exitCode).toBe(1);
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
