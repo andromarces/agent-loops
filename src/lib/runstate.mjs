@@ -13,7 +13,17 @@
 // and the directory name avoids a file-versus-directory clash at that path.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -303,12 +313,13 @@ function claimFileFor(rootLockFile, file, staleText) {
 // - an unparseable claim with a live marker, a claim whose pid is alive (see
 //   `ownerAlive`), and a file that cannot be read: never, while that stays true.
 // known-limit: a lock or claim records a start-time stamp of the owner with its pid
-// (`processStartTime`), and a live pid whose current stamp is of the same kind and
-// differs reads as dead (a reused pid). Any other case reads as alive, so a reused
-// pid keeps the file until that process exits: no recorded stamp (an older version,
-// or an owner that could not read its own), a platform with no source, a kind
-// mismatch, and a current read that failed, timed out (5 s), or did not parse. The
-// Linux stamp is clock independent. The macOS and Windows stamps are fixed at process
+// (`processStartTime`), and a live pid whose current stamp is valid, of the same kind
+// (and Linux PID namespace), and differs reads as dead (a reused pid). Any other case
+// reads as alive, so a reused pid keeps the file until that process exits: no recorded
+// stamp (an older version, or an owner that could not read its own), a platform with
+// no source, an invalid stamp (`parseStamp`), a kind or namespace mismatch, and a
+// current read that failed, timed out (5 s), or did not parse. The Linux stamp is
+// clock independent. The macOS and Windows stamps are fixed at process
 // creation and compared with a 2 s tolerance that covers only their one-second
 // resolution, so a reuse within it reads as the owner. A marker file name carries only
 // a pid, so `hasLiveWriter` stays pid-only. A chain of more than
@@ -589,24 +600,28 @@ async function queryOutput(command, args) {
 }
 
 // Field 22 (starttime, clock ticks since boot) of /proc/<pid>/stat, joined with the
-// boot id. Both are independent of the wall clock, so a clock step (NTP, a manual
-// set, a suspend) never changes the stamp of a running process, and the boot id
-// keeps the ticks of one boot from matching another. The command name (field 2) can
-// hold spaces and parentheses, so fields count from the last ")".
+// PID namespace of this process and the boot id. Ticks and boot id are independent of
+// the wall clock, so a clock step (NTP, a manual set, a suspend) never changes the
+// stamp of a running process, and the boot id keeps the ticks of one boot from
+// matching another. The namespace (the inode in the target of /proc/self/ns/pid) keeps
+// a pid of another PID namespace, such as a container that shares the runs root, from
+// being compared with a process of this one. The command name (field 2) can hold
+// spaces and parentheses, so fields count from the last ")".
 async function linuxProcStamp(pid) {
   const stat = await readFile(`/proc/${pid}/stat`, "utf8");
   const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
   const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
-  return /^\d+$/.test(fields[19] ?? "") && /^[0-9a-f-]{36}$/i.test(bootId)
-    ? `linux-proc:${bootId}:${fields[19]}`
-    : null;
+  const namespace = /^pid:\[(\d+)\]$/.exec(await readlink("/proc/self/ns/pid"))?.[1];
+  const stamp = `linux-proc:${namespace}:${bootId}:${fields[19]}`;
+  return parseStamp(stamp) === null ? null : stamp;
 }
 
 /**
  * Start-time stamp of the process `pid`, `<kind>:<value>`, or null when it cannot
  * be read (a missing platform source, or a failed, timed-out, empty, or unparseable
  * read). Callers compare only stamps of one kind. The kind is chosen by platform:
- * - `linux-proc`: /proc stat ticks and boot id (no spawn, clock independent).
+ * - `linux-proc`: /proc stat ticks, boot id, and PID namespace (no spawn, clock
+ *   independent).
  * - `darwin-lstart`: epoch seconds of `ps -o lstart=` under TZ=UTC and LC_ALL=C. The
  *   kernel stores the start time (`p_starttime`) once at process creation and `ps`
  *   formats it, so a clock step afterward does not change it (from the XNU source;
@@ -658,32 +673,66 @@ function ownStartTime() {
 // many seconds: it covers their one-second resolution only, not a clock step.
 const START_TIME_TOLERANCE_S = 2;
 
-// True when two stamps of one kind name different processes. A kind mismatch, an
-// unknown kind, and a stamp that does not parse are not different: the caller reads
-// them as alive.
+const EPOCH_STAMP = {
+  "darwin-lstart": /^darwin-lstart:(\d{1,15})$/,
+  "win32-creation": /^win32-creation:(\d{1,15})$/,
+};
+const LINUX_STAMP =
+  /^linux-proc:(\d{1,20}):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):(\d{1,20})$/i;
+
+// The structure of a stamp, or null when it is not exactly one of the known forms:
+// `linux-proc:<namespace>:<boot id>:<ticks>`, or `<darwin-lstart|win32-creation>:
+// <epoch seconds>` with plain digits, so a value that is empty, signed, fractional,
+// exponential, or not finite never parses.
+function parseStamp(text) {
+  if (typeof text !== "string") {
+    return null;
+  }
+  const linux = LINUX_STAMP.exec(text);
+  if (linux !== null) {
+    return {
+      kind: "linux-proc",
+      namespace: linux[1],
+      boot: linux[2].toLowerCase(),
+      ticks: linux[3],
+    };
+  }
+  for (const [kind, pattern] of Object.entries(EPOCH_STAMP)) {
+    const match = pattern.exec(text);
+    if (match !== null) {
+      return { kind, seconds: Number(match[1]) };
+    }
+  }
+  return null;
+}
+
+// True when two stamps name different processes. Anything that is not a plain
+// mismatch of one structure is not different, and the caller reads it as alive: a
+// stamp that does not parse (either one), a kind mismatch, and a `linux-proc` pair of
+// different PID namespaces, where the pid of the recorded owner means another process
+// here and no stamp comparison is meaningful.
 function startTimesDiffer(recorded, current) {
-  const [, kind, value] = /^([a-z0-9-]+):(.+)$/.exec(recorded) ?? [];
-  const [, currentKind, currentValue] = /^([a-z0-9-]+):(.+)$/.exec(current) ?? [];
-  if (kind === undefined || kind !== currentKind) {
+  const a = parseStamp(recorded);
+  const b = parseStamp(current);
+  if (a === null || b === null || a.kind !== b.kind) {
     return false;
   }
-  if (kind === "linux-proc") {
-    return value !== currentValue;
+  if (a.kind === "linux-proc") {
+    return a.namespace === b.namespace && (a.boot !== b.boot || a.ticks !== b.ticks);
   }
-  if (kind === "darwin-lstart" || kind === "win32-creation") {
-    return Math.abs(Number(value) - Number(currentValue)) > START_TIME_TOLERANCE_S;
-  }
-  return false;
+  return Math.abs(a.seconds - b.seconds) > START_TIME_TOLERANCE_S;
 }
 
 // True when the owner of a lock or claim still runs. A live pid is dead only when
-// its recorded stamp and the stamp of the process now at that pid are of one kind and
-// differ (see `startTimesDiffer`): the pid was reused. Every other case reads as
-// alive: no recorded stamp (an older version, or an owner that could not read its
-// own), a recorded value that is not a string, a kind mismatch, and a current read
-// that is null (failed, timed out, empty, or unparseable). A value of a fixed-at-creation
-// kind that is not a number compares as not different, so a corrupt value never
-// frees a lock.
+// its recorded stamp and the stamp of the process now at that pid are valid, of one
+// kind, and differ (see `startTimesDiffer`): the pid was reused. Every other case
+// reads as alive: no recorded stamp (an older version, or an owner that could not read
+// its own), an invalid stamp, a kind mismatch, a PID namespace mismatch, and a current
+// read that is null (failed, timed out, empty, or unparseable).
+// known-limit: a pid of another PID namespace that shares the runs root (a container)
+// is looked up in this namespace by `pidAlive` before any stamp is read, so a dead
+// foreign owner whose pid is alive here keeps its file, and a foreign owner whose pid
+// is dead here reads as dead. That pid-only ambiguity predates the stamp and stays.
 async function ownerAlive(owner) {
   if (!pidAlive(owner.pid)) {
     return false;

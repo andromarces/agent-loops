@@ -97,3 +97,33 @@ test("a lock whose recorded stamp differs from the current one is taken over", a
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 });
+
+// Usefulness: verifies a recorded epoch stamp that is not plain digits (not finite,
+// signed, fractional, exponential, empty, or with extra parts) never frees a lock on
+// either epoch platform; the fresh read is valid, so only the recorded value decides.
+test.each([
+  ["darwin", "darwin-lstart", "Thu Jan  1 00:01:00 1970\n"],
+  ["win32", "win32-creation", "60\n"],
+])("a live lock with a malformed %s stamp is kept", async (platform, kind, out) => {
+  const dir = await mkdtemp(join(tmpdir(), "runstate-starttime-"));
+  dirs.push(dir);
+  answer = { err: null, out };
+  Object.defineProperty(process, "platform", { value: platform });
+  try {
+    const values = ["Infinity", "1e999", "NaN", "abc", "", "-5", "1.5", "12:34", "0x10"];
+    for (const [i, value] of values.entries()) {
+      const lockFile = join(dir, `state.${i}.lock`);
+      await writeFile(
+        lockFile,
+        JSON.stringify({ pid: process.pid, startedAt: "old", startTime: `${kind}:${value}` }),
+        "utf8",
+      );
+
+      await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+        /locked by a live process/,
+      );
+    }
+  } finally {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+  }
+});

@@ -78,10 +78,12 @@ running process. It also asks to check a reported PID-reuse window.
    `ownerAlive` reads a live pid as dead only when the recorded stamp and the stamp of
    the process now at that pid are of the same kind and differ.
    - Sources, by platform (`processStartTime`). No native dependency is added.
-     - Linux, `linux-proc`: field 22 of `/proc/<pid>/stat` (clock ticks since boot)
-       with the boot id. No spawn, no timeout, and independent of the wall clock, so a
-       clock step (NTP, a manual set, a suspend) never changes it. A stamp of the same
-       boot with other ticks, or of another boot, is a different process.
+     - Linux, `linux-proc:<PID namespace>:<boot id>:<ticks>`: the inode in the target
+       of `/proc/self/ns/pid`, the boot id, and field 22 of `/proc/<pid>/stat` (clock
+       ticks since boot). No spawn, no timeout, and independent of the wall clock, so a
+       clock step (NTP, a manual set, a suspend) never changes it. In one namespace, a
+       stamp of the same boot with other ticks, or of another boot, is a different
+       process. Stamps of different namespaces are never compared.
      - macOS, `darwin-lstart`: epoch seconds of `ps -o lstart=` under `TZ=UTC` and
        `LC_ALL=C`, with a 5 s timeout. The line must name a date that exists.
      - Windows, `win32-creation`: epoch seconds of the process creation time from
@@ -94,10 +96,20 @@ running process. It also asks to check a reported PID-reuse window.
      documentation and source, and no test steps a clock, so it is unverified. The
      kinds `darwin-lstart` and `win32-creation` compare with a 2 s tolerance that
      covers their one-second resolution only, not a clock step.
+   - Validity. A stamp is valid only in exactly the forms above: digits for the
+     namespace and the ticks, a UUID for the boot id, and 1 to 15 digits for epoch
+     seconds (no sign, fraction, exponent, or non-finite value). Both the recorded and
+     the fresh stamp must be valid.
    - Every other case reads as alive, so an unknown stamp never frees a lock: no
      recorded stamp (a lock of an older version, or the number of an earlier
-     revision), a kind mismatch, an unknown kind, and a current read that fails, times
-     out, is empty, or does not parse. The decision stays fail-closed.
+     revision), an invalid stamp, a kind mismatch, an unknown kind, a Linux PID
+     namespace mismatch or an unreadable namespace, and a current read that fails,
+     times out, is empty, or does not parse. The decision stays fail-closed.
+   - PID namespaces. `pidAlive` looks the pid up in the namespace of the reader before
+     any stamp is read, so a lock of another namespace that shares the runs root (a
+     container) reads as alive when its pid is alive here, and as dead when it is not,
+     whatever its stamp says. This pid-only ambiguity predates the stamp and is a
+     `known-limit`; the stamp adds no takeover across namespaces.
    - Cost. A contender queries a pid only for a parsed owner with a live pid and a
      recorded stamp. A process reads its own stamp once, on its first lock creation:
      no spawn on Linux, one `ps` on macOS, and one `powershell.exe` startup on
@@ -110,7 +122,8 @@ running process. It also asks to check a reported PID-reuse window.
      older version's marker is never removed.
    - Remaining limits (`known-limit` in `src/lib/runstate.mjs`): the one-second
      resolution on macOS and Windows, a file without a stamp, the unverified
-     clock-step behavior on macOS and Windows, and the Windows startup cost.
+     clock-step behavior on macOS and Windows, the Windows startup cost, and the
+     pid-only ambiguity across PID namespaces.
 
 ## Consequences
 
@@ -121,10 +134,12 @@ running process. It also asks to check a reported PID-reuse window.
     exclusive-create window, or an older version wrote it): at the first
     acquisition after the file is older than the 60 s grace window. A fresh one
     stays until then.
-  - An unparseable claim with a live marker, and a claim whose pid and recorded start
-    time match a running process: never, while that holds. A reused pid with a
-    different start time reads as dead (decision 7). A claim without a start time
-    keeps the pid-only check, so a reused pid keeps it until that process exits.
+  - An unparseable claim with a live marker, and a claim whose owner does not read as
+    dead: never, while that holds. The owner reads as dead only when its pid is dead,
+    or alive with a valid stamp of the same kind (and Linux PID namespace) that
+    differs (decision 7). A claim without a valid stamp, with a stamp of another kind
+    or namespace, or whose current stamp cannot be read keeps the pid-only check, so
+    a reused pid keeps it until that process exits.
   - A claim that cannot be read: never, until it can be read.
 - A foreign or corrupt unparseable lock with no live marker is stale after the 60 s
   grace window. A lock that cannot be read stays busy until it can be read.
