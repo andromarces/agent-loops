@@ -150,7 +150,10 @@ export async function runOpenCode(state, prompt, options = {}) {
  * the earlier block. Messages without an attempt stay: narration before the block and plain prose
  * after it. This is the Codex and Copilot selection (lastClosingMessage, src/agents/shared.mjs) plus
  * those kept messages.
- * @throws {Error} when two messages that hold a closing block attempt interleave in the stream.
+ * @throws {Error} when two messages that hold a closing block attempt interleave in the stream. The
+ * turn then ends as an error, never as a report, so no accept can come from it. The first line of
+ * the message names the cause, and the lines after it hold every message joined as above with
+ * nothing dropped, so the envelope carries what the model wrote (issue #493).
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
@@ -167,12 +170,17 @@ function joinTextParts(events) {
 
   const attempts = messages.filter((group) => hasClosingBlockAttempt(group.parts.join("")));
   if (attempts.some((a) => attempts.some((b) => a !== b && a.first < b.last && b.first < a.last))) {
-    throw new Error("opencode returned closing block attempts from interleaved messages.");
+    throw new Error(`${INTERLEAVED_MESSAGE}\n${joinMessages(messages)}`);
   }
   const governing = attempts.at(-1);
-  const kept = messages.filter((group) => group === governing || !attempts.includes(group));
 
-  return kept.reduce((text, { parts }) => {
+  return joinMessages(messages.filter((group) => group === governing || !attempts.includes(group)));
+}
+
+const INTERLEAVED_MESSAGE = "opencode returned closing block attempts from interleaved messages.";
+
+function joinMessages(messages) {
+  return messages.reduce((text, { parts }) => {
     const opening = parts.join("");
     const breaks = text && opening && !text.endsWith("\n");
     return parts.reduce(joinPart, breaks ? `${text}\n` : text);
