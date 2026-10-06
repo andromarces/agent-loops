@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
@@ -16,6 +17,13 @@ import { createTempRepo } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
+// Directory for task and prompt files; `cleanup` removes it through `repos`.
+async function createInputDir() {
+  const dir = await mkdtemp(join(tmpdir(), "role-task-file-"));
+  repos.push(dir);
+  return dir;
+}
+
 // INIT_OVERRIDES minus its --task pair.
 const INIT_WITHOUT_TASK = INIT_OVERRIDES.filter(
   (value, i) => value !== "--task" && INIT_OVERRIDES[i - 1] !== "--task",
@@ -26,7 +34,7 @@ test("role init --task-file stores the file content as the task", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
-  const path = join(repo, "..", "role-task.md");
+  const path = join(await createInputDir(), "role-task.md");
   await writeFile(path, "Multi-line\ntask.\n");
   const result = await executeRoleCommand(
     withRepo(dispatchArgv([...INIT_WITHOUT_TASK, "--task-file", path]), repo),
@@ -44,7 +52,7 @@ test("role init --task-file - reads the task from stdin", async () => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
-  const prompt = join(repo, "..", "role-prompt.md");
+  const prompt = join(await createInputDir(), "role-prompt.md");
   await writeFile(prompt, "Do the work.");
   const result = await executeRoleCommand(
     withRepo(
@@ -89,7 +97,7 @@ test("role init with an empty task file fails and writes no state", async () => 
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
-  const path = join(repo, "..", "role-empty.md");
+  const path = join(await createInputDir(), "role-empty.md");
   await writeFile(path, "  \n");
   const result = await executeRoleCommand(
     withRepo(dispatchArgv([...INIT_WITHOUT_TASK, "--task-file", path]), repo),
@@ -114,7 +122,7 @@ test("--task-file after init is refused wherever --task is refused", async () =>
   };
   const init = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), deps);
   expect(init.exitCode).toBe(0);
-  const taskFile = join(repo, "..", "later-task.md");
+  const taskFile = join(await createInputDir(), "later-task.md");
   await writeFile(taskFile, "Other task.");
 
   const operations = [

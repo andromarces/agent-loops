@@ -3,6 +3,7 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   test: {
     testTimeout: 15000,
+    setupFiles: ["./tests/setup-tmpdir.mjs"],
   },
   // Oxfmt and Oxlint defaults; the empty blocks keep both tools on this file.
   fmt: {},

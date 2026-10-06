@@ -66,11 +66,13 @@ export async function readRepoState(repo) {
 // Each test gets its own runs root (env override) and its own temp repo, so
 // state files never collide between tests. Callers push repos to `repos` and
 // pass `cleanup` to `afterEach`.
-let runsRoot;
+// A test can call `setup` more than once; `cleanup` removes every root created.
+const runsRoots = [];
 export const repos = [];
 
 export async function setup() {
-  runsRoot = await mkdtemp(join(tmpdir(), "role-test-runs-"));
+  const runsRoot = await mkdtemp(join(tmpdir(), "role-test-runs-"));
+  runsRoots.push(runsRoot);
   process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
   return runsRoot;
 }
@@ -81,8 +83,9 @@ export async function cleanup() {
     await removePath(dir);
   }
   repos.length = 0;
-  await removePath(runsRoot);
-  runsRoot = undefined;
+  for (const root of runsRoots.splice(0)) {
+    await removePath(root);
+  }
 }
 
 /**
