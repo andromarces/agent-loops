@@ -39,13 +39,19 @@ function stripControl(text) {
     .join("");
 }
 
+// Redaction runs before and after the cleanup: a secret can hold a control character that the first
+// pass must match, and the cleanup can join the text around a removed character into a value.
+function redactAndClean(text) {
+  return redactEnvSecrets(stripControl(redactEnvSecrets(text)));
+}
+
 /**
  * The command text as every output shows it (ADR 0017): secret-named environment values
  * redacted and control characters removed. The runtime runs the original text.
  * @param {string} command
  */
 export function redactCommandText(command) {
-  return stripControl(redactEnvSecrets(command));
+  return redactAndClean(command);
 }
 
 /**
@@ -139,9 +145,7 @@ export async function runTestCmd({
   const after = await snapshot(cwd);
   const changed = diffSnapshots(before, after);
 
-  const text = stripControl(
-    redactEnvSecrets(window.subarray(-CAPTURE_WINDOW_BYTES).toString("utf8")),
-  );
+  const text = redactAndClean(window.subarray(-CAPTURE_WINDOW_BYTES).toString("utf8"));
   const truncated = total > CAPTURE_WINDOW_BYTES || text.length > TAIL_CHARS;
   const tail = text.slice(-TAIL_CHARS);
 

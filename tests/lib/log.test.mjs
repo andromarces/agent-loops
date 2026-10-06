@@ -69,3 +69,12 @@ test("logError keeps the full message and redacts env secrets", () => {
     `[agent-loop] error: ${message.replace("s3cr3t-value-123", "[redacted:AGENT_TEST_SECRET]")}`,
   );
 });
+
+// Usefulness: verifies the cut and its ellipsis cannot form a secret value that the text held in part
+// (issue #521, ADR 0017).
+test("logWarn does not form a value from the cut text and the ellipsis", () => {
+  vi.stubEnv("AGENT_TEST_SECRET", "abcdefgh...");
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  logWarn(`${"x".repeat(292)}abcdefgh${"y".repeat(20)}`);
+  expect(errorSpy.mock.calls[0][0]).not.toContain("abcdefgh...");
+});
