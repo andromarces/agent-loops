@@ -45,9 +45,13 @@ running process. It also asks to check a reported PID-reuse window.
    `STALE_LOCK_GRACE_MS` (60 s). This is the grace window of the earlier design,
    kept only for the writer that leaves no marker. The pre-guard decision and the
    scan use `ownerless`; the check under the guard uses it too.
-3. **Stale means identified dead.** A file is stale when its parsed pid is dead, or
-   when it is unparseable, readable, and `ownerless`. A file that cannot be read, or
-   that is missing, is kept and the contender exits as busy.
+3. **Stale means identified dead.** A file is stale when its parsed owner reads as
+   dead (`ownerAlive`: its pid is dead, or its pid is alive but now belongs to another
+   process, a reused pid, decision 7; a valid `linux-proc` stamp of another PID
+   namespace, or any valid `linux-proc` stamp while the reader namespace cannot be
+   read, keeps the owner alive instead), or when it is unparseable, readable, and
+   `ownerless`. A file that cannot be read, or that is missing, is kept and the
+   contender exits as busy.
 4. **Check under the claim.** Under the guard claim, `stillStale` re-reads the file.
    A parsed owner's content is unique (nonce), so equal content is the same file. An
    unparseable file has no unique content, so the check also compares the file
@@ -112,19 +116,32 @@ running process. It also asks to check a reported PID-reuse window.
      namespace and the ticks, a UUID for the boot id, and 1 to 15 digits for epoch
      seconds (no sign, fraction, exponent, or non-finite value). Both the recorded and
      the fresh stamp must be valid.
-   - Every other case reads as alive, so an unknown stamp never frees a lock: no
-     recorded stamp (a lock of an older version, or the number of an earlier
-     revision), an invalid stamp, a kind mismatch, an unknown kind, a Linux PID
-     namespace mismatch or an unreadable namespace, a `/proc` view that fails the
-     `NSpid` check, and a current read that fails,
-     times out, is empty, or does not parse. The decision stays fail-closed.
-   - PID namespaces. `pidAlive` looks the pid up in the namespace of the reader before
-     any stamp is read, so a lock of another namespace that shares the runs root (a
-     container) reads as alive when its pid is alive here, and as dead when it is not,
-     whatever its stamp says. This pid-only ambiguity predates the stamp and is a
-     `known-limit`; the stamp adds no takeover across namespaces.
+   - For a live pid, every other case reads as alive, so an unknown stamp never frees
+     a lock: no recorded stamp (a lock of an older version, or the number of an
+     earlier revision), an invalid stamp, a kind mismatch, an unknown kind, a `/proc`
+     view that fails the `NSpid` check, and a current read that fails, times out, is
+     empty, or does not parse. A dead pid reads as dead in these cases: the pid-only
+     check decides a lock without a valid stamp, or with a stamp of another kind.
+     The exception is the namespace rule below, which decides before the pid probe.
+     The decision stays fail-closed.
+   - PID namespaces. Before the pid probe, a valid `linux-proc` stamp whose PID
+     namespace differs from the reader namespace, or any valid `linux-proc` stamp while
+     the reader namespace cannot be read, reads the owner as alive, whether its pid is
+     alive here or not. A stamp of another kind (`darwin-lstart`, `win32-creation`)
+     never takes this step and keeps its own comparison. A differing
+     namespace means the pid belongs to another namespace that shares the runs root (a
+     container), so it says nothing about that owner here. An unreadable reader
+     namespace means the reader cannot tell whether the stamp namespace is its own, so
+     it keeps the lock. A lock without a valid stamp keeps the pid-only check. It is a
+     `known-limit` that two locks with a valid `linux-proc` stamp are therefore never
+     taken over, even when the owner is dead: the lock of a crashed owner of another
+     namespace, and the lock of a crashed owner of the same namespace when the reader
+     cannot read its own PID namespace. To free such a lock, check that the owner is
+     gone, then remove the lock file (and any `.reap.<digest>` claim beside it) by
+     hand (#512).
    - Cost. A contender queries a pid only for a parsed owner with a live pid and a
-     recorded stamp. A process reads its own stamp once, on its first lock creation:
+     recorded stamp (a `linux-proc` owner costs one `readlink` of the reader
+     namespace first). A process reads its own stamp once, on its first lock creation:
      no spawn on Linux, one `ps` on macOS, and one `powershell.exe` startup on
      Windows. The Windows latency is not measured, it is bounded by the 5 s timeout,
      and Node has no cheaper source (`process.uptime()` stops during a system sleep on
@@ -136,23 +153,31 @@ running process. It also asks to check a reported PID-reuse window.
    - Remaining limits (`known-limit` in `src/lib/runstate.mjs`): the one-second
      resolution on macOS and Windows, a file without a stamp, the unverified
      clock-step behavior on macOS and Windows, the Windows startup cost, and the
-     pid-only ambiguity across PID namespaces.
+     lock with a valid `linux-proc` stamp of a crashed owner of another PID namespace,
+     or of this one while the reader cannot read its own namespace, that is never
+     taken over.
 
 ## Consequences
 
 - A lock acquisition removes an orphaned claim, or a contender that meets its stale
   file does. When, by kind of orphan:
-  - A parsed claim whose pid is dead: at the next acquisition.
+  - A parsed claim whose pid is dead, or alive but reused: at the next acquisition, unless it holds a
+    valid `linux-proc` stamp of another PID namespace, or any valid `linux-proc`
+    stamp while the reader cannot read its own PID namespace (see the next item).
   - An unparseable claim with no live marker (its writer crashed inside the
     exclusive-create window, or an older version wrote it): at the first
     acquisition after the file is older than the 60 s grace window. A fresh one
     stays until then.
   - An unparseable claim with a live marker, and a claim whose owner does not read as
-    dead: never, while that holds. The owner reads as dead only when its pid is dead,
-    or alive with a valid stamp of the same kind (and Linux PID namespace) that
-    differs (decision 7). A claim without a valid stamp, with a stamp of another kind
-    or namespace, or whose current stamp cannot be read keeps the pid-only check, so
-    a reused pid keeps it until that process exits.
+    dead: never, while that holds. Apart from the `linux-proc` namespace rule, the
+    owner reads as dead only when its pid is dead, or alive with a valid stamp of the
+    same kind (and Linux PID namespace) that differs (decision 7). A claim with a valid
+    `linux-proc` stamp of another PID namespace is never removed, and neither is one
+    with a valid `linux-proc` stamp when the reader cannot read its own PID namespace,
+    even when its pid is dead here. A claim without a valid stamp, or with a stamp of
+    another kind, is removed when its pid is dead. A live pid of it follows the stamp
+    comparison, and a claim whose current stamp cannot be read keeps the pid-only
+    check, so a reused pid keeps it until that process exits.
   - A claim that cannot be read: never, until it can be read.
 - A foreign or corrupt unparseable lock with no live marker is stale after the 60 s
   grace window. A lock that cannot be read stays busy until it can be read.
