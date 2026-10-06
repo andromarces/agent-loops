@@ -397,8 +397,9 @@ export async function expectAbortKillsShim(command, start) {
 // `execa` through a double. The real snapshot code still runs over these answers;
 // only the `git` processes are gone. Each reply holds the bytes `git` prints, and
 // `answer` applies the `stripFinalNewline` option as execa does. Only the exact
-// argument lists that the code under test sends are answered; any other `git` call,
-// including a changed flag or flag order, throws. A `cwd` that does not exist fails
+// argument arrays that the code under test sends are answered, compared element by
+// element; any other `git` call, including a changed flag, flag order, or two
+// arguments joined into one element, throws. A `cwd` that does not exist fails
 // as execa does with `reject: false`: no exit code, `code: "ENOENT"`, empty output.
 export const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
 
@@ -413,23 +414,23 @@ export function cleanRepoGit(command, args, options) {
     stdout: options?.stripFinalNewline === false ? stdout : stdout.replace(/\r?\n$/, ""),
     stderr: "",
   });
-  switch (args.join(" ")) {
-    case "rev-parse --is-inside-work-tree":
+  switch (JSON.stringify(args)) {
+    case '["rev-parse","--is-inside-work-tree"]':
       return answer("true\n");
     // The directory holds a `.git` directory, which is the common Git directory.
-    case "rev-parse --git-common-dir":
+    case '["rev-parse","--git-common-dir"]':
       return answer(".git\n");
-    case "rev-parse --show-toplevel":
+    case '["rev-parse","--show-toplevel"]':
       return answer(`${options.cwd}\n`);
-    case "rev-parse --verify -q HEAD":
+    case '["rev-parse","--verify","-q","HEAD"]':
       return answer(`${CLEAN_REPO_HEAD}\n`);
-    case "status --porcelain=v1 -z --untracked-files=all":
-    case "ls-files --stage -z":
+    case '["status","--porcelain=v1","-z","--untracked-files=all"]':
+    case '["ls-files","--stage","-z"]':
       return answer("");
     // The directory is the only work tree, on branch `main`, in the `--porcelain -z`
     // format: NUL-ended `worktree`, `HEAD`, and `branch` fields, then an empty field.
     // The init copy of local files has no main work tree to copy from.
-    case "worktree list --porcelain -z":
+    case '["worktree","list","--porcelain","-z"]':
       return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0branch refs/heads/main\0\0`);
     default:
       throw new Error(`unexpected git call: ${args.join(" ")}`);
@@ -442,7 +443,7 @@ export function cleanRepoGit(command, args, options) {
 // next snapshot, as it does under real `git`, and no `git` process runs. Files in
 // subdirectories are not listed.
 export async function untrackedFilesGit(command, args, options) {
-  if (args.join(" ") !== "status --porcelain=v1 -z --untracked-files=all") {
+  if (JSON.stringify(args) !== '["status","--porcelain=v1","-z","--untracked-files=all"]') {
     return cleanRepoGit(command, args, options);
   }
   const entries = await readdir(options.cwd, { withFileTypes: true });
