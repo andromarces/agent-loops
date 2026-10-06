@@ -633,3 +633,23 @@ test("the only differences from the main output are where the main output leaks"
   expect(redactEnvSecretsOnMain("abcabcabcabc", selfOverlap)).toContain("abc");
   expect(redactEnvSecrets("abcabcabcabc", selfOverlap)).toBe("[redacted:SELF_TOKEN]");
 });
+
+// Usefulness: pins the third difference from the main output in ADR 0017: overlapping occurrences that the
+// main output masks fully give one marker for the merged run, not one for each match (issue #521).
+test("a tiled self-overlapping value gives one marker where main gives two", () => {
+  const env = { S_TOKEN: "abcabcabc" };
+  const text = "abcabcabcabcabcabc";
+  expect(redactEnvSecretsOnMain(text, env)).toBe("[redacted:S_TOKEN][redacted:S_TOKEN]");
+  const out = redactEnvSecrets(text, env);
+  expect(out).toBe("[redacted:S_TOKEN]");
+  expect(out).not.toContain("abc");
+});
+
+// Usefulness: verifies two variables with one value give the output of the main algorithm: the first
+// variable in the environment owns the marker, and no value stays (issue #521).
+test("two variables with the same value give the main output", () => {
+  const env = { A_TOKEN: "synthetic-aaa", B_KEY: "synthetic-aaa" };
+  const text = "x synthetic-aaa y";
+  expect(redactEnvSecretsOnMain(text, env)).toBe("x [redacted:A_TOKEN] y");
+  expect(redactEnvSecrets(text, env)).toBe("x [redacted:A_TOKEN] y");
+});

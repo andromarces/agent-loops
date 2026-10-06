@@ -81,9 +81,12 @@ function replaceRuns(text, runs, markerOf) {
  *
  * The result holds no complete value in either form. A second call on the result returns it
  * unchanged. With `shrink`, every marker is `[*]`, so the result is never longer than `text`.
+ * Two variables with one value share one match, named for the first variable in the environment.
  * Compared with the replacement of one value after the other, the result is equal for text
- * in which no occurrence overlaps another and the earlier result holds no complete value. In
- * the other cases the earlier result holds a value or a piece of an overlapping occurrence.
+ * in which no occurrence overlaps another and the earlier result holds no complete value. It
+ * differs in three cases: the earlier result holds a complete value, the earlier result holds
+ * a piece of an overlapping occurrence, or overlapping occurrences that the earlier result masks
+ * fully, as a value `abcabcabc` in the text `abc` repeated six times, give one marker for the merged run.
  *
  * Exact-value match only: a secret that the command derives, encodes, or reads from
  * a file is not found. A later change of the result, such as a cut, removal of control
@@ -96,10 +99,12 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
   const patterns = [];
   for (const [name, value] of Object.entries(env)) {
     if (SECRET_NAME.test(name) && typeof value === "string" && value.length >= MIN_SECRET_LENGTH) {
-      patterns.push({ name, text: value });
       const escaped = JSON.stringify(value).slice(1, -1);
-      if (!escaped.includes(value)) {
-        patterns.push({ name, text: escaped });
+      for (const form of escaped.includes(value) ? [value] : [value, escaped]) {
+        // The first variable in the environment owns a form that two variables share.
+        if (!patterns.some((p) => p.text === form)) {
+          patterns.push({ name, text: form });
+        }
       }
     }
   }
