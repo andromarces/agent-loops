@@ -387,3 +387,65 @@ test("a long repetitive text with a long secret value redacts in bounded time", 
   expect(performance.now() - start).toBeLessThan(500);
   expect(out).toBe("[redacted:BIG_TOKEN]");
 });
+
+// Reference copy of the redaction before issue #521: one split/join pass per value, raw then escaped.
+function redactInPasses(text, env) {
+  let out = text;
+  for (const [name, value] of Object.entries(env)) {
+    const marker = `[redacted:${name}]`;
+    out = out.split(value).join(marker);
+    const escaped = JSON.stringify(value).slice(1, -1);
+    if (escaped !== value) {
+      out = out.split(escaped).join(marker);
+    }
+  }
+  return out;
+}
+
+const formsOf = (env) =>
+  Object.values(env).flatMap((value) => [value, JSON.stringify(value).slice(1, -1)]);
+
+// Usefulness: verifies the text after a marker cannot join the marker to rebuild the JSON-escaped
+// form of a value (issue #521, ADR 0017). The variable name ends in the value's first character.
+test("a marker and the text after it do not rebuild the escaped form of a value", () => {
+  const value = 'x]"abcdefg';
+  const env = { A_TOKENx: value };
+  const out = redactEnvSecrets(`${value}\\"abcdefg`, env);
+  for (const form of formsOf(env)) {
+    expect(out).not.toContain(form);
+  }
+});
+
+// Usefulness: verifies two adjacent markers cannot rebuild the raw value of another secret (issue #521).
+test("adjacent markers do not rebuild the raw value of another secret", () => {
+  const env = { A_TOKEN: "synthetic-aaa", C_KEY: "TOKEN][redacted:A_TOKEN" };
+  const out = redactEnvSecrets("synthetic-aaasynthetic-aaa", env);
+  for (const form of formsOf(env)) {
+    expect(out).not.toContain(form);
+  }
+});
+
+// Usefulness: verifies a single secret that overlaps nothing gives the output of the pass-based
+// redaction, at the start, at the end, repeated, next to marker-like text, and with brackets (issue #521).
+test.each([
+  ["start", "synthetic-aaa tail"],
+  ["end", "head synthetic-aaa"],
+  ["alone", "synthetic-aaa"],
+  ["adjacent repeats", "synthetic-aaasynthetic-aaa"],
+  ["marker-like text before", "[redacted:A_TOKEN synthetic-aaa"],
+  ["marker-like text after", "synthetic-aaa[redacted:A_TOKEN]"],
+  ["bracket text", "]synthetic-aaa["],
+  ["no match", "nothing here"],
+])("a single non-overlapping secret keeps the pass-based output: %s", (_label, text) => {
+  const env = { A_TOKEN: "synthetic-aaa", B_TOKEN: "other-unused-1" };
+  expect(redactEnvSecrets(text, env)).toBe(redactInPasses(text, env));
+});
+
+// Usefulness: same parity for a value with brackets and for a value with a quote and a backslash (issue #521).
+test.each([
+  ["brackets", "pa]ss[word1", "x pa]ss[word1 y"],
+  ["quote and backslash", 'q"b\\vvvvv', 'x q"b\\vvvvv y and q\\"b\\\\vvvvv z'],
+])("a single secret with %s keeps the pass-based output", (_label, value, text) => {
+  const env = { A_TOKEN: value };
+  expect(redactEnvSecrets(text, env)).toBe(redactInPasses(text, env));
+});
