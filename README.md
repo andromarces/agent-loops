@@ -126,7 +126,10 @@ install recorded, and restores a file that install changed when the file is
 otherwise unchanged. Install applies a harness guard before its entry point, and
 if a write fails part way through it records the writes that completed, so
 `uninstall` still removes or restores them. It leaves a target in place when it
-cannot remove or restore it safely; see [Uninstall skips](#uninstall-skips).
+cannot remove or restore it safely; see [Uninstall skips](#uninstall-skips). If
+`~/.agent-loops` exists as a regular file, `install` and `uninstall` both stop
+with an error and change nothing, on every platform. Move or remove the file,
+then run the command again.
 
 `install` must run from an install whose package location survives an upgrade: a
 global install, a project install, or a linked clone. It writes the package

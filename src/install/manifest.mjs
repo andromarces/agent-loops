@@ -4,6 +4,7 @@
 // by the first install is immutable: later installs carry it forward untouched
 // and only uninstall consumes it.
 import { createHash } from "node:crypto";
+import { stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -165,10 +166,27 @@ function assertHarnessRecord(harness, record, path) {
   }
 }
 
+/**
+ * Rejects an install directory that exists but is not a directory. Windows
+ * reads `<file>/install.json` as ENOENT, not ENOTDIR, so the read alone cannot
+ * tell this layout from a fresh home and install would write before its
+ * manifest write failed.
+ */
+async function assertInstallRootUsable(home) {
+  const root = installRoot(home);
+  const entry = await stat(root).catch((err) =>
+    err.code === "ENOENT" ? null : Promise.reject(err),
+  );
+  if (entry && !entry.isDirectory()) {
+    throw new Error(`Install directory is not a directory: ${root}`);
+  }
+}
+
 export async function readManifest(home = resolveHome()) {
   const path = manifestPath(home);
   const text = await readTextOrNull(path);
   if (text === null) {
+    await assertInstallRootUsable(home);
     return emptyManifest();
   }
   let value;
