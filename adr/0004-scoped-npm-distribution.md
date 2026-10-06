@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0022: Run the dev toolchain and Git hooks through Vite+](0022-vite-plus-toolchain-and-npm-distribution.md). ADR 0022 restates the decisions of this ADR that still hold, replaces the Husky `prepare` guard with a Vite+ hook dispatcher guard, and raises `engines.node` to the `vite-plus` range.
 
 ## Date
 
@@ -57,4 +59,5 @@ Andro Marces
 - [Implementation: release workflow](../.github/workflows/release.yml)
 - [npm trusted publishing with OIDC](https://docs.npmjs.com/trusted-publishers)
 - [npm provenance statements](https://docs.npmjs.com/generating-provenance-statements)
+- Superseded by [ADR 0022: Run the dev toolchain and Git hooks through Vite+](0022-vite-plus-toolchain-and-npm-distribution.md)
 - [ADR Index](README.md)

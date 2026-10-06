@@ -95,7 +95,7 @@ An explicit `--<role>-model` passes through unchanged, with no variant appended.
 
 ## Requirements
 
-- Node.js 22 or later
+- Node.js `^22.18.0 || ^24.11.0 || >=26.0.0` (22.18.0 or later on the 22 line, 24.11.0 or later on the 24 line, or 26.0.0 or later)
 - Git (the target `--cwd` must be inside a Git work tree)
 - Installed and authenticated CLI agents
 
@@ -256,19 +256,17 @@ npm 12 disables git fetches by default. On npm 12, pass `--allow-git=all`:
 npm install -g --allow-git=all github:andromarces/agent-loops
 ```
 
-A Git URL install also installs the devDependencies and runs `prepare` before it
-packs the package, so it pulls `vite-plus`. `vite-plus` declares Node
-`^22.18.0 || ^24.11.0 || >=26.0.0`. On an older Node 22 release, npm warns about
-that range, and with `engine-strict` set the install fails. A registry install
-installs no devDependencies, so it needs only the Node version in
-[Requirements](#requirements).
+A Git URL install also installs the devDependencies, including `vite-plus`, and
+runs `prepare` before it packs the package. The package `engines.node` range
+matches the `vite-plus` range. On a Node version outside it, npm warns, and with
+`engine-strict` set the install fails.
 
 The `bin` script keeps its `#!/usr/bin/env node` shebang and executable bit, so macOS and Linux link an executable file. npm generates the `.cmd` and `.ps1` shims on Windows, so `agent-loop` resolves in PowerShell and cmd. An `agent-loops` alias points at the same CLI, so `npx @andromarces/agent-loops` and `pnpm dlx @andromarces/agent-loops` resolve it. The command locates its package files relative to the installed script, not `process.cwd()`, so it works from any directory; `--cwd` selects the work tree.
 
 ### From a clone (development)
 
 Development uses pnpm and the repository Git hooks. The dev toolchain is
-Vite+ (`vite-plus`), so a clone needs Node `^22.18.0 || ^24.11.0 || >=26.0.0`.
+Vite+ (`vite-plus`), which needs the Node range in [Requirements](#requirements).
 The `pre-commit` hook runs `vp staged`, which needs Node 22.22.1 or later on the
 22 line, or 24.11.0 or later, and Git 2.32.0 or later. Every script runs the
 project-local `vp`, so no global `vp` install is needed. User-scope integrations
@@ -303,7 +301,10 @@ node "<repo>/src/cli.mjs" install --harness claude --yes
 `pnpm agent-loop` still runs the CLI entry from the repository root. The
 repository Git hooks run formatting and linting on commit and push; they need
 `pnpm install` to have completed, because its `prepare` script installs the
-Husky hooks. `prepare` exits 0 in CI, in production, and when Husky is absent.
+Vite+ hook dispatcher (`vp config`). The hook scripts live in `.vite-hooks/`.
+`prepare` exits 0 in CI, in production, with `VP_GIT_HOOKS=0`, and when
+`vite-plus` is absent. A clone set up under Husky has `core.hooksPath` set to
+`.husky/_`; `prepare` unsets that value so `vp config` can install the dispatcher.
 
 ## Usage
 
@@ -912,7 +913,7 @@ pnpm test        # Run the test suite with vp test (Vitest)
 
 The toolchain config lives in `vite.config.mjs`. A `vite-plus` upgrade re-pins the
 `vitest` override in `pnpm-workspace.yaml` to the version that `pnpm exec vp --version`
-lists ([ADR 0022](adr/0022-vite-plus-dev-toolchain.md)).
+lists ([ADR 0022](adr/0022-vite-plus-toolchain-and-npm-distribution.md)).
 
 ## Releasing
 

@@ -174,9 +174,6 @@ importers:
         specifier: ^10.0.1
         version: 10.0.1
     devDependencies:
-      husky:
-        specifier: ^9.1.7
-        version: 9.1.7
       vite-plus:
         specifier: 1.0.0
         version: 1.0.0(@vitest/ui@5.0.1)(yaml@2.9.1)
@@ -906,11 +903,6 @@ packages:
   human-signals@8.0.1:
     resolution: {integrity: sha512-eKCa6bwnJhvxj14kZk5NCPc6Hb6BdsU9DZcOnmQKSnO1VKrfV0zCvtttPZUsBvjmNDn8rpcJfpwSYnHBjc95MQ==}
     engines: {node: '>=18.18.0'}
-
-  husky@9.1.7:
-    resolution: {integrity: sha512-5gs5ytaNjBrh5Ow3zrvdUUY+0VxIuWVL4i9irt6friV+BqdCfmV11CQTWMiBYWHbXhco+J1kHfTOUkePhCDvMA==}
-    engines: {node: '>=18'}
-    hasBin: true
 
   is-plain-obj@4.1.0:
     resolution: {integrity: sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg==}
@@ -1731,8 +1723,6 @@ snapshots:
       is-stream: 4.0.1
 
   human-signals@8.0.1: {}
-
-  husky@9.1.7: {}
 
   is-plain-obj@4.1.0: {}
 
