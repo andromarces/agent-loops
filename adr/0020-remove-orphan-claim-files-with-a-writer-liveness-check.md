@@ -118,11 +118,12 @@ running process. It also asks to check a reported PID-reuse window.
      namespace mismatch or an unreadable namespace, a `/proc` view that fails the
      `NSpid` check, and a current read that fails,
      times out, is empty, or does not parse. The decision stays fail-closed.
-   - PID namespaces. `pidAlive` looks the pid up in the namespace of the reader before
-     any stamp is read, so a lock of another namespace that shares the runs root (a
-     container) reads as alive when its pid is alive here, and as dead when it is not,
-     whatever its stamp says. This pid-only ambiguity predates the stamp and is a
-     `known-limit`; the stamp adds no takeover across namespaces.
+   - PID namespaces. Before the pid probe, a `linux-proc` stamp whose PID namespace
+     differs from the reader namespace, or a reader namespace that cannot be read, reads
+     the owner as alive: a pid of another namespace that shares the runs root (a
+     container) says nothing about that owner here. A lock without a stamp keeps the
+     pid-only check. It is a `known-limit` that a crashed owner of another namespace
+     keeps its lock until the file is removed by hand (#512).
    - Cost. A contender queries a pid only for a parsed owner with a live pid and a
      recorded stamp. A process reads its own stamp once, on its first lock creation:
      no spawn on Linux, one `ps` on macOS, and one `powershell.exe` startup on
@@ -136,7 +137,7 @@ running process. It also asks to check a reported PID-reuse window.
    - Remaining limits (`known-limit` in `src/lib/runstate.mjs`): the one-second
      resolution on macOS and Windows, a file without a stamp, the unverified
      clock-step behavior on macOS and Windows, the Windows startup cost, and the
-     pid-only ambiguity across PID namespaces.
+     lock of a crashed owner of another PID namespace that is never taken over.
 
 ## Consequences
 

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vite-plus/test";
 import { processStartTime, withStateLock } from "../../src/lib/runstate.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // The Linux source reads /proc, which does not exist on the other test platforms, so
 // the platform is fixed to linux and `readFile` answers the /proc paths from a table.
@@ -84,11 +84,11 @@ afterEach(async () => {
   dirs = [];
 });
 
-async function lockWith(startTime) {
+async function lockWith(startTime, pid = process.pid) {
   const dir = await mkdtemp(join(tmpdir(), "runstate-linux-"));
   dirs.push(dir);
   const lockFile = join(dir, "state.lock");
-  await writeFile(lockFile, JSON.stringify({ pid: process.pid, startedAt: "old", startTime }));
+  await writeFile(lockFile, JSON.stringify({ pid, startedAt: "old", startTime }));
   return lockFile;
 }
 
@@ -241,4 +241,44 @@ test("a live lock is kept when /proc/self/status cannot be read", async () => {
   await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
     /locked by a live process/,
   );
+});
+
+// Usefulness: verifies a lock whose stamp names another PID namespace is kept when its pid does
+// not exist in the reader namespace (a container pid), so a running foreign owner is not taken over.
+test("a lock of another PID namespace with a pid absent here is kept", async () => {
+  setProc(987_654);
+  const lockFile = await lockWith(`linux-proc:4026532999:${BOOT_ID}:111`, await deadPid());
+
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
+  );
+});
+
+// Usefulness: verifies a lock with a linux-proc stamp is kept when the reader namespace cannot be
+// read, because no namespace comparison is possible and a pid probe alone cannot clear the owner.
+test("a linux-proc lock with a pid absent here is kept when the reader namespace cannot be read", async () => {
+  setProc(987_654);
+  namespaceLink = null;
+  const lockFile = await lockWith(`linux-proc:${NAMESPACE}:${BOOT_ID}:111`, await deadPid());
+
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
+  );
+});
+
+// Usefulness: verifies a dead owner of the reader namespace is still taken over, so the namespace
+// guard does not keep every stamped lock.
+test("a lock of the same PID namespace with a dead pid is taken over", async () => {
+  setProc(987_654);
+  const lockFile = await lockWith(`linux-proc:${NAMESPACE}:${BOOT_ID}:111`, await deadPid());
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+});
+
+// Usefulness: verifies a lock without a stamp keeps the pid-only check, so a dead pid is taken over.
+test("a lock without a stamp and with a dead pid is taken over", async () => {
+  setProc(987_654);
+  const lockFile = await lockWith(undefined, await deadPid());
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 });

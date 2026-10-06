@@ -628,6 +628,16 @@ async function ownProcView() {
   return entries?.length === 1 && entries[0] === String(process.pid);
 }
 
+// The PID namespace inode of this process (the target of /proc/self/ns/pid), or
+// undefined when it cannot be read or does not parse.
+async function readerPidNamespace() {
+  try {
+    return /^pid:\[(\d+)\]$/.exec(await readlink("/proc/self/ns/pid"))?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
 async function linuxProcStamp(pid) {
   if (!(await ownProcView())) {
     return null;
@@ -635,7 +645,7 @@ async function linuxProcStamp(pid) {
   const stat = await readFile(`/proc/${pid}/stat`, "utf8");
   const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
   const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
-  const namespace = /^pid:\[(\d+)\]$/.exec(await readlink("/proc/self/ns/pid"))?.[1];
+  const namespace = await readerPidNamespace();
   const stamp = `linux-proc:${namespace}:${bootId}:${fields[19]}`;
   return parseStamp(stamp) === null ? null : stamp;
 }
@@ -751,13 +761,19 @@ function startTimesDiffer(recorded, current) {
 // its recorded stamp and the stamp of the process now at that pid are valid, of one
 // kind, and differ (see `startTimesDiffer`): the pid was reused. Every other case
 // reads as alive: no recorded stamp (an older version, or an owner that could not read
-// its own), an invalid stamp, a kind mismatch, a PID namespace mismatch, and a current
-// read that is null (failed, timed out, empty, or unparseable).
-// known-limit: a pid of another PID namespace that shares the runs root (a container)
-// is looked up in this namespace by `pidAlive` before any stamp is read, so a dead
-// foreign owner whose pid is alive here keeps its file, and a foreign owner whose pid
-// is dead here reads as dead. That pid-only ambiguity predates the stamp and stays.
+// its own) keeps the pid-only check, and an invalid stamp, a kind mismatch, and a
+// current read that is null (failed, timed out, empty, or unparseable) read as alive.
+// A `linux-proc` stamp whose PID namespace differs from the reader, or a reader
+// namespace that cannot be read, reads as alive before the pid probe: the recorded pid
+// belongs to another namespace (a container that shares the runs root), so `pidAlive`
+// cannot say whether that owner runs.
+// known-limit: such a lock is never taken over by a contender of this namespace, so an
+// owner of another namespace that crashed keeps its lock until the file is removed by hand.
 async function ownerAlive(owner) {
+  const recorded = parseStamp(owner.startTime);
+  if (recorded?.kind === "linux-proc" && recorded.namespace !== (await readerPidNamespace())) {
+    return true;
+  }
   if (!pidAlive(owner.pid)) {
     return false;
   }
