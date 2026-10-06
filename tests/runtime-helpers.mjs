@@ -396,39 +396,44 @@ export async function expectAbortKillsShim(command, start) {
 // A clean repo at `CLEAN_REPO_HEAD`, answered from memory for a test that routes
 // `execa` through a double. The real snapshot code still runs over these answers;
 // only the `git` processes are gone. Each reply holds the bytes `git` prints, and
-// `answer` applies the `stripFinalNewline` option as execa does. Any other `git`
-// call throws.
+// `answer` applies the `stripFinalNewline` option as execa does. Only the exact
+// argument lists that the code under test sends are answered; any other `git` call,
+// including a changed flag or flag order, throws. A `cwd` that does not exist fails
+// as execa does with `reject: false`: no exit code, `code: "ENOENT"`, empty output.
 export const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
 
 export function cleanRepoGit(command, args, options) {
   assert.equal(command, "git");
+  if (!existsSync(options.cwd)) {
+    return { exitCode: undefined, failed: true, code: "ENOENT", stdout: "", stderr: "" };
+  }
   // execa strips one final newline from stdout unless `stripFinalNewline` is false.
   const answer = (stdout) => ({
     exitCode: 0,
     stdout: options?.stripFinalNewline === false ? stdout : stdout.replace(/\r?\n$/, ""),
     stderr: "",
   });
-  if (args[0] === "rev-parse") {
-    if (args.includes("--is-inside-work-tree")) {
+  switch (args.join(" ")) {
+    case "rev-parse --is-inside-work-tree":
       return answer("true\n");
-    }
     // The directory holds a `.git` directory, which is the common Git directory.
-    if (args.includes("--git-common-dir")) {
+    case "rev-parse --git-common-dir":
       return answer(".git\n");
-    }
-    return answer(`${args.includes("--show-toplevel") ? options.cwd : CLEAN_REPO_HEAD}\n`);
+    case "rev-parse --show-toplevel":
+      return answer(`${options.cwd}\n`);
+    case "rev-parse --verify -q HEAD":
+      return answer(`${CLEAN_REPO_HEAD}\n`);
+    case "status --porcelain=v1 -z --untracked-files=all":
+    case "ls-files --stage -z":
+      return answer("");
+    // The directory is the only work tree, on branch `main`, in the `--porcelain -z`
+    // format: NUL-ended `worktree`, `HEAD`, and `branch` fields, then an empty field.
+    // The init copy of local files has no main work tree to copy from.
+    case "worktree list --porcelain -z":
+      return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0branch refs/heads/main\0\0`);
+    default:
+      throw new Error(`unexpected git call: ${args.join(" ")}`);
   }
-
-  if (args[0] === "status" || args[0] === "ls-files") {
-    return answer("");
-  }
-  // The directory is the only work tree, on branch `main`, in the `--porcelain -z`
-  // format: NUL-ended `worktree`, `HEAD`, and `branch` fields, then an empty field.
-  // The init copy of local files has no main work tree to copy from.
-  if (args[0] === "worktree") {
-    return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0branch refs/heads/main\0\0`);
-  }
-  throw new Error(`unexpected git call: ${args.join(" ")}`);
 }
 
 // `cleanRepoGit` for a repo with no tracked files, whose `status` lists each regular
@@ -437,7 +442,7 @@ export function cleanRepoGit(command, args, options) {
 // next snapshot, as it does under real `git`, and no `git` process runs. Files in
 // subdirectories are not listed.
 export async function untrackedFilesGit(command, args, options) {
-  if (args[0] !== "status") {
+  if (args.join(" ") !== "status --porcelain=v1 -z --untracked-files=all") {
     return cleanRepoGit(command, args, options);
   }
   const entries = await readdir(options.cwd, { withFileTypes: true });
@@ -449,11 +454,11 @@ export async function untrackedFilesGit(command, args, options) {
 }
 
 // `cleanRepoGit` for a directory that is a work tree only while it holds a `.git`
-// entry. Without one, or without the directory, every `git` call exits 128 with
-// git's "not a git repository" message, as real `git` does for a removed work tree
-// or lost Git metadata, and no `git` process runs.
+// entry. Without one, every `git` call exits 128 with git's "not a git repository"
+// message, as real `git` does for lost Git metadata, and no `git` process runs. A
+// directory that is gone fails as `cleanRepoGit` reports it.
 export function gitWhileDotGitExists(command, args, options) {
-  if (existsSync(join(options.cwd, ".git"))) {
+  if (existsSync(join(options.cwd, ".git")) || !existsSync(options.cwd)) {
     return cleanRepoGit(command, args, options);
   }
   return {

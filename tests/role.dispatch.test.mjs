@@ -211,7 +211,8 @@ test("a dispatch in a Git work tree whose path contains spaces is not refused", 
 // `git` is answered from memory, not spawned: two real repos cost this test the
 // 15 s limit on a loaded Windows runner (issue #492). The double answers as a work
 // tree only while the directory holds `.git`, so the refusal still follows from
-// the work tree state on disk, and the removed path and the lost `.git` still differ.
+// the work tree state on disk. The removed path fails as execa reports a missing
+// `cwd` (no exit code, ENOENT), and the lost `.git` exits 128 as git does.
 test("a later dispatch at the live run's own --cwd is refused and changes no run state", async () => {
   await setup();
   gitDouble.answer = gitWhileDotGitExists;
@@ -246,8 +247,7 @@ test("a later dispatch at the live run's own --cwd is refused and changes no run
     expect(result.payload, repo).toMatchObject({ status: "error" });
     expect(result.payload.error, repo).toContain("--cwd must be inside a Git work tree");
     const after = await readRepoState(repo);
-    expect(after.stepsUsed, repo).toBe(before[index].stepsUsed);
-    expect(after.lifecycle, repo).toBe(before[index].lifecycle);
+    expect(after, repo).toEqual(before[index]);
   }
   // The two init turns ran, and no later dispatch reached a child.
   expect(worker.recorded.length).toBe(2);
