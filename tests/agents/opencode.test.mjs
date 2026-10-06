@@ -1294,3 +1294,91 @@ test("opencode invocation is identical with the reviewer sandbox input on and of
   const [off, on] = vi.mocked(exec).mock.calls;
   expect(on).toEqual(off);
 });
+
+const UNIDENTIFIED_REFUSAL = "opencode returned a closing block that spans unidentified parts.";
+
+// Usefulness: verifies the shared unidentified group fails closed: a `Verdict: accept` part on its
+// own line cannot pair with the `Checks` line of an earlier unidentified part. The turn errors with
+// the assistant text, so no accept comes from it and the text stays readable (issue #509).
+test("opencode refuses an accept that spans unidentified parts", async () => {
+  const error = await runWithEvents(
+    textEvent(`${CLOSING_BLOCK}\n`),
+    textEvent("Verdict: accept"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(error.message).toContain("Verdict: accept");
+  expect(error.message).toContain("Checks: pnpm test");
+});
+
+// Usefulness: verifies a block that sits whole in one unidentified part still parses as accept, so
+// the fail-closed rule of issue #509 does not reject an ordinary no-id stream.
+test("opencode accepts a whole block held by one unidentified part", async () => {
+  const response = await runWithEvents(
+    textEvent("Working on it."),
+    textEvent(`${ACCEPTED_BLOCK}\n`),
+  );
+
+  expect(parseVerdict(response)).toBe("accept");
+});
+
+// Usefulness: verifies the unidentified fail-closed rule holds however the lines split: a label cut
+// across parts, so no single part holds an attempt for the split label, still ends as an error
+// instead of an accept (issue #509, reviewer probe 1).
+test.each([
+  [[`${CLOSING_BLOCK}\nVer`, "dict: accept"]],
+  [["Conclusion: c\nWhy: w\nBlockers: none\nChe", "cks: pnpm test\nVerdict: accept"]],
+  [[`${CLOSING_BLOCK}\nVerdict: acc`, "ept"]],
+])("opencode refuses an accept whose labels split across unidentified parts %j", async (parts) => {
+  const error = await runWithEvents(...parts.map((part) => textEvent(part))).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies a complete block inside one unidentified part parses as accept when an earlier
+// part only mentions a label in prose, so the fail-closed rule does not reject what main accepts
+// (issue #509, reviewer probe 2).
+test.each([["Remember that the Verdict: line is required."], ["Checks: will follow below."]])(
+  "opencode accepts a whole unidentified block after prose that mentions a label: %s",
+  async (prose) => {
+    const response = await runWithEvents(textEvent(prose), textEvent(ACCEPTED_BLOCK));
+
+    expect(parseVerdict(response)).toBe("accept");
+    expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
+  },
+);
+
+// Usefulness: verifies a line terminator alone never makes a later unidentified part count as block
+// content: a whole accept block in one part still parses as accept when the next part starts with
+// CRLF, LF, or CR, as it does on main (issue #509, reviewer probe 3).
+test.each([["\r\nThe watcher finished.\r\n"], ["\nThe watcher finished."], ["\r\n"]])(
+  "opencode accepts a whole unidentified block before a part that starts with a line terminator %j",
+  async (late) => {
+    const response = await runWithEvents(textEvent(ACCEPTED_BLOCK), textEvent(late));
+
+    expect(parseVerdict(response)).toBe("accept");
+    expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
+  },
+);
+
+// Usefulness: verifies a bare CR part is no new error: it glues to the Verdict line and the verdict
+// reads `unknown` as on main, never accept (issue #509, reviewer probe 3).
+test("opencode reads a whole unidentified block before a bare CR part as unknown", async () => {
+  const response = await runWithEvents(textEvent(ACCEPTED_BLOCK), textEvent("\rThe watcher."));
+
+  expect(parseVerdict(response)).toBe("unknown");
+});
+
+// Usefulness: verifies a Verdict value cut across parts still fails closed when a CRLF follows, so
+// the terminator fix of issue #509 does not reopen the split-label bypass.
+test("opencode refuses a Verdict value split across parts before a CRLF", async () => {
+  const error = await runWithEvents(
+    textEvent(`${CLOSING_BLOCK}\nVerdict: acc`),
+    textEvent("ept\r\n"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
