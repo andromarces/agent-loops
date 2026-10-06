@@ -433,7 +433,7 @@ export function cleanRepoGit(command, args, options) {
     case '["worktree","list","--porcelain","-z"]':
       return answer(`worktree ${options.cwd}\0HEAD ${CLEAN_REPO_HEAD}\0branch refs/heads/main\0\0`);
     default:
-      throw new Error(`unexpected git call: ${args.join(" ")}`);
+      throw new Error(`unexpected git call: ${JSON.stringify(args)}`);
   }
 }
 
