@@ -54,6 +54,9 @@ async function invoke({ agents, state, roleName, prompt, opts, onEvent, stepsUse
  * operator's `--test-cmd` that the runtime ran before the turn (ADR 0017). A
  * handled error result keeps `testRun`, and a fatal error carries it as
  * `err.testRun`, so a turn that fails after the command ran loses no evidence.
+ * Read the result from a fatal error through `failedTestRun`, because an error
+ * that cannot take the property (frozen, or a throwing setter) keeps it in a
+ * `WeakMap` that only `failedTestRun` reads.
  * `reviewerWorkspaceWrite` passes the reviewer-only `sandbox: "workspace-write"` input to a
  * reviewer turn and adds the matching prompt line; no other role receives it (ADR 0019).
  * @param {object} options
