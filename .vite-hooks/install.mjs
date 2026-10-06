@@ -12,10 +12,11 @@ if (CI === "true" || NODE_ENV === "production" || VP_GIT_HOOKS === "0") process.
 
 const git = (...args) => spawnSync("git", args, { encoding: "utf8" });
 // Real path of the nearest existing ancestor, plus the missing tail, so a path
-// that does not exist yet still compares equal through a symlinked parent.
+// that does not exist yet still compares equal through a symlinked parent or a
+// Windows 8.3 short name (the native call expands both).
 const real = (path) => {
   try {
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     const parent = dirname(path);
     return parent === path ? path : join(real(parent), basename(path));
