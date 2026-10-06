@@ -46,10 +46,12 @@ running process. It also asks to check a reported PID-reuse window.
    kept only for the writer that leaves no marker. The pre-guard decision and the
    scan use `ownerless`; the check under the guard uses it too.
 3. **Stale means identified dead.** A file is stale when its parsed owner reads as
-   dead (`ownerAlive`: its pid is dead, except that a valid `linux-proc` stamp of
-   another PID namespace, or any valid `linux-proc` stamp while the reader namespace
-   cannot be read, keeps the owner alive, decision 7), or when it is unparseable, readable, and `ownerless`. A file that cannot be read, or
-   that is missing, is kept and the contender exits as busy.
+   dead (`ownerAlive`: its pid is dead, or its pid is alive but now belongs to another
+   process, a reused pid, decision 7; a valid `linux-proc` stamp of another PID
+   namespace, or any valid `linux-proc` stamp while the reader namespace cannot be
+   read, keeps the owner alive instead), or when it is unparseable, readable, and
+   `ownerless`. A file that cannot be read, or that is missing, is kept and the
+   contender exits as busy.
 4. **Check under the claim.** Under the guard claim, `stillStale` re-reads the file.
    A parsed owner's content is unique (nonce), so equal content is the same file. An
    unparseable file has no unique content, so the check also compares the file
@@ -126,9 +128,11 @@ running process. It also asks to check a reported PID-reuse window.
      namespace differs from the reader namespace, or any valid `linux-proc` stamp while
      the reader namespace cannot be read, reads the owner as alive, whether its pid is
      alive here or not. A stamp of another kind (`darwin-lstart`, `win32-creation`)
-     never takes this step and keeps its own comparison. A pid of
-     another namespace that shares the runs root (a container) says nothing about that
-     owner here. A lock without a valid stamp keeps the pid-only check. It is a
+     never takes this step and keeps its own comparison. A differing
+     namespace means the pid belongs to another namespace that shares the runs root (a
+     container), so it says nothing about that owner here. An unreadable reader
+     namespace means the reader cannot tell whether the stamp namespace is its own, so
+     it keeps the lock. A lock without a valid stamp keeps the pid-only check. It is a
      `known-limit` that two locks with a valid `linux-proc` stamp are therefore never
      taken over, even when the owner is dead: the lock of a crashed owner of another
      namespace, and the lock of a crashed owner of the same namespace when the reader
@@ -157,7 +161,7 @@ running process. It also asks to check a reported PID-reuse window.
 
 - A lock acquisition removes an orphaned claim, or a contender that meets its stale
   file does. When, by kind of orphan:
-  - A parsed claim whose pid is dead: at the next acquisition, unless it holds a
+  - A parsed claim whose pid is dead, or alive but reused: at the next acquisition, unless it holds a
     valid `linux-proc` stamp of another PID namespace, or any valid `linux-proc`
     stamp while the reader cannot read its own PID namespace (see the next item).
   - An unparseable claim with no live marker (its writer crashed inside the

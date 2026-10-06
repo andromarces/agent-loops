@@ -303,15 +303,18 @@ function claimFileFor(rootLockFile, file, staleText) {
 // claimed removal: a contender that meets its stale file, and the scan that each
 // lock acquisition runs (`pruneOrphanClaims`, #452). Both key the guard by the
 // claim's name and content, so exactly one process acts on a claim. A file counts
-// as dead only when `ownerAlive` reads its parsed owner as dead (its pid is dead and
-// no valid `linux-proc` stamp of another PID namespace, or with an unreadable reader
-// namespace, keeps it alive), or when it is unparseable and `ownerless` finds no live
-// marker and an age past the grace window (ADR 0020).
+// as dead only when `ownerAlive` reads its parsed owner as dead (its pid is dead, or
+// its pid is alive but now belongs to another process, a reused pid; a valid
+// `linux-proc` stamp of another PID namespace, or any valid `linux-proc` stamp while
+// the reader namespace cannot be read, keeps the owner alive instead), or when it is
+// unparseable and `ownerless` finds no live marker and an age past the grace window
+// (ADR 0020).
 // When each orphan is removed (ADR 0020), by the first lock acquisition that
 // finds it, or by a contender that meets its stale file:
-// - a parsed claim whose owner reads as dead (`ownerAlive`): at once. A claim with a
-//   valid `linux-proc` stamp of another PID namespace, or one read while the reader
-//   cannot read its own PID namespace, stays even when its pid is dead here.
+// - a parsed claim whose owner reads as dead (`ownerAlive`: a dead pid, or a reused
+//   pid): at once. A claim with a valid `linux-proc` stamp of another PID namespace,
+//   or with any valid `linux-proc` stamp while the reader cannot read its own PID
+//   namespace, stays even when its pid is dead here.
 // - an unparseable claim with no live marker: once it is older than
 //   STALE_LOCK_GRACE_MS, so a fresh one stays until it has aged.
 // - an unparseable claim with a live marker, a claim whose owner reads as alive (see
@@ -766,9 +769,11 @@ function startTimesDiffer(recorded, current) {
 // True when the owner of a lock or claim still runs. Checks in order:
 // 1. A valid `linux-proc` stamp whose PID namespace differs from the reader, or any
 //    valid `linux-proc` stamp while the reader namespace cannot be read, reads as alive
-//    before the pid probe, whether its pid is alive here or not: the recorded pid
-//    belongs to another namespace (a container that shares the runs root), so
-//    `pidAlive` cannot say whether that owner runs. Other stamp kinds skip this step.
+//    before the pid probe, whether its pid is alive here or not. A differing namespace
+//    means the recorded pid belongs to another namespace (a container that shares the
+//    runs root), so `pidAlive` cannot say whether that owner runs. An unreadable
+//    reader namespace means the reader cannot tell whether the stamp namespace is its
+//    own, so it keeps the lock. Other stamp kinds skip this step.
 // 2. A dead pid reads as dead, with any stamp or none (the pid-only check).
 // 3. A live pid reads as dead only when its recorded stamp and the stamp of the process
 //    now at that pid are valid, of one kind, and differ (see `startTimesDiffer`): the
