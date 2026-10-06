@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { install } from "../../src/install/installer.mjs";
-import { manifestPath } from "../../src/install/manifest.mjs";
+import { install, uninstall } from "../../src/install/installer.mjs";
+import { manifestLockFile, manifestPath } from "../../src/install/manifest.mjs";
 import { PACKAGE_ROOT, cleanupHomes, makeHome, readText } from "./install-helpers.mjs";
 
 // Windows reports ENOENT, not ENOTDIR, when a path component is a regular file.
@@ -36,6 +36,23 @@ test("install fails before any harness write when the manifest read reports ENOE
 
   expect(existsSync(join(home, ".claude"))).toBe(false);
   expect(await readText(join(home, ".agent-loops"))).toBe("user data\n");
+  // The lock lives under the OS temp root and is released on failure; nothing
+  // else lands in the home.
+  expect(existsSync(manifestLockFile(home))).toBe(false);
+  expect(await readdir(home)).toEqual([".agent-loops"]);
+});
+
+// Usefulness: verifies #491 reaches uninstall — a regular file at the manifest
+// parent must stop uninstall with an error and change nothing, as it does on POSIX.
+test("uninstall fails and changes nothing when the manifest parent is a regular file", async () => {
+  const home = await makeHome();
+  await writeFile(join(home, ".agent-loops"), "user data\n", "utf8");
+
+  await expect(uninstall({ home })).rejects.toThrow(/\.agent-loops/);
+
+  expect(await readText(join(home, ".agent-loops"))).toBe("user data\n");
+  expect(existsSync(manifestLockFile(home))).toBe(false);
+  expect(await readdir(home)).toEqual([".agent-loops"]);
 });
 
 // Usefulness: verifies #491 leaves a fresh home alone — an absent manifest parent
