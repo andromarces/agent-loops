@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -445,4 +446,19 @@ export async function untrackedFilesGit(command, args, options) {
     .map((entry) => `?? ${entry.name}\0`)
     .join("");
   return { exitCode: 0, stdout, stderr: "" };
+}
+
+// `cleanRepoGit` for a directory that is a work tree only while it holds a `.git`
+// entry. Without one, or without the directory, every `git` call exits 128 with
+// git's "not a git repository" message, as real `git` does for a removed work tree
+// or lost Git metadata, and no `git` process runs.
+export function gitWhileDotGitExists(command, args, options) {
+  if (existsSync(join(options.cwd, ".git"))) {
+    return cleanRepoGit(command, args, options);
+  }
+  return {
+    exitCode: 128,
+    stdout: "",
+    stderr: "fatal: not a git repository (or any of the parent directories): .git",
+  };
 }

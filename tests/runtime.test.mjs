@@ -220,8 +220,13 @@ test("reviewer reassesses without worker turn", async () => {
 });
 
 // 5. Usefulness: verifies two consecutive worker turns.
+//
+// `git` is answered from memory, not spawned: a real repo cost this test the 15 s
+// limit on a loaded Windows runner (issue #492). The behavior under test is the
+// two worker turns and the verbatim second prompt, not the snapshot code.
 test("two consecutive worker turns", async () => {
-  const repo = await createTempRepo();
+  const cwd = tmpdir();
+  gitDouble.answer = cleanRepoGit;
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_worker", prompt: "work 1" }),
@@ -238,7 +243,9 @@ test("two consecutive worker turns", async () => {
 
     const result = await runLoop({
       task: "Task 5",
-      cwd: repo,
+      cwd,
+      // The init copy of local files has no `git` answers in the double.
+      copyLocalFiles: false,
       maxSteps: 5,
       roles: {
         orchestrator: { kind: "orch", sessionId: null },
@@ -253,7 +260,7 @@ test("two consecutive worker turns", async () => {
     // On second turn, prompt is verbatim
     expect(workerAdapter.recorded[1].prompt).toBe("work 2");
   } finally {
-    await removePath(repo);
+    gitDouble.answer = null;
   }
 });
 
