@@ -62,11 +62,14 @@ export async function main(argv = process.argv.slice(2)) {
  */
 export function reportFailure(error) {
   let message;
-  if (typeof error?.shortMessage === "string") {
+  if (typeof readProp(error, "shortMessage") === "string") {
+    const exitCode = readProp(error, "exitCode");
+    const signal = readProp(error, "signal");
+    const code = readProp(error, "code");
     const causes = [
-      error.exitCode === undefined ? null : `exit code ${error.exitCode}`,
-      error.signal ? `signal ${error.signal}` : null,
-      error.code ? `error code ${error.code}` : null,
+      exitCode === undefined ? null : `exit code ${exitCode}`,
+      signal ? `signal ${signal}` : null,
+      code ? `error code ${code}` : null,
     ].filter(Boolean);
     message = `copilot failed${causes.length > 0 ? ` (${causes.join(", ")})` : ""}`;
   } else {

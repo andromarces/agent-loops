@@ -138,3 +138,46 @@ test.each([
     process.exitCode = origExitCode;
   }
 });
+
+// Usefulness: acceptance (#523) — a throwing `shortMessage`, `exitCode`, `signal`, or `code` getter
+// never escapes the report, and an execa error still prints its exit code, signal, and error code.
+test.each(["shortMessage", "exitCode", "signal", "code"])(
+  "Copilot launcher failure report survives a throwing %s getter",
+  (key) => {
+    const thrown = {
+      shortMessage: "Command failed",
+      exitCode: 2,
+      signal: "SIGTERM",
+      code: "ENOENT",
+      message: "full command line",
+    };
+    Object.defineProperty(thrown, key, {
+      get() {
+        throw new Error("getter");
+      },
+    });
+    const origExitCode = process.exitCode;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(() => reportFailure(thrown)).not.toThrow();
+      expect(process.exitCode).toBe(1);
+    } finally {
+      errorSpy.mockRestore();
+      process.exitCode = origExitCode;
+    }
+  },
+);
+
+// Usefulness: acceptance (#523) — an ordinary execa error keeps its exit code, signal, and error code text.
+test("Copilot launcher failure report prints exit code, signal, and error code of an execa error", () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    reportFailure({ shortMessage: "Command failed", exitCode: 2, signal: "SIGTERM", code: "EX" });
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain("copilot failed (exit code 2, signal SIGTERM, error code EX)");
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});

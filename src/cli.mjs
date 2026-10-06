@@ -713,7 +713,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         await finish({ exitCode: result.exitCode, error: new Error(result.reason) });
       }
     } catch (err) {
-      if (err?.isCanceled) {
+      if (readProp(err, "isCanceled")) {
         await finish({ exitCode: 130, error: new Error("Interrupted by SIGINT") });
       } else {
         await finish({ exitCode: 1, error: err });
