@@ -162,7 +162,10 @@ export async function runOpenCode(state, prompt, options = {}) {
  * envelope carries what the model wrote (issue #493). Only the interleaved stream error bounds that
  * text (issue #510): the text is redacted (ADR 0017) first, then keeps its last 4000 code units,
  * cut on a code point boundary. A longer text is cut at the start, and a second line states the
- * cut and the original length. The unidentified part error carries the whole text.
+ * cut and the original length. The bound holds for the text that this adapter produces. A later
+ * redaction of an environment value that matches part of a `[redacted:NAME]` marker, for example
+ * `redacted`, rewrites the markers and can grow the text past it. The unidentified part error
+ * carries the whole text.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
