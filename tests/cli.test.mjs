@@ -972,6 +972,55 @@ test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () 
   }
 });
 
+// Usefulness: acceptance (#523) — a thrown value whose `isCanceled` getter throws still reaches
+// the generic failure path (exit 1) instead of hiding the original failure.
+test("headless run survives a thrown value with a throwing isCanceled getter", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const thrown = {
+    message: "original failure",
+    get isCanceled() {
+      throw new Error("getter");
+    },
+  };
+  const fakeAgents = {
+    codex: {
+      async run() {
+        throw thrown;
+      },
+    },
+    claude: { async run() {} },
+    agy: { async run() {} },
+  };
+
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "task",
+        "--cwd",
+        repo,
+      ],
+      fakeAgents,
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy.mock.calls.map((call) => call.join(" ")).join("\n")).toContain(
+      "original failure",
+    );
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a finish that reports an unresolved PR-head compare exits
 // 4 and still prints the recorded summary, so an exit-code-only consumer tells
 // it apart from the exit-0 verified finish (issue #279).
