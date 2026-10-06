@@ -1294,3 +1294,31 @@ test("opencode invocation is identical with the reviewer sandbox input on and of
   const [off, on] = vi.mocked(exec).mock.calls;
   expect(on).toEqual(off);
 });
+
+const UNIDENTIFIED_REFUSAL = "opencode returned a closing block that spans unidentified parts.";
+
+// Usefulness: verifies the shared unidentified group fails closed: a `Verdict: accept` part on its
+// own line cannot pair with the `Checks` line of an earlier unidentified part. The turn errors with
+// the assistant text, so no accept comes from it and the text stays readable (issue #509).
+test("opencode refuses an accept that spans unidentified parts", async () => {
+  const error = await runWithEvents(
+    textEvent(`${CLOSING_BLOCK}\n`),
+    textEvent("Verdict: accept"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(error.message).toContain("Verdict: accept");
+  expect(error.message).toContain("Checks: pnpm test");
+});
+
+// Usefulness: verifies a block that sits whole in one unidentified part still parses as accept, so
+// the fail-closed rule of issue #509 does not reject an ordinary no-id stream.
+test("opencode accepts a whole block held by one unidentified part", async () => {
+  const response = await runWithEvents(
+    textEvent("Working on it."),
+    textEvent(`${ACCEPTED_BLOCK}\n`),
+  );
+
+  expect(parseVerdict(response)).toBe("accept");
+});

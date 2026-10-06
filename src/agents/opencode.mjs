@@ -2,7 +2,7 @@ import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { readProp } from "../lib/error-message.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
-import { REPORT_LABEL_NAMES, hasClosingBlockAttempt } from "../lib/report.mjs";
+import { REPORT_LABEL_NAMES, hasClosingBlockAttempt, parseVerdict } from "../lib/report.mjs";
 import {
   asSessionId,
   keepFailedSessionId,
@@ -150,8 +150,11 @@ export async function runOpenCode(state, prompt, options = {}) {
  * the earlier block. Messages without an attempt stay: narration before the block and plain prose
  * after it. This is the Codex and Copilot selection (lastClosingMessage, src/agents/shared.mjs) plus
  * those kept messages.
- * @throws {Error} when two messages that hold a closing block attempt interleave in the stream. The
- * turn then ends as an error, never as a report, so no accept can come from it. The first line of
+ * @throws {Error} when two messages that hold a closing block attempt interleave in the stream, or
+ * when the governing message is the unidentified one, holds a closing block attempt in more than one
+ * part, and joins to an accept verdict. Parts without an id cannot be told apart from one another, so
+ * a `Verdict:` part cannot be trusted to belong to the `Checks` line before it (issue #509). The turn
+ * then ends as an error, never as a report, so no accept can come from it. The first line of
  * the message names the cause, and the lines after it hold every message joined as above with
  * nothing dropped, so the envelope carries what the model wrote (issue #493).
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
@@ -164,6 +167,8 @@ function joinTextParts(events) {
     const group = groups.get(key) ?? { first: position, parts: [] };
     group.last = position;
     group.parts.push(part.text);
+    group.attemptParts = (group.attemptParts ?? 0) + (hasClosingBlockAttempt(part.text) ? 1 : 0);
+    group.unidentified = key === null;
     groups.set(key, group);
   });
   const messages = [...groups.values()];
@@ -173,11 +178,18 @@ function joinTextParts(events) {
     throw new Error(`${INTERLEAVED_MESSAGE}\n${joinMessages(messages)}`);
   }
   const governing = attempts.at(-1);
+  if (governing?.unidentified && governing.attemptParts > 1) {
+    const text = joinMessages([governing]);
+    if (parseVerdict(text) === "accept") {
+      throw new Error(`${UNIDENTIFIED_MESSAGE}\n${joinMessages(messages)}`);
+    }
+  }
 
   return joinMessages(messages.filter((group) => group === governing || !attempts.includes(group)));
 }
 
 const INTERLEAVED_MESSAGE = "opencode returned closing block attempts from interleaved messages.";
+const UNIDENTIFIED_MESSAGE = "opencode returned a closing block that spans unidentified parts.";
 
 function joinMessages(messages) {
   return messages.reduce((text, { parts }) => {
