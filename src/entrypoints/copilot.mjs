@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { isEntryPoint } from "../lib/entrypoint.mjs";
-import { readProp, redactedText } from "../lib/error-message.mjs";
+import { readProp, redactedText, UNSERIALIZABLE_MESSAGE } from "../lib/error-message.mjs";
 
 // Resolve the shipped instructions relative to this file, so the launcher works
 // from any directory, not only from a clone of this repository. The file lives
@@ -87,7 +87,13 @@ export function reportFailure(error) {
     ].filter(Boolean);
     message = `copilot failed${causes.length > 0 ? ` (${causes.join(", ")})` : ""}`;
   } else {
-    message = String(redactedText(readProp(error, "message") ?? error)).split("\n", 1)[0];
+    const text = readProp(error, "message") ?? error;
+    // An object without a string message never serializes, because its content can hold argv.
+    message = (
+      typeof text === "string" || typeof text !== "object" || text === null
+        ? redactedText(text)
+        : UNSERIALIZABLE_MESSAGE
+    ).split("\n", 1)[0];
   }
   console.error(`agent-loop-copilot: ${redactedText(message)}`);
   process.exitCode = 1;

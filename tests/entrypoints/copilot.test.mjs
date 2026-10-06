@@ -260,3 +260,20 @@ test("Copilot launcher failure report keeps command arguments out of object-valu
     process.exitCode = origExitCode;
   }
 });
+
+// Usefulness: ADR 0017 — a thrown object with no readable string message never has its content
+// serialized into the report, because that content can hold command arguments.
+test("Copilot launcher failure report never serializes a thrown object without a message", () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    reportFailure({ exitCode: { argv: ["copilot", "ARGUMENT_CANARY"] } });
+    const report = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(report).toContain("agent-loop-copilot:");
+    expect(report).not.toContain("ARGUMENT_CANARY");
+    expect(process.exitCode).toBe(1);
+  } finally {
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
