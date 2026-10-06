@@ -87,42 +87,58 @@ function loggedError(message) {
 }
 
 // Usefulness: verifies #515 review blocker 1 — a cut never splits a surrogate pair, so the log
-// line stays well-formed Unicode whether the pair falls at the end of the kept head or at the
-// start of the kept tail.
+// line stays well-formed Unicode. A one-sentence message cuts after 100 head characters and
+// before the last 200, so the sweeps put the pair across each of those two cuts.
 test("a cut never splits a surrogate pair", () => {
-  for (const head of [199, 200, 201]) {
-    const atHead = loggedError(`${"x".repeat(head)}😀${"y".repeat(200)}`);
-    expect(atHead.isWellFormed()).toBe(true);
+  for (let head = 97; head <= 103; head++) {
+    expect(loggedError(`${"x".repeat(head)}😀${"y".repeat(400)}`).isWellFormed()).toBe(true);
   }
-  for (const rest of [99, 100, 101]) {
-    const atTail = loggedError(`${"x".repeat(300)}😀${"y".repeat(rest)}`);
-    expect(atTail.isWellFormed()).toBe(true);
+  for (let rest = 196; rest <= 202; rest++) {
+    expect(loggedError(`${"x".repeat(400)}😀${"y".repeat(rest)}`).isWellFormed()).toBe(true);
   }
-  expect(loggedError(`${"x".repeat(299)}😀${"y".repeat(5)}`).isWellFormed()).toBe(true);
   vi.spyOn(console, "log").mockImplementation(() => {});
-  const info = vi.spyOn(console, "log").mock;
   logInfo(`${"x".repeat(299)}😀${"y".repeat(5)}`);
-  expect(info.calls.at(-1)[0].isWellFormed()).toBe(true);
+  expect(console.log.mock.calls.at(-1)[0].isWellFormed()).toBe(true);
 });
 
-// Usefulness: verifies #515 review blocker 2 — a cut never lands inside a redaction marker, so a
-// log line holds whole markers only and never a partial one, wherever the marker sits.
-test("a cut never splits a redaction marker", () => {
-  vi.stubEnv("AGENT_TEST_SECRET", "s3cr3t-value-123");
-  for (const offset of [170, 190, 199, 200, 250, 285, 299, 300]) {
-    const line = loggedError(`${"x".repeat(offset)}s3cr3t-value-123${"y".repeat(300)} end`);
-    const all = line.match(/\[?redacted:|AGENT_TEST_SECRET\]?/g) ?? [];
-    const whole = line.match(/\[redacted:AGENT_TEST_SECRET\]/g) ?? [];
-    expect(all.length).toBe(whole.length * 2);
-    expect(line).not.toContain("s3cr3t");
-  }
-  for (const rest of [0, 20, 40, 60, 80, 99, 100]) {
-    const line = loggedError(`${"x".repeat(400)}s3cr3t-value-123${"y".repeat(rest)}`);
-    const all = line.match(/\[?redacted:|AGENT_TEST_SECRET\]?/g) ?? [];
-    const whole = line.match(/\[redacted:AGENT_TEST_SECRET\]/g) ?? [];
-    expect(all.length).toBe(whole.length * 2);
-    expect(line).not.toContain("s3cr3t");
-  }
+// Whole markers removed, a line holds no fragment of one and no secret value.
+function expectOnlyWholeMarkers(line, name) {
+  const rest = line.split(`[redacted:${name}]`).join("");
+  expect(rest).not.toContain("redacted:");
+  expect(rest).not.toContain("AGENT_TEST");
+  expect(line).not.toContain("s3cr3t");
+}
+
+// Usefulness: verifies #515 review blockers 2 and 1 of the second review — a cut never lands
+// inside a redaction marker, wherever the marker sits and whatever characters (including `]`)
+// the variable name holds. The sweeps put the marker across the head cut and the tail cut.
+test.each(["AGENT_TEST_SECRET", "AGENT_TEST_SECRET]X"])(
+  "a cut never splits a redaction marker for variable %s",
+  (name) => {
+    vi.stubEnv(name, "s3cr3t-value-123");
+    for (let offset = 60; offset <= 105; offset++) {
+      expectOnlyWholeMarkers(
+        loggedError(`${"x".repeat(offset)}s3cr3t-value-123${"y".repeat(400)}`),
+        name,
+      );
+    }
+    for (let rest = 150; rest <= 235; rest++) {
+      expectOnlyWholeMarkers(
+        loggedError(`${"x".repeat(400)}s3cr3t-value-123${"y".repeat(rest)}`),
+        name,
+      );
+    }
+  },
+);
+
+// Usefulness: verifies #515 second-review blocker 2 — trailing whitespace does not count against
+// the final-sentence budget, so a short final instruction is not erased by a trailing newline run.
+test("trailing whitespace does not erase the final instruction", () => {
+  const instruction = "Remove the directory manually.";
+  const line = loggedError(
+    `Install directory ${"/long".repeat(80)} failed. ${instruction}${"\n".repeat(250)}`,
+  );
+  expect(line.endsWith(instruction)).toBe(true);
 });
 
 // Usefulness: verifies #515 review blocker 3 — the whole final sentence survives when it is up

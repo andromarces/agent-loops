@@ -5,6 +5,24 @@
 const MIN_SECRET_LENGTH = 8;
 const SECRET_NAME = /token|secret|passw|key|credential|auth/i;
 
+/** Marker text that replaces the value of the secret-named variable `name`. */
+export function redactionMarker(name) {
+  return `[redacted:${name}]`;
+}
+
+/**
+ * Names of the environment variables whose values `redactEnvSecrets` replaces.
+ * @param {NodeJS.ProcessEnv} env
+ */
+export function redactedEnvNames(env = process.env) {
+  return Object.keys(env).filter(
+    (name) =>
+      SECRET_NAME.test(name) &&
+      typeof env[name] === "string" &&
+      env[name].length >= MIN_SECRET_LENGTH,
+  );
+}
+
 /**
  * Replaces every occurrence of the value of a secret-named environment variable
  * with `[redacted:NAME]`, in its raw form and in its JSON-escaped form, because a
@@ -16,14 +34,13 @@ const SECRET_NAME = /token|secret|passw|key|credential|auth/i;
  */
 export function redactEnvSecrets(text, env = process.env) {
   let out = text;
-  for (const [name, value] of Object.entries(env)) {
-    if (SECRET_NAME.test(name) && typeof value === "string" && value.length >= MIN_SECRET_LENGTH) {
-      const marker = `[redacted:${name}]`;
-      out = out.split(value).join(marker);
-      const escaped = JSON.stringify(value).slice(1, -1);
-      if (escaped !== value) {
-        out = out.split(escaped).join(marker);
-      }
+  for (const name of redactedEnvNames(env)) {
+    const value = env[name];
+    const marker = redactionMarker(name);
+    out = out.split(value).join(marker);
+    const escaped = JSON.stringify(value).slice(1, -1);
+    if (escaped !== value) {
+      out = out.split(escaped).join(marker);
     }
   }
   return out;

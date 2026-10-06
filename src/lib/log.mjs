@@ -5,13 +5,12 @@
 // (for example a model echo in a validation error) cannot flood a line; logInfoFull
 // prints a trusted, user-facing note in full instead. Every line has secret-named environment
 // values redacted first (ADR 0017), so a log line never echoes a secret that an error text held.
-import { redactEnvSecrets } from "./redact.mjs";
+import { redactEnvSecrets, redactedEnvNames, redactionMarker } from "./redact.mjs";
 
 const MAX_LENGTH = 300;
 // An error keeps its final sentence, where the action for the user usually sits, up to this
 // many characters. A longer final sentence keeps only its last MAX_FINAL_SENTENCE characters.
 const MAX_FINAL_SENTENCE = 200;
-const REDACTION_MARKER = /\[redacted:[^\]]*\]/g;
 const SENTENCE_END = /[.!?]\s+/g;
 
 let verbose = false;
@@ -40,21 +39,23 @@ function safeCut(message, index, step) {
   if (low >= 0xdc00 && low <= 0xdfff && high >= 0xd800 && high <= 0xdbff) {
     index += step;
   }
-  for (const marker of message.matchAll(REDACTION_MARKER)) {
-    const end = marker.index + marker[0].length;
-    if (marker.index < index && index < end) {
-      return step < 0 ? marker.index : end;
+  // Markers come from the variable names that redaction used, so a name that holds `]` is whole.
+  for (const name of redactedEnvNames()) {
+    const marker = redactionMarker(name);
+    for (let at = message.indexOf(marker); at !== -1; at = message.indexOf(marker, at + 1)) {
+      if (at < index && index < at + marker.length) {
+        return step < 0 ? at : at + marker.length;
+      }
     }
   }
   return index;
 }
 
-/** Start of the last sentence, or 0 when the message holds one sentence. */
+/** Start of the last sentence (the message has no trailing whitespace), or 0 when the message holds one sentence. */
 function finalSentenceStart(message) {
-  const body = message.trimEnd();
   let start = 0;
-  for (const end of body.matchAll(SENTENCE_END)) {
-    if (end.index + end[0].length < body.length) {
+  for (const end of message.matchAll(SENTENCE_END)) {
+    if (end.index + end[0].length < message.length) {
       start = end.index + end[0].length;
     }
   }
@@ -69,6 +70,11 @@ function finalSentenceStart(message) {
  */
 function truncate(message, keepFinalSentence = false) {
   message = redactEnvSecrets(message);
+  if (message.length <= MAX_LENGTH) {
+    return message;
+  }
+  // Trailing whitespace carries no text, so it never uses the final-sentence budget.
+  message = message.trimEnd();
   if (message.length <= MAX_LENGTH) {
     return message;
   }
