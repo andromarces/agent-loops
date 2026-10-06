@@ -2183,7 +2183,7 @@ test.each([
   "the supplied status agrees with the finish gate on %s",
   async (_name, { statusPages, clean = true, ...options }) => {
     const table = routes(options).map(([match, value]) =>
-      statusPages && match === `commits/${HEAD}/status --paginate`
+      statusPages && match === `api repos/${SLUG}/commits/${HEAD}/status --paginate`
         ? [match, statusPages]
         : [match, value],
     );
@@ -2195,6 +2195,11 @@ test.each([
       gh: fakeGh(table),
     });
     expect(read.status === "pass").toBe(gate.ok);
+    // Only a served second page passes: the head run covers one required check
+    // and the later success covers the other, so an unserved fixture refuses both.
+    if (statusPages) {
+      expect(gate.ok).toBe(true);
+    }
   },
 );
 
