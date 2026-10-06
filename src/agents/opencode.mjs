@@ -151,9 +151,11 @@ export async function runOpenCode(state, prompt, options = {}) {
  * after it. This is the Codex and Copilot selection (lastClosingMessage, src/agents/shared.mjs) plus
  * those kept messages.
  * @throws {Error} when two messages that hold a closing block attempt interleave in the stream, or
- * when the governing message is the unidentified one, holds a closing block attempt in more than one
- * part, and joins to an accept verdict. Parts without an id cannot be told apart from one another, so
- * a `Verdict:` part cannot be trusted to belong to the `Checks` line before it (issue #509). The turn
+ * when the governing message is the unidentified one, joins to an accept verdict, and the label
+ * lines of its closing block (`Conclusion:` through `Verdict:`) come from more than one part,
+ * however the lines or the labels are split. Parts without an id cannot be told apart from one
+ * another, so a `Verdict:` part cannot be trusted to belong to the `Checks` line before it. A block
+ * whole in one part never throws, whatever earlier parts mention (issue #509). The turn
  * then ends as an error, never as a report, so no accept can come from it. The first line of
  * the message names the cause, and the lines after it hold every message joined as above with
  * nothing dropped, so the envelope carries what the model wrote (issue #493).
@@ -167,7 +169,6 @@ function joinTextParts(events) {
     const group = groups.get(key) ?? { first: position, parts: [] };
     group.last = position;
     group.parts.push(part.text);
-    group.attemptParts = (group.attemptParts ?? 0) + (hasClosingBlockAttempt(part.text) ? 1 : 0);
     group.unidentified = key === null;
     groups.set(key, group);
   });
@@ -178,11 +179,12 @@ function joinTextParts(events) {
     throw new Error(`${INTERLEAVED_MESSAGE}\n${joinMessages(messages)}`);
   }
   const governing = attempts.at(-1);
-  if (governing?.unidentified && governing.attemptParts > 1) {
-    const text = joinMessages([governing]);
-    if (parseVerdict(text) === "accept") {
-      throw new Error(`${UNIDENTIFIED_MESSAGE}\n${joinMessages(messages)}`);
-    }
+  if (
+    governing?.unidentified &&
+    parseVerdict(joinMessages([governing])) === "accept" &&
+    labelLinePartCount(governing.parts) > 1
+  ) {
+    throw new Error(`${UNIDENTIFIED_MESSAGE}\n${joinMessages(messages)}`);
   }
 
   return joinMessages(messages.filter((group) => group === governing || !attempts.includes(group)));
@@ -197,6 +199,40 @@ function joinMessages(messages) {
     const breaks = text && opening && !text.endsWith("\n");
     return parts.reduce(joinPart, breaks ? `${text}\n` : text);
   }, "");
+}
+
+const BLOCK_START = /^Conclusion:\s*/i;
+const BLOCK_LABEL_LINE = new RegExp(`^(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")}):`, "i");
+
+/**
+ * Counts the parts that a label line of the closing block touches, in the join of `parts`. The
+ * block starts at the last `Conclusion:` line, as parseReportBlock reads it. A label line touches
+ * every part that holds one of its characters, so a label cut across parts counts both. Text before
+ * the block and plain prose after it touch no label line.
+ */
+function labelLinePartCount(parts) {
+  const spans = [];
+  const text = parts.reduce((joined, part) => {
+    const next = joinPart(joined, part);
+    spans.push([next.length - part.length, next.length]);
+    return next;
+  }, "");
+
+  let offset = 0;
+  const lines = text.split("\n").map((line) => {
+    const span = [offset, offset + line.length];
+    offset += line.length + 1;
+    return { line, span };
+  });
+  const start = lines.findLastIndex(({ line }) => BLOCK_START.test(line));
+  const touched = new Set();
+  for (const { line, span } of lines.slice(Math.max(start, 0))) {
+    if (start === -1 || !BLOCK_LABEL_LINE.test(line)) continue;
+    spans.forEach(([from, to], index) => {
+      if (from < span[1] && span[0] < to) touched.add(index);
+    });
+  }
+  return touched.size;
 }
 
 function joinPart(text, part) {

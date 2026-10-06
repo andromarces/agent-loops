@@ -1322,3 +1322,30 @@ test("opencode accepts a whole block held by one unidentified part", async () =>
 
   expect(parseVerdict(response)).toBe("accept");
 });
+
+// Usefulness: verifies the unidentified fail-closed rule holds however the lines split: a label cut
+// across parts, so no single part holds an attempt for the split label, still ends as an error
+// instead of an accept (issue #509, reviewer probe 1).
+test.each([
+  [[`${CLOSING_BLOCK}\nVer`, "dict: accept"]],
+  [["Conclusion: c\nWhy: w\nBlockers: none\nChe", "cks: pnpm test\nVerdict: accept"]],
+  [[`${CLOSING_BLOCK}\nVerdict: acc`, "ept"]],
+])("opencode refuses an accept whose labels split across unidentified parts %j", async (parts) => {
+  const error = await runWithEvents(...parts.map((part) => textEvent(part))).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies a complete block inside one unidentified part parses as accept when an earlier
+// part only mentions a label in prose, so the fail-closed rule does not reject what main accepts
+// (issue #509, reviewer probe 2).
+test.each([["Remember that the Verdict: line is required."], ["Checks: will follow below."]])(
+  "opencode accepts a whole unidentified block after prose that mentions a label: %s",
+  async (prose) => {
+    const response = await runWithEvents(textEvent(prose), textEvent(ACCEPTED_BLOCK));
+
+    expect(parseVerdict(response)).toBe("accept");
+    expect(parseReportBlock(response)).toEqual(BLOCK_VALUES);
+  },
+);
