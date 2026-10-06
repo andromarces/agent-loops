@@ -1214,6 +1214,84 @@ test("opencode keeps the joined assistant text on the interleaved-stream error",
   expect(error.message).toContain(`Working on it.Verdict: accept\n${REJECTED_BLOCK}`);
 });
 
+// Usefulness: verifies the error of an interleaved stream has a fixed upper size however long the
+// model text is, keeps the cause on the first line and the tail of the text, and marks the cut, so
+// the envelope and the state file cannot grow without a limit (issue #510).
+test("opencode bounds and marks the joined text on the interleaved-stream error", async () => {
+  const filler = "x".repeat(150_000);
+  const run = (text) =>
+    runWithEvents(
+      textEvent(text, "msg-a"),
+      textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+      textEvent("Verdict: accept", "msg-a"),
+    ).catch((err) => err);
+
+  const small = await run("Working on it.");
+  const large = await run(filler);
+  const larger = await run(filler.repeat(3));
+
+  expect(large.message.split("\n")[0]).toBe(INTERLEAVED);
+  expect(large.message.length).toBeLessThan(10_000);
+  expect(larger.message.length).toBe(large.message.length);
+  expect(large.message.split("\n")[1]).toMatch(/cut/i);
+  expect(large.message.trimEnd().endsWith(REJECTED_BLOCK.trimEnd())).toBe(true);
+  expect(small.message).not.toMatch(/cut/i);
+});
+
+// Usefulness: verifies the cut never leaves a fragment of a secret-named environment value: a cut
+// that lands inside the value would leave a suffix that exact-value redaction cannot match, so the
+// bound must not expose what redaction would have hidden (issue #510).
+test("opencode leaves no secret fragment on a cut interleaved-stream error", async () => {
+  const secret = "s3cr3t-value-0123456789-abcdefghijklmnopqrstuvwxyz";
+  vi.stubEnv("OPENCODE_TEST_TOKEN", secret);
+  try {
+    const after = "Verdict: accept".length + 1 + `${REJECTED_BLOCK}\n`.length;
+    const padding = "x".repeat(3980 - after);
+    const error = await runWithEvents(
+      textEvent(`${"p".repeat(10_000)}${secret}${padding}`, "msg-a"),
+      textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+      textEvent("Verdict: accept", "msg-a"),
+    ).catch((err) => err);
+
+    expect(error.message.split("\n")[1]).toMatch(/cut/i);
+    expect(error.message).not.toContain(secret.slice(-12));
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+// Usefulness: verifies the cut never splits a UTF-16 surrogate pair, so the error text stays
+// well-formed Unicode whichever side of a code point the limit lands on (issue #510).
+test.each(["", "x"])(
+  "opencode cuts the interleaved-stream error on a code point boundary %j",
+  async (trail) => {
+    const error = await runWithEvents(
+      textEvent(`${"😀".repeat(5000)}${trail}`, "msg-a"),
+      textEvent(`${REJECTED_BLOCK}\n`, "msg-b"),
+      textEvent("Verdict: accept", "msg-a"),
+    ).catch((err) => err);
+
+    expect(error.message.split("\n")[1]).toMatch(/cut/i);
+    expect(error.message).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+    );
+  },
+);
+
+// Usefulness: verifies the unidentified-part error keeps the whole joined text, because the issue
+// #510 bound applies to the interleaved stream error only (issue #509 contract).
+test("opencode keeps the whole text on the unidentified-part error", async () => {
+  const text = "x".repeat(20_000);
+  const error = await runWithEvents(
+    textEvent(`${text}\n${CLOSING_BLOCK}\n`),
+    textEvent("Verdict: accept"),
+  ).catch((err) => err);
+
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(error.message).toContain(text);
+  expect(error.message).not.toMatch(/cut/i);
+});
+
 // Usefulness: verifies one block split across A's parts, with another message's block between them,
 // is ambiguous and errors rather than letting either block govern (issue #467).
 test("opencode refuses a block split across parts that another block interrupts", async () => {
