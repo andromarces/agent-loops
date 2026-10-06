@@ -655,18 +655,29 @@ test("two variables with the same value give the main output", () => {
 });
 
 // Usefulness: verifies the setup and the marker choice stay near-linear in the number of unique values,
-// so an environment with many secret-named variables does not slow every redaction (issue #521).
-test("many unique values redact in bounded time", () => {
-  const env = {};
-  const parts = [];
-  for (let i = 0; i < 20_000; i++) {
-    env[`VAR_${i}_TOKEN`] = `value-${i}-synthetic-secret`;
-    if (i < 100) parts.push(`value-${i}-synthetic-secret`);
-  }
-  const start = performance.now();
-  const out = redactEnvSecrets(parts.join(" "), env);
-  expect(performance.now() - start).toBeLessThan(1000);
-  expect(out).not.toContain("synthetic-secret");
+// so an environment with many secret-named variables does not slow every redaction (issue #521). The
+// check compares the run time of N values with 4N values, so a slow runner does not change the verdict:
+// linear growth gives about 4, quadratic growth gives about 16.
+test("the redaction time grows near-linearly with the number of unique values", () => {
+  const run = (count) => {
+    const env = {};
+    for (let i = 0; i < count; i++) {
+      env[`VAR_${i}_TOKEN`] = `value-${i}-synthetic-secret`;
+    }
+    const text = "a short text with value-7-synthetic-secret and no other value";
+    let best = Infinity;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const start = performance.now();
+      const out = redactEnvSecrets(text, env);
+      best = Math.min(best, performance.now() - start);
+      expect(out).toBe("a short text with [redacted:VAR_7_TOKEN] and no other value");
+    }
+    return best;
+  };
+  run(1000);
+  const small = run(5000);
+  const large = run(20_000);
+  expect(large / small).toBeLessThan(8);
 });
 
 // Usefulness: pins the fourth difference from the main output in ADR 0017: a variable whose name holds the
