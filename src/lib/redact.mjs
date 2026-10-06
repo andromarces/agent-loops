@@ -9,22 +9,32 @@ const SECRET_NAME = /token|secret|passw|key|credential|auth/i;
  * Replaces every occurrence of the value of a secret-named environment variable
  * with `[redacted:NAME]`, in its raw form and in its JSON-escaped form, because a
  * serialized error holds the escaped text and a decoder recovers the value from it.
+ * One pass with the longest value first, so a secret that is a prefix of another secret
+ * never leaves the suffix of the longer one, and a marker is never rescanned.
  * Exact-value match only: a secret that the command derives, encodes, or reads from
  * a file is not found.
  * @param {string} text
  * @param {NodeJS.ProcessEnv} env
  */
 export function redactEnvSecrets(text, env = process.env) {
-  let out = text;
+  const markers = new Map();
   for (const [name, value] of Object.entries(env)) {
     if (SECRET_NAME.test(name) && typeof value === "string" && value.length >= MIN_SECRET_LENGTH) {
       const marker = `[redacted:${name}]`;
-      out = out.split(value).join(marker);
-      const escaped = JSON.stringify(value).slice(1, -1);
-      if (escaped !== value) {
-        out = out.split(escaped).join(marker);
+      for (const needle of [value, JSON.stringify(value).slice(1, -1)]) {
+        if (!markers.has(needle)) {
+          markers.set(needle, marker);
+        }
       }
     }
   }
-  return out;
+  if (markers.size === 0) {
+    return text;
+  }
+  const needles = [...markers.keys()].sort((a, b) => b.length - a.length);
+  const pattern = new RegExp(
+    needles.map((needle) => needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+    "g",
+  );
+  return text.replace(pattern, (match) => markers.get(match));
 }

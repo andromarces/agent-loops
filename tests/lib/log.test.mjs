@@ -69,3 +69,20 @@ test("logError keeps the full message and redacts env secrets", () => {
     `[agent-loop] error: ${message.replace("s3cr3t-value-123", "[redacted:AGENT_TEST_SECRET]")}`,
   );
 });
+
+// Usefulness: verifies review blocker on #515 — when one secret value is a prefix of another,
+// the longer secret is fully covered in a long error line, so no suffix of it reaches the log.
+test("logError redacts a secret that is a prefix of another secret in full", () => {
+  vi.stubEnv("AGENT_TEST_SECRET_SHORT", "prefix-secret");
+  vi.stubEnv("AGENT_TEST_SECRET_LONG", "prefix-secret-with-suffix");
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  logError(`${"x".repeat(400)} prefix-secret-with-suffix and prefix-secret end`);
+
+  const line = errorSpy.mock.calls.at(-1)[0];
+  expect(line).not.toContain("suffix");
+  expect(line).not.toContain("prefix-secret");
+  expect(line).toContain(
+    "[redacted:AGENT_TEST_SECRET_LONG] and [redacted:AGENT_TEST_SECRET_SHORT] end",
+  );
+});
