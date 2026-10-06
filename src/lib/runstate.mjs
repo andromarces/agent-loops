@@ -767,8 +767,10 @@ function startTimesDiffer(recorded, current) {
 // namespace that cannot be read, reads as alive before the pid probe: the recorded pid
 // belongs to another namespace (a container that shares the runs root), so `pidAlive`
 // cannot say whether that owner runs.
-// known-limit: such a lock is never taken over by a contender of this namespace, so an
-// owner of another namespace that crashed keeps its lock until the file is removed by hand.
+// known-limit: such a lock is never taken over, even when its owner is dead: a crashed
+// owner of another namespace, and a crashed owner of this namespace when the reader
+// cannot read its own PID namespace, keep the lock until a person checks that the owner
+// is gone and removes the lock file (and any `.reap.<digest>` claim beside it).
 async function ownerAlive(owner) {
   const recorded = parseStamp(owner.startTime);
   if (recorded?.kind === "linux-proc" && recorded.namespace !== (await readerPidNamespace())) {
