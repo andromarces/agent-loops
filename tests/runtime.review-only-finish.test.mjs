@@ -41,7 +41,7 @@ function cleanRepoGit(cwd) {
       case "worktree":
         return answer(`worktree ${cwd}\0HEAD ${HEAD}\0\0`);
       default:
-        throw new Error(`unexpected git call: ${args.join(" ")}`);
+        throw new Error(`unexpected git call: ${JSON.stringify(args)}`);
     }
   };
 }
@@ -104,5 +104,18 @@ test("a review-only run accepts a finish after a reviewer report with no verdict
   await expectFinishAcceptedAfterReviewerTurn(
     "a reviewer report with no verdict line",
     "Conclusion: read the code\nWhy: no verdict here\nBlockers: none",
+  );
+});
+
+// Usefulness: acceptance (#522) — a merged-argument call reads differently from the split call in the error.
+test("cleanRepoGit error for a merged-argument call differs from the split call text", async () => {
+  const message = (args) =>
+    cleanRepoGit(tmpdir())("git", args).then(
+      () => undefined,
+      (error) => error.message,
+    );
+  expect(await message(["branch", "--show-current"])).toBeDefined();
+  expect(await message(["branch --show-current"])).not.toBe(
+    await message(["branch", "--show-current"]),
   );
 });

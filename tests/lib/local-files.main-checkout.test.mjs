@@ -45,7 +45,7 @@ function answerGit({ root, top = root, list, common, failing = [], workingDirect
       "rev-parse --git-common-dir": common,
     }[name];
     if (reply === undefined) {
-      throw new Error(`unexpected git call: ${args.join(" ")}`);
+      throw new Error(`unexpected git call: ${JSON.stringify(args)}`);
     }
     if (failing.includes(name)) {
       return { exitCode: 128, stdout: "", stderr: "fatal: simulated failure" };
@@ -265,4 +265,18 @@ test("copies nothing and reports it when Git runs only in the operator's --cwd",
 
   expect(await copyLocalFiles(operator)).toBeNull();
   expect(log).toHaveBeenCalledWith(expect.stringContaining("no main work tree"));
+});
+
+// Usefulness: acceptance (#522) — a merged-argument call reads differently from the split call in the error.
+test("answerGit error for a merged-argument call differs from the split call text", async () => {
+  answerGit({ root: tmpdir(), list: "", common: "" });
+  const message = (args) =>
+    execa("git", args).then(
+      () => undefined,
+      (error) => error.message,
+    );
+  expect(await message(["branch", "--show-current"])).toBeDefined();
+  expect(await message(["branch --show-current"])).not.toBe(
+    await message(["branch", "--show-current"]),
+  );
 });
