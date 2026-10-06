@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
 import { workerPrompt } from "../../src/prompts/worker.mjs";
 

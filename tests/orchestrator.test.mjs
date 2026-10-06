@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { expect, test, vi } from "vite-plus/test";
 import { decide, OrchestratorError } from "../src/orchestrator.mjs";
 
 // Helper to create a fake agent

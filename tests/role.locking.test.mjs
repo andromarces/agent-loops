@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the test that switches it on (see `cleanRepoGit`
 // below); every other test reaches the real `execa`.

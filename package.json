@@ -28,28 +28,21 @@
   },
   "scripts": {
     "agent-loop": "node ./src/cli.mjs",
-    "fmt": "oxfmt",
-    "fmt:check": "oxfmt --check",
-    "lint": "oxlint",
-    "test": "vitest run",
-    "prepare": "node .husky/install.mjs",
-    "test:watch": "vitest"
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "lint": "vp lint",
+    "test": "vp test run",
+    "prepare": "node .vite-hooks/install.mjs",
+    "test:watch": "vp test watch"
   },
   "dependencies": {
     "execa": "^10.0.1"
   },
   "devDependencies": {
-    "husky": "^9.1.7",
-    "lint-staged": "^17.5.1",
-    "oxfmt": "^0.71.0",
-    "oxlint": "^1.85.0",
-    "vitest": "^5.0.1"
-  },
-  "lint-staged": {
-    "*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}": "oxfmt"
+    "vite-plus": "1.0.0"
   },
   "engines": {
-    "node": ">=22"
+    "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
   },
   "packageManager": "pnpm@12.9.1"
 }

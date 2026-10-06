@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, vi } from "vitest";
+import { expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `withContinueRepo`); every other test, and every other command, reaches the real `execa`.

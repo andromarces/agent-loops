@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 import { parseSettings, validateLocator } from "../../src/install/settings.mjs";
 
 // Usefulness: verifies a settings root that is not a JSON object is refused with its path; no other test reaches this error path.

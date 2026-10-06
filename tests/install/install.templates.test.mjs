@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test } from "vite-plus/test";
 import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";
 import {
   PACKAGE_ROOT,

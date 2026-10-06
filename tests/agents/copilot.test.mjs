@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { expect, test, vi } from "vite-plus/test";
 import { runCopilot } from "../../src/agents/copilot.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";

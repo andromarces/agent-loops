@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";

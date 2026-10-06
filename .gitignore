@@ -1,5 +1,5 @@
 # Tool-local artifacts
-.husky/_/
+.vite-hooks/_/
 .ruff_cache/
 
 # Local environment and secrets

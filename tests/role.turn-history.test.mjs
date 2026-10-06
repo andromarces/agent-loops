@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test } from "vite-plus/test";
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
 import {

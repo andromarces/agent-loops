@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 import { isEntryPoint } from "../../src/lib/entrypoint.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 

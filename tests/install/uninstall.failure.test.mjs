@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main as cliMain } from "../../src/cli.mjs";
 import { removeDirQuiet } from "../../src/install/fsutil.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";

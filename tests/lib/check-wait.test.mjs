@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
 
 // A scripted `gh` for the required-check read. Each entry is `{ status, checks,

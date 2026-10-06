@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test } from "vite-plus/test";
 import { readStatesForSession, statePaths, writeSessionEntry } from "../../src/lib/runstate.mjs";
 import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mjs";
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";

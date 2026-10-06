@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { exec } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";

@@ -1,7 +1,7 @@
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { sha256 } from "../src/lib/hash.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";

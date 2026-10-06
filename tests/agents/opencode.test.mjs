@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { logDebug, logInfo } from "../../src/lib/log.mjs";

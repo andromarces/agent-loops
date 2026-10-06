@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see `useCleanRepo`
 // and `cleanRepoGit` in runtime-helpers.mjs), so no test here starts a `git`
