@@ -82,13 +82,19 @@ function replaceRuns(text, runs, markerOf) {
  * The result holds no complete value in either form. A second call on the result returns it
  * unchanged. With `shrink`, every marker is `[*]`, so the result is never longer than `text`.
  * Two variables with one value share one match, named for the first variable in the environment.
- * Compared with the replacement of one value after the other, the result is equal for text
- * in which no occurrence overlaps another and the earlier result holds no complete value. It
- * differs in four cases, and no complete value stays in either result in the last two:
- * the earlier result holds a complete value, or a piece of an overlapping occurrence; overlapping
- * occurrences that the earlier result masks fully, as a value `abcabcabc` in the text `abc`
- * repeated six times, give one marker for the merged run; and a variable whose name holds the
- * value of another variable gets `[*]`, where the earlier result nested a marker in the marker.
+ *
+ * Guarantee: no complete value survives in the result, raw or escaped. Every occurrence of a
+ * value that the input holds, and every occurrence that a round forms from a marker and the text
+ * next to it, is replaced in full, so no part of an occurrence stays. Two exceptions: the escape
+ * backslash that the raw match leaves for an escaped form that holds the raw form, and text
+ * that holds only a piece of a value, which stays as it is.
+ *
+ * Parity with the earlier replacement of one value after the other, tested for one
+ * secret-named variable: the result is byte-identical when the occurrences of its value, raw and
+ * escaped, do not overlap, and the earlier result holds no complete value, in a marker or across
+ * a marker and the text next to it. With several values, a value that occurs in marker text,
+ * or an occurrence that overlaps another, the result can differ from the earlier result. The
+ * differences are not a closed list. The tests pin examples.
  *
  * Exact-value match only: a secret that the command derives, encodes, or reads from
  * a file is not found. A later change of the result, such as a cut, removal of control

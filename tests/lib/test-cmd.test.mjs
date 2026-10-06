@@ -656,17 +656,18 @@ test("two variables with the same value give the main output", () => {
 
 // Usefulness: verifies the setup and the marker choice stay near-linear in the number of unique values,
 // so an environment with many secret-named variables does not slow every redaction (issue #521). The
-// check compares the run time of N values with 4N values, so a slow runner does not change the verdict:
-// linear growth gives about 4, quadratic growth gives about 16.
+// check compares the best run time of 2,500 values with that of 40,000 values on a short text, so a slow
+// runner does not change the verdict: the size ratio is 16, linear growth gives about 16 (measured 15 to
+// 17), and quadratic growth gives about 256 (measured 160 to 220). The bound of 64 sits between them.
 test("the redaction time grows near-linearly with the number of unique values", () => {
-  const run = (count) => {
+  const run = (count, attempts) => {
     const env = {};
     for (let i = 0; i < count; i++) {
       env[`VAR_${i}_TOKEN`] = `value-${i}-synthetic-secret`;
     }
     const text = "a short text with value-7-synthetic-secret and no other value";
     let best = Infinity;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
       const start = performance.now();
       const out = redactEnvSecrets(text, env);
       best = Math.min(best, performance.now() - start);
@@ -674,10 +675,10 @@ test("the redaction time grows near-linearly with the number of unique values", 
     }
     return best;
   };
-  run(1000);
-  const small = run(5000);
-  const large = run(20_000);
-  expect(large / small).toBeLessThan(8);
+  run(1000, 2);
+  const small = run(2500, 5);
+  const large = run(40_000, 3);
+  expect(large / small).toBeLessThan(64);
 });
 
 // Usefulness: pins the fourth difference from the main output in ADR 0017: a variable whose name holds the
@@ -690,6 +691,21 @@ test("a variable name that holds another value gives [*] where main nests a mark
   expect(onMain).toBe("a [redacted:LONG_[redacted:SHORT_KEY]_TOKEN] b");
   const out = redactEnvSecrets(text, env);
   expect(out).toBe("a [*] b");
+  for (const form of formsOf(env)) {
+    expect(onMain).not.toContain(form);
+    expect(out).not.toContain(form);
+  }
+});
+
+// Usefulness: pins one more example of the difference that ADR 0017 states: the value of one variable
+// occurs in the marker of another. Main nests a marker in the marker, head prints `[*]`, and no value
+// stays in either output (issue #521).
+test("a value that occurs in the marker of another variable gives [*] where main nests a marker", () => {
+  const env = { A_TOKEN: "synthetic-aaa", B_KEY: "redacted:A" };
+  const onMain = redactEnvSecretsOnMain("synthetic-aaa", env);
+  expect(onMain).toBe("[[redacted:B_KEY]_TOKEN]");
+  const out = redactEnvSecrets("synthetic-aaa", env);
+  expect(out).toBe("[*]");
   for (const form of formsOf(env)) {
     expect(onMain).not.toContain(form);
     expect(out).not.toContain(form);
