@@ -11,11 +11,13 @@
 // non-terminal run owned by the hook session. The reader also unions the legacy
 // single-file index at `<root>/sessions/<parent-session>`; init never writes it,
 // and the directory name avoids a file-versus-directory clash at that path.
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 import { sha256 } from "./hash.mjs";
 import { isJsonObject } from "./json.mjs";
 import { logWarn } from "./log.mjs";
@@ -236,7 +238,7 @@ async function acquireLock(
 
   const lockText = await readLockText(lockFile);
   const owner = parseLockOwner(lockText);
-  if (owner && pidAlive(owner.pid)) {
+  if (owner && (await ownerAlive(owner))) {
     throw new Error(
       `${label} is locked by a live process (pid ${owner.pid}, started ${owner.startedAt ?? "unknown"}).`,
     );
@@ -301,11 +303,14 @@ function claimFileFor(rootLockFile, file, staleText) {
 //   STALE_LOCK_GRACE_MS, so a fresh one stays until it has aged.
 // - an unparseable claim with a live marker, a claim whose pid is alive, and a
 //   file that cannot be read: never, while that stays true.
-// known-limit: pidAlive reports a live process for a pid that the OS reused, so
-// a lock or claim of a dead owner stays until that process exits. Reuse never
-// reports a live owner as dead, so it cannot remove a running process's lock or
-// claim; closing it needs the owner's start time, a platform-specific
-// process-table query that this module avoids. A chain of more than two crashed
+// known-limit: a lock or claim records the owner's start time with its pid, and a
+// live pid with a different start time reads as dead (a reused pid). Without a
+// recorded start time (an older version, or one that could not read it), or when
+// the start time of the pid cannot be read now, the pid-only check holds and a
+// reused pid keeps the file until that process exits. The start time has the
+// resolution of `ps -o lstart=` (one second) on POSIX, so a reuse within the
+// second that the owner started reads as the owner. A marker file name carries only
+// a pid, so `hasLiveWriter` stays pid-only. A chain of more than two crashed
 // claims fails closed (MAX_CLAIM_DEPTH). A lock written without a nonce by an
 // older version is matched by content alone, so an older-version owner with the
 // same pid and start time in the same millisecond would be taken for it.
@@ -420,7 +425,7 @@ async function pruneOrphanClaims(lockFile, label) {
         const text = await readLockText(claimFile);
         const owner = parseLockOwner(text);
         const orphaned = owner
-          ? !pidAlive(owner.pid)
+          ? !(await ownerAlive(owner))
           : text !== null && (await ownerless(claimFile));
         if (orphaned) {
           logWarn(`removing orphaned stale-removal claim (dead pid ${owner?.pid ?? "unknown"})`);
@@ -448,6 +453,7 @@ async function createLock(lockFile) {
   const owner = JSON.stringify({
     pid: process.pid,
     startedAt: new Date().toISOString(),
+    startTime: await ownStartTime(),
     nonce: randomUUID(),
   });
   const tempFile = `${lockFile}.${process.pid}.${LOCK_TEMP_TOKEN}.${lockTempCounter++}.tmp`;
@@ -528,6 +534,62 @@ export function pidAlive(pid) {
   } catch (err) {
     return err.code === "EPERM";
   }
+}
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Start time of the process `pid` as an opaque string for equality comparison
+ * (`ps -o lstart=` on POSIX, PowerShell `Process.StartTime` on Windows), or null
+ * when it cannot be read. No native dependency; the query spawns one process.
+ */
+export async function processStartTime(pid) {
+  const [command, args] =
+    process.platform === "win32"
+      ? [
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().ToString('o')`,
+          ],
+        ]
+      : ["ps", ["-o", "lstart=", "-p", String(pid)]];
+  try {
+    const { stdout } = await execFileAsync(command, args, {
+      env: { ...process.env, LC_ALL: "C" },
+      timeout: 10_000,
+      windowsHide: true,
+    });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+let ownStartTimeQuery;
+
+// The start time of this process, read once: the lock content of every acquisition
+// carries it, and the query spawns a process.
+function ownStartTime() {
+  ownStartTimeQuery ??= processStartTime(process.pid).then((time) => time ?? undefined);
+  return ownStartTimeQuery;
+}
+
+// True when the owner of a lock or claim still runs. A live pid whose recorded start
+// time differs from the process now at that pid is a reused pid, so the owner is
+// dead. A content without a start time (an older version, or one that could not read
+// it) and a start time that cannot be read now fall back to the pid-only check.
+async function ownerAlive(owner) {
+  if (!pidAlive(owner.pid)) {
+    return false;
+  }
+  if (typeof owner.startTime !== "string") {
+    return true;
+  }
+  const current = await processStartTime(owner.pid);
+  return current === null || current === owner.startTime;
 }
 
 // Raw lock content, or null when the lock cannot be read.

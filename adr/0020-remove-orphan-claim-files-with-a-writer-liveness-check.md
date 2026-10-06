@@ -69,15 +69,22 @@ running process. It also asks to check a reported PID-reuse window.
    claim that is live, busy, or unreadable is kept, and any failure is swallowed:
    the scan never fails the lock holder. Claim temp files are pruned like lock temp
    files.
-7. **PID reuse.** The OS can give the pid of a dead owner to an unrelated process.
-   `pidAlive` then reports a live owner, so the lock or claim stays until that
-   process exits. This is fail-closed: reuse never reports a running owner as dead,
-   so it cannot remove a running process's lock or claim, and a replacement owner
-   never matches stale content because every acquisition writes a nonce (#363). The
-   marker race that reuse could cause is closed for tokened markers by decision 5,
-   and an older version's marker is never removed. Closing the stuck case needs the
-   owner's start time, a platform-specific process-table query. It is recorded as a
-   `known-limit` in `src/lib/runstate.mjs`.
+7. **PID reuse and owner start time.** The OS can give the pid of a dead owner to an
+   unrelated process, and `pidAlive` then reports a live owner. Each lock and claim
+   therefore records the owner's `startTime` with its pid (issue #498). `ownerAlive`
+   reads a live pid as dead when its recorded `startTime` differs from the start time
+   of the process now at that pid. The read needs no native dependency:
+   `ps -o lstart=` on macOS and Linux, and PowerShell `Process.StartTime` on Windows.
+   The value is an opaque string, compared for equality. Without a recorded
+   `startTime` (a lock of an older version, or an owner that could not read its own),
+   and when the start time of the pid cannot be read now, the pid-only check holds.
+   This stays fail-closed: an unreadable start time never reads a running owner as
+   dead. The replacement owner never matches stale content because every acquisition
+   writes a nonce (#363). The marker name carries only a pid, so `hasLiveWriter` stays
+   pid-only; decision 5 closes the marker race for tokened markers, and an older
+   version's marker is never removed. The remaining limits are in `src/lib/runstate.mjs`
+   as a `known-limit`: the one-second resolution of `lstart`, and a file without a
+   `startTime`.
 
 ## Consequences
 
@@ -88,8 +95,10 @@ running process. It also asks to check a reported PID-reuse window.
     exclusive-create window, or an older version wrote it): at the first
     acquisition after the file is older than the 60 s grace window. A fresh one
     stays until then.
-  - An unparseable claim with a live marker, and a claim whose pid is alive:
-    never, while that holds. A reused pid keeps one until that process exits.
+  - An unparseable claim with a live marker, and a claim whose pid and recorded start
+    time match a running process: never, while that holds. A reused pid with a
+    different start time reads as dead (decision 7). A claim without a start time
+    keeps the pid-only check, so a reused pid keeps it until that process exits.
   - A claim that cannot be read: never, until it can be read.
 - A foreign or corrupt unparseable lock with no live marker is stale after the 60 s
   grace window. A lock that cannot be read stays busy until it can be read.
@@ -98,8 +107,9 @@ running process. It also asks to check a reported PID-reuse window.
 - A running writer of an older version that leaves no marker keeps its unwritten file
   only for the grace window. A stall past it loses the file. This is a known limit
   that upgrading every process removes.
-- Windows and POSIX use the same code: `process.kill(pid, 0)` and file names are the
-  only OS contracts. No native dependency is added.
+- Windows and POSIX use the same code, except the start-time query: `process.kill(pid, 0)`
+  and file names are the shared OS contracts, and the query uses `ps` or PowerShell,
+  which ship with the OS. No native dependency is added.
 - A writer whose temp file an outside process deleted reads as dead. Only this module
   creates and removes those files.
 
@@ -116,9 +126,8 @@ running process. It also asks to check a reported PID-reuse window.
    short limit (104 bytes on macOS) that a long temp directory can exceed, and a
    POSIX socket file is itself an orphan after a crash. The two platforms use
    different endpoint kinds.
-4. **Pid plus process start time**: rejected for now. It closes the PID-reuse stuck
-   case, but needs `ps` and PowerShell queries per platform. It stays the upgrade
-   path if reuse is ever observed in practice.
+4. **Pid alone**: superseded by decision 7 (issue #498). It left a lock or claim of a
+   dead owner stuck while an unrelated process held the reused pid.
 5. **Keep the claim files (the #377 decision)**: rejected. Issue #452 asks for the
    removal, and the writer evidence meets the invariants that blocked it. No ADR
    recorded #377; its reasoning is in PR #445.
@@ -130,9 +139,10 @@ Andro Marces
 ## Links
 
 - [Issue #452](https://github.com/andromarces/agent-loops/issues/452)
+- [Issue #498](https://github.com/andromarces/agent-loops/issues/498): owner start time
 - [Issue #377](https://github.com/andromarces/agent-loops/issues/377), [PR #445](https://github.com/andromarces/agent-loops/pull/445), [Issue #363](https://github.com/andromarces/agent-loops/issues/363), [PR #370](https://github.com/andromarces/agent-loops/pull/370)
-- Implementation: `hasLiveWriter`, `stillStale`, and `pruneOrphanClaims` in
-  `src/lib/runstate.mjs`; tests in `tests/lib/runstate.test.mjs`,
+- Implementation: `hasLiveWriter`, `stillStale`, `pruneOrphanClaims`, `ownerAlive`, and
+  `processStartTime` in `src/lib/runstate.mjs`; tests in `tests/lib/runstate.test.mjs`,
   `tests/lib/runstate.stale-takeover.test.mjs`, and
   `tests/lib/runstate.link-fallback.test.mjs`
 - [ADR Index](README.md)

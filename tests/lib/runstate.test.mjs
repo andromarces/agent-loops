@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import {
+  processStartTime,
   readState,
   readStatesForSession,
   statePaths,
@@ -391,4 +392,77 @@ test("statePaths names the state directory by the cwd SHA-256 prefix", () => {
 // an absent session to undefined.
 test("statePaths rejects a null parentSession", () => {
   expect(() => statePaths({ parentSession: null })).toThrow(/Invalid session id/);
+});
+
+const REUSED_START = "Thu Jan  1 00:00:00 1970";
+
+// Usefulness: verifies the issue #498 acceptance: a lock whose pid is alive but
+// whose recorded start time differs is a reused pid, so it is taken over. Without
+// the start time, a dead owner's lock stays until the unrelated process exits.
+test("withStateLock takes over a lock whose live pid has a different start time", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(
+    lockFile,
+    JSON.stringify({ pid: process.pid, startedAt: "old", startTime: REUSED_START }),
+    "utf8",
+  );
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+});
+
+// Usefulness: verifies a lock whose pid and start time both match a running
+// process stays busy, so the start-time check never removes a live owner's lock.
+test("withStateLock keeps a lock whose live pid has the same start time", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  const startTime = await processStartTime(process.pid);
+  expect(startTime).toEqual(expect.any(String));
+  await writeFile(
+    lockFile,
+    JSON.stringify({ pid: process.pid, startedAt: "old", startTime }),
+    "utf8",
+  );
+  const fn = vi.fn(async () => "ran");
+
+  await expect(withStateLock(lockFile, fn)).rejects.toThrow(/locked by a live process/);
+  expect(fn).not.toHaveBeenCalled();
+});
+
+// Usefulness: verifies a lock of an older version, written without a start time,
+// keeps the pid-only check, so an upgrade never frees a live owner's lock.
+test("withStateLock keeps a lock without a start time while its pid is alive", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(lockFile, JSON.stringify({ pid: process.pid, startedAt: "old" }), "utf8");
+
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
+  );
+});
+
+// Usefulness: verifies a new lock records the owner's start time, so a later
+// contender can tell a reused pid from the owner.
+test("withStateLock records the owner start time in the lock", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+
+  const content = await withStateLock(lockFile, async () => readFile(lockFile, "utf8"));
+
+  expect(JSON.parse(content).startTime).toBe(await processStartTime(process.pid));
+});
+
+// Usefulness: verifies the orphan-claim scan applies the same reuse check, so a
+// claim of a dead owner whose pid was reused is removed (issue #498).
+test("withStateLock removes a claim whose live pid has a different start time", async () => {
+  const dir = await tempDir();
+  const lockFile = join(dir, "state.lock");
+  await writeFile(
+    join(dir, CLAIM_NAME),
+    JSON.stringify({ pid: process.pid, startedAt: "old", nonce: "n", startTime: REUSED_START }),
+    "utf8",
+  );
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  expect(await readdir(dir)).toEqual([]);
 });
