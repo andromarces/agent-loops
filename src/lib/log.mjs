@@ -6,9 +6,6 @@
 // trusted, user-facing note in full, and logError prints an error in full, so a long path
 // never hides the action the message asks for (#515). Every line has secret-named environment
 // values redacted first (ADR 0017), so a log line never echoes a secret that an error text held.
-// known-limit: error lines are unbounded, so the redaction limits of redact.mjs (overlapping or prefix
-// secret values, a secret value inside a variable name) can show text past character 300 that the
-// old cut hid. Upgrade path: redaction hardening.
 import { redactEnvSecrets } from "./redact.mjs";
 
 const MAX_LENGTH = 300;
@@ -31,7 +28,10 @@ export function setLogsToStderr(value) {
 
 function truncate(message) {
   message = redactEnvSecrets(message);
-  return message.length > MAX_LENGTH ? `${message.slice(0, MAX_LENGTH)}...` : message;
+  // The cut and the ellipsis can form a value, so a cut line is redacted again.
+  return message.length > MAX_LENGTH
+    ? redactEnvSecrets(`${message.slice(0, MAX_LENGTH)}...`)
+    : message;
 }
 
 export function logDebug(message) {

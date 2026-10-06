@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, test } from "vite-plus/test";
 import { redactEnvSecrets } from "../../src/lib/redact.mjs";
-import { TAIL_CHARS, runTestCmd } from "../../src/lib/test-cmd.mjs";
+import { TAIL_CHARS, redactCommandText, runTestCmd } from "../../src/lib/test-cmd.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
 
 const dirs = [];
@@ -388,15 +388,34 @@ test("a long repetitive text with a long secret value redacts in bounded time", 
   expect(out).toBe("[redacted:BIG_TOKEN]");
 });
 
-// Reference copy of the redaction before issue #521: one split/join pass per value, raw then escaped.
-function redactInPasses(text, env) {
+// Verbatim copy of `redactEnvSecrets` from origin/main before issue #521 (`git show origin/main:src/lib/redact.mjs`),
+// renamed only. Reference for the parity tests.
+const MAIN_MIN_SECRET_LENGTH = 8;
+const MAIN_SECRET_NAME = /token|secret|passw|key|credential|auth/i;
+
+/**
+ * Replaces every occurrence of the value of a secret-named environment variable
+ * with `[redacted:NAME]`, in its raw form and in its JSON-escaped form, because a
+ * serialized error holds the escaped text and a decoder recovers the value from it.
+ * Exact-value match only: a secret that the command derives, encodes, or reads from
+ * a file is not found.
+ * @param {string} text
+ * @param {NodeJS.ProcessEnv} env
+ */
+function redactEnvSecretsOnMain(text, env = process.env) {
   let out = text;
   for (const [name, value] of Object.entries(env)) {
-    const marker = `[redacted:${name}]`;
-    out = out.split(value).join(marker);
-    const escaped = JSON.stringify(value).slice(1, -1);
-    if (escaped !== value) {
-      out = out.split(escaped).join(marker);
+    if (
+      MAIN_SECRET_NAME.test(name) &&
+      typeof value === "string" &&
+      value.length >= MAIN_MIN_SECRET_LENGTH
+    ) {
+      const marker = `[redacted:${name}]`;
+      out = out.split(value).join(marker);
+      const escaped = JSON.stringify(value).slice(1, -1);
+      if (escaped !== value) {
+        out = out.split(escaped).join(marker);
+      }
     }
   }
   return out;
@@ -438,7 +457,7 @@ test.each([
   ["no match", "nothing here"],
 ])("a single non-overlapping secret keeps the pass-based output: %s", (_label, text) => {
   const env = { A_TOKEN: "synthetic-aaa", B_TOKEN: "other-unused-1" };
-  expect(redactEnvSecrets(text, env)).toBe(redactInPasses(text, env));
+  expect(redactEnvSecrets(text, env)).toBe(redactEnvSecretsOnMain(text, env));
 });
 
 // Usefulness: same parity for a value with brackets and for a value with a quote and a backslash (issue #521).
@@ -447,5 +466,62 @@ test.each([
   ["quote and backslash", 'q"b\\vvvvv', 'x q"b\\vvvvv y and q\\"b\\\\vvvvv z'],
 ])("a single secret with %s keeps the pass-based output", (_label, value, text) => {
   const env = { A_TOKEN: value };
-  expect(redactEnvSecrets(text, env)).toBe(redactInPasses(text, env));
+  expect(redactEnvSecrets(text, env)).toBe(redactEnvSecretsOnMain(text, env));
+});
+
+// Usefulness: verifies the command text path cannot rebuild a value when it removes a control character
+// that sat inside the value (issue #521, ADR 0017): redaction runs again after the cleanup.
+test("the command text does not rebuild a value after control characters are removed", () => {
+  process.env.TEST_CMD_PROBE_TOKEN = "abcdefgh";
+  try {
+    expect(redactCommandText("run abcd\u0001efgh now")).not.toContain("abcdefgh");
+  } finally {
+    delete process.env.TEST_CMD_PROBE_TOKEN;
+  }
+});
+
+// Usefulness: verifies the tail path has the same guarantee as the command text path (issue #521).
+test("the tail does not rebuild a value after control characters are removed", async () => {
+  const cwd = await repo();
+  process.env.TEST_CMD_PROBE_TOKEN = "abcdefgh";
+  try {
+    const run = await runTestCmd({
+      command: node("process.stdout.write('abcd' + String.fromCharCode(1) + 'efgh')"),
+      cwd,
+    });
+    expect(run.tail).not.toContain("abcdefgh");
+  } finally {
+    delete process.env.TEST_CMD_PROBE_TOKEN;
+  }
+});
+
+// Usefulness: verifies a second redaction of an output is a no-op, so a later redaction (a log line cut,
+// a caller cleanup) never grows a bounded text (issue #521).
+test.each([
+  [{ A_TOKENx: 'x]"abcdefg' }, 'x]"abcdefg\\"abcdefg'],
+  [{ A_TOKEN: "synthetic-aaa", C_KEY: "TOKEN][redacted:A_TOKEN" }, "synthetic-aaasynthetic-aaa"],
+  [{ A_TOKEN: "abcabcabc", B_KEY: "abcabcabcXYZW" }, "q abcabcabcXYZW abcabcabcabc"],
+  [{ LONG_SECRETVALUE_TOKEN: "synthetic-aaa-1", SHORT_KEY: "SECRETVALUE" }, "a synthetic-aaa-1 b"],
+])("a second redaction of the output changes nothing: %j", (env, text) => {
+  const once = redactEnvSecrets(text, env);
+  expect(redactEnvSecrets(once, env)).toBe(once);
+});
+
+// Usefulness: verifies the redaction ends and leaves no value when every character that a marker
+// could use appears in some value (issue #521).
+test("the redaction ends when every candidate marker character is part of a value", () => {
+  let every = "";
+  for (let code = 0; code < 0x10000; code++) every += String.fromCharCode(code);
+  const env = { A_TOKENx: 'x]"abcdefg', ALL_CHARS_KEY: every };
+  const out = redactEnvSecrets('x]"abcdefg\\"abcdefg', env);
+  for (const form of formsOf(env)) {
+    expect(out).not.toContain(form);
+  }
+});
+
+// Usefulness: verifies a marker never shows a variable name that holds a value, and no fragment of
+// the escaped form stays after the marker (issue #521).
+test("a boundary hit between a marker and the text after it leaves no fragment", () => {
+  const out = redactEnvSecrets('x]"abcdefg\\"abcdefg', { A_TOKENx: 'x]"abcdefg' });
+  expect(out).not.toContain("abcdefg");
 });

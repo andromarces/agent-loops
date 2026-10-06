@@ -4,14 +4,8 @@
 // ordinary words and ruin the tail.
 const MIN_SECRET_LENGTH = 8;
 const SECRET_NAME = /token|secret|passw|key|credential|auth/i;
-// Marker brackets, tried in order. The first pair is the standard `[redacted:NAME]`.
-const BRACKETS = [
-  ["[", "]"],
-  ["(", ")"],
-  ["<", ">"],
-  ["{", "}"],
-  ["\u00ab", "\u00bb"],
-];
+// Shorter than MIN_SECRET_LENGTH, so it cannot hold a value, and it replaces a match that is longer.
+const SHRINK_MARKER = "[*]";
 
 /** Yields `[start, end)` of every occurrence of `pattern` in `text`, overlapping ones included. Linear. */
 function* occurrences(text, pattern) {
@@ -31,21 +25,55 @@ function* occurrences(text, pattern) {
   }
 }
 
-const holdsSecret = (text, patterns) => patterns.some((p) => !occurrences(text, p).next().done);
+/** Merged hits of every pattern in `text`, sorted by start. A merged hit lists its patterns' names. */
+function findRuns(text, patterns) {
+  const hits = [];
+  for (const { name, text: pattern } of patterns) {
+    for (const [start, end] of occurrences(text, pattern)) {
+      hits.push({ start, end, name });
+    }
+  }
+  hits.sort((a, b) => a.start - b.start);
+  const runs = [];
+  for (const hit of hits) {
+    const last = runs.at(-1);
+    if (last && hit.start < last.end) {
+      last.end = Math.max(last.end, hit.end);
+      last.names.add(hit.name);
+    } else {
+      runs.push({ start: hit.start, end: hit.end, names: new Set([hit.name]) });
+    }
+  }
+  return runs;
+}
+
+function replaceRuns(text, runs, markerOf) {
+  let out = "";
+  let pos = 0;
+  for (const run of runs) {
+    out += text.slice(pos, run.start) + markerOf(run);
+    pos = run.end;
+  }
+  return out + text.slice(pos);
+}
 
 /**
- * Replaces every occurrence of the value of a secret-named environment variable
- * with `[redacted:NAME]`, in its raw form and in its JSON-escaped form, because a
- * serialized error holds the escaped text and a decoder recovers the value from it.
- * All occurrences are found on the original text and merged, so overlapping, crossing,
- * and prefix-sharing values leave no fragment. A merged run gets one marker per variable
- * that it holds. A variable name that holds a secret value gets the marker `[*]`.
- * The result holds no value in either form. If the standard markers next to the text would
- * rebuild a value, the markers use the first bracket pair from `BRACKETS` that no value
- * contains, and a pair of private-use characters after that. Otherwise the output is the
- * original text with each run replaced by its marker.
+ * Replaces every occurrence of the value of a secret-named environment variable,
+ * in its raw form and in its JSON-escaped form, because a serialized error holds the
+ * escaped text and a decoder recovers the value from it.
+ * Step 1 finds every occurrence on the original text, merges the overlapping ones, and
+ * replaces each merged run with `[redacted:NAME]`, one marker for each distinct name in the
+ * run. A name that holds a value is shown as `[*]`. For text in which no occurrence overlaps
+ * another, no marker rebuilds a value, and no value holds a marker, the result equals the
+ * result of replacing the values one after the other.
+ * Step 2 scans the result again, because a marker next to text can form a value. Each match
+ * is replaced by `[*]`, which is shorter than the match, until no match is left.
+ * The loop ends because the text gets strictly shorter in each round.
+ * The result holds no complete value in either form, and a second call on the result
+ * returns it unchanged. The marker characters are printable ASCII.
  * Exact-value match only: a secret that the command derives, encodes, or reads from
- * a file is not found.
+ * a file is not found. A later change of the result, such as a cut, removal of control
+ * characters, or serialization, can form a value again, so a caller redacts after it.
  * @param {string} text
  * @param {NodeJS.ProcessEnv} env
  */
@@ -60,61 +88,23 @@ export function redactEnvSecrets(text, env = process.env) {
       }
     }
   }
-  const hits = [];
-  for (const { name, text: pattern } of patterns) {
-    for (const [start, end] of occurrences(text, pattern)) {
-      hits.push({ start, end, name });
-    }
-  }
-  if (hits.length === 0) {
+  let runs = findRuns(text, patterns);
+  if (runs.length === 0) {
     return text;
   }
-  hits.sort((a, b) => a.start - b.start);
-  const forms = patterns.map((p) => p.text);
-
-  const render = ([open, close]) => {
-    const markers = new Map();
-    const markerFor = (name) => {
-      if (!markers.has(name)) {
-        const named = `${open}redacted:${name}${close}`;
-        markers.set(name, holdsSecret(named, forms) ? `${open}*${close}` : named);
-      }
-      return markers.get(name);
-    };
-    let out = "";
-    let pos = 0;
-    for (let i = 0; i < hits.length;) {
-      let end = hits[i].end;
-      const names = new Set([hits[i].name]);
-      let j = i + 1;
-      for (; j < hits.length && hits[j].start < end; j++) {
-        end = Math.max(end, hits[j].end);
-        names.add(hits[j].name);
-      }
-      out += text.slice(pos, hits[i].start);
-      out += [...new Set([...names].map(markerFor))].join("");
-      pos = end;
-      i = j;
+  const markers = new Map();
+  const markerFor = (name) => {
+    if (!markers.has(name)) {
+      const named = `[redacted:${name}]`;
+      markers.set(name, patterns.some((p) => named.includes(p.text)) ? SHRINK_MARKER : named);
     }
-    return out + text.slice(pos);
+    return markers.get(name);
   };
-
-  const out = render(BRACKETS[0]);
-  if (!holdsSecret(out, forms)) {
-    return out;
+  let out = replaceRuns(text, runs, (run) => [...new Set([...run.names].map(markerFor))].join(""));
+  // known-limit: a round costs one scan per value; text built to rebuild a value after every
+  // round needs a round for each, at most one per 5 characters. Realistic text needs none.
+  for (runs = findRuns(out, patterns); runs.length > 0; runs = findRuns(out, patterns)) {
+    out = replaceRuns(out, runs, () => SHRINK_MARKER);
   }
-  // A bracket character that no value holds cannot join a value across a marker boundary.
-  const unused = (c) => !forms.some((f) => f.includes(c));
-  const pair =
-    BRACKETS.find(([open, close]) => unused(open) && unused(close)) ?? privateUsePair(unused);
-  return render(pair);
-}
-
-function privateUsePair(unused) {
-  const free = [];
-  for (let code = 0xe000; free.length < 2; code++) {
-    const c = String.fromCharCode(code);
-    if (unused(c)) free.push(c);
-  }
-  return free;
+  return out;
 }
