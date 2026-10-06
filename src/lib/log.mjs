@@ -28,9 +28,10 @@ export function setLogsToStderr(value) {
 
 function truncate(message) {
   message = redactEnvSecrets(message);
-  // The cut and the ellipsis can form a value, so a cut line is redacted again.
+  // The cut and the ellipsis can form a value, so a cut line is redacted again. With `shrink` the
+  // line stays within the bound.
   return message.length > MAX_LENGTH
-    ? redactEnvSecrets(`${message.slice(0, MAX_LENGTH)}...`)
+    ? redactEnvSecrets(`${message.slice(0, MAX_LENGTH)}...`, undefined, { shrink: true })
     : message;
 }
 

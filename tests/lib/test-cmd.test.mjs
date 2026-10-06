@@ -362,11 +362,13 @@ test("a self-overlapping secret occurrence leaves no fragment", () => {
   expect(out).toBe("x [redacted:SELF_TOKEN] y");
 });
 
-// Usefulness: verifies the raw and the JSON-escaped forms of one value overlap without a fragment (issue #521).
-test("raw and JSON-escaped forms that overlap leave no fragment", () => {
+// Usefulness: verifies a value that starts with a quote is redacted in its escaped form with the
+// main output: the raw match leaves the escape backslash, and no value stays (issue #521).
+test("a value that starts with a quote leaves only the escape backslash", () => {
   const value = '"abcdefg';
   const escaped = JSON.stringify(value).slice(1, -1);
-  expect(redactEnvSecrets(`x ${escaped} y`, { RAW_TOKEN: value })).toBe("x [redacted:RAW_TOKEN] y");
+  const out = redactEnvSecrets(`x ${escaped} y`, { RAW_TOKEN: value });
+  expect(out).toBe("x \\[redacted:RAW_TOKEN] y");
 });
 
 // Usefulness: verifies a marker never holds a secret value, even when a variable name does (issue #521, ADR 0017).
@@ -524,4 +526,110 @@ test("the redaction ends when every candidate marker character is part of a valu
 test("a boundary hit between a marker and the text after it leaves no fragment", () => {
   const out = redactEnvSecrets('x]"abcdefg\\"abcdefg', { A_TOKENx: 'x]"abcdefg' });
   expect(out).not.toContain("abcdefg");
+});
+
+// Usefulness: verifies the redaction of an adversarial cascade stays near-linear (issue #521). Each
+// round of a naive rescan removes one layer of this text, so many rounds would cost a quadratic scan.
+test("an adversarial cascade input redacts in bounded time and leaves no value", () => {
+  const value = "ab[*]cdef";
+  const env = { "X_ab[*]cdef_KEY": value };
+  const layers = 20_000;
+  const text = `${"ab".repeat(layers)}[*]${"cdef".repeat(layers)}`;
+  const start = performance.now();
+  const out = redactEnvSecrets(text, env);
+  expect(performance.now() - start).toBeLessThan(1000);
+  expect(out).not.toContain(value);
+  expect(redactEnvSecrets(out, env)).toBe(out);
+});
+
+// Usefulness: verifies the repeated cut redaction of a log line never grows the line past the bound
+// of 300 characters plus the cut marker (issue #521).
+test("a redaction after the log cut keeps the line within the bound", () => {
+  const env = { AGENT_TEST_SECRET: "abcdefgh..." };
+  const cut = `${"x".repeat(292)}abcdefgh${"y".repeat(20)}`.slice(0, 300) + "...";
+  const out = redactEnvSecrets(cut, env, { shrink: true });
+  expect(out.length).toBeLessThanOrEqual(cut.length);
+  expect(out).not.toContain("abcdefgh...");
+});
+
+// Usefulness: verifies a single secret that overlaps nothing gives the output of the main algorithm over a
+// systematic set of boundary inputs, so the one exception of ADR 0017 stays the only difference (issue #521).
+test("a single secret keeps the main output over systematic boundary inputs", () => {
+  const values = [
+    "abcdefgh",
+    "abcdefgh]",
+    "[abcdefgh",
+    "abcd:efgh",
+    'a"bcdefgh',
+    "a\\bcdefgh",
+    '"abcdefgh',
+    "\\abcdefgh",
+    "abcdefgh\\",
+    'abcdefgh"',
+    'x]"abcdefg',
+    "ab[cd]efgh",
+  ];
+  const names = ["A_TOKEN", "A_TOKENx", "xA_TOKEN", "A_TOKENh", "A_KEY]", "A_TOKEN:"];
+  let compared = 0;
+  for (const value of values) {
+    const escaped = JSON.stringify(value).slice(1, -1);
+    for (const name of names) {
+      const env = { [name]: value };
+      const marker = `[redacted:${name}]`;
+      const pieces = [
+        "",
+        " ",
+        "[",
+        "]",
+        ":",
+        "x",
+        marker,
+        "[redacted:",
+        value,
+        escaped,
+        `\\"abcdefg`,
+      ];
+      for (const left of pieces) {
+        for (const right of pieces) {
+          for (const form of [value, escaped]) {
+            const text = `${left}${form}${right}`;
+            const expected = redactEnvSecretsOnMain(text, env);
+            if ([value, escaped].some((f) => expected.includes(f))) continue;
+            // An escaped form that holds the raw form always holds a raw hit, so it adds no span.
+            const spanForms = escaped.includes(value) ? [value] : [value, escaped];
+            if (hasOverlappingOccurrences(text, spanForms)) continue;
+            compared++;
+            expect(redactEnvSecrets(text, env), JSON.stringify({ name, value, text })).toBe(
+              expected,
+            );
+          }
+        }
+      }
+    }
+  }
+  expect(compared).toBeGreaterThan(1000);
+});
+
+function hasOverlappingOccurrences(text, forms) {
+  const spans = [];
+  for (const form of new Set(forms)) {
+    for (let i = text.indexOf(form); i >= 0; i = text.indexOf(form, i + 1)) {
+      spans.push([i, i + form.length]);
+    }
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+  return spans.some((span, i) => i > 0 && span[0] < spans[i - 1][1]);
+}
+
+// Usefulness: verifies the stated exceptions of ADR 0017: where the main output holds a complete value
+// or a piece of a self-overlapping occurrence, the new output holds none (issue #521).
+test("the only differences from the main output are where the main output leaks", () => {
+  const rebuilt = { A_TOKENx: "x]abcdefg" };
+  const boundary = "x]abcdefgabcdefg";
+  expect(redactEnvSecretsOnMain(boundary, rebuilt)).toContain("x]abcdefg");
+  expect(redactEnvSecrets(boundary, rebuilt)).not.toContain("x]abcdefg");
+
+  const selfOverlap = { SELF_TOKEN: "abcabcabc" };
+  expect(redactEnvSecretsOnMain("abcabcabcabc", selfOverlap)).toContain("abc");
+  expect(redactEnvSecrets("abcabcabcabc", selfOverlap)).toBe("[redacted:SELF_TOKEN]");
 });
