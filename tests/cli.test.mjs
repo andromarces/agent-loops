@@ -686,8 +686,8 @@ test("successful finish run writes transcript with exitCode 0", async () => {
     const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
     expect(transcript.exitCode).toBe(0);
     expect(transcript.error).toBeNull();
-    // One orchestrator CLI call, then its validated finish action.
-    expect(transcript.events.map((event) => event.type)).toEqual(["invocation", "action"]);
+    // One orchestrator CLI call, its validated finish action, then the gate record (#393).
+    expect(transcript.events.map((event) => event.type)).toEqual(["invocation", "action", "gate"]);
   } finally {
     process.exitCode = origExitCode;
     await removePath(repo);
@@ -784,7 +784,7 @@ test("a mode-free run writes the origin/main transcript shape", async () => {
   expect(Object.keys(modeFree.options).sort()).toEqual(
     ["maxSteps", "pr", "requireAccept", "requireCi", "timeout"].sort(),
   );
-  expect(modeFree.events.map((event) => event.type)).toEqual(["invocation", "action"]);
+  expect(modeFree.events.map((event) => event.type)).toEqual(["invocation", "action", "gate"]);
 
   // A run that names a mode records it, and its other fields are unchanged.
   const withMode = await runOnce(["--mode", "review-first"]);
@@ -1250,6 +1250,294 @@ test("--continue-from resumes the earlier role sessions with a new budget", asyn
     expect(transcript.options.maxSteps).toBe(3);
     expect(transcript.roles.worker.sessionId).toBe("claude-session");
   });
+});
+
+// Usefulness: verifies the transcript carries the gate state across --continue-from through the
+// CLI (#393): a reviewer accept recorded by the first run satisfies --require-accept in the
+// continued run on the unchanged tree, so the continued run dispatches no reviewer.
+test("--continue-from restores the recorded reviewer accept on an unchanged tree", async () => {
+  const repo = await createTempRepo();
+  // Outside the work tree: a transcript inside it is an untracked file that changes the tree.
+  const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
+  const transcriptPath = join(transcriptDir, "run.json");
+  const origExitCode = process.exitCode;
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const accept = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
+    const reviewerCalls = [];
+    const agents = (orchReplies, reviewerReply) => {
+      let call = 0;
+      return {
+        codex: { run: async () => orchReplies[call++] },
+        claude: { run: async () => "worker ok" },
+        agy: {
+          run: async () => {
+            reviewerCalls.push(reviewerReply);
+            return reviewerReply;
+          },
+        },
+      };
+    };
+    const args = [
+      ...CONTINUE_BASE,
+      "--cwd",
+      repo,
+      "--require-accept",
+      "--transcript",
+      transcriptPath,
+    ];
+    await main(
+      args,
+      agents(
+        [
+          JSON.stringify({ action: "run_worker", prompt: "w" }),
+          JSON.stringify({ action: "run_reviewer", prompt: "r" }),
+          FINISH,
+        ],
+        accept,
+      ),
+    );
+    expect(process.exitCode).toBe(0);
+    expect(reviewerCalls.length).toBe(1);
+
+    await main([...args, "--continue-from", transcriptPath], agents([FINISH], accept));
+    expect(process.exitCode).toBe(0);
+    expect(reviewerCalls.length).toBe(1);
+  } finally {
+    process.exitCode = origExitCode;
+    logSpy.mockRestore();
+    await removePath(repo);
+    await removePath(transcriptDir);
+  }
+});
+
+// Usefulness: verifies an edited transcript cannot bypass --require-accept (#393 review): a
+// forged `gate` record that claims an accept is ignored, because the restore reads only the
+// reviewer and worker result events, and the last reviewer turn here rejected.
+test("--continue-from ignores a forged gate record that claims an accept", async () => {
+  const repo = await createTempRepo();
+  const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
+  const transcriptPath = join(transcriptDir, "run.json");
+  const origExitCode = process.exitCode;
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const reject = "Conclusion: no.\nWhy: no.\nBlockers: none.\nChecks: t\nVerdict: reject";
+    const accept = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
+    const reviewerReplies = [reject, accept];
+    let reviewerCalls = 0;
+    const agents = (orchReplies) => {
+      let call = 0;
+      return {
+        codex: { run: async () => orchReplies[call++] },
+        claude: { run: async () => "worker ok" },
+        agy: { run: async () => reviewerReplies[reviewerCalls++] },
+      };
+    };
+    const args = [
+      ...CONTINUE_BASE,
+      "--cwd",
+      repo,
+      "--require-accept",
+      "--transcript",
+      transcriptPath,
+    ];
+    await main(
+      args,
+      agents([
+        JSON.stringify({ action: "run_worker", prompt: "w" }),
+        JSON.stringify({ action: "run_reviewer", prompt: "r" }),
+        FINISH,
+      ]),
+    );
+    expect(process.exitCode).toBe(1);
+
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    const reviewed = transcript.events.findLast(
+      (event) => event.type === "result" && event.role === "reviewer",
+    ).result.reviewed;
+    transcript.gate = {
+      workerRan: true,
+      reviewerRan: true,
+      reviewerTurnDispatched: true,
+      acceptedSinceWorker: true,
+      lastReviewed: reviewed,
+    };
+    await writeFile(transcriptPath, JSON.stringify(transcript));
+
+    await main(
+      [...args, "--continue-from", transcriptPath],
+      agents([FINISH, JSON.stringify({ action: "run_reviewer", prompt: "r" }), FINISH]),
+    );
+    expect(process.exitCode).toBe(0);
+    expect(reviewerCalls).toBe(2);
+  } finally {
+    process.exitCode = origExitCode;
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    await removePath(repo);
+    await removePath(transcriptDir);
+  }
+});
+
+const GATE_ACCEPT = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
+const GATE_REJECT = "Conclusion: no.\nWhy: no.\nBlockers: none.\nChecks: t\nVerdict: reject";
+const RUN_WORKER = JSON.stringify({ action: "run_worker", prompt: "w" });
+const RUN_REVIEWER = JSON.stringify({ action: "run_reviewer", prompt: "r" });
+
+// Runs a --require-accept headless run whose reviewer replies come from `reviewerReplies`,
+// lets `tamper(transcript)` edit the written transcript, then continues it with a finish that
+// the gate refuses unless it restored an accept. Returns the reviewer calls of the continuation
+// and the exit code. The transcript sits outside the work tree, so the tree stays unchanged.
+async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
+  const repo = await createTempRepo();
+  const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
+  const transcriptPath = join(transcriptDir, "run.json");
+  const origExitCode = process.exitCode;
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    let reviewerCalls = 0;
+    const agents = (orchReplies) => {
+      let call = 0;
+      return {
+        codex: { run: async () => orchReplies[call++] },
+        claude: { run: async () => "worker ok" },
+        agy: { run: async () => reviewerReplies[reviewerCalls++] ?? GATE_ACCEPT },
+      };
+    };
+    const args = [
+      ...CONTINUE_BASE,
+      "--cwd",
+      repo,
+      "--require-accept",
+      "--transcript",
+      transcriptPath,
+    ];
+    await main(args, agents(firstOrch));
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    tamper(transcript);
+    await writeFile(transcriptPath, JSON.stringify(transcript));
+    const before = reviewerCalls;
+    await main(
+      [...args, "--continue-from", transcriptPath],
+      agents([FINISH, RUN_REVIEWER, FINISH]),
+    );
+    return { exitCode: process.exitCode, reviewerCalls: reviewerCalls - before };
+  } finally {
+    process.exitCode = origExitCode;
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    await removePath(repo);
+    await removePath(transcriptDir);
+  }
+}
+
+const ACCEPTED_RUN = [RUN_WORKER, RUN_REVIEWER, FINISH];
+
+// Usefulness: verifies an incomplete later turn cancels the restore (#393 review): a worker turn
+// that started after the accept and never returned a result (a canceled or failed turn) can have
+// changed the tree, so the continuation needs a new reviewer turn.
+test("--continue-from resets when a worker invocation follows the accepted review", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterEdit({
+    firstOrch: ACCEPTED_RUN,
+    reviewerReplies: [GATE_ACCEPT],
+    tamper: (transcript) => {
+      const gate = transcript.events.pop();
+      transcript.events.push({ type: "invocation", role: "worker", status: "error" }, gate);
+    },
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
+});
+
+// Usefulness: verifies a transcript whose later reviewer result was deleted does not restore the
+// earlier accept (#393 review): the recorded result count no longer matches the events.
+test("--continue-from resets when a result event was deleted", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterEdit({
+    firstOrch: [RUN_WORKER, RUN_REVIEWER, RUN_REVIEWER, FINISH, FINISH],
+    reviewerReplies: [GATE_ACCEPT, GATE_REJECT],
+    tamper: (transcript) => {
+      const last = transcript.events.findLastIndex((event) => event.type === "result");
+      transcript.events.splice(last, 1);
+    },
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
+});
+
+// Usefulness: verifies an earlier result event with an unknown role resets (#393 review). The
+// replay accepts only `worker` and `reviewer` result events, so the edit cannot hide the worker
+// turn that makes a reviewer reject count as a review of work.
+test("--continue-from resets when an earlier result event has a malformed role", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterEdit({
+    firstOrch: [RUN_WORKER, RUN_REVIEWER, FINISH, FINISH],
+    reviewerReplies: [GATE_REJECT],
+    tamper: (transcript) => {
+      transcript.events.find((event) => event.type === "result" && event.role === "worker").role =
+        "wrk";
+    },
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
+});
+
+// Usefulness: verifies reordered reviewer results cannot let an obsolete accept replace the
+// latest rejection (#393 review): the replay in file order ends on the rewritten accept, which
+// differs from the state the run recorded, so the gate resets.
+test("--continue-from resets when reviewer results were reordered", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterEdit({
+    firstOrch: [RUN_WORKER, RUN_REVIEWER, RUN_REVIEWER, FINISH, FINISH],
+    reviewerReplies: [GATE_ACCEPT, GATE_REJECT],
+    tamper: (transcript) => {
+      const at = transcript.events.flatMap((event, i) =>
+        event.type === "result" && event.role === "reviewer" ? [i] : [],
+      );
+      const [a, b] = at;
+      [transcript.events[a], transcript.events[b]] = [transcript.events[b], transcript.events[a]];
+    },
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
+});
+
+// Usefulness: verifies a transcript with no gate record resets, as every transcript did before
+// the restore existed (#393 review), even when its events end on a reviewer accept.
+test("--continue-from resets when the transcript has no gate record", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterEdit({
+    firstOrch: ACCEPTED_RUN,
+    reviewerReplies: [GATE_ACCEPT],
+    tamper: (transcript) => {
+      transcript.events = transcript.events.filter((event) => event.type !== "gate");
+    },
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
+});
+
+// Usefulness: verifies a malformed value in the events the restore reads resets instead of
+// aborting the run (#393 review): a null reviewer response and a head that is not a string.
+test("--continue-from resets, and does not abort, on a malformed result event", async () => {
+  for (const edit of [
+    (result) => {
+      result.response = null;
+    },
+    (result) => {
+      result.reviewed.head = { not: "a head" };
+    },
+  ]) {
+    const { exitCode, reviewerCalls } = await continueAfterEdit({
+      firstOrch: ACCEPTED_RUN,
+      reviewerReplies: [GATE_ACCEPT],
+      tamper: (transcript) => {
+        edit(
+          transcript.events.findLast((e) => e.type === "result" && e.role === "reviewer").result,
+        );
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(reviewerCalls).toBe(1);
+  }
 });
 
 // Usefulness: verifies a changed role kind or model is refused before any turn

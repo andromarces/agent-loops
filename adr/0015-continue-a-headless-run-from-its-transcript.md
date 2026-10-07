@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0023: Restore the headless gate state on a continued run](0023-restore-the-headless-gate-state-on-a-continued-run.md). ADR 0023 restates the decisions of this ADR that still hold and replaces the reset of the gate state (decision 3) with a restore on an unchanged work tree.
 
 ## Date
 
@@ -79,4 +81,5 @@ Andro Marces
   and `initialPrompt`, and `--continue-from` in `src/cli.mjs`; tests in
   `tests/lib/continuation.test.mjs`, `tests/cli.test.mjs`, and
   `tests/runtime.test.mjs`; documented in `README.md`
+- Superseded by [ADR 0023: Restore the headless gate state on a continued run](0023-restore-the-headless-gate-state-on-a-continued-run.md)
 - [ADR Index](README.md)

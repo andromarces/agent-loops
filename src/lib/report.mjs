@@ -56,7 +56,7 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // no `\d`, so it does not flag. The cost is not only a reporting loss: a null
 // block has no Checks line, so the `--require-accept` gate also refuses.
 // `acceptGateReason` in src/role.mjs returns "the accepted review has no Checks
-// line", and `isAcceptedReview` in src/runtime.mjs returns false. Both
+// line", and `isAcceptedReview` in this file returns false. Both
 // directions fail closed, but the report loses its text to `raw`, and the
 // `acceptGateReason` refusal names the wrong cause.
 //
@@ -224,4 +224,11 @@ function lastLabeled(lines, label) {
     }
   }
   return found;
+}
+
+// An accept counts only with a Checks line in the closing block, matching the
+// parent rule the prompt states (#217) and the interactive --require-accept gate
+// (issue #218). An accept without a Checks line is treated as not accepted.
+export function isAcceptedReview(response) {
+  return parseVerdict(response) === "accept" && Boolean(parseReportBlock(response)?.checks);
 }

@@ -25,7 +25,12 @@ import {
   reviewerWorkspaceWriteError,
   testCmdError,
 } from "./lib/args.mjs";
-import { carryEarlierEvents, readContinuation, restoreSessions } from "./lib/continuation.mjs";
+import {
+  carryEarlierEvents,
+  gateFromTranscript,
+  readContinuation,
+  restoreSessions,
+} from "./lib/continuation.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { readProp, redactedText } from "./lib/error-message.mjs";
 import {
@@ -414,8 +419,12 @@ Options:
                                 refused before any turn. An omitted model or effort matches only
                                 an omitted one, and a change of a CLI's own default model between
                                 the two runs is not detected. The
-                                completion gate is reset, not restored: no reviewer accept carries
-                                over, so a finish after work needs a reviewer turn in this run. The
+                                completion gate is restored only when the work tree is the state
+                                the earlier run's last reviewer turn reviewed, read from the
+                                transcript's events and must equal the gate event that ends it. Otherwise it is reset: no reviewer
+                                accept carries over, so a finish after work needs a reviewer turn in
+                                this run. Keep --transcript outside the work tree for the restore
+                                to apply. The
                                 earlier transcript is read once at start, so --transcript can name
                                 the same file, and the transcript write is atomic, so a failed write
                                 keeps the earlier file.
@@ -560,12 +569,14 @@ export async function main(
       sessionId: null,
     };
   }
+  let earlierGate = null;
   // A refused continuation writes no transcript: --transcript may name the
   // --continue-from file, and a refusal must not overwrite the sessions it holds.
   if (options.continueFrom) {
     try {
       const earlier = await readContinuation(options.continueFrom);
       restoreSessions(roles, earlier, options.cwd);
+      earlierGate = gateFromTranscript(earlier);
       // --transcript rewrites its file at exit, so a run that names the file it
       // continues carries the earlier events into the rewrite, then a boundary
       // event that keeps the earlier outcome the rewrite replaces.
@@ -694,12 +705,19 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         reviewerWorkspaceWrite: options.reviewerWorkspaceWrite,
         mode: options.mode,
         continued: Boolean(options.continueFrom),
+        earlierGate,
         copyLocalFiles: options.copyLocalFiles,
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,
         onEvent,
       });
+      // The last event of a run that returned an exit code: its gate state, which a
+      // later --continue-from checks against a replay of the events (#393). A
+      // thrown error leaves none.
+      if (options.transcript) {
+        events.push({ type: "gate", ...result.gate, at: new Date().toISOString() });
+      }
 
       if (result.exitCode === 0) {
         // A recorded unresolved PR-head compare keeps the summary and gains its

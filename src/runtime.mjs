@@ -4,9 +4,9 @@ import { readableErrorText, readProp } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
+import { applyResult, matchingGate } from "./lib/continuation.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
-import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   carryTestRun,
   DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
@@ -270,10 +270,12 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * is itself the reviewer turn, so the headless loop supplies the one condition
  * the interactive path gets for free (#337).
  *
- * With `continued`, the run resumes the sessions of an earlier headless run, and
- * the completion gate state is reset rather than restored: the run counts as
- * work that no reviewer has accepted, so a finish under `requireAccept` needs a
- * reviewer accept in this run (#362).
+ * With `continued`, the run resumes the sessions of an earlier headless run. The
+ * completion gate state is reset unless `earlierGate` (see `gateFromTranscript`)
+ * is valid and the current work tree has the head and digest of its last
+ * reviewer turn (#393). A reset counts the work as unreviewed, so a finish under
+ * `requireAccept` needs a reviewer accept in this run (#362). A restore takes
+ * `lastReviewed` from the current snapshot, never from the record.
  *
  * With `copyLocalFiles` (default true), the run first copies the untracked, ignored
  * local agent and environment files of the main work tree into a linked `cwd`,
@@ -315,6 +317,7 @@ export async function runLoop(options) {
     reviewerWorkspaceWrite = false,
     mode = null,
     continued = false,
+    earlierGate = null,
     copyLocalFiles = true,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
@@ -339,34 +342,44 @@ export async function runLoop(options) {
     // process exits UNRESOLVED_COMPARE_EXIT, so the log names it (#279).
     const marker = detail.unresolvedCompare ? ", unresolved compare recorded" : "";
     logInfo(`agent loop stopped (exit ${exitCode}${marker})`);
-    return { exitCode, ...detail };
+    // The gate state travels with the result, so the CLI can record it in the
+    // transcript for a later `--continue-from` to check against a replay (#393).
+    return {
+      exitCode,
+      ...detail,
+      gate: { workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed },
+    };
   }
 
   let stepsUsed = 0;
   // Completion gate state (#234). The headless loop has no mode: a worker turn
   // marks work mode and needs a later reviewer accept; no worker turn maps to
   // review-only and needs at least one reviewer report.
-  // A continued run resets this state conservatively (#362): the earlier run's
-  // turns are not persisted, so the tree counts as changed and unreviewed. A
-  // reviewer accept on the current state is then what `--require-accept` needs,
-  // and `reviewerRan`, `lastReviewed`, and the review-only turn flag start empty,
-  // so every gate reads only evidence from this run.
-  let workerRan = continued;
-  let reviewerRan = false;
+  // A continued run restores the earlier run's gate state only when it is valid
+  // and the current work tree is the state that run's last reviewer turn
+  // reviewed (#393). The CLI derives `earlierGate` from the result events of the
+  // earlier transcript, never from a stored flag.
+  // Otherwise it resets conservatively (#362): the tree counts as changed and
+  // unreviewed, so a reviewer accept on the current state is what
+  // `--require-accept` needs, and `reviewerRan`, `lastReviewed`, and the
+  // review-only turn flag start empty, so every gate reads only this run.
+  const restoredGate = continued ? await matchingGate(earlierGate, cwd) : null;
+  let workerRan = restoredGate?.workerRan ?? continued;
+  let reviewerRan = restoredGate?.reviewerRan ?? false;
   // A reviewer turn that was dispatched, whatever it returned. `reviewerRan`
   // counts only a turn that ended `ok`, because `--require-accept` reads that
   // one. A `review-only` run needs the turn itself, not a successful one: the
   // interactive path accepts its finish from `active` after any reviewer turn,
   // including one that ended in a handled error, and the summary records what
   // the turn returned (#337).
-  let reviewerTurnDispatched = false;
-  let acceptedSinceWorker = false;
+  let reviewerTurnDispatched = restoredGate?.reviewerTurnDispatched ?? false;
+  let acceptedSinceWorker = restoredGate?.acceptedSinceWorker ?? false;
   let finishRefused = false;
   // The reviewed state the `--require-ci` gate reads: the runtime-owned identity
   // of the last reviewer turn, reset to none by any later turn, so a change made
   // after that review cannot be gated against the older head (#293). It mirrors
   // the interactive `lastResult.reviewed` the role gate reads.
-  let lastReviewed = null;
+  let lastReviewed = restoredGate?.lastReviewed ?? null;
 
   const orchAdapter = {
     async run(state, p, opts) {
@@ -386,6 +399,7 @@ export async function runLoop(options) {
     reviewerWorkspaceWrite,
     mode,
     continued,
+    gateRestored: restoredGate !== null,
     timeout,
     cwd,
     orchestratorKind: orchestrator?.kind ?? null,
@@ -617,18 +631,15 @@ export async function runLoop(options) {
     }
     onEvent({ type: "result", role: roleName, result, stepsUsed });
 
-    lastReviewed = result.reviewed ?? null;
-
-    if (isWorkerDispatch) {
-      workerRan = true;
-      acceptedSinceWorker = false;
-    } else {
-      // Set whatever the turn returned: a turn that ended in a handled error is
-      // still the report a `review-only` finish records.
-      reviewerTurnDispatched = true;
-      reviewerRan = reviewerRan || result.status === "ok";
-      acceptedSinceWorker = result.status === "ok" && isAcceptedReview(result.response);
-    }
+    // Set whatever the turn returned: a reviewer turn that ended in a handled error
+    // is still the report a `review-only` finish records (#337). The replay of a
+    // continued run applies the same transition (#393).
+    ({ workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed } =
+      applyResult(
+        { workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed },
+        roleName,
+        result,
+      ));
     finishRefused = false;
 
     prompt = resultPrompt({ result, stepsUsed, maxSteps });
@@ -734,11 +745,4 @@ async function ciGate({ pr, reviewed, cwd, gh }) {
     },
     noRequiredChecks: false,
   };
-}
-
-// An accept counts only with a Checks line in the closing block, matching the
-// parent rule the prompt states (#217) and the interactive --require-accept gate
-// (issue #218). An accept without a Checks line is treated as not accepted.
-function isAcceptedReview(response) {
-  return parseVerdict(response) === "accept" && Boolean(parseReportBlock(response)?.checks);
 }
