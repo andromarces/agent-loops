@@ -29,9 +29,17 @@ test("untrackedFilesGit error for a merged-argument call differs from the expect
   expect(error.message).not.toBe(`unexpected git call: ${expected.join(" ")}`);
 });
 
-// Usefulness: acceptance (#546) — the dead owner reads as dead and is never a pid of a running process, so a test cannot fail on pid reuse.
-test("deadPid is a valid pid that the production liveness check reads as dead", async () => {
+// Largest pid limit of a supported OS: Linux `pid_max` is at most 2^22. macOS (99999) is lower, and a Windows pid is a multiple of 4.
+const OS_PID_CEILING = 2 ** 22;
+const INT32_MAX = 2 ** 31 - 1;
+
+// Usefulness: acceptance (#546, #557) — the dead owner is a valid pid above every OS pid limit, so a reusable pid of an exited process, `undefined`, or an out-of-range value fails here while `pidAlive` alone reads them as dead.
+test("deadPid is a valid pid that no OS assigns and the production liveness check reads as dead", async () => {
   const pid = await deadPid();
   expect(pid).not.toBe(process.pid);
+  expect(Number.isInteger(pid)).toBe(true);
+  expect(pid).toBeGreaterThan(OS_PID_CEILING);
+  expect(pid).toBeLessThanOrEqual(INT32_MAX);
+  expect(pid % 4).not.toBe(0);
   expect(pidAlive(pid)).toBe(false);
 });
