@@ -19,6 +19,7 @@ vi.mock("execa", async (importOriginal) => {
 
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
+import { gateFromTranscript } from "../src/lib/continuation.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
 import {
@@ -3634,6 +3635,7 @@ test("a continued --require-accept run needs a reviewer accept before finish", a
 test("a continued --require-accept run restores the earlier accept on an unchanged tree", async () => {
   const repo = await createTempRepo();
   try {
+    const events = [];
     const first = await runLoop({
       task: "Task 393",
       cwd: repo,
@@ -3649,6 +3651,7 @@ test("a continued --require-accept run restores the earlier accept on an unchang
         work: scripted(["worked"]),
         rev: scripted([REVIEW_ACCEPT]),
       },
+      onEvent: (event) => events.push(event),
     });
     expect(first.exitCode).toBe(0);
 
@@ -3659,7 +3662,7 @@ test("a continued --require-accept run restores the earlier accept on an unchang
       maxSteps: 5,
       requireAccept: true,
       continued: true,
-      earlierGate: structuredClone(first.gate),
+      earlierGate: gateFromTranscript({ events }),
       roles: gateRoles(),
       agents: {
         orch: scripted([JSON.stringify({ action: "finish", summary: SUMMARY })]),
@@ -3679,6 +3682,7 @@ test("a continued --require-accept run restores the earlier accept on an unchang
 test("a continued --require-accept run resets the gate when the tree changed", async () => {
   const repo = await createTempRepo();
   try {
+    const events = [];
     const first = await runLoop({
       task: "Task 393",
       cwd: repo,
@@ -3694,6 +3698,7 @@ test("a continued --require-accept run resets the gate when the tree changed", a
         work: scripted(["worked"]),
         rev: scripted([REVIEW_ACCEPT]),
       },
+      onEvent: (event) => events.push(event),
     });
     expect(first.exitCode).toBe(0);
     await writeFile(join(repo, "edited-between-runs.txt"), "new\n");
@@ -3705,7 +3710,7 @@ test("a continued --require-accept run resets the gate when the tree changed", a
       maxSteps: 5,
       requireAccept: true,
       continued: true,
-      earlierGate: structuredClone(first.gate),
+      earlierGate: gateFromTranscript({ events }),
       roles: gateRoles(),
       agents: {
         orch: scripted([
@@ -3719,6 +3724,86 @@ test("a continued --require-accept run resets the gate when the tree changed", a
     });
     expect(second.exitCode).toBe(0);
     expect(reviewer.recorded.length).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a gate record whose `clean` is not a boolean never restores (#393 review):
+// the --require-ci gate reads `clean` for truthiness, so a string would pass a gate that needs a
+// clean reviewed tree. The reset makes the finish need a reviewer turn from this run.
+test("a continued run resets when the earlier gate record holds an invalid clean value", async () => {
+  const repo = await createTempRepo();
+  try {
+    const state = reviewedState(await snapshot(repo));
+    const reviewer = scripted([REVIEW_ACCEPT]);
+    const result = await runLoop({
+      task: "PR work: address issue 43 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      continued: true,
+      earlierGate: {
+        workerRan: true,
+        reviewerRan: true,
+        reviewerTurnDispatched: true,
+        acceptedSinceWorker: true,
+        lastReviewed: { ...state, clean: "yes" },
+      },
+      gh: ciGateGh(state.head),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: reviewer,
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(reviewer.recorded.length).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a restored gate takes `clean` from the current work tree, not from the
+// record (#393 review): a record that claims a clean review of a dirty tree must still fail the
+// --require-ci clean-tree check.
+test("a restored gate reads cleanliness from the current tree, not the record", async () => {
+  const repo = await createTempRepo();
+  try {
+    await writeFile(join(repo, "dirty.txt"), "dirty\n");
+    const state = reviewedState(await snapshot(repo));
+    expect(state.clean).toBe(false);
+    const result = await runLoop({
+      task: "PR work: address issue 43 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      continued: true,
+      earlierGate: {
+        workerRan: true,
+        reviewerRan: true,
+        reviewerTurnDispatched: true,
+        acceptedSinceWorker: true,
+        lastReviewed: { ...state, clean: true },
+      },
+      gh: ciGateGh(state.head),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev: scripted([]),
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("the reviewed work tree is not clean");
   } finally {
     await removePath(repo);
   }

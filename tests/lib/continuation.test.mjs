@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import {
   carryEarlierEvents,
+  gateFromTranscript,
   matchingGate,
   readContinuation,
   restoreSessions,
@@ -254,12 +255,78 @@ test("readContinuation keeps the message of an ordinary read failure", async () 
   );
 });
 
-// Usefulness: a hand-edited or old transcript with no usable gate record falls back to the
-// reset instead of throwing, which keeps --continue-from working on a transcript of any version (#393).
+const HEAD = "a".repeat(40);
+const DIGEST = "b".repeat(64);
+const ACCEPT = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
+const REVIEWED = { head: HEAD, digest: DIGEST, clean: true, exact: true };
+
+function resultEvent(role, response, reviewed = REVIEWED, status = "ok") {
+  return { type: "result", role, result: { status, response, ...(reviewed ? { reviewed } : {}) } };
+}
+
+// Usefulness: the gate comes from the result events only (#393 review), so a stored flag cannot
+// bypass --require-accept; an accept needs the Checks line, and a reject derives no accept.
+test("gateFromTranscript derives each flag from the result events", () => {
+  const events = [resultEvent("worker", "done", null), resultEvent("reviewer", ACCEPT)];
+  expect(gateFromTranscript({ events, gate: { acceptedSinceWorker: false } })).toEqual({
+    workerRan: true,
+    reviewerRan: true,
+    reviewerTurnDispatched: true,
+    acceptedSinceWorker: true,
+    lastReviewed: REVIEWED,
+  });
+  const reject = [resultEvent("reviewer", "Verdict: reject")];
+  expect(gateFromTranscript({ events: reject, gate: { acceptedSinceWorker: true } })).toMatchObject(
+    {
+      workerRan: false,
+      acceptedSinceWorker: false,
+    },
+  );
+  expect(gateFromTranscript({ events, options: { continueFrom: "x" } }).workerRan).toBe(true);
+  expect(
+    gateFromTranscript({
+      events: [resultEvent("reviewer", ACCEPT)],
+      options: { continueFrom: "x" },
+    }).workerRan,
+  ).toBe(true);
+});
+
+// Usefulness: a transcript that does not end on an ok reviewer turn with a reviewed state has no
+// derivable gate, so the continuation resets instead of trusting any record.
+test("gateFromTranscript returns null with no usable last reviewer turn", () => {
+  expect(gateFromTranscript(undefined)).toBeNull();
+  expect(gateFromTranscript({ events: [] })).toBeNull();
+  expect(
+    gateFromTranscript({
+      events: [resultEvent("reviewer", ACCEPT), resultEvent("worker", "w", null)],
+    }),
+  ).toBeNull();
+  expect(gateFromTranscript({ events: [resultEvent("reviewer", "x", null, "error")] })).toBeNull();
+});
+
+// Usefulness: every malformed record falls back to the reset without throwing, which keeps
+// --continue-from working on a hand-edited transcript (#393 review).
 test("matchingGate returns null for an absent or malformed gate", async () => {
+  const gate = (over = {}, reviewed = {}) => ({
+    workerRan: true,
+    reviewerRan: true,
+    reviewerTurnDispatched: true,
+    acceptedSinceWorker: true,
+    ...over,
+    lastReviewed: { ...REVIEWED, ...reviewed },
+  });
   expect(await matchingGate(undefined, CWD)).toBeNull();
   expect(await matchingGate({}, CWD)).toBeNull();
-  expect(
-    await matchingGate({ lastReviewed: { exact: true, head: "h", digest: "d" } }, CWD),
-  ).toBeNull();
+  for (const bad of [
+    gate({ acceptedSinceWorker: "true" }),
+    gate({ reviewerRan: 1 }),
+    gate({}, { clean: "yes" }),
+    gate({}, { exact: "true" }),
+    gate({}, { exact: false }),
+    gate({}, { head: "not-a-head" }),
+    gate({}, { digest: "abc" }),
+    gate({}, { digest: undefined }),
+  ]) {
+    expect(await matchingGate(bad, CWD)).toBeNull();
+  }
 });

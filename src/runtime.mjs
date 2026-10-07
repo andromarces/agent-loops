@@ -7,7 +7,7 @@ import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { matchingGate } from "./lib/continuation.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
-import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
+import { isAcceptedReview } from "./lib/report.mjs";
 import {
   carryTestRun,
   DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
@@ -271,10 +271,12 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * is itself the reviewer turn, so the headless loop supplies the one condition
  * the interactive path gets for free (#337).
  *
- * With `continued`, the run resumes the sessions of an earlier headless run, and
- * the completion gate state is reset rather than restored: the run counts as
- * work that no reviewer has accepted, so a finish under `requireAccept` needs a
- * reviewer accept in this run (#362).
+ * With `continued`, the run resumes the sessions of an earlier headless run. The
+ * completion gate state is reset unless `earlierGate` (see `gateFromTranscript`)
+ * is valid and the current work tree has the head and digest of its last
+ * reviewer turn (#393). A reset counts the work as unreviewed, so a finish under
+ * `requireAccept` needs a reviewer accept in this run (#362). A restore takes
+ * `lastReviewed` from the current snapshot, never from the record.
  *
  * With `copyLocalFiles` (default true), the run first copies the untracked, ignored
  * local agent and environment files of the main work tree into a linked `cwd`,
@@ -341,21 +343,17 @@ export async function runLoop(options) {
     // process exits UNRESOLVED_COMPARE_EXIT, so the log names it (#279).
     const marker = detail.unresolvedCompare ? ", unresolved compare recorded" : "";
     logInfo(`agent loop stopped (exit ${exitCode}${marker})`);
-    // The gate state travels with the result for the transcript, so a continued
-    // run can restore it on an unchanged tree (#393).
-    return {
-      exitCode,
-      ...detail,
-      gate: { workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed },
-    };
+    return { exitCode, ...detail };
   }
 
   let stepsUsed = 0;
   // Completion gate state (#234). The headless loop has no mode: a worker turn
   // marks work mode and needs a later reviewer accept; no worker turn maps to
   // review-only and needs at least one reviewer report.
-  // A continued run restores the earlier run's gate state only when the current
-  // work tree is the state that run's last reviewer turn reviewed (#393).
+  // A continued run restores the earlier run's gate state only when it is valid
+  // and the current work tree is the state that run's last reviewer turn
+  // reviewed (#393). The CLI derives `earlierGate` from the result events of the
+  // earlier transcript, never from a stored flag.
   // Otherwise it resets conservatively (#362): the tree counts as changed and
   // unreviewed, so a reviewer accept on the current state is what
   // `--require-accept` needs, and `reviewerRan`, `lastReviewed`, and the
@@ -745,11 +743,4 @@ async function ciGate({ pr, reviewed, cwd, gh }) {
     },
     noRequiredChecks: false,
   };
-}
-
-// An accept counts only with a Checks line in the closing block, matching the
-// parent rule the prompt states (#217) and the interactive --require-accept gate
-// (issue #218). An accept without a Checks line is treated as not accepted.
-function isAcceptedReview(response) {
-  return parseVerdict(response) === "accept" && Boolean(parseReportBlock(response)?.checks);
 }

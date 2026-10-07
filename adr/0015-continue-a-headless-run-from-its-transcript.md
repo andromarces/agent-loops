@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0023: Restore the headless gate state on a continued run](0023-restore-the-headless-gate-state-on-a-continued-run.md). ADR 0023 restates the decisions of this ADR that still hold and replaces the reset of the gate state (decision 3) with a restore on an unchanged work tree.
 
 ## Date
 
@@ -32,18 +34,10 @@ memory in `runLoop`.
    rename), so a failed write keeps the earlier file. When `--transcript` names
    the same file, the rewrite keeps the earlier events, read whole with no size
    limit, and adds a `continued` event with the earlier outcome.
-3. The gate state is restored only on an unchanged tree (issue #393, which
-   supersedes the first version of this item, a plain reset). A headless run
-   returns its gate state (`workerRan`, `reviewerRan`, `reviewerTurnDispatched`,
-   `acceptedSinceWorker`, `lastReviewed`) and the CLI writes it to the transcript
-   as `gate`. `runLoop` takes `continued` and `earlierGate`. It restores the gate
-   only when `lastReviewed` is an exact snapshot and the current snapshot is exact
-   with the same head and digest. Otherwise it resets: `continued` starts
-   `workerRan` true and the other gate inputs start empty, so a finish needs
-   reviewer evidence from the continued run. `finishRefused` is never persisted,
-   because it paces refusals and is not completion evidence. A run that ends on a
-   thrown error writes no `gate`, so its continuation resets. The orchestrator
-   prompt states the new budget and which of the two cases applies.
+3. The gate state is reset, not restored. `runLoop` takes `continued`, which
+   starts `workerRan` true. The other gate inputs already start empty, so a
+   finish needs reviewer evidence from the continued run. The orchestrator
+   prompt states the new budget and the reset.
 4. The interactive design of issue #361 shares nothing with this change. Its state
    file already holds the sessions and the gate state, so it only raises the
    budget. `src/lib/continuation.mjs` takes plain role objects, so a later change
@@ -51,15 +45,10 @@ memory in `runLoop`.
 
 ## Consequences
 
-- A continuation on the tree that the earlier run last reviewed costs no extra
-  reviewer turn. A continuation on a changed tree, or with no usable `gate`,
-  costs at most one.
+- A continuation costs at most one extra reviewer turn when the earlier run had
+  already reviewed the current state.
 - A continuation never accepts a finish on a saved verdict for a tree that may
-  have changed: the restore needs the same head and digest, so an edit between
-  the runs resets the gate.
-- The transcript gains a top-level `gate` field. A transcript with no `gate`
-  continues with the reset. A `--transcript` file inside the work tree is an
-  untracked file, so it changes the digest and keeps the reset.
+  have changed.
 - **Accepted gap:** a change of a CLI's own default model between the two runs is
   not detected. The transcript records the model the caller requested, not the
   model a CLI resolved, so an omitted model matches only an omitted model and no
@@ -70,13 +59,13 @@ memory in `runLoop`.
 
 ## Alternatives considered
 
-1. **Persist and restore the gate state with no tree check**: rejected. The saved
-   accept cannot cover an edit made between the runs. Item 3 adds the check.
+1. **Persist and restore the gate state**: rejected. It needs a new file format
+   and a tree identity check, and the saved accept still cannot cover an edit made
+   between the runs. Reserved for a change that persists headless state.
 2. **A new session-state file next to the transcript**: rejected. The transcript
    already holds the ids, and a second file adds a second source of truth.
-3. **Restore only when the tree digest matches**: first rejected for the cost of a
-   second snapshot read and a new file format, then adopted by issue #393 as item 3,
-   in the existing transcript.
+3. **Restore only when the tree digest matches**: rejected for the same reason as
+   1, at the cost of a second snapshot read.
 4. **Compare an effective model per adapter**: rejected. It needs adapter
    knowledge in the check, cannot name a CLI default, and treated an omitted model
    differently across CLIs. The exact-value rule is the same for all.
@@ -88,9 +77,9 @@ Andro Marces
 ## Links
 
 - [Issue #362: Continue a headless run with a new step budget and its earlier role sessions](https://github.com/andromarces/agent-loops/issues/362)
-- [Issue #393: Restore the headless gate state on --continue-from when the tree is unchanged](https://github.com/andromarces/agent-loops/issues/393)
-- Implementation: `src/lib/continuation.mjs` (`matchingGate`), the `continued` and `earlierGate` inputs of `runLoop`
+- Implementation: `src/lib/continuation.mjs`, the `continued` input of `runLoop`
   and `initialPrompt`, and `--continue-from` in `src/cli.mjs`; tests in
   `tests/lib/continuation.test.mjs`, `tests/cli.test.mjs`, and
   `tests/runtime.test.mjs`; documented in `README.md`
+- Superseded by [ADR 0023: Restore the headless gate state on a continued run](0023-restore-the-headless-gate-state-on-a-continued-run.md)
 - [ADR Index](README.md)
