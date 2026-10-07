@@ -163,14 +163,11 @@ export async function runOpenCode(state, prompt, options = {}) {
  * the unidentified part one, bound that text (issues #510 and #529): the text is redacted (ADR 0017) first, then keeps its last 4000 code units,
  * cut on a code point boundary. A longer text is cut at the start, and a second line states the
  * cut and the original length.
- * The bound holds for the text that the adapter produces. A later redaction with a different
- * environment can grow the text past it. The added environment must hold a secret-named value
- * of 8 or more characters. The value must match the text and be shorter than the marker that
- * replaces it. The match can be plain text, text inside a `[redacted:NAME]` marker, or text
- * that spans a `[*]` marker and the text next to it. For example, the value `API_TOKEN` in
- * `OTHER_SECRET` rewrites `[redacted:API_TOKEN]` (20 characters) to
- * `[redacted:[redacted:OTHER_SECRET]]` (34 characters). The same environment leaves the text
- * unchanged.
+ * The bound holds only for the text that the adapter produces. A later redaction pass with a
+ * different environment can grow the text past the bound. A pass with the same environment
+ * leaves the text unchanged. For example, the value `API_TOKEN` in `OTHER_SECRET` rewrites
+ * `[redacted:API_TOKEN]` (20 characters) to `[redacted:[redacted:OTHER_SECRET]]` (34
+ * characters). This example is not the full condition.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
