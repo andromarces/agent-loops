@@ -19,7 +19,7 @@ vi.mock("execa", async (importOriginal) => {
 
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
-import { gateFromTranscript, gateRecord } from "../src/lib/continuation.mjs";
+import { gateFromTranscript } from "../src/lib/continuation.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
 import {
@@ -3662,7 +3662,7 @@ test("a continued --require-accept run restores the earlier accept on an unchang
       maxSteps: 5,
       requireAccept: true,
       continued: true,
-      earlierGate: gateFromTranscript({ events: [...events, gateRecord(events)] }),
+      earlierGate: gateFromTranscript({ events: [...events, { type: "gate", ...first.gate }] }),
       roles: gateRoles(),
       agents: {
         orch: scripted([JSON.stringify({ action: "finish", summary: SUMMARY })]),
@@ -3710,7 +3710,7 @@ test("a continued --require-accept run resets the gate when the tree changed", a
       maxSteps: 5,
       requireAccept: true,
       continued: true,
-      earlierGate: gateFromTranscript({ events: [...events, gateRecord(events)] }),
+      earlierGate: gateFromTranscript({ events: [...events, { type: "gate", ...first.gate }] }),
       roles: gateRoles(),
       agents: {
         orch: scripted([

@@ -1466,6 +1466,41 @@ test("--continue-from resets when a result event was deleted", async () => {
   expect(reviewerCalls).toBe(1);
 });
 
+// Usefulness: verifies an earlier result event with an unknown role resets (#393 review). The
+// replay accepts only `worker` and `reviewer` result events, so the edit cannot hide the worker
+// turn that makes a reviewer reject count as a review of work.
+test("--continue-from resets when an earlier result event has a malformed role", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterEdit({
+    firstOrch: [RUN_WORKER, RUN_REVIEWER, FINISH, FINISH],
+    reviewerReplies: [GATE_REJECT],
+    tamper: (transcript) => {
+      transcript.events.find((event) => event.type === "result" && event.role === "worker").role =
+        "wrk";
+    },
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
+});
+
+// Usefulness: verifies reordered reviewer results cannot let an obsolete accept replace the
+// latest rejection (#393 review): the replay in file order ends on the rewritten accept, which
+// differs from the state the run recorded, so the gate resets.
+test("--continue-from resets when reviewer results were reordered", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterEdit({
+    firstOrch: [RUN_WORKER, RUN_REVIEWER, RUN_REVIEWER, FINISH, FINISH],
+    reviewerReplies: [GATE_ACCEPT, GATE_REJECT],
+    tamper: (transcript) => {
+      const at = transcript.events.flatMap((event, i) =>
+        event.type === "result" && event.role === "reviewer" ? [i] : [],
+      );
+      const [a, b] = at;
+      [transcript.events[a], transcript.events[b]] = [transcript.events[b], transcript.events[a]];
+    },
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
+});
+
 // Usefulness: verifies a transcript with no gate record resets, as every transcript did before
 // the restore existed (#393 review), even when its events end on a reviewer accept.
 test("--continue-from resets when the transcript has no gate record", async () => {

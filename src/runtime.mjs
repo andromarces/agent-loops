@@ -4,10 +4,9 @@ import { readableErrorText, readProp } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
-import { matchingGate } from "./lib/continuation.mjs";
+import { applyResult, matchingGate } from "./lib/continuation.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
-import { isAcceptedReview } from "./lib/report.mjs";
 import {
   carryTestRun,
   DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
@@ -343,7 +342,13 @@ export async function runLoop(options) {
     // process exits UNRESOLVED_COMPARE_EXIT, so the log names it (#279).
     const marker = detail.unresolvedCompare ? ", unresolved compare recorded" : "";
     logInfo(`agent loop stopped (exit ${exitCode}${marker})`);
-    return { exitCode, ...detail };
+    // The gate state travels with the result, so the CLI can record it in the
+    // transcript for a later `--continue-from` to check against a replay (#393).
+    return {
+      exitCode,
+      ...detail,
+      gate: { workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed },
+    };
   }
 
   let stepsUsed = 0;
@@ -626,18 +631,15 @@ export async function runLoop(options) {
     }
     onEvent({ type: "result", role: roleName, result, stepsUsed });
 
-    lastReviewed = result.reviewed ?? null;
-
-    if (isWorkerDispatch) {
-      workerRan = true;
-      acceptedSinceWorker = false;
-    } else {
-      // Set whatever the turn returned: a turn that ended in a handled error is
-      // still the report a `review-only` finish records.
-      reviewerTurnDispatched = true;
-      reviewerRan = reviewerRan || result.status === "ok";
-      acceptedSinceWorker = result.status === "ok" && isAcceptedReview(result.response);
-    }
+    // Set whatever the turn returned: a reviewer turn that ended in a handled error
+    // is still the report a `review-only` finish records (#337). The replay of a
+    // continued run applies the same transition (#393).
+    ({ workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed } =
+      applyResult(
+        { workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed },
+        roleName,
+        result,
+      ));
     finishRefused = false;
 
     prompt = resultPrompt({ result, stepsUsed, maxSteps });

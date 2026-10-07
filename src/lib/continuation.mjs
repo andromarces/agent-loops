@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { normalizeAgent } from "../agents/index.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { ROLE_KINDS } from "./args.mjs";
+import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
 
@@ -94,79 +95,112 @@ const GATE_FLAGS = ["workerRan", "reviewerRan", "reviewerTurnDispatched", "accep
 const HEAD_PATTERN = /^([0-9a-f]{40}|[0-9a-f]{64}|unborn)$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
-const isChildInvocation = (event) =>
-  event?.type === "invocation" && (event.role === "worker" || event.role === "reviewer");
+/** The gate state of a run that starts with no earlier run (#234). */
+export const freshGate = () => ({
+  workerRan: false,
+  reviewerRan: false,
+  reviewerTurnDispatched: false,
+  acceptedSinceWorker: false,
+  lastReviewed: null,
+});
+
+/** The gate state of a continued run that restores nothing (#362): the tree counts as unreviewed. */
+export const resetGate = () => ({ ...freshGate(), workerRan: true });
 
 /**
- * The `gate` event a headless run appends as its last event when it returns an
- * exit code (#393). It counts the child results and the child invocations
- * (worker and reviewer) in `events`, so a continuation can tell that the events
- * it reads are the events the run wrote. A run that ends on a thrown error
- * (SIGINT, a fatal turn, a detected mutation) appends none.
- * @param {object[]} events
- * @returns {{ type: "gate", results: number, childInvocations: number }}
+ * The gate transition for one child result. `runLoop` and the replay in
+ * `gateFromTranscript` both apply it, so the two cannot drift apart. A worker
+ * turn clears the accept. A reviewer turn sets `reviewerRan` when it ended `ok`,
+ * and sets or clears the accept from its verdict and Checks line. Every turn
+ * replaces the reviewed state with the one it carries, or none.
+ * @param {object} state a gate state; not mutated
+ * @param {"worker" | "reviewer"} role
+ * @param {{ status: string, response?: string, reviewed?: object }} result
+ * @returns {object} the next gate state
  */
-export function gateRecord(events) {
+export function applyResult(state, role, result) {
+  const lastReviewed = result.reviewed ?? null;
+  if (role === "worker") {
+    return { ...state, workerRan: true, acceptedSinceWorker: false, lastReviewed };
+  }
+  const ok = result.status === "ok";
   return {
-    type: "gate",
-    results: events.filter((event) => event?.type === "result").length,
-    childInvocations: events.filter(isChildInvocation).length,
+    ...state,
+    reviewerTurnDispatched: true,
+    reviewerRan: state.reviewerRan || ok,
+    acceptedSinceWorker: ok && isAcceptedReview(result.response),
+    lastReviewed,
   };
 }
 
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+// A reviewed state as the runtime snapshot writes it. Its values get a stricter
+// check in `matchingGate`, against the current snapshot.
+const isReviewedShape = (value) =>
+  isObject(value) &&
+  typeof value.clean === "boolean" &&
+  typeof value.exact === "boolean" &&
+  typeof value.head === "string" &&
+  typeof value.digest === "string";
+
+// One result event as `runLoop` emits it: a worker or reviewer role, and the
+// fields of that role's `ok` or `error` result.
+function isValidResultEvent(event) {
+  const { result } = event;
+  if ((event.role !== "worker" && event.role !== "reviewer") || !isObject(result)) return false;
+  if (result.reviewed !== undefined && !isReviewedShape(result.reviewed)) return false;
+  if (result.status === "ok") return typeof result.response === "string";
+  return result.status === "error" && typeof result.error === "string";
+}
+
 /**
- * Derives the gate state of the earlier run from its transcript events (#393). No
- * stored flag is read: each value comes from the result events. Returns null,
- * which keeps the reset, unless all of these hold:
- * - the last event is a `gate` record, so a transcript with no record, and a run
- *   that ended on a thrown error or kept running after the record, reset;
- * - the record's counts equal the child results and child invocations before it,
- *   so a deleted or added event resets;
- * - no child invocation follows the last result, so a turn that started and
- *   returned no result (canceled, failed) resets;
- * - the last result is a reviewer turn that ended `ok` with a string response and
- *   a reviewed state.
- * `acceptedSinceWorker` is the accept rule applied to that turn. `workerRan` is
- * true when a worker result event exists or the earlier run was itself
- * continued, which can only tighten a gate. Any unexpected value gives null, never
- * a throw. Does not check the work tree; `matchingGate` does.
+ * Rebuilds the gate state of the earlier run by replaying its transcript events in
+ * file order through the transitions `runLoop` applies (#393). No stored flag is
+ * trusted. Returns the replayed state, or null, which keeps the reset, unless all
+ * of these hold:
+ * - every event is an object with a string `type`, and every `invocation` and
+ *   `result` event is well formed (role exactly `orchestrator`, `worker`, or
+ *   `reviewer`; for a result, the fields of its `ok` or `error` shape);
+ * - no worker or reviewer invocation is left without a result, so a canceled or
+ *   failed turn resets;
+ * - the last event is the `gate` event a run that returned an exit code appends,
+ *   so a transcript with none, and a run that ended on a thrown error, reset;
+ * - the replayed state equals that record, so a deleted, added, or reordered event
+ *   that changes the state resets.
+ * A `continued` event restarts the replay at the reset state. A transcript of a
+ * continued run with no such event starts at the reset state too. Does not check
+ * the work tree; `matchingGate` does. Any unexpected value gives null, never a
+ * throw. known-limit: a well-formed event sequence that replays to the recorded
+ * state is accepted, because the transcript carries no signature.
  * @param {{ events?: object[], options?: { continueFrom?: string } } | null | undefined} earlier
  * @returns {object | null}
  */
 export function gateFromTranscript(earlier) {
   try {
     const events = earlier?.events;
-    if (!Array.isArray(events) || events.at(-1)?.type !== "gate") return null;
-    const before = events.slice(0, -1);
-    const expected = gateRecord(before);
-    const record = events.at(-1);
-    if (
-      record.results !== expected.results ||
-      record.childInvocations !== expected.childInvocations
-    ) {
-      return null;
+    const record = Array.isArray(events) ? events.at(-1) : null;
+    if (record?.type !== "gate") return null;
+    const continuedEvents = events.some((event) => event?.type === "continued");
+    let state = earlier.options?.continueFrom && !continuedEvents ? resetGate() : freshGate();
+    let childOpen = false;
+    for (const event of events.slice(0, -1)) {
+      if (!isObject(event) || typeof event.type !== "string") return null;
+      if (event.type === "continued") {
+        state = resetGate();
+        childOpen = false;
+      } else if (event.type === "invocation") {
+        if (!["orchestrator", "worker", "reviewer"].includes(event.role)) return null;
+        if (event.status !== "ok" && event.status !== "error") return null;
+        childOpen ||= event.role !== "orchestrator";
+      } else if (event.type === "result") {
+        if (!isValidResultEvent(event)) return null;
+        state = applyResult(state, event.role, event.result);
+        childOpen = false;
+      }
     }
-    const lastIndex = before.findLastIndex((event) => event?.type === "result");
-    const last = before[lastIndex];
-    if (
-      lastIndex < 0 ||
-      before.slice(lastIndex + 1).some(isChildInvocation) ||
-      last.role !== "reviewer" ||
-      last.result?.status !== "ok" ||
-      typeof last.result.response !== "string" ||
-      !last.result.reviewed
-    ) {
-      return null;
-    }
-    return {
-      workerRan:
-        Boolean(earlier.options?.continueFrom) ||
-        before.some((event) => event?.type === "result" && event.role === "worker"),
-      reviewerRan: true,
-      reviewerTurnDispatched: true,
-      acceptedSinceWorker: isAcceptedReview(last.result.response),
-      lastReviewed: last.result.reviewed,
-    };
+    const recorded = Object.keys(state).every((key) => isDeepStrictEqual(record[key], state[key]));
+    return childOpen || !recorded ? null : state;
   } catch {
     return null;
   }
