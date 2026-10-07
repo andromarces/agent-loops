@@ -134,6 +134,15 @@ const SHELL_READ = "through a shell command that its sandbox runs";
 const SHELL_ONLY_LIMIT =
   "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything.";
 
+// A `copilot` read-only turn keeps shell network, so the Codex sandbox wording above is false for
+// it. Its limit is a permission refusal of `role wait-checks` without approval, while `gh pr checks
+// <pr> --required` ran in 3 of 3 probe runs (#432, #495). It may take the one-shot read itself,
+// without `--watch`, because the read is bounded and the finish gate still enforces.
+const COPILOT_LIMIT =
+  "whose read-only turn keeps shell network but refuses agent-loop role wait-checks without approval, so you cannot run the bounded wait";
+const copilotRead = (requireCi) =>
+  ` This run excepts one read from the role rule above: you may run gh pr checks ${requireCi} --required once yourself to read the pull request check status. That read is not a review, not a test, not an edit, and not a remote write. Do not add --watch, because gh has no timeout for a watch. A pending, failing, or unreadable result is not a pass, and the --require-ci finish gate still re-reads GitHub and enforces the condition.`;
+
 function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand }) {
   const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed.${noRequiredCheckClause()} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
   const rule = requiredCheckWait({ requireCi, orchestratorKind, reviewerKind });
@@ -164,12 +173,26 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
     ];
   }
 
+  const copilot = orchestratorKind === "copilot";
+
   if (rule === "reviewer") {
     return [
       gate,
-      `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, so you cannot read the required checks ${SHELL_READ} and the status-read exception does not apply to you. ${SHELL_ONLY_LIMIT} Do not run gh pr checks.`,
+      copilot
+        ? `- You orchestrate through copilot, ${COPILOT_LIMIT}.${copilotRead(requireCi)}`
+        : `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, so you cannot read the required checks ${SHELL_READ} and the status-read exception does not apply to you. ${SHELL_ONLY_LIMIT} Do not run gh pr checks.`,
       `- The reviewer of this run is ${reviewerKind}, whose read-only turn keeps shell network, so every reviewer turn reads the required checks, as the reviewer scope states. The reviewer turn is where the wait happens: before you dispatch the reviewer on a new PR head, name the required checks in the reviewer prompt so that turn reads and reports them.`,
       "- When a reviewer turn reports a pending required check, wait for it through another reviewer turn: dispatch the reviewer again until it reports the check complete, or abort with the pending check named in the reason. A required check still pending after a reviewer turn is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check. Each of those reviewer dispatches costs a step, so the step budget has to cover them.",
+    ];
+  }
+
+  const enforcesLine = `- The --require-ci finish gate is the only check read in this run that enforces anything, because the runtime applies it outside every read-only turn.${advisoryQualifier(pr)} A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.`;
+
+  if (copilot) {
+    return [
+      gate,
+      `- You orchestrate through copilot, ${COPILOT_LIMIT}, and your reviewer ${reviewerKind ?? "an unnamed CLI"} cannot reach the network ${SHELL_NETWORK}, so no reviewer turn in this run can read the checks ${SHELL_READ}. ${SHELL_ONLY_LIMIT}${copilotRead(requireCi)}${suppliedRead(pr)}`,
+      enforcesLine,
     ];
   }
 
@@ -192,7 +215,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
     // The advisory clause is rendered only for a declared PR, because the runtime
     // reads the status only for a declared PR. A gated run that declares none
     // gets the origin/main gate claim, which already calls the gate the only read.
-    `- The --require-ci finish gate is the only check read in this run that enforces anything, because the runtime applies it outside every read-only turn.${advisoryQualifier(pr)} A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.`,
+    enforcesLine,
   ];
 }
 

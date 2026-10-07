@@ -591,6 +591,39 @@ test("initialPrompt states the required-check wait at the reviewer and at finish
   }
 });
 
+// Usefulness: verifies a copilot orchestrator is not told that its shell has no network or runs in
+// a sandbox, because its read-only turn keeps network and only refuses `role wait-checks` (#432
+// probe, #495), and that it may take the one-shot `gh pr checks <pr> --required` read the probe ran.
+test.each([
+  ["claude", 42],
+  ["claude", null],
+  ["codex", 42],
+  ["codex", null],
+  [null, null],
+])(
+  "a copilot orchestrator with a %s reviewer, pr %s, keeps true limit wording",
+  (reviewerKind, pr) => {
+    const prompt = initialPrompt({
+      task: "T",
+      maxSteps: 10,
+      requireCi: 42,
+      orchestratorKind: "copilot",
+      reviewerKind,
+      pr,
+    });
+    const own = prompt.split("\n").find((line) => line.includes("You orchestrate through copilot"));
+    expect(own).toBeTruthy();
+    expect(own).toContain("keeps shell network");
+    expect(own).toContain("refuses agent-loop role wait-checks");
+    expect(own).toContain("gh pr checks 42 --required");
+    expect(own).toContain("Do not add --watch");
+    expect(own).not.toMatch(/copilot, whose read-only turn cannot reach the network/);
+    expect(own).not.toMatch(/Do not run gh pr checks/);
+    expect(prompt).not.toMatch(/Do not run gh pr checks/);
+    expect(prompt).not.toMatch(/agent-loop role wait-checks --pr/);
+  },
+);
+
 // Usefulness: verifies the pending-check wait point keeps a pending check out of
 // the finish summary, because the --require-ci gate refuses a finish while a
 // required check is pending, so the run must wait, re-review, or abort (issue #319).
@@ -1658,6 +1691,9 @@ describe.each([
     ["codex", "codex", 42],
     ["codex", "claude", null],
     ["codex", "claude", 42],
+    ["copilot", "claude", 42],
+    ["copilot", "codex", null],
+    ["copilot", "codex", 42],
     ["claude", "codex", null],
     ["claude", "claude", 42],
     [null, null, null],
