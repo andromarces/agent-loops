@@ -1,3 +1,6 @@
+import { mkdtemp, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { statePaths, writeState } from "../src/lib/runstate.mjs";
 import { SPAWNED_RUN_ENV, exec } from "../src/lib/exec.mjs";
@@ -13,7 +16,7 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 afterEach(() => {
@@ -280,4 +283,29 @@ test("a parent that inherited the marker of another run still extends and aborts
   expect(aborted.exitCode).toBe(0);
   expect((await readRepoState(nested)).lifecycle).toBe("aborted");
   expect((await readRepoState(outer)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies a child that names the run's work tree through a symlink alias is refused
+// like one that names the real path, so an alias cannot bypass the marker (issue #392).
+test("a child caller that names the work tree through a symlink alias is refused", async () => {
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+  const repo = await startRun(5, agents);
+  const aliasDir = await mkdtemp(join(tmpdir(), "role-alias-"));
+  const alias = join(aliasDir, "link");
+  await symlink(repo, alias, "junction");
+  try {
+    vi.stubEnv(SPAWNED_RUN_ENV, await markerOf(repo));
+    for (const argv of [
+      ["finish", "--cwd", "<repo>"],
+      ["abort", "--cwd", "<repo>", "--reason", "alias stop"],
+      parentExtendArgv("--max-steps", "9"),
+    ]) {
+      const result = await executeRoleCommand(withRepo(argv, alias));
+      expect(result.exitCode, argv[0]).toBe(1);
+      expect(result.payload.error, argv[0]).toContain("child role");
+    }
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  } finally {
+    await removePath(aliasDir);
+  }
 });

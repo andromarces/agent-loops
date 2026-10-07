@@ -43,7 +43,7 @@ import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
-  cwdHash,
+  runMarkerKey,
   readState,
   statePaths,
   withStateLock,
@@ -1246,7 +1246,7 @@ export async function executeRoleCommand(args, deps = {}) {
   try {
     if (
       RUN_ENDING_OPERATIONS.has(args.operation) &&
-      process.env[SPAWNED_RUN_ENV] === cwdHash(args.cwd)
+      process.env[SPAWNED_RUN_ENV] === runMarkerKey(args.cwd)
     ) {
       throw new RoleError(
         `${args.operation} is refused for a child role; only the parent session runs it.`,

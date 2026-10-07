@@ -13,6 +13,7 @@
 // and the directory name avoids a file-versus-directory clash at that path.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import {
   link,
   mkdir,
@@ -80,9 +81,24 @@ function stateRoot() {
   return override ? resolve(override) : join(tmpdir(), "agent-loops", "runs");
 }
 
-/** The key of the run in one work tree: the name of its state directory. */
-export function cwdHash(cwd) {
+function cwdHash(cwd) {
   return sha256(canonicalCwd(cwd)).slice(0, 12);
+}
+
+/**
+ * The key that binds a spawned child to its run (issue #392). It hashes the real path of the
+ * work tree, so a symlink alias of the work tree yields the same key. A path that does not
+ * resolve falls back to its lexical form. The state directory name does not use it: that name
+ * keeps hashing the lexical path.
+ */
+export function runMarkerKey(cwd) {
+  let real;
+  try {
+    real = realpathSync.native(resolve(cwd));
+  } catch {
+    real = cwd;
+  }
+  return cwdHash(real);
 }
 
 function canonicalCwd(cwd) {

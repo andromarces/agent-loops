@@ -1,6 +1,6 @@
 import { execa } from "execa";
 import { logDebug, logInfo } from "./log.mjs";
-import { cwdHash } from "./runstate.mjs";
+import { runMarkerKey } from "./runstate.mjs";
 
 /**
  * Environment variable that marks a process spawned for a worker or reviewer turn. Its value is
@@ -54,7 +54,7 @@ export async function exec(command, args = [], options = {}) {
   if (env || marked) {
     execaOptions.env = {
       ...env,
-      ...(marked && { [SPAWNED_RUN_ENV]: cwdHash(cwd ?? process.cwd()) }),
+      ...(marked && { [SPAWNED_RUN_ENV]: runMarkerKey(cwd ?? process.cwd()) }),
     };
   }
 

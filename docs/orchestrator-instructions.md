@@ -1008,12 +1008,16 @@ to GitHub Pro or make this repository public to enable this feature.`, was measu
   role never runs `extend`, `finish`, or `abort`. Each subcommand refuses a
   caller whose `AGENT_LOOP_SPAWNED_RUN` equals the key of the run it acts on. The
   runtime sets the variable, with the key of the dispatching run, in the
-  environment of every worker and reviewer process, and in no other process. A
-  parent session that another run's child started holds a different key and is not
-  refused. `extend` also refuses a call whose `--parent-session` is missing or differs from the run's stored parent
+  environment of every worker and reviewer process, and in no other spawn. The key
+  hashes the real path of the work tree, so a symlink alias is refused too. A
+  process keeps a marker it inherited. A parent session that another run's child
+  started holds a different key for its own work tree and is not refused. A worker
+  that a nested run starts holds the nested run's key only, so it can still end the
+  outer run. `extend` also refuses a call whose `--parent-session` is missing or differs from the run's stored parent
   session id. The id check alone does not identify the caller, so a child that
-  clears its environment passes. A nested parent that works in the same work tree
-  as the child's run is refused. The prompt rule backs the marker.
+  clears its environment passes. An orchestrator or parent that a child of the same
+  run started, in that run's work tree, inherits the key and is refused. The prompt
+  rule backs the marker.
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not
   abort and start a new run to gain steps: that starts every role on a new
