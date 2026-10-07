@@ -9,9 +9,11 @@ import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,
   expectAbortKillsShim,
+  equalsArgs,
   expectBoundKillsShim,
+  expectNoReplyToMalformedCalls,
+  isApiRead,
   removePath,
-  startsWithArgs,
 } from "../runtime-helpers.mjs";
 
 const HEAD = "1111111111111111111111111111111111111111";
@@ -83,7 +85,7 @@ const commitStatus = (context, state, updatedAt = "2026-01-01T00:00:00Z") => ({
 function fakeGh(routes) {
   return async (args) => {
     for (const [match, value] of routes) {
-      if (startsWithArgs(args, match.split(" "))) {
+      if (equalsArgs(args, match.split(" "))) {
         if (value === null) {
           return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
         }
@@ -120,6 +122,12 @@ function fakeGh(routes) {
   };
 }
 
+// The `gh` calls the gate makes, each as the exact argument elements it passes, so
+// a call that merges two elements into one gets no route (issue #538).
+const PR_VIEW = "pr view 42 --json headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit";
+const PR_CHECKS = "pr checks 42 --required --json name";
+const REPO_VIEW = "repo view --json nameWithOwner -q .nameWithOwner";
+
 function routes({
   info = prInfo(),
   mergeRuns = [],
@@ -135,35 +143,31 @@ function routes({
   prChecks = [],
 } = {}) {
   return [
-    ["pr view 42", info],
-    ["pr checks 42", prChecks],
-    ["repo view", SLUG],
+    [PR_VIEW, info],
+    [PR_CHECKS, prChecks],
+    [REPO_VIEW, SLUG],
     // The ruleset read is paginated, so its body is an array of pages.
     [
-      `api repos/${SLUG}/rules/branches/main`,
+      `api repos/${SLUG}/rules/branches/main --paginate --slurp`,
       requiredPages ?? (Array.isArray(required) ? [required] : required),
     ],
     [`api repos/${SLUG}/branches/main/protection`, protection],
-    [`api repos/${SLUG}/commits/${MERGE}/check-runs`, [{ check_runs: mergeRuns }]],
-    [`api repos/${SLUG}/commits/${MERGE}/status --paginate`, [{ statuses: mergeStatuses }]],
-    [`api repos/${SLUG}/commits/${MERGE}/status`, { statuses: mergeStatuses }],
-    [`api repos/${SLUG}/commits/${HEAD}/check-runs`, [{ check_runs: headRuns }]],
-    // The status read paginates; the gate's single-page read does not. The more
-    // specific route comes first.
-    [`api repos/${SLUG}/commits/${HEAD}/status --paginate`, [{ statuses: headStatuses }]],
-    [`api repos/${SLUG}/commits/${HEAD}/status`, { statuses: headStatuses }],
+    [
+      `api repos/${SLUG}/commits/${MERGE}/check-runs --paginate --slurp`,
+      [{ check_runs: mergeRuns }],
+    ],
+    [`api repos/${SLUG}/commits/${MERGE}/status --paginate --slurp`, [{ statuses: mergeStatuses }]],
+    [`api repos/${SLUG}/commits/${HEAD}/check-runs --paginate --slurp`, [{ check_runs: headRuns }]],
+    [`api repos/${SLUG}/commits/${HEAD}/status --paginate --slurp`, [{ statuses: headStatuses }]],
   ];
 }
 
 // Usefulness: verifies the double routes on the argument elements, so a call
 // that merges the arguments into one element gets no reply and its error prints
 // the array, which differs from the text of the expected call (issue #530).
-test("the gh double gives no reply to a merged-argument call", async () => {
-  const merged = ["pr view 42 --json headRefOid"];
-  const reply = await fakeGh(routes())(merged);
-  expect(reply.status).toBe(1);
-  expect(reply.stdout).toBe("");
-  expect(reply.stderr).toContain(JSON.stringify(merged));
+test("the gh double gives no reply to a malformed call", async () => {
+  const calls = routes().map(([match]) => match.split(" "));
+  await expectNoReplyToMalformedCalls(fakeGh(routes()), calls);
 });
 
 const REVIEWED = { head: HEAD, clean: true, exact: true, digest: "d" };
@@ -569,11 +573,16 @@ const SECOND_PAGE_RULE = [
 // A `gh` double for the ruleset read that serves every page only when the caller
 // actually asks for them. A caller that reads one page receives the first page
 // alone, so a missing `--paginate --slurp` cannot be hidden by a double that always
-// returns every page (issue #336 review).
+// returns every page (issue #336 review). It replies only to a ruleset endpoint
+// followed by no flag or by `--paginate` and `--slurp` as separate elements. Any
+// other call, a merged-argument call included, gets a failure that prints the
+// arguments as an array (issue #538).
 function rulesetPages(pages) {
   return async (args) => {
-    const key = args.join(" ");
-    const paginated = key.includes("--paginate") && key.includes("--slurp");
+    const paginated = equalsArgs(args.slice(2), ["--paginate", "--slurp"]);
+    if (!isApiRead(args, "/rules/branches/main") || !(paginated || args.length === 2)) {
+      return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
+    }
     return {
       status: 0,
       stdout: JSON.stringify(paginated ? pages : [pages[0]]),
@@ -581,6 +590,28 @@ function rulesetPages(pages) {
     };
   };
 }
+
+// Usefulness: verifies the ruleset double serves every page only to a caller that
+// passes `--paginate` and `--slurp` as separate elements, and gives no reply to a
+// call that merges arguments into one element (issue #538).
+test("the ruleset double gives no reply to a merged-argument call", async () => {
+  const read = rulesetPages([[{ type: "deletion" }], SECOND_PAGE_RULE]);
+  const endpoint = "repos/owner/repo/rules/branches/main";
+  const apart = await read(["api", endpoint, "--paginate", "--slurp"]);
+  expect(JSON.parse(apart.stdout)).toHaveLength(2);
+  const one = await read(["api", endpoint]);
+  expect(JSON.parse(one.stdout)).toHaveLength(1);
+  for (const merged of [
+    ["api", endpoint, "--paginate --slurp"],
+    ["api", `${endpoint} --paginate`, "--slurp"],
+    [`api ${endpoint}`, "--paginate", "--slurp"],
+  ]) {
+    const reply = await read(merged);
+    expect(reply.status).toBe(1);
+    expect(reply.stdout).toBe("");
+    expect(reply.stderr).toContain(JSON.stringify(merged));
+  }
+});
 
 // Usefulness: verifies a required-status-check rule that appears only on the second
 // page is still enforced, so a read that stops at the first page cannot pass a
@@ -594,8 +625,7 @@ test("reads every ruleset page before classifying the absence", async () => {
     reviewed: REVIEWED,
     cwd: ".",
     gh: async (args) => {
-      const key = args.join(" ");
-      if (key.includes("rules/branches/main")) {
+      if (isApiRead(args, "/rules/branches/main")) {
         return read(args);
       }
       return fakeGh(routes({ required: [{ type: "deletion" }] }))(args);
@@ -1741,13 +1771,15 @@ test("reads an unresolved status when the repository rulesets cannot be read", a
 // reviewer keeps its own read (issue #320).
 test("reads an unresolved status when the gh runner fails", async () => {
   const read = await readOn(HEAD, async (args) => {
-    if (args.join(" ").startsWith("pr view 42")) {
+    if (equalsArgs(args, PR_VIEW.split(" "))) {
       return { status: 0, stdout: JSON.stringify(prInfo()), stderr: "" };
     }
-    throw new Error("spawn gh ENOENT");
+    throw new Error(`spawn gh ENOENT: ${JSON.stringify(args)}`);
   });
   expect(read).toMatchObject({ status: "unresolved", checks: [] });
-  expect(read.summary).toContain("spawn gh ENOENT");
+  // The failure names the call after the PR view, so a PR-view route that stops
+  // matching moves the failure to the first call and fails this test.
+  expect(read.summary).toContain(`spawn gh ENOENT: ${JSON.stringify(REPO_VIEW.split(" "))}`);
 });
 
 // Usefulness: verifies the read never reports a pass for a PR head that differs
@@ -1919,24 +1951,32 @@ describe("the gh runner against the installed execa", () => {
 test("binds the status to the reviewed commit when the PR head moves A to B to A", async () => {
   const other = "3333333333333333333333333333333333333333";
   const calls = [];
+  const served = [];
   const gh = async (args) => {
-    const key = args.join(" ");
-    calls.push(key);
-    if (key === "pr checks 42 --required --json name,bucket") {
+    calls.push(args.join(" "));
+    if (equalsArgs(args, PR_CHECKS.split(" "))) {
+      served.push(args);
       return {
         status: 1,
         stdout: JSON.stringify([{ name: "ci (ubuntu-latest)", bucket: "fail" }]),
         stderr: "",
       };
     }
-    if (key.includes(`commits/${other}/`)) {
-      return { status: 1, stdout: "", stderr: "the read asked for commit B" };
+    if (args[0] === "api" && args[1]?.includes(`commits/${other}/`)) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: `the read asked for commit B: ${JSON.stringify(args)}`,
+      };
     }
     return statusReadGh({ headRuns: BOTH_PASS })(args);
   };
   const read = await readOn(HEAD, gh);
   expect(read).toMatchObject({ status: "pass", head: HEAD });
   expect(calls.filter((call) => call.includes(other))).toEqual([]);
+  // The stale list is the fixture this test names, so a route that stops matching
+  // fails here instead of passing on a fallback list.
+  expect(served).toEqual([PR_CHECKS.split(" ")]);
 });
 
 // Usefulness: verifies a reply the read cannot parse is unresolved and never a
@@ -1990,7 +2030,7 @@ test.each([
 test("reads a failing status from a later page of the commit status reply", async () => {
   const gh = fakeGh(
     routes({ headRuns: [run("ci (ubuntu-latest)", "success")] }).map(([match, value]) =>
-      match === `api repos/${SLUG}/commits/${HEAD}/status --paginate`
+      match === `api repos/${SLUG}/commits/${HEAD}/status --paginate --slurp`
         ? [
             match,
             [
@@ -2131,7 +2171,7 @@ test.each([
 ])("reads the required names from %s", async (_name, reply, expected) => {
   const gh = fakeGh(
     routes({ headRuns: BOTH_PASS }).map(([match, value]) =>
-      match === "pr checks 42" ? [match, reply] : [match, value],
+      match === PR_CHECKS ? [match, reply] : [match, value],
     ),
   );
   expect((await readOn(HEAD, gh)).status).toBe(expected);
@@ -2183,7 +2223,7 @@ test.each([
   "the supplied status agrees with the finish gate on %s",
   async (_name, { statusPages, clean = true, ...options }) => {
     const table = routes(options).map(([match, value]) =>
-      statusPages && match === `api repos/${SLUG}/commits/${HEAD}/status --paginate`
+      statusPages && match === `api repos/${SLUG}/commits/${HEAD}/status --paginate --slurp`
         ? [match, statusPages]
         : [match, value],
     );
@@ -2242,7 +2282,7 @@ test.each([
 ])("reads the required names from %s", async (_name, reply, expected) => {
   const table = fakeGh(routes({ headRuns: BOTH_PASS }));
   const gh = async (args, ...rest) =>
-    args.join(" ") === "pr checks 42 --required --json name" ? reply : table(args, ...rest);
+    equalsArgs(args, PR_CHECKS.split(" ")) ? reply : table(args, ...rest);
   expect((await readOn(HEAD, gh)).status).toBe(expected);
 });
 

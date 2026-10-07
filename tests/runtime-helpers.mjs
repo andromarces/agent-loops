@@ -16,9 +16,76 @@ export function startsWithArgs(args, lead) {
   return lead.every((part, i) => args[i] === part);
 }
 
-/** True when `args` is a `gh api` call whose endpoint ends with `suffix`. */
-export function isApiRead(args, suffix) {
-  return args[0] === "api" && typeof args[1] === "string" && args[1].endsWith(suffix);
+/** True when `args` equals `expected` element by element, with no extra element. */
+export function equalsArgs(args, expected) {
+  return args.length === expected.length && startsWithArgs(args, expected);
+}
+
+/** The flags the gate passes to every paginated `gh api` read. */
+export const PAGED = ["--paginate", "--slurp"];
+
+/** The exact argument elements of the gate's `gh pr view` read. */
+export const prViewArgs = (pr) => [
+  "pr",
+  "view",
+  String(pr),
+  "--json",
+  "headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit",
+];
+
+/** The exact argument elements of the gate's `gh pr checks` read. */
+export const prChecksArgs = (pr) => ["pr", "checks", String(pr), "--required", "--json", "name"];
+
+/** The exact argument elements of the gate's `gh repo view` read. */
+export const REPO_VIEW_ARGS = ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"];
+
+/** The exact argument elements of a `gh api` read of `endpoint` with `flags`. */
+export const apiArgs = (endpoint, flags = PAGED) => ["api", endpoint, ...flags];
+
+/**
+ * True when `args` is a `gh api` call whose endpoint ends with `suffix`. With
+ * `flags`, the elements after the endpoint must equal `flags`, so a call that
+ * merges two flags into one element does not match.
+ */
+export function isApiRead(args, suffix, flags) {
+  return (
+    args[0] === "api" &&
+    typeof args[1] === "string" &&
+    args[1].endsWith(suffix) &&
+    (flags === undefined || equalsArgs(args.slice(2), flags))
+  );
+}
+
+/** Every `gh` read the gate makes for PR 42 on `owner/repo` at `head`, as exact arguments. */
+export const gateReadCalls = (head) => [
+  prViewArgs(42),
+  REPO_VIEW_ARGS,
+  apiArgs("repos/owner/repo/rules/branches/main"),
+  apiArgs("repos/owner/repo/branches/main/protection", []),
+  apiArgs(`repos/owner/repo/commits/${head}/check-runs`),
+  apiArgs(`repos/owner/repo/commits/${head}/status`),
+  prChecksArgs(42),
+];
+
+/**
+ * Asserts that `gh` fails every malformed variant of each call in `calls`: the
+ * last two elements merged into one, the last element dropped, and an extra
+ * element added. Each failure prints the arguments as an array.
+ */
+export async function expectNoReplyToMalformedCalls(gh, calls) {
+  for (const args of calls) {
+    const variants = [
+      [...args.slice(0, -2), args.slice(-2).join(" ")],
+      args.slice(0, -1),
+      [...args, "--extra"],
+    ];
+    for (const bad of variants) {
+      const reply = await gh(bad);
+      assert.equal(reply.status, 1, `a reply to ${JSON.stringify(bad)}`);
+      assert.equal(reply.stdout, "");
+      assert.ok(reply.stderr.includes(JSON.stringify(bad)), `no array in: ${reply.stderr}`);
+    }
+  }
 }
 
 /**
