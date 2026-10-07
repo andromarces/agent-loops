@@ -571,10 +571,16 @@ const SECOND_PAGE_RULE = [
 // A `gh` double for the ruleset read that serves every page only when the caller
 // actually asks for them. A caller that reads one page receives the first page
 // alone, so a missing `--paginate --slurp` cannot be hidden by a double that always
-// returns every page (issue #336 review).
+// returns every page (issue #336 review). It replies only to a ruleset endpoint
+// followed by no flag or by `--paginate` and `--slurp` as separate elements. Any
+// other call, a merged-argument call included, gets a failure that prints the
+// arguments as an array (issue #538).
 function rulesetPages(pages) {
   return async (args) => {
-    const paginated = args.includes("--paginate") && args.includes("--slurp");
+    const paginated = equalsArgs(args.slice(2), ["--paginate", "--slurp"]);
+    if (!isApiRead(args, "/rules/branches/main") || !(paginated || args.length === 2)) {
+      return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
+    }
     return {
       status: 0,
       stdout: JSON.stringify(paginated ? pages : [pages[0]]),
@@ -584,14 +590,25 @@ function rulesetPages(pages) {
 }
 
 // Usefulness: verifies the ruleset double serves every page only to a caller that
-// passes `--paginate` and `--slurp` as separate elements, so a call that merges
-// them into one element gets the first page alone (issue #538).
-test("the ruleset double serves one page to a merged-argument call", async () => {
+// passes `--paginate` and `--slurp` as separate elements, and gives no reply to a
+// call that merges arguments into one element (issue #538).
+test("the ruleset double gives no reply to a merged-argument call", async () => {
   const read = rulesetPages([[{ type: "deletion" }], SECOND_PAGE_RULE]);
-  const apart = await read(["api", "x", "--paginate", "--slurp"]);
-  const merged = await read(["api", "x", "--paginate --slurp"]);
+  const endpoint = "repos/owner/repo/rules/branches/main";
+  const apart = await read(["api", endpoint, "--paginate", "--slurp"]);
   expect(JSON.parse(apart.stdout)).toHaveLength(2);
-  expect(JSON.parse(merged.stdout)).toHaveLength(1);
+  const one = await read(["api", endpoint]);
+  expect(JSON.parse(one.stdout)).toHaveLength(1);
+  for (const merged of [
+    ["api", endpoint, "--paginate --slurp"],
+    ["api", `${endpoint} --paginate`, "--slurp"],
+    [`api ${endpoint}`, "--paginate", "--slurp"],
+  ]) {
+    const reply = await read(merged);
+    expect(reply.status).toBe(1);
+    expect(reply.stdout).toBe("");
+    expect(reply.stderr).toContain(JSON.stringify(merged));
+  }
 });
 
 // Usefulness: verifies a required-status-check rule that appears only on the second
@@ -1939,7 +1956,7 @@ test("binds the status to the reviewed commit when the PR head moves A to B to A
         stderr: "",
       };
     }
-    if (args[1]?.includes(`commits/${other}/`)) {
+    if (args[0] === "api" && args[1]?.includes(`commits/${other}/`)) {
       return { status: 1, stdout: "", stderr: "the read asked for commit B" };
     }
     return statusReadGh({ headRuns: BOTH_PASS })(args);

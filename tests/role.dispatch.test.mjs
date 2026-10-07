@@ -1433,7 +1433,10 @@ test("a declared PR supplies the runtime-read required-check status to the revie
       return json(args.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
     }
     // `gh pr checks` names no check beyond the ruleset.
-    return { status: 0, stdout: "[]", stderr: "" };
+    if (startsWithArgs(args, ["pr", "checks", "42"])) {
+      return json([]);
+    }
+    return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
   };
   const turn = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
     agents,
