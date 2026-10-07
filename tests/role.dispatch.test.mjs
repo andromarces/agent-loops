@@ -36,11 +36,18 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import {
+  apiArgs,
   createTempRepo,
+  equalsArgs,
+  expectNoReplyToMalformedCalls,
+  gateReadCalls,
   gitWhileDotGitExists,
   isApiRead,
+  PAGED,
+  prChecksArgs,
+  prViewArgs,
   removePath,
-  startsWithArgs,
+  REPO_VIEW_ARGS,
 } from "./runtime-helpers.mjs";
 
 // A directory that `gitWhileDotGitExists` treats as a work tree. Callers remove it
@@ -1377,6 +1384,67 @@ test("main keeps a non-string message redacted by its toJSON", async () => {
   }
 });
 
+// A `gh` double for the gate's reads of PR 42 whose required check `ci (macos-latest)`
+// fails on the PR head `localHead`. It replies only to the exact argument elements
+// of each read and fails any other call with the arguments printed as an array.
+function failingCheckGh(localHead) {
+  return async (args) => {
+    const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
+    if (equalsArgs(args, prViewArgs(42))) {
+      return json({ headRefOid: localHead, baseRefName: "main", mergeStateStatus: "CLEAN" });
+    }
+    if (equalsArgs(args, REPO_VIEW_ARGS)) {
+      return { status: 0, stdout: "owner/repo", stderr: "" };
+    }
+    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
+      return json([
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ci (macos-latest)" }] },
+          },
+        ],
+      ]);
+    }
+    if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection", []))) {
+      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
+    }
+    if (isApiRead(args, "/check-runs", PAGED)) {
+      return json([
+        {
+          check_runs: [
+            {
+              id: 1,
+              name: "ci (macos-latest)",
+              status: "completed",
+              conclusion: "failure",
+              started_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      ]);
+    }
+    if (isApiRead(args, "/status", PAGED)) {
+      return json([{ statuses: [] }]);
+    }
+    // `gh pr checks` names no check beyond the ruleset.
+    if (equalsArgs(args, prChecksArgs(42))) {
+      return json([]);
+    }
+    return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
+  };
+}
+
+// Usefulness: verifies the double for the failing required check replies only to the
+// exact argument elements of the gate's reads, so a malformed call gets no reply and
+// the reviewer-turn test cannot pass on a call that no longer matches (issue #538).
+test("the failing-check double gives no reply to a malformed call", async () => {
+  await expectNoReplyToMalformedCalls(
+    failingCheckGh("a".repeat(40)),
+    gateReadCalls("a".repeat(40)),
+  );
+});
+
 // Usefulness: verifies acceptance — a run that declared a PR supplies the
 // required-check status the runtime read to the reviewer turn and reports that
 // read in the envelope and in the state file, so the parent can compare it with
@@ -1393,51 +1461,7 @@ test("a declared PR supplies the runtime-read required-check status to the revie
   // The status read resolves the PR head and compares it with the local reviewed
   // head, then judges the required contexts on the check runs of that commit.
   const localHead = (await snapshot(repo)).head;
-  const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
-  const gh = async (args) => {
-    if (startsWithArgs(args, ["pr", "view", "42"])) {
-      return json({ headRefOid: localHead, baseRefName: "main", mergeStateStatus: "CLEAN" });
-    }
-    if (startsWithArgs(args, ["repo", "view"])) {
-      return { status: 0, stdout: "owner/repo", stderr: "" };
-    }
-    if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
-      return json([
-        [
-          {
-            type: "required_status_checks",
-            parameters: { required_status_checks: [{ context: "ci (macos-latest)" }] },
-          },
-        ],
-      ]);
-    }
-    if (startsWithArgs(args, ["api", "repos/owner/repo/branches/main/protection"])) {
-      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
-    }
-    if (isApiRead(args, "/check-runs")) {
-      return json([
-        {
-          check_runs: [
-            {
-              id: 1,
-              name: "ci (macos-latest)",
-              status: "completed",
-              conclusion: "failure",
-              started_at: "2026-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]);
-    }
-    if (isApiRead(args, "/status")) {
-      return json(args.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
-    }
-    // `gh pr checks` names no check beyond the ruleset.
-    if (startsWithArgs(args, ["pr", "checks", "42"])) {
-      return json([]);
-    }
-    return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
-  };
+  const gh = failingCheckGh(localHead);
   const turn = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
     agents,
     stdin: stdinPrompt,

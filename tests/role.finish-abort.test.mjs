@@ -35,11 +35,18 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import {
+  apiArgs,
   CLEAN_REPO_HEAD,
   cleanRepoGit,
+  equalsArgs,
+  expectNoReplyToMalformedCalls,
+  gateReadCalls,
   isApiRead,
+  PAGED,
+  prChecksArgs,
+  prViewArgs,
   removePath,
-  startsWithArgs,
+  REPO_VIEW_ARGS,
 } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
@@ -455,7 +462,7 @@ test("the finish gates are rejected outside finish", async () => {
 
 const ciGh = (head, mergeStateStatus) => async (args) => {
   const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
-  if (startsWithArgs(args, ["pr", "view", "42"])) {
+  if (equalsArgs(args, prViewArgs(42))) {
     return json({
       headRefOid: head,
       baseRefName: "main",
@@ -464,10 +471,10 @@ const ciGh = (head, mergeStateStatus) => async (args) => {
       state: "OPEN",
     });
   }
-  if (startsWithArgs(args, ["repo", "view"])) {
+  if (equalsArgs(args, REPO_VIEW_ARGS)) {
     return { status: 0, stdout: "owner/repo", stderr: "" };
   }
-  if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
+  if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
     // The ruleset read is paginated, so its body is an array of pages.
     return json([
       [
@@ -478,10 +485,10 @@ const ciGh = (head, mergeStateStatus) => async (args) => {
       ],
     ]);
   }
-  if (startsWithArgs(args, ["api", "repos/owner/repo/branches/main/protection"])) {
+  if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection", []))) {
     return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
   }
-  if (isApiRead(args, "/check-runs")) {
+  if (isApiRead(args, "/check-runs", PAGED)) {
     return json([
       {
         check_runs: [
@@ -495,7 +502,7 @@ const ciGh = (head, mergeStateStatus) => async (args) => {
       },
     ]);
   }
-  if (isApiRead(args, "/status")) {
+  if (isApiRead(args, "/status", PAGED)) {
     return json({ statuses: [] });
   }
   return { status: 1, stdout: "", stderr: `unmatched: ${JSON.stringify(args)}` };
@@ -668,7 +675,7 @@ async function initPrRun(repo, pr) {
 function cleanPrGh(head) {
   return async (args) => {
     const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
-    if (startsWithArgs(args, ["pr", "view"])) {
+    if (equalsArgs(args, prViewArgs(42))) {
       return json({
         headRefOid: head,
         baseRefName: "main",
@@ -677,10 +684,10 @@ function cleanPrGh(head) {
         state: "OPEN",
       });
     }
-    if (startsWithArgs(args, ["repo", "view"])) {
+    if (equalsArgs(args, REPO_VIEW_ARGS)) {
       return { status: 0, stdout: "owner/repo", stderr: "" };
     }
-    if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
+    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
       // The ruleset read is paginated, so its body is an array of pages.
       return json([
         [
@@ -691,10 +698,10 @@ function cleanPrGh(head) {
         ],
       ]);
     }
-    if (startsWithArgs(args, ["api", "repos/owner/repo/branches/main/protection"])) {
+    if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection", []))) {
       return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
     }
-    if (isApiRead(args, "/check-runs")) {
+    if (isApiRead(args, "/check-runs", PAGED)) {
       return json([
         {
           check_runs: [
@@ -708,26 +715,22 @@ function cleanPrGh(head) {
         },
       ]);
     }
-    if (isApiRead(args, "/status")) {
+    if (isApiRead(args, "/status", PAGED)) {
       return json({ statuses: [] });
     }
     return { status: 1, stdout: "", stderr: `unmatched: ${JSON.stringify(args)}` };
   };
 }
 
-// Usefulness: verifies the `--require-ci` doubles route on the argument
-// elements, so a call that merges the arguments into one element gets no reply
-// and its error prints the array, which differs from the text of the expected
-// call (issue #530).
+// Usefulness: verifies the `--require-ci` doubles route on the exact argument
+// elements, so a call that merges two elements into one, drops one, or adds one
+// gets no reply and its error prints the array (issues #530 and #538).
 test.each([
   ["the merge-state double", ciGh(CLEAN_REPO_HEAD, "CLEAN")],
   ["the clean-PR double", cleanPrGh(CLEAN_REPO_HEAD)],
-])("%s gives no reply to a merged-argument call", async (_name, gh) => {
-  const merged = ["pr view 42 --json headRefOid"];
-  const reply = await gh(merged);
-  expect(reply.status).toBe(1);
-  expect(reply.stdout).toBe("");
-  expect(reply.stderr).toContain(JSON.stringify(merged));
+  ["the no-required-check double", noRequiredCheckGh(CLEAN_REPO_HEAD)],
+])("%s gives no reply to a malformed call", async (_name, gh) => {
+  await expectNoReplyToMalformedCalls(gh, gateReadCalls(CLEAN_REPO_HEAD));
 });
 
 // Usefulness: verifies an interactive run that declares a PR refuses a finish
@@ -799,10 +802,11 @@ test("a declared PR with no gate reports the marker and the gate in one refusal"
 // stated that it holds no required check, so the gate establishes the absence
 // rather than inferring it (#336). `gh pr checks --required` prints nothing there,
 // which is not a statement about the branch and is not read as one.
-function noRequiredCheckGh(head) {
+function noRequiredCheckGh(head, calls = []) {
   const read = cleanPrGh(head);
   return async (args) => {
-    if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
+    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
+      calls.push(args);
       return {
         status: 0,
         stdout: JSON.stringify([
@@ -815,7 +819,8 @@ function noRequiredCheckGh(head) {
         stderr: "",
       };
     }
-    if (startsWithArgs(args, ["pr", "checks"])) {
+    if (equalsArgs(args, prChecksArgs(42))) {
+      calls.push(args);
       return { status: 1, stdout: "", stderr: "no required checks reported" };
     }
     return read(args);
@@ -843,18 +848,6 @@ async function useAcceptedPrRun() {
   return run;
 }
 
-// Usefulness: verifies the no-required-check double replies to separate argument
-// elements only, so a merged-argument call reaches the clean-PR double and gets no
-// ruleset or `pr checks` reply (issue #538).
-test("the no-required-check double gives no reply to a merged-argument call", async () => {
-  const gh = noRequiredCheckGh(CLEAN_REPO_HEAD);
-  for (const merged of [["api repos/owner/repo/rules/branches/main"], ["pr checks 42"]]) {
-    const reply = await gh(merged);
-    expect(reply.status).toBe(1);
-    expect(reply.stderr).toContain(JSON.stringify(merged));
-  }
-});
-
 describe("finish on a run that declares a PR", () => {
   // Usefulness: verifies a declared run finishes on a base branch with no required
   // check, and records the absence in the envelope and the state file, so a finish
@@ -864,10 +857,14 @@ describe("finish on a run that declares a PR", () => {
     await setup();
     const { repo, head } = await useAcceptedPrRun();
 
+    const calls = [];
     const result = await finishCall(repo, ["--require-ci", "42"], {
-      gh: noRequiredCheckGh(head),
+      gh: noRequiredCheckGh(head, calls),
     });
     expect(result.exitCode).toBe(0);
+    // The absence rests on the two fixtures this double names, so a route that
+    // stops matching fails here instead of passing on a fallback.
+    expect(calls).toEqual([apiArgs("repos/owner/repo/rules/branches/main"), prChecksArgs(42)]);
     expect(result.payload).toMatchObject({ noRequiredChecks: true });
     const state = await readRepoState(repo);
     expect(state.lifecycle).toBe("finished");
