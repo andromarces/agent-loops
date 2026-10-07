@@ -162,9 +162,12 @@ export async function runOpenCode(state, prompt, options = {}) {
  * envelope carries what the model wrote (issue #493). Both stream errors, the interleaved one and
  * the unidentified part one, bound that text (issues #510 and #529): the text is redacted (ADR 0017) first, then keeps its last 4000 code units,
  * cut on a code point boundary. A longer text is cut at the start, and a second line states the
- * cut and the original length. The bound holds for the text that this adapter produces. A later
- * redaction of an environment value that matches part of a `[redacted:NAME]` marker, for example
- * `redacted`, rewrites the markers and can grow the text past it.
+ * cut and the original length.
+ * The bound holds only for the text that the adapter produces. A later redaction pass with a
+ * different environment can grow the text past the bound. A pass with the same environment
+ * leaves the text unchanged. For example, the value `API_TOKEN` in `OTHER_SECRET` rewrites
+ * `[redacted:API_TOKEN]` (20 characters) to `[redacted:[redacted:OTHER_SECRET]]` (34
+ * characters). This example is not the full condition.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
