@@ -4,7 +4,7 @@
 
 accepted
 
-Supersedes [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md). The decisions of ADR 0011 that still hold are restated below. One changes: a headless run that takes only `--require-ci <pr>` now reads and supplies the status, where ADR 0011 keyed the read on `--pr` alone.
+Supersedes [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md). The decisions of ADR 0011 that still hold are restated below. One changes: a headless run that takes only `--require-ci <pr>` now reads and supplies the status, where ADR 0011 keyed the read on `--pr` alone. It also narrows [ADR 0013](0013-bound-the-headless-required-check-wait.md) decision 6, which stays `accepted` (item 15).
 
 ## Date
 
@@ -138,6 +138,16 @@ checks`, which reports no commit and could not separate that case.
     the runtime read a status.
 14. `--require-ci` stays the enforcement point. The supplied status changes no
     gate condition and no refusal.
+15. **Narrowing of ADR 0013 decision 6.** ADR 0013 decision 6 and its matching
+    Consequences statement say that, when no wait is named, the `--require-ci`
+    gate is the only check read. For a run that names a PR, that statement now
+    reads: the gate is the only read that enforces, and the runtime adds the
+    advisory read of this ADR before each reviewer turn. The runtime read does
+    not depend on the prompt naming a wait, so a gate-only run with a turn
+    `--timeout` under 12 seconds, or with a refused path character, also
+    supplies the status to its reviewer. ADR 0013 stays `accepted`: its wait
+    bound, its command, and its refusal to wait when no bound fits all hold. Its
+    two statements carry a forward pointer to this ADR.
 
 ## Consequences
 
@@ -226,5 +236,6 @@ Andro Marces
 - Implementation: `readRequiredChecks` in `src/lib/ci-gate.mjs`, `runtimeReadLines` in `src/prompts/reviewer.mjs`, the read and the `prChecks` result field in `runChild` in `src/runtime.mjs`, the dispatch wiring and the `prChecks` envelope field in `src/role.mjs`; tests in `tests/lib/ci-gate.test.mjs`, `tests/prompts/reviewer.test.mjs`, `tests/runtime.test.mjs`, and `tests/role.dispatch.test.mjs`; documented in `docs/orchestrator-instructions.md` and `README.md`
 - [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md), the superseded decision
 - [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md)
+- [ADR 0013: Bound the headless required-check wait with the runtime wait](0013-bound-the-headless-required-check-wait.md), narrowed by item 15
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
 - [ADR Index](README.md)

@@ -59,7 +59,10 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
 6. A turn `--timeout` under 12 seconds fits no positive bound. The prompt then
    names no wait and tells the orchestrator not to run `gh pr checks` or
    `role wait-checks`. The `--require-ci` gate is the only check read, and a
-   refused finish is corrected by a reviewer dispatch or an abort.
+   refused finish is corrected by a reviewer dispatch or an abort. Narrowed by
+   [ADR 0024](0024-supply-the-required-check-status-for-a-named-pr.md): the gate
+   stays the only read that enforces, and for a run that names a PR the runtime
+   also reads the status before each reviewer turn as advisory evidence.
 7. The status-read exception to the orchestrator role rule covers one command,
    `agent-loop role wait-checks`, the same scope as the interactive instructions.
    It reads status and changes nothing. The headless prompt tells the orchestrator
@@ -87,7 +90,10 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
   and work tree locations in the prompt, so a prompt is not portable to another
   machine.
 - A run with a turn `--timeout` under 12 seconds, or a path with a refused
-  character, cannot wait, and only the `--require-ci` gate reads the checks.
+  character, cannot wait, and only the `--require-ci` gate reads the checks
+  (narrowed by [ADR 0024](0024-supply-the-required-check-status-for-a-named-pr.md):
+  the runtime also supplies an advisory status to the reviewer of a run that
+  names a PR, and only the gate enforces).
 - known-limit: a non-ASCII path is rendered as is, and cmd reads it through its
   active code page. A path that cmd cannot read fails the command visibly.
 - The orchestrator must pick the form for its own shell. A prompt cannot know
@@ -138,5 +144,6 @@ Andro Marces
   tests in `tests/prompts/orchestrator.test.mjs` and `tests/runtime.test.mjs`;
   documented in `docs/orchestrator-instructions.md` and `README.md`
 - [PR #382](https://github.com/andromarces/agent-loops/pull/382)
+- [ADR 0024: Supply the required-check status to the reviewer for every run that names a PR](0024-supply-the-required-check-status-for-a-named-pr.md), which narrows decision 6 and its Consequences statement that only the gate reads the checks
 - [ADR 0010: A runtime-owned bound on the interactive required-check wait](0010-runtime-owned-required-check-wait-bound.md)
 - [ADR Index](README.md)
