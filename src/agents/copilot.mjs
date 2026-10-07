@@ -4,6 +4,7 @@ import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 import {
   asSessionId,
+  childRan,
   keepFailedSessionId,
   lastClosingMessage,
   resumeMismatchError,
@@ -37,7 +38,11 @@ export async function runCopilot(state, prompt, options = {}) {
   try {
     ({ stdout } = await exec("copilot", args, { cwd, input: prompt, timeout, signal, role }));
   } catch (error) {
-    const failedResult = findResultEvent(parseJsonLines(error?.stdout ?? ""));
+    const failedEvents = parseJsonLines(error?.stdout ?? "");
+    const failedResult = findResultEvent(failedEvents);
+    // The session ran on whatever the failed output names, or on an unknown model, so the record
+    // follows it unless the process never started.
+    if (childRan(error)) setResolvedModel(state, reportedModels(failedEvents));
     setMainLoopUsage(state, objectUsage(failedResult));
     // Keep only an id the CLI reported. A failed turn that reports no id does not show that a
     // session holding the turn's content exists, and keeping the pre-assigned id would skip the
@@ -49,6 +54,8 @@ export async function runCopilot(state, prompt, options = {}) {
   }
 
   const events = parseJsonLines(stdout);
+  // Set before the checks below: a turn that fails them still ran on this model.
+  setResolvedModel(state, reportedModels(events));
   const resultEvent = findResultEvent(events);
   setMainLoopUsage(state, objectUsage(resultEvent));
 
@@ -80,16 +87,6 @@ export async function runCopilot(state, prompt, options = {}) {
     logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
   }
 
-  // Every assistant message that carries a `model` field is evidence. Messages that name different
-  // models, or a malformed value, are unresolved (the gap: a turn that used a second model).
-  setResolvedModel(
-    state,
-    events
-      .filter((event) => event.type === "assistant.message" && isJsonObject(event.data))
-      .filter((event) => Object.hasOwn(event.data, "model"))
-      .map((event) => event.data.model),
-  );
-
   return String(lastClosingMessage(messages)).trim();
 }
 
@@ -106,4 +103,16 @@ function readAssistantMessage(event) {
 function objectUsage(resultEvent) {
   const usage = resultEvent?.usage;
   return usage && typeof usage === "object" ? usage : undefined;
+}
+
+/**
+ * Lists the `model` of every assistant message that has the field, malformed values included. Messages
+ * that name different models, or a malformed value, are unresolved (the gap: a turn that used a second
+ * model).
+ */
+function reportedModels(events) {
+  return events
+    .filter((event) => event?.type === "assistant.message" && isJsonObject(event.data))
+    .filter((event) => Object.hasOwn(event.data, "model"))
+    .map((event) => event.data.model);
 }

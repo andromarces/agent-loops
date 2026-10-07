@@ -2,6 +2,7 @@ import { isJsonObject, parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import {
   asSessionId,
+  childRan,
   flagMissingSession,
   keepFailedSessionId,
   resumeMismatchError,
@@ -53,11 +54,23 @@ export async function runClaude(state, prompt, options = {}) {
       failed = undefined;
     }
     setUsage(state, findResultEvent(failed));
+    // The session ran on whatever the failed output names, or on an unknown model, so the record
+    // follows it unless the process never started.
+    if (childRan(err)) setResolvedModel(state, reportedModels(findResultEvent(failed)));
     keepFailedSessionId(state, findSessionId(failed));
     flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }
-  const parsed = parseJson(stdout, "Claude Code");
+  let parsed;
+  try {
+    parsed = parseJson(stdout, "Claude Code");
+  } catch (err) {
+    setResolvedModel(state, []);
+    throw err;
+  }
+  // Set before the session checks below: a turn that fails them still ran on this model.
+  const resultEvent = findResultEvent(parsed);
+  setResolvedModel(state, reportedModels(resultEvent));
 
   const sessionId = findSessionId(parsed);
 
@@ -71,9 +84,7 @@ export async function runClaude(state, prompt, options = {}) {
   }
 
   state.sessionId = sessionId;
-  const resultEvent = findResultEvent(parsed);
   setUsage(state, resultEvent);
-  setResolvedModel(state, reportedModels(resultEvent));
 
   return String(resultEvent?.result ?? "").trim();
 }

@@ -598,3 +598,76 @@ test("copilot replaces the earlier resolvedModel when a turn names another singl
   const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };
   expect(await resolvedFrom([message({ model: "m-2" })], state)).toBe("m-2");
 });
+
+const copilotFailure = (overrides = {}) =>
+  Object.assign(new Error("copilot exited with code 1."), {
+    name: "ExecError",
+    exitCode: 1,
+    stdout: "",
+    stderr: "",
+    timedOut: false,
+    isCanceled: false,
+    isTerminated: false,
+    ...overrides,
+  });
+
+const recordedState = () => ({
+  kind: "copilot",
+  sessionId: null,
+  model: null,
+  resolvedModel: "m-1",
+});
+
+// Usefulness: the session ran on the model a failed turn names, so the record must follow it (review
+// probe: the record kept A while the failed turn named B).
+test("copilot records the model a failed turn names, replacing the earlier one", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({
+      stdout: [message({ model: "m-2" }), '{"type":"result","sessionId":"s1"}'].join("\n"),
+    }),
+  );
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("exited");
+  expect(state.resolvedModel).toBe("m-2");
+});
+
+// Usefulness: a turn that ran and named no single model may have run on another model, so the record
+// becomes unresolved on every failure path: a non-zero exit with no or ambiguous output, a timeout, a
+// cancel, a signal, and an exit 0 with no result event.
+test.each([
+  ["a non-zero exit with no output", copilotFailure()],
+  [
+    "a non-zero exit with different models",
+    copilotFailure({ stdout: [message({ model: "m-2" }), message({ model: "m-3" })].join("\n") }),
+  ],
+  ["a timeout", copilotFailure({ timedOut: true })],
+  ["a cancel", copilotFailure({ isCanceled: true })],
+  ["a signal", copilotFailure({ isTerminated: true, exitCode: undefined })],
+])("copilot marks the record unresolved after %s", async (_label, failure) => {
+  vi.mocked(exec).mockRejectedValueOnce(failure);
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(state.resolvedModel).toBeNull();
+});
+
+test("copilot marks the record unresolved after an exit 0 with no result event", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: "garbage", stderr: "" });
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("session ID");
+  expect(state.resolvedModel).toBeNull();
+});
+
+test("copilot records the model of an exit 0 turn that then fails a check", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: message({ model: "m-2" }), stderr: "" });
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("session ID");
+  expect(state.resolvedModel).toBe("m-2");
+});
+
+// Usefulness: a process that never started ran no model, so the earlier record stays.
+test("copilot leaves the record alone when the process never started", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(copilotFailure({ exitCode: undefined }));
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(state.resolvedModel).toBe("m-1");
+});

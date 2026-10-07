@@ -105,7 +105,9 @@ export function lastClosingMessage(messages) {
  *   model, a value of another type). An earlier model is replaced, because it describes an earlier
  *   turn, and `--continue-from` compares nothing against it;
  * - the field absent, not reported: the adapter never calls this, as for a CLI that reports no model.
- * A failed turn never calls this, so it leaves the record of the last successful turn.
+ * An adapter calls this for every turn whose child process ran, failed or not, with the evidence in the
+ * output it has (none for a timeout, a cancel, or a signal), because a turn that ran may have run the
+ * session on another model. It does not call this when `childRan` is false.
  * @param {object} state role state; mutated
  * @param {unknown[]} reported the model values the turn output named, malformed ones included
  */
@@ -114,4 +116,16 @@ export function setResolvedModel(state, reported) {
   const named =
     typeof first === "string" && MODEL_ID.test(first) && reported.every((m) => m === first);
   state.resolvedModel = named ? first : null;
+}
+
+/**
+ * False only when `exec` reports that the child process never started (POSIX: no exit code and no
+ * timeout, cancel, or signal), so the turn ran no model and the resolved-model record stays. Every
+ * other failure, including an error of an unknown shape, counts as a turn that ran, so the record
+ * is set from what the output shows, or to unresolved, and never keeps a model the session may have left.
+ * @param {unknown} err the error `exec` threw
+ */
+export function childRan(err) {
+  if (!err || typeof err !== "object" || err.name !== "ExecError") return true;
+  return !(err.exitCode == null && !err.timedOut && !err.isCanceled && !err.isTerminated);
 }

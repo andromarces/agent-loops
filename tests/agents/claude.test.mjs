@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vite-plus/test";
 import { runClaude } from "../../src/agents/claude.mjs";
 import { exec } from "../../src/lib/exec.mjs";
+import { runChild } from "../../src/runtime.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
@@ -383,16 +384,113 @@ test.each([
   expect(await resolved(result, state)).toBeNull();
 });
 
-// Usefulness: a failed turn gives no evidence about a model, so it leaves the record of the last
-// successful turn alone.
-test("claude leaves resolvedModel alone on a failed turn", async () => {
-  vi.mocked(exec).mockRejectedValueOnce(Object.assign(new Error("boom"), { stdout: "" }));
-  const state = { kind: "claude", sessionId: null, model: null, resolvedModel: "claude-opus-5-5" };
-  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("boom");
-  expect(state.resolvedModel).toBe("claude-opus-5-5");
-});
-
 test("claude replaces the earlier resolvedModel when a turn names another single model", async () => {
   const state = { kind: "claude", sessionId: null, model: null, resolvedModel: "claude-opus-5-5" };
   expect(await resolved({ modelUsage: { "claude-opus-5-6": {} } }, state)).toBe("claude-opus-5-6");
+});
+
+// A failure as `exec` throws it: an ExecError that carries the output the child printed.
+const execFailure = (overrides = {}) =>
+  Object.assign(new Error("claude exited with code 1."), {
+    name: "ExecError",
+    exitCode: 1,
+    stdout: "",
+    stderr: "",
+    timedOut: false,
+    isCanceled: false,
+    isTerminated: false,
+    ...overrides,
+  });
+
+const failedState = () => ({
+  kind: "claude",
+  sessionId: null,
+  model: null,
+  resolvedModel: "claude-opus-5-5",
+});
+
+// Usefulness: the session ran on the model a failed turn names, so the record must follow it. Probe from
+// review: a failed turn named B while the record kept A, so a probe of B refused and a probe of A passed.
+test("claude records the model a failed turn names, replacing the earlier one", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    execFailure({
+      stdout: JSON.stringify({ session_id: "s1", modelUsage: { "claude-opus-5-6": {} } }),
+    }),
+  );
+  const state = failedState();
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("exited");
+  expect(state.resolvedModel).toBe("claude-opus-5-6");
+});
+
+// Usefulness: a turn that ran and named no single model may have run on another model, so the record
+// becomes unresolved, on every failure path that writes the transcript: a non-zero exit with no or
+// ambiguous output, a timeout, a cancel, a signal, and an exit 0 with output that does not parse.
+test.each([
+  ["a non-zero exit with no output", execFailure()],
+  [
+    "a non-zero exit with several models",
+    execFailure({ stdout: JSON.stringify({ modelUsage: { a: {}, b: {} } }) }),
+  ],
+  ["a non-zero exit with output that is not JSON", execFailure({ stdout: "oops" })],
+  ["a timeout", execFailure({ timedOut: true })],
+  ["a cancel", execFailure({ isCanceled: true })],
+  ["a signal", execFailure({ isTerminated: true, exitCode: undefined })],
+])("claude marks the record unresolved after %s", async (_label, failure) => {
+  vi.mocked(exec).mockRejectedValueOnce(failure);
+  const state = failedState();
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow();
+  expect(state.resolvedModel).toBeNull();
+});
+
+test("claude marks the record unresolved after an exit 0 whose output does not parse", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: "not json", stderr: "" });
+  const state = failedState();
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow();
+  expect(state.resolvedModel).toBeNull();
+});
+
+test("claude records the model of an exit 0 turn that then fails a session check", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ result: "ok", modelUsage: { "claude-opus-5-6": {} } }),
+    stderr: "",
+  });
+  const state = failedState();
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("session_id");
+  expect(state.resolvedModel).toBe("claude-opus-5-6");
+});
+
+// Usefulness: a process that never started ran no model, so the record stays: a spawn failure leaves
+// the earlier state, and the earlier session is unchanged.
+test("claude leaves the record alone when the process never started", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(execFailure({ exitCode: undefined }));
+  const state = failedState();
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow();
+  expect(state.resolvedModel).toBe("claude-opus-5-5");
+});
+
+// Usefulness: a resume of a missing session ran no model turn, but the rerun as a first turn does: the
+// record follows the rerun, and a rerun that fails too leaves it unresolved, never the stale model.
+test("claude record follows the rerun after a missing session", async () => {
+  vi.mocked(exec)
+    .mockRejectedValueOnce(missingFailure({ name: "ExecError", timedOut: false }))
+    .mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        session_id: "s2",
+        result: "ok",
+        modelUsage: { "claude-opus-5-6": {} },
+      }),
+      stderr: "",
+    });
+  const state = { ...failedState(), sessionId: "gone" };
+  const outcome = await runChild({ role: state, roleName: "worker", prompt: "t", cwd: "/path" });
+  expect(outcome.status).toBe("ok");
+  expect(state.resolvedModel).toBe("claude-opus-5-6");
+
+  vi.mocked(exec)
+    .mockRejectedValueOnce(missingFailure({ name: "ExecError", timedOut: false }))
+    .mockRejectedValueOnce(execFailure());
+  const again = { ...failedState(), sessionId: "gone" };
+  const failed = await runChild({ role: again, roleName: "worker", prompt: "t", cwd: "/path" });
+  expect(failed.status).toBe("error");
+  expect(again.resolvedModel).toBeNull();
 });
