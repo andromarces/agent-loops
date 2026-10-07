@@ -336,3 +336,41 @@ test("claude invocation is identical with the reviewer sandbox input on and off"
   const [off, on] = vi.mocked(exec).mock.calls;
   expect(on).toEqual(off);
 });
+
+// Usefulness: --continue-from compares the model Claude Code resolved, so a turn whose result names one
+// model in `modelUsage` records it, and a turn that names several (subagents) records none instead of a guess.
+test("claude records the one model its result reports as resolvedModel", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({
+      session_id: "s1",
+      result: "ok",
+      modelUsage: { "claude-opus-5-5": { inputTokens: 1 } },
+    }),
+    stderr: "",
+  });
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.resolvedModel).toBe("claude-opus-5-5");
+
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({
+      session_id: "s1",
+      result: "ok",
+      modelUsage: { "claude-opus-5-5": {}, "claude-haiku-4-5": {} },
+    }),
+    stderr: "",
+  });
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.resolvedModel).toBe("claude-opus-5-5");
+  const fresh = { kind: "claude", sessionId: null, model: null, effort: null };
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({
+      session_id: "s2",
+      result: "ok",
+      modelUsage: { a: {}, b: {} },
+    }),
+    stderr: "",
+  });
+  await runClaude(fresh, "p", { cwd: "/path" });
+  expect(fresh.resolvedModel).toBeUndefined();
+});

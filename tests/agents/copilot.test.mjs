@@ -542,3 +542,28 @@ test("copilot invocation is identical with the reviewer sandbox input on and off
   const [off, on] = vi.mocked(exec).mock.calls;
   expect(on).toEqual(off);
 });
+
+// Usefulness: --continue-from compares the model Copilot resolved, which its assistant messages name.
+test("copilot records the model of the last assistant message as resolvedModel", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      '{"type":"assistant.message","data":{"content":"a","model":"m-1"}}',
+      '{"type":"assistant.message","data":{"content":"b","model":"m-2"}}',
+      '{"type":"result","sessionId":"s1","exitCode":0}',
+    ].join("\n"),
+    stderr: "",
+  });
+  const state = { kind: "copilot", sessionId: null, model: null, effort: null };
+  await runCopilot(state, "p", { cwd: "/dir" });
+  expect(state.resolvedModel).toBe("m-2");
+
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      '{"type":"assistant.message","data":{"content":"a"}}',
+      '{"type":"result","sessionId":"s1","exitCode":0}',
+    ].join("\n"),
+    stderr: "",
+  });
+  await runCopilot(state, "p", { cwd: "/dir" });
+  expect(state.resolvedModel).toBe("m-2");
+});

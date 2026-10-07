@@ -1678,6 +1678,55 @@ test("--continue-from refuses a changed role and keeps the transcript", async ()
   });
 });
 
+// Usefulness: verifies a CLI default that resolves to another model than the earlier run recorded
+// is refused before any turn of the run and leaves the transcript unchanged, and an unchanged model
+// continues (#394).
+test("--continue-from refuses a changed resolved model and keeps the transcript", async () => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    const reporting = (model, seen) => {
+      const agents = sessionAgents([work, FINISH], seen);
+      const run = agents.claude.run;
+      agents.claude.run = async (state, prompt, options) => {
+        state.resolvedModel = model;
+        return run(state, prompt, options);
+      };
+      return agents;
+    };
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      reporting("model-1", { codex: [], claude: [], agy: [] }),
+    );
+    const before = await readFile(transcriptPath, "utf8");
+    expect(JSON.parse(before).roles.worker.resolvedModel).toBe("model-1");
+
+    const args = [
+      ...CONTINUE_BASE,
+      "--cwd",
+      repo,
+      "--continue-from",
+      transcriptPath,
+      "--transcript",
+      transcriptPath,
+    ];
+    const changed = { codex: [], claude: [], agy: [] };
+    await main(args, reporting("model-2", changed));
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      'worker resolved to "model-1" in the earlier run, not "model-2"',
+    );
+    expect(changed.codex).toEqual([]);
+    expect(await readFile(transcriptPath, "utf8")).toBe(before);
+
+    process.exitCode = undefined;
+    await main(args, reporting("model-1", { codex: [], claude: [], agy: [] }));
+    expect(process.exitCode).toBe(0);
+    expect(JSON.parse(await readFile(transcriptPath, "utf8")).roles.worker.resolvedModel).toBe(
+      "model-1",
+    );
+  });
+});
+
 // Usefulness: verifies --continue-from takes a value, in both forms.
 test("--continue-from requires a value and accepts the inline form", () => {
   expect(() => parseArgs([...CONTINUE_BASE, "--continue-from"])).toThrow();

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { normalizeAgent } from "../agents/index.mjs";
+import { defaultAgents, normalizeAgent, runAgent } from "../agents/index.mjs";
+import { logInfo, logWarn } from "./log.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
@@ -51,9 +52,9 @@ export async function readContinuation(path) {
  * the work tree must equal the earlier run's, because a session id is valid only
  * for the CLI that created it and a provider keeps a session per project
  * directory. One rule covers every adapter: model and effort compare exactly, so
- * an omitted value matches only an omitted value. known-limit: an omitted model
- * runs the CLI's own default, and a change of that default between the two runs
- * is not detected, because the transcript records what the caller requested.
+ * an omitted value matches only an omitted value. The model each CLI resolved
+ * (`resolvedModel`, where its output names one) carries over to the new role;
+ * `verifyResolvedModels` compares it with the current default.
  * Changes no role when it throws. A role that never ran keeps a null id and
  * starts a new session.
  * @param {object} roles new run roles keyed by role name; mutated on success
@@ -84,6 +85,47 @@ export function restoreSessions(roles, earlier, cwd) {
   }
   for (const role of ROLE_KINDS) {
     roles[role].sessionId = earlier.roles[role].sessionId;
+    const resolved = earlier.roles[role].resolvedModel;
+    if (typeof resolved === "string" && resolved) roles[role].resolvedModel = resolved;
+  }
+}
+
+const PROBE_PROMPT = "Reply with the single word OK.";
+
+/**
+ * Refuses a continuation when the model a CLI resolves now differs from the one the earlier run
+ * recorded in `resolvedModel` (#394). The transcript holds the requested model, and an omitted
+ * model or an alias resolves inside the CLI, so a changed CLI default or alias target is visible
+ * only in the output. For each role with a recorded model, one read-only turn in a new session
+ * (never the continued one) reads what the CLI resolves now, before any turn of the run.
+ * A probe that reports no model cannot be compared and passes with a warning. A failed probe
+ * refuses, because the model is then unverified. Adapters that report no model (Codex, agy,
+ * opencode) record none, so they are never probed. known-limit: each probe is a real model call.
+ * @param {object} roles new run roles after `restoreSessions`; not mutated
+ * @param {{ cwd: string, timeout?: number | null, signal?: AbortSignal, agents?: object }} options
+ */
+export async function verifyResolvedModels(
+  roles,
+  { cwd, timeout, signal, agents = defaultAgents },
+) {
+  for (const role of ROLE_KINDS) {
+    const recorded = roles[role].resolvedModel;
+    if (typeof recorded !== "string" || !recorded) continue;
+    const { kind, model, effort } = roles[role];
+    const probe = { kind, model, effort, sessionId: null };
+    logInfo(`--continue-from: probing the model that ${role} (${kind}) resolves now`);
+    try {
+      await runAgent(probe, PROBE_PROMPT, { cwd, readOnly: true, timeout, signal, role }, agents);
+    } catch (err) {
+      throw new Error(`--continue-from: ${role} model probe failed: ${readableErrorText(err)}`);
+    }
+    if (typeof probe.resolvedModel !== "string" || !probe.resolvedModel) {
+      logWarn(`--continue-from: the ${kind} probe reported no model, so ${role} is not compared.`);
+    } else if (probe.resolvedModel !== recorded) {
+      throw new Error(
+        `--continue-from: ${role} resolved to ${JSON.stringify(recorded)} in the earlier run, not ${JSON.stringify(probe.resolvedModel)}. The CLI default or alias changed, and a session continues under the model that created it. Pass the earlier model explicitly, or start a new run.`,
+      );
+    }
   }
 }
 

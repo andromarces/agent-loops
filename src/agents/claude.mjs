@@ -72,6 +72,7 @@ export async function runClaude(state, prompt, options = {}) {
   state.sessionId = sessionId;
   const resultEvent = findResultEvent(parsed);
   setUsage(state, resultEvent);
+  setResolvedModel(state, resultEvent);
 
   return String(resultEvent?.result ?? "").trim();
 }
@@ -101,4 +102,14 @@ function setUsage(state, resultEvent) {
     usage.totalCostUsd = resultEvent.total_cost_usd;
   }
   setUsageOrDelete(state, Object.keys(usage).length > 0 ? usage : undefined);
+}
+
+/**
+ * Records the model Claude Code resolved for the turn, read from the keys of `modelUsage`. More
+ * than one key means a subagent or helper model ran too, and the role model is then unknown, so
+ * the earlier value stays instead of a guess.
+ */
+function setResolvedModel(state, resultEvent) {
+  const models = Object.keys(resultEvent?.modelUsage ?? {});
+  if (models.length === 1) state.resolvedModel = models[0];
 }

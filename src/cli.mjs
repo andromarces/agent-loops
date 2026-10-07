@@ -30,6 +30,7 @@ import {
   gateFromTranscript,
   readContinuation,
   restoreSessions,
+  verifyResolvedModels,
 } from "./lib/continuation.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { readProp, redactedText } from "./lib/error-message.mjs";
@@ -417,8 +418,11 @@ Options:
                                 reviewer sessions. The role kinds, the recorded role models and
                                 efforts, and --cwd must equal the earlier run's, or the run is
                                 refused before any turn. An omitted model or effort matches only
-                                an omitted one, and a change of a CLI's own default model between
-                                the two runs is not detected. The
+                                an omitted one. For claude and copilot, which report the model
+                                they resolved, a role whose earlier run recorded one is probed
+                                with one read-only turn before any turn of the run, and a changed
+                                resolved model refuses the run. codex, agy, and opencode report no
+                                model, so a changed CLI default is not detected for them. The
                                 completion gate is restored only when the work tree is the state
                                 the earlier run's last reviewer turn reviewed, read from the
                                 transcript's events and must equal the gate event that ends it. Otherwise it is reset: no reviewer
@@ -576,6 +580,11 @@ export async function main(
     try {
       const earlier = await readContinuation(options.continueFrom);
       restoreSessions(roles, earlier, options.cwd);
+      await verifyResolvedModels(roles, {
+        cwd: options.cwd,
+        timeout: options.timeout,
+        agents,
+      });
       earlierGate = gateFromTranscript(earlier);
       // --transcript rewrites its file at exit, so a run that names the file it
       // continues carries the earlier events into the rewrite, then a boundary

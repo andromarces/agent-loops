@@ -79,6 +79,11 @@ export async function runCopilot(state, prompt, options = {}) {
     logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
   }
 
+  const resolved = events.findLast(
+    (event) => event.type === "assistant.message" && typeof event.data?.model === "string",
+  )?.data.model;
+  if (resolved) state.resolvedModel = resolved;
+
   return String(lastClosingMessage(messages)).trim();
 }
 
