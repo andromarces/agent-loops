@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
+import { startsWithArgs } from "../runtime-helpers.mjs";
 
 // A scripted `gh` for the required-check read. Each entry is `{ status, checks,
 // stdout, stderr }` and the last entry repeats, so a wait that polls more times
@@ -9,8 +10,12 @@ import { waitChecks } from "../../src/lib/check-wait.mjs";
 function scriptedGh(reads) {
   let n = 0;
   return async (args, cwd) => {
-    if (!args.join(" ").includes("pr checks")) {
-      return { status: 1, stdout: "", stderr: `unmatched gh call: ${args.join(" ")} (${cwd})` };
+    if (!startsWithArgs(args, ["pr", "checks"])) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: `unmatched gh call: ${JSON.stringify(args)} (${cwd})`,
+      };
     }
     const read = reads[Math.min(n++, reads.length - 1)];
     return {
@@ -35,6 +40,17 @@ function fakeClock() {
     elapsed: () => clock.now,
   };
 }
+
+// Usefulness: verifies the scripted `gh` routes on the argument elements, so a
+// call that merges the arguments into one element gets no reply and its error
+// prints the array, which differs from the text of the expected call (issue #530).
+test("the scripted gh gives no reply to a merged-argument call", async () => {
+  const merged = ["pr checks 42 --required --json name,state,bucket"];
+  const reply = await scriptedGh([{ checks: [] }])(merged, ".");
+  expect(reply.status).toBe(1);
+  expect(reply.stdout).toBe("");
+  expect(reply.stderr).toContain(JSON.stringify(merged));
+});
 
 function check(name, bucket, state) {
   return { name, state, bucket };

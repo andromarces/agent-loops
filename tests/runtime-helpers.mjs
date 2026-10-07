@@ -8,6 +8,20 @@ import { setTimeout as delay } from "node:timers/promises";
 import { execa } from "execa";
 
 /**
+ * True when `args` begins with the elements of `lead`, compared element by
+ * element. A call that merges arguments into one element does not match, which
+ * a substring test on the joined text cannot tell apart.
+ */
+export function startsWithArgs(args, lead) {
+  return lead.every((part, i) => args[i] === part);
+}
+
+/** True when `args` is a `gh api` call whose endpoint ends with `suffix`. */
+export function isApiRead(args, suffix) {
+  return args[0] === "api" && typeof args[1] === "string" && args[1].endsWith(suffix);
+}
+
+/**
  * Creates a temporary git repository with one initial commit (`init.txt`).
  * Side effect: leaves a directory in the OS temp dir; callers must remove it
  * with `removePath`.

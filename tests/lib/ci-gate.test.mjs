@@ -11,10 +11,12 @@ import {
   expectAbortKillsShim,
   expectBoundKillsShim,
   removePath,
+  startsWithArgs,
 } from "../runtime-helpers.mjs";
 
 const HEAD = "1111111111111111111111111111111111111111";
 const MERGE = "2222222222222222222222222222222222222222";
+const SLUG = "andromarces/agent-loops";
 
 function prInfo(overrides = {}) {
   return {
@@ -67,7 +69,8 @@ const commitStatus = (context, state, updatedAt = "2026-01-01T00:00:00Z") => ({
   updated_at: updatedAt,
 });
 
-// Routes a `gh` call by a substring of its arguments. A `hidden` value answers
+// Routes a `gh` call by the leading elements of its argument array, so a call
+// that merges arguments into one element gets no reply. A `hidden` value answers
 // with the 404 a token without repository admin receives, a `forbidden` value
 // with the 403 a `GITHUB_TOKEN` receives, a `pat forbidden` value with the 403 a
 // fine-grained PAT without the Administration permission receives, a
@@ -79,9 +82,8 @@ const commitStatus = (context, state, updatedAt = "2026-01-01T00:00:00Z") => ({
 // says so differently.
 function fakeGh(routes) {
   return async (args) => {
-    const key = args.join(" ");
     for (const [match, value] of routes) {
-      if (key.includes(match)) {
+      if (startsWithArgs(args, match.split(" "))) {
         if (value === null) {
           return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
         }
@@ -114,7 +116,7 @@ function fakeGh(routes) {
         return { status: 0, stdout: JSON.stringify(value), stderr: "" };
       }
     }
-    return { status: 1, stdout: "", stderr: `unmatched gh call: ${key}` };
+    return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
   };
 }
 
@@ -135,20 +137,34 @@ function routes({
   return [
     ["pr view 42", info],
     ["pr checks 42", prChecks],
-    ["repo view", "andromarces/agent-loops"],
+    ["repo view", SLUG],
     // The ruleset read is paginated, so its body is an array of pages.
-    ["rules/branches/main", requiredPages ?? (Array.isArray(required) ? [required] : required)],
-    ["branches/main/protection", protection],
-    [`commits/${MERGE}/check-runs`, [{ check_runs: mergeRuns }]],
-    [`commits/${MERGE}/status --paginate`, [{ statuses: mergeStatuses }]],
-    [`commits/${MERGE}/status`, { statuses: mergeStatuses }],
-    [`commits/${HEAD}/check-runs`, [{ check_runs: headRuns }]],
+    [
+      `api repos/${SLUG}/rules/branches/main`,
+      requiredPages ?? (Array.isArray(required) ? [required] : required),
+    ],
+    [`api repos/${SLUG}/branches/main/protection`, protection],
+    [`api repos/${SLUG}/commits/${MERGE}/check-runs`, [{ check_runs: mergeRuns }]],
+    [`api repos/${SLUG}/commits/${MERGE}/status --paginate`, [{ statuses: mergeStatuses }]],
+    [`api repos/${SLUG}/commits/${MERGE}/status`, { statuses: mergeStatuses }],
+    [`api repos/${SLUG}/commits/${HEAD}/check-runs`, [{ check_runs: headRuns }]],
     // The status read paginates; the gate's single-page read does not. The more
     // specific route comes first.
-    [`commits/${HEAD}/status --paginate`, [{ statuses: headStatuses }]],
-    [`commits/${HEAD}/status`, { statuses: headStatuses }],
+    [`api repos/${SLUG}/commits/${HEAD}/status --paginate`, [{ statuses: headStatuses }]],
+    [`api repos/${SLUG}/commits/${HEAD}/status`, { statuses: headStatuses }],
   ];
 }
+
+// Usefulness: verifies the double routes on the argument elements, so a call
+// that merges the arguments into one element gets no reply and its error prints
+// the array, which differs from the text of the expected call (issue #530).
+test("the gh double gives no reply to a merged-argument call", async () => {
+  const merged = ["pr view 42 --json headRefOid"];
+  const reply = await fakeGh(routes())(merged);
+  expect(reply.status).toBe(1);
+  expect(reply.stdout).toBe("");
+  expect(reply.stderr).toContain(JSON.stringify(merged));
+});
 
 const REVIEWED = { head: HEAD, clean: true, exact: true, digest: "d" };
 
@@ -1712,7 +1728,7 @@ test("reads an unresolved status when the repository rulesets cannot be read", a
     HEAD,
     fakeGh(
       routes({ headRuns: BOTH_PASS }).map(([m, v]) =>
-        m.startsWith("rules/") ? [m, "hidden"] : [m, v],
+        m.includes("/rules/") ? [m, "hidden"] : [m, v],
       ),
     ),
   );
@@ -1974,7 +1990,7 @@ test.each([
 test("reads a failing status from a later page of the commit status reply", async () => {
   const gh = fakeGh(
     routes({ headRuns: [run("ci (ubuntu-latest)", "success")] }).map(([match, value]) =>
-      match === `commits/${HEAD}/status --paginate`
+      match === `api repos/${SLUG}/commits/${HEAD}/status --paginate`
         ? [
             match,
             [
@@ -2167,7 +2183,7 @@ test.each([
   "the supplied status agrees with the finish gate on %s",
   async (_name, { statusPages, clean = true, ...options }) => {
     const table = routes(options).map(([match, value]) =>
-      statusPages && match === `commits/${HEAD}/status --paginate`
+      statusPages && match === `api repos/${SLUG}/commits/${HEAD}/status --paginate`
         ? [match, statusPages]
         : [match, value],
     );
@@ -2179,6 +2195,11 @@ test.each([
       gh: fakeGh(table),
     });
     expect(read.status === "pass").toBe(gate.ok);
+    // Only a served second page passes: the head run covers one required check
+    // and the later success covers the other, so an unserved fixture refuses both.
+    if (statusPages) {
+      expect(gate.ok).toBe(true);
+    }
   },
 );
 
