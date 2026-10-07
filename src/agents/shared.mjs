@@ -1,5 +1,8 @@
 import { hasClosingBlockAttempt } from "../lib/report.mjs";
 
+// A model id has no whitespace or control character, so a sentence or a blank is not one.
+const MODEL_ID = /^[^\s\p{Cc}]+$/u;
+
 /**
  * Sets `state.usage` to `usage`, or removes it when the CLI reported none (`undefined` or
  * `null`), so a turn that omits usage leaves no stale value behind. An empty object is kept.
@@ -91,4 +94,56 @@ export function asSessionId(value) {
  */
 export function lastClosingMessage(messages) {
   return messages.findLast(hasClosingBlockAttempt) ?? messages.at(-1);
+}
+
+/**
+ * Sets `state.resolvedModel` to the resolution state of the turn that just succeeded, one of three:
+ * - a model id: the output named one model, from well-formed, unambiguous evidence (at least one
+ *   value, every value a model id, which is a non-empty string with no whitespace or control
+ *   character, and all values equal);
+ * - `null`, unresolved: the output was unreadable, malformed, or ambiguous (several models, no
+ *   model, a value of another type). An earlier model is replaced, because it describes an earlier
+ *   turn, and `--continue-from` compares nothing against it;
+ * - the field absent, not reported: the adapter never calls this, as for a CLI that reports no model.
+ * The record describes the session the role keeps. An adapter calls `recordResolvedModel`, which calls
+ * this, for every turn whose child process ran, failed or not, because a turn that ran may have run the
+ * session on another model. It does not call it when `childRan` is false.
+ * @param {object} state role state; mutated
+ * @param {unknown[]} reported the model values the turn output named, malformed ones included
+ */
+export function setResolvedModel(state, reported) {
+  const [first] = reported;
+  const named =
+    typeof first === "string" && MODEL_ID.test(first) && reported.every((m) => m === first);
+  state.resolvedModel = named ? first : null;
+}
+
+/**
+ * False only when `exec` reports that the child process never started (POSIX: no exit code and no
+ * timeout, cancel, or signal), so the turn ran no model and the resolved-model record stays. Every
+ * other failure, including an error of an unknown shape, counts as a turn that ran, so the record
+ * is set from what the output shows, or to unresolved, and never keeps a model the session may have left.
+ * @param {unknown} err the error `exec` threw
+ */
+export function childRan(err) {
+  if (!err || typeof err !== "object" || err.name !== "ExecError") return true;
+  return !(err.exitCode == null && !err.timedOut && !err.isCanceled && !err.isTerminated);
+}
+
+/**
+ * Records the resolution state of a turn that ran, for the session the role keeps after it. The model
+ * evidence counts only when the output's session is that session: the retained id, or the new id that a
+ * first turn adopts. An output that reports another session than the retained one (the case
+ * `resumeMismatchError` catches), or no valid session, cannot be tied to the kept session, which may
+ * have run on any model, so the record is unresolved (`null`). Call it before any check that throws,
+ * on the success and the failure path alike.
+ * @param {object} state role state; mutated
+ * @param {unknown[]} reported the model values the output named
+ * @param {string | null} requestedId the session id the turn asked the CLI to resume, or null
+ * @param {unknown} returnedId the session id the output reports
+ */
+export function recordResolvedModel(state, reported, requestedId, returnedId) {
+  const session = asSessionId(returnedId);
+  const keptSession = Boolean(session) && (!requestedId || session === requestedId);
+  setResolvedModel(state, keptSession ? reported : []);
 }

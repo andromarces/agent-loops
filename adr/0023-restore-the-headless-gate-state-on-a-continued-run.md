@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0026: Detect a changed resolved model on --continue-from](0026-detect-a-changed-resolved-model-on-continue-from.md). ADR 0026 restates the decisions of this ADR that still hold and closes the accepted gap about a changed default model for the CLIs that report it.
 
 Supersedes [ADR 0015: Continue a headless run from its transcript](0015-continue-a-headless-run-from-its-transcript.md). The decisions of ADR 0015 that still hold are restated below. One changes: the completion gate state is restored on an unchanged work tree, where ADR 0015 reset it.
 
@@ -61,4 +63,5 @@ Andro Marces
 - [Issue #393: Restore the headless gate state on --continue-from when the tree is unchanged](https://github.com/andromarces/agent-loops/issues/393)
 - [Pull Request #536](https://github.com/andromarces/agent-loops/pull/536)
 - Implementation: `gateFromTranscript` and `matchingGate` in `src/lib/continuation.mjs`, the `continued` and `earlierGate` inputs of `runLoop`, and `--continue-from` in `src/cli.mjs`; tests in `tests/lib/continuation.test.mjs`, `tests/cli.test.mjs`, and `tests/runtime.test.mjs`; documented in `README.md`
+- Superseded by [ADR 0026: Detect a changed resolved model on --continue-from](0026-detect-a-changed-resolved-model-on-continue-from.md)
 - [ADR Index](README.md)

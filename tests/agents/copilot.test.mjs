@@ -2,6 +2,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { runCopilot } from "../../src/agents/copilot.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
+import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
 import { runChild } from "../../src/runtime.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
@@ -541,4 +542,277 @@ test("copilot invocation is identical with the reviewer sandbox input on and off
 
   const [off, on] = vi.mocked(exec).mock.calls;
   expect(on).toEqual(off);
+});
+
+const message = (data) =>
+  JSON.stringify({ type: "assistant.message", data: { content: "a", ...data } });
+const resolvedFrom = async (
+  messages,
+  state = { kind: "copilot", sessionId: null, model: null },
+) => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [...messages, '{"type":"result","sessionId":"s1","exitCode":0}'].join("\n"),
+    stderr: "",
+  });
+  await runCopilot(state, "p", { cwd: "/dir" });
+  return state.resolvedModel;
+};
+
+// Usefulness: --continue-from compares the model Copilot resolved, which its assistant messages
+// name; one model across the messages is unambiguous.
+test("copilot records the one model its assistant messages name as resolvedModel", async () => {
+  expect(await resolvedFrom([message({ model: "m-1" }), message({ model: "m-1" })])).toBe("m-1");
+  expect(await resolvedFrom([message({ model: "m-1" }), message({})])).toBe("m-1");
+});
+
+// Usefulness: a false resolved model would refuse or pass a continuation wrongly, so messages that
+// name different models, and every malformed `model` value, record none.
+test.each([
+  ["different models", [message({ model: "m-1" }), message({ model: "m-2" })]],
+  ["no model", [message({})]],
+  ["an empty model", [message({ model: "" })]],
+  ["a blank model", [message({ model: "  " })]],
+  ["a number", [message({ model: 7 })]],
+  ["an object", [message({ model: {} })]],
+  ["a valid model beside a malformed one", [message({ model: "m-1" }), message({ model: 7 })]],
+  ["a model with whitespace", [message({ model: "m 1" })]],
+])("copilot marks the turn unresolved for %s", async (_label, messages) => {
+  expect(await resolvedFrom(messages)).toBeNull();
+});
+
+// Usefulness: the record describes the latest turn, so a turn with unreadable or ambiguous evidence
+// replaces an earlier model with unresolved (null) instead of leaving a stale model that a later
+// --continue-from would compare against.
+test.each([
+  ["no model", [message({})]],
+  ["different models", [message({ model: "m-2" }), message({ model: "m-3" })]],
+  ["a malformed model", [message({ model: 7 })]],
+])(
+  "copilot replaces the earlier resolvedModel with unresolved for %s",
+  async (_label, messages) => {
+    const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };
+    expect(await resolvedFrom(messages, state)).toBeNull();
+  },
+);
+
+test("copilot replaces the earlier resolvedModel when a turn names another single model", async () => {
+  const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };
+  expect(await resolvedFrom([message({ model: "m-2" })], state)).toBe("m-2");
+});
+
+const copilotFailure = (overrides = {}) =>
+  Object.assign(new Error("copilot exited with code 1."), {
+    name: "ExecError",
+    exitCode: 1,
+    stdout: "",
+    stderr: "",
+    timedOut: false,
+    isCanceled: false,
+    isTerminated: false,
+    ...overrides,
+  });
+
+const recordedState = () => ({
+  kind: "copilot",
+  sessionId: null,
+  model: null,
+  resolvedModel: "m-1",
+});
+
+// Usefulness: the session ran on the model a failed turn names, so the record must follow it (review
+// probe: the record kept A while the failed turn named B).
+test("copilot records the model a failed turn names, replacing the earlier one", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({
+      stdout: [message({ model: "m-2" }), '{"type":"result","sessionId":"s1"}'].join("\n"),
+    }),
+  );
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("exited");
+  expect(state.resolvedModel).toBe("m-2");
+});
+
+// Usefulness: a turn that ran and named no single model may have run on another model, so the record
+// becomes unresolved on every failure path: a non-zero exit with no or ambiguous output, a timeout, a
+// cancel, a signal, and an exit 0 with no result event.
+test.each([
+  ["a non-zero exit with no output", copilotFailure()],
+  [
+    "a non-zero exit with different models",
+    copilotFailure({ stdout: [message({ model: "m-2" }), message({ model: "m-3" })].join("\n") }),
+  ],
+  ["a timeout", copilotFailure({ timedOut: true })],
+  ["a cancel", copilotFailure({ isCanceled: true })],
+  ["a signal", copilotFailure({ isTerminated: true, exitCode: undefined })],
+])("copilot marks the record unresolved after %s", async (_label, failure) => {
+  vi.mocked(exec).mockRejectedValueOnce(failure);
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(state.resolvedModel).toBeNull();
+});
+
+test("copilot marks the record unresolved after an exit 0 with no result event", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: "garbage", stderr: "" });
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("session ID");
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: the record describes the session the role keeps. A turn whose output reports no session
+// cannot be tied to the kept session, so the record is unresolved even when the output names a model.
+test("copilot marks the record unresolved when the output names no session", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: message({ model: "m-2" }), stderr: "" });
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("session ID");
+  expect(state.resolvedModel).toBeNull();
+});
+
+const turnOf = (sessionId, model) =>
+  [message({ model }), JSON.stringify({ type: "result", sessionId, exitCode: 0 })].join("\n");
+
+// Usefulness: reported outcome. A resumed turn whose result is another session naming B keeps the
+// original session id, so the record must not become B (a continuation would refuse A and accept B
+// against the kept session). The record is unresolved, so a continuation compares nothing.
+test("copilot does not record the model of a session the role does not keep", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: turnOf("s-other", "m-2"), stderr: "" });
+  const state = { ...recordedState(), sessionId: "s-kept" };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("did not resume");
+  expect(state.sessionId).toBe("s-kept");
+  expect(state.resolvedModel).toBeNull();
+
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    for (const now of ["m-1", "m-2"]) {
+      const roles = {
+        orchestrator: { kind: "codex", model: null, effort: null },
+        worker: { ...state },
+        reviewer: { kind: "agy", model: null, effort: null },
+      };
+      const probe = vi.fn(async (probed) => {
+        probed.resolvedModel = now;
+      });
+      await expect(verifyResolvedModels(roles, { probe })).resolves.toBeUndefined();
+      expect(probe).not.toHaveBeenCalled();
+    }
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+  }
+});
+
+// Usefulness: a resumed turn that reports the retained session records its model, and a first turn
+// records the session it adopts.
+test("copilot records the model of the retained or adopted session", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: turnOf("s-kept", "m-2"), stderr: "" });
+  const resumed = { ...recordedState(), sessionId: "s-kept" };
+  await runCopilot(resumed, "p", { cwd: "/dir" });
+  expect(resumed.resolvedModel).toBe("m-2");
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: turnOf("s-new", "m-2"), stderr: "" });
+  const first = recordedState();
+  await runCopilot(first, "p", { cwd: "/dir" });
+  expect(first.sessionId).toBe("s-new");
+  expect(first.resolvedModel).toBe("m-2");
+});
+
+// Usefulness: the same session rule holds on a failed turn.
+test.each([
+  ["the retained session", "s-kept", "m-2"],
+  ["another session", "s-other", null],
+  ["no session", undefined, null],
+])("copilot failed turn that reports %s", async (_label, reported, expected) => {
+  const result = reported ? [JSON.stringify({ type: "result", sessionId: reported })] : [];
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({ stdout: [message({ model: "m-2" }), ...result].join("\n") }),
+  );
+  const state = { ...recordedState(), sessionId: "s-kept" };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(state.sessionId).toBe("s-kept");
+  expect(state.resolvedModel).toBe(expected);
+});
+
+test("copilot failed first turn records the model only with the session it adopts", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({
+      stdout: [message({ model: "m-2" }), '{"type":"result","sessionId":"s-new"}'].join("\n"),
+    }),
+  );
+  const adopted = recordedState();
+  await expect(runCopilot(adopted, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(adopted.sessionId).toBe("s-new");
+  expect(adopted.resolvedModel).toBe("m-2");
+
+  vi.mocked(exec).mockRejectedValueOnce(copilotFailure({ stdout: message({ model: "m-2" }) }));
+  const none = recordedState();
+  await expect(runCopilot(none, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(none.sessionId).toBeNull();
+  expect(none.resolvedModel).toBeNull();
+});
+
+// Usefulness: a process that never started ran no model, so the earlier record stays.
+test("copilot leaves the record alone when the process never started", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(copilotFailure({ exitCode: undefined }));
+  const state = recordedState();
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(state.resolvedModel).toBe("m-1");
+});
+
+const resultOf = (sessionId) => JSON.stringify({ type: "result", sessionId, exitCode: 0 });
+
+// Usefulness: one consistent source. The adapter takes the session from the last result event, so a
+// stream whose events name more than one session cannot tie its messages' model to the session the role
+// keeps, and records unresolved. Before, a first result of another session was ignored and the model was
+// recorded for the retained session.
+test.each([
+  [
+    "two result events of different sessions",
+    [message({ model: "m-2" }), resultOf("s-other"), resultOf("s-kept")],
+  ],
+  [
+    "an event whose data names another session",
+    [
+      JSON.stringify({ type: "session.start", data: { sessionId: "s-other" } }),
+      message({ model: "m-2" }),
+      resultOf("s-kept"),
+    ],
+  ],
+  [
+    "an event with a malformed session",
+    [JSON.stringify({ type: "x", session_id: 7 }), message({ model: "m-2" }), resultOf("s-kept")],
+  ],
+])("copilot records unresolved for %s", async (_label, lines) => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: lines.join("\n"), stderr: "" });
+  const state = { ...recordedState(), sessionId: "s-kept" };
+  await runCopilot(state, "p", { cwd: "/dir" }).catch(() => {});
+  expect(state.sessionId).toBe("s-kept");
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: a normal single-session stream still records its model, also when another event repeats
+// the same session.
+test("copilot records the model of a single-session stream", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      JSON.stringify({ type: "session.start", data: { sessionId: "s-kept" } }),
+      message({ model: "m-2" }),
+      resultOf("s-kept"),
+    ].join("\n"),
+    stderr: "",
+  });
+  const state = { ...recordedState(), sessionId: "s-kept" };
+  await runCopilot(state, "p", { cwd: "/dir" });
+  expect(state.resolvedModel).toBe("m-2");
+});
+
+// Usefulness: the same single-source rule holds on a failed turn.
+test("copilot failed turn with mixed sessions records unresolved", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({
+      stdout: [message({ model: "m-2" }), resultOf("s-other"), resultOf("s-kept")].join("\n"),
+    }),
+  );
+  const state = { ...recordedState(), sessionId: "s-kept" };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(state.resolvedModel).toBeNull();
 });

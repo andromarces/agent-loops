@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { normalizeAgent } from "../agents/index.mjs";
-import { readableErrorText } from "./error-message.mjs";
+import { normalizeAgent, REPORTS_RESOLVED_MODEL } from "../agents/index.mjs";
+import { logInfo, logWarn } from "./log.mjs";
+import { readableErrorText, readProp } from "./error-message.mjs";
 import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
@@ -51,9 +52,9 @@ export async function readContinuation(path) {
  * the work tree must equal the earlier run's, because a session id is valid only
  * for the CLI that created it and a provider keeps a session per project
  * directory. One rule covers every adapter: model and effort compare exactly, so
- * an omitted value matches only an omitted value. known-limit: an omitted model
- * runs the CLI's own default, and a change of that default between the two runs
- * is not detected, because the transcript records what the caller requested.
+ * an omitted value matches only an omitted value. The model each CLI resolved
+ * (`resolvedModel`, where its output names one) carries over to the new role;
+ * `verifyResolvedModels` compares it with the current default.
  * Changes no role when it throws. A role that never ran keeps a null id and
  * starts a new session.
  * @param {object} roles new run roles keyed by role name; mutated on success
@@ -84,6 +85,77 @@ export function restoreSessions(roles, earlier, cwd) {
   }
   for (const role of ROLE_KINDS) {
     roles[role].sessionId = earlier.roles[role].sessionId;
+    // A model id or null (unresolved) carries over; an absent or malformed value is "not reported".
+    const resolved = earlier.roles[role].resolvedModel;
+    if (resolved === null || (typeof resolved === "string" && resolved)) {
+      roles[role].resolvedModel = resolved;
+    }
+  }
+}
+
+/**
+ * Refuses a continuation when the model a CLI resolves now differs from the one the earlier run
+ * recorded in `resolvedModel` (#394, ADR 0026). The transcript holds the requested model, and an
+ * omitted model or an alias resolves inside the CLI, so a changed CLI default or alias target is
+ * visible only in the output. `resolvedModel` holds the state of the latest turn of the role that
+ * ran, failed or not, for the session the role keeps: a model id, `null` (unresolved: that turn named
+ * no single model, or its output was not the kept session), or absent (not reported:
+ * a CLI that never reports a model, or a record written before this change).
+ * Only a recorded model id is compared. For it, `probe` runs one read-only turn in a new session
+ * (never the continued one), before any turn of the run, and sets `resolvedModel` on the state it
+ * receives. A probe that does not name one model (`null` or absent) skips the comparison with a
+ * warning. A recorded `null` skips the probe and the comparison with a warning, and never compares
+ * against an older model. An absent record warns for a CLI that can report a model and logs an info
+ * line for one that never does. The caller owns the guards of the probe turn (mutation check,
+ * cancel), and an error of theirs (`MutationError`, `SnapshotError`, a cancel) is rethrown
+ * unchanged. Any other probe failure refuses, because the model is then unverified.
+ * known-limit: each probe is a real model call.
+ * @param {object} roles new run roles after `restoreSessions`; not mutated
+ * @param {{ probe: (state: object, role: string) => Promise<void> }} options
+ */
+export async function verifyResolvedModels(roles, { probe }) {
+  for (const role of ROLE_KINDS) {
+    const { kind, model, effort, resolvedModel: recorded } = roles[role];
+    if (recorded === null) {
+      logWarn(
+        `--continue-from: the default-model check did not run for ${role} (${kind}), because the latest turn of the earlier run did not name one model.`,
+      );
+      continue;
+    }
+    if (typeof recorded !== "string" || !recorded) {
+      if (REPORTS_RESOLVED_MODEL.has(normalizeAgent(kind))) {
+        logWarn(
+          `--continue-from: the default-model check did not run for ${role} (${kind}), because the earlier record has no resolved model.`,
+        );
+      } else {
+        logInfo(
+          `--continue-from: ${role} (${kind}) reports no resolved model, so a changed default model is not detected.`,
+        );
+      }
+      continue;
+    }
+    const state = { kind, model, effort, sessionId: null };
+    logInfo(`--continue-from: probing the model that ${role} (${kind}) resolves now`);
+    try {
+      await probe(state, role);
+    } catch (err) {
+      if (
+        ["MutationError", "SnapshotError"].includes(readProp(err, "name")) ||
+        readProp(err, "isCanceled")
+      ) {
+        throw err;
+      }
+      throw new Error(`--continue-from: ${role} model probe failed: ${readableErrorText(err)}`);
+    }
+    if (typeof state.resolvedModel !== "string" || !state.resolvedModel) {
+      logWarn(
+        `--continue-from: the default-model check did not run for ${role} (${kind}), because the probe did not name one model.`,
+      );
+    } else if (state.resolvedModel !== recorded) {
+      throw new Error(
+        `--continue-from: ${role} resolved to ${JSON.stringify(recorded)} in the earlier run, not ${JSON.stringify(state.resolvedModel)}. The CLI default or alias changed, and a session continues under the model that created it. The model flags must equal the earlier run's, so a new --${role}-model value is refused too. Restore the earlier default in the CLI, or start a new run without --continue-from.`,
+      );
+    }
   }
 }
 
