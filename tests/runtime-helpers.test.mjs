@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { expect, test } from "vite-plus/test";
-import { cleanRepoGit, untrackedFilesGit } from "./runtime-helpers.mjs";
+import { pidAlive } from "../src/lib/runstate.mjs";
+import { cleanRepoGit, deadPid, untrackedFilesGit } from "./runtime-helpers.mjs";
 
 const options = { cwd: tmpdir() };
 const expected = ["rev-parse", "--verify", "-q", "HEAD"];
@@ -26,4 +27,11 @@ test("untrackedFilesGit error for a merged-argument call differs from the expect
   const error = await untrackedFilesGit("git", merged, options).catch((caught) => caught);
   expect(error.message).toContain("unexpected git call");
   expect(error.message).not.toBe(`unexpected git call: ${expected.join(" ")}`);
+});
+
+// Usefulness: acceptance (#546) — the dead owner reads as dead and is never a pid of a running process, so a test cannot fail on pid reuse.
+test("deadPid is a valid pid that the production liveness check reads as dead", async () => {
+  const pid = await deadPid();
+  expect(pid).not.toBe(process.pid);
+  expect(pidAlive(pid)).toBe(false);
 });
