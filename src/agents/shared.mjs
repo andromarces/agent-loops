@@ -97,22 +97,18 @@ export function lastClosingMessage(messages) {
 }
 
 /**
- * Sets `state.resolvedModel` from the model values one turn reported, or removes it. The model is
- * recorded only from well-formed, unambiguous evidence: at least one value, every value a model id
- * (a non-empty string with no whitespace or control character), and all values equal. Anything else,
- * including a value of another type, gives no model, so a malformed or mixed report never becomes a
- * false resolved model that `--continue-from` would compare. The earlier value is removed too,
- * because it describes an earlier turn.
+ * Sets `state.resolvedModel` from the model values one turn reported. The model is replaced only
+ * from well-formed, unambiguous evidence: at least one value, every value a model id (a non-empty
+ * string with no whitespace or control character), and all values equal. Any other output, such as
+ * several models, no model, or a value of another type, leaves the last well-formed model in place,
+ * because that value is the baseline `--continue-from` compares, and a turn that reads nothing says
+ * nothing against it. A malformed report never becomes a false resolved model.
  * @param {object} state role state; mutated
  * @param {unknown[]} reported the model values the turn output named, malformed ones included
  */
 export function setResolvedModel(state, reported) {
   const [first] = reported;
-  const unambiguous =
-    typeof first === "string" && MODEL_ID.test(first) && reported.every((model) => model === first);
-  if (unambiguous) {
+  if (typeof first === "string" && MODEL_ID.test(first) && reported.every((m) => m === first)) {
     state.resolvedModel = first;
-  } else {
-    delete state.resolvedModel;
   }
 }

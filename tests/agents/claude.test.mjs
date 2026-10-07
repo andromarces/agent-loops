@@ -370,9 +370,19 @@ test.each([
   expect(await resolved(result)).toBeUndefined();
 });
 
-// Usefulness: a turn with unreadable evidence must not leave an earlier turn's model as if it
-// were the model of this turn.
-test("claude clears an earlier resolvedModel when a turn reports none", async () => {
+// Usefulness: the earlier model is the baseline of the next --continue-from comparison, so a turn with
+// unreadable or ambiguous evidence keeps the last well-formed model, and a turn that names another
+// single model replaces it.
+test.each([
+  ["no modelUsage", {}],
+  ["several models", { modelUsage: { a: {}, b: {} } }],
+  ["a malformed modelUsage", { modelUsage: "x" }],
+])("claude keeps the earlier resolvedModel for %s", async (_label, result) => {
   const state = { kind: "claude", sessionId: null, model: null, resolvedModel: "claude-opus-5-5" };
-  expect(await resolved({}, state)).toBeUndefined();
+  expect(await resolved(result, state)).toBe("claude-opus-5-5");
+});
+
+test("claude replaces the earlier resolvedModel when a turn names another single model", async () => {
+  const state = { kind: "claude", sessionId: null, model: null, resolvedModel: "claude-opus-5-5" };
+  expect(await resolved({ modelUsage: { "claude-opus-5-6": {} } }, state)).toBe("claude-opus-5-6");
 });

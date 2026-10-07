@@ -81,7 +81,7 @@ export async function runCopilot(state, prompt, options = {}) {
   }
 
   // Every assistant message that carries a `model` field is evidence. Messages that name different
-  // models, or a malformed value, record none (the gap: a turn that used a second model).
+  // models, or a malformed value, change nothing (the gap: a turn that used a second model).
   setResolvedModel(
     state,
     events

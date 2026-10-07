@@ -579,9 +579,19 @@ test.each([
   expect(await resolvedFrom(messages)).toBeUndefined();
 });
 
-// Usefulness: a turn with unreadable evidence must not leave an earlier turn's model as if it
-// were the model of this turn.
-test("copilot clears an earlier resolvedModel when a turn reports none", async () => {
+// Usefulness: the earlier model is the baseline of the next --continue-from comparison, so a turn with
+// unreadable or ambiguous evidence keeps the last well-formed model, and a turn that names another
+// single model replaces it.
+test.each([
+  ["no model", [message({})]],
+  ["different models", [message({ model: "m-2" }), message({ model: "m-3" })]],
+  ["a malformed model", [message({ model: 7 })]],
+])("copilot keeps the earlier resolvedModel for %s", async (_label, messages) => {
   const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };
-  expect(await resolvedFrom([message({})], state)).toBeUndefined();
+  expect(await resolvedFrom(messages, state)).toBe("m-1");
+});
+
+test("copilot replaces the earlier resolvedModel when a turn names another single model", async () => {
+  const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };
+  expect(await resolvedFrom([message({ model: "m-2" })], state)).toBe("m-2");
 });

@@ -107,9 +107,9 @@ function setUsage(state, resultEvent) {
 
 /**
  * Lists the model ids a result names, the keys of `modelUsage`. More than one key means a subagent
- * or helper model ran too, so the role model is unknown (the gap: such a turn records none). A
+ * or helper model ran too, so the role model is unknown (the gap: such a turn changes nothing). A
  * `modelUsage` that is not an object, or an entry that is not an object, is reported as `null`,
- * which is malformed evidence and records none.
+ * which is malformed evidence and changes nothing.
  */
 function reportedModels(resultEvent) {
   const usage = resultEvent?.modelUsage;
