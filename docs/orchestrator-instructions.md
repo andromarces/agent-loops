@@ -313,7 +313,8 @@ worker turn and no extra reviewer turn for that failure.
 
 A reviewer turn whose shell commands cannot reach the network, for example a
 sandboxed Codex reviewer, could only report the status as unresolved before. A run that declares
-its PR with `--pr <pr>` knows the pull request before the first turn, so the
+its PR with `--pr <pr>`, or a headless run that gates a PR with `--require-ci <pr>`,
+knows the pull request before the first turn, so the
 runtime reads the required-check status for that PR head and supplies it to every
 reviewer prompt. The prompt adds two lines inside the required-check group, so
 they apply only under the pull request condition:
@@ -373,10 +374,12 @@ required names, a base branch with no required check, and a pass withheld for a
 reviewed work tree that is not clean or a merge state the gate refuses (blocked,
 behind, conflicting, or unknown).
 
-A run that declares no PR reads no status, and the reviewer keeps its own read.
-The read follows `--pr`, which is the PR input both paths know at dispatch. A
-headless run that takes only `--require-ci` and declares no `--pr` reads no
-status.
+A run that names no PR reads no status, and the reviewer keeps its own read.
+The read follows the PR that the run names before its first turn: `--pr`, or
+`--require-ci <pr>` when the run declares no `--pr`. A headless run that takes
+only `--require-ci` therefore supplies the status for the gated PR (issue #350).
+The interactive path receives `--require-ci` only at `finish`, so only `--pr`
+supplies the status there.
 
 ## The runtime supplies a test command result
 
@@ -581,12 +584,12 @@ for the probes.
   through a shell command that its sandbox runs, so the headless loop cannot
   wait. The limit covers shell commands only: a model-side tool or another channel
   outside the sandbox is not blocked, and the run counts on none of them for the
-  read. A run that declares its PR with `--pr <pr>` still
-  supplies the status to each reviewer turn, because the runtime reads it outside
-  every read-only turn, so the reviewer does not have to. A run that declares no
-  PR gets no supplied status, because the runtime reads one only for `--pr`. That
+  read. A run that names its PR with `--pr <pr>`, or with
+  `--require-ci <pr>` on the headless command, still supplies the status to each
+  reviewer turn, because the runtime reads it outside every read-only turn, so the
+  reviewer does not have to. A run that names no PR gets no supplied status. That
   supplied status is advisory: it reports to the reviewer and never enforces.
-- The `--require-ci` finish gate is the only check read here that enforces; a declared PR's advisory status read does not. The gate refuses a
+- The `--require-ci` finish gate is the only check read here that enforces; the advisory status read of a named PR does not. The gate refuses a
   finish while a required check is pending. A refusal itself charges no step, and
   the reviewer dispatch that corrects it charges one, so the step budget has to
   cover those dispatches. Dispatch the reviewer when the gate refuses, or `abort`

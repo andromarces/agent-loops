@@ -37,13 +37,16 @@ the reviewer `Checks` line.
    per-context judgment (`evaluateContext`). It reads the pull request once,
    then the repository, the rulesets, the classic protection, and the check runs
    and commit statuses of `commits/{head}` for the reviewed head (item 4).
-2. The read is keyed on `--pr`, which is the PR input both paths know at
-   dispatch. A run that declares no PR reads nothing. A headless run that takes
-   only `--require-ci` and declares no `--pr` reads nothing, because the gate
-   flag is not the declared PR input. Every prompt statement about the supplied
-   read is therefore conditional on `--pr`: a gated run that declares no PR gets
-   the gate claim without any statement about a status read, because the runtime
-   makes none and the prompt must not describe a read that never happens.
+2. The read is keyed on the PR that the run names before its first turn: `--pr`,
+   or `--require-ci <pr>` when a headless run declares no `--pr`. The headless
+   CLI refuses a `--pr` and a `--require-ci` that name different PRs, so the two
+   never conflict. A run that names no PR reads nothing, and the interactive path
+   receives `--require-ci` only at `finish`, so only `--pr` keys it there. Every
+   prompt statement about the supplied read is conditional on a named PR: a run
+   with neither flag gets no statement about a status read, because the runtime
+   makes none and the prompt must not describe a read that never happens. A
+   headless run that took only `--require-ci` read nothing until issue #350
+   amended this item, so a sandboxed reviewer in that run had no status.
 3. A status is reported only for the head it describes. The read compares the
    resolved PR head with the local reviewed head, which the runtime already has
    from the pre-turn snapshot. A read whose PR head differs, and a read with no
@@ -111,11 +114,10 @@ checks`, which reports no commit and could not separate that case.
     A result with no read carries no `prChecks` field, so a turn that made no
     read cannot be read as one that did. The `turns` entry keeps the fixed shape
     ADR 0008 defines, so the status is not recorded there.
-13. The prompt wording a run does not need stays unchanged. A run that declares
-    no PR gets the `origin/main` lines verbatim, including the gate line that
-    calls the gate the only check read, because that run makes no supplied read
-    and the qualification would describe one. Only a declared run's lines are
-    reworded, so the rewording cannot reach a run this decision does not touch.
+13. The prompt wording a run does not need stays unchanged. A run that names no
+    PR carries no gate lines at all, because the gate lines render only for a
+    gated run, and a gated run always names a PR. Every gated run gets the
+    reworded lines, which state the supplied read for the named PR.
 14. `--require-ci` stays the enforcement point. The supplied status changes no
     gate condition and no refusal.
 
@@ -141,8 +143,10 @@ checks`, which reports no commit and could not separate that case.
 - The status is a point-in-time read, taken before the turn. A check that starts
   or finishes after it is not reflected, which is why the reviewer keeps its own
   read and reports a difference.
-- A run that declares no PR gains nothing and loses nothing: the reviewer's own
+- A run that names no PR gains nothing and loses nothing: the reviewer's own
   read is the only read, as before.
+- A headless run that takes only `--require-ci <pr>` now reads the status too, so
+  a sandboxed reviewer in that run sees it (issue #350).
 - A declared-PR run whose reviewer CLI can reach the network now reads the status
   twice, once in the runtime and once in the reviewer. The prompt tells the
   reviewer to report the supplied status rather than read again, so the second
@@ -188,6 +192,7 @@ Andro Marces
 ## Links
 
 - [Issue #320: Put the runtime-read required-check status into each reviewer prompt when the run has a PR input](https://github.com/andromarces/agent-loops/issues/320)
+- [Issue #350: Supply the required-check status for a headless --require-ci run without --pr](https://github.com/andromarces/agent-loops/issues/350)
 - [Issue #313: Show required-check status to the reviewer before it accepts a PR head](https://github.com/andromarces/agent-loops/issues/313)
 - [Issue #302: Require a PR input on every run so an omitted unresolvedCompare marker cannot read as verified](https://github.com/andromarces/agent-loops/issues/302)
 - Implementation: `readRequiredChecks` in `src/lib/ci-gate.mjs`, `runtimeReadLines` in `src/prompts/reviewer.mjs`, the read and the `prChecks` result field in `runChild` in `src/runtime.mjs`, the dispatch wiring and the `prChecks` envelope field in `src/role.mjs`; tests in `tests/lib/ci-gate.test.mjs`, `tests/prompts/reviewer.test.mjs`, `tests/runtime.test.mjs`, and `tests/role.dispatch.test.mjs`; documented in `docs/orchestrator-instructions.md` and `README.md`
