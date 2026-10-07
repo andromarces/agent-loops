@@ -210,6 +210,38 @@ test("withMutationCheck prioritizes MutationError when inner function throws", a
   }
 });
 
+// Usefulness: verifies a falsy thrown value is rethrown, so a turn that throws null or undefined never returns as a success.
+test.each([null, undefined, 0, ""])(
+  "withMutationCheck rethrows falsy thrown value %j",
+  async (thrown) => {
+    const repo = await createTempRepo();
+    try {
+      await expect(
+        withMutationCheck(repo, "orchestrator", async () => {
+          throw thrown;
+        }),
+      ).rejects.toBe(thrown);
+    } finally {
+      await removePath(repo);
+    }
+  },
+);
+
+// Usefulness: verifies a detected mutation still wins over a falsy thrown value.
+test("withMutationCheck prioritizes MutationError when inner function throws a falsy value", async () => {
+  const repo = await createTempRepo();
+  try {
+    await expect(
+      withMutationCheck(repo, "reviewer", async () => {
+        await writeFile(join(repo, "dirty.txt"), "leaked\n");
+        throw null;
+      }),
+    ).rejects.toThrow(MutationError);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies snapshot() resolves root-relative paths so a subdirectory cwd still hashes root files.
 test("snapshot from subdirectory detects second edit to already-modified root file", async () => {
   const repo = await createTempRepo();

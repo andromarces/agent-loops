@@ -26,8 +26,10 @@ import {
   CLEAN_REPO_HEAD,
   cleanRepoGit,
   createTempRepo,
+  isApiRead,
   removePath,
   scripted,
+  startsWithArgs,
 } from "./runtime-helpers.mjs";
 
 // 1. Usefulness: verifies orchestrator dispatches worker first.
@@ -1789,10 +1791,9 @@ const PASSING_RUN = {
 // commit carries.
 function ciGateGh(headRefOid, calls = [], runs = [PASSING_RUN]) {
   return async (args) => {
-    const key = args.join(" ");
-    calls.push(key);
+    calls.push(args.join(" "));
     const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
-    if (key.includes("pr view 42")) {
+    if (startsWithArgs(args, ["pr", "view", "42"])) {
       return json({
         headRefOid,
         baseRefName: "main",
@@ -1801,13 +1802,13 @@ function ciGateGh(headRefOid, calls = [], runs = [PASSING_RUN]) {
         state: "OPEN",
       });
     }
-    if (key.includes("repo view")) {
+    if (startsWithArgs(args, ["repo", "view"])) {
       return { status: 0, stdout: "owner/repo", stderr: "" };
     }
-    if (key.startsWith("pr checks 42")) {
+    if (startsWithArgs(args, ["pr", "checks", "42"])) {
       return json([]);
     }
-    if (key.includes("rules/branches/main")) {
+    if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
       // The ruleset read is paginated, so its body is an array of pages.
       return json([
         [
@@ -1818,19 +1819,31 @@ function ciGateGh(headRefOid, calls = [], runs = [PASSING_RUN]) {
         ],
       ]);
     }
-    if (key.includes("branches/main/protection")) {
+    if (startsWithArgs(args, ["api", "repos/owner/repo/branches/main/protection"])) {
       return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
     }
-    if (key.includes("/check-runs")) {
+    if (isApiRead(args, "/check-runs")) {
       return json([{ check_runs: runs }]);
     }
-    if (key.includes("/status")) {
+    if (isApiRead(args, "/status")) {
       // The status read paginates, so its reply is an array of pages.
-      return json(key.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
+      return json(args.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
     }
-    return { status: 1, stdout: "", stderr: `unmatched: ${key}` };
+    return { status: 1, stdout: "", stderr: `unmatched: ${JSON.stringify(args)}` };
   };
 }
+
+// Usefulness: verifies the `--require-ci` double routes on the argument elements,
+// so a call that merges the arguments into one element gets no reply and its
+// error prints the array, which differs from the text of the expected call
+// (issue #530).
+test("the --require-ci gh double gives no reply to a merged-argument call", async () => {
+  const merged = ["pr view 42 --json headRefOid"];
+  const reply = await ciGateGh(OTHER_HEAD)(merged);
+  expect(reply.status).toBe(1);
+  expect(reply.stdout).toBe("");
+  expect(reply.stderr).toContain(JSON.stringify(merged));
+});
 
 const OTHER_HEAD = "1".repeat(40);
 

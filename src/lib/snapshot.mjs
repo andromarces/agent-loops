@@ -227,6 +227,7 @@ export function diffSnapshots(before, after) {
  * Run `fn()` and compare Git snapshots taken before and after.
  * Throws `MutationError` when the diff is non-empty, even when `fn()` already
  * failed: the mutation error wins over the wrapped error, which is discarded.
+ * Any thrown value is rethrown unchanged, a falsy one (`null`, `undefined`) included.
  * `fn` receives the before snapshot, so a caller can derive the reviewed state
  * without taking a second snapshot.
  * @template T
@@ -238,12 +239,14 @@ export function diffSnapshots(before, after) {
 export async function withMutationCheck(cwd, role, fn) {
   const before = await snapshot(cwd);
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
-  let actionError = null;
+  let threw = false;
+  let actionError;
   let result;
 
   try {
     result = await fn(before);
   } catch (err) {
+    threw = true;
     actionError = err;
   }
 
@@ -252,7 +255,7 @@ export async function withMutationCheck(cwd, role, fn) {
     after = await snapshot(cwd);
   } catch (snapErr) {
     // A failed post-turn snapshot wins over the agent error; the agent error rides as cause.
-    if (actionError) {
+    if (threw) {
       throw new SnapshotError(`post-turn snapshot failed during ${role} turn: ${snapErr.message}`, {
         cause: actionError,
       });
@@ -268,7 +271,7 @@ export async function withMutationCheck(cwd, role, fn) {
     throw mutationError;
   }
 
-  if (actionError) {
+  if (threw) {
     throw actionError;
   }
 

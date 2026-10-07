@@ -34,7 +34,13 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { CLEAN_REPO_HEAD, cleanRepoGit, removePath } from "./runtime-helpers.mjs";
+import {
+  CLEAN_REPO_HEAD,
+  cleanRepoGit,
+  isApiRead,
+  removePath,
+  startsWithArgs,
+} from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 afterEach(() => {
@@ -447,6 +453,54 @@ test("the finish gates are rejected outside finish", async () => {
   expect(abortResult.payload.error).toContain("only valid for finish");
 });
 
+const ciGh = (head, mergeStateStatus) => async (args) => {
+  const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
+  if (startsWithArgs(args, ["pr", "view", "42"])) {
+    return json({
+      headRefOid: head,
+      baseRefName: "main",
+      mergeStateStatus,
+      potentialMergeCommit: null,
+      state: "OPEN",
+    });
+  }
+  if (startsWithArgs(args, ["repo", "view"])) {
+    return { status: 0, stdout: "owner/repo", stderr: "" };
+  }
+  if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
+    // The ruleset read is paginated, so its body is an array of pages.
+    return json([
+      [
+        {
+          type: "required_status_checks",
+          parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
+        },
+      ],
+    ]);
+  }
+  if (startsWithArgs(args, ["api", "repos/owner/repo/branches/main/protection"])) {
+    return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
+  }
+  if (isApiRead(args, "/check-runs")) {
+    return json([
+      {
+        check_runs: [
+          {
+            name: "ci (ubuntu-latest)",
+            status: "completed",
+            conclusion: "success",
+            started_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      },
+    ]);
+  }
+  if (isApiRead(args, "/status")) {
+    return json({ statuses: [] });
+  }
+  return { status: 1, stdout: "", stderr: `unmatched: ${JSON.stringify(args)}` };
+};
+
 // Usefulness: verifies --require-ci refuses a finish when GitHub reports an
 // unknown merge state, and passes when the reviewed head is the PR head and no
 // required check is failing (issue #218).
@@ -457,60 +511,11 @@ test("--require-ci refuses an unknown merge state and passes a clean PR", async 
   await dispatchReviewer(repo, ACCEPT);
   const head = CLEAN_REPO_HEAD;
 
-  const ciGh = (mergeStateStatus) => async (args) => {
-    const key = args.join(" ");
-    const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
-    if (key.includes("pr view 42")) {
-      return json({
-        headRefOid: head,
-        baseRefName: "main",
-        mergeStateStatus,
-        potentialMergeCommit: null,
-        state: "OPEN",
-      });
-    }
-    if (key.includes("repo view")) {
-      return { status: 0, stdout: "owner/repo", stderr: "" };
-    }
-    if (key.includes("rules/branches/main")) {
-      // The ruleset read is paginated, so its body is an array of pages.
-      return json([
-        [
-          {
-            type: "required_status_checks",
-            parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
-          },
-        ],
-      ]);
-    }
-    if (key.includes("branches/main/protection")) {
-      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
-    }
-    if (key.includes("/check-runs")) {
-      return json([
-        {
-          check_runs: [
-            {
-              name: "ci (ubuntu-latest)",
-              status: "completed",
-              conclusion: "success",
-              started_at: "2026-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]);
-    }
-    if (key.includes("/status")) {
-      return json({ statuses: [] });
-    }
-    return { status: 1, stdout: "", stderr: `unmatched: ${key}` };
-  };
-
-  const refused = await finishCall(repo, ["--require-ci", "42"], { gh: ciGh("UNKNOWN") });
+  const refused = await finishCall(repo, ["--require-ci", "42"], { gh: ciGh(head, "UNKNOWN") });
   expect(refused.exitCode).toBe(1);
   expect(refused.payload.error).toContain("merge state as unknown");
 
-  const passed = await finishCall(repo, ["--require-ci", "42"], { gh: ciGh("CLEAN") });
+  const passed = await finishCall(repo, ["--require-ci", "42"], { gh: ciGh(head, "CLEAN") });
   expect(passed.exitCode).toBe(0);
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
@@ -662,9 +667,8 @@ async function initPrRun(repo, pr) {
 
 function cleanPrGh(head) {
   return async (args) => {
-    const key = args.join(" ");
     const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
-    if (key.includes("pr view")) {
+    if (startsWithArgs(args, ["pr", "view"])) {
       return json({
         headRefOid: head,
         baseRefName: "main",
@@ -673,10 +677,10 @@ function cleanPrGh(head) {
         state: "OPEN",
       });
     }
-    if (key.includes("repo view")) {
+    if (startsWithArgs(args, ["repo", "view"])) {
       return { status: 0, stdout: "owner/repo", stderr: "" };
     }
-    if (key.includes("rules/branches/main")) {
+    if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
       // The ruleset read is paginated, so its body is an array of pages.
       return json([
         [
@@ -687,10 +691,10 @@ function cleanPrGh(head) {
         ],
       ]);
     }
-    if (key.includes("branches/main/protection")) {
+    if (startsWithArgs(args, ["api", "repos/owner/repo/branches/main/protection"])) {
       return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
     }
-    if (key.includes("/check-runs")) {
+    if (isApiRead(args, "/check-runs")) {
       return json([
         {
           check_runs: [
@@ -704,12 +708,27 @@ function cleanPrGh(head) {
         },
       ]);
     }
-    if (key.includes("/status")) {
+    if (isApiRead(args, "/status")) {
       return json({ statuses: [] });
     }
-    return { status: 1, stdout: "", stderr: `unmatched: ${key}` };
+    return { status: 1, stdout: "", stderr: `unmatched: ${JSON.stringify(args)}` };
   };
 }
+
+// Usefulness: verifies the `--require-ci` doubles route on the argument
+// elements, so a call that merges the arguments into one element gets no reply
+// and its error prints the array, which differs from the text of the expected
+// call (issue #530).
+test.each([
+  ["the merge-state double", ciGh(CLEAN_REPO_HEAD, "CLEAN")],
+  ["the clean-PR double", cleanPrGh(CLEAN_REPO_HEAD)],
+])("%s gives no reply to a merged-argument call", async (_name, gh) => {
+  const merged = ["pr view 42 --json headRefOid"];
+  const reply = await gh(merged);
+  expect(reply.status).toBe(1);
+  expect(reply.stdout).toBe("");
+  expect(reply.stderr).toContain(JSON.stringify(merged));
+});
 
 // Usefulness: verifies an interactive run that declares a PR refuses a finish
 // with no `--require-ci` gate, so a declared PR run cannot end through a field

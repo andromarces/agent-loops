@@ -64,3 +64,28 @@ test.each([{ dryRun: true }, { dryRun: false }])(
     expect(note.detail).toContain("A changed hook command needs a new trust step.");
   },
 );
+
+// Usefulness: verifies #185 — notes come out in a fixed order (Codex trust, Codex skills,
+// Claude skills) whatever order the harnesses are passed, and a dry run keeps only the trust note.
+test.each([
+  {
+    harnesses: ["claude", "codex"],
+    dryRun: false,
+    paths: [".codex/hooks.json", ".agents/skills", ".claude/skills"],
+  },
+  {
+    harnesses: ["codex", "claude"],
+    dryRun: false,
+    paths: [".codex/hooks.json", ".agents/skills", ".claude/skills"],
+  },
+  { harnesses: ["claude", "codex"], dryRun: true, paths: [".codex/hooks.json"] },
+])(
+  "notes for $harnesses keep their order (dryRun: $dryRun)",
+  async ({ harnesses, dryRun, paths }) => {
+    const home = await mkdtemp(join(tmpdir(), "agent-loop-notes-home-"));
+    homes.push(home);
+    const reports = await install({ harnesses, home, packageRoot: PACKAGE_ROOT, dryRun });
+    const notes = reports.filter((r) => r.action === "note").map((r) => r.path);
+    expect(notes).toEqual(paths.map((p) => join(home, ...p.split("/"))));
+  },
+);
