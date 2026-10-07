@@ -569,26 +569,27 @@ shell commands without approval: the issue #432 probe found `gh pr checks`
 allowed and `role wait-checks` refused. A `copilot` orchestrator therefore does not
 wait (#495), and a `copilot` reviewer still reads the checks with `gh pr checks`.
 A `copilot` turn keeps shell network, so the prompt for a `copilot` orchestrator
-does not say that its shell has no network. The prompt allows one
-`gh pr checks <pr> --required` read without `--watch`. That read is advisory,
-because the `--require-ci` gate re-reads GitHub and enforces.
+does not say that its shell has no network. Its limit is the refusal of
+`agent-loop role wait-checks` without approval. The only status read that the
+role rule excepts is that command, so a `copilot` orchestrator runs no check
+read itself.
 See "Codex read-only network limit" and "Remote writes" in the README
 for the probes.
 
 - Orchestrator CLI keeps shell network and runs `role wait-checks` (`claude`,
   `agy`, `opencode`): the orchestrator waits, at both points below.
 - Orchestrator CLI cannot wait (`codex`, `copilot`), reviewer CLI keeps shell
-  network: the orchestrator cannot wait. A `copilot` orchestrator keeps shell
-  network and may read the status once with `gh pr checks <pr> --required`.
-  Every reviewer turn reads the required checks, as the reviewer scope states, so name the required checks in the reviewer prompt and let the reviewer
+  network: the orchestrator cannot wait and runs no check read itself. Every
+  reviewer turn reads the required checks, as the reviewer scope states, so name the required checks in the reviewer prompt and let the reviewer
   turn read them. Each further reviewer dispatch costs a step, so the step budget
   has to cover those dispatches.
-- Neither CLI can read the checks (`codex` reviewer, or no reviewer CLI that
-  keeps shell network): no sandboxed turn in the run can read the required
+- Neither role can read the checks (the orchestrator CLI cannot wait, and the
+  reviewer CLI is `codex` or unnamed): no turn in the run reads the required
   checks through a shell command that its sandbox runs, so the headless loop
-  cannot wait. A `copilot` orchestrator is not sandboxed: it keeps shell network
-  and may still read the status once with `gh pr checks <pr> --required`, which
-  is advisory. The limit covers shell commands only: a model-side tool or another channel
+  cannot wait. A `copilot` orchestrator is not sandboxed and keeps shell
+  network, but it runs no check read itself, because it cannot run
+  `role wait-checks`, so the `--require-ci` gate is its only enforced read. The
+  sandbox limit covers shell commands only: a model-side tool or another channel
   outside the sandbox is not blocked, and the run counts on none of them for the
   read. A run that declares its PR with `--pr <pr>` still
   supplies the status to each reviewer turn, because the runtime reads it outside

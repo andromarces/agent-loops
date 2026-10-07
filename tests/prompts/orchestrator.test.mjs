@@ -593,7 +593,7 @@ test("initialPrompt states the required-check wait at the reviewer and at finish
 
 // Usefulness: verifies a copilot orchestrator is not told that its shell has no network or runs in
 // a sandbox, because its read-only turn keeps network and only refuses `role wait-checks` (#432
-// probe, #495), and that it may take the one-shot `gh pr checks <pr> --required` read the probe ran.
+// probe, #495), and that it runs no check read itself, as the reviewer and gate rules state.
 test.each([
   ["claude", 42],
   ["claude", null],
@@ -615,11 +615,9 @@ test.each([
     expect(own).toBeTruthy();
     expect(own).toContain("keeps shell network");
     expect(own).toContain("refuses agent-loop role wait-checks");
-    expect(own).toContain("gh pr checks 42 --required");
-    expect(own).toContain("Do not add --watch");
+    expect(own).toContain("Do not run gh pr checks");
     expect(own).not.toMatch(/copilot, whose read-only turn cannot reach the network/);
-    expect(own).not.toMatch(/Do not run gh pr checks/);
-    expect(prompt).not.toMatch(/Do not run gh pr checks/);
+    expect(prompt).not.toMatch(/gh pr checks 42 --required|--watch/);
     expect(prompt).not.toMatch(/agent-loop role wait-checks --pr/);
   },
 );
