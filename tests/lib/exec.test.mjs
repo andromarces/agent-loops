@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { mkdtemp, readFile, symlink } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { ExecError, SPAWNED_RUN_ENV, exec } from "../../src/lib/exec.mjs";
 import { setVerbose } from "../../src/lib/log.mjs";
 import { pidAlive } from "../../src/lib/runstate.mjs";
@@ -49,23 +49,6 @@ test("exec marks a worker or reviewer spawn and leaves every other spawn unmarke
   expect(await spawn({ role: "reviewer", cwd: tmpdir() })).toBe(worker);
   expect(await spawn({ role: "orchestrator", cwd: tmpdir() })).toBe("none");
   expect(await spawn({ cwd: tmpdir() })).toBe("none");
-});
-
-// Usefulness: verifies a symlink alias of a work tree yields the marker of the work tree itself, so a child of the run is recognized whichever path a later call names (issue #392).
-test("exec gives a worker spawn the same marker for a work tree and a symlink alias of it", async () => {
-  vi.stubEnv(SPAWNED_RUN_ENV, "");
-  const real = await mkdtemp(join(tmpdir(), "exec-marker-real-"));
-  const alias = join(await mkdtemp(join(tmpdir(), "exec-marker-alias-")), "link");
-  await symlink(real, alias, "junction");
-  const script = `console.log(process.env.${SPAWNED_RUN_ENV})`;
-  try {
-    const viaReal = await exec(process.execPath, ["-e", script], { role: "worker", cwd: real });
-    const viaAlias = await exec(process.execPath, ["-e", script], { role: "worker", cwd: alias });
-    expect(viaAlias.stdout.trim()).toBe(viaReal.stdout.trim());
-  } finally {
-    await removePath(real);
-    await removePath(dirname(alias));
-  }
 });
 
 // Usefulness: verifies non-zero exit code throws ExecError with fields.

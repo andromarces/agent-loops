@@ -49,13 +49,17 @@ history and provider prompt cache. `archiveState` keeps the old ids in
 8. A child caller of the run is refused by a spawn-time marker bound to the run
    (issue #392). `exec` sets `AGENT_LOOP_SPAWNED_RUN=<run key>` in the environment
    of every worker and reviewer process. It sets nothing for the orchestrator or
-   any other spawn. The run key is a hash of the real path of the work tree, with
-   the Windows drive letter in lower case, so a symlink alias of the work tree
-   yields the same key. A path that does not resolve falls back to its lexical
-   form. The state directory name is unchanged. Every descendant inherits the
-   marker, a shell command of the turn included. `extend`, `finish`, and `abort`
-   refuse a call whose value equals the key of the run they act on, before any
-   state read, so the run stays as it was. A process that holds no marker, or a
+   any other spawn. The run key is the name of the run's state directory, the hash
+   that every subcommand uses to find the run state, so the marker and the lookup
+   cannot disagree. The hash covers the lexical path with the Windows drive letter
+   in lower case. Every descendant inherits the marker, a shell command of the turn
+   included. `extend`, `finish`, and `abort` refuse a call whose value equals the key
+   they use to find the run state, before any state read, so the run stays as it
+   was. A path that spells the work tree another way, such as a symlink alias or a
+   different case on a case-insensitive disk, computes another key and finds no
+   state, so it cannot reach the run. A child that names the work tree as the run
+   does is refused even when that work tree no longer exists, and a parent `abort`
+   over a missing work tree still ends the run. A process that holds no marker, or a
    marker of another run, passes. The parent path therefore works on every
    supported harness, including a parent session that a child of another run
    started.

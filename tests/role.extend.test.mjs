@@ -285,9 +285,38 @@ test("a parent that inherited the marker of another run still extends and aborts
   expect((await readRepoState(outer)).lifecycle).toBe("active");
 });
 
-// Usefulness: verifies a child that names the run's work tree through a symlink alias is refused
-// like one that names the real path, so an alias cannot bypass the marker (issue #392).
-test("a child caller that names the work tree through a symlink alias is refused", async () => {
+// Usefulness: verifies a child caller is refused after its work tree was removed, so a path that
+// no longer resolves cannot reach the run's state, while a parent abort over the missing work tree
+// still ends the run (issue #392).
+test("a child caller is refused and a parent abort works when the work tree is gone", async () => {
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+  const repo = await startRun(5, agents);
+  const marker = await markerOf(repo);
+  await removePath(repo);
+
+  vi.stubEnv(SPAWNED_RUN_ENV, marker);
+  for (const argv of [
+    ["finish", "--cwd", "<repo>"],
+    ["abort", "--cwd", "<repo>", "--reason", "child stop"],
+    parentExtendArgv("--max-steps", "9"),
+  ]) {
+    const result = await executeRoleCommand(withRepo(argv, repo), { stdin: stdinPrompt });
+    expect(result.exitCode, argv[0]).toBe(1);
+    expect(result.payload.error, argv[0]).toContain("child role");
+  }
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+
+  vi.stubEnv(SPAWNED_RUN_ENV, "");
+  const parent = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "parent stop"], repo),
+  );
+  expect(parent.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("aborted");
+});
+
+// Usefulness: verifies a child caller that names the work tree through a symlink alias reaches no
+// run state, so the alias cannot end or extend the run (issue #392).
+test("a child caller that names the work tree through a symlink alias cannot reach the run", async () => {
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
   const repo = await startRun(5, agents);
   const aliasDir = await mkdtemp(join(tmpdir(), "role-alias-"));
@@ -300,9 +329,8 @@ test("a child caller that names the work tree through a symlink alias is refused
       ["abort", "--cwd", "<repo>", "--reason", "alias stop"],
       parentExtendArgv("--max-steps", "9"),
     ]) {
-      const result = await executeRoleCommand(withRepo(argv, alias));
+      const result = await executeRoleCommand(withRepo(argv, alias), { stdin: stdinPrompt });
       expect(result.exitCode, argv[0]).toBe(1);
-      expect(result.payload.error, argv[0]).toContain("child role");
     }
     expect((await readRepoState(repo)).lifecycle).toBe("active");
   } finally {

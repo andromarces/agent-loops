@@ -1009,7 +1009,10 @@ to GitHub Pro or make this repository public to enable this feature.`, was measu
   caller whose `AGENT_LOOP_SPAWNED_RUN` equals the key of the run it acts on. The
   runtime sets the variable, with the key of the dispatching run, in the
   environment of every worker and reviewer process, and in no other spawn. The key
-  hashes the real path of the work tree, so a symlink alias is refused too. A
+  is the name of the run's state directory, the hash each subcommand uses to find
+  the run state. A path spelled another way, such as a symlink alias, finds no
+  state. A child that names the work tree as the run does is refused even when the
+  work tree is gone. A
   process keeps a marker it inherited. A parent session that another run's child
   started holds a different key for its own work tree and is not refused. A worker
   that a nested run starts holds the nested run's key only, so it can still end the
