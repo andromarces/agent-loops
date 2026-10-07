@@ -93,8 +93,10 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
 - The orchestrator must pick the form for its own shell. A prompt cannot know
   which shell a harness runs, so it lists the forms and the orchestrator chooses.
 - The orchestrator can run the command in a read-only turn on `claude`, `agy`,
-  `opencode`, and `copilot`, the same CLIs that keep network for `gh`. `codex`
-  stays unable to wait, as before.
+  and `opencode`. `codex` stays unable to wait, as before. `copilot` keeps
+  network for `gh pr checks` but refuses the command without approval (#432
+  probe), so a `copilot` orchestrator cannot wait either (#495). A `copilot`
+  reviewer still reads the checks.
 - Probes on Windows 11 with Node 26 (a Node path and a work tree path holding
   spaces): bash and cmd ran the plain form, and Windows PowerShell 5.1 and
   PowerShell 7 ran the `&` form. PowerShell reported a parser error on the plain
