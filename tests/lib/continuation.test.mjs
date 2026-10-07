@@ -5,6 +5,7 @@ import { expect, test, vi } from "vite-plus/test";
 import {
   carryEarlierEvents,
   gateFromTranscript,
+  gateRecord,
   matchingGate,
   readContinuation,
   restoreSessions,
@@ -264,11 +265,14 @@ function resultEvent(role, response, reviewed = REVIEWED, status = "ok") {
   return { type: "result", role, result: { status, response, ...(reviewed ? { reviewed } : {}) } };
 }
 
+// A transcript as a finished run writes it: the events, then the gate record.
+const withGate = (events, extra = {}) => ({ events: [...events, gateRecord(events)], ...extra });
+
 // Usefulness: the gate comes from the result events only (#393 review), so a stored flag cannot
 // bypass --require-accept; an accept needs the Checks line, and a reject derives no accept.
 test("gateFromTranscript derives each flag from the result events", () => {
   const events = [resultEvent("worker", "done", null), resultEvent("reviewer", ACCEPT)];
-  expect(gateFromTranscript({ events, gate: { acceptedSinceWorker: false } })).toEqual({
+  expect(gateFromTranscript(withGate(events, { gate: { acceptedSinceWorker: false } }))).toEqual({
     workerRan: true,
     reviewerRan: true,
     reviewerTurnDispatched: true,
@@ -276,32 +280,58 @@ test("gateFromTranscript derives each flag from the result events", () => {
     lastReviewed: REVIEWED,
   });
   const reject = [resultEvent("reviewer", "Verdict: reject")];
-  expect(gateFromTranscript({ events: reject, gate: { acceptedSinceWorker: true } })).toMatchObject(
-    {
-      workerRan: false,
-      acceptedSinceWorker: false,
-    },
-  );
-  expect(gateFromTranscript({ events, options: { continueFrom: "x" } }).workerRan).toBe(true);
   expect(
-    gateFromTranscript({
-      events: [resultEvent("reviewer", ACCEPT)],
-      options: { continueFrom: "x" },
-    }).workerRan,
+    gateFromTranscript(withGate(reject, { gate: { acceptedSinceWorker: true } })),
+  ).toMatchObject({ workerRan: false, acceptedSinceWorker: false });
+  expect(gateFromTranscript(withGate(events, { options: { continueFrom: "x" } })).workerRan).toBe(
+    true,
+  );
+  expect(
+    gateFromTranscript(
+      withGate([resultEvent("reviewer", ACCEPT)], { options: { continueFrom: "x" } }),
+    ).workerRan,
   ).toBe(true);
 });
 
-// Usefulness: a transcript that does not end on an ok reviewer turn with a reviewed state has no
-// derivable gate, so the continuation resets instead of trusting any record.
-test("gateFromTranscript returns null with no usable last reviewer turn", () => {
+// Usefulness: each way the events can fail to be the complete record of a finished run gives no
+// gate, so the continuation resets (#393 review). A child turn after the accept, a missing,
+// misplaced, or miscounted gate record, and a last turn that is not an ok reviewer turn all reset.
+test("gateFromTranscript returns null unless the events are the complete record", () => {
+  const accepted = [resultEvent("worker", "w", null), resultEvent("reviewer", ACCEPT)];
+  const invocation = (role) => ({ type: "invocation", role, status: "ok" });
   expect(gateFromTranscript(undefined)).toBeNull();
   expect(gateFromTranscript({ events: [] })).toBeNull();
+  expect(gateFromTranscript({ events: accepted })).toBeNull();
   expect(
-    gateFromTranscript({
-      events: [resultEvent("reviewer", ACCEPT), resultEvent("worker", "w", null)],
-    }),
+    gateFromTranscript({ events: [...withGate(accepted).events, invocation("worker")] }),
   ).toBeNull();
-  expect(gateFromTranscript({ events: [resultEvent("reviewer", "x", null, "error")] })).toBeNull();
+  const miscounted = withGate(accepted);
+  miscounted.events.splice(0, 1);
+  expect(gateFromTranscript(miscounted)).toBeNull();
+  const afterAccept = [...accepted, invocation("worker")];
+  expect(gateFromTranscript({ events: [...afterAccept, gateRecord(afterAccept)] })).toBeNull();
+  const orchestratorOnly = [...accepted, invocation("orchestrator")];
+  expect(
+    gateFromTranscript({ events: [...orchestratorOnly, gateRecord(orchestratorOnly)] }),
+  ).not.toBeNull();
+  expect(
+    gateFromTranscript(
+      withGate([resultEvent("reviewer", ACCEPT), resultEvent("worker", "w", null)]),
+    ),
+  ).toBeNull();
+  expect(gateFromTranscript(withGate([resultEvent("reviewer", "x", null, "error")]))).toBeNull();
+});
+
+// Usefulness: an unexpected value in an event gives the reset and never a throw (#393 review).
+test("gateFromTranscript returns null, and does not throw, on malformed events", () => {
+  for (const response of [null, undefined, 7, {}]) {
+    expect(gateFromTranscript(withGate([resultEvent("reviewer", response)]))).toBeNull();
+  }
+  expect(gateFromTranscript({ events: [null, 3, "x", gateRecord([])] })).toBeNull();
+  expect(gateFromTranscript({ events: "events" })).toBeNull();
+  expect(
+    gateFromTranscript(withGate([{ type: "result", role: "reviewer", result: null }])),
+  ).toBeNull();
 });
 
 // Usefulness: every malformed record falls back to the reset without throwing, which keeps
@@ -324,6 +354,7 @@ test("matchingGate returns null for an absent or malformed gate", async () => {
     gate({}, { exact: "true" }),
     gate({}, { exact: false }),
     gate({}, { head: "not-a-head" }),
+    gate({}, { head: { not: "a head" } }),
     gate({}, { digest: "abc" }),
     gate({}, { digest: undefined }),
   ]) {

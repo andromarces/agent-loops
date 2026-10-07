@@ -94,31 +94,82 @@ const GATE_FLAGS = ["workerRan", "reviewerRan", "reviewerTurnDispatched", "accep
 const HEAD_PATTERN = /^([0-9a-f]{40}|[0-9a-f]{64}|unborn)$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
+const isChildInvocation = (event) =>
+  event?.type === "invocation" && (event.role === "worker" || event.role === "reviewer");
+
+/**
+ * The `gate` event a headless run appends as its last event when it returns an
+ * exit code (#393). It counts the child results and the child invocations
+ * (worker and reviewer) in `events`, so a continuation can tell that the events
+ * it reads are the events the run wrote. A run that ends on a thrown error
+ * (SIGINT, a fatal turn, a detected mutation) appends none.
+ * @param {object[]} events
+ * @returns {{ type: "gate", results: number, childInvocations: number }}
+ */
+export function gateRecord(events) {
+  return {
+    type: "gate",
+    results: events.filter((event) => event?.type === "result").length,
+    childInvocations: events.filter(isChildInvocation).length,
+  };
+}
+
 /**
  * Derives the gate state of the earlier run from its transcript events (#393). No
- * stored flag is read: a flag in an edited file would bypass a gate, so each value
- * comes from the result events. The state is derivable only when the last child
- * turn is a reviewer turn that ended `ok` with a reviewed state; any other
- * transcript gives null, which keeps the reset. `acceptedSinceWorker` is the
- * accept rule applied to that turn. `workerRan` is true when a worker result event
- * exists or the earlier run was itself continued, which can only tighten a gate.
- * Does not check the work tree; `matchingGate` does.
+ * stored flag is read: each value comes from the result events. Returns null,
+ * which keeps the reset, unless all of these hold:
+ * - the last event is a `gate` record, so a transcript with no record, and a run
+ *   that ended on a thrown error or kept running after the record, reset;
+ * - the record's counts equal the child results and child invocations before it,
+ *   so a deleted or added event resets;
+ * - no child invocation follows the last result, so a turn that started and
+ *   returned no result (canceled, failed) resets;
+ * - the last result is a reviewer turn that ended `ok` with a string response and
+ *   a reviewed state.
+ * `acceptedSinceWorker` is the accept rule applied to that turn. `workerRan` is
+ * true when a worker result event exists or the earlier run was itself
+ * continued, which can only tighten a gate. Any unexpected value gives null, never
+ * a throw. Does not check the work tree; `matchingGate` does.
  * @param {{ events?: object[], options?: { continueFrom?: string } } | null | undefined} earlier
  * @returns {object | null}
  */
 export function gateFromTranscript(earlier) {
-  const results = (earlier?.events ?? []).filter((event) => event?.type === "result");
-  const last = results.at(-1);
-  if (last?.role !== "reviewer" || last.result?.status !== "ok" || !last.result.reviewed) {
+  try {
+    const events = earlier?.events;
+    if (!Array.isArray(events) || events.at(-1)?.type !== "gate") return null;
+    const before = events.slice(0, -1);
+    const expected = gateRecord(before);
+    const record = events.at(-1);
+    if (
+      record.results !== expected.results ||
+      record.childInvocations !== expected.childInvocations
+    ) {
+      return null;
+    }
+    const lastIndex = before.findLastIndex((event) => event?.type === "result");
+    const last = before[lastIndex];
+    if (
+      lastIndex < 0 ||
+      before.slice(lastIndex + 1).some(isChildInvocation) ||
+      last.role !== "reviewer" ||
+      last.result?.status !== "ok" ||
+      typeof last.result.response !== "string" ||
+      !last.result.reviewed
+    ) {
+      return null;
+    }
+    return {
+      workerRan:
+        Boolean(earlier.options?.continueFrom) ||
+        before.some((event) => event?.type === "result" && event.role === "worker"),
+      reviewerRan: true,
+      reviewerTurnDispatched: true,
+      acceptedSinceWorker: isAcceptedReview(last.result.response),
+      lastReviewed: last.result.reviewed,
+    };
+  } catch {
     return null;
   }
-  return {
-    workerRan: Boolean(earlier.options?.continueFrom) || results.some((e) => e.role === "worker"),
-    reviewerRan: true,
-    reviewerTurnDispatched: true,
-    acceptedSinceWorker: isAcceptedReview(last.result.response),
-    lastReviewed: last.result.reviewed,
-  };
 }
 
 /**
@@ -138,6 +189,8 @@ export async function matchingGate(earlierGate, cwd) {
     GATE_FLAGS.some((flag) => typeof earlierGate?.[flag] !== "boolean") ||
     typeof reviewed?.clean !== "boolean" ||
     reviewed.exact !== true ||
+    typeof reviewed.head !== "string" ||
+    typeof reviewed.digest !== "string" ||
     !HEAD_PATTERN.test(reviewed.head) ||
     !DIGEST_PATTERN.test(reviewed.digest)
   ) {

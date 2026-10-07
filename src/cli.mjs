@@ -28,6 +28,7 @@ import {
 import {
   carryEarlierEvents,
   gateFromTranscript,
+  gateRecord,
   readContinuation,
   restoreSessions,
 } from "./lib/continuation.mjs";
@@ -421,7 +422,7 @@ Options:
                                 the two runs is not detected. The
                                 completion gate is restored only when the work tree is the state
                                 the earlier run's last reviewer turn reviewed, read from the
-                                transcript's result events. Otherwise it is reset: no reviewer
+                                transcript's events, which must end with a complete gate event. Otherwise it is reset: no reviewer
                                 accept carries over, so a finish after work needs a reviewer turn in
                                 this run. Keep --transcript outside the work tree for the restore
                                 to apply. The
@@ -712,6 +713,11 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         agents,
         onEvent,
       });
+      // The last event of a run that returned an exit code, so --continue-from can
+      // tell the events are complete (#393). A thrown error leaves none.
+      if (options.transcript) {
+        events.push({ ...gateRecord(events), at: new Date().toISOString() });
+      }
 
       if (result.exitCode === 0) {
         // A recorded unresolved PR-head compare keeps the summary and gains its
