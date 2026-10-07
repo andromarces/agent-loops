@@ -569,20 +569,30 @@ invocation keeps shell network access for `claude`, `agy`, and `opencode`. The
 `codex` read-only sandbox blocks the network of shell
 commands (not model-side tools). A `copilot` read-only turn refuses most
 shell commands without approval: the issue #432 probe found `gh pr checks`
-allowed and `role wait-checks` refused, so a `copilot` orchestrator wait is
-unconfirmed. See "Codex read-only network limit" and "Remote writes" in the README
+allowed and `role wait-checks` refused. A `copilot` orchestrator therefore does not
+wait (#495), and a `copilot` reviewer still reads the checks with `gh pr checks`.
+A `copilot` turn keeps shell network, so the prompt for a `copilot` orchestrator
+does not say that its shell has no network. Its limit is the refusal of
+`agent-loop role wait-checks` without approval. The only status read that the
+role rule excepts is that command, so a `copilot` orchestrator runs no check
+read itself.
+See "Codex read-only network limit" and "Remote writes" in the README
 for the probes.
 
-- Orchestrator CLI keeps shell network: the orchestrator waits, at both points
-  below.
-- Orchestrator CLI blocks shell network, reviewer CLI keeps it: the orchestrator
-  cannot wait. Every reviewer turn reads the required checks, as the reviewer scope
-  states, so name the required checks in the reviewer prompt and let the reviewer
+- Orchestrator CLI keeps shell network and runs `role wait-checks` (`claude`,
+  `agy`, `opencode`): the orchestrator waits, at both points below.
+- Orchestrator CLI cannot wait (`codex`, `copilot`), reviewer CLI keeps shell
+  network: the orchestrator cannot wait and runs no check read itself. Every
+  reviewer turn reads the required checks, as the reviewer scope states, so name the required checks in the reviewer prompt and let the reviewer
   turn read them. Each further reviewer dispatch costs a step, so the step budget
   has to cover those dispatches.
-- Both CLIs block shell network: no turn in the run can read the required checks
-  through a shell command that its sandbox runs, so the headless loop cannot
-  wait. The limit covers shell commands only: a model-side tool or another channel
+- Neither role can read the checks (the orchestrator CLI cannot wait, and the
+  reviewer CLI is `codex` or unnamed): no turn in the run reads the required
+  checks through a shell command that its sandbox runs, so the headless loop
+  cannot wait. A `copilot` orchestrator is not sandboxed and keeps shell
+  network, but it runs no check read itself, because it cannot run
+  `role wait-checks`, so the `--require-ci` gate is its only enforced read. The
+  sandbox limit covers shell commands only: a model-side tool or another channel
   outside the sandbox is not blocked, and the run counts on none of them for the
   read. A run that names its PR with `--pr <pr>`, or with
   `--require-ci <pr>` on the headless command, still supplies the status to each
@@ -1010,17 +1020,17 @@ to GitHub Pro or make this repository public to enable this feature.`, was measu
   dispatch again. Otherwise call `abort` and report the unresolved condition.
   Never raise the budget on your own to avoid a stop the user set. A child
   role never runs `extend`, `finish`, or `abort`. Each subcommand refuses a
-  caller whose `AGENT_LOOP_SPAWNED_RUN` equals the key of the run it acts on. The
-  runtime sets the variable, with the key of the dispatching run, in the
-  environment of every worker and reviewer process, and in no other spawn. The key
+  caller whose `AGENT_LOOP_SPAWNED_RUN` list holds the key of the run it acts on. The
+  runtime sets the variable, as a comma-separated list of the keys of every
+  enclosing run and then the key of the dispatching run, in the environment of every worker and reviewer process, and in no other spawn. The key
   is the name of the run's state directory, the hash each subcommand uses to find
   the run state. A path spelled another way, such as a symlink alias, finds no
   state. A child that names the work tree as the run does is refused even when the
   work tree is gone. A
   process keeps a marker it inherited. A parent session that another run's child
   started holds a different key for its own work tree and is not refused. A worker
-  that a nested run starts holds the nested run's key only, so it can still end the
-  outer run. `extend` also refuses a call whose `--parent-session` is missing or differs from the run's stored parent
+  that a nested run starts holds the keys of the outer run and the nested run, so
+  it is refused against both. `extend` also refuses a call whose `--parent-session` is missing or differs from the run's stored parent
   session id. The id check alone does not identify the caller, so a child that
   clears its environment passes. An orchestrator or parent that a child of the same
   run started, in that run's work tree, inherits the key and is refused. The prompt

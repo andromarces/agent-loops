@@ -285,6 +285,42 @@ test("a parent that inherited the marker of another run still extends and aborts
   expect((await readRepoState(outer)).lifecycle).toBe("active");
 });
 
+// Usefulness: verifies acceptance — a worker that a nested run started, inside a worker of the
+// outer run, is refused by extend, finish, and abort against the outer run, while the nested run's
+// own parent keeps every parent path (issue #548). The nested worker holds both keys; a one-key
+// marker would pass the outer run.
+test("a worker of a nested run is refused against the outer run", async () => {
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+  const outer = await startRun(5, agents);
+  const nested = await startRunInNewRepo(5, agents);
+
+  vi.stubEnv(SPAWNED_RUN_ENV, await markerOf(outer));
+  vi.stubEnv(SPAWNED_RUN_ENV, await markerOf(nested));
+  for (const argv of [
+    parentExtendArgv("--max-steps", "9"),
+    ["finish", "--cwd", "<repo>"],
+    ["abort", "--cwd", "<repo>", "--reason", "nested child stop"],
+  ]) {
+    const result = await executeRoleCommand(withRepo(argv, outer), { stdin: stdinPrompt });
+    expect(result.exitCode, argv[0]).toBe(1);
+    expect(result.payload.error, argv[0]).toContain("child role");
+  }
+  expect((await readRepoState(outer)).lifecycle).toBe("active");
+
+  const nestedChild = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "nested child stop"], nested),
+  );
+  expect(nestedChild.exitCode).toBe(1);
+  expect((await readRepoState(nested)).lifecycle).toBe("active");
+
+  vi.stubEnv(SPAWNED_RUN_ENV, "");
+  vi.stubEnv(SPAWNED_RUN_ENV, await markerOf(outer));
+  const nestedParent = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "nested parent stop"], nested),
+  );
+  expect(nestedParent.exitCode).toBe(0);
+});
+
 // Usefulness: verifies a child caller is refused after its work tree was removed, so a path that
 // no longer resolves cannot reach the run's state, while a parent abort over the missing work tree
 // still ends the run (issue #392).

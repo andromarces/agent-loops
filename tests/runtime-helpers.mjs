@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -214,16 +213,14 @@ export function scripted(replies) {
 }
 
 /**
- * Resolves to the pid of an exited one-shot process, so callers can build a
- * lock file that points at a dead owner. child_process exposes the pid; execa's
- * result does not.
+ * Resolves to a pid that no process can hold, so callers can build a lock file
+ * that points at a dead owner. The pid is the largest signed 32-bit integer, the
+ * largest value `process.kill` accepts: it is above the pid limit of Linux
+ * (2^22) and macOS (99999), and a Windows pid is a multiple of 4. The OS never
+ * reuses it, unlike the pid of an exited process.
  */
 export async function deadPid() {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
-    child.on("exit", () => resolve(child.pid));
-    child.on("error", reject);
-  });
+  return 2 ** 31 - 1;
 }
 
 // The hanging child is a `node` process on every platform, launched by a wrapper

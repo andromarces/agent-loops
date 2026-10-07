@@ -133,8 +133,11 @@ checks`, which reports no commit and could not separate that case.
     read the checks from a shell command (`requiredCheckWait` returns `gate`).
     That branch gets the reworded lines for the named PR. The other two
     branches, where the orchestrator waits itself (`wait`) or only the reviewer
-    CLI can read (`reviewer`), keep their lines and state no supplied read. In
-    every branch the reviewer prompt carries the supplied-status lines whenever
+    CLI can read (`reviewer`), keep their lines and state no supplied read. A
+    `copilot` orchestrator is never in the `wait` branch (ADR 0013, #495), so
+    in a gate-only run its `gate` line states both its true limit, the refusal
+    of `agent-loop role wait-checks` without approval, and the supplied read.
+    In every branch the reviewer prompt carries the supplied-status lines whenever
     the runtime read a status.
 14. `--require-ci` stays the enforcement point. The supplied status changes no
     gate condition and no refusal.

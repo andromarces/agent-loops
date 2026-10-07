@@ -543,6 +543,13 @@ test("requiredCheckWait reports the rule per orchestrator and reviewer CLI", () 
   // The codex read-only sandbox blocks network, so a codex turn cannot read.
   expect(rule("codex", "claude")).toBe("reviewer");
   expect(rule("codex", "codex")).toBe("gate");
+  // A copilot turn refuses `role wait-checks` but runs `gh pr checks` (#432 probe),
+  // so a copilot orchestrator cannot wait and a copilot reviewer still reads (#495).
+  expect(rule("copilot", "claude")).toBe("reviewer");
+  expect(rule("copilot", "copilot")).toBe("reviewer");
+  expect(rule("copilot", "codex")).toBe("gate");
+  expect(rule("claude", "copilot")).toBe("wait");
+  expect(rule("codex", "copilot")).toBe("reviewer");
   // An unnamed CLI on either role cannot read the checks.
   expect(rule("codex", null)).toBe("gate");
   expect(requiredCheckWait({ requireCi: null, orchestratorKind: "claude" })).toBeNull();
@@ -566,7 +573,7 @@ const gatedPrompt = (orchestratorKind, reviewerKind = "claude") =>
 // rules the parent can act on separately, for every orchestrator CLI whose
 // read-only turn can read the checks (issue #319).
 test("initialPrompt states the required-check wait at the reviewer and at finish", () => {
-  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
+  for (const kind of ["claude", "agy", "opencode"]) {
     const lines = gatedPrompt(kind).split("\n");
     const beforeReviewer = lines.find(
       (line) => /dispatch the reviewer/i.test(line) && /wait/i.test(line),
@@ -580,11 +587,80 @@ test("initialPrompt states the required-check wait at the reviewer and at finish
   }
 });
 
+// Usefulness: verifies a copilot orchestrator is not told that its shell has no network or runs in
+// a sandbox, because its read-only turn keeps network and only refuses `role wait-checks` (#432
+// probe, #495), and that it runs no check read itself, as the reviewer and gate rules state.
+test.each([
+  ["claude", 42],
+  ["claude", null],
+  ["codex", 42],
+  ["codex", null],
+  [null, null],
+])(
+  "a copilot orchestrator with a %s reviewer, pr %s, keeps true limit wording",
+  (reviewerKind, pr) => {
+    const prompt = initialPrompt({
+      task: "T",
+      maxSteps: 10,
+      requireCi: 42,
+      orchestratorKind: "copilot",
+      reviewerKind,
+      pr,
+    });
+    const own = prompt.split("\n").find((line) => line.includes("You orchestrate through copilot"));
+    expect(own).toBeTruthy();
+    expect(own).toContain("keeps shell network");
+    expect(own).toContain("refuses agent-loop role wait-checks");
+    expect(own).toContain("Do not run gh pr checks");
+    expect(own).not.toMatch(/copilot, whose read-only turn cannot reach the network/);
+    expect(prompt).not.toMatch(/gh pr checks 42 --required|--watch/);
+    expect(prompt).not.toMatch(/agent-loop role wait-checks --pr/);
+  },
+);
+
+// Usefulness: verifies a copilot orchestrator in gate mode, in a gate-only run, is told both its
+// true limit and the supplied read, and that only the gate enforces, so #495 and #350 do not
+// contradict each other. Only the gate branch states the supplied read.
+test.each([["codex"], [null]])(
+  "a gate-only copilot orchestrator with a %s reviewer states its limit and the supplied read",
+  (reviewerKind) => {
+    const prompt = initialPrompt({
+      task: "T",
+      maxSteps: 10,
+      requireCi: 42,
+      orchestratorKind: "copilot",
+      reviewerKind,
+      pr: null,
+    });
+    const own = prompt.split("\n").find((line) => line.includes("You orchestrate through copilot"));
+    expect(own).toContain("refuses agent-loop role wait-checks without approval");
+    expect(own).toContain("This run names PR #42");
+    expect(own).toContain("supplies it to every reviewer prompt");
+    expect(prompt).toContain(
+      "The advisory status read above reports to the reviewer and never enforces",
+    );
+  },
+);
+
+// Usefulness: verifies the reviewer mode for a copilot orchestrator states no supplied read,
+// because only the gate branch states it.
+test("a copilot orchestrator in reviewer mode states no supplied read", () => {
+  const prompt = initialPrompt({
+    task: "T",
+    maxSteps: 10,
+    requireCi: 42,
+    orchestratorKind: "copilot",
+    reviewerKind: "claude",
+    pr: null,
+  });
+  expect(prompt).not.toMatch(/supplies it to every reviewer prompt/);
+});
+
 // Usefulness: verifies the pending-check wait point keeps a pending check out of
 // the finish summary, because the --require-ci gate refuses a finish while a
 // required check is pending, so the run must wait, re-review, or abort (issue #319).
 test("the pending-check wait point does not put a pending check in a finish summary", () => {
-  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
+  for (const kind of ["claude", "agy", "opencode"]) {
     const line = gatedPrompt(kind)
       .split("\n")
       .find((entry) => /finish/i.test(entry) && /pending/i.test(entry) && /wait/i.test(entry));
@@ -1610,6 +1686,9 @@ describe.each([
     ["codex", "codex", 42],
     ["codex", "claude", null],
     ["codex", "claude", 42],
+    ["copilot", "claude", 42],
+    ["copilot", "codex", null],
+    ["copilot", "codex", 42],
     ["claude", "codex", null],
     ["claude", "claude", 42],
     [null, null, null],

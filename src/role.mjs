@@ -37,7 +37,7 @@ import {
   readProp,
   UNREADABLE_MESSAGE,
 } from "./lib/error-message.mjs";
-import { SPAWNED_RUN_ENV } from "./lib/exec.mjs";
+import { isSpawnedByRun } from "./lib/exec.mjs";
 import { copyLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
@@ -1244,10 +1244,7 @@ async function withinBound(ms, work, message) {
  */
 export async function executeRoleCommand(args, deps = {}) {
   try {
-    if (
-      RUN_ENDING_OPERATIONS.has(args.operation) &&
-      process.env[SPAWNED_RUN_ENV] === cwdHash(args.cwd)
-    ) {
+    if (RUN_ENDING_OPERATIONS.has(args.operation) && isSpawnedByRun(cwdHash(args.cwd))) {
       throw new RoleError(
         `${args.operation} is refused for a child role; only the parent session runs it.`,
       );

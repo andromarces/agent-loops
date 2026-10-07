@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -394,6 +395,21 @@ test("statePaths rejects a null parentSession", () => {
   expect(() => statePaths({ parentSession: null })).toThrow(/Invalid session id/);
 });
 
+// On macOS the start time comes from `ps`. A sandbox can block `ps`, and then the
+// source gives no stamp. Tests that need a stamp skip on such a host. Other
+// platforms count as available, so a broken source there still fails.
+const hostHasStartTimeSource =
+  process.platform !== "darwin" ||
+  (() => {
+    try {
+      execFileSync("ps", ["-o", "pid=", "-p", String(process.pid)], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+const startTimeTest = test.skipIf(!hostHasStartTimeSource);
+
 // A stamp of another process: the last number of a real stamp (epoch seconds, or
 // clock ticks on Linux) moved by a day, so the kind and the boot id stay the same.
 async function otherProcessStamp() {
@@ -403,21 +419,24 @@ async function otherProcessStamp() {
 // Usefulness: verifies the issue #498 acceptance: a lock whose pid is alive but
 // whose recorded start time differs is a reused pid, so it is taken over. Without
 // the start time, a dead owner's lock stays until the unrelated process exits.
-test("withStateLock takes over a lock whose live pid has a different start time", async () => {
-  const dir = await tempDir();
-  const lockFile = join(dir, "state.lock");
-  await writeFile(
-    lockFile,
-    JSON.stringify({ pid: process.pid, startedAt: "old", startTime: await otherProcessStamp() }),
-    "utf8",
-  );
+startTimeTest(
+  "withStateLock takes over a lock whose live pid has a different start time",
+  async () => {
+    const dir = await tempDir();
+    const lockFile = join(dir, "state.lock");
+    await writeFile(
+      lockFile,
+      JSON.stringify({ pid: process.pid, startedAt: "old", startTime: await otherProcessStamp() }),
+      "utf8",
+    );
 
-  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
-});
+    await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+  },
+);
 
 // Usefulness: verifies a lock whose pid and start time both match a running
 // process stays busy, so the start-time check never removes a live owner's lock.
-test("withStateLock keeps a lock whose live pid has the same start time", async () => {
+startTimeTest("withStateLock keeps a lock whose live pid has the same start time", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
   const startTime = await processStartTime(process.pid);
@@ -447,7 +466,7 @@ test("withStateLock keeps a lock without a start time while its pid is alive", a
 
 // Usefulness: verifies a new lock records the owner's start time, so a later
 // contender can tell a reused pid from the owner.
-test("withStateLock records the owner start time in the lock", async () => {
+startTimeTest("withStateLock records the owner start time in the lock", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
 
@@ -458,28 +477,54 @@ test("withStateLock records the owner start time in the lock", async () => {
 
 // Usefulness: verifies the orphan-claim scan applies the same reuse check, so a
 // claim of a dead owner whose pid was reused is removed (issue #498).
-test("withStateLock removes a claim whose live pid has a different start time", async () => {
-  const dir = await tempDir();
-  const lockFile = join(dir, "state.lock");
-  await writeFile(
-    join(dir, CLAIM_NAME),
-    JSON.stringify({
-      pid: process.pid,
-      startedAt: "old",
-      nonce: "n",
-      startTime: await otherProcessStamp(),
-    }),
-    "utf8",
-  );
+startTimeTest(
+  "withStateLock removes a claim whose live pid has a different start time",
+  async () => {
+    const dir = await tempDir();
+    const lockFile = join(dir, "state.lock");
+    await writeFile(
+      join(dir, CLAIM_NAME),
+      JSON.stringify({
+        pid: process.pid,
+        startedAt: "old",
+        nonce: "n",
+        startTime: await otherProcessStamp(),
+      }),
+      "utf8",
+    );
 
-  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
-  expect(await readdir(dir)).toEqual([]);
+    await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+    expect(await readdir(dir)).toEqual([]);
+  },
+);
+
+// Usefulness: verifies the host start-time source gives a stamp of the running
+// process. It is the test that fails when the real source breaks where it exists.
+startTimeTest("processStartTime reads a stamp of the running process", async () => {
+  await expect(processStartTime(process.pid)).resolves.toMatch(
+    /^(linux-proc|darwin-lstart|win32-creation):/,
+  );
 });
+
+// Usefulness: verifies a missing `ps` gives no stamp and no throw, so a sandbox that
+// blocks `ps` degrades to the pid-only lock check.
+test.skipIf(process.platform !== "darwin")(
+  "processStartTime is null when ps cannot run",
+  async () => {
+    const saved = process.env.PATH;
+    try {
+      process.env.PATH = await tempDir();
+      await expect(processStartTime(process.pid)).resolves.toBeNull();
+    } finally {
+      process.env.PATH = saved;
+    }
+  },
+);
 
 // Usefulness: verifies the start time does not depend on the caller's time zone, so
 // a lock written under one TZ is never read as a reused pid under another (a live
 // lock must survive a TZ change between write and compare).
-test("processStartTime is the same under different TZ values", async () => {
+startTimeTest("processStartTime is the same under different TZ values", async () => {
   const saved = process.env.TZ;
   try {
     process.env.TZ = "Pacific/Kiritimati";
@@ -499,34 +544,37 @@ test("processStartTime is the same under different TZ values", async () => {
 
 // Usefulness: verifies a live lock written under one TZ stays busy when a contender
 // compares under another, the reviewer's macOS failure of the first design.
-test("withStateLock keeps a live lock across a TZ change between write and compare", async () => {
-  const dir = await tempDir();
-  const lockFile = join(dir, "state.lock");
-  const saved = process.env.TZ;
-  try {
-    process.env.TZ = "Pacific/Kiritimati";
-    await writeFile(
-      lockFile,
-      JSON.stringify({
-        pid: process.pid,
-        startedAt: "old",
-        startTime: await processStartTime(process.pid),
-      }),
-      "utf8",
-    );
-    process.env.TZ = "America/Los_Angeles";
+startTimeTest(
+  "withStateLock keeps a live lock across a TZ change between write and compare",
+  async () => {
+    const dir = await tempDir();
+    const lockFile = join(dir, "state.lock");
+    const saved = process.env.TZ;
+    try {
+      process.env.TZ = "Pacific/Kiritimati";
+      await writeFile(
+        lockFile,
+        JSON.stringify({
+          pid: process.pid,
+          startedAt: "old",
+          startTime: await processStartTime(process.pid),
+        }),
+        "utf8",
+      );
+      process.env.TZ = "America/Los_Angeles";
 
-    await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
-      /locked by a live process/,
-    );
-  } finally {
-    if (saved === undefined) {
-      delete process.env.TZ;
-    } else {
-      process.env.TZ = saved;
+      await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+        /locked by a live process/,
+      );
+    } finally {
+      if (saved === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = saved;
+      }
     }
-  }
-});
+  },
+);
 
 // Usefulness: verifies a recorded start time that is not a number (an unknown
 // format) reads as alive, so a stamp that cannot be compared never frees a lock.
@@ -557,7 +605,7 @@ test.each([
 // Usefulness: verifies a start time within the one-second resolution of the source
 // still reads as the owner, so a rounding difference never frees a live lock.
 // Linux stamps are exact ticks, so the tolerance applies to the other kinds only.
-test.skipIf(process.platform === "linux")(
+test.skipIf(process.platform === "linux" || !hostHasStartTimeSource)(
   "withStateLock keeps a live lock whose start time differs by one second",
   async () => {
     const dir = await tempDir();
