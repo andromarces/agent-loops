@@ -921,6 +921,7 @@ test.each([
   [0, "0"],
   [false, "false"],
   ["", "Run failed with an empty error message."],
+  [new Error(""), "Run failed with an empty error message."],
 ])(
   "orchestrator that throws %j records a transcript error and prints an error line",
   async (thrown, expectedText) => {
@@ -969,6 +970,38 @@ test.each([
     }
   },
 );
+
+// Usefulness: acceptance (#537) — the fallback text for an empty thrown value goes through the shared
+// redactor, so an environment value that matches part of it never reaches the transcript or stderr.
+test("the fallback error text for an empty thrown value is redacted", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const synthetic = "empty error";
+  process.env.SYNTH_PROBE_TOKEN = synthetic;
+  const agents = {
+    codex: {
+      async run() {
+        throw "";
+      },
+    },
+    claude: { async run() {} },
+    agy: { async run() {} },
+  };
+  try {
+    await main([...BASE, "--cwd", repo, "--transcript", transcriptPath], agents);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    const expected = "Run failed with an [redacted:SYNTH_PROBE_TOKEN] message.";
+    expect(transcript.error).toBe(expected);
+    expect(errorSpy).toHaveBeenLastCalledWith(`\n${expected}`);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+    await removePath(repo);
+  }
+});
 
 // Usefulness: verifies SIGINT cancel through cli.mjs sets exitCode 130 and writes transcript.
 test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () => {

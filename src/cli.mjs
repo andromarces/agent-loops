@@ -641,7 +641,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   const finish = async ({ exitCode, error, failed }) => {
     const errorText = failed
       ? redactedText(readProp(error, "message") ?? error) ||
-        "Run failed with an empty error message."
+        redactedText("Run failed with an empty error message.")
       : null;
     transcriptData.exitCode = exitCode;
     transcriptData.error = errorText;
