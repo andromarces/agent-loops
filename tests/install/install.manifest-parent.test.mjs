@@ -36,8 +36,8 @@ test("install fails before any harness write when the manifest read reports ENOE
 
   expect(existsSync(join(home, ".claude"))).toBe(false);
   expect(await readText(join(home, ".agent-loops"))).toBe("user data\n");
-  // The lock lives under the OS temp root and is released on failure; nothing
-  // else lands in the home.
+  // The lock sits beside the manifest directory and is released on failure;
+  // nothing else lands in the home.
   expect(existsSync(manifestLockFile(home))).toBe(false);
   expect(await readdir(home)).toEqual([".agent-loops"]);
 });

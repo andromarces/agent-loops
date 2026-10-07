@@ -6,9 +6,10 @@
 // unchanged since install. Guards are applied before entry points, and a failed
 // write persists the manifest for the writes that completed and keeps the
 // previous record for every target it did not complete, so uninstall can recover
-// a partial install or an interrupted upgrade (#156). An exclusive lock outside
-// the home serializes install and uninstall, so concurrent read-modify-write of
-// the manifest cannot drop a record (#193).
+// a partial install or an interrupted upgrade (#156). An exclusive lock
+// beside `<home>/.agent-loops` serializes install and uninstall, so concurrent
+// read-modify-write of the manifest cannot drop a record, whatever the temp
+// root of each process (#193, #198).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vite-plus/test";
 
@@ -1605,29 +1605,35 @@ test("--continue-from resets when the transcript has no gate record", async () =
   expect(reviewerCalls).toBe(1);
 });
 
-// Usefulness: verifies a malformed value in the events the restore reads resets instead of
-// aborting the run (#393 review): a null reviewer response and a head that is not a string.
-test("--continue-from resets, and does not abort, on a malformed result event", async () => {
-  for (const edit of [
-    (result) => {
-      result.response = null;
+// Runs continueAfterEdit with `edit` applied to the last reviewer result event.
+async function continueAfterResultEdit(edit) {
+  return continueAfterEdit({
+    firstOrch: ACCEPTED_RUN,
+    reviewerReplies: [GATE_ACCEPT],
+    tamper: (transcript) => {
+      edit(transcript.events.findLast((e) => e.type === "result" && e.role === "reviewer").result);
     },
-    (result) => {
-      result.reviewed.head = { not: "a head" };
-    },
-  ]) {
-    const { exitCode, reviewerCalls } = await continueAfterEdit({
-      firstOrch: ACCEPTED_RUN,
-      reviewerReplies: [GATE_ACCEPT],
-      tamper: (transcript) => {
-        edit(
-          transcript.events.findLast((e) => e.type === "result" && e.role === "reviewer").result,
-        );
-      },
-    });
-    expect(exitCode).toBe(0);
-    expect(reviewerCalls).toBe(1);
-  }
+  });
+}
+
+// Usefulness: verifies a null reviewer response in the events the restore reads resets instead
+// of aborting the run (#393 review). One edit per test keeps each inside the test timeout (#556).
+test("--continue-from resets, and does not abort, on a null reviewer response", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterResultEdit((result) => {
+    result.response = null;
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
+});
+
+// Usefulness: verifies a reviewed head that is not a string resets instead of aborting the run
+// (#393 review). Separate from the null-response case so each fits the test timeout (#556).
+test("--continue-from resets, and does not abort, on a non-string reviewed head", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterResultEdit((result) => {
+    result.reviewed.head = { not: "a head" };
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
 });
 
 // Usefulness: verifies a changed role kind or model is refused before any turn
@@ -1675,6 +1681,165 @@ test("--continue-from refuses a changed role and keeps the transcript", async ()
     }
     expect(calls.codex).toEqual([]);
     expect(await readFile(transcriptPath, "utf8")).toBe(before);
+  });
+});
+
+// Usefulness: verifies a CLI default that resolves to another model than the earlier run recorded
+// is refused before any turn of the run and leaves the transcript unchanged, and an unchanged model
+// continues (#394).
+test("--continue-from refuses a changed resolved model and keeps the transcript", async () => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    const reporting = (model, seen) => {
+      const agents = sessionAgents([work, FINISH], seen);
+      const run = agents.claude.run;
+      agents.claude.run = async (state, prompt, options) => {
+        state.resolvedModel = model;
+        return run(state, prompt, options);
+      };
+      return agents;
+    };
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      reporting("model-1", { codex: [], claude: [], agy: [] }),
+    );
+    const before = await readFile(transcriptPath, "utf8");
+    expect(JSON.parse(before).roles.worker.resolvedModel).toBe("model-1");
+
+    const args = [
+      ...CONTINUE_BASE,
+      "--cwd",
+      repo,
+      "--continue-from",
+      transcriptPath,
+      "--transcript",
+      transcriptPath,
+    ];
+    const changed = { codex: [], claude: [], agy: [] };
+    await main(args, reporting("model-2", changed));
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      'worker resolved to "model-1" in the earlier run, not "model-2"',
+    );
+    expect(changed.codex).toEqual([]);
+    expect(await readFile(transcriptPath, "utf8")).toBe(before);
+
+    process.exitCode = undefined;
+    await main(args, reporting("model-1", { codex: [], claude: [], agy: [] }));
+    expect(process.exitCode).toBe(0);
+    expect(JSON.parse(await readFile(transcriptPath, "utf8")).roles.worker.resolvedModel).toBe(
+      "model-1",
+    );
+  });
+});
+
+// Runs a first headless run that stops on the step limit, then records a resolved model for the
+// worker in its transcript, as a Claude or Copilot turn would. `fn(repo, transcriptPath, errorSpy)`
+// then continues it.
+async function withRecordedModel(fn, recordedModel = "model-1") {
+  const repo = await createTempRepo();
+  const transcriptPath = join(await mkdtemp(join(tmpdir(), "cli-test-probe-")), "run.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      sessionAgents([work, work], { codex: [], claude: [], agy: [] }),
+    );
+    const recorded = JSON.parse(await readFile(transcriptPath, "utf8"));
+    recorded.roles.worker.resolvedModel = recordedModel;
+    await writeFile(transcriptPath, JSON.stringify(recorded));
+    process.exitCode = undefined;
+    await fn(repo, transcriptPath, errorSpy);
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    logSpy.mockRestore();
+    await removePath(repo);
+    await removePath(dirname(transcriptPath));
+  }
+}
+
+const continueArgs = (repo, transcriptPath) => [
+  ...CONTINUE_BASE,
+  "--cwd",
+  repo,
+  "--continue-from",
+  transcriptPath,
+  "--transcript",
+  transcriptPath,
+];
+
+// Usefulness: the resolved-model probe runs under the mutation check of a child turn, so a probe
+// that changes the work tree halts the continuation with exit 1 before any turn, and the earlier
+// transcript stays whole (#394).
+test("--continue-from halts when the probe changes the work tree", async () => {
+  await withRecordedModel(async (repo, transcriptPath, errorSpy) => {
+    const before = await readFile(transcriptPath, "utf8");
+    const seen = { codex: [], claude: [], agy: [] };
+    const agents = sessionAgents([FINISH], seen);
+    agents.claude.run = async () => {
+      await writeFile(join(repo, "probe-leak.txt"), "leak\n");
+      return "OK";
+    };
+    await main(continueArgs(repo, transcriptPath), agents);
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy.mock.calls.flat().join("\n")).toMatch(/mutat/i);
+    expect(seen.codex).toEqual([]);
+    expect(await readFile(transcriptPath, "utf8")).toBe(before);
+  });
+});
+
+// Usefulness: after a turn that named no single model (recorded null), an unchanged model B must not be
+// refused, and a B-to-A change must not be compared against a stale A. The run continues, tells the
+// operator that the check did not run, and starts no probe (#394).
+test.each([["model-1"], ["model-2"]])(
+  "--continue-from compares nothing after an unresolved turn, probe would say %s",
+  async (probeModel) => {
+    await withRecordedModel(async (repo, transcriptPath, errorSpy) => {
+      const seen = { codex: [], claude: [], agy: [] };
+      const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+      const agents = sessionAgents([work, FINISH], seen);
+      const run = agents.claude.run;
+      agents.claude.run = async (state, prompt, options) => {
+        state.resolvedModel = probeModel;
+        return run(state, prompt, options);
+      };
+      await main(continueArgs(repo, transcriptPath), agents);
+      // The only Claude call resumes the earlier session: no probe (a new session) ran.
+      expect(seen.claude.map((call) => call.sessionId)).toEqual(["claude-session"]);
+      expect(errorSpy.mock.calls.flat().join("\n")).toMatch(
+        /did not run for worker \(claude\), because the latest turn of the earlier run did not name one model/,
+      );
+      expect(errorSpy.mock.calls.flat().join("\n")).not.toMatch(/resolved to/);
+    }, null);
+  },
+);
+
+// Usefulness: a SIGINT during the probe cancels it through the run's signal and refuses the
+// continuation with exit 130, before any turn, leaving the earlier transcript whole (#394).
+test("--continue-from cancels a probe on SIGINT and exits 130", async () => {
+  await withRecordedModel(async (repo, transcriptPath) => {
+    const before = await readFile(transcriptPath, "utf8");
+    const seen = { codex: [], claude: [], agy: [] };
+    const agents = sessionAgents([FINISH], seen);
+    let probeSignal;
+    agents.claude.run = async (_state, _prompt, options) => {
+      probeSignal = options.signal;
+      process.emit("SIGINT");
+      const err = new Error("canceled");
+      err.isCanceled = true;
+      throw err;
+    };
+    const listenersBefore = process.listenerCount("SIGINT");
+    await main(continueArgs(repo, transcriptPath), agents);
+    expect(process.exitCode).toBe(130);
+    expect(probeSignal?.aborted).toBe(true);
+    expect(seen.codex).toEqual([]);
+    expect(await readFile(transcriptPath, "utf8")).toBe(before);
+    expect(process.listenerCount("SIGINT")).toBe(listenersBefore);
   });
 });
 

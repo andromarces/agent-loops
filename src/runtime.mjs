@@ -43,6 +43,36 @@ async function invoke({ agents, state, roleName, prompt, opts, onEvent, stepsUse
 }
 
 /**
+ * Runs one read-only probe turn in a new session and reads `state.resolvedModel` from it (#394). The
+ * probe is a child turn, so it runs under the same mutation check as a reviewer turn: a probe that
+ * changes the work tree throws `MutationError`, a failed snapshot throws `SnapshotError`, and
+ * `signal` cancels the CLI call. Every error is thrown, never returned as a result, because the
+ * caller refuses the continuation on any failure.
+ * @param {{ agents?: object, state: object, roleName: string, prompt?: string, cwd: string, timeout?: number | null, signal?: AbortSignal }} options
+ */
+export async function runProbeTurn({
+  agents = defaultAgents,
+  state,
+  roleName,
+  prompt = "Reply with the single word OK.",
+  cwd,
+  timeout,
+  signal,
+}) {
+  await withMutationCheck(cwd, roleName, () =>
+    invoke({
+      agents,
+      state,
+      roleName,
+      prompt,
+      opts: { cwd, readOnly: true, timeout, signal },
+      onEvent: () => {},
+      stepsUsed: 0,
+    }),
+  );
+}
+
+/**
  * Run one worker or reviewer turn with the same guards as the headless loop:
  * role prompt wrapping, read-only mutation check for the reviewer, timeout,
  * and cancel propagation. Returns `{ role, status, response }` on success and

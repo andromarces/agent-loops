@@ -3,11 +3,13 @@ import { constants } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { parseJson } from "../lib/json.mjs";
+import { isJsonObject, parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 import {
   asSessionId,
+  childRan,
+  recordResolvedModel,
   failedWithLine,
   flagMissingSession,
   keepFailedSessionId,
@@ -181,6 +183,9 @@ export async function runClaude(state, prompt, options = {}) {
       failed = undefined;
     }
     setUsage(state, findResultEvent(failed));
+    // The kept session ran on whatever the failed output names for it, or on an unknown model, so
+    // the record follows that unless the process never started.
+    if (childRan(err)) recordTurnModel(state, failed, requestedSessionId);
     // An id the CLI printed wins. Otherwise the pre-assigned id stays: a kill before the CLI
     // saved a session leaves an id that names none, and the next resume then reaches the
     // missing-session fallback below. An id that the CLI rejects as in use names another
@@ -204,9 +209,18 @@ export async function runClaude(state, prompt, options = {}) {
     flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }
-  const parsed = parseJson(stdout, "Claude Code");
-
+  let parsed;
+  try {
+    parsed = parseJson(stdout, "Claude Code");
+  } catch (err) {
+    recordTurnModel(state, undefined, requestedSessionId);
+    throw err;
+  }
+  const resultEvent = findResultEvent(parsed);
   const sessionId = findSessionId(parsed);
+  // Set before the session checks below, so a turn that fails them records unresolved when its
+  // output is not the session the role keeps.
+  recordTurnModel(state, parsed, requestedSessionId);
 
   if (!sessionId) {
     throw new Error("Claude Code did not return a session_id.");
@@ -223,7 +237,6 @@ export async function runClaude(state, prompt, options = {}) {
 
   state.sessionId = sessionId;
   delete state.sessionUnconfirmed;
-  const resultEvent = findResultEvent(parsed);
   setUsage(state, resultEvent);
 
   return String(resultEvent?.result ?? "").trim();
@@ -254,4 +267,47 @@ function setUsage(state, resultEvent) {
     usage.totalCostUsd = resultEvent.total_cost_usd;
   }
   setUsageOrDelete(state, Object.keys(usage).length > 0 ? usage : undefined);
+}
+
+/**
+ * Lists the model ids one result event names, the keys of `modelUsage`. More than one key means a
+ * subagent or helper model ran too, so the role model is unknown (the gap: such a turn is
+ * unresolved). A `modelUsage` that is missing, empty, or not an object, or an entry that is not an
+ * object, is reported as `null`, which is malformed evidence and is unresolved.
+ */
+function reportedModels(resultEvent) {
+  const usage = resultEvent?.modelUsage;
+  if (!isJsonObject(usage) || Object.keys(usage).length === 0) return [null];
+  return Object.entries(usage).map(([model, entry]) => (isJsonObject(entry) ? model : null));
+}
+
+/**
+ * Records the resolved model of a turn that ran, from one consistent source. The session and the
+ * model come from the same events: the output must name exactly one valid session across all its
+ * events, and every result event that carries model evidence must name that session itself. An
+ * array of events that names more than one session, a malformed session, or a result event with no
+ * session cannot tie the model to the session the role keeps, so the turn is unresolved. Every
+ * place this adapter reads a session id (`findSessionId`, for the id the role adopts or checks)
+ * or a model (`reportedModels`) is covered: `recordResolvedModel` then requires that session to be
+ * the one the role keeps.
+ * @param {object} state role state; mutated
+ * @param {unknown} parsed the parsed output: one result object, an array of events, or nothing
+ * @param {string | null} requestedSessionId the session id the turn asked the CLI to resume
+ */
+function recordTurnModel(state, parsed, requestedSessionId) {
+  const events = Array.isArray(parsed) ? parsed : [parsed];
+  const named = events.filter((event) => isJsonObject(event) && event.session_id !== undefined);
+  const ids = new Set(named.map((event) => asSessionId(event.session_id) ?? null));
+  const session = ids.size === 1 ? [...ids][0] : null;
+  const results = (
+    Array.isArray(parsed) ? events.filter((e) => e?.type === "result") : events
+  ).filter(isJsonObject);
+  const sourced =
+    session && results.length > 0 && results.every((e) => asSessionId(e.session_id) === session);
+  recordResolvedModel(
+    state,
+    sourced ? results.flatMap(reportedModels) : [],
+    requestedSessionId,
+    sourced ? session : null,
+  );
 }
