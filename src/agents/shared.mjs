@@ -1,5 +1,8 @@
 import { hasClosingBlockAttempt } from "../lib/report.mjs";
 
+// A model id has no whitespace or control character, so a sentence or a blank is not one.
+const MODEL_ID = /^[^\s\p{Cc}]+$/u;
+
 /**
  * Sets `state.usage` to `usage`, or removes it when the CLI reported none (`undefined` or
  * `null`), so a turn that omits usage leaves no stale value behind. An empty object is kept.
@@ -91,4 +94,25 @@ export function asSessionId(value) {
  */
 export function lastClosingMessage(messages) {
   return messages.findLast(hasClosingBlockAttempt) ?? messages.at(-1);
+}
+
+/**
+ * Sets `state.resolvedModel` from the model values one turn reported, or removes it. The model is
+ * recorded only from well-formed, unambiguous evidence: at least one value, every value a model id
+ * (a non-empty string with no whitespace or control character), and all values equal. Anything else,
+ * including a value of another type, gives no model, so a malformed or mixed report never becomes a
+ * false resolved model that `--continue-from` would compare. The earlier value is removed too,
+ * because it describes an earlier turn.
+ * @param {object} state role state; mutated
+ * @param {unknown[]} reported the model values the turn output named, malformed ones included
+ */
+export function setResolvedModel(state, reported) {
+  const [first] = reported;
+  const unambiguous =
+    typeof first === "string" && MODEL_ID.test(first) && reported.every((model) => model === first);
+  if (unambiguous) {
+    state.resolvedModel = first;
+  } else {
+    delete state.resolvedModel;
+  }
 }

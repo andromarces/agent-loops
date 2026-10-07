@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { defaultAgents, normalizeAgent, runAgent } from "../agents/index.mjs";
+import { normalizeAgent, REPORTS_RESOLVED_MODEL } from "../agents/index.mjs";
 import { logInfo, logWarn } from "./log.mjs";
-import { readableErrorText } from "./error-message.mjs";
+import { readableErrorText, readProp } from "./error-message.mjs";
 import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
@@ -90,40 +90,55 @@ export function restoreSessions(roles, earlier, cwd) {
   }
 }
 
-const PROBE_PROMPT = "Reply with the single word OK.";
-
 /**
  * Refuses a continuation when the model a CLI resolves now differs from the one the earlier run
- * recorded in `resolvedModel` (#394). The transcript holds the requested model, and an omitted
- * model or an alias resolves inside the CLI, so a changed CLI default or alias target is visible
- * only in the output. For each role with a recorded model, one read-only turn in a new session
- * (never the continued one) reads what the CLI resolves now, before any turn of the run.
- * A probe that reports no model cannot be compared and passes with a warning. A failed probe
- * refuses, because the model is then unverified. Adapters that report no model (Codex, agy,
- * opencode) record none, so they are never probed. known-limit: each probe is a real model call.
+ * recorded in `resolvedModel` (#394, ADR 0026). The transcript holds the requested model, and an
+ * omitted model or an alias resolves inside the CLI, so a changed CLI default or alias target is
+ * visible only in the output. For each role with a recorded model, `probe` runs one read-only turn
+ * in a new session (never the continued one), before any turn of the run, and sets
+ * `resolvedModel` on the state it receives. The caller owns the guards of that turn (mutation
+ * check, cancel), and an error of theirs (`MutationError`, `SnapshotError`, a cancel) is rethrown
+ * unchanged. Any other probe failure refuses, because the model is then unverified. A probe that
+ * reports no model cannot be compared and passes with a warning. A role with no recorded model is
+ * not probed: the operator is warned for a CLI that can report one (an earlier version wrote the
+ * record, or the turn named no unambiguous model) and told for a CLI that never reports one.
+ * known-limit: each probe is a real model call.
  * @param {object} roles new run roles after `restoreSessions`; not mutated
- * @param {{ cwd: string, timeout?: number | null, signal?: AbortSignal, agents?: object }} options
+ * @param {{ probe: (state: object, role: string) => Promise<void> }} options
  */
-export async function verifyResolvedModels(
-  roles,
-  { cwd, timeout, signal, agents = defaultAgents },
-) {
+export async function verifyResolvedModels(roles, { probe }) {
   for (const role of ROLE_KINDS) {
-    const recorded = roles[role].resolvedModel;
-    if (typeof recorded !== "string" || !recorded) continue;
-    const { kind, model, effort } = roles[role];
-    const probe = { kind, model, effort, sessionId: null };
+    const { kind, model, effort, resolvedModel: recorded } = roles[role];
+    if (typeof recorded !== "string" || !recorded) {
+      if (REPORTS_RESOLVED_MODEL.has(normalizeAgent(kind))) {
+        logWarn(
+          `--continue-from: the earlier record has no resolved model for ${role} (${kind}), so the default-model check did not run for it.`,
+        );
+      } else {
+        logInfo(
+          `--continue-from: ${role} (${kind}) reports no resolved model, so a changed default model is not detected.`,
+        );
+      }
+      continue;
+    }
+    const state = { kind, model, effort, sessionId: null };
     logInfo(`--continue-from: probing the model that ${role} (${kind}) resolves now`);
     try {
-      await runAgent(probe, PROBE_PROMPT, { cwd, readOnly: true, timeout, signal, role }, agents);
+      await probe(state, role);
     } catch (err) {
+      if (
+        ["MutationError", "SnapshotError"].includes(readProp(err, "name")) ||
+        readProp(err, "isCanceled")
+      ) {
+        throw err;
+      }
       throw new Error(`--continue-from: ${role} model probe failed: ${readableErrorText(err)}`);
     }
-    if (typeof probe.resolvedModel !== "string" || !probe.resolvedModel) {
+    if (typeof state.resolvedModel !== "string" || !state.resolvedModel) {
       logWarn(`--continue-from: the ${kind} probe reported no model, so ${role} is not compared.`);
-    } else if (probe.resolvedModel !== recorded) {
+    } else if (state.resolvedModel !== recorded) {
       throw new Error(
-        `--continue-from: ${role} resolved to ${JSON.stringify(recorded)} in the earlier run, not ${JSON.stringify(probe.resolvedModel)}. The CLI default or alias changed, and a session continues under the model that created it. Pass the earlier model explicitly, or start a new run.`,
+        `--continue-from: ${role} resolved to ${JSON.stringify(recorded)} in the earlier run, not ${JSON.stringify(state.resolvedModel)}. The CLI default or alias changed, and a session continues under the model that created it. The model flags must equal the earlier run's, so a new --${role}-model value is refused too. Restore the earlier default in the CLI, or start a new run without --continue-from.`,
       );
     }
   }

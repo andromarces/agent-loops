@@ -1,10 +1,11 @@
-import { parseJson } from "../lib/json.mjs";
+import { isJsonObject, parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import {
   asSessionId,
   flagMissingSession,
   keepFailedSessionId,
   resumeMismatchError,
+  setResolvedModel,
   setUsageOrDelete,
 } from "./shared.mjs";
 
@@ -72,7 +73,7 @@ export async function runClaude(state, prompt, options = {}) {
   state.sessionId = sessionId;
   const resultEvent = findResultEvent(parsed);
   setUsage(state, resultEvent);
-  setResolvedModel(state, resultEvent);
+  setResolvedModel(state, reportedModels(resultEvent));
 
   return String(resultEvent?.result ?? "").trim();
 }
@@ -105,11 +106,13 @@ function setUsage(state, resultEvent) {
 }
 
 /**
- * Records the model Claude Code resolved for the turn, read from the keys of `modelUsage`. More
- * than one key means a subagent or helper model ran too, and the role model is then unknown, so
- * the earlier value stays instead of a guess.
+ * Lists the model ids a result names, the keys of `modelUsage`. More than one key means a subagent
+ * or helper model ran too, so the role model is unknown (the gap: such a turn records none). A
+ * `modelUsage` that is not an object, or an entry that is not an object, is reported as `null`,
+ * which is malformed evidence and records none.
  */
-function setResolvedModel(state, resultEvent) {
-  const models = Object.keys(resultEvent?.modelUsage ?? {});
-  if (models.length === 1) state.resolvedModel = models[0];
+function reportedModels(resultEvent) {
+  const usage = resultEvent?.modelUsage;
+  if (!isJsonObject(usage)) return [];
+  return Object.entries(usage).map(([model, entry]) => (isJsonObject(entry) ? model : null));
 }

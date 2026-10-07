@@ -543,27 +543,45 @@ test("copilot invocation is identical with the reviewer sandbox input on and off
   expect(on).toEqual(off);
 });
 
-// Usefulness: --continue-from compares the model Copilot resolved, which its assistant messages name.
-test("copilot records the model of the last assistant message as resolvedModel", async () => {
+const message = (data) =>
+  JSON.stringify({ type: "assistant.message", data: { content: "a", ...data } });
+const resolvedFrom = async (
+  messages,
+  state = { kind: "copilot", sessionId: null, model: null },
+) => {
   vi.mocked(exec).mockResolvedValueOnce({
-    stdout: [
-      '{"type":"assistant.message","data":{"content":"a","model":"m-1"}}',
-      '{"type":"assistant.message","data":{"content":"b","model":"m-2"}}',
-      '{"type":"result","sessionId":"s1","exitCode":0}',
-    ].join("\n"),
+    stdout: [...messages, '{"type":"result","sessionId":"s1","exitCode":0}'].join("\n"),
     stderr: "",
   });
-  const state = { kind: "copilot", sessionId: null, model: null, effort: null };
   await runCopilot(state, "p", { cwd: "/dir" });
-  expect(state.resolvedModel).toBe("m-2");
+  return state.resolvedModel;
+};
 
-  vi.mocked(exec).mockResolvedValueOnce({
-    stdout: [
-      '{"type":"assistant.message","data":{"content":"a"}}',
-      '{"type":"result","sessionId":"s1","exitCode":0}',
-    ].join("\n"),
-    stderr: "",
-  });
-  await runCopilot(state, "p", { cwd: "/dir" });
-  expect(state.resolvedModel).toBe("m-2");
+// Usefulness: --continue-from compares the model Copilot resolved, which its assistant messages
+// name; one model across the messages is unambiguous.
+test("copilot records the one model its assistant messages name as resolvedModel", async () => {
+  expect(await resolvedFrom([message({ model: "m-1" }), message({ model: "m-1" })])).toBe("m-1");
+  expect(await resolvedFrom([message({ model: "m-1" }), message({})])).toBe("m-1");
+});
+
+// Usefulness: a false resolved model would refuse or pass a continuation wrongly, so messages that
+// name different models, and every malformed `model` value, record none.
+test.each([
+  ["different models", [message({ model: "m-1" }), message({ model: "m-2" })]],
+  ["no model", [message({})]],
+  ["an empty model", [message({ model: "" })]],
+  ["a blank model", [message({ model: "  " })]],
+  ["a number", [message({ model: 7 })]],
+  ["an object", [message({ model: {} })]],
+  ["a valid model beside a malformed one", [message({ model: "m-1" }), message({ model: 7 })]],
+  ["a model with whitespace", [message({ model: "m 1" })]],
+])("copilot records no resolvedModel for %s", async (_label, messages) => {
+  expect(await resolvedFrom(messages)).toBeUndefined();
+});
+
+// Usefulness: a turn with unreadable evidence must not leave an earlier turn's model as if it
+// were the model of this turn.
+test("copilot clears an earlier resolvedModel when a turn reports none", async () => {
+  const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };
+  expect(await resolvedFrom([message({})], state)).toBeUndefined();
 });

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { parseJsonLines } from "../lib/json.mjs";
+import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 import {
@@ -8,6 +8,7 @@ import {
   lastClosingMessage,
   resumeMismatchError,
   setMainLoopUsage,
+  setResolvedModel,
 } from "./shared.mjs";
 
 export async function runCopilot(state, prompt, options = {}) {
@@ -79,10 +80,15 @@ export async function runCopilot(state, prompt, options = {}) {
     logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
   }
 
-  const resolved = events.findLast(
-    (event) => event.type === "assistant.message" && typeof event.data?.model === "string",
-  )?.data.model;
-  if (resolved) state.resolvedModel = resolved;
+  // Every assistant message that carries a `model` field is evidence. Messages that name different
+  // models, or a malformed value, record none (the gap: a turn that used a second model).
+  setResolvedModel(
+    state,
+    events
+      .filter((event) => event.type === "assistant.message" && isJsonObject(event.data))
+      .filter((event) => Object.hasOwn(event.data, "model"))
+      .map((event) => event.data.model),
+  );
 
   return String(lastClosingMessage(messages)).trim();
 }

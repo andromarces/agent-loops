@@ -422,40 +422,42 @@ test("restoreSessions carries the recorded resolvedModel to the new roles", () =
   expect(next.reviewer.resolvedModel).toBeUndefined();
 });
 
-function probeAgents(resolvedByKind) {
-  const run = vi.fn(async (state) => {
-    if (resolvedByKind[state.kind] !== undefined) state.resolvedModel = resolvedByKind[state.kind];
-    return "OK";
+// The injected probe stands in for the guarded turn that the CLI runs (`runProbeTurn`).
+function probeWith(resolvedByRole) {
+  return vi.fn(async (state, role) => {
+    if (resolvedByRole[role] !== undefined) state.resolvedModel = resolvedByRole[role];
   });
-  const agents = Object.fromEntries(
-    ["codex", "claude", "agy", "opencode", "copilot"].map((kind) => [kind, { run }]),
-  );
-  return { agents, run };
 }
 
-const probeOptions = (agents) => ({ cwd: CWD, timeout: 5, signal: undefined, agents });
-
 // Usefulness: a CLI default that changed between the runs is refused before any turn, and the
-// refusal names the role and both models.
+// refusal names the role and both models. A new --model flag is refused by the flag rule, so the
+// advice must not offer it.
 test("verifyResolvedModels rejects a role whose resolved model changed", async () => {
   const next = roles();
   next.worker.resolvedModel = "claude-opus-5-5";
-  const { agents, run } = probeAgents({ claude: "claude-opus-5-6" });
-  await expect(verifyResolvedModels(next, probeOptions(agents))).rejects.toThrow(
+  const probe = probeWith({ worker: "claude-opus-5-6" });
+  const failure = await verifyResolvedModels(next, { probe }).catch((err) => err);
+  expect(failure.message).toContain(
     'worker resolved to "claude-opus-5-5" in the earlier run, not "claude-opus-5-6"',
   );
-  // The probe starts a new read-only session, never the continued one.
-  expect(run.mock.calls[0][0].sessionId).toBeNull();
-  expect(run.mock.calls[0][2]).toMatchObject({ readOnly: true, role: "worker", cwd: CWD });
+  expect(failure.message).not.toMatch(/explicit/i);
+  expect(failure.message).toContain("without --continue-from");
+  // The probe starts a new session, never the continued one, with the new run's model and effort.
+  expect(probe.mock.calls[0][0]).toMatchObject({
+    kind: "claude",
+    model: "opus",
+    effort: "high",
+    sessionId: null,
+  });
 });
 
 // Usefulness: an unchanged resolved model continues, and a role with no record costs no probe.
 test("verifyResolvedModels accepts an unchanged model and skips a role with no record", async () => {
   const next = roles();
   next.worker.resolvedModel = "claude-opus-5-5";
-  const { agents, run } = probeAgents({ claude: "claude-opus-5-5" });
-  await verifyResolvedModels(next, probeOptions(agents));
-  expect(run).toHaveBeenCalledTimes(1);
+  const probe = probeWith({ worker: "claude-opus-5-5" });
+  await verifyResolvedModels(next, { probe });
+  expect(probe).toHaveBeenCalledTimes(1);
 });
 
 // Usefulness: a CLI that reports no model on the probe cannot be compared, so the run continues
@@ -463,16 +465,37 @@ test("verifyResolvedModels accepts an unchanged model and skips a role with no r
 test("verifyResolvedModels continues when the probe reports no model", async () => {
   const next = roles();
   next.worker.resolvedModel = "claude-opus-5-5";
-  const { agents } = probeAgents({});
-  await expect(verifyResolvedModels(next, probeOptions(agents))).resolves.toBeUndefined();
+  await expect(verifyResolvedModels(next, { probe: probeWith({}) })).resolves.toBeUndefined();
 });
 
-// Usefulness: a probe that fails refuses the continuation, because the model is unverified.
-test("verifyResolvedModels refuses when the probe fails", async () => {
+// Usefulness: a probe that fails refuses the continuation, because the model is unverified. A
+// fatal guard error (a mutation, a cancel) keeps its own type so the caller can tell it apart.
+test("verifyResolvedModels refuses when the probe fails and keeps a fatal error whole", async () => {
   const next = roles();
   next.worker.resolvedModel = "claude-opus-5-5";
-  const agents = { claude: { run: vi.fn().mockRejectedValue(new Error("boom")) } };
-  await expect(verifyResolvedModels(next, probeOptions(agents))).rejects.toThrow(
-    "worker model probe failed: boom",
-  );
+  await expect(
+    verifyResolvedModels(next, { probe: vi.fn().mockRejectedValue(new Error("boom")) }),
+  ).rejects.toThrow("worker model probe failed: boom");
+  const fatal = Object.assign(new Error("mutated"), { name: "MutationError" });
+  await expect(
+    verifyResolvedModels(next, { probe: vi.fn().mockRejectedValue(fatal) }),
+  ).rejects.toBe(fatal);
+});
+
+// Usefulness: a record with no resolved model leaves the role unchecked, so the operator is told
+// that the check did not run, and told apart from a CLI that cannot report a model.
+test("verifyResolvedModels warns for a role with no recorded resolved model", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const next = roles();
+    await verifyResolvedModels(next, { probe: probeWith({}) });
+    const warned = warn.mock.calls.flat().join("\n");
+    expect(warned).toMatch(/worker .*default-model check did not run/);
+    expect(warned).not.toMatch(/orchestrator|reviewer/);
+    expect(info.mock.calls.flat().join("\n")).toMatch(/orchestrator .*reports no resolved model/);
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+  }
 });

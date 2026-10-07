@@ -2,11 +2,11 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0026: Detect a changed resolved model on --continue-from](0026-detect-a-changed-resolved-model-on-continue-from.md). ADR 0026 restates the decisions of this ADR that still hold and closes the accepted gap about a changed default model for the CLIs that report it.
 
 Supersedes [ADR 0015: Continue a headless run from its transcript](0015-continue-a-headless-run-from-its-transcript.md). The decisions of ADR 0015 that still hold are restated below. One changes: the completion gate state is restored on an unchanged work tree, where ADR 0015 reset it.
-
-Narrowed by [ADR 0025](0025-detect-a-changed-resolved-model-on-continue-from.md): decision 2 and the accepted gap about a changed default model now apply only to a CLI that reports no resolved model.
 
 ## Date
 
@@ -21,7 +21,7 @@ The transcript already records every child result, with the reviewed head and di
 ## Decision
 
 1. `--continue-from <transcript>` reads the session ids from the `roles` of an earlier transcript and gives the run a new `--max-steps` budget.
-2. The run is refused before any turn when a role kind, a role's recorded model, a role's recorded effort, or `--cwd` differs from the earlier run. One rule covers every CLI: model and effort compare exactly, so an omitted value matches only an omitted value. A change of a CLI's own default model between the two runs is detected only for a CLI that reports its resolved model (ADR 0025). A refusal writes no transcript. The transcript write is atomic, so a failed write keeps the earlier file. When `--transcript` names the same file, the rewrite keeps the earlier events and adds a `continued` event with the earlier outcome.
+2. The run is refused before any turn when a role kind, a role's recorded model, a role's recorded effort, or `--cwd` differs from the earlier run. One rule covers every CLI: model and effort compare exactly, so an omitted value matches only an omitted value. A change of a CLI's own default model between the two runs is not detected, because the transcript records what the caller requested. A refusal writes no transcript. The transcript write is atomic, so a failed write keeps the earlier file. When `--transcript` names the same file, the rewrite keeps the earlier events and adds a `continued` event with the earlier outcome.
 3. A headless run that returns an exit code appends a `gate` event as the last event of its transcript. The event holds the gate state of the run: `workerRan`, `reviewerRan`, `reviewerTurnDispatched`, `acceptedSinceWorker`, and `lastReviewed`. A run that ends on a thrown error (SIGINT, a fatal turn, a detected mutation) appends none.
 4. `--continue-from` does not trust that record. It rebuilds the gate state by replaying the transcript events in file order through `applyResult`, the transition function that `runLoop` also applies after each child result: a worker result clears the accept, and a reviewer result sets `reviewerRan` when it ended `ok` and sets or clears the accept from its verdict and Checks line. Every result replaces the reviewed state with its own. A `continued` event restarts the replay at the reset state, and so does a transcript of a continued run that has none. The replay returns no state, which keeps the reset, unless all of these hold:
    - Every event is an object with a string `type`. Every `invocation` event has a role that is exactly `orchestrator`, `worker`, or `reviewer`. Every `result` event has a role that is exactly `worker` or `reviewer`, and the fields of its `ok` or `error` result with the right types (a string `response` or `error`, a reviewed state of strings and booleans when present).
@@ -39,7 +39,7 @@ The transcript already records every child result, with the reviewed head and di
 - A continuation never accepts a finish on a saved verdict for a changed tree: the restore needs the same head and digest.
 - The transcript gains one event type, `gate`, that holds the final gate state. A transcript from an earlier version has none, so it continues with the reset, as it did before this change.
 - **Accepted gap:** the transcript is a local file with no signature. The restore checks that the events are well formed and replay to the recorded state, and that the work tree matches. It does not check any event against another source, and it makes no promise about a deleted, added, or reordered event beyond that replay: an edit resets only when it makes an event invalid or makes the replay differ from the `gate` event. The gap is a forged sequence that is well formed and replays to the recorded state, for example a transcript whose events and `gate` event were all rewritten to end on an accept of the current head and digest. The same trust already covers the session ids in that file.
-- **Accepted gap:** a change of a CLI's own default model between the two runs is not detected for Codex, agy, and opencode, which report no resolved model (ADR 0025). Pass an explicit `--<role>-model` in both runs to pin it.
+- **Accepted gap:** a change of a CLI's own default model between the two runs is not detected. Pass an explicit `--<role>-model` in both runs to pin it.
 - A run that ends on a thrown error (for example SIGINT) writes no `gate` event, so its continuation resets, and so does a continuation of a same-file transcript whose later run ended on a thrown error.
 - A continuation that restored a gate and ran no turn ends in a state that the replay, which restarts at the reset state, does not reproduce. The next continuation resets. That fails closed.
 - A transcript file inside the work tree is an untracked file, so it changes the digest and keeps the reset. Keep it outside the work tree.
@@ -63,5 +63,5 @@ Andro Marces
 - [Issue #393: Restore the headless gate state on --continue-from when the tree is unchanged](https://github.com/andromarces/agent-loops/issues/393)
 - [Pull Request #536](https://github.com/andromarces/agent-loops/pull/536)
 - Implementation: `gateFromTranscript` and `matchingGate` in `src/lib/continuation.mjs`, the `continued` and `earlierGate` inputs of `runLoop`, and `--continue-from` in `src/cli.mjs`; tests in `tests/lib/continuation.test.mjs`, `tests/cli.test.mjs`, and `tests/runtime.test.mjs`; documented in `README.md`
-- Narrowed by [ADR 0025: Detect a changed resolved model on --continue-from](0025-detect-a-changed-resolved-model-on-continue-from.md)
+- Superseded by [ADR 0026: Detect a changed resolved model on --continue-from](0026-detect-a-changed-resolved-model-on-continue-from.md)
 - [ADR Index](README.md)

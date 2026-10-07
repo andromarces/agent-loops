@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { execa } from "execa";
 import { MutationError } from "../src/lib/snapshot.mjs";
-import { runLoop } from "../src/runtime.mjs";
+import { runLoop, runProbeTurn } from "../src/runtime.mjs";
 import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
 
 // 16. Usefulness: verifies reviewer mutation is detected, fatal, and does not revert changes.
@@ -221,6 +221,36 @@ test("reviewer snapshot failure is fatal when agent also fails", async () => {
       name: "SnapshotError",
       cause: agentError,
     });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: the resolved-model probe is a child turn, so a probe that changes the work tree halts with
+// the same MutationError as any read-only turn, and a clean probe leaves the tree alone (#394).
+test("a probe turn that changes the work tree is a fatal mutation", async () => {
+  const repo = await createTempRepo();
+  try {
+    const state = { kind: "rev", sessionId: null };
+    const seen = [];
+    const clean = scripted([
+      async (_state, _prompt, options) => {
+        seen.push(options);
+        return "OK";
+      },
+    ]);
+    await runProbeTurn({ agents: { rev: clean }, state, roleName: "reviewer", cwd: repo });
+    expect(seen[0]).toMatchObject({ readOnly: true, role: "reviewer", cwd: repo });
+
+    const leak = scripted([
+      async () => {
+        await writeFile(join(repo, "probe-leak.txt"), "leak\n");
+        return "OK";
+      },
+    ]);
+    await expect(
+      runProbeTurn({ agents: { rev: leak }, state, roleName: "reviewer", cwd: repo }),
+    ).rejects.toThrow(MutationError);
   } finally {
     await removePath(repo);
   }

@@ -337,40 +337,42 @@ test("claude invocation is identical with the reviewer sandbox input on and off"
   expect(on).toEqual(off);
 });
 
-// Usefulness: --continue-from compares the model Claude Code resolved, so a turn whose result names one
-// model in `modelUsage` records it, and a turn that names several (subagents) records none instead of a guess.
-test("claude records the one model its result reports as resolvedModel", async () => {
+const resolved = async (result, state = { kind: "claude", sessionId: null, model: null }) => {
   vi.mocked(exec).mockResolvedValueOnce({
-    stdout: JSON.stringify({
-      session_id: "s1",
-      result: "ok",
-      modelUsage: { "claude-opus-5-5": { inputTokens: 1 } },
-    }),
+    stdout: JSON.stringify({ session_id: "s1", result: "ok", ...result }),
     stderr: "",
   });
-  const state = { kind: "claude", sessionId: null, model: null, effort: null };
   await runClaude(state, "p", { cwd: "/path" });
-  expect(state.resolvedModel).toBe("claude-opus-5-5");
+  return state.resolvedModel;
+};
 
-  vi.mocked(exec).mockResolvedValueOnce({
-    stdout: JSON.stringify({
-      session_id: "s1",
-      result: "ok",
-      modelUsage: { "claude-opus-5-5": {}, "claude-haiku-4-5": {} },
-    }),
-    stderr: "",
-  });
-  await runClaude(state, "p", { cwd: "/path" });
-  expect(state.resolvedModel).toBe("claude-opus-5-5");
-  const fresh = { kind: "claude", sessionId: null, model: null, effort: null };
-  vi.mocked(exec).mockResolvedValueOnce({
-    stdout: JSON.stringify({
-      session_id: "s2",
-      result: "ok",
-      modelUsage: { a: {}, b: {} },
-    }),
-    stderr: "",
-  });
-  await runClaude(fresh, "p", { cwd: "/path" });
-  expect(fresh.resolvedModel).toBeUndefined();
+// Usefulness: --continue-from compares the model Claude Code resolved, so a result that names
+// exactly one well-formed model in `modelUsage` records it.
+test("claude records the one model its result reports as resolvedModel", async () => {
+  expect(await resolved({ modelUsage: { "claude-opus-5-5": { inputTokens: 1 } } })).toBe(
+    "claude-opus-5-5",
+  );
+});
+
+// Usefulness: a false resolved model would refuse or pass a continuation wrongly, so several
+// models (a subagent or helper ran), and every malformed `modelUsage` shape, record none.
+test.each([
+  ["several models", { modelUsage: { a: {}, b: {} } }],
+  ["no modelUsage", {}],
+  ["an empty object", { modelUsage: {} }],
+  ["a string, whose characters are not keys", { modelUsage: "x" }],
+  ["an array, whose indexes are not keys", { modelUsage: [{ inputTokens: 1 }] }],
+  ["a null", { modelUsage: null }],
+  ["a non-object entry", { modelUsage: { "claude-opus-5-5": 7 } }],
+  ["a blank key", { modelUsage: { " ": {} } }],
+  ["a key with whitespace", { modelUsage: { "claude opus": {} } }],
+])("claude records no resolvedModel for %s", async (_label, result) => {
+  expect(await resolved(result)).toBeUndefined();
+});
+
+// Usefulness: a turn with unreadable evidence must not leave an earlier turn's model as if it
+// were the model of this turn.
+test("claude clears an earlier resolvedModel when a turn reports none", async () => {
+  const state = { kind: "claude", sessionId: null, model: null, resolvedModel: "claude-opus-5-5" };
+  expect(await resolved({}, state)).toBeUndefined();
 });

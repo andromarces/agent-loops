@@ -43,7 +43,7 @@ import { setVerbose } from "./lib/log.mjs";
 import { writeFileAtomic } from "./lib/runstate.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { redactCommandText } from "./lib/test-cmd.mjs";
-import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
+import { runLoop, runProbeTurn, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
@@ -420,9 +420,13 @@ Options:
                                 refused before any turn. An omitted model or effort matches only
                                 an omitted one. For claude and copilot, which report the model
                                 they resolved, a role whose earlier run recorded one is probed
-                                with one read-only turn before any turn of the run, and a changed
-                                resolved model refuses the run. codex, agy, and opencode report no
-                                model, so a changed CLI default is not detected for them. The
+                                with one read-only turn before any turn of the run, under the
+                                mutation check and SIGINT cancel of a child turn. A changed
+                                resolved model refuses the run: restore the earlier CLI default
+                                or start a new run, because a new --<role>-model value is refused
+                                too. A role with no recorded model is not checked, and the run
+                                warns. codex, agy, and opencode report no model, so a changed CLI
+                                default is not detected for them. The
                                 completion gate is restored only when the work tree is the state
                                 the earlier run's last reviewer turn reviewed, read from the
                                 transcript's events and must equal the gate event that ends it. Otherwise it is reset: no reviewer
@@ -573,6 +577,12 @@ export async function main(
       sessionId: null,
     };
   }
+  // Created before the continuation check, so a SIGINT during a probe turn cancels it.
+  const controller = new AbortController();
+  const onSigInt = () => {
+    controller.abort();
+  };
+  process.once("SIGINT", onSigInt);
   let earlierGate = null;
   // A refused continuation writes no transcript: --transcript may name the
   // --continue-from file, and a refusal must not overwrite the sessions it holds.
@@ -581,9 +591,15 @@ export async function main(
       const earlier = await readContinuation(options.continueFrom);
       restoreSessions(roles, earlier, options.cwd);
       await verifyResolvedModels(roles, {
-        cwd: options.cwd,
-        timeout: options.timeout,
-        agents,
+        probe: (state, role) =>
+          runProbeTurn({
+            agents,
+            state,
+            roleName: role,
+            cwd: options.cwd,
+            timeout: options.timeout,
+            signal: controller.signal,
+          }),
       });
       earlierGate = gateFromTranscript(earlier);
       // --transcript rewrites its file at exit, so a run that names the file it
@@ -593,9 +609,10 @@ export async function main(
         carryEarlierEvents(events, earlier);
       }
     } catch (err) {
+      process.removeListener("SIGINT", onSigInt);
       console.error(`
 ${redactedText(readProp(err, "message") ?? err)}`);
-      process.exitCode = 1;
+      process.exitCode = readProp(err, "isCanceled") ? 130 : 1;
       return;
     }
   }
@@ -665,12 +682,6 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     }
     process.exitCode = exitCode;
   };
-
-  const controller = new AbortController();
-  const onSigInt = () => {
-    controller.abort();
-  };
-  process.once("SIGINT", onSigInt);
 
   try {
     try {

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vite-plus/test";
 
@@ -1724,6 +1724,90 @@ test("--continue-from refuses a changed resolved model and keeps the transcript"
     expect(JSON.parse(await readFile(transcriptPath, "utf8")).roles.worker.resolvedModel).toBe(
       "model-1",
     );
+  });
+});
+
+// Runs a first headless run that stops on the step limit, then records a resolved model for the
+// worker in its transcript, as a Claude or Copilot turn would. `fn(repo, transcriptPath, errorSpy)`
+// then continues it.
+async function withRecordedModel(fn) {
+  const repo = await createTempRepo();
+  const transcriptPath = join(await mkdtemp(join(tmpdir(), "cli-test-probe-")), "run.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+      sessionAgents([work, work], { codex: [], claude: [], agy: [] }),
+    );
+    const recorded = JSON.parse(await readFile(transcriptPath, "utf8"));
+    recorded.roles.worker.resolvedModel = "model-1";
+    await writeFile(transcriptPath, JSON.stringify(recorded));
+    process.exitCode = undefined;
+    await fn(repo, transcriptPath, errorSpy);
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    logSpy.mockRestore();
+    await removePath(repo);
+    await removePath(dirname(transcriptPath));
+  }
+}
+
+const continueArgs = (repo, transcriptPath) => [
+  ...CONTINUE_BASE,
+  "--cwd",
+  repo,
+  "--continue-from",
+  transcriptPath,
+  "--transcript",
+  transcriptPath,
+];
+
+// Usefulness: the resolved-model probe runs under the mutation check of a child turn, so a probe
+// that changes the work tree halts the continuation with exit 1 before any turn, and the earlier
+// transcript stays whole (#394).
+test("--continue-from halts when the probe changes the work tree", async () => {
+  await withRecordedModel(async (repo, transcriptPath, errorSpy) => {
+    const before = await readFile(transcriptPath, "utf8");
+    const seen = { codex: [], claude: [], agy: [] };
+    const agents = sessionAgents([FINISH], seen);
+    agents.claude.run = async () => {
+      await writeFile(join(repo, "probe-leak.txt"), "leak\n");
+      return "OK";
+    };
+    await main(continueArgs(repo, transcriptPath), agents);
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy.mock.calls.flat().join("\n")).toMatch(/mutat/i);
+    expect(seen.codex).toEqual([]);
+    expect(await readFile(transcriptPath, "utf8")).toBe(before);
+  });
+});
+
+// Usefulness: a SIGINT during the probe cancels it through the run's signal and refuses the
+// continuation with exit 130, before any turn, leaving the earlier transcript whole (#394).
+test("--continue-from cancels a probe on SIGINT and exits 130", async () => {
+  await withRecordedModel(async (repo, transcriptPath) => {
+    const before = await readFile(transcriptPath, "utf8");
+    const seen = { codex: [], claude: [], agy: [] };
+    const agents = sessionAgents([FINISH], seen);
+    let probeSignal;
+    agents.claude.run = async (_state, _prompt, options) => {
+      probeSignal = options.signal;
+      process.emit("SIGINT");
+      const err = new Error("canceled");
+      err.isCanceled = true;
+      throw err;
+    };
+    const listenersBefore = process.listenerCount("SIGINT");
+    await main(continueArgs(repo, transcriptPath), agents);
+    expect(process.exitCode).toBe(130);
+    expect(probeSignal?.aborted).toBe(true);
+    expect(seen.codex).toEqual([]);
+    expect(await readFile(transcriptPath, "utf8")).toBe(before);
+    expect(process.listenerCount("SIGINT")).toBe(listenersBefore);
   });
 });
 
