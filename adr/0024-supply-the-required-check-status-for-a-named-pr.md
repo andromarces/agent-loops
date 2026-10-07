@@ -107,8 +107,9 @@ checks`, which reports no commit and could not separate that case.
    PR and the status. The second states that the reviewer keeps its own read as
    the fallback, is preferred when the supplied status is unresolved, and any
    difference between the two goes in `Checks`. `docs/orchestrator-instructions.md`
-   and the headless orchestrator prompt state the rule in the same words, and a
-   test reads both to keep them from drifting.
+   and the headless orchestrator prompt state the rule in the same words where
+   the prompt states it (item 13), and a test reads both to keep them from
+   drifting.
 10. The reviewer's own read is never removed. The supplied status is evidence for
     one turn, not a gate: it is a pre-turn snapshot, so a check that starts or
     finishes later is not in it.
@@ -126,8 +127,15 @@ checks`, which reports no commit and could not separate that case.
     ADR 0008 defines, so the status is not recorded there.
 13. The prompt wording a run does not need stays unchanged. A run that names no
     PR carries no gate lines at all, because the gate lines render only for a
-    gated run, and a gated run always names a PR. Every gated run gets the
-    reworded lines, which state the supplied read for the named PR.
+    gated run. The runtime reads the status for every run that names a PR, but
+    the headless orchestrator prompt states the supplied read in one branch
+    only: the run where neither the orchestrator CLI nor the reviewer CLI can
+    read the checks from a shell command (`requiredCheckWait` returns `gate`).
+    That branch gets the reworded lines for the named PR. The other two
+    branches, where the orchestrator waits itself (`wait`) or only the reviewer
+    CLI can read (`reviewer`), keep their lines and state no supplied read. In
+    every branch the reviewer prompt carries the supplied-status lines whenever
+    the runtime read a status.
 14. `--require-ci` stays the enforcement point. The supplied status changes no
     gate condition and no refusal.
 
