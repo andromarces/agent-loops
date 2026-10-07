@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import { logWarn } from "../lib/log.mjs";
 import {
   asSessionId,
   flagMissingSession,
@@ -16,10 +18,13 @@ export async function runClaude(state, prompt, options = {}) {
   const args = ["-p"];
   const execOptions = { cwd, input: prompt, timeout, signal, role };
   const requestedSessionId = state.sessionId;
+  // A first turn pre-assigns its id, so a kill that leaves stdout empty still names the session
+  // the CLI saved (issue #395). A resumed turn passes no `--session-id`.
+  const preassignedId = requestedSessionId ? null : randomUUID();
 
-  if (state.sessionId) {
-    args.push("--resume", state.sessionId);
-  }
+  args.push(
+    ...(requestedSessionId ? ["--resume", requestedSessionId] : ["--session-id", preassignedId]),
+  );
 
   if (readOnly) {
     args.push("--permission-mode", "plan");
@@ -52,7 +57,10 @@ export async function runClaude(state, prompt, options = {}) {
       failed = undefined;
     }
     setUsage(state, findResultEvent(failed));
-    keepFailedSessionId(state, findSessionId(failed));
+    // An id the CLI printed wins. Otherwise the pre-assigned id stays: a kill before the CLI
+    // saved a session leaves an id that names none, and the next resume then reaches the
+    // missing-session fallback below.
+    keepFailedSessionId(state, findSessionId(failed) ?? preassignedId);
     flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }
@@ -67,6 +75,10 @@ export async function runClaude(state, prompt, options = {}) {
   // A resumed id must come back unchanged, as in the Codex, Copilot, and opencode adapters.
   if (requestedSessionId && sessionId !== requestedSessionId) {
     throw resumeMismatchError("Claude Code", "session", requestedSessionId, sessionId);
+  }
+
+  if (preassignedId && sessionId !== preassignedId) {
+    logWarn(`Claude Code reported session ${sessionId}, not the pre-assigned ${preassignedId}`);
   }
 
   state.sessionId = sessionId;

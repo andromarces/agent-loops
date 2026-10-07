@@ -44,6 +44,16 @@ step budget runs out.
    pre-assigned id completed and echoed that id. Whether that call resumed a prior
    session or started a new one is not verified, and neither is whether the failed turn
    saved a session.
+   The Claude adapter passes a pre-assigned UUID with `--session-id` on every first turn and
+   keeps it when the turn fails, unless the failed output reported an id, which wins (issue
+   #395). A resumed turn passes no `--session-id`. A successful first turn adopts the id the
+   CLI reports and logs a warning when it differs from the pre-assigned one. On Claude Code
+   2.1.292, a first turn killed 30 s into a `sleep 90` tool call printed nothing and left a
+   session file, and `--resume` of the pre-assigned id answered with the earlier command in its
+   history and echoed the id. A first turn killed 0.4 s in left no session file, and `--resume`
+   of its id exited 1 with the `No conversation found` line of decision 2, so the next turn
+   reaches the fallback and reruns as a first turn with a new pre-assigned id. A pre-assigned id
+   that names no session therefore costs one failed resume, not a lost run.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
    stderr is the one verified line for the requested id, byte for byte, plus at most one
@@ -74,8 +84,8 @@ step budget runs out.
   when stderr matches `conversation "<name>" not found`. A resumed turn carries no
   preamble, so a new conversation lacks it. A new id without that stderr text is adopted
   without a warning and was not seen in the probe.
-- In the probe, Claude and agy printed no session id when killed at 20 to 25 s, so a
-  first turn that ends that way keeps a null id.
+- In the probe, Claude and agy printed no session id when killed at 20 to 25 s. A Claude first
+  turn that ends that way keeps its pre-assigned id. An agy first turn keeps a null id.
 - A worker resumed after a failed first turn receives no second preamble. The failed turn
   carried it, and the CLI saved it with the session.
 
@@ -88,8 +98,9 @@ step budget runs out.
    each adapter owns its pattern and the runtime reads one flag.
 3. **Rerun the agy turn when the conversation is missing**: rejected. The turn already
    ran and can have edited the tree, so a rerun repeats the edits.
-4. **Pass a pre-assigned Claude session id with `--session-id`, as the Copilot adapter does**: deferred. It would keep the
-   id across a timeout, but it changes the first-turn invocation and needs its own probe.
+4. **Pass a pre-assigned Claude session id with `--session-id`, as the Copilot adapter does**: adopted for Claude in
+   issue #395 after a probe (decision 1). The Copilot adapter still keeps no pre-assigned id, because a Copilot
+   probe did not show that a failed first turn saves a session.
 
 ## Authors
 
@@ -98,7 +109,8 @@ Andro Marces
 ## Links
 
 - [Issue #360](https://github.com/andromarces/agent-loops/issues/360)
+- [Issue #395](https://github.com/andromarces/agent-loops/issues/395)
 - Implementation: `keepFailedSessionId` and `flagMissingSession` in `src/agents/shared.mjs`,
-  the adapters in `src/agents/`, `runFn` in `src/runtime.mjs`, and the dispatch write in
+  the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, and the dispatch write in
   `src/role.mjs`; documented in `README.md`
 - [ADR Index](README.md)

@@ -6,9 +6,18 @@ vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
 }));
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Reads the id the adapter pre-assigned on its latest `exec` call. */
+function preassignedId() {
+  const args = vi.mocked(exec).mock.calls.at(-1)[1];
+  return args[args.indexOf("--session-id") + 1];
+}
+
 // Usefulness: verifies claude adapter sends -p, --output-format json, adds --permission-mode plan when
 // readOnly is true, and disables the built-in Explore and Plan research subagents so a read-only turn
-// does not spawn hidden subagents on the role model (issue #46).
+// does not spawn hidden subagents on the role model (issue #46). It also verifies a first turn
+// pre-assigns a UUID with --session-id (issue #395).
 test("claude sends correct argv for initial turn with readOnly", async () => {
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
@@ -23,9 +32,20 @@ test("claude sends correct argv for initial turn with readOnly", async () => {
 
   expect(response).toBe("ok");
   expect(state.sessionId).toBe("s1");
-  expect(exec).toHaveBeenCalledWith(
+  expect(preassignedId()).toMatch(UUID);
+  expect(exec).toHaveBeenLastCalledWith(
     "claude",
-    ["-p", "--permission-mode", "plan", "--model", "claude-3-5", "--output-format", "json"],
+    [
+      "-p",
+      "--session-id",
+      preassignedId(),
+      "--permission-mode",
+      "plan",
+      "--model",
+      "claude-3-5",
+      "--output-format",
+      "json",
+    ],
     {
       cwd: "/path",
       input: "test prompt",
@@ -158,15 +178,91 @@ test("claude keeps the stored session id when a resumed turn fails", async () =>
   expect(state.sessionId).toBe("s-stored");
 });
 
-// Usefulness: verifies a timeout with empty stdout leaves the id null (nothing to read).
-test("claude leaves the session id null when a failed first turn printed nothing", async () => {
+// Usefulness: verifies a first turn that a timeout or cancel killed, with empty stdout, keeps the
+// pre-assigned id, so the next turn resumes the session the CLI saved (issue #395).
+test.each([
+  ["a timeout", { timedOut: true }],
+  ["a cancel", { isCanceled: true }],
+  ["a signal", { isTerminated: true }],
+])("claude keeps the pre-assigned session id when %s ends a first turn", async (_n, flags) => {
   vi.mocked(exec).mockRejectedValueOnce(
-    Object.assign(new Error("claude timed out after 5 seconds."), { stdout: "", stderr: "" }),
+    Object.assign(new Error("claude was stopped."), { stdout: "", stderr: "", ...flags }),
   );
 
   const state = { kind: "claude", sessionId: null, model: null, effort: null };
-  await expect(runClaude(state, "p", { cwd: "/path", readOnly: false })).rejects.toThrow("timed");
-  expect(state.sessionId).toBeNull();
+  await expect(runClaude(state, "p", { cwd: "/path", readOnly: false })).rejects.toThrow("stopped");
+  expect(state.sessionId).toMatch(UUID);
+  expect(state.sessionId).toBe(preassignedId());
+});
+
+// Usefulness: verifies the next turn after a killed first turn resumes the kept id and passes no
+// --session-id, because the CLI refuses a new id for a resumed session (issue #395).
+test("claude resumes the pre-assigned id kept from a killed first turn", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
+  );
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("timed out");
+  const kept = state.sessionId;
+
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: kept, result: "ok" }),
+    stderr: "",
+  });
+  await expect(runClaude(state, "again", { cwd: "/path" })).resolves.toBe("ok");
+  const args = vi.mocked(exec).mock.calls.at(-1)[1];
+  expect(args).toEqual(expect.arrayContaining(["--resume", kept]));
+  expect(args).not.toContain("--session-id");
+});
+
+// Usefulness: verifies a killed first turn whose session the CLI never saved still reaches the
+// missing-session fallback on the next turn, and the rerun pre-assigns a new id (issue #395).
+test("claude flags the resume of a pre-assigned id that the CLI never saved", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
+  );
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("timed out");
+  const kept = state.sessionId;
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    missingFailure({ stderr: `No conversation found with session ID: ${kept}` }),
+  );
+  const caught = await runClaude(state, "again", { cwd: "/path" }).catch((e) => e);
+  expect(caught.sessionMissing).toBe(true);
+
+  state.sessionId = null;
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s-new", result: "ok" }),
+    stderr: "",
+  });
+  await runClaude(state, "again", { cwd: "/path" });
+  expect(preassignedId()).toMatch(UUID);
+  expect(preassignedId()).not.toBe(kept);
+});
+
+// Usefulness: verifies a successful first turn adopts the id the CLI reports, even when it differs
+// from the pre-assigned one, so the stored id is always one the CLI printed (issue #395).
+test("claude adopts the reported id of a first turn over the pre-assigned id", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s-reported", result: "ok" }),
+    stderr: "",
+  });
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.sessionId).toBe("s-reported");
+});
+
+// Usefulness: verifies a resumed turn never gains a pre-assigned id, so a failed resumed turn keeps
+// its stored id (issue #395).
+test("claude pre-assigns no id on a resumed turn", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
+  );
+  const state = { kind: "claude", sessionId: "s-stored", model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("timed out");
+  expect(vi.mocked(exec).mock.calls.at(-1)[1]).not.toContain("--session-id");
+  expect(state.sessionId).toBe("s-stored");
 });
 
 const MISSING = "No conversation found with session ID: gone";
@@ -333,6 +429,10 @@ test("claude invocation is identical with the reviewer sandbox input on and off"
   await turn({});
   await turn({ sandbox: "workspace-write" });
 
-  const [off, on] = vi.mocked(exec).mock.calls;
+  // Each first turn pre-assigns its own random id, so compare the invocations without it.
+  const [off, on] = vi.mocked(exec).mock.calls.map(([cmd, args, opts]) => {
+    const at = args.indexOf("--session-id");
+    return [cmd, args.filter((_, i) => i !== at && i !== at + 1), opts];
+  });
   expect(on).toEqual(off);
 });
