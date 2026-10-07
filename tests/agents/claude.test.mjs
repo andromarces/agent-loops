@@ -535,3 +535,35 @@ test.each([
   await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("exited");
   expect(state.sessionId).toMatch(UUID);
 });
+
+// Usefulness: verifies the adapter tells the dispatcher to drop a rejected pre-assigned id before it
+// rethrows, so the id never outlives the rejection in a persisted state file, and that no other
+// failure clears the id (issue #395).
+test("claude clears the reported id through onSessionAssigned when the CLI rejects it as in use", async () => {
+  const calls = [];
+  vi.mocked(exec).mockImplementationOnce(async (_cmd, args) => {
+    const id = args[args.indexOf("--session-id") + 1];
+    throw Object.assign(new Error("claude exited with code 1."), {
+      exitCode: 1,
+      stdout: "",
+      stderr: IN_USE(id),
+    });
+  });
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(
+    runClaude(state, "p", { cwd: "/path", onSessionAssigned: async (id) => calls.push(id) }),
+  ).rejects.toThrow("exited");
+  expect(calls).toEqual([preassignedId(), null]);
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
+  );
+  const other = [];
+  await expect(
+    runClaude({ ...state, sessionId: null }, "p", {
+      cwd: "/path",
+      onSessionAssigned: async (id) => other.push(id),
+    }),
+  ).rejects.toThrow("timed out");
+  expect(other).toEqual([preassignedId()]);
+});

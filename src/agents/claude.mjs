@@ -20,7 +20,8 @@ const sessionInUse = (id) => `Error: Session ID ${id} is already in use.`;
 /**
  * Runs one Claude turn. A first turn pre-assigns its session id and reports it through
  * `options.onSessionAssigned` before the CLI starts, so a dispatcher can persist the id ahead of a
- * crash. A rejected callback stops the turn before any CLI runs.
+ * crash. A rejected callback stops the turn before any CLI runs. A later call with `null` withdraws
+ * an id that the CLI rejected as in use.
  */
 export async function runClaude(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role, onSessionAssigned } = options;
@@ -76,6 +77,16 @@ export async function runClaude(state, prompt, options = {}) {
     // session, so it is never kept and the next turn starts with a fresh id.
     const collided = preassignedId && failedWithLine(err, sessionInUse(preassignedId));
     keepFailedSessionId(state, findSessionId(failed) ?? (collided ? null : preassignedId));
+    if (collided) {
+      // Drop the id that the dispatcher persisted before the spawn, so a crash after this point
+      // leaves no id for `--resume-interrupted` to resume. A failed write leaves the result write
+      // to clear it.
+      try {
+        await onSessionAssigned?.(null);
+      } catch (writeError) {
+        logWarn(`Claude Code: could not clear the rejected session id: ${writeError?.message}`);
+      }
+    }
     flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }

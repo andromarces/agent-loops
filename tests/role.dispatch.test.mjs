@@ -1601,6 +1601,33 @@ test("a pre-assigned session id is persisted before the child turn runs", async 
   expect(resumer.recorded[0].incomingSessionId).toBe("pre-1");
 });
 
+// Usefulness: verifies the early-persisted id is cleared in the state file as soon as the adapter
+// reports it rejected, so a parent crash right after the rejection cannot leave an id that
+// `--resume-interrupted` would resume (issue #395). The result write alone cannot cover that window.
+test("a rejected pre-assigned id is cleared from the state file before the turn ends", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+  let afterRejection = null;
+  const worker = {
+    async run(_state, _prompt, options) {
+      await options.onSessionAssigned("pre-rejected");
+      await options.onSessionAssigned(null);
+      afterRejection = await readState(paths.stateFile);
+      throw new Error("parent crashed");
+    },
+  };
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(afterRejection).toMatchObject({
+    lifecycle: "dispatched",
+    roles: { worker: { sessionId: null } },
+  });
+});
+
 // Usefulness: verifies a turn that fails with no id on its role state clears the id persisted
 // before the turn, so a rejected pre-assigned id never becomes a resume target (issue #395).
 test("a failed first turn that keeps no id clears the pre-assigned id from the state file", async () => {

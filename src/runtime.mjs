@@ -59,7 +59,8 @@ async function invoke({ agents, state, roleName, prompt, opts, onEvent, stepsUse
  * `reviewerWorkspaceWrite` passes the reviewer-only `sandbox: "workspace-write"` input to a
  * reviewer turn and adds the matching prompt line; no other role receives it (ADR 0019).
  * `onSessionAssigned(id)` is awaited by an adapter that pre-assigns a session id, before its CLI
- * starts. A dispatcher uses it to persist the id ahead of a crash (issue #395).
+ * starts, and with `null` when the CLI rejected that id. A dispatcher uses it to persist the id
+ * ahead of a crash (issue #395).
  * @param {object} options
  * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, testRun?: object }>}
  */

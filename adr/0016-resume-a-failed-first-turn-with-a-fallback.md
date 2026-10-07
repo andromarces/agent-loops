@@ -62,6 +62,13 @@ step budget runs out.
    line ending) never keeps the id, because the id names another session. The state file then
    records null and the next turn starts with a fresh id. The turn is not rerun: a collision of
    a random UUID is not expected, and a refusal never resumes an unrelated session.
+   The adapter withdraws the id through the same callback as soon as it sees the rejection,
+   before it rethrows, so the state file holds no rejected id while the turn ends. A crash in the
+   instant between the rejection and that write can still leave it: no check can tell an
+   unconfirmed id from a saved session before the CLI answers. Only the interactive dispatch path
+   saves the id mid-turn. The headless loop keeps the id in memory until the turn ends, so a
+   parent crash during a first turn there still loses the id, and the next run starts a new
+   session. That pre-spawn crash gap stays open for the headless loop.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
    stderr is the one verified line for the requested id, byte for byte, plus at most one
