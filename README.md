@@ -715,7 +715,7 @@ ran `./node_modules/.bin/vitest run` to exit 0 (66 files passed, 1 skipped), fai
 fails under network on as well, because pnpm writes to its store outside the work tree.
 `network_access=false` covers the shell commands that the sandbox runs. A model-side tool
 (for example Codex `web_search`) and any other channel outside the sandbox, such as a
-connector, are not covered, and no probe of those under `workspace-write` was run. The runtime read of the required-check status for a named PR (ADR 0011) still reaches
+connector, are not covered, and no probe of those under `workspace-write` was run. The runtime read of the required-check status for a named PR ([ADR 0024](adr/0024-supply-the-required-check-status-for-a-named-pr.md)) still reaches
 the reviewer.
 
 Accepted gaps, as the ADR states them:
