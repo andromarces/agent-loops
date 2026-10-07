@@ -9,7 +9,9 @@ import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,
   expectAbortKillsShim,
+  equalsArgs,
   expectBoundKillsShim,
+  isApiRead,
   removePath,
   startsWithArgs,
 } from "../runtime-helpers.mjs";
@@ -572,8 +574,7 @@ const SECOND_PAGE_RULE = [
 // returns every page (issue #336 review).
 function rulesetPages(pages) {
   return async (args) => {
-    const key = args.join(" ");
-    const paginated = key.includes("--paginate") && key.includes("--slurp");
+    const paginated = args.includes("--paginate") && args.includes("--slurp");
     return {
       status: 0,
       stdout: JSON.stringify(paginated ? pages : [pages[0]]),
@@ -581,6 +582,17 @@ function rulesetPages(pages) {
     };
   };
 }
+
+// Usefulness: verifies the ruleset double serves every page only to a caller that
+// passes `--paginate` and `--slurp` as separate elements, so a call that merges
+// them into one element gets the first page alone (issue #538).
+test("the ruleset double serves one page to a merged-argument call", async () => {
+  const read = rulesetPages([[{ type: "deletion" }], SECOND_PAGE_RULE]);
+  const apart = await read(["api", "x", "--paginate", "--slurp"]);
+  const merged = await read(["api", "x", "--paginate --slurp"]);
+  expect(JSON.parse(apart.stdout)).toHaveLength(2);
+  expect(JSON.parse(merged.stdout)).toHaveLength(1);
+});
 
 // Usefulness: verifies a required-status-check rule that appears only on the second
 // page is still enforced, so a read that stops at the first page cannot pass a
@@ -594,8 +606,7 @@ test("reads every ruleset page before classifying the absence", async () => {
     reviewed: REVIEWED,
     cwd: ".",
     gh: async (args) => {
-      const key = args.join(" ");
-      if (key.includes("rules/branches/main")) {
+      if (isApiRead(args, "/rules/branches/main")) {
         return read(args);
       }
       return fakeGh(routes({ required: [{ type: "deletion" }] }))(args);
@@ -1741,7 +1752,7 @@ test("reads an unresolved status when the repository rulesets cannot be read", a
 // reviewer keeps its own read (issue #320).
 test("reads an unresolved status when the gh runner fails", async () => {
   const read = await readOn(HEAD, async (args) => {
-    if (args.join(" ").startsWith("pr view 42")) {
+    if (startsWithArgs(args, ["pr", "view", "42"])) {
       return { status: 0, stdout: JSON.stringify(prInfo()), stderr: "" };
     }
     throw new Error("spawn gh ENOENT");
@@ -1920,16 +1931,15 @@ test("binds the status to the reviewed commit when the PR head moves A to B to A
   const other = "3333333333333333333333333333333333333333";
   const calls = [];
   const gh = async (args) => {
-    const key = args.join(" ");
-    calls.push(key);
-    if (key === "pr checks 42 --required --json name,bucket") {
+    calls.push(args.join(" "));
+    if (equalsArgs(args, ["pr", "checks", "42", "--required", "--json", "name,bucket"])) {
       return {
         status: 1,
         stdout: JSON.stringify([{ name: "ci (ubuntu-latest)", bucket: "fail" }]),
         stderr: "",
       };
     }
-    if (key.includes(`commits/${other}/`)) {
+    if (args[1]?.includes(`commits/${other}/`)) {
       return { status: 1, stdout: "", stderr: "the read asked for commit B" };
     }
     return statusReadGh({ headRuns: BOTH_PASS })(args);
@@ -2242,7 +2252,9 @@ test.each([
 ])("reads the required names from %s", async (_name, reply, expected) => {
   const table = fakeGh(routes({ headRuns: BOTH_PASS }));
   const gh = async (args, ...rest) =>
-    args.join(" ") === "pr checks 42 --required --json name" ? reply : table(args, ...rest);
+    equalsArgs(args, ["pr", "checks", "42", "--required", "--json", "name"])
+      ? reply
+      : table(args, ...rest);
   expect((await readOn(HEAD, gh)).status).toBe(expected);
 });
 

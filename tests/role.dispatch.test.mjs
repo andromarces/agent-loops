@@ -35,7 +35,13 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo, gitWhileDotGitExists, removePath } from "./runtime-helpers.mjs";
+import {
+  createTempRepo,
+  gitWhileDotGitExists,
+  isApiRead,
+  removePath,
+  startsWithArgs,
+} from "./runtime-helpers.mjs";
 
 // A directory that `gitWhileDotGitExists` treats as a work tree. Callers remove it
 // with `removePath`.
@@ -1389,14 +1395,13 @@ test("a declared PR supplies the runtime-read required-check status to the revie
   const localHead = (await snapshot(repo)).head;
   const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
   const gh = async (args) => {
-    const key = args.join(" ");
-    if (key.startsWith("pr view 42")) {
+    if (startsWithArgs(args, ["pr", "view", "42"])) {
       return json({ headRefOid: localHead, baseRefName: "main", mergeStateStatus: "CLEAN" });
     }
-    if (key.startsWith("repo view")) {
+    if (startsWithArgs(args, ["repo", "view"])) {
       return { status: 0, stdout: "owner/repo", stderr: "" };
     }
-    if (key.includes("rules/branches/main")) {
+    if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
       return json([
         [
           {
@@ -1406,10 +1411,10 @@ test("a declared PR supplies the runtime-read required-check status to the revie
         ],
       ]);
     }
-    if (key.includes("branches/main/protection")) {
+    if (startsWithArgs(args, ["api", "repos/owner/repo/branches/main/protection"])) {
       return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
     }
-    if (key.includes("/check-runs")) {
+    if (isApiRead(args, "/check-runs")) {
       return json([
         {
           check_runs: [
@@ -1424,8 +1429,8 @@ test("a declared PR supplies the runtime-read required-check status to the revie
         },
       ]);
     }
-    if (key.includes("/status")) {
-      return json(key.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
+    if (isApiRead(args, "/status")) {
+      return json(args.includes("--paginate") ? [{ statuses: [] }] : { statuses: [] });
     }
     // `gh pr checks` names no check beyond the ruleset.
     return { status: 0, stdout: "[]", stderr: "" };

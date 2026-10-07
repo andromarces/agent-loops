@@ -26,6 +26,7 @@ import {
   CLEAN_REPO_HEAD,
   cleanRepoGit,
   createTempRepo,
+  equalsArgs,
   isApiRead,
   removePath,
   scripted,
@@ -2050,7 +2051,7 @@ test("--require-ci refuses when the gh error message getter throws", async () =>
       },
     });
     const throwingGh = async (args) => {
-      if (args.join(" ").includes("pr view 42")) {
+      if (startsWithArgs(args, ["pr", "view", "42"])) {
         throw hostile;
       }
       return ciGateGh(head)(args);
@@ -2090,7 +2091,7 @@ test("--require-ci refuses when the gh error message is a non-string with a toSt
   try {
     const head = (await snapshot(repo)).head;
     const throwingGh = async (args) => {
-      if (args.join(" ").includes("pr view 42")) {
+      if (startsWithArgs(args, ["pr", "view", "42"])) {
         throw Object.assign(new Error("hidden"), { message: { toString: 1 } });
       }
       return ciGateGh(head)(args);
@@ -2138,8 +2139,7 @@ test("--require-ci turns a gh failure into a refusal, not a throw", async () => 
     ];
     const events = [];
     const failingGh = async (args) => {
-      const key = args.join(" ");
-      if (key.includes("pr view 42")) {
+      if (startsWithArgs(args, ["pr", "view", "42"])) {
         return { status: 1, stdout: "", stderr: "gh: Bad credentials (HTTP 401)" };
       }
       return ciGateGh(head)(args);
@@ -2391,10 +2391,10 @@ test("following a --require-ci refusal prompt reaches exit 0", async () => {
       // The PR head matches the reviewed commit only after the second worker
       // turn, which is the recovery the prompt named.
       gh: async (args) => {
-        const key = args.join(" ");
-        const answer = ciGateGh(key.includes("pr view 42") ? gateHead.current : head);
+        const readsHead = startsWithArgs(args, ["pr", "view", "42"]);
+        const answer = ciGateGh(readsHead ? gateHead.current : head);
         const result = await answer(args);
-        if (key.includes("pr view 42")) {
+        if (readsHead) {
           gateHead.current = head;
         }
         return result;
@@ -2484,8 +2484,7 @@ test("a pending-check refusal is cleared by the reviewer turn its prompt names",
       JSON.stringify({ action: "finish", summary: SUMMARY }),
     ]);
     const gh = async (args) => {
-      const key = args.join(" ");
-      if (key.includes("/check-runs")) {
+      if (isApiRead(args, "/check-runs")) {
         const answer = await ciGateGh(head)(args);
         if (check.status === "completed") {
           return answer;
@@ -2733,9 +2732,8 @@ test("a declared PR with a matching gate runs the gate and nothing else", async 
 function noRequiredCheckGh(headRefOid, calls = []) {
   const read = ciGateGh(headRefOid, calls);
   return async (args) => {
-    const key = args.join(" ");
-    if (key.includes("rules/branches/main")) {
-      calls.push(key);
+    if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
+      calls.push(args.join(" "));
       return {
         status: 0,
         stdout: JSON.stringify([
@@ -2748,13 +2746,26 @@ function noRequiredCheckGh(headRefOid, calls = []) {
         stderr: "",
       };
     }
-    if (key === "pr checks 42 --required --json name") {
-      calls.push(key);
+    if (equalsArgs(args, ["pr", "checks", "42", "--required", "--json", "name"])) {
+      calls.push(args.join(" "));
       return { status: 1, stdout: "", stderr: "no required checks reported" };
     }
     return read(args);
   };
 }
+
+// Usefulness: verifies the no-required-check double gives the ruleset and
+// required-names replies only to calls whose arguments are separate elements, so a
+// merged-argument call falls through to the unmatched reply (issue #538).
+test("the no-required-check double gives no reply to a merged-argument call", async () => {
+  const gh = noRequiredCheckGh(CLEAN_REPO_HEAD);
+  const merged = [["api repos/owner/repo/rules/branches/main", "--paginate"], ["pr checks 42"]];
+  for (const args of merged) {
+    const reply = await gh(args);
+    expect(reply.status).toBe(1);
+    expect(reply.stderr).toContain(JSON.stringify(args));
+  }
+});
 
 // Usefulness: verifies a headless declared run finishes on a base branch with no
 // required check and emits a `no-required-checks` event, so the recorded run says
@@ -3143,8 +3154,7 @@ test("a gh-failure refusal does not claim the run is out of attempts", async () 
       JSON.stringify({ action: "finish", summary: SUMMARY }),
     ]);
     const gh = async (args) => {
-      const key = args.join(" ");
-      if (failing.on && key.includes("pr view 42")) {
+      if (failing.on && startsWithArgs(args, ["pr", "view", "42"])) {
         return { status: 1, stdout: "", stderr: "gh: Bad credentials (HTTP 401)" };
       }
       return ciGateGh(head)(args);
@@ -3338,10 +3348,12 @@ test("a hung required-check read yields an unresolved status and a completed tur
       timeout: 30,
       readTimeoutMs: 25,
       gh: (args, cwd, options) => {
-        const key = args.join(" ");
         // Only the ruleset read stalls: the head resolves, so the read reaches the
         // call a hung `gh` would hold open.
-        if (rev.recorded.length === 0 && key.includes("rules/branches/main")) {
+        if (
+          rev.recorded.length === 0 &&
+          startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])
+        ) {
           return new Promise((resolve, reject) => {
             options.signal.addEventListener("abort", () => reject(new Error("read timed out")));
           });

@@ -802,7 +802,7 @@ test("a declared PR with no gate reports the marker and the gate in one refusal"
 function noRequiredCheckGh(head) {
   const read = cleanPrGh(head);
   return async (args) => {
-    if (args.join(" ").includes("rules/branches/main")) {
+    if (startsWithArgs(args, ["api", "repos/owner/repo/rules/branches/main"])) {
       return {
         status: 0,
         stdout: JSON.stringify([
@@ -815,7 +815,7 @@ function noRequiredCheckGh(head) {
         stderr: "",
       };
     }
-    if (args.join(" ").includes("pr checks")) {
+    if (startsWithArgs(args, ["pr", "checks"])) {
       return { status: 1, stdout: "", stderr: "no required checks reported" };
     }
     return read(args);
@@ -842,6 +842,18 @@ async function useAcceptedPrRun() {
   await dispatchReviewer(run.repo, ACCEPT);
   return run;
 }
+
+// Usefulness: verifies the no-required-check double replies to separate argument
+// elements only, so a merged-argument call reaches the clean-PR double and gets no
+// ruleset or `pr checks` reply (issue #538).
+test("the no-required-check double gives no reply to a merged-argument call", async () => {
+  const gh = noRequiredCheckGh(CLEAN_REPO_HEAD);
+  for (const merged of [["api repos/owner/repo/rules/branches/main"], ["pr checks 42"]]) {
+    const reply = await gh(merged);
+    expect(reply.status).toBe(1);
+    expect(reply.stderr).toContain(JSON.stringify(merged));
+  }
+});
 
 describe("finish on a run that declares a PR", () => {
   // Usefulness: verifies a declared run finishes on a base branch with no required

@@ -16,6 +16,11 @@ export function startsWithArgs(args, lead) {
   return lead.every((part, i) => args[i] === part);
 }
 
+/** True when `args` equals `expected` element by element, with no extra element. */
+export function equalsArgs(args, expected) {
+  return args.length === expected.length && startsWithArgs(args, expected);
+}
+
 /** True when `args` is a `gh api` call whose endpoint ends with `suffix`. */
 export function isApiRead(args, suffix) {
   return args[0] === "api" && typeof args[1] === "string" && args[1].endsWith(suffix);
