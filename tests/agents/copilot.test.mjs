@@ -575,21 +575,24 @@ test.each([
   ["an object", [message({ model: {} })]],
   ["a valid model beside a malformed one", [message({ model: "m-1" }), message({ model: 7 })]],
   ["a model with whitespace", [message({ model: "m 1" })]],
-])("copilot records no resolvedModel for %s", async (_label, messages) => {
-  expect(await resolvedFrom(messages)).toBeUndefined();
+])("copilot marks the turn unresolved for %s", async (_label, messages) => {
+  expect(await resolvedFrom(messages)).toBeNull();
 });
 
-// Usefulness: the earlier model is the baseline of the next --continue-from comparison, so a turn with
-// unreadable or ambiguous evidence keeps the last well-formed model, and a turn that names another
-// single model replaces it.
+// Usefulness: the record describes the latest turn, so a turn with unreadable or ambiguous evidence
+// replaces an earlier model with unresolved (null) instead of leaving a stale model that a later
+// --continue-from would compare against.
 test.each([
   ["no model", [message({})]],
   ["different models", [message({ model: "m-2" }), message({ model: "m-3" })]],
   ["a malformed model", [message({ model: 7 })]],
-])("copilot keeps the earlier resolvedModel for %s", async (_label, messages) => {
-  const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };
-  expect(await resolvedFrom(messages, state)).toBe("m-1");
-});
+])(
+  "copilot replaces the earlier resolvedModel with unresolved for %s",
+  async (_label, messages) => {
+    const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };
+    expect(await resolvedFrom(messages, state)).toBeNull();
+  },
+);
 
 test("copilot replaces the earlier resolvedModel when a turn names another single model", async () => {
   const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };

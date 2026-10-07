@@ -97,18 +97,21 @@ export function lastClosingMessage(messages) {
 }
 
 /**
- * Sets `state.resolvedModel` from the model values one turn reported. The model is replaced only
- * from well-formed, unambiguous evidence: at least one value, every value a model id (a non-empty
- * string with no whitespace or control character), and all values equal. Any other output, such as
- * several models, no model, or a value of another type, leaves the last well-formed model in place,
- * because that value is the baseline `--continue-from` compares, and a turn that reads nothing says
- * nothing against it. A malformed report never becomes a false resolved model.
+ * Sets `state.resolvedModel` to the resolution state of the turn that just succeeded, one of three:
+ * - a model id: the output named one model, from well-formed, unambiguous evidence (at least one
+ *   value, every value a model id, which is a non-empty string with no whitespace or control
+ *   character, and all values equal);
+ * - `null`, unresolved: the output was unreadable, malformed, or ambiguous (several models, no
+ *   model, a value of another type). An earlier model is replaced, because it describes an earlier
+ *   turn, and `--continue-from` compares nothing against it;
+ * - the field absent, not reported: the adapter never calls this, as for a CLI that reports no model.
+ * A failed turn never calls this, so it leaves the record of the last successful turn.
  * @param {object} state role state; mutated
  * @param {unknown[]} reported the model values the turn output named, malformed ones included
  */
 export function setResolvedModel(state, reported) {
   const [first] = reported;
-  if (typeof first === "string" && MODEL_ID.test(first) && reported.every((m) => m === first)) {
-    state.resolvedModel = first;
-  }
+  const named =
+    typeof first === "string" && MODEL_ID.test(first) && reported.every((m) => m === first);
+  state.resolvedModel = named ? first : null;
 }

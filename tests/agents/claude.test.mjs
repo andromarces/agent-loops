@@ -355,7 +355,8 @@ test("claude records the one model its result reports as resolvedModel", async (
 });
 
 // Usefulness: a false resolved model would refuse or pass a continuation wrongly, so several
-// models (a subagent or helper ran), and every malformed `modelUsage` shape, record none.
+// models (a subagent or helper ran), and every malformed `modelUsage` shape, mark the turn
+// unresolved (null), which differs from "not reported" (the field absent).
 test.each([
   ["several models", { modelUsage: { a: {}, b: {} } }],
   ["no modelUsage", {}],
@@ -366,20 +367,29 @@ test.each([
   ["a non-object entry", { modelUsage: { "claude-opus-5-5": 7 } }],
   ["a blank key", { modelUsage: { " ": {} } }],
   ["a key with whitespace", { modelUsage: { "claude opus": {} } }],
-])("claude records no resolvedModel for %s", async (_label, result) => {
-  expect(await resolved(result)).toBeUndefined();
+])("claude marks the turn unresolved for %s", async (_label, result) => {
+  expect(await resolved(result)).toBeNull();
 });
 
-// Usefulness: the earlier model is the baseline of the next --continue-from comparison, so a turn with
-// unreadable or ambiguous evidence keeps the last well-formed model, and a turn that names another
-// single model replaces it.
+// Usefulness: the record describes the latest turn, so a turn with unreadable or ambiguous evidence
+// replaces an earlier model with unresolved (null) instead of leaving a stale model that a later
+// --continue-from would compare against (a false refusal of an unchanged model, or a false pass).
 test.each([
   ["no modelUsage", {}],
   ["several models", { modelUsage: { a: {}, b: {} } }],
   ["a malformed modelUsage", { modelUsage: "x" }],
-])("claude keeps the earlier resolvedModel for %s", async (_label, result) => {
+])("claude replaces the earlier resolvedModel with unresolved for %s", async (_label, result) => {
   const state = { kind: "claude", sessionId: null, model: null, resolvedModel: "claude-opus-5-5" };
-  expect(await resolved(result, state)).toBe("claude-opus-5-5");
+  expect(await resolved(result, state)).toBeNull();
+});
+
+// Usefulness: a failed turn gives no evidence about a model, so it leaves the record of the last
+// successful turn alone.
+test("claude leaves resolvedModel alone on a failed turn", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(Object.assign(new Error("boom"), { stdout: "" }));
+  const state = { kind: "claude", sessionId: null, model: null, resolvedModel: "claude-opus-5-5" };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("boom");
+  expect(state.resolvedModel).toBe("claude-opus-5-5");
 });
 
 test("claude replaces the earlier resolvedModel when a turn names another single model", async () => {

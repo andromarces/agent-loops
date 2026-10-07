@@ -422,6 +422,18 @@ test("restoreSessions carries the recorded resolvedModel to the new roles", () =
   expect(next.reviewer.resolvedModel).toBeUndefined();
 });
 
+// Usefulness: unresolved (null) is a recorded state of its own, so it carries over and a later
+// continuation still sees that the latest turn named no model.
+test("restoreSessions carries an unresolved resolvedModel as null", () => {
+  const earlier = transcript();
+  earlier.roles.worker.resolvedModel = null;
+  earlier.roles.reviewer.resolvedModel = 7;
+  const next = roles();
+  restoreSessions(next, earlier, CWD);
+  expect(next.worker.resolvedModel).toBeNull();
+  expect(next.reviewer.resolvedModel).toBeUndefined();
+});
+
 // The injected probe stands in for the guarded turn that the CLI runs (`runProbeTurn`).
 function probeWith(resolvedByRole) {
   return vi.fn(async (state, role) => {
@@ -491,9 +503,56 @@ test("verifyResolvedModels warns for a role with no recorded resolved model", as
     const next = roles();
     await verifyResolvedModels(next, { probe: probeWith({}) });
     const warned = warn.mock.calls.flat().join("\n");
-    expect(warned).toMatch(/worker .*default-model check did not run/);
+    expect(warned).toMatch(
+      /did not run for worker \(claude\), because the earlier record has no resolved model/,
+    );
     expect(warned).not.toMatch(/orchestrator|reviewer/);
     expect(info.mock.calls.flat().join("\n")).toMatch(/orchestrator .*reports no resolved model/);
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+  }
+});
+
+// Usefulness: when the latest recorded turn named no single model, no comparison is possible. The run
+// must not probe, must not refuse, and must not compare against an older model, and it tells the
+// operator that the check did not run.
+test("verifyResolvedModels skips and warns when the latest recorded turn is unresolved", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const next = roles();
+    next.worker.resolvedModel = null;
+    const probe = probeWith({ worker: "claude-opus-5-6" });
+    await expect(verifyResolvedModels(next, { probe })).resolves.toBeUndefined();
+    expect(probe).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join("\n")).toMatch(
+      /did not run for worker \(claude\), because the latest turn of the earlier run did not name one model/,
+    );
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+  }
+});
+
+// Usefulness: a probe that does not name one model (unresolved, or no field) cannot be compared, so
+// it skips the comparison with the warning, never refuses and never passes silently.
+test.each([
+  ["unresolved", null],
+  ["not reported", undefined],
+])("verifyResolvedModels warns and skips when the probe is %s", async (_label, value) => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const next = roles();
+    next.worker.resolvedModel = "claude-opus-5-5";
+    const probe = vi.fn(async (state) => {
+      if (value !== undefined) state.resolvedModel = value;
+    });
+    await expect(verifyResolvedModels(next, { probe })).resolves.toBeUndefined();
+    expect(warn.mock.calls.flat().join("\n")).toMatch(
+      /did not run for worker \(claude\), because the probe did not name one model/,
+    );
   } finally {
     warn.mockRestore();
     info.mockRestore();

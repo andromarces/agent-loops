@@ -1730,7 +1730,7 @@ test("--continue-from refuses a changed resolved model and keeps the transcript"
 // Runs a first headless run that stops on the step limit, then records a resolved model for the
 // worker in its transcript, as a Claude or Copilot turn would. `fn(repo, transcriptPath, errorSpy)`
 // then continues it.
-async function withRecordedModel(fn) {
+async function withRecordedModel(fn, recordedModel = "model-1") {
   const repo = await createTempRepo();
   const transcriptPath = join(await mkdtemp(join(tmpdir(), "cli-test-probe-")), "run.json");
   const origExitCode = process.exitCode;
@@ -1743,7 +1743,7 @@ async function withRecordedModel(fn) {
       sessionAgents([work, work], { codex: [], claude: [], agy: [] }),
     );
     const recorded = JSON.parse(await readFile(transcriptPath, "utf8"));
-    recorded.roles.worker.resolvedModel = "model-1";
+    recorded.roles.worker.resolvedModel = recordedModel;
     await writeFile(transcriptPath, JSON.stringify(recorded));
     process.exitCode = undefined;
     await fn(repo, transcriptPath, errorSpy);
@@ -1785,6 +1785,32 @@ test("--continue-from halts when the probe changes the work tree", async () => {
     expect(await readFile(transcriptPath, "utf8")).toBe(before);
   });
 });
+
+// Usefulness: after a turn that named no single model (recorded null), an unchanged model B must not be
+// refused, and a B-to-A change must not be compared against a stale A. The run continues, tells the
+// operator that the check did not run, and starts no probe (#394).
+test.each([["model-1"], ["model-2"]])(
+  "--continue-from compares nothing after an unresolved turn, probe would say %s",
+  async (probeModel) => {
+    await withRecordedModel(async (repo, transcriptPath, errorSpy) => {
+      const seen = { codex: [], claude: [], agy: [] };
+      const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+      const agents = sessionAgents([work, FINISH], seen);
+      const run = agents.claude.run;
+      agents.claude.run = async (state, prompt, options) => {
+        state.resolvedModel = probeModel;
+        return run(state, prompt, options);
+      };
+      await main(continueArgs(repo, transcriptPath), agents);
+      // The only Claude call resumes the earlier session: no probe (a new session) ran.
+      expect(seen.claude.map((call) => call.sessionId)).toEqual(["claude-session"]);
+      expect(errorSpy.mock.calls.flat().join("\n")).toMatch(
+        /did not run for worker \(claude\), because the latest turn of the earlier run did not name one model/,
+      );
+      expect(errorSpy.mock.calls.flat().join("\n")).not.toMatch(/resolved to/);
+    }, null);
+  },
+);
 
 // Usefulness: a SIGINT during the probe cancels it through the run's signal and refuses the
 // continuation with exit 130, before any turn, leaving the earlier transcript whole (#394).
