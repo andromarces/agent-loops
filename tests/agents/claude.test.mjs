@@ -582,3 +582,70 @@ test("claude record follows the rerun after a missing session", async () => {
   expect(failed.status).toBe("error");
   expect(again.resolvedModel).toBeNull();
 });
+
+const eventsOf = (...events) => ({ stdout: JSON.stringify(events), stderr: "" });
+const systemEvent = (session_id) => ({ type: "system", subtype: "init", session_id });
+const resultEvent = (session_id, models = { "claude-opus-5-6": {} }) => ({
+  type: "result",
+  ...(session_id === undefined ? {} : { session_id }),
+  result: "ok",
+  modelUsage: models,
+});
+
+// Usefulness: one consistent source. With an array of events, the model counts only when the event that
+// carries it also names the session, and every event of the output names that one session. Reported
+// fixture: a system event names the retained session while the result event with `modelUsage` names
+// another, so the old selection kept session s-kept with the model of s-other.
+test.each([
+  ["a result event of another session", [systemEvent("s-kept"), resultEvent("s-other")]],
+  ["a result event with no session", [systemEvent("s-kept"), resultEvent(undefined)]],
+  ["a later event of another session", [resultEvent("s-kept"), systemEvent("s-other")]],
+  ["a malformed session on one event", [resultEvent("s-kept"), { type: "x", session_id: 7 }]],
+  [
+    "two result events that disagree on the model",
+    [resultEvent("s-kept"), resultEvent("s-kept", { "claude-opus-5-5": {} })],
+  ],
+])("claude records unresolved for %s in an array of events", async (_label, events) => {
+  vi.mocked(exec).mockResolvedValueOnce(eventsOf(...events));
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" }).catch(() => {});
+  expect(state.sessionId).toBe("s-kept");
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: a normal single-session array still records the model of its result event.
+test("claude records the model of a single-session array of events", async () => {
+  vi.mocked(exec).mockResolvedValueOnce(eventsOf(systemEvent("s-kept"), resultEvent("s-kept")));
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.resolvedModel).toBe("claude-opus-5-6");
+
+  vi.mocked(exec).mockResolvedValueOnce(
+    eventsOf(
+      systemEvent("s-new"),
+      resultEvent("s-new", { "claude-opus-5-6": {} }),
+      resultEvent("s-new", { "claude-opus-5-6": {} }),
+    ),
+  );
+  const first = failedState();
+  await runClaude(first, "p", { cwd: "/path" });
+  expect(first.sessionId).toBe("s-new");
+  expect(first.resolvedModel).toBe("claude-opus-5-6");
+});
+
+// Usefulness: the same single-source rule holds on a failed turn.
+test("claude failed turn with mixed sessions in an array records unresolved", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    execFailure({ stdout: JSON.stringify([systemEvent("s-kept"), resultEvent("s-other")]) }),
+  );
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow();
+  expect(state.resolvedModel).toBeNull();
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    execFailure({ stdout: JSON.stringify([systemEvent("s-kept"), resultEvent("s-kept")]) }),
+  );
+  const same = { ...failedState(), sessionId: "s-kept" };
+  await expect(runClaude(same, "p", { cwd: "/path" })).rejects.toThrow();
+  expect(same.resolvedModel).toBe("claude-opus-5-6");
+});

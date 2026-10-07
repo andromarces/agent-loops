@@ -56,14 +56,7 @@ export async function runClaude(state, prompt, options = {}) {
     setUsage(state, findResultEvent(failed));
     // The kept session ran on whatever the failed output names for it, or on an unknown model, so
     // the record follows that unless the process never started.
-    if (childRan(err)) {
-      recordResolvedModel(
-        state,
-        reportedModels(findResultEvent(failed)),
-        requestedSessionId,
-        findSessionId(failed),
-      );
-    }
+    if (childRan(err)) recordTurnModel(state, failed, requestedSessionId);
     keepFailedSessionId(state, findSessionId(failed));
     flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
@@ -72,14 +65,14 @@ export async function runClaude(state, prompt, options = {}) {
   try {
     parsed = parseJson(stdout, "Claude Code");
   } catch (err) {
-    recordResolvedModel(state, [], requestedSessionId, undefined);
+    recordTurnModel(state, undefined, requestedSessionId);
     throw err;
   }
   const resultEvent = findResultEvent(parsed);
   const sessionId = findSessionId(parsed);
   // Set before the session checks below, so a turn that fails them records unresolved when its
   // output is not the session the role keeps.
-  recordResolvedModel(state, reportedModels(resultEvent), requestedSessionId, sessionId);
+  recordTurnModel(state, parsed, requestedSessionId);
 
   if (!sessionId) {
     throw new Error("Claude Code did not return a session_id.");
@@ -124,13 +117,44 @@ function setUsage(state, resultEvent) {
 }
 
 /**
- * Lists the model ids a result names, the keys of `modelUsage`. More than one key means a subagent
- * or helper model ran too, so the role model is unknown (the gap: such a turn is unresolved). A
- * `modelUsage` that is not an object, or an entry that is not an object, is reported as `null`,
- * which is malformed evidence and is unresolved.
+ * Lists the model ids one result event names, the keys of `modelUsage`. More than one key means a
+ * subagent or helper model ran too, so the role model is unknown (the gap: such a turn is
+ * unresolved). A `modelUsage` that is missing, empty, or not an object, or an entry that is not an
+ * object, is reported as `null`, which is malformed evidence and is unresolved.
  */
 function reportedModels(resultEvent) {
   const usage = resultEvent?.modelUsage;
-  if (!isJsonObject(usage)) return [];
+  if (!isJsonObject(usage) || Object.keys(usage).length === 0) return [null];
   return Object.entries(usage).map(([model, entry]) => (isJsonObject(entry) ? model : null));
+}
+
+/**
+ * Records the resolved model of a turn that ran, from one consistent source. The session and the
+ * model come from the same events: the output must name exactly one valid session across all its
+ * events, and every result event that carries model evidence must name that session itself. An
+ * array of events that names more than one session, a malformed session, or a result event with no
+ * session cannot tie the model to the session the role keeps, so the turn is unresolved. Every
+ * place this adapter reads a session id (`findSessionId`, for the id the role adopts or checks)
+ * or a model (`reportedModels`) is covered: `recordResolvedModel` then requires that session to be
+ * the one the role keeps.
+ * @param {object} state role state; mutated
+ * @param {unknown} parsed the parsed output: one result object, an array of events, or nothing
+ * @param {string | null} requestedSessionId the session id the turn asked the CLI to resume
+ */
+function recordTurnModel(state, parsed, requestedSessionId) {
+  const events = Array.isArray(parsed) ? parsed : [parsed];
+  const named = events.filter((event) => isJsonObject(event) && event.session_id !== undefined);
+  const ids = new Set(named.map((event) => asSessionId(event.session_id) ?? null));
+  const session = ids.size === 1 ? [...ids][0] : null;
+  const results = (
+    Array.isArray(parsed) ? events.filter((e) => e?.type === "result") : events
+  ).filter(isJsonObject);
+  const sourced =
+    session && results.length > 0 && results.every((e) => asSessionId(e.session_id) === session);
+  recordResolvedModel(
+    state,
+    sourced ? results.flatMap(reportedModels) : [],
+    requestedSessionId,
+    sourced ? session : null,
+  );
 }

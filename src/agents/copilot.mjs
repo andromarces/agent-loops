@@ -47,7 +47,7 @@ export async function runCopilot(state, prompt, options = {}) {
         state,
         reportedModels(failedEvents),
         requestedSessionId,
-        failedResult?.sessionId ?? failedResult?.session_id,
+        streamSession(failedEvents),
       );
     }
     setMainLoopUsage(state, objectUsage(failedResult));
@@ -67,7 +67,7 @@ export async function runCopilot(state, prompt, options = {}) {
   const returnedId = asSessionId(resultEvent?.sessionId ?? resultEvent?.session_id);
   // Set before the checks below, so a turn that fails them records unresolved when its output is
   // not the session the role keeps.
-  recordResolvedModel(state, reportedModels(events), requestedSessionId, returnedId);
+  recordResolvedModel(state, reportedModels(events), requestedSessionId, streamSession(events));
   if (!returnedId) {
     throw new Error("Copilot did not return a session ID.");
   }
@@ -123,4 +123,26 @@ function reportedModels(events) {
     .filter((event) => event?.type === "assistant.message" && isJsonObject(event.data))
     .filter((event) => Object.hasOwn(event.data, "model"))
     .map((event) => event.data.model);
+}
+
+/**
+ * Returns the one session id the whole stream names, or undefined. The assistant messages that carry
+ * the model name no session, so their model is tied to a session only through the stream: every
+ * event that carries a session id (`sessionId` or `session_id`, at the top level or in `data`) must
+ * name the same valid one, and the last `result` event, from which the adapter reads the session it
+ * keeps, must name it. A stream that names two sessions, a malformed one, or none cannot tie the
+ * model to the session the role keeps.
+ */
+function streamSession(events) {
+  const ids = new Set();
+  for (const event of events) {
+    if (!isJsonObject(event)) continue;
+    const data = isJsonObject(event.data) ? event.data : {};
+    for (const value of [event.sessionId, event.session_id, data.sessionId, data.session_id]) {
+      if (value !== undefined) ids.add(asSessionId(value) ?? null);
+    }
+  }
+  const result = findResultEvent(events);
+  const resultId = asSessionId(result?.sessionId ?? result?.session_id);
+  return ids.size === 1 && resultId && ids.has(resultId) ? resultId : undefined;
 }

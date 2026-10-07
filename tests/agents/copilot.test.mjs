@@ -757,3 +757,62 @@ test("copilot leaves the record alone when the process never started", async () 
   await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
   expect(state.resolvedModel).toBe("m-1");
 });
+
+const resultOf = (sessionId) => JSON.stringify({ type: "result", sessionId, exitCode: 0 });
+
+// Usefulness: one consistent source. The adapter takes the session from the last result event, so a
+// stream whose events name more than one session cannot tie its messages' model to the session the role
+// keeps, and records unresolved. Before, a first result of another session was ignored and the model was
+// recorded for the retained session.
+test.each([
+  [
+    "two result events of different sessions",
+    [message({ model: "m-2" }), resultOf("s-other"), resultOf("s-kept")],
+  ],
+  [
+    "an event whose data names another session",
+    [
+      JSON.stringify({ type: "session.start", data: { sessionId: "s-other" } }),
+      message({ model: "m-2" }),
+      resultOf("s-kept"),
+    ],
+  ],
+  [
+    "an event with a malformed session",
+    [JSON.stringify({ type: "x", session_id: 7 }), message({ model: "m-2" }), resultOf("s-kept")],
+  ],
+])("copilot records unresolved for %s", async (_label, lines) => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: lines.join("\n"), stderr: "" });
+  const state = { ...recordedState(), sessionId: "s-kept" };
+  await runCopilot(state, "p", { cwd: "/dir" }).catch(() => {});
+  expect(state.sessionId).toBe("s-kept");
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: a normal single-session stream still records its model, also when another event repeats
+// the same session.
+test("copilot records the model of a single-session stream", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      JSON.stringify({ type: "session.start", data: { sessionId: "s-kept" } }),
+      message({ model: "m-2" }),
+      resultOf("s-kept"),
+    ].join("\n"),
+    stderr: "",
+  });
+  const state = { ...recordedState(), sessionId: "s-kept" };
+  await runCopilot(state, "p", { cwd: "/dir" });
+  expect(state.resolvedModel).toBe("m-2");
+});
+
+// Usefulness: the same single-source rule holds on a failed turn.
+test("copilot failed turn with mixed sessions records unresolved", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({
+      stdout: [message({ model: "m-2" }), resultOf("s-other"), resultOf("s-kept")].join("\n"),
+    }),
+  );
+  const state = { ...recordedState(), sessionId: "s-kept" };
+  await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+  expect(state.resolvedModel).toBeNull();
+});
