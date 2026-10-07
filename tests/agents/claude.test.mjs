@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import { runClaude } from "../../src/agents/claude.mjs";
 import { exec } from "../../src/lib/exec.mjs";
@@ -195,50 +198,65 @@ test.each([
   expect(state.sessionId).toBe(preassignedId());
 });
 
-// Usefulness: verifies the next turn after a killed first turn resumes the kept id and passes no
-// --session-id, because the CLI refuses a new id for a resumed session (issue #395).
+// Usefulness: verifies the next turn after a killed first turn resumes the kept id when the CLI saved
+// its session for this work tree, and passes no --session-id, because the CLI refuses a new id for a
+// resumed session (issue #395).
 test("claude resumes the pre-assigned id kept from a killed first turn", async () => {
-  vi.mocked(exec).mockRejectedValueOnce(
-    Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
-  );
-  const state = { kind: "claude", sessionId: null, model: null, effort: null };
-  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("timed out");
-  const kept = state.sessionId;
+  await withSessionStore(
+    () => [],
+    async (work) => {
+      vi.mocked(exec).mockRejectedValueOnce(
+        Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
+      );
+      const state = { kind: "claude", sessionId: null, model: null, effort: null };
+      await expect(runClaude(state, "p", { cwd: work })).rejects.toThrow("timed out");
+      const kept = state.sessionId;
+      // The CLI saved the session of the killed turn.
+      const config = process.env.CLAUDE_CONFIG_DIR;
+      await mkdir(join(config, "projects", "-p"), { recursive: true });
+      await writeFile(
+        join(config, "projects", "-p", `${kept}.jsonl`),
+        JSON.stringify({ type: "user", cwd: work, sessionId: kept }),
+      );
 
-  vi.mocked(exec).mockResolvedValueOnce({
-    stdout: JSON.stringify({ session_id: kept, result: "ok" }),
-    stderr: "",
-  });
-  await expect(runClaude(state, "again", { cwd: "/path" })).resolves.toBe("ok");
-  const args = vi.mocked(exec).mock.calls.at(-1)[1];
-  expect(args).toEqual(expect.arrayContaining(["--resume", kept]));
-  expect(args).not.toContain("--session-id");
+      vi.mocked(exec).mockResolvedValueOnce({
+        stdout: JSON.stringify({ session_id: kept, result: "ok" }),
+        stderr: "",
+      });
+      await expect(runClaude(state, "again", { cwd: work })).resolves.toBe("ok");
+      const args = vi.mocked(exec).mock.calls.at(-1)[1];
+      expect(args).toEqual(expect.arrayContaining(["--resume", kept]));
+      expect(args).not.toContain("--session-id");
+    },
+  );
 });
 
-// Usefulness: verifies a killed first turn whose session the CLI never saved still reaches the
-// missing-session fallback on the next turn, and the rerun pre-assigns a new id (issue #395).
+// Usefulness: verifies a killed first turn whose session the CLI never saved is refused as missing
+// before a resume, so the runtime reruns it as a first turn with a new pre-assigned id (issue #395).
 test("claude flags the resume of a pre-assigned id that the CLI never saved", async () => {
-  vi.mocked(exec).mockRejectedValueOnce(
-    Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
-  );
-  const state = { kind: "claude", sessionId: null, model: null, effort: null };
-  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("timed out");
-  const kept = state.sessionId;
+  await withSessionStore(
+    () => [],
+    async (work) => {
+      vi.mocked(exec).mockRejectedValueOnce(
+        Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
+      );
+      const state = { kind: "claude", sessionId: null, model: null, effort: null };
+      await expect(runClaude(state, "p", { cwd: work })).rejects.toThrow("timed out");
+      const kept = state.sessionId;
 
-  vi.mocked(exec).mockRejectedValueOnce(
-    missingFailure({ stderr: `No conversation found with session ID: ${kept}` }),
-  );
-  const caught = await runClaude(state, "again", { cwd: "/path" }).catch((e) => e);
-  expect(caught.sessionMissing).toBe(true);
+      const caught = await runClaude(state, "again", { cwd: work }).catch((e) => e);
+      expect(caught.sessionMissing).toBe(true);
 
-  state.sessionId = null;
-  vi.mocked(exec).mockResolvedValueOnce({
-    stdout: JSON.stringify({ session_id: "s-new", result: "ok" }),
-    stderr: "",
-  });
-  await runClaude(state, "again", { cwd: "/path" });
-  expect(preassignedId()).toMatch(UUID);
-  expect(preassignedId()).not.toBe(kept);
+      state.sessionId = null;
+      vi.mocked(exec).mockResolvedValueOnce({
+        stdout: JSON.stringify({ session_id: "s-new", result: "ok" }),
+        stderr: "",
+      });
+      await runClaude(state, "again", { cwd: work });
+      expect(preassignedId()).toMatch(UUID);
+      expect(preassignedId()).not.toBe(kept);
+    },
+  );
 });
 
 // Usefulness: verifies a successful first turn adopts the id the CLI reports, even when it differs
@@ -566,4 +584,121 @@ test("claude clears the reported id through onSessionAssigned when the CLI rejec
     }),
   ).rejects.toThrow("timed out");
   expect(other).toEqual([preassignedId()]);
+});
+
+// Ownership of an unconfirmed pre-assigned id (issue #395). A session file is written in a fake
+// Claude config directory, in the shape that Claude Code 2.1.292 writes.
+async function withSessionStore(files, body) {
+  const config = await mkdtemp(join(tmpdir(), "claude-config-"));
+  const work = await realpath(await mkdtemp(join(tmpdir(), "claude-work-")));
+  try {
+    for (const { project, id, cwd } of files(work)) {
+      await mkdir(join(config, "projects", project), { recursive: true });
+      const lines = [
+        { type: "queue-operation", sessionId: id },
+        { type: "user", cwd, sessionId: id },
+      ];
+      await writeFile(
+        join(config, "projects", project, `${id}.jsonl`),
+        lines.map((l) => JSON.stringify(l)).join("\n"),
+      );
+    }
+    vi.stubEnv("CLAUDE_CONFIG_DIR", config);
+    await body(work);
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(config, { recursive: true, force: true });
+    await rm(work, { recursive: true, force: true });
+  }
+}
+
+const unconfirmed = (id) => ({
+  kind: "claude",
+  sessionId: id,
+  sessionUnconfirmed: true,
+  model: null,
+  effort: null,
+});
+
+// Usefulness: verifies an unconfirmed id with no session file is refused before any CLI starts and
+// is marked missing, so the runtime reruns the turn as a first turn with its preamble (issue #395).
+test("claude refuses to resume an unconfirmed id with no session file", async () => {
+  vi.mocked(exec).mockClear();
+  await withSessionStore(
+    () => [],
+    async (work) => {
+      const state = unconfirmed("11111111-1111-4111-8111-111111111111");
+      const caught = await runClaude(state, "p", { cwd: work }).catch((e) => e);
+      expect(caught.sessionMissing).toBe(true);
+      expect(exec).not.toHaveBeenCalled();
+    },
+  );
+});
+
+// Usefulness: verifies an unconfirmed id whose session belongs to another work tree is never
+// resumed, because an unrelated session can hold the same UUID (issue #395).
+test("claude refuses to resume an unconfirmed id whose session belongs to another work tree", async () => {
+  vi.mocked(exec).mockClear();
+  const id = "22222222-2222-4222-8222-222222222222";
+  await withSessionStore(
+    () => [{ project: "-elsewhere", id, cwd: "/somewhere/else" }],
+    async (work) => {
+      const caught = await runClaude(unconfirmed(id), "p", { cwd: work }).catch((e) => e);
+      expect(caught.sessionMissing).toBe(true);
+      expect(exec).not.toHaveBeenCalled();
+    },
+  );
+});
+
+// Usefulness: verifies an unconfirmed id whose session file records this work tree is resumed, and
+// that a successful turn confirms it (issue #395).
+test("claude resumes an unconfirmed id that this work tree owns and confirms it", async () => {
+  const id = "33333333-3333-4333-8333-333333333333";
+  await withSessionStore(
+    (work) => [{ project: "-any-encoding", id, cwd: work }],
+    async (work) => {
+      vi.mocked(exec).mockResolvedValueOnce({
+        stdout: JSON.stringify({ session_id: id, result: "ok" }),
+        stderr: "",
+      });
+      const state = unconfirmed(id);
+      await expect(runClaude(state, "p", { cwd: work })).resolves.toBe("ok");
+      expect(vi.mocked(exec).mock.calls.at(-1)[1]).toEqual(
+        expect.arrayContaining(["--resume", id]),
+      );
+      expect(state.sessionUnconfirmed).toBeUndefined();
+    },
+  );
+});
+
+// Usefulness: verifies the unconfirmed mark follows what the CLI reported: set on a first turn,
+// kept after a failure that printed no id, and cleared by a reported id or a success (issue #395).
+test("claude marks a pre-assigned id unconfirmed until the CLI reports the session", async () => {
+  const fresh = () => ({ kind: "claude", sessionId: null, model: null, effort: null });
+
+  const killed = fresh();
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
+  );
+  await runClaude(killed, "p", { cwd: "/path" }).catch(() => {});
+  expect(killed.sessionUnconfirmed).toBe(true);
+
+  const reported = fresh();
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("claude exited with code 1."), {
+      stdout: JSON.stringify({ type: "result", session_id: "s-reported", result: "boom" }),
+      stderr: "",
+    }),
+  );
+  await runClaude(reported, "p", { cwd: "/path" }).catch(() => {});
+  expect(reported.sessionId).toBe("s-reported");
+  expect(reported.sessionUnconfirmed).toBeUndefined();
+
+  const done = fresh();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
+    stderr: "",
+  });
+  await runClaude(done, "p", { cwd: "/path" });
+  expect(done.sessionUnconfirmed).toBeUndefined();
 });

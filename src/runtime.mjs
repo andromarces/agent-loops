@@ -122,6 +122,7 @@ export async function runChild(options) {
       }
       logWarn(`${roleName}: session ${resumedId} is missing; rerunning the turn as a first turn`);
       role.sessionId = null;
+      delete role.sessionUnconfirmed;
       return invokeRole(isWorker ? workerPrompt(prompt, true) : finalPrompt);
     }
   };

@@ -1648,3 +1648,32 @@ test("a failed first turn that keeps no id clears the pre-assigned id from the s
   expect(result.payload).toMatchObject({ status: "error" });
   expect((await readRepoState(repo)).roles.worker.sessionId).toBeNull();
 });
+
+// Usefulness: verifies the unconfirmed mark is saved with the early id, so recovery can tell an
+// id the CLI never confirmed from one it did, and that a turn which confirms it clears the saved
+// mark (issue #395).
+test("the state file marks a pre-assigned id unconfirmed until the turn confirms it", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+  let midTurn = null;
+  const worker = {
+    async run(state, _prompt, options) {
+      state.sessionUnconfirmed = true;
+      await options.onSessionAssigned("pre-2");
+      midTurn = await readState(paths.stateFile);
+      state.sessionId = "pre-2";
+      delete state.sessionUnconfirmed;
+      return REPORT;
+    },
+  };
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(midTurn.roles.worker).toMatchObject({ sessionId: "pre-2", sessionUnconfirmed: true });
+  const after = (await readState(paths.stateFile)).roles.worker;
+  expect(after.sessionId).toBe("pre-2");
+  expect(after.sessionUnconfirmed).toBeUndefined();
+});

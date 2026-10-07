@@ -64,8 +64,15 @@ step budget runs out.
    a random UUID is not expected, and a refusal never resumes an unrelated session.
    The adapter withdraws the id through the same callback as soon as it sees the rejection,
    before it rethrows, so the state file holds no rejected id while the turn ends. A crash in the
-   instant between the rejection and that write can still leave it: no check can tell an
-   unconfirmed id from a saved session before the CLI answers. Only the interactive dispatch path
+   instant between the rejection and that write can still leave it, and an unrelated session of
+   another work tree can hold a pre-assigned UUID that the CLI never confirmed for this run.
+   `resumeMismatchError` cannot catch that: the other session reports the same id. The role state
+   therefore carries `sessionUnconfirmed` from the pre-spawn write until the CLI output reports the
+   session. The adapter resumes an unconfirmed id only when a Claude Code session file for it,
+   under `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`), names the id and this work
+   tree. Otherwise it raises the missing-session error before any CLI starts, and the runtime
+   reruns the turn as a first turn, as in decision 3. A session store elsewhere reads as not owned,
+   and the turn starts a fresh session. Only the interactive dispatch path
    saves the id mid-turn. The headless loop keeps the id in memory until the turn ends, so a
    parent crash during a first turn there still loses the id, and the next run starts a new
    session. That pre-spawn crash gap stays open for the headless loop.

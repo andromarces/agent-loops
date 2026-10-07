@@ -721,7 +721,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
       // still leaves the id for the resume after `--resume-interrupted` (issue #395). The
       // result write below replaces it, with null when the turn kept no id.
       onSessionAssigned: async (id) => {
-        state.roles[roleName].sessionId = id;
+        recordRoleSession(state.roles[roleName], { sessionId: id, ...pickUnconfirmed(role, id) });
         await writeState(paths.stateFile, state);
       },
       // The command is the flag value, which init stored a digest of or the digest
@@ -749,7 +749,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
     };
     // A cancel or a fatal guard error can end the turn after the CLI reported its session, so
     // keep the id for the resume that follows. A null id records a session the fallback cleared.
-    state.roles[roleName].sessionId = role.sessionId;
+    recordRoleSession(state.roles[roleName], role);
     state.lifecycle = canceled ? "interrupted" : "halted";
     const at = new Date().toISOString();
     state.lastResult = { ...payload, at };
@@ -763,7 +763,7 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
   const at = new Date().toISOString();
   state.lastResult = { ...result, at };
   recordTurn(state, roleName, result, at);
-  state.roles[roleName].sessionId = role.sessionId;
+  recordRoleSession(state.roles[roleName], role);
   await writeState(paths.stateFile, state);
 
   onEvent({ type: "result", role: roleName, result, stepsUsed: state.stepsUsed });
@@ -774,6 +774,24 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
     exitCode: result.status === "ok" ? 0 : 1,
     payload: withLocalFiles(dispatchPayload(roleName, result), localFiles),
   };
+}
+
+/** The unconfirmed mark that goes with `id`: only a non-null id the adapter marked carries it. */
+function pickUnconfirmed(role, id) {
+  return id && role.sessionUnconfirmed ? { sessionUnconfirmed: true } : {};
+}
+
+/**
+ * Copies the session id of a role copy to the role state. `sessionUnconfirmed` marks an id that
+ * no CLI output has confirmed, so recovery verifies it before a resume (issue #395, ADR 0016).
+ */
+function recordRoleSession(target, source) {
+  target.sessionId = source.sessionId;
+  if (source.sessionUnconfirmed) {
+    target.sessionUnconfirmed = true;
+  } else {
+    delete target.sessionUnconfirmed;
+  }
 }
 
 /** Adds the copied and skipped path names of the init copy to the envelope. */
