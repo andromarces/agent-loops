@@ -4,6 +4,7 @@ import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 import {
   asSessionId,
+  failedWithLine,
   flagMissingSession,
   keepFailedSessionId,
   resumeMismatchError,
@@ -13,8 +14,16 @@ import {
 // Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
 const missingSession = (id) => `No conversation found with session ID: ${id}`;
 
+// Claude Code prints exactly this on stderr, exit 1, when `--session-id` names an existing session.
+const sessionInUse = (id) => `Error: Session ID ${id} is already in use.`;
+
+/**
+ * Runs one Claude turn. A first turn pre-assigns its session id and reports it through
+ * `options.onSessionAssigned` before the CLI starts, so a dispatcher can persist the id ahead of a
+ * crash. A rejected callback stops the turn before any CLI runs.
+ */
 export async function runClaude(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal, role } = options;
+  const { cwd, readOnly, timeout, signal, role, onSessionAssigned } = options;
   const args = ["-p"];
   const execOptions = { cwd, input: prompt, timeout, signal, role };
   const requestedSessionId = state.sessionId;
@@ -44,6 +53,10 @@ export async function runClaude(state, prompt, options = {}) {
 
   args.push("--output-format", "json");
 
+  if (preassignedId) {
+    await onSessionAssigned?.(preassignedId);
+  }
+
   let stdout;
   try {
     ({ stdout } = await exec("claude", args, execOptions));
@@ -59,8 +72,10 @@ export async function runClaude(state, prompt, options = {}) {
     setUsage(state, findResultEvent(failed));
     // An id the CLI printed wins. Otherwise the pre-assigned id stays: a kill before the CLI
     // saved a session leaves an id that names none, and the next resume then reaches the
-    // missing-session fallback below.
-    keepFailedSessionId(state, findSessionId(failed) ?? preassignedId);
+    // missing-session fallback below. An id that the CLI rejects as in use names another
+    // session, so it is never kept and the next turn starts with a fresh id.
+    const collided = preassignedId && failedWithLine(err, sessionInUse(preassignedId));
+    keepFailedSessionId(state, findSessionId(failed) ?? (collided ? null : preassignedId));
     flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }

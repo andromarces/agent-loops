@@ -717,6 +717,13 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
       // reads nothing, and the reviewer keeps its own read.
       pr: state.pr ?? null,
       reviewerWorkspaceWrite: state.reviewerWorkspaceWrite === true,
+      // A pre-assigned session id is written before the CLI starts, so a crash during the turn
+      // still leaves the id for the resume after `--resume-interrupted` (issue #395). The
+      // result write below replaces it, with null when the turn kept no id.
+      onSessionAssigned: async (id) => {
+        state.roles[roleName].sessionId = id;
+        await writeState(paths.stateFile, state);
+      },
       // The command is the flag value, which init stored a digest of or the digest
       // check above matched. Nothing the state file holds is run.
       testCmd:

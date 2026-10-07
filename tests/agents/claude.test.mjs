@@ -436,3 +436,102 @@ test("claude invocation is identical with the reviewer sandbox input on and off"
   });
   expect(on).toEqual(off);
 });
+
+const IN_USE = (id) => `Error: Session ID ${id} is already in use.`;
+
+// Usefulness: verifies the adapter reports the pre-assigned id through `onSessionAssigned` before
+// the CLI starts, so the dispatcher can persist it ahead of a crash (issue #395).
+test("claude reports the pre-assigned id before it starts the CLI", async () => {
+  const order = [];
+  let assigned;
+  vi.mocked(exec).mockImplementationOnce(async () => {
+    order.push("exec");
+    return { stdout: JSON.stringify({ session_id: "s1", result: "ok" }), stderr: "" };
+  });
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await runClaude(state, "p", {
+    cwd: "/path",
+    onSessionAssigned: async (id) => {
+      assigned = id;
+      order.push("assigned");
+    },
+  });
+  expect(order).toEqual(["assigned", "exec"]);
+  expect(assigned).toBe(preassignedId());
+
+  // A resumed turn assigns nothing.
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
+    stderr: "",
+  });
+  const onSessionAssigned = vi.fn();
+  await runClaude(state, "p", { cwd: "/path", onSessionAssigned });
+  expect(onSessionAssigned).not.toHaveBeenCalled();
+});
+
+// Usefulness: verifies a failed hook stops the turn before the CLI starts, so no unrecorded
+// session exists (issue #395).
+test("claude starts no CLI when the dispatcher cannot record the pre-assigned id", async () => {
+  vi.mocked(exec).mockClear();
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(
+    runClaude(state, "p", {
+      cwd: "/path",
+      onSessionAssigned: async () => {
+        throw new Error("state write failed");
+      },
+    }),
+  ).rejects.toThrow("state write failed");
+  expect(exec).not.toHaveBeenCalled();
+  expect(state.sessionId).toBeNull();
+});
+
+// Usefulness: verifies a first turn that the CLI rejects because the pre-assigned id belongs to an
+// existing session keeps no id, so the next turn starts a fresh session and never resumes the
+// unrelated one (issue #395).
+test("claude never keeps a pre-assigned id that the CLI rejects as in use", async () => {
+  vi.mocked(exec).mockImplementationOnce(async (_cmd, args) => {
+    const id = args[args.indexOf("--session-id") + 1];
+    throw Object.assign(new Error("claude exited with code 1."), {
+      exitCode: 1,
+      stdout: "",
+      stderr: `${IN_USE(id)}\n`,
+    });
+  });
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("exited");
+  const rejected = preassignedId();
+  expect(state.sessionId).toBeNull();
+
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s-fresh", result: "ok" }),
+    stderr: "",
+  });
+  await runClaude(state, "p", { cwd: "/path" });
+  const next = vi.mocked(exec).mock.calls.at(-1)[1];
+  expect(next).not.toContain("--resume");
+  expect(preassignedId()).toMatch(UUID);
+  expect(preassignedId()).not.toBe(rejected);
+});
+
+// Usefulness: verifies only the exact in-use line for the pre-assigned id counts as a collision,
+// so any other failed first turn still keeps its id for the resume (issue #395).
+test.each([
+  ["another id", () => IN_USE("other"), {}],
+  ["a longer message", (id) => `warn ${IN_USE(id)}`, {}],
+  ["a timeout", (id) => IN_USE(id), { timedOut: true }],
+  ["stdout output", (id) => IN_USE(id), { stdout: "partial" }],
+])("claude keeps the pre-assigned id when the failure is %s", async (_n, line, extra) => {
+  vi.mocked(exec).mockImplementationOnce(async (_cmd, args) => {
+    const id = args[args.indexOf("--session-id") + 1];
+    throw Object.assign(new Error("claude exited with code 1."), {
+      exitCode: 1,
+      stdout: "",
+      stderr: line(id),
+      ...extra,
+    });
+  });
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("exited");
+  expect(state.sessionId).toMatch(UUID);
+});

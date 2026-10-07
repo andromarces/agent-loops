@@ -1558,3 +1558,66 @@ test("dispatch init with an empty parentSession succeeds without a session entry
   expect(result.exitCode).toBe(0);
   expect(result.payload).toMatchObject({ role: "worker", status: "ok" });
 });
+
+// Usefulness: verifies a pre-assigned session id reaches the state file before the child runs, so
+// a parent crash during a first turn still leaves the id that the resume after
+// `--resume-interrupted` needs (issue #395). No other test reads the state file mid-turn.
+test("a pre-assigned session id is persisted before the child turn runs", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+  let midTurn = null;
+  const worker = {
+    async run(state, _prompt, options) {
+      await options.onSessionAssigned("pre-1");
+      midTurn = await readState(paths.stateFile);
+      throw new Error("parent crashed");
+    },
+  };
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(midTurn).toMatchObject({
+    lifecycle: "dispatched",
+    roles: { worker: { sessionId: "pre-1" } },
+  });
+
+  // Restore the mid-turn file, as left by a crash, then recover.
+  await writeState(paths.stateFile, midTurn);
+  const resumer = recordingAdapter([]);
+  const agents = { fake1: resumer, fake2: recordingAdapter([]) };
+  const marked = await executeRoleCommand(withRepo(dispatchArgv(["--resume-interrupted"]), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(marked.exitCode).toBe(1);
+  const resumed = await executeRoleCommand(withRepo(dispatchArgv(["--resume-interrupted"]), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(resumed.exitCode).toBe(0);
+  expect(resumer.recorded[0].incomingSessionId).toBe("pre-1");
+});
+
+// Usefulness: verifies a turn that fails with no id on its role state clears the id persisted
+// before the turn, so a rejected pre-assigned id never becomes a resume target (issue #395).
+test("a failed first turn that keeps no id clears the pre-assigned id from the state file", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const worker = {
+    async run(state, _prompt, options) {
+      await options.onSessionAssigned("pre-rejected");
+      state.sessionId = null;
+      throw new Error("Session ID pre-rejected is already in use.");
+    },
+  };
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload).toMatchObject({ status: "error" });
+  expect((await readRepoState(repo)).roles.worker.sessionId).toBeNull();
+});

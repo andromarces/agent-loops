@@ -54,6 +54,14 @@ step budget runs out.
    of its id exited 1 with the `No conversation found` line of decision 2, so the next turn
    reaches the fallback and reruns as a first turn with a new pre-assigned id. A pre-assigned id
    that names no session therefore costs one failed resume, not a lost run.
+   On the interactive dispatch path, the adapter reports the pre-assigned id to the dispatcher
+   before it starts the CLI, and the dispatcher writes it to the state file at once. A crash
+   during the turn then leaves the id, and the turn after `--resume-interrupted` resumes it. A
+   failed write stops the turn before the CLI starts. A first turn that the CLI rejects with
+   `Error: Session ID <id> is already in use.` (exit 1, empty stdout, that one line, optional
+   line ending) never keeps the id, because the id names another session. The state file then
+   records null and the next turn starts with a fresh id. The turn is not rerun: a collision of
+   a random UUID is not expected, and a refusal never resumes an unrelated session.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
    stderr is the one verified line for the requested id, byte for byte, plus at most one
