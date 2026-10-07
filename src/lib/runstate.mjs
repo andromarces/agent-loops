@@ -80,7 +80,12 @@ function stateRoot() {
   return override ? resolve(override) : join(tmpdir(), "agent-loops", "runs");
 }
 
-function cwdHash(cwd) {
+/**
+ * The name of the state directory of the run in one work tree, which is also the key that binds
+ * a spawned child to its run (issue #392). It hashes the lexical path, so a path spelling that
+ * the state lookup treats as another run is another key and finds no state.
+ */
+export function cwdHash(cwd) {
   return sha256(canonicalCwd(cwd)).slice(0, 12);
 }
 

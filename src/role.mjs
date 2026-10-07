@@ -37,11 +37,13 @@ import {
   readProp,
   UNREADABLE_MESSAGE,
 } from "./lib/error-message.mjs";
+import { SPAWNED_RUN_ENV } from "./lib/exec.mjs";
 import { copyLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
+  cwdHash,
   readState,
   statePaths,
   withStateLock,
@@ -57,6 +59,9 @@ import { validateAction } from "./contracts/orchestrator-action.mjs";
 const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "wait-checks"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
+
+// Operations that end or extend a run. A child process of that run never runs them.
+const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend"]);
 
 class RoleError extends Error {}
 
@@ -1102,9 +1107,9 @@ async function extend(args) {
     const state = requireState(await readState(paths.stateFile), args.cwd, { needsBudget: true });
     // The caller must pass the run's stored parent session id, the id the
     // parent-edit guard matches. The refusal does not name the stored id.
-    // known-limit: the check compares the id only and does not identify the
-    // caller, so a caller that read the id from the state file passes; the rule
-    // that a child never calls extend rests on the orchestrator instructions.
+    // known-limit: the id check does not identify the caller. The spawn-time
+    // run marker refuses a child of this run (executeRoleCommand), but a child
+    // that clears its environment passes both checks.
     if (args.parentSession !== state.parentSession) {
       throw new RoleError("--parent-session does not match the run's parent session.");
     }
@@ -1239,6 +1244,14 @@ async function withinBound(ms, work, message) {
  */
 export async function executeRoleCommand(args, deps = {}) {
   try {
+    if (
+      RUN_ENDING_OPERATIONS.has(args.operation) &&
+      process.env[SPAWNED_RUN_ENV] === cwdHash(args.cwd)
+    ) {
+      throw new RoleError(
+        `${args.operation} is refused for a child role; only the parent session runs it.`,
+      );
+    }
     switch (args.operation) {
       case "dispatch":
         return await dispatch(args, deps);

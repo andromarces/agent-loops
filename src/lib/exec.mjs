@@ -1,5 +1,20 @@
 import { execa } from "execa";
 import { logDebug, logInfo } from "./log.mjs";
+import { cwdHash } from "./runstate.mjs";
+
+/**
+ * Environment variable that marks a process spawned for a worker or reviewer turn. Its value is
+ * the key of the run that dispatched the turn, the name of its state directory. `role extend`,
+ * `finish`, and `abort` refuse a caller whose value equals the key they use to find the run
+ * state, so a child of a run never ends or extends it, while a parent that inherited the marker
+ * of another run is not refused. Every descendant of the spawned process inherits it (issue
+ * #392). An empty value counts as unset.
+ */
+export const SPAWNED_RUN_ENV = "AGENT_LOOP_SPAWNED_RUN";
+
+// `exec` adds no marker for the orchestrator or any other spawn. A process keeps a marker it
+// inherited.
+const MARKED_ROLES = new Set(["worker", "reviewer"]);
 
 export class ExecError extends Error {
   constructor(
@@ -37,8 +52,12 @@ export async function exec(command, args = [], options = {}) {
   };
 
   // execa merges env with process.env; the child still inherits the launcher environment.
-  if (env) {
-    execaOptions.env = env;
+  const marked = MARKED_ROLES.has(role);
+  if (env || marked) {
+    execaOptions.env = {
+      ...env,
+      ...(marked && { [SPAWNED_RUN_ENV]: cwdHash(cwd ?? process.cwd()) }),
+    };
   }
 
   if (typeof timeout === "number" && timeout > 0) {

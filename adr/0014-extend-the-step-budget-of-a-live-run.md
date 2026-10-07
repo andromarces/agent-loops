@@ -43,17 +43,45 @@ history and provider prompt cache. `archiveState` keeps the old ids in
    stored `parentSession`, the id the parent-edit guard matches (ADR 0006). The
    refusal does not name the stored id. A different `--parent-session` on `dispatch`,
    `finish`, or `abort` is refused by the init-flag check, and that refusal does name
-   it. The check compares the id only. It does
-   not identify the calling harness session, so any caller that passes the stored
-   id is accepted, and a caller that read the id from the state file can pass it,
-   a child role included. No child environment marker exists at spawn, and the
-   other operations have no session check. The check stops a call that omits the
-   id or carries another one, for example a child in its own session that never
-   read the state file. The rule that a child never calls `extend` rests on the
-   orchestrator instructions. A boundary that identifies the caller is not part of
-   this decision.
+   it. The id check does not identify the calling harness session, so a caller
+   that read the id from the state file can pass it, a child role included. The
+   check stops a call that omits the id or carries another one.
+8. A child caller of the run is refused by a spawn-time marker bound to the run
+   (issue #392). `exec` sets `AGENT_LOOP_SPAWNED_RUN=<run key>` in the environment
+   of every worker and reviewer process. It sets nothing for the orchestrator or
+   any other spawn. The run key is the name of the run's state directory, the hash
+   that every subcommand uses to find the run state, so the marker and the lookup
+   cannot disagree. The hash covers the lexical path with the Windows drive letter
+   in lower case. Every descendant inherits the marker, a shell command of the turn
+   included. `extend`, `finish`, and `abort` refuse a call whose value equals the key
+   they use to find the run state, before any state read, so the run stays as it
+   was. A path that spells the work tree another way, such as a symlink alias or a
+   different case on a case-insensitive disk, computes another key and finds no
+   state, so it cannot reach the run. A child that names the work tree as the run
+   does is refused even when that work tree no longer exists, and a parent `abort`
+   over a missing work tree still ends the run. A process that holds no marker, or a
+   marker of another run, passes. The parent path therefore works on every
+   supported harness, including a parent session that a child of another run
+   started.
+   The marker is a boundary against a child that follows its prompt, not against a
+   hostile one. These limits remain:
+   - A child that clears its environment, or a harness that filters it from shell
+     commands, passes.
+   - `exec` adds no marker to an orchestrator or a parent, but such a process keeps
+     a marker it inherited. A headless orchestrator or an interactive parent that a
+     child of the same run started holds that run's key and is refused for it,
+     which happens only in the work tree of that run.
+   - The variable holds one key. A worker or reviewer that a nested run starts
+     through `exec` receives the key of the nested run and loses the outer key, so
+     it can still end the outer run.
+     In these cases the id check and the orchestrator instructions are the remaining
+     guards.
 
 ## Consequences
+
+- A child role cannot end or extend its own run through the CLI while the marker
+  reaches its shell. A parent session that a child of another run started keeps
+  every parent path for its own run. The limits of point 8 stay. `dispatch` and `wait-checks` stay open to every caller.
 
 - An exhausted run continues with its role sessions and prompt cache.
 - The bound in ADR 0008 point 5 still holds: `maxSteps` only grows, so `turns` never
