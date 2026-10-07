@@ -4,13 +4,25 @@ import { cwdHash } from "./runstate.mjs";
 
 /**
  * Environment variable that marks a process spawned for a worker or reviewer turn. Its value is
- * the key of the run that dispatched the turn, the name of its state directory. `role extend`,
- * `finish`, and `abort` refuse a caller whose value equals the key they use to find the run
- * state, so a child of a run never ends or extends it, while a parent that inherited the marker
- * of another run is not refused. Every descendant of the spawned process inherits it (issue
- * #392). An empty value counts as unset.
+ * a comma-separated list of run keys, the names of state directories: the keys of every enclosing
+ * run, outermost first, then the key of the run that dispatched the turn. `role extend`, `finish`,
+ * and `abort` refuse a caller whose list holds the key they use to find the run state, so a
+ * descendant of a run never ends or extends it, while a parent that inherited the marker of
+ * another run is not refused. Every descendant of the spawned process inherits it (issues #392,
+ * #548). An empty value counts as unset.
  */
 export const SPAWNED_RUN_ENV = "AGENT_LOOP_SPAWNED_RUN";
+
+/** Appends `key` to the marker list that this process inherited, once. */
+function markerFor(key) {
+  const keys = (process.env[SPAWNED_RUN_ENV] ?? "").split(",").filter(Boolean);
+  return (keys.includes(key) ? keys : [...keys, key]).join(",");
+}
+
+/** True when the inherited marker list holds `key`. */
+export function isSpawnedByRun(key) {
+  return (process.env[SPAWNED_RUN_ENV] ?? "").split(",").includes(key);
+}
 
 // `exec` adds no marker for the orchestrator or any other spawn. A process keeps a marker it
 // inherited.
@@ -56,7 +68,7 @@ export async function exec(command, args = [], options = {}) {
   if (env || marked) {
     execaOptions.env = {
       ...env,
-      ...(marked && { [SPAWNED_RUN_ENV]: cwdHash(cwd ?? process.cwd()) }),
+      ...(marked && { [SPAWNED_RUN_ENV]: markerFor(cwdHash(cwd ?? process.cwd())) }),
     };
   }
 
