@@ -636,12 +636,14 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   // that gave no --transcript still receives the evidence the runtime read (ADR 0017).
   let fatalTestRun = null;
 
-  const finish = async ({ exitCode, error }) => {
+  // `failed` is explicit, because a thrown value can be falsy (null, 0, "") and must still record.
+  const finish = async ({ exitCode, error, failed = true }) => {
+    const errorText = failed ? redactedText(readProp(error, "message") ?? error) : null;
     transcriptData.exitCode = exitCode;
-    transcriptData.error = error ? redactedText(readProp(error, "message") ?? error) : null;
+    transcriptData.error = errorText;
     await writeTranscript();
-    if (error) {
-      console.error(`\n${redactedText(readProp(error, "message") ?? error)}`);
+    if (failed) {
+      console.error(`\n${errorText}`);
       if (fatalTestRun) {
         console.error(
           `\nTest command result before the failed turn (advisory):\n${JSON.stringify(fatalTestRun, null, 2)}`,
@@ -726,7 +728,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         const exitCode = result.unresolvedCompare ? UNRESOLVED_COMPARE_EXIT : 0;
         console.log("\n===== SUMMARY =====\n");
         console.log(formatSummary(result.summary));
-        await finish({ exitCode, error: null });
+        await finish({ exitCode, failed: false });
       } else {
         await finish({ exitCode: result.exitCode, error: new Error(result.reason) });
       }

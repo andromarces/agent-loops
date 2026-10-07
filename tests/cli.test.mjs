@@ -913,6 +913,57 @@ test("orchestrator failure writes transcript with exitCode 1", async () => {
   }
 });
 
+// Usefulness: acceptance (#537) — a falsy value thrown by the orchestrator still fails the run with
+// a non-null transcript error and a stderr error line, so a failed run never reads as error-free.
+test.each([null, undefined, 0, false, ""])(
+  "orchestrator that throws %j records a transcript error and prints an error line",
+  async (thrown) => {
+    const repo = await createTempRepo();
+    const transcriptPath = join(repo, "transcript.json");
+    const origExitCode = process.exitCode;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fakeAgents = {
+      codex: {
+        async run() {
+          throw thrown;
+        },
+      },
+      claude: { async run() {} },
+      agy: { async run() {} },
+    };
+
+    try {
+      await main(
+        [
+          "--orchestrator",
+          "codex",
+          "--worker",
+          "claude",
+          "--reviewer",
+          "agy",
+          "--task",
+          "task",
+          "--cwd",
+          repo,
+          "--transcript",
+          transcriptPath,
+        ],
+        fakeAgents,
+      );
+
+      expect(process.exitCode).toBe(1);
+      const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+      expect(transcript.exitCode).toBe(1);
+      expect(transcript.error).toBe(String(thrown));
+      expect(errorSpy).toHaveBeenLastCalledWith(`\n${String(thrown)}`);
+    } finally {
+      process.exitCode = origExitCode;
+      errorSpy.mockRestore();
+      await removePath(repo);
+    }
+  },
+);
+
 // Usefulness: verifies SIGINT cancel through cli.mjs sets exitCode 130 and writes transcript.
 test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () => {
   const repo = await createTempRepo();
