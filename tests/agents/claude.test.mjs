@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
@@ -51,7 +51,7 @@ test("claude sends correct argv for initial turn with readOnly", async () => {
     ],
     {
       cwd: "/path",
-      input: "test prompt",
+      input: expect.stringMatching(/^test prompt\n\n\[agent-loop session [0-9a-f-]{36} role \]$/),
       timeout: undefined,
       signal: undefined,
       role: undefined,
@@ -209,21 +209,28 @@ test("claude resumes the pre-assigned id kept from a killed first turn", async (
         Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
       );
       const state = { kind: "claude", sessionId: null, model: null, effort: null };
-      await expect(runClaude(state, "p", { cwd: work })).rejects.toThrow("timed out");
+      await expect(runClaude(state, "p", { cwd: work, role: "worker" })).rejects.toThrow(
+        "timed out",
+      );
       const kept = state.sessionId;
       // The CLI saved the session of the killed turn.
       const config = process.env.CLAUDE_CONFIG_DIR;
       await mkdir(join(config, "projects", "-p"), { recursive: true });
       await writeFile(
         join(config, "projects", "-p", `${kept}.jsonl`),
-        JSON.stringify({ type: "user", cwd: work, sessionId: kept }),
+        JSON.stringify({
+          type: "user",
+          cwd: work,
+          sessionId: kept,
+          message: { role: "user", content: `p\n\n${marker(kept, "worker")}` },
+        }),
       );
 
       vi.mocked(exec).mockResolvedValueOnce({
         stdout: JSON.stringify({ session_id: kept, result: "ok" }),
         stderr: "",
       });
-      await expect(runClaude(state, "again", { cwd: work })).resolves.toBe("ok");
+      await expect(runClaude(state, "again", { cwd: work, role: "worker" })).resolves.toBe("ok");
       const args = vi.mocked(exec).mock.calls.at(-1)[1];
       expect(args).toEqual(expect.arrayContaining(["--resume", kept]));
       expect(args).not.toContain("--session-id");
@@ -241,10 +248,12 @@ test("claude flags the resume of a pre-assigned id that the CLI never saved", as
         Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true }),
       );
       const state = { kind: "claude", sessionId: null, model: null, effort: null };
-      await expect(runClaude(state, "p", { cwd: work })).rejects.toThrow("timed out");
+      await expect(runClaude(state, "p", { cwd: work, role: "worker" })).rejects.toThrow(
+        "timed out",
+      );
       const kept = state.sessionId;
 
-      const caught = await runClaude(state, "again", { cwd: work }).catch((e) => e);
+      const caught = await runClaude(state, "again", { cwd: work, role: "worker" }).catch((e) => e);
       expect(caught.sessionMissing).toBe(true);
 
       state.sessionId = null;
@@ -252,7 +261,7 @@ test("claude flags the resume of a pre-assigned id that the CLI never saved", as
         stdout: JSON.stringify({ session_id: "s-new", result: "ok" }),
         stderr: "",
       });
-      await runClaude(state, "again", { cwd: work });
+      await runClaude(state, "again", { cwd: work, role: "worker" });
       expect(preassignedId()).toMatch(UUID);
       expect(preassignedId()).not.toBe(kept);
     },
@@ -450,7 +459,11 @@ test("claude invocation is identical with the reviewer sandbox input on and off"
   // Each first turn pre-assigns its own random id, so compare the invocations without it.
   const [off, on] = vi.mocked(exec).mock.calls.map(([cmd, args, opts]) => {
     const at = args.indexOf("--session-id");
-    return [cmd, args.filter((_, i) => i !== at && i !== at + 1), opts];
+    return [
+      cmd,
+      args.filter((_, i) => i !== at && i !== at + 1),
+      { ...opts, input: opts.input.replace(/[0-9a-f-]{36}/, "<id>") },
+    ];
   });
   expect(on).toEqual(off);
 });
@@ -586,17 +599,25 @@ test("claude clears the reported id through onSessionAssigned when the CLI rejec
   expect(other).toEqual([preassignedId()]);
 });
 
+// The line that the adapter appends to the prompt of a first turn (issue #395).
+const marker = (id, role) => `[agent-loop session ${id} role ${role}]`;
+
 // Ownership of an unconfirmed pre-assigned id (issue #395). A session file is written in a fake
 // Claude config directory, in the shape that Claude Code 2.1.292 writes.
 async function withSessionStore(files, body) {
   const config = await mkdtemp(join(tmpdir(), "claude-config-"));
   const work = await realpath(await mkdtemp(join(tmpdir(), "claude-work-")));
   try {
-    for (const { project, id, cwd } of files(work)) {
+    for (const { project, id, cwd, role = "worker", content } of files(work)) {
       await mkdir(join(config, "projects", project), { recursive: true });
       const lines = [
         { type: "queue-operation", sessionId: id },
-        { type: "user", cwd, sessionId: id },
+        {
+          type: "user",
+          cwd,
+          sessionId: id,
+          message: { role: "user", content: content ?? `task\n\n${marker(id, role)}` },
+        },
       ];
       await writeFile(
         join(config, "projects", project, `${id}.jsonl`),
@@ -628,7 +649,7 @@ test("claude refuses to resume an unconfirmed id with no session file", async ()
     () => [],
     async (work) => {
       const state = unconfirmed("11111111-1111-4111-8111-111111111111");
-      const caught = await runClaude(state, "p", { cwd: work }).catch((e) => e);
+      const caught = await runClaude(state, "p", { cwd: work, role: "worker" }).catch((e) => e);
       expect(caught.sessionMissing).toBe(true);
       expect(exec).not.toHaveBeenCalled();
     },
@@ -643,7 +664,9 @@ test("claude refuses to resume an unconfirmed id whose session belongs to anothe
   await withSessionStore(
     () => [{ project: "-elsewhere", id, cwd: "/somewhere/else" }],
     async (work) => {
-      const caught = await runClaude(unconfirmed(id), "p", { cwd: work }).catch((e) => e);
+      const caught = await runClaude(unconfirmed(id), "p", { cwd: work, role: "worker" }).catch(
+        (e) => e,
+      );
       expect(caught.sessionMissing).toBe(true);
       expect(exec).not.toHaveBeenCalled();
     },
@@ -662,7 +685,7 @@ test("claude resumes an unconfirmed id that this work tree owns and confirms it"
         stderr: "",
       });
       const state = unconfirmed(id);
-      await expect(runClaude(state, "p", { cwd: work })).resolves.toBe("ok");
+      await expect(runClaude(state, "p", { cwd: work, role: "worker" })).resolves.toBe("ok");
       expect(vi.mocked(exec).mock.calls.at(-1)[1]).toEqual(
         expect.arrayContaining(["--resume", id]),
       );
@@ -701,4 +724,142 @@ test("claude marks a pre-assigned id unconfirmed until the CLI reports the sessi
   });
   await runClaude(done, "p", { cwd: "/path" });
   expect(done.sessionUnconfirmed).toBeUndefined();
+});
+
+// Usefulness: verifies the first prompt of a first turn carries the marker for the pre-assigned id
+// and the role, the one thing the ownership check later requires in the first user record
+// (issue #395).
+test("claude appends the session marker to the prompt of a first turn only", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
+    stderr: "",
+  });
+  const state = { kind: "claude", sessionId: null, model: null, effort: null };
+  await runClaude(state, "do it", { cwd: "/path", role: "worker" });
+  const input = vi.mocked(exec).mock.calls.at(-1)[2].input;
+  expect(input).toBe(`do it\n\n${marker(preassignedId(), "worker")}`);
+
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
+    stderr: "",
+  });
+  await runClaude(state, "again", { cwd: "/path", role: "worker" });
+  expect(vi.mocked(exec).mock.calls.at(-1)[2].input).toBe("again");
+});
+
+// Usefulness: verifies a session of this work tree that the adapter did not start for this id and
+// role is never resumed: an unrelated session can share the UUID and the work tree (issue #395).
+test.each([
+  ["no marker", () => ({ content: "an unrelated task" })],
+  ["the marker of another role", (id) => ({ role: "reviewer", id })],
+  [
+    "the marker of another id",
+    () => ({ content: marker("44444444-4444-4444-8444-444444444444", "worker") }),
+  ],
+])("claude refuses to resume an unconfirmed id whose first prompt has %s", async (_n, make) => {
+  vi.mocked(exec).mockClear();
+  const id = "55555555-5555-4555-8555-555555555555";
+  await withSessionStore(
+    (work) => [{ project: "-p", id, cwd: work, ...make(id) }],
+    async (work) => {
+      const caught = await runClaude(unconfirmed(id), "p", { cwd: work, role: "worker" }).catch(
+        (e) => e,
+      );
+      expect(caught.sessionMissing).toBe(true);
+      expect(exec).not.toHaveBeenCalled();
+    },
+  );
+});
+
+// Usefulness: verifies an id that is not a canonical UUID is refused before any filesystem path is
+// built from it, so a path fragment cannot reach a file outside the projects directory (issue #395).
+test.each([
+  ["a parent path", "../outside"],
+  ["a nested path", "a/b"],
+  ["an uppercase UUID", "55555555-5555-4555-8555-55555555555A"],
+  ["an empty-looking id", " "],
+])("claude refuses an unconfirmed id that is %s without reading a file", async (_n, id) => {
+  vi.mocked(exec).mockClear();
+  await withSessionStore(
+    (work) => [{ project: "-p", id: "55555555-5555-4555-8555-555555555555", cwd: work }],
+    async (work) => {
+      // A valid session file sits where the traversal would land.
+      const config = process.env.CLAUDE_CONFIG_DIR;
+      await writeFile(
+        join(config, "projects", "outside.jsonl"),
+        JSON.stringify({
+          type: "user",
+          cwd: work,
+          sessionId: "../outside",
+          message: { content: marker("../outside", "worker") },
+        }),
+      );
+      const caught = await runClaude(unconfirmed(id), "p", { cwd: work, role: "worker" }).catch(
+        (e) => e,
+      );
+      expect(caught.sessionMissing).toBe(true);
+      expect(exec).not.toHaveBeenCalled();
+    },
+  );
+});
+
+// Usefulness: verifies a symlinked project directory or session file is never followed out of the
+// projects directory, and that only a regular file counts (issue #395).
+test.each([
+  ["a symlinked project directory", "dir"],
+  ["a symlinked session file", "file"],
+])("claude refuses an unconfirmed id behind %s", async (_n, kind, ctx) => {
+  vi.mocked(exec).mockClear();
+  const id = "66666666-6666-4666-8666-666666666666";
+  await withSessionStore(
+    (work) => [{ project: "-real", id, cwd: work }],
+    async (work) => {
+      const config = process.env.CLAUDE_CONFIG_DIR;
+      const projects = join(config, "projects");
+      try {
+        if (kind === "dir") {
+          // The valid session lives outside the projects directory, behind a symlinked project.
+          await rename(join(projects, "-real"), join(config, "elsewhere"));
+          await symlink(join(config, "elsewhere"), join(projects, "-real"), "dir");
+        } else {
+          await mkdir(join(config, "elsewhere"));
+          await rename(
+            join(projects, "-real", `${id}.jsonl`),
+            join(config, "elsewhere", `${id}.jsonl`),
+          );
+          await symlink(
+            join(config, "elsewhere", `${id}.jsonl`),
+            join(projects, "-real", `${id}.jsonl`),
+            "file",
+          );
+        }
+      } catch (err) {
+        if (err?.code === "EPERM") ctx.skip();
+        throw err;
+      }
+      const caught = await runClaude(unconfirmed(id), "p", { cwd: work, role: "worker" }).catch(
+        (e) => e,
+      );
+      expect(caught.sessionMissing).toBe(true);
+      expect(exec).not.toHaveBeenCalled();
+    },
+  );
+});
+
+// Usefulness: verifies a directory named like the session file is not a regular file (issue #395).
+test("claude refuses an unconfirmed id whose session path is a directory", async () => {
+  vi.mocked(exec).mockClear();
+  const id = "77777777-7777-4777-8777-777777777777";
+  await withSessionStore(
+    () => [],
+    async (work) => {
+      const dir = join(process.env.CLAUDE_CONFIG_DIR, "projects", "-p", `${id}.jsonl`);
+      await mkdir(dir, { recursive: true });
+      const caught = await runClaude(unconfirmed(id), "p", { cwd: work, role: "worker" }).catch(
+        (e) => e,
+      );
+      expect(caught.sessionMissing).toBe(true);
+      expect(exec).not.toHaveBeenCalled();
+    },
+  );
 });

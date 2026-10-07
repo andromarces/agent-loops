@@ -69,10 +69,17 @@ step budget runs out.
    `resumeMismatchError` cannot catch that: the other session reports the same id. The role state
    therefore carries `sessionUnconfirmed` from the pre-spawn write until the CLI output reports the
    session. The adapter resumes an unconfirmed id only when a Claude Code session file for it,
-   under `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`), names the id and this work
-   tree. Otherwise it raises the missing-session error before any CLI starts, and the runtime
-   reruns the turn as a first turn, as in decision 3. A session store elsewhere reads as not owned,
-   and the turn starts a fresh session. Only the interactive dispatch path
+   under `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`), has a first user record that
+   names the id and this work tree and carries the marker `[agent-loop session <id> role <role>]`,
+   which the adapter appends to every first-turn prompt. The id is a fresh random value that only
+   this run's state records, and the role is in the marker, so another session of the same work
+   tree or of another role never matches. Only the marker match reads session content, and nothing
+   of it is logged. The adapter refuses an id that is not a canonical lowercase UUID before it builds
+   a path, follows no symlinked project directory or session file, and accepts only a regular file
+   that it reads with a 256 KiB bound. `--continue-from` restores the unconfirmed mark with the id,
+   so a restored id passes the same check. Otherwise the adapter raises the missing-session error
+   before any CLI starts, and the runtime reruns the turn as a first turn, as in decision 3. A
+   session store elsewhere reads as not owned, and the turn starts a fresh session. Only the interactive dispatch path
    saves the id mid-turn. The headless loop keeps the id in memory until the turn ends, so a
    parent crash during a first turn there still loses the id, and the next run starts a new
    session. That pre-spawn crash gap stays open for the headless loop.
