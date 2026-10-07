@@ -636,12 +636,18 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   // that gave no --transcript still receives the evidence the runtime read (ADR 0017).
   let fatalTestRun = null;
 
-  const finish = async ({ exitCode, error }) => {
+  // `failed` is explicit, because a thrown value can be falsy (null, 0, "") and must still record.
+  // An empty error text gets a fallback so a failed run never records or prints a blank error.
+  const finish = async ({ exitCode, error, failed }) => {
+    const errorText = failed
+      ? redactedText(readProp(error, "message") ?? error) ||
+        redactedText("Run failed with an empty error message.")
+      : null;
     transcriptData.exitCode = exitCode;
-    transcriptData.error = error ? redactedText(readProp(error, "message") ?? error) : null;
+    transcriptData.error = errorText;
     await writeTranscript();
-    if (error) {
-      console.error(`\n${redactedText(readProp(error, "message") ?? error)}`);
+    if (failed) {
+      console.error(`\n${errorText}`);
       if (fatalTestRun) {
         console.error(
           `\nTest command result before the failed turn (advisory):\n${JSON.stringify(fatalTestRun, null, 2)}`,
@@ -661,7 +667,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     try {
       await assertGitWorkTree(options.cwd);
     } catch (err) {
-      await finish({ exitCode: 1, error: err });
+      await finish({ exitCode: 1, error: err, failed: true });
       return;
     }
 
@@ -726,15 +732,15 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         const exitCode = result.unresolvedCompare ? UNRESOLVED_COMPARE_EXIT : 0;
         console.log("\n===== SUMMARY =====\n");
         console.log(formatSummary(result.summary));
-        await finish({ exitCode, error: null });
+        await finish({ exitCode, failed: false });
       } else {
-        await finish({ exitCode: result.exitCode, error: new Error(result.reason) });
+        await finish({ exitCode: result.exitCode, error: new Error(result.reason), failed: true });
       }
     } catch (err) {
       if (readProp(err, "isCanceled")) {
-        await finish({ exitCode: 130, error: new Error("Interrupted by SIGINT") });
+        await finish({ exitCode: 130, error: new Error("Interrupted by SIGINT"), failed: true });
       } else {
-        await finish({ exitCode: 1, error: err });
+        await finish({ exitCode: 1, error: err, failed: true });
       }
     }
   } finally {
