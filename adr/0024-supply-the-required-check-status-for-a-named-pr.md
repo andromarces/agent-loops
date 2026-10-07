@@ -1,14 +1,14 @@
-# 0011. Supply the required-check status to the reviewer from the runtime
+# 0024. Supply the required-check status to the reviewer for every run that names a PR
 
 ## Status
 
-superseded
+accepted
 
-Superseded by [ADR 0024: Supply the required-check status to the reviewer for every run that names a PR](0024-supply-the-required-check-status-for-a-named-pr.md). ADR 0024 restates the decisions of this ADR that still hold and replaces the `--pr` keying of the read (decision 2) with the PR a run names through `--pr` or a headless `--require-ci`.
+Supersedes [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md). The decisions of ADR 0011 that still hold are restated below. One changes: a headless run that takes only `--require-ci <pr>` now reads and supplies the status, where ADR 0011 keyed the read on `--pr` alone. It also narrows [ADR 0013](0013-bound-the-headless-required-check-wait.md) decision 6, which stays `accepted` (item 15).
 
 ## Date
 
-2026-09-28
+2026-10-07
 
 ## Context
 
@@ -30,6 +30,16 @@ there: supply the status to each reviewer prompt when the run carries a PR
 input, and report the status the runtime read so a parent can compare it with
 the reviewer `Checks` line.
 
+ADR 0011 keyed that read on `--pr`, so a headless run that takes `--require-ci
+<pr>` without `--pr` knew the PR number and supplied no status. Its reviewer
+depended on its own `gh` read, which a sandboxed Codex reviewer cannot make:
+`gh pr checks 418 --required` exits 1 with `error connecting to api.github.com`
+under `sandbox_mode="read-only"`. Issue #350 asks whether the runtime supplies the
+status for that PR or whether the docs tell the operator to add `--pr`. Supplying
+it reverses the explicit no-read decision of ADR 0011 item 2, which materially
+changes that decision, so this ADR supersedes ADR 0011 and restates the
+decisions that still hold.
+
 ## Decision
 
 1. A run that declares a PR reads the required-check status for the reviewed
@@ -39,12 +49,13 @@ the reviewer `Checks` line.
    per-context judgment (`evaluateContext`). It reads the pull request once,
    then the repository, the rulesets, the classic protection, and the check runs
    and commit statuses of `commits/{head}` for the reviewed head (item 4).
-2. The read is keyed on `--pr`, which is the PR input both paths know at
-   dispatch. A run that declares no PR reads nothing. A headless run that takes
-   only `--require-ci` and declares no `--pr` reads nothing, because the gate
-   flag is not the declared PR input. Every prompt statement about the supplied
-   read is therefore conditional on `--pr`: a gated run that declares no PR gets
-   the gate claim without any statement about a status read, because the runtime
+2. The read is keyed on the PR that the run names before its first turn: `--pr`,
+   or `--require-ci <pr>` when a headless run declares no `--pr`. The headless
+   CLI refuses a `--pr` and a `--require-ci` that name different PRs, so the two
+   never conflict. A run that names no PR reads nothing. The interactive path
+   receives `--require-ci` only at `finish`, so only `--pr` keys it there. Every
+   prompt statement about the supplied read is conditional on a named PR: a run
+   with neither flag gets no statement about a status read, because the runtime
    makes none and the prompt must not describe a read that never happens.
 3. A status is reported only for the head it describes. The read compares the
    resolved PR head with the local reviewed head, which the runtime already has
@@ -96,8 +107,9 @@ checks`, which reports no commit and could not separate that case.
    PR and the status. The second states that the reviewer keeps its own read as
    the fallback, is preferred when the supplied status is unresolved, and any
    difference between the two goes in `Checks`. `docs/orchestrator-instructions.md`
-   and the headless orchestrator prompt state the rule in the same words, and a
-   test reads both to keep them from drifting.
+   and the headless orchestrator prompt state the rule in the same words where
+   the prompt states it (item 13), and a test reads both to keep them from
+   drifting.
 10. The reviewer's own read is never removed. The supplied status is evidence for
     one turn, not a gate: it is a pre-turn snapshot, so a check that starts or
     finishes later is not in it.
@@ -113,13 +125,32 @@ checks`, which reports no commit and could not separate that case.
     A result with no read carries no `prChecks` field, so a turn that made no
     read cannot be read as one that did. The `turns` entry keeps the fixed shape
     ADR 0008 defines, so the status is not recorded there.
-13. The prompt wording a run does not need stays unchanged. A run that declares
-    no PR gets the `origin/main` lines verbatim, including the gate line that
-    calls the gate the only check read, because that run makes no supplied read
-    and the qualification would describe one. Only a declared run's lines are
-    reworded, so the rewording cannot reach a run this decision does not touch.
+13. The prompt wording a run does not need stays unchanged. A run that names no
+    PR carries no gate lines at all, because the gate lines render only for a
+    gated run. The runtime reads the status for every run that names a PR, but
+    the headless orchestrator prompt states the supplied read in one branch
+    only: the run where neither the orchestrator CLI nor the reviewer CLI can
+    read the checks from a shell command (`requiredCheckWait` returns `gate`).
+    That branch gets the reworded lines for the named PR. The other two
+    branches, where the orchestrator waits itself (`wait`) or only the reviewer
+    CLI can read (`reviewer`), keep their lines and state no supplied read. A
+    `copilot` orchestrator is never in the `wait` branch (ADR 0013, #495), so
+    in a gate-only run its `gate` line states both its true limit, the refusal
+    of `agent-loop role wait-checks` without approval, and the supplied read.
+    In every branch the reviewer prompt carries the supplied-status lines whenever
+    the runtime read a status.
 14. `--require-ci` stays the enforcement point. The supplied status changes no
     gate condition and no refusal.
+15. **Narrowing of ADR 0013 decision 6.** ADR 0013 decision 6 and its matching
+    Consequences statement say that, when no wait is named, the `--require-ci`
+    gate is the only check read. For a run that names a PR, that statement now
+    reads: the gate is the only read that enforces, and the runtime adds the
+    advisory read of this ADR before each reviewer turn. The runtime read does
+    not depend on the prompt naming a wait, so a gate-only run with a turn
+    `--timeout` under 12 seconds, or with a refused path character, also
+    supplies the status to its reviewer. ADR 0013 stays `accepted`: its wait
+    bound, its command, and its refusal to wait when no bound fits all hold. Its
+    two statements carry a forward pointer to this ADR.
 
 ## Consequences
 
@@ -143,9 +174,12 @@ checks`, which reports no commit and could not separate that case.
 - The status is a point-in-time read, taken before the turn. A check that starts
   or finishes after it is not reflected, which is why the reviewer keeps its own
   read and reports a difference.
-- A run that declares no PR gains nothing and loses nothing: the reviewer's own
+- A run that names no PR gains nothing and loses nothing: the reviewer's own
   read is the only read, as before.
-- A declared-PR run whose reviewer CLI can reach the network now reads the status
+- A headless run that takes only `--require-ci <pr>` reads the status too, so a
+  sandboxed reviewer in that run sees it (issue #350). ADR 0011 left that run
+  with the reviewer's own read only.
+- A run that names a PR, whose reviewer CLI can reach the network now reads the status
   twice, once in the runtime and once in the reviewer. The prompt tells the
   reviewer to report the supplied status rather than read again, so the second
   read happens only when the reviewer needs the fallback.
@@ -182,6 +216,13 @@ checks`, which reports no commit and could not separate that case.
 9. **Rebuild the required-name source for the read**: the read would drift from
    the gate. Rejected; the read calls the gate's `requiredContexts` and
    `evaluateContext`.
+10. **Tell the operator to add `--pr` to a gate-only run**: the docs and prompt
+    would carry the instruction and the runtime would stay unchanged. Rejected;
+    the PR number is already a run input, and the runtime reads the same status
+    for it with one changed expression.
+11. **Amend ADR 0011 in place**: item 2 states the no-read decision for a
+    gate-only run in terms. Reversing it is a material change, so the repository
+    ADR rules require a new ADR and a `superseded` status. Rejected.
 
 ## Authors
 
@@ -189,11 +230,15 @@ Andro Marces
 
 ## Links
 
+- Supersedes [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md)
+- [Issue #350: Supply the required-check status for a headless --require-ci run without --pr](https://github.com/andromarces/agent-loops/issues/350)
+- [Pull Request #554](https://github.com/andromarces/agent-loops/pull/554)
 - [Issue #320: Put the runtime-read required-check status into each reviewer prompt when the run has a PR input](https://github.com/andromarces/agent-loops/issues/320)
 - [Issue #313: Show required-check status to the reviewer before it accepts a PR head](https://github.com/andromarces/agent-loops/issues/313)
 - [Issue #302: Require a PR input on every run so an omitted unresolvedCompare marker cannot read as verified](https://github.com/andromarces/agent-loops/issues/302)
 - Implementation: `readRequiredChecks` in `src/lib/ci-gate.mjs`, `runtimeReadLines` in `src/prompts/reviewer.mjs`, the read and the `prChecks` result field in `runChild` in `src/runtime.mjs`, the dispatch wiring and the `prChecks` envelope field in `src/role.mjs`; tests in `tests/lib/ci-gate.test.mjs`, `tests/prompts/reviewer.test.mjs`, `tests/runtime.test.mjs`, and `tests/role.dispatch.test.mjs`; documented in `docs/orchestrator-instructions.md` and `README.md`
+- [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md), the superseded decision
 - [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md)
+- [ADR 0013: Bound the headless required-check wait with the runtime wait](0013-bound-the-headless-required-check-wait.md), narrowed by item 15
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
-- Superseded by [ADR 0024: Supply the required-check status to the reviewer for every run that names a PR](0024-supply-the-required-check-status-for-a-named-pr.md)
 - [ADR Index](README.md)

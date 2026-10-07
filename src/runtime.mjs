@@ -121,17 +121,14 @@ export async function runChild(options) {
   const workerFinalPrompt = isWorker ? workerPrompt(prompt, role.sessionId === null) : null;
 
   /**
-   * Reads the required-check status a declared-PR run supplies to the reviewer,
-   * using the pre-turn snapshot head as the local head, and its `clean` flag so a
+   * Reads the required-check status a PR-bearing run supplies to the reviewer,
+   * for the declared `--pr` or, when none is declared, the `--require-ci` PR
+   * (#350), using the pre-turn snapshot head as the local head, and its `clean` flag so a
    * pass is withheld for a tree the finish gate refuses. A failed read, a
    * mismatched head, and a stalled read are all an unresolved status rather than
    * a turn failure, and the reviewer keeps its own read as the fallback
    * (issue #320). The status covers the PR head on GitHub, so it is evidence
    * for the reviewer, not a gate.
-   *
-   * known-limit: a headless run that takes only `--require-ci` and declares no
-   * `--pr` reads no status, because `pr` is the PR input both paths know at
-   * dispatch. The reviewer's own read stays the source there.
    */
   const readStatus = async ({ head, clean }) => {
     if (roleName !== "reviewer" || pr === null) {
@@ -596,10 +593,11 @@ export async function runLoop(options) {
         timeout,
         signal,
         stepsUsed,
-        // The declared PR is the run's PR input, so it is known before the turn and
-        // supplies the reviewer with the required-check status (#320). A run with no
-        // declaration reads nothing, and the reviewer keeps its own read.
-        pr,
+        // The declared PR, or the gated PR when none is declared, is known before
+        // the turn and supplies the reviewer with the required-check status (#320,
+        // #350). A run with neither reads nothing, and the reviewer keeps its own
+        // read. The CLI refuses a `--pr` and a `--require-ci` that name different PRs.
+        pr: pr ?? requireCi,
         // The command text comes from the `--test-cmd` run input only (ADR 0017).
         testCmd:
           testCmdText === null

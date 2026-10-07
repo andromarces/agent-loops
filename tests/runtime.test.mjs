@@ -2374,7 +2374,7 @@ test("following a --require-ci refusal prompt reaches exit 0", async () => {
     // The gate refusal: the prompt names a worker turn, and the reviewer turn
     // after it re-establishes the reviewed state the gate reads.
     const head = (await snapshot(repo)).head;
-    const gateHead = { current: OTHER_HEAD };
+    const gateWork = scripted(["worker changed", "worker pushed the change"]);
     const gateOrch = scripted([
       JSON.stringify({ action: "run_worker", prompt: "work" }),
       JSON.stringify({ action: "run_reviewer", prompt: "review" }),
@@ -2390,20 +2390,14 @@ test("following a --require-ci refusal prompt reaches exit 0", async () => {
       requireAccept: true,
       requireCi: 42,
       // The PR head matches the reviewed commit only after the second worker
-      // turn, which is the recovery the prompt named.
-      gh: async (args) => {
-        const readsHead = equalsArgs(args, prViewArgs(42));
-        const answer = ciGateGh(readsHead ? gateHead.current : head);
-        const result = await answer(args);
-        if (readsHead) {
-          gateHead.current = head;
-        }
-        return result;
-      },
+      // turn, which is the recovery the prompt named. The reviewer's status read
+      // calls gh too, so the answer follows the worker turns, not the call count.
+      gh: (args, cwd, options) =>
+        ciGateGh(gateWork.recorded.length < 2 ? OTHER_HEAD : head)(args, cwd, options),
       roles: gateRoles(),
       agents: {
         orch: gateOrch,
-        work: scripted(["worker changed", "worker pushed the change"]),
+        work: gateWork,
         rev: scripted([REVIEW_ACCEPT, REVIEW_ACCEPT]),
       },
     });
@@ -3242,6 +3236,46 @@ test("a declared PR supplies the runtime-read required-check status to the revie
     expect(result.exitCode).toBe(0);
     expect(rev.recorded[0].prompt).toContain("ci (ubuntu-latest)");
     expect(rev.recorded[0].prompt).toContain("42");
+    const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer");
+    expect(reviewed.result.prChecks).toMatchObject({ pr: 42, status: "failing" });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a headless run that takes only `--require-ci <pr>` supplies
+// the status for that PR to the reviewer, because a sandboxed reviewer cannot make
+// the read itself and the PR number is already a run input (issue #350).
+test("a gate-only run supplies the required-check status for the gated PR", async () => {
+  const repo = await createTempRepo();
+  try {
+    const head = (await snapshot(repo)).head;
+    const rev = scripted([REVIEW_ACCEPT]);
+    const events = [];
+
+    const result = await runLoop({
+      task: "Review the change on PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: (args, cwd, options) =>
+        reviewerReadGh(head, [
+          rev.recorded.length === 0 ? { ...PASSING_RUN, conclusion: "failure" } : PASSING_RUN,
+        ])(args, cwd, options),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work: scripted([]),
+        rev,
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(rev.recorded[0].prompt).toContain("ci (ubuntu-latest)");
     const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer");
     expect(reviewed.result.prChecks).toMatchObject({ pr: 42, status: "failing" });
   } finally {
