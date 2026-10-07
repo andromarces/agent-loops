@@ -547,6 +547,13 @@ test("requiredCheckWait reports the rule per orchestrator and reviewer CLI", () 
   // The codex read-only sandbox blocks network, so a codex turn cannot read.
   expect(rule("codex", "claude")).toBe("reviewer");
   expect(rule("codex", "codex")).toBe("gate");
+  // A copilot turn refuses `role wait-checks` but runs `gh pr checks` (#432 probe),
+  // so a copilot orchestrator cannot wait and a copilot reviewer still reads (#495).
+  expect(rule("copilot", "claude")).toBe("reviewer");
+  expect(rule("copilot", "copilot")).toBe("reviewer");
+  expect(rule("copilot", "codex")).toBe("gate");
+  expect(rule("claude", "copilot")).toBe("wait");
+  expect(rule("codex", "copilot")).toBe("reviewer");
   // An unnamed CLI on either role cannot read the checks.
   expect(rule("codex", null)).toBe("gate");
   expect(requiredCheckWait({ requireCi: null, orchestratorKind: "claude" })).toBeNull();
@@ -570,7 +577,7 @@ const gatedPrompt = (orchestratorKind, reviewerKind = "claude") =>
 // rules the parent can act on separately, for every orchestrator CLI whose
 // read-only turn can read the checks (issue #319).
 test("initialPrompt states the required-check wait at the reviewer and at finish", () => {
-  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
+  for (const kind of ["claude", "agy", "opencode"]) {
     const lines = gatedPrompt(kind).split("\n");
     const beforeReviewer = lines.find(
       (line) => /dispatch the reviewer/i.test(line) && /wait/i.test(line),
@@ -588,7 +595,7 @@ test("initialPrompt states the required-check wait at the reviewer and at finish
 // the finish summary, because the --require-ci gate refuses a finish while a
 // required check is pending, so the run must wait, re-review, or abort (issue #319).
 test("the pending-check wait point does not put a pending check in a finish summary", () => {
-  for (const kind of ["claude", "agy", "opencode", "copilot"]) {
+  for (const kind of ["claude", "agy", "opencode"]) {
     const line = gatedPrompt(kind)
       .split("\n")
       .find((entry) => /finish/i.test(entry) && /pending/i.test(entry) && /wait/i.test(entry));

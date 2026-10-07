@@ -809,7 +809,7 @@ Selective MCP write denial, decided per adapter:
 
 Codex needs no shell denial. The Codex connector path stays unverified. The `copilot` shell refusal is a default of the CLI version above and of a configuration without a tool allow list, so a user allow list can restore it. The rule stays advisory on `claude`, `agy`, and `opencode`, and a parent that needs enforcement must run those CLIs in a sandbox with no credential for the remote.
 
-The `copilot` result conflicts with the headless wait design in one place. The runtime lists `copilot` as an orchestrator that waits (`NETWORKED_READ_ONLY_ORCHESTRATORS`), and the orchestrator prompt tells it to run `role wait-checks`. The probe found that command refused, while `gh pr checks` ran. A reviewer turn on `copilot` can still read the required checks. The design is unchanged here, and whether a `copilot` orchestrator can wait is unresolved.
+The `copilot` result decides the headless wait (#495). The runtime does not give a `copilot` orchestrator the `wait` mode, because the probe found `role wait-checks` refused while `gh pr checks` ran. A `copilot` orchestrator gets the `reviewer` rule when the reviewer CLI keeps shell network, and the `gate` rule otherwise. A `copilot` reviewer still reads the required checks with `gh pr checks`.
 
 ## Continue a run
 

@@ -7,14 +7,17 @@ import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.m
 // for interactive parents (#56); this headless prompt states the same rules in
 // JSON-action form, including the completion rule. Keep the two consistent when
 // either changes.
-// Orchestrator CLIs whose read-only turn keeps shell network access, so the turn
-// itself can read the required checks. The reviewer turn is read-only under the
-// same flag, so this one set decides the read for both roles. The `codex`
-// read-only sandbox blocks the network of the shell commands it runs, so a codex turn cannot read
-// the checks through one; an
-// unknown CLI is treated the same way, because a wait it cannot perform costs a
-// run.
-const NETWORKED_READ_ONLY_ORCHESTRATORS = new Set(["claude", "agy", "opencode", "copilot"]);
+// CLIs whose read-only turn keeps shell network access, so a reviewer turn on
+// one can read the required checks with `gh pr checks`. The `codex` read-only
+// sandbox blocks the network of the shell commands it runs, so a codex turn
+// cannot read the checks through one. An unknown CLI is treated the same way,
+// because a wait it cannot perform costs a run.
+const NETWORKED_READ_ONLY_CLIS = new Set(["claude", "agy", "opencode", "copilot"]);
+// The subset that can also run `role wait-checks`. A `copilot` turn refuses that
+// command with `Permission denied because no interactive user response was
+// available` while `gh pr checks` runs (#432 probe, #495), so a `copilot`
+// orchestrator cannot wait and gets the reviewer or gate rule instead.
+const WAITING_ORCHESTRATORS = new Set(["claude", "agy", "opencode"]);
 
 /**
  * Reports which required-check read a headless run can perform. The two role
@@ -25,8 +28,8 @@ const NETWORKED_READ_ONLY_ORCHESTRATORS = new Set(["claude", "agy", "opencode", 
  */
 export function requiredCheckWait({ requireCi, orchestratorKind, reviewerKind }) {
   if (requireCi === null) return null;
-  if (NETWORKED_READ_ONLY_ORCHESTRATORS.has(orchestratorKind)) return "wait";
-  return NETWORKED_READ_ONLY_ORCHESTRATORS.has(reviewerKind) ? "reviewer" : "gate";
+  if (WAITING_ORCHESTRATORS.has(orchestratorKind)) return "wait";
+  return NETWORKED_READ_ONLY_CLIS.has(reviewerKind) ? "reviewer" : "gate";
 }
 
 /**
