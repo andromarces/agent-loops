@@ -68,10 +68,11 @@ function parseFlags(argv) {
   return options;
 }
 
-function resolveSelection(token, discovered) {
+// A number resolves against the menu positions that selectHarnesses prints,
+// not against the preselected list.
+function resolveSelection(token) {
   if (/^\d+$/.test(token)) {
-    const index = Number(token) - 1;
-    const harness = discovered[index];
+    const harness = HARNESS_ORDER[Number(token) - 1];
     if (!harness) {
       throw new Error(`No harness at position ${token}.`);
     }
@@ -100,7 +101,7 @@ async function selectHarnesses(discovered) {
       ...new Set(
         answer
           .split(",")
-          .map((part) => resolveSelection(part.trim(), discovered))
+          .map((part) => resolveSelection(part.trim()))
           .filter(Boolean),
       ),
     ];

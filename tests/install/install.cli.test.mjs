@@ -7,6 +7,12 @@ import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install
 import { restoreAgentLoopHome } from "../runtime-helpers.mjs";
 import { makeHome, cleanupHomes } from "./install-helpers.mjs";
 
+// The interactive prompt reads its answer from this stub instead of a terminal.
+const prompt = vi.hoisted(() => ({ answer: "" }));
+vi.mock("node:readline/promises", () => ({
+  createInterface: () => ({ question: async () => prompt.answer, close() {} }),
+}));
+
 afterEach(cleanupHomes);
 
 // Usefulness: verifies the CLI wiring — `install --dry-run` returns success
@@ -352,3 +358,49 @@ test.each([
     process.exitCode = 0;
   }
 });
+
+// Usefulness: acceptance (#539) — a number selects the harness the menu prints at that
+// position whatever is detected, and a number outside the menu fails. Detection is empty here
+// (PATH holds no CLI), so a number resolved against the detected list would fail instead.
+test.each([
+  ["2", { codex: true, claude: false }, undefined],
+  ["1,2", { codex: true, claude: true }, undefined],
+  ["6", { codex: false, claude: false }, "No harness at position 6."],
+  ["0", { codex: false, claude: false }, "No harness at position 0."],
+])(
+  "CLI install resolves the answer %s against the menu positions",
+  async (answer, installed, failure) => {
+    const home = await makeHome();
+    process.env.AGENT_LOOP_HOME = home;
+    const originalPath = process.env.PATH;
+    const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const originalLog = console.log;
+    const originalError = console.error;
+    console.log = () => {};
+    console.error = () => {};
+    process.env.PATH = home;
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    prompt.answer = answer;
+    try {
+      process.exitCode = 0;
+      const outcome = await cliMain(["install"]).then(
+        () => undefined,
+        (error) => error.message,
+      );
+      expect(outcome).toBe(failure);
+      expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(installed.codex);
+      expect(existsSync(join(home, ".claude", "settings.json"))).toBe(installed.claude);
+    } finally {
+      console.log = originalLog;
+      console.error = originalError;
+      process.env.PATH = originalPath;
+      if (ttyDescriptor) {
+        Object.defineProperty(process.stdin, "isTTY", ttyDescriptor);
+      } else {
+        delete process.stdin.isTTY;
+      }
+      restoreAgentLoopHome();
+      process.exitCode = 0;
+    }
+  },
+);
