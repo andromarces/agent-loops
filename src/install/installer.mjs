@@ -647,54 +647,23 @@ async function runInstall({
     throw err;
   }
 
-  if (harnesses.includes("codex")) {
-    reports.push({
-      harness: "codex",
-      kind: "settings",
-      action: "note",
-      path: join(home, ".codex", "hooks.json"),
-      detail:
-        "The agent-loop parent guard stays inactive in Codex until the hook is trusted. " +
-        "The hook is the PreToolUse entry in ~/.codex/hooks.json with the status message " +
-        '"Checking parent orchestration guard". Its command runs parent-guard.mjs. ' +
-        "Run /hooks in Codex. " +
-        "Trust that entry. " +
-        "A changed hook command needs a new trust step.",
-    });
-    if (!dryRun) {
+  // Codex notes precede Claude notes whatever order the harnesses were selected in.
+  for (const harness of [...HARNESS_ORDER].reverse()) {
+    if (!harnesses.includes(harness)) {
+      continue;
+    }
+    for (const note of HARNESS_META[harness].notes ?? []) {
+      if (dryRun && !note.dryRun) {
+        continue;
+      }
       reports.push({
-        harness: "codex",
+        harness,
         kind: "settings",
         action: "note",
-        path: join(home, ".agents", "skills"),
-        detail:
-          "The Codex skill lives in the shared ~/.agents/skills directory, which " +
-          "GitHub Copilot CLI and OpenCode also discover. The skill sets " +
-          "`metadata.opencode/autoinvoke: false`, so OpenCode drops it from the " +
-          "model's skill list and the OpenCode plugin command owns /agent-loop. " +
-          "The skill also runs the installed CLI by absolute path with " +
-          "`harness-check codex`. It starts only when the nearest harness above the " +
-          "shell is Codex CLI. It stops for any other harness, and when the check " +
-          "cannot run or finds no harness ancestor.",
+        path: join(home, ...note.path),
+        detail: note.detail,
       });
     }
-  }
-
-  if (harnesses.includes("claude") && !dryRun) {
-    reports.push({
-      harness: "claude",
-      kind: "settings",
-      action: "note",
-      path: join(home, ".claude", "skills"),
-      detail:
-        "OpenCode also discovers ~/.claude/skills, so it lists the Claude skill " +
-        "to the model. The skill sets `metadata.opencode/autoinvoke: false`, so " +
-        "OpenCode drops it from the model's skill list and the OpenCode plugin " +
-        "command owns /agent-loop. The skill also runs the installed CLI by absolute " +
-        "path with `harness-check claude`. It starts only when the nearest harness " +
-        "above the shell is Claude Code. It stops for any other harness, and when " +
-        "the check cannot run or finds no harness ancestor.",
-    });
   }
 
   if (!dryRun) {
