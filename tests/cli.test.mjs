@@ -914,10 +914,16 @@ test("orchestrator failure writes transcript with exitCode 1", async () => {
 });
 
 // Usefulness: acceptance (#537) — a falsy value thrown by the orchestrator still fails the run with
-// a non-null transcript error and a stderr error line, so a failed run never reads as error-free.
-test.each([null, undefined, 0, false, ""])(
+// a non-null transcript error and a visible non-empty stderr error line, so a failed run never reads as error-free.
+test.each([
+  [null, "null"],
+  [undefined, "undefined"],
+  [0, "0"],
+  [false, "false"],
+  ["", "Run failed with an empty error message."],
+])(
   "orchestrator that throws %j records a transcript error and prints an error line",
-  async (thrown) => {
+  async (thrown, expectedText) => {
     const repo = await createTempRepo();
     const transcriptPath = join(repo, "transcript.json");
     const origExitCode = process.exitCode;
@@ -954,8 +960,8 @@ test.each([null, undefined, 0, false, ""])(
       expect(process.exitCode).toBe(1);
       const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
       expect(transcript.exitCode).toBe(1);
-      expect(transcript.error).toBe(String(thrown));
-      expect(errorSpy).toHaveBeenLastCalledWith(`\n${String(thrown)}`);
+      expect(transcript.error).toBe(expectedText);
+      expect(errorSpy).toHaveBeenLastCalledWith(`\n${expectedText}`);
     } finally {
       process.exitCode = origExitCode;
       errorSpy.mockRestore();

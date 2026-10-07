@@ -637,8 +637,12 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   let fatalTestRun = null;
 
   // `failed` is explicit, because a thrown value can be falsy (null, 0, "") and must still record.
-  const finish = async ({ exitCode, error, failed = true }) => {
-    const errorText = failed ? redactedText(readProp(error, "message") ?? error) : null;
+  // An empty error text gets a fallback so a failed run never records or prints a blank error.
+  const finish = async ({ exitCode, error, failed }) => {
+    const errorText = failed
+      ? redactedText(readProp(error, "message") ?? error) ||
+        "Run failed with an empty error message."
+      : null;
     transcriptData.exitCode = exitCode;
     transcriptData.error = errorText;
     await writeTranscript();
@@ -663,7 +667,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     try {
       await assertGitWorkTree(options.cwd);
     } catch (err) {
-      await finish({ exitCode: 1, error: err });
+      await finish({ exitCode: 1, error: err, failed: true });
       return;
     }
 
@@ -730,13 +734,13 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         console.log(formatSummary(result.summary));
         await finish({ exitCode, failed: false });
       } else {
-        await finish({ exitCode: result.exitCode, error: new Error(result.reason) });
+        await finish({ exitCode: result.exitCode, error: new Error(result.reason), failed: true });
       }
     } catch (err) {
       if (readProp(err, "isCanceled")) {
-        await finish({ exitCode: 130, error: new Error("Interrupted by SIGINT") });
+        await finish({ exitCode: 130, error: new Error("Interrupted by SIGINT"), failed: true });
       } else {
-        await finish({ exitCode: 1, error: err });
+        await finish({ exitCode: 1, error: err, failed: true });
       }
     }
   } finally {
