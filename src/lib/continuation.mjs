@@ -97,8 +97,9 @@ export function restoreSessions(roles, earlier, cwd) {
  * Refuses a continuation when the model a CLI resolves now differs from the one the earlier run
  * recorded in `resolvedModel` (#394, ADR 0026). The transcript holds the requested model, and an
  * omitted model or an alias resolves inside the CLI, so a changed CLI default or alias target is
- * visible only in the output. `resolvedModel` holds the state of the latest successful turn of the
- * role: a model id, `null` (unresolved: that turn named no single model), or absent (not reported:
+ * visible only in the output. `resolvedModel` holds the state of the latest turn of the role that
+ * ran, failed or not, for the session the role keeps: a model id, `null` (unresolved: that turn named
+ * no single model, or its output was not the kept session), or absent (not reported:
  * a CLI that never reports a model, or a record written before this change).
  * Only a recorded model id is compared. For it, `probe` runs one read-only turn in a new session
  * (never the continued one), before any turn of the run, and sets `resolvedModel` on the state it

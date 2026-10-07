@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vite-plus/test";
 import { runClaude } from "../../src/agents/claude.mjs";
 import { exec } from "../../src/lib/exec.mjs";
+import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
 import { runChild } from "../../src/runtime.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
@@ -449,14 +450,101 @@ test("claude marks the record unresolved after an exit 0 whose output does not p
   expect(state.resolvedModel).toBeNull();
 });
 
-test("claude records the model of an exit 0 turn that then fails a session check", async () => {
+// Usefulness: the record describes the session the role keeps. A session that cannot be established
+// from the output (no session_id) may have run on any model, so the record is unresolved even when the
+// output names one.
+test("claude marks the record unresolved when the output names no session", async () => {
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: JSON.stringify({ result: "ok", modelUsage: { "claude-opus-5-6": {} } }),
     stderr: "",
   });
   const state = failedState();
   await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("session_id");
-  expect(state.resolvedModel).toBe("claude-opus-5-6");
+  expect(state.resolvedModel).toBeNull();
+});
+
+const namingB = (sessionId) => ({
+  session_id: sessionId,
+  result: "ok",
+  modelUsage: { "claude-opus-5-6": {} },
+});
+
+// Usefulness: reported outcome. A resumed turn whose output is another session naming B keeps the
+// original session id, so the record must not become B (a continuation would refuse A and accept B
+// against the session the role keeps). The record is unresolved, so a continuation compares nothing.
+test("claude does not record the model of a session the role does not keep", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: JSON.stringify(namingB("s-other")), stderr: "" });
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow("did not resume");
+  expect(state.sessionId).toBe("s-kept");
+  expect(state.resolvedModel).toBeNull();
+
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    for (const now of ["claude-opus-5-5", "claude-opus-5-6"]) {
+      const roles = {
+        orchestrator: { kind: "codex", model: null, effort: null, resolvedModel: undefined },
+        worker: { ...state, resolvedModel: state.resolvedModel },
+        reviewer: { kind: "agy", model: null, effort: null, resolvedModel: undefined },
+      };
+      const probe = vi.fn(async (probed) => {
+        probed.resolvedModel = now;
+      });
+      await expect(verifyResolvedModels(roles, { probe })).resolves.toBeUndefined();
+      expect(probe).not.toHaveBeenCalled();
+    }
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+  }
+});
+
+// Usefulness: a resumed turn that reports the retained session records its model, and a first turn
+// records the session it adopts.
+test("claude records the model of the retained or adopted session", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: JSON.stringify(namingB("s-kept")), stderr: "" });
+  const resumed = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(resumed, "p", { cwd: "/path" });
+  expect(resumed.resolvedModel).toBe("claude-opus-5-6");
+
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: JSON.stringify(namingB("s-new")), stderr: "" });
+  const first = failedState();
+  await runClaude(first, "p", { cwd: "/path" });
+  expect(first.sessionId).toBe("s-new");
+  expect(first.resolvedModel).toBe("claude-opus-5-6");
+});
+
+// Usefulness: the same session rule holds on a failed turn: only evidence of the kept session records,
+// and a failed output with no session, or another one, is unresolved.
+test.each([
+  ["the retained session", "s-kept", "claude-opus-5-6"],
+  ["another session", "s-other", null],
+  ["no session", undefined, null],
+])("claude failed turn that reports %s", async (_label, reported, expected) => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    execFailure({ stdout: JSON.stringify({ ...namingB(reported) }) }),
+  );
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await expect(runClaude(state, "p", { cwd: "/path" })).rejects.toThrow();
+  expect(state.sessionId).toBe("s-kept");
+  expect(state.resolvedModel).toBe(expected);
+});
+
+test("claude failed first turn records the model only with the session it adopts", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(execFailure({ stdout: JSON.stringify(namingB("s-new")) }));
+  const adopted = failedState();
+  await expect(runClaude(adopted, "p", { cwd: "/path" })).rejects.toThrow();
+  expect(adopted.sessionId).toBe("s-new");
+  expect(adopted.resolvedModel).toBe("claude-opus-5-6");
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    execFailure({ stdout: JSON.stringify(namingB(undefined)) }),
+  );
+  const none = failedState();
+  await expect(runClaude(none, "p", { cwd: "/path" })).rejects.toThrow();
+  expect(none.sessionId).toBeNull();
+  expect(none.resolvedModel).toBeNull();
 });
 
 // Usefulness: a process that never started ran no model, so the record stays: a spawn failure leaves

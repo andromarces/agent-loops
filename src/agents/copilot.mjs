@@ -5,11 +5,11 @@ import { logWarn } from "../lib/log.mjs";
 import {
   asSessionId,
   childRan,
+  recordResolvedModel,
   keepFailedSessionId,
   lastClosingMessage,
   resumeMismatchError,
   setMainLoopUsage,
-  setResolvedModel,
 } from "./shared.mjs";
 
 export async function runCopilot(state, prompt, options = {}) {
@@ -40,9 +40,16 @@ export async function runCopilot(state, prompt, options = {}) {
   } catch (error) {
     const failedEvents = parseJsonLines(error?.stdout ?? "");
     const failedResult = findResultEvent(failedEvents);
-    // The session ran on whatever the failed output names, or on an unknown model, so the record
-    // follows it unless the process never started.
-    if (childRan(error)) setResolvedModel(state, reportedModels(failedEvents));
+    // The kept session ran on whatever the failed output names for it, or on an unknown model, so
+    // the record follows that unless the process never started.
+    if (childRan(error)) {
+      recordResolvedModel(
+        state,
+        reportedModels(failedEvents),
+        requestedSessionId,
+        failedResult?.sessionId ?? failedResult?.session_id,
+      );
+    }
     setMainLoopUsage(state, objectUsage(failedResult));
     // Keep only an id the CLI reported. A failed turn that reports no id does not show that a
     // session holding the turn's content exists, and keeping the pre-assigned id would skip the
@@ -54,12 +61,13 @@ export async function runCopilot(state, prompt, options = {}) {
   }
 
   const events = parseJsonLines(stdout);
-  // Set before the checks below: a turn that fails them still ran on this model.
-  setResolvedModel(state, reportedModels(events));
   const resultEvent = findResultEvent(events);
   setMainLoopUsage(state, objectUsage(resultEvent));
 
   const returnedId = asSessionId(resultEvent?.sessionId ?? resultEvent?.session_id);
+  // Set before the checks below, so a turn that fails them records unresolved when its output is
+  // not the session the role keeps.
+  recordResolvedModel(state, reportedModels(events), requestedSessionId, returnedId);
   if (!returnedId) {
     throw new Error("Copilot did not return a session ID.");
   }

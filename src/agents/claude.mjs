@@ -3,10 +3,10 @@ import { exec } from "../lib/exec.mjs";
 import {
   asSessionId,
   childRan,
+  recordResolvedModel,
   flagMissingSession,
   keepFailedSessionId,
   resumeMismatchError,
-  setResolvedModel,
   setUsageOrDelete,
 } from "./shared.mjs";
 
@@ -54,9 +54,16 @@ export async function runClaude(state, prompt, options = {}) {
       failed = undefined;
     }
     setUsage(state, findResultEvent(failed));
-    // The session ran on whatever the failed output names, or on an unknown model, so the record
-    // follows it unless the process never started.
-    if (childRan(err)) setResolvedModel(state, reportedModels(findResultEvent(failed)));
+    // The kept session ran on whatever the failed output names for it, or on an unknown model, so
+    // the record follows that unless the process never started.
+    if (childRan(err)) {
+      recordResolvedModel(
+        state,
+        reportedModels(findResultEvent(failed)),
+        requestedSessionId,
+        findSessionId(failed),
+      );
+    }
     keepFailedSessionId(state, findSessionId(failed));
     flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
@@ -65,14 +72,14 @@ export async function runClaude(state, prompt, options = {}) {
   try {
     parsed = parseJson(stdout, "Claude Code");
   } catch (err) {
-    setResolvedModel(state, []);
+    recordResolvedModel(state, [], requestedSessionId, undefined);
     throw err;
   }
-  // Set before the session checks below: a turn that fails them still ran on this model.
   const resultEvent = findResultEvent(parsed);
-  setResolvedModel(state, reportedModels(resultEvent));
-
   const sessionId = findSessionId(parsed);
+  // Set before the session checks below, so a turn that fails them records unresolved when its
+  // output is not the session the role keeps.
+  recordResolvedModel(state, reportedModels(resultEvent), requestedSessionId, sessionId);
 
   if (!sessionId) {
     throw new Error("Claude Code did not return a session_id.");
