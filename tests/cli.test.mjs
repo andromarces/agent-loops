@@ -1605,29 +1605,35 @@ test("--continue-from resets when the transcript has no gate record", async () =
   expect(reviewerCalls).toBe(1);
 });
 
-// Usefulness: verifies a malformed value in the events the restore reads resets instead of
-// aborting the run (#393 review): a null reviewer response and a head that is not a string.
-test("--continue-from resets, and does not abort, on a malformed result event", async () => {
-  for (const edit of [
-    (result) => {
-      result.response = null;
+// Runs continueAfterEdit with `edit` applied to the last reviewer result event.
+async function continueAfterResultEdit(edit) {
+  return continueAfterEdit({
+    firstOrch: ACCEPTED_RUN,
+    reviewerReplies: [GATE_ACCEPT],
+    tamper: (transcript) => {
+      edit(transcript.events.findLast((e) => e.type === "result" && e.role === "reviewer").result);
     },
-    (result) => {
-      result.reviewed.head = { not: "a head" };
-    },
-  ]) {
-    const { exitCode, reviewerCalls } = await continueAfterEdit({
-      firstOrch: ACCEPTED_RUN,
-      reviewerReplies: [GATE_ACCEPT],
-      tamper: (transcript) => {
-        edit(
-          transcript.events.findLast((e) => e.type === "result" && e.role === "reviewer").result,
-        );
-      },
-    });
-    expect(exitCode).toBe(0);
-    expect(reviewerCalls).toBe(1);
-  }
+  });
+}
+
+// Usefulness: verifies a null reviewer response in the events the restore reads resets instead
+// of aborting the run (#393 review). One edit per test keeps each inside the test timeout (#556).
+test("--continue-from resets, and does not abort, on a null reviewer response", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterResultEdit((result) => {
+    result.response = null;
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
+});
+
+// Usefulness: verifies a reviewed head that is not a string resets instead of aborting the run
+// (#393 review). Separate from the null-response case so each fits the test timeout (#556).
+test("--continue-from resets, and does not abort, on a non-string reviewed head", async () => {
+  const { exitCode, reviewerCalls } = await continueAfterResultEdit((result) => {
+    result.reviewed.head = { not: "a head" };
+  });
+  expect(exitCode).toBe(0);
+  expect(reviewerCalls).toBe(1);
 });
 
 // Usefulness: verifies a changed role kind or model is refused before any turn

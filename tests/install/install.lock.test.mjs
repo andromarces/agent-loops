@@ -1,13 +1,22 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, sep } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
-import { manifestLockFile, manifestPath } from "../../src/install/manifest.mjs";
+import { installRoot, manifestLockFile, manifestPath } from "../../src/install/manifest.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
-import { PACKAGE_ROOT, makeHome, cleanupHomes, writeJson, readText } from "./install-helpers.mjs";
+import {
+  PACKAGE_ROOT,
+  makeHome,
+  trackHome,
+  cleanupHomes,
+  writeJson,
+  readText,
+} from "./install-helpers.mjs";
 
+const TEMP_VARS = ["TMPDIR", "TEMP", "TMP"];
 const lockFiles = [];
 
 afterEach(async () => {
@@ -120,6 +129,78 @@ test("equivalent install home spellings share one lock", async () => {
   expect(manifestLockFile(join(home, "."))).toBe(key);
   expect(manifestLockFile(relative(process.cwd(), home))).toBe(key);
   if (process.platform === "win32") {
-    expect(manifestLockFile(home.toUpperCase())).toBe(key);
+    expect(manifestLockFile(home.toUpperCase()).toLowerCase()).toBe(key.toLowerCase());
   }
+});
+
+// Usefulness: verifies #198 — a second install or uninstall that runs with a
+// different TMPDIR/TEMP than the first still contends on the one lock of the
+// install home, so a sandboxed harness cannot overwrite the first manifest record.
+test("install and uninstall contend across differing temp roots", async () => {
+  const home = await makeHome();
+  const otherRoot = await mkdtemp(join(tmpdir(), "agent-loop-other-temp-"));
+  trackHome(otherRoot);
+  let releaseFirst;
+  const firstHolds = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  let signalHolding;
+  const holding = new Promise((resolve) => {
+    signalHolding = resolve;
+  });
+  const write = async (path, ...rest) => {
+    signalHolding();
+    await firstHolds;
+    return writeTextAtomic(path, ...rest);
+  };
+
+  const first = install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT, write });
+  await holding;
+
+  const saved = Object.fromEntries(TEMP_VARS.map((name) => [name, process.env[name]]));
+  const errors = [];
+  try {
+    for (const name of TEMP_VARS) {
+      process.env[name] = otherRoot;
+    }
+    for (const run of [
+      () => install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT }),
+      () => uninstall({ home }),
+    ]) {
+      errors.push(
+        await run().then(
+          () => null,
+          (err) => err,
+        ),
+      );
+    }
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+  }
+  for (const error of errors) {
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/locked by a live process/);
+  }
+
+  releaseFirst();
+  await first;
+  expect(existsSync(manifestPath(home))).toBe(true);
+});
+
+// Usefulness: verifies #198 — the lock sits beside `<home>/.agent-loops`, not
+// inside it, and is released, so a full uninstall leaves the home empty.
+test("the lock lives beside the manifest directory and leaves the home empty after uninstall", async () => {
+  const home = await makeHome();
+  expect(manifestLockFile(home).startsWith(installRoot(home) + sep)).toBe(false);
+  expect(manifestLockFile(home).startsWith(home + sep)).toBe(true);
+  await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
+  expect(existsSync(manifestLockFile(home))).toBe(false);
+  await uninstall({ home });
+  expect(await readdir(home)).toEqual([]);
 });
