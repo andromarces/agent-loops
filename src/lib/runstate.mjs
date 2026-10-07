@@ -80,7 +80,8 @@ function stateRoot() {
   return override ? resolve(override) : join(tmpdir(), "agent-loops", "runs");
 }
 
-function cwdHash(cwd) {
+/** The key of the run in one work tree: the name of its state directory. */
+export function cwdHash(cwd) {
   return sha256(canonicalCwd(cwd)).slice(0, 12);
 }
 

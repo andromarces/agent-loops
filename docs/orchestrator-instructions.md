@@ -1006,11 +1006,14 @@ to GitHub Pro or make this repository public to enable this feature.`, was measu
   dispatch again. Otherwise call `abort` and report the unresolved condition.
   Never raise the budget on your own to avoid a stop the user set. A child
   role never runs `extend`, `finish`, or `abort`. Each subcommand refuses a
-  caller that holds `AGENT_LOOP_SPAWNED_ROLE`, which the runtime sets in the
-  environment of every worker and reviewer process. `extend` also refuses a call
-  whose `--parent-session` is missing or differs from the run's stored parent
+  caller whose `AGENT_LOOP_SPAWNED_RUN` equals the key of the run it acts on. The
+  runtime sets the variable, with the key of the dispatching run, in the
+  environment of every worker and reviewer process, and in no other process. A
+  parent session that another run's child started holds a different key and is not
+  refused. `extend` also refuses a call whose `--parent-session` is missing or differs from the run's stored parent
   session id. The id check alone does not identify the caller, so a child that
-  clears its environment passes. The prompt rule backs the marker.
+  clears its environment passes. A nested parent that works in the same work tree
+  as the child's run is refused. The prompt rule backs the marker.
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not
   abort and start a new run to gain steps: that starts every role on a new

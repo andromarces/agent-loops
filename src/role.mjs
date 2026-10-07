@@ -37,12 +37,13 @@ import {
   readProp,
   UNREADABLE_MESSAGE,
 } from "./lib/error-message.mjs";
-import { SPAWNED_ROLE_ENV } from "./lib/exec.mjs";
+import { SPAWNED_RUN_ENV } from "./lib/exec.mjs";
 import { copyLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
+  cwdHash,
   readState,
   statePaths,
   withStateLock,
@@ -59,7 +60,7 @@ const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "wait-check
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
-// Operations that end or extend a run. A process spawned for a role turn never runs them.
+// Operations that end or extend a run. A child process of that run never runs them.
 const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend"]);
 
 class RoleError extends Error {}
@@ -1107,8 +1108,8 @@ async function extend(args) {
     // The caller must pass the run's stored parent session id, the id the
     // parent-edit guard matches. The refusal does not name the stored id.
     // known-limit: the id check does not identify the caller. The spawn-time
-    // child marker refuses a child (executeRoleCommand), but a child that
-    // clears its environment passes both checks.
+    // run marker refuses a child of this run (executeRoleCommand), but a child
+    // that clears its environment passes both checks.
     if (args.parentSession !== state.parentSession) {
       throw new RoleError("--parent-session does not match the run's parent session.");
     }
@@ -1243,7 +1244,10 @@ async function withinBound(ms, work, message) {
  */
 export async function executeRoleCommand(args, deps = {}) {
   try {
-    if (RUN_ENDING_OPERATIONS.has(args.operation) && process.env[SPAWNED_ROLE_ENV]) {
+    if (
+      RUN_ENDING_OPERATIONS.has(args.operation) &&
+      process.env[SPAWNED_RUN_ENV] === cwdHash(args.cwd)
+    ) {
       throw new RoleError(
         `${args.operation} is refused for a child role; only the parent session runs it.`,
       );

@@ -2,7 +2,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ExecError, exec } from "../../src/lib/exec.mjs";
+import { ExecError, SPAWNED_RUN_ENV, exec } from "../../src/lib/exec.mjs";
 import { setVerbose } from "../../src/lib/log.mjs";
 import { pidAlive } from "../../src/lib/runstate.mjs";
 import { removePath } from "../runtime-helpers.mjs";
@@ -37,14 +37,16 @@ test("exec merges env into the inherited child environment", async () => {
   expect(result.stdout.trim()).toBe("set string");
 });
 
-// Usefulness: verifies a spawn for a role marks the child process, so `role extend`, `finish`,
-// and `abort` can refuse it, and a spawn with no role carries no marker (issue #392).
-test("exec marks a role spawn with the child role and leaves other spawns unmarked", async () => {
-  const script = "console.log(process.env.AGENT_LOOP_SPAWNED_ROLE || 'none')";
-  const marked = await exec(process.execPath, ["-e", script], { role: "worker" });
-  expect(marked.stdout.trim()).toBe("worker");
-  const plain = await exec(process.execPath, ["-e", script]);
-  expect(plain.stdout.trim()).toBe("none");
+// Usefulness: verifies only a worker or reviewer spawn carries the run marker, so a headless orchestrator process, whose descendants include a nested parent, never holds it (issue #392).
+test("exec marks a worker or reviewer spawn and leaves every other spawn unmarked", async () => {
+  const script = `console.log(process.env.${SPAWNED_RUN_ENV} || "none")`;
+  const spawn = async (options) =>
+    (await exec(process.execPath, ["-e", script], options)).stdout.trim();
+  const worker = await spawn({ role: "worker", cwd: tmpdir() });
+  expect(worker).not.toBe("none");
+  expect(await spawn({ role: "reviewer", cwd: tmpdir() })).toBe(worker);
+  expect(await spawn({ role: "orchestrator", cwd: tmpdir() })).toBe("none");
+  expect(await spawn({ cwd: tmpdir() })).toBe("none");
 });
 
 // Usefulness: verifies non-zero exit code throws ExecError with fields.

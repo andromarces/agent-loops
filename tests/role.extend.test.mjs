@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { statePaths, writeState } from "../src/lib/runstate.mjs";
+import { SPAWNED_RUN_ENV, exec } from "../src/lib/exec.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
 import {
   cleanup,
@@ -19,12 +20,24 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+/** The marker a worker process of the run in `repo` receives from `exec`. */
+async function markerOf(repo) {
+  const script = `console.log(process.env.${SPAWNED_RUN_ENV})`;
+  const spawned = await exec(process.execPath, ["-e", script], { role: "worker", cwd: repo });
+  return spawned.stdout.trim();
+}
+
 const PARENT = ["--parent-session", "parent-sess-1"];
 const extendArgv = (...flags) => ["extend", "--cwd", "<repo>", ...flags];
 const parentExtendArgv = (...flags) => extendArgv(...PARENT, ...flags);
 
 async function startRun(maxSteps, agents) {
   await setup();
+  return startRunInNewRepo(maxSteps, agents);
+}
+
+/** Starts a run in a new work tree under the runs root that `setup` made. */
+async function startRunInNewRepo(maxSteps, agents) {
   const repo = await createTempRepo();
   repos.push(repo);
   await executeRoleCommand(
@@ -217,15 +230,15 @@ test("extend accepts the stored parent session id and refuses another id or none
   expect((await readRepoState(repo)).maxSteps).toBe(9);
 });
 
-// Usefulness: verifies acceptance — a caller that carries the spawn-time child
-// marker is refused by extend, finish, and abort with the run left as it was,
-// while the same calls without the marker still work (issue #392). The id
-// check alone cannot separate them, because the child passes the stored id.
-test("extend, finish, and abort refuse a child caller that holds the stored id", async () => {
+// Usefulness: verifies acceptance — a caller that carries the marker of its own run is refused by
+// extend, finish, and abort with the run left as it was, while the same calls without a marker
+// still work (issue #392). The id check alone cannot separate them, because the child passes the
+// stored id.
+test("extend, finish, and abort refuse a child caller of the run that holds the stored id", async () => {
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
   const repo = await startRun(5, agents);
 
-  vi.stubEnv("AGENT_LOOP_SPAWNED_ROLE", "worker");
+  vi.stubEnv(SPAWNED_RUN_ENV, await markerOf(repo));
   const childCalls = [
     parentExtendArgv("--max-steps", "9"),
     ["finish", "--cwd", "<repo>"],
@@ -240,7 +253,7 @@ test("extend, finish, and abort refuse a child caller that holds the stored id",
   expect(refused.lifecycle).toBe("active");
   expect(refused.maxSteps).toBe(5);
 
-  vi.stubEnv("AGENT_LOOP_SPAWNED_ROLE", "");
+  vi.stubEnv(SPAWNED_RUN_ENV, "");
   const parent = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "9"), repo));
   expect(parent.exitCode).toBe(0);
   const aborted = await executeRoleCommand(
@@ -248,4 +261,23 @@ test("extend, finish, and abort refuse a child caller that holds the stored id",
   );
   expect(aborted.exitCode).toBe(0);
   expect((await readRepoState(repo)).lifecycle).toBe("aborted");
+});
+
+// Usefulness: verifies a nested parent that inherited the marker of another run (an interactive
+// session started inside a worker of run A, driving run B) can still extend and abort its own
+// run, so the marker never blocks a parent path (issue #392).
+test("a parent that inherited the marker of another run still extends and aborts its own run", async () => {
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+  const outer = await startRun(5, agents);
+  const nested = await startRunInNewRepo(5, agents);
+
+  vi.stubEnv(SPAWNED_RUN_ENV, await markerOf(outer));
+  const extended = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "9"), nested));
+  expect(extended.exitCode).toBe(0);
+  const aborted = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "nested stop"], nested),
+  );
+  expect(aborted.exitCode).toBe(0);
+  expect((await readRepoState(nested)).lifecycle).toBe("aborted");
+  expect((await readRepoState(outer)).lifecycle).toBe("active");
 });
