@@ -631,7 +631,8 @@ ceiling when that is smaller. The command returns inside that bound plus the
 ceiling, so a wait cannot outlast the turn. A turn `--timeout` under 12 seconds
 fits no positive bound, so the prompt names no wait: the orchestrator does not
 run `gh pr checks` or `role wait-checks`, and the `--require-ci` gate is the only
-check read. A finish refused for a pending check is corrected by a reviewer
+check read that enforces, beside the advisory status that the runtime reads for a
+named PR. A finish refused for a pending check is corrected by a reviewer
 dispatch, or by an `abort` with the pending check named.
 
 `childExitUnconfirmed: true` in the envelope means the five-second window expired
