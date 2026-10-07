@@ -76,6 +76,25 @@ test("restoreSessions copies the earlier session ids", () => {
   expect(next.reviewer.sessionId).toBeNull();
 });
 
+// Usefulness: an id that the earlier run never confirmed stays unconfirmed after a continuation, so
+// the adapter still verifies its owner before a resume (issue #395). A confirmed id restores none.
+test("restoreSessions keeps the unconfirmed mark of a restored session id", () => {
+  const next = roles();
+  const earlier = transcript();
+  earlier.roles.worker.sessionUnconfirmed = true;
+  restoreSessions(next, earlier, CWD);
+  expect(next.worker.sessionUnconfirmed).toBe(true);
+  expect(next.orchestrator.sessionUnconfirmed).toBeUndefined();
+});
+
+// Usefulness: a mark that is not a boolean cannot switch the ownership check off by accident
+// (issue #395).
+test("readContinuation rejects an unconfirmed mark that is not a boolean", async () => {
+  const bad = transcript();
+  bad.roles.worker.sessionUnconfirmed = "no";
+  await expect(readJson(bad)).rejects.toThrow("invalid worker role");
+});
+
 // Usefulness: a session id is valid only for the CLI that made it, so a changed
 // role kind is refused, and the refusal names the role and both kinds.
 test("restoreSessions rejects a changed role kind", () => {

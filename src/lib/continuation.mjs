@@ -11,7 +11,7 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
  * Reads the earlier headless run from its `--transcript` file, the only record
  * that holds the final role session ids (#362). Rejects a file that is
  * unreadable, not JSON, has `events` that are not a list, or is missing a role
- * with a string `kind` and a string or null `sessionId`.
+ * with a string `kind`, a string or null `sessionId`, and no `sessionUnconfirmed` or a boolean one.
  * @param {string} path
  * @returns {Promise<{ cwd: string, roles: object, events?: object[] }>}
  */
@@ -38,7 +38,8 @@ export async function readContinuation(path) {
     const earlier = transcript.roles[role];
     if (
       typeof earlier?.kind !== "string" ||
-      (earlier.sessionId !== null && typeof earlier.sessionId !== "string")
+      (earlier.sessionId !== null && typeof earlier.sessionId !== "string") ||
+      (earlier.sessionUnconfirmed !== undefined && typeof earlier.sessionUnconfirmed !== "boolean")
     ) {
       throw new Error(`--continue-from ${path} has an invalid ${role} role.`);
     }
@@ -85,6 +86,10 @@ export function restoreSessions(roles, earlier, cwd) {
   }
   for (const role of ROLE_KINDS) {
     roles[role].sessionId = earlier.roles[role].sessionId;
+    // An id that no CLI output confirmed keeps its mark, so the adapter verifies its owner (#395).
+    if (earlier.roles[role].sessionUnconfirmed === true && roles[role].sessionId !== null) {
+      roles[role].sessionUnconfirmed = true;
+    }
     // A model id or null (unresolved) carries over; an absent or malformed value is "not reported".
     const resolved = earlier.roles[role].resolvedModel;
     if (resolved === null || (typeof resolved === "string" && resolved)) {

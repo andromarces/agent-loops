@@ -88,6 +88,9 @@ export async function runProbeTurn({
  * `WeakMap` when the error cannot take the `testRun` property.
  * `reviewerWorkspaceWrite` passes the reviewer-only `sandbox: "workspace-write"` input to a
  * reviewer turn and adds the matching prompt line; no other role receives it (ADR 0019).
+ * `onSessionAssigned(id)` is awaited by an adapter that pre-assigns a session id, before its CLI
+ * starts, and with `null` when the CLI rejected that id. A dispatcher uses it to persist the id
+ * ahead of a crash (issue #395).
  * @param {object} options
  * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, testRun?: object }>}
  */
@@ -104,6 +107,7 @@ export async function runChild(options) {
     pr = null,
     testCmd = null,
     reviewerWorkspaceWrite = false,
+    onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -121,7 +125,14 @@ export async function runChild(options) {
       state: role,
       roleName,
       prompt: finalPrompt,
-      opts: { cwd, readOnly, ...(sandbox ? { sandbox } : {}), timeout, signal },
+      opts: {
+        cwd,
+        readOnly,
+        ...(sandbox ? { sandbox } : {}),
+        ...(onSessionAssigned ? { onSessionAssigned } : {}),
+        timeout,
+        signal,
+      },
       onEvent,
       stepsUsed,
     });
@@ -141,6 +152,7 @@ export async function runChild(options) {
       }
       logWarn(`${roleName}: session ${resumedId} is missing; rerunning the turn as a first turn`);
       role.sessionId = null;
+      delete role.sessionUnconfirmed;
       return invokeRole(isWorker ? workerPrompt(prompt, true) : finalPrompt);
     }
   };

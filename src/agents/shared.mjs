@@ -66,14 +66,24 @@ export function keepFailedSessionId(state, id) {
  * @param {(id: string) => string} missingLine the CLI's stderr line for a missing session
  */
 export function flagMissingSession(err, requestedId, missingLine) {
-  if (!requestedId || !err || typeof err !== "object") {
-    return;
+  if (requestedId && failedWithLine(err, missingLine(requestedId))) {
+    err.sessionMissing = true;
+  }
+}
+
+/**
+ * True when a failed call exited 1 without a timeout, cancel, or signal, printed nothing on stdout,
+ * and printed exactly `line` on stderr, followed by at most one line ending (LF or CRLF).
+ * @param {unknown} err the error `exec` threw
+ * @param {string} line the one stderr line to match, byte for byte
+ */
+export function failedWithLine(err, line) {
+  if (!err || typeof err !== "object") {
+    return false;
   }
   const exited = err.exitCode === 1 && !err.timedOut && !err.isCanceled && !err.isTerminated;
   const stderr = typeof err.stderr === "string" ? err.stderr.replace(/\r?\n$/, "") : null;
-  if (exited && err.stdout === "" && stderr === missingLine(requestedId)) {
-    err.sessionMissing = true;
-  }
+  return exited && err.stdout === "" && stderr === line;
 }
 
 /**
