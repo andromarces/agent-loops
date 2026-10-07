@@ -55,4 +55,5 @@ Andro Marces
 ## Links
 
 - Issue #198, issue #193, PR #197
+- Pull request: [PR #561](https://github.com/andromarces/agent-loops/pull/561)
 - Implementation: `manifestLockFile` in `src/install/manifest.mjs`
