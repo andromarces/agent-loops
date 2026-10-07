@@ -1,6 +1,13 @@
 import { execa } from "execa";
 import { logDebug, logInfo } from "./log.mjs";
 
+/**
+ * Environment variable that marks a process spawned for a role turn. `role extend`, `finish`,
+ * and `abort` refuse a caller that holds it, and every descendant of the spawned process
+ * inherits it (issue #392). An empty value counts as unset.
+ */
+export const SPAWNED_ROLE_ENV = "AGENT_LOOP_SPAWNED_ROLE";
+
 export class ExecError extends Error {
   constructor(
     message,
@@ -37,8 +44,8 @@ export async function exec(command, args = [], options = {}) {
   };
 
   // execa merges env with process.env; the child still inherits the launcher environment.
-  if (env) {
-    execaOptions.env = env;
+  if (env || role) {
+    execaOptions.env = { ...env, ...(role && { [SPAWNED_ROLE_ENV]: role }) };
   }
 
   if (typeof timeout === "number" && timeout > 0) {

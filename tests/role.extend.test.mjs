@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
 import {
@@ -15,6 +15,9 @@ import {
 import { createTempRepo } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const PARENT = ["--parent-session", "parent-sess-1"];
 const extendArgv = (...flags) => ["extend", "--cwd", "<repo>", ...flags];
@@ -212,4 +215,37 @@ test("extend accepts the stored parent session id and refuses another id or none
   const parent = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "9"), repo));
   expect(parent.exitCode).toBe(0);
   expect((await readRepoState(repo)).maxSteps).toBe(9);
+});
+
+// Usefulness: verifies acceptance — a caller that carries the spawn-time child
+// marker is refused by extend, finish, and abort with the run left as it was,
+// while the same calls without the marker still work (issue #392). The id
+// check alone cannot separate them, because the child passes the stored id.
+test("extend, finish, and abort refuse a child caller that holds the stored id", async () => {
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+  const repo = await startRun(5, agents);
+
+  vi.stubEnv("AGENT_LOOP_SPAWNED_ROLE", "worker");
+  const childCalls = [
+    parentExtendArgv("--max-steps", "9"),
+    ["finish", "--cwd", "<repo>"],
+    ["abort", "--cwd", "<repo>", "--reason", "child stop"],
+  ];
+  for (const argv of childCalls) {
+    const result = await executeRoleCommand(withRepo(argv, repo), { stdin: stdinPrompt });
+    expect(result.exitCode, argv[0]).toBe(1);
+    expect(result.payload.error, argv[0]).toContain("child role");
+  }
+  const refused = await readRepoState(repo);
+  expect(refused.lifecycle).toBe("active");
+  expect(refused.maxSteps).toBe(5);
+
+  vi.stubEnv("AGENT_LOOP_SPAWNED_ROLE", "");
+  const parent = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "9"), repo));
+  expect(parent.exitCode).toBe(0);
+  const aborted = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "parent stop"], repo),
+  );
+  expect(aborted.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("aborted");
 });

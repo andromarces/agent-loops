@@ -37,6 +37,16 @@ test("exec merges env into the inherited child environment", async () => {
   expect(result.stdout.trim()).toBe("set string");
 });
 
+// Usefulness: verifies a spawn for a role marks the child process, so `role extend`, `finish`,
+// and `abort` can refuse it, and a spawn with no role carries no marker (issue #392).
+test("exec marks a role spawn with the child role and leaves other spawns unmarked", async () => {
+  const script = "console.log(process.env.AGENT_LOOP_SPAWNED_ROLE || 'none')";
+  const marked = await exec(process.execPath, ["-e", script], { role: "worker" });
+  expect(marked.stdout.trim()).toBe("worker");
+  const plain = await exec(process.execPath, ["-e", script]);
+  expect(plain.stdout.trim()).toBe("none");
+});
+
 // Usefulness: verifies non-zero exit code throws ExecError with fields.
 test("exec throws ExecError on failure", async () => {
   await expect(

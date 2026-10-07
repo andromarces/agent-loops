@@ -43,17 +43,26 @@ history and provider prompt cache. `archiveState` keeps the old ids in
    stored `parentSession`, the id the parent-edit guard matches (ADR 0006). The
    refusal does not name the stored id. A different `--parent-session` on `dispatch`,
    `finish`, or `abort` is refused by the init-flag check, and that refusal does name
-   it. The check compares the id only. It does
-   not identify the calling harness session, so any caller that passes the stored
-   id is accepted, and a caller that read the id from the state file can pass it,
-   a child role included. No child environment marker exists at spawn, and the
-   other operations have no session check. The check stops a call that omits the
-   id or carries another one, for example a child in its own session that never
-   read the state file. The rule that a child never calls `extend` rests on the
-   orchestrator instructions. A boundary that identifies the caller is not part of
-   this decision.
+   it. The id check does not identify the calling harness session, so a caller
+   that read the id from the state file can pass it, a child role included. The
+   check stops a call that omits the id or carries another one.
+8. A child caller is refused by a spawn-time marker (issue #392). `exec` sets
+   `AGENT_LOOP_SPAWNED_ROLE=<role>` in the environment of every process it starts
+   for a role turn, and every descendant inherits it, a shell command of the turn
+   included. `extend`, `finish`, and `abort` refuse a call that holds a non-empty
+   value, before any state read, so the run stays as it was. The parent session is
+   not spawned through `exec`, so it never holds the marker and the parent path
+   works on every supported harness. The vitest config sets the variable to an
+   empty value, so a test suite that runs inside a role turn still passes.
+   The marker is a boundary against a child that follows its prompt, not against a
+   hostile one. A child that clears its environment, or a harness that filters it
+   from shell commands, passes. In that case the id check and the orchestrator
+   instructions are the remaining guards.
 
 ## Consequences
+
+- A child role cannot end or extend its own run through the CLI while the marker
+  reaches its shell. `dispatch` and `wait-checks` stay open to every caller.
 
 - An exhausted run continues with its role sessions and prompt cache.
 - The bound in ADR 0008 point 5 still holds: `maxSteps` only grows, so `turns` never

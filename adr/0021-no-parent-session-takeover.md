@@ -85,8 +85,8 @@ A takeover command cannot meet the second requirement:
   extend only by passing the stored id, and that gives no guard coverage.
   `dispatch`, `finish`, and `abort` check `--parent-session` only when it is given,
   so the new session can still drive and end the run by omitting it.
-- The prompt rule still keeps a child away from `extend`; no check backs it beyond
-  the id compare of ADR 0014.
+- The spawn-time marker of ADR 0014 point 8 keeps a child away from `extend`, and
+  the prompt rule backs it. The id compare alone does not.
 - No new state field, flag, or session-entry move exists, so ADR 0006 and ADR 0007
   stay unchanged.
 - A runtime-owned marker that a harness hook or the CLI can verify to separate a

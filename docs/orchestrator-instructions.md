@@ -1005,10 +1005,12 @@ to GitHub Pro or make this repository public to enable this feature.`, was measu
   `agent-loop role extend --cwd "<work tree>" --parent-session "<parent session id>" --max-steps <count>`, then
   dispatch again. Otherwise call `abort` and report the unresolved condition.
   Never raise the budget on your own to avoid a stop the user set. A child
-  role never runs `extend`. The subcommand refuses a call whose
-  `--parent-session` is missing or differs from the run's stored parent session
-  id, but it compares the id only, so a caller that read the id from the state
-  file passes. The prompt rule is what keeps a child from calling it.
+  role never runs `extend`, `finish`, or `abort`. Each subcommand refuses a
+  caller that holds `AGENT_LOOP_SPAWNED_ROLE`, which the runtime sets in the
+  environment of every worker and reviewer process. `extend` also refuses a call
+  whose `--parent-session` is missing or differs from the run's stored parent
+  session id. The id check alone does not identify the caller, so a child that
+  clears its environment passes. The prompt rule backs the marker.
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not
   abort and start a new run to gain steps: that starts every role on a new
@@ -1058,9 +1060,9 @@ A run that a new session resumes is therefore unguarded for that session. No
 call moves the stored id to the new session. The new session can run `dispatch`,
 `finish`, and `abort` by omitting `--parent-session`. It can run `extend` only by
 passing the stored id. `extend` compares the id only, so that call succeeds for
-any caller that holds the id, a child role included, and it gives no guard
-coverage. A child role never runs `extend`, and the prompt rule is the only thing
-that keeps it from doing so. To get a guard, call `abort` and start a new run with
+any parent-side caller that holds the id, and it gives no guard coverage. A child
+role never runs `extend`: the spawn-time marker refuses it, and the prompt rule
+backs the marker. To get a guard, call `abort` and start a new run with
 the new session id. A new run starts every role on a new session (ADR 0021).
 
 ## Turn history
