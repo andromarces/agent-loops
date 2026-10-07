@@ -131,6 +131,13 @@ cannot remove or restore it safely; see [Uninstall skips](#uninstall-skips). If
 with an error and change nothing, on every platform. Move or remove the file,
 then run the command again.
 
+A real `install` or `uninstall` holds the lock file `~/.agent-loops.lock` (beside
+`~/.agent-loops`, under `AGENT_LOOP_HOME` when set), so two commands on one home
+contend whatever their `TMPDIR` or `TEMP` values are. The lock is released when the
+command ends, so a full `uninstall` leaves the home empty. A crash leaves a stale
+lock that the next command removes once its owner process is dead. A dry run takes
+no lock and writes nothing. See [ADR 0025](adr/0025-lock-the-install-manifest-beside-the-home.md).
+
 `install` must run from an install whose package location survives an upgrade: a
 global install, a project install, or a linked clone. It writes the package
 location as an absolute path into every entry point and guard, and `npx` and
