@@ -39,7 +39,7 @@ import {
   runInstallCommand,
   runUninstallCommand,
 } from "./install/commands.mjs";
-import { logWarn, setVerbose } from "./lib/log.mjs";
+import { setVerbose } from "./lib/log.mjs";
 import { writeFileAtomic } from "./lib/runstate.mjs";
 import { assertGitWorkTree, workTreeRoot } from "./lib/snapshot.mjs";
 import { redactCommandText } from "./lib/test-cmd.mjs";
