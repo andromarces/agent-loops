@@ -62,7 +62,7 @@ Two directions were weighed. The first exempts the transcript path from the chec
 - A same-user process can still forge a valid record, because it can also edit the transcript. The ownership check still requires a session file with the marker of this work tree and role.
 - This changes the transcript contract of issue #337 for one case. A transcript inside the work tree holds one more top-level field, `runNonce`. A transcript outside the work tree keeps its earlier shape. Tests assert both shapes. The README states the exception. The repository owner must approve the change at merge.
 - The field is needed because no value of the transcript is unique to a run before the first turn. The transcript then holds the task, `cwd`, the options, role records with null ids, and no events. Two runs with the same inputs write the same bytes.
-- An in-tree transcript is written once before the first turn. A run that fails before any turn leaves that file with exit code 1 and no error text.
+- An in-tree transcript is written once before the first turn. A failure that the loop catches before any turn rewrites that file with its error. A crash before any turn leaves the file with exit code 1 and no error text.
 - Not verified: Windows file system behavior, and the record that a real process kill leaves. The tests simulate a kill by restoring the files that a turn had on disk.
 - Separate processes that share one transcript path have no write coordination. Each write is atomic and the last one wins.
 
