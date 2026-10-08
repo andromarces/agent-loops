@@ -217,7 +217,7 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
       role,
     });
     messages = JSON.parse(stdout)?.messages;
-  } catch (err) {
+  } catch {
     return [];
   }
   if (!Array.isArray(messages)) return [];
