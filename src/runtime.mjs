@@ -165,27 +165,28 @@ export async function runChild(options) {
   // that conversation never received the worker preamble. The turn already ran, so a rerun would
   // repeat its edits. A preamble-only turn in the new conversation gives it the preamble instead.
   // The turn that ran stays the result, so a failed preamble turn only warns (issue #396, ADR 0016).
+  // The mark is cleared on every exit, so a step that throws after the adapter succeeded, such
+  // as an event handler, leaves no stale mark for a later turn.
   const runFn = async (finalPrompt) => {
-    const response = await runTurn(finalPrompt);
-    if (!role.conversationReplaced) {
-      return response;
-    }
-    delete role.conversationReplaced;
-    if (isWorker) {
-      try {
-        await invokeRole(workerPrompt(PREAMBLE_ONLY_TASK, true));
-      } catch (err) {
-        if (readProp(err, "isCanceled")) {
-          throw err;
-        }
-        logWarn(
-          `worker: the preamble turn in the new conversation failed: ${readableErrorText(err).split("\n")[0]}`,
-        );
-      } finally {
+    try {
+      const response = await runTurn(finalPrompt);
+      if (role.conversationReplaced && isWorker) {
         delete role.conversationReplaced;
+        try {
+          await invokeRole(workerPrompt(PREAMBLE_ONLY_TASK, true));
+        } catch (err) {
+          if (readProp(err, "isCanceled")) {
+            throw err;
+          }
+          logWarn(
+            `worker: the preamble turn in the new conversation failed: ${readableErrorText(err).split("\n")[0]}`,
+          );
+        }
       }
+      return response;
+    } finally {
+      delete role.conversationReplaced;
     }
-    return response;
   };
 
   // The worker prompt needs no runtime read, so it is built once here. The
@@ -469,14 +470,15 @@ export async function runLoop(options) {
   });
 
   // An adapter sets `conversationReplaced` when a resume ran the turn in a new conversation, which
-  // never received `instructions`. The turn is read-only under the mutation check, so a rerun
-  // repeats no edit: it carries the instructions before the same prompt, and its answer replaces
-  // the one the instructionless conversation gave. The earlier turns of the old conversation are
-  // lost. One rerun only, and the mark is cleared in every case (issue #396, ADR 0016).
+  // never received `instructions`. The turn is read-only, so a rerun repeats no edit: it carries the
+  // instructions before the same prompt, and its answer replaces the one the instructionless
+  // conversation gave. Each call has its own mutation check, so an edit of the first call is
+  // detected before the rerun can restore it. The earlier turns of the old conversation are lost.
+  // One rerun only, and the mark is cleared on every exit (issue #396, ADR 0016).
   const orchAdapter = {
     async run(state, p, opts) {
-      return withMutationCheck(cwd, "orchestrator", async () => {
-        const call = (text) =>
+      const call = (text) =>
+        withMutationCheck(cwd, "orchestrator", () =>
           invoke({
             agents,
             state,
@@ -485,23 +487,23 @@ export async function runLoop(options) {
             opts,
             onEvent,
             stepsUsed,
-          });
-        try {
-          const response = await call(p);
-          if (!state.conversationReplaced || p === instructions) {
-            return response;
-          }
-          delete state.conversationReplaced;
-          logWarn(
-            "orchestrator: conversation was replaced; rerunning the turn with its instructions",
-          );
-          return await call(
-            `${instructions}\n\nThe conversation restarted and earlier turns are lost. Ignore the request above to choose a first action. Answer the prompt below.\n\n${p}`,
-          );
-        } finally {
-          delete state.conversationReplaced;
+          }),
+        );
+      try {
+        const response = await call(p);
+        if (!state.conversationReplaced || p === instructions) {
+          return response;
         }
-      });
+        delete state.conversationReplaced;
+        logWarn(
+          "orchestrator: conversation was replaced; rerunning the turn with its instructions",
+        );
+        return await call(
+          `${instructions}\n\nThe conversation restarted and earlier turns are lost. Ignore the request above to choose a first action. Answer the prompt below.\n\n${p}`,
+        );
+      } finally {
+        delete state.conversationReplaced;
+      }
     },
   };
 

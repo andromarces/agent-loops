@@ -3724,6 +3724,55 @@ test("a replaced orchestrator conversation on its first turn is not rerun", asyn
   }
 });
 
+// Usefulness: verifies a worker or reviewer replacement mark never outlives a turn that fails after
+// the adapter succeeded, here an event handler that throws, so no later turn reads a stale mark
+// (issue #396, ADR 0016).
+test.each([
+  ["worker", "run_worker"],
+  ["reviewer", "run_reviewer"],
+])(
+  "a %s turn that fails after the adapter succeeded clears the replacement mark",
+  async (name, action) => {
+    const repo = await createTempRepo();
+    try {
+      const orch = scripted([JSON.stringify({ action, prompt: "go" }), ORCHESTRATOR_FINISH]);
+      const child = {
+        async run(state) {
+          state.sessionId = "replacement";
+          state.conversationReplaced = true;
+          return "done";
+        },
+      };
+      const roles = {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: "gone" },
+        reviewer: { kind: "rev", sessionId: "gone" },
+      };
+
+      await runLoop({
+        task: "Task",
+        cwd: repo,
+        maxSteps: 2,
+        roles,
+        agents: {
+          orch,
+          work: name === "worker" ? child : scripted([]),
+          rev: name === "reviewer" ? child : scripted([]),
+        },
+        onEvent: (event) => {
+          if (event.type === "invocation" && event.role === name) {
+            throw new Error("event handler failed");
+          }
+        },
+      });
+
+      expect(roles[name].conversationReplaced).toBeUndefined();
+    } finally {
+      await removePath(repo);
+    }
+  },
+);
+
 // Usefulness: verifies a resume that fails because the CLI has no such session clears the id and
 // reruns the turn once as a first turn with the worker preamble, inside the one charged step
 // (issue #360, ADR 0016).

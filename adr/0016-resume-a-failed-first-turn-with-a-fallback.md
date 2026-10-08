@@ -46,8 +46,10 @@ step budget runs out.
    it can still write although its prompt asks for no change. A failed preamble turn logs a
    warning and leaves the worker result intact, and only a cancel propagates. A reviewer prompt
    carries its full scope on every turn, so a replaced reviewer conversation needs nothing.
-   An orchestrator turn that carries the mark and was not the first turn is rerun once, under
-   the same mutation check, with the initial instructions placed before the same prompt. An
+   An orchestrator turn that carries the mark and was not the first turn is rerun once, with the
+   initial instructions placed before the same prompt. Each call has its own mutation check, and
+   the first call is checked before the rerun starts, so an edit of the first call that the rerun
+   restores is still detected. An
    orchestrator turn is read-only, so the rerun repeats no edit, and its answer replaces the
    answer of the instructionless conversation. The first orchestrator turn already carries the
    instructions and is not rerun. The orchestrator conversation loses the earlier turns of the old
