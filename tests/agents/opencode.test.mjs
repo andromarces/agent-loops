@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { runOpenCode } from "../../src/agents/opencode.mjs";
+import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { logDebug, logInfo } from "../../src/lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
@@ -1489,4 +1490,136 @@ test("opencode refuses a Verdict value split across parts before a CRLF", async 
 
   expect(error).toBeInstanceOf(Error);
   expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+const assistantMessage = (id, model) => ({ id, type: "assistant", model, content: [] });
+const exportJson = (...messages) => ({
+  stdout: JSON.stringify({ info: { id: "sess-oc" }, messages }),
+  stderr: "",
+});
+
+/** Runs one turn whose stream names the assistant messages `ids`, then the export reply `exported`. */
+async function runResolvedTurn(state, ids, exported, options = { cwd: "/dir" }) {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: (ids.length ? ids.map((id) => textEvent("reply", id)) : [textEvent("reply")]).join(
+      "\n",
+    ),
+    stderr: "",
+  });
+  if (exported instanceof Error) {
+    vi.mocked(exec).mockRejectedValueOnce(exported);
+  } else {
+    vi.mocked(exec).mockResolvedValueOnce(exported);
+  }
+  return runOpenCode(state, "oc prompt", options);
+}
+
+const MODEL_A = { id: "model-a", providerID: "prov" };
+const MODEL_B = { id: "model-b", providerID: "prov" };
+
+// Usefulness: verifies the resolved model of a turn comes from the session export, for only the
+// assistant messages that the turn streamed, so an earlier turn of the session never counts (#567).
+test("opencode records provider/model of the streamed assistant messages as resolvedModel", async () => {
+  const state = { kind: "opencode", sessionId: null, model: null };
+  await runResolvedTurn(
+    state,
+    ["msg-2", "msg-3"],
+    exportJson(
+      assistantMessage("msg-1", MODEL_B),
+      assistantMessage("msg-2", MODEL_A),
+      assistantMessage("msg-3", MODEL_A),
+    ),
+  );
+
+  expect(state.resolvedModel).toBe("prov/model-a");
+  expect(vi.mocked(exec)).toHaveBeenLastCalledWith("opencode", ["session", "export", "sess-oc"], {
+    cwd: "/dir",
+    timeout: undefined,
+    signal: undefined,
+    role: undefined,
+  });
+});
+
+// Usefulness: verifies a turn that ran several models, or whose message is missing from the export,
+// is unresolved, so the continuation never compares against ambiguous evidence.
+test.each([
+  [
+    "several models",
+    exportJson(assistantMessage("msg-1", MODEL_A), assistantMessage("msg-2", MODEL_B)),
+  ],
+  ["a streamed message missing from the export", exportJson(assistantMessage("msg-1", MODEL_A))],
+  [
+    "a malformed model",
+    exportJson(assistantMessage("msg-1", MODEL_A), assistantMessage("msg-2", { id: 7 })),
+  ],
+  ["an export that is not JSON", { stdout: "not json", stderr: "" }],
+  ["an export that failed", new Error("export failed")],
+])("opencode records resolvedModel null for %s", async (_name, exported) => {
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+  await runResolvedTurn(state, ["msg-1", "msg-2"], exported);
+
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: verifies a turn that streams no message id records null instead of guessing from the
+// export of the whole session.
+test("opencode records resolvedModel null when the stream names no message", async () => {
+  const state = { kind: "opencode", sessionId: null, model: null };
+  await runResolvedTurn(state, [], exportJson(assistantMessage("msg-1", MODEL_A)));
+
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: verifies a failed turn that ran replaces the earlier model with null, because the
+// failed stream carries no model and the export is not read after a failure.
+test("opencode records resolvedModel null for a failed turn", async () => {
+  vi.mocked(exec).mockReset();
+  const failure = Object.assign(new Error("boom"), { name: "ExecError", exitCode: 1, stdout: "" });
+  vi.mocked(exec).mockRejectedValueOnce(failure);
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+
+  await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow();
+
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: verifies a failed start leaves the earlier record, because no model ran.
+test("opencode keeps resolvedModel when the child never started", async () => {
+  vi.mocked(exec).mockReset();
+  const failure = Object.assign(new Error("spawn"), { name: "ExecError", stdout: "" });
+  vi.mocked(exec).mockRejectedValueOnce(failure);
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+
+  await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow();
+
+  expect(state.resolvedModel).toBe("prov/model-a");
+});
+
+// Usefulness: verifies output from another session than the retained one is unresolved and never
+// read as the kept session's model.
+test("opencode records resolvedModel null when the output reports another session", async () => {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("reply", "msg-1"), stderr: "" });
+  vi.mocked(exec).mockResolvedValueOnce(exportJson(assistantMessage("msg-1", MODEL_A)));
+  const state = { kind: "opencode", sessionId: "other-sess", model: null, resolvedModel: "x/y" };
+
+  await expect(runOpenCode(state, "oc prompt", { cwd: "/dir" })).rejects.toThrow();
+
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: verifies --continue-from now probes an opencode role, so a changed default model is refused.
+test("opencode role with a recorded model is probed and a changed model is refused", async () => {
+  const roles = {
+    orchestrator: { kind: "codex", resolvedModel: undefined },
+    worker: { kind: "opencode", model: null, effort: null, resolvedModel: "prov/model-a" },
+    reviewer: { kind: "codex", resolvedModel: undefined },
+  };
+  const probe = vi.fn(async (state) => {
+    state.resolvedModel = "prov/model-b";
+  });
+
+  await expect(verifyResolvedModels(roles, { probe })).rejects.toThrow(/prov\/model-b/);
+  expect(probe).toHaveBeenCalledTimes(1);
 });

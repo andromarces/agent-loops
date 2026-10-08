@@ -6,8 +6,11 @@ import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES, hasClosingBlockAttempt, parseVerdict } from "../lib/report.mjs";
 import {
   asSessionId,
+  childRan,
   keepFailedSessionId,
+  recordResolvedModel,
   resumeMismatchError,
+  setResolvedModel,
   setUsageOrDelete,
 } from "./shared.mjs";
 
@@ -58,15 +61,19 @@ export async function runOpenCode(state, prompt, options = {}) {
   } else {
     // No --model: OpenCode selects its own default, which the JSON stream does not name.
     logInfo(
-      "opencode model: OpenCode selects its CLI default; the OpenCode session metadata records the model that ran.",
+      "opencode model: OpenCode selects its CLI default; the session export records the model that ran.",
     );
   }
 
+  const requestedSessionId = state.sessionId;
   let stdout;
   try {
     ({ stdout } = await exec("opencode", args, execOptions));
   } catch (err) {
     const events = parseJsonLines(err?.stdout ?? "");
+    // The failed stream names no model and the export is not read after a failure, so a turn that
+    // ran is unresolved (ADR 0026).
+    if (childRan(err)) setResolvedModel(state, []);
     // A non-zero exit, a timeout, or a cancel can still carry completed-step usage and the session
     // id. Expose both, then rethrow.
     setUsage(state, events);
@@ -93,12 +100,18 @@ export async function runOpenCode(state, prompt, options = {}) {
   // string: a later valid id never rescues a truthy invalid or mismatched first one.
   const sessionId = asSessionId(events.map((event) => event.sessionID).find(Boolean));
 
+  // Set before the checks below, so a turn that fails them records unresolved. The export is read
+  // only for the session the role keeps.
+  const kept = sessionId && (!requestedSessionId || sessionId === requestedSessionId);
+  const models = kept ? await exportedModels(sessionId, events, execOptions) : [];
+  recordResolvedModel(state, models, requestedSessionId, sessionId);
+
   if (!sessionId) {
     throw new Error("opencode did not return a session ID.");
   }
 
-  if (state.sessionId && state.sessionId !== sessionId) {
-    throw resumeMismatchError("opencode", "session", state.sessionId, sessionId);
+  if (requestedSessionId && requestedSessionId !== sessionId) {
+    throw resumeMismatchError("opencode", "session", requestedSessionId, sessionId);
   }
 
   state.sessionId = sessionId;
@@ -126,6 +139,39 @@ export async function runOpenCode(state, prompt, options = {}) {
   }
 
   return text.trim();
+}
+
+/**
+ * Lists the `provider/model` of each assistant message that the turn streamed, read from
+ * `opencode session export <id>`, because no stream event names the model. The export holds the
+ * whole session, so only the messages whose id the stream names count. A streamed message that the
+ * export lacks, or whose model is malformed, contributes `undefined`, which makes the turn
+ * unresolved. An empty list, a failed export, or output that is not JSON also makes it unresolved.
+ * known-limit: the export prints the whole session, so a long session enlarges the buffered output.
+ */
+async function exportedModels(sessionId, events, { cwd, timeout, signal, role }) {
+  const ids = [...new Set(events.map((event) => event.part?.messageID).filter(isMessageId))];
+  if (ids.length === 0) return [];
+  let messages;
+  try {
+    const { stdout } = await exec("opencode", ["session", "export", sessionId], {
+      cwd,
+      timeout,
+      signal,
+      role,
+    });
+    messages = JSON.parse(stdout)?.messages;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(messages)) return [];
+  return ids.map((id) => {
+    const message = messages.find((m) => isJsonObject(m) && m.type === "assistant" && m.id === id);
+    const model = message?.model;
+    return isJsonObject(model) && isMessageId(model.providerID) && isMessageId(model.id)
+      ? `${model.providerID}/${model.id}`
+      : undefined;
+  });
 }
 
 /**
@@ -272,7 +318,7 @@ const isMessageId = (value) => typeof value === "string" && value !== "";
 /**
  * Sets `state.usage` from the `step_finish` parts of the stream, or removes it when the stream
  * carries none. Each completed step emits one `step_finish` part with `tokens` and `cost`, so
- * both fields sum across steps. No event names the model, so `models` is omitted. The read runs
+ * both fields sum across steps. No stream event names the model, so `models` is omitted. The read runs
  * before the failure message on the non-zero path, so it drops any value that is not a count
  * rather than letting a malformed one throw and cost the caller its exit code (issue #326).
  */
