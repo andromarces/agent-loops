@@ -12,7 +12,7 @@
 // root of each process (#193, #198).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { basename, delimiter, dirname, join, parse, relative, resolve, win32 } from "node:path";
+import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
 import { logWarn } from "../lib/log.mjs";
 import { withStateLock } from "../lib/runstate.mjs";
@@ -760,11 +760,14 @@ async function planFileRestore(record, dryRun) {
 
 /**
  * Removes every target the manifest records for the selected harnesses under
- * the manifest lock. A dry run takes no lock and writes nothing. A home that is
- * valid and absent has no manifest, so it returns no reports without reading or
- * writing anything and never creates the home. No branch mutates without the
- * lock: an install that creates the home after that check runs after this
- * uninstall returned, as if the uninstall had come first.
+ * the manifest lock. A dry run takes no lock and writes nothing. If lstat of the
+ * home reports ENOENT, for any reason, the call takes no lock, reads and writes
+ * nothing, reports nothing to remove, and never creates the home. That includes
+ * a Windows path that cannot name a directory: no install can exist there, so no
+ * data is lost, and it no longer raises the origin/main error (maintainer
+ * decision, issue #570). An install that creates the home after that check runs
+ * after this uninstall returned, as if the uninstall had come first. Any other
+ * lstat error takes the locked path, so no branch mutates without the lock.
  */
 export async function uninstall(options = {}) {
   const home = options.home ?? resolveHome();
@@ -780,41 +783,12 @@ export async function uninstall(options = {}) {
   });
 }
 
-// Device names that Windows refuses as a directory name, with or without an extension.
-const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
-// Characters Windows refuses in a name, and a trailing dot or space.
-// eslint-disable-next-line no-control-regex -- control characters are illegal in a Windows name
-const WINDOWS_ILLEGAL_NAME = /[<>:"|?*\u0000-\u001f]|[. ]$/;
-
-/**
- * True when the home is a valid path that does not exist. Windows also reports
- * ENOENT for an invalid path (illegal characters, a missing drive), and that
- * error must still surface from the locked path as it always did, so the home
- * counts as missing only when its root exists and every name is legal there.
- * Any other lstat error also falls through to the locked path.
- */
 function homeIsMissing(home) {
   try {
     lstatSync(home);
     return false;
   } catch (err) {
-    if (err?.code !== "ENOENT") {
-      return false;
-    }
-  }
-  if (process.platform !== "win32") {
-    return true;
-  }
-  const { root, dir, base } = win32.parse(resolve(home));
-  const names = `${dir.slice(root.length)}\\${base}`.split(/[\\/]+/).filter(Boolean);
-  if (names.some((name) => WINDOWS_ILLEGAL_NAME.test(name) || WINDOWS_RESERVED_NAME.test(name))) {
-    return false;
-  }
-  try {
-    lstatSync(root);
-    return true;
-  } catch {
-    return false;
+    return err?.code === "ENOENT";
   }
 }
 

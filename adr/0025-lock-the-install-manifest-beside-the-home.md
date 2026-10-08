@@ -28,14 +28,17 @@ directory, so the case is reachable (issue #198).
 3. The lock is removed in a `finally`, so a full uninstall leaves the home empty
    and the CI empty-home check holds.
 4. A dry run takes no lock and writes nothing.
-5. An uninstall on a home that is valid and absent returns no reports without a
-   lock, a read, or a write. It has nothing to remove, so it must not create the
-   home (issue #570). No path runs a mutating uninstall without the lock. An
-   install that creates the home after that check runs after the uninstall
-   returned, as if the uninstall had come first. The home counts as missing only
-   when lstat reports ENOENT and, on Windows, the root exists and every name is
-   legal, because Windows also reports ENOENT for an invalid path. Any other home
-   takes the locked path, so its error surfaces as before.
+5. If lstat of the home reports ENOENT, for any reason, `uninstall` takes no lock,
+   reads and writes nothing, reports nothing to remove, and exits 0. It never
+   creates the home (issue #570). No install can exist at a path that does not
+   exist, so no data is lost. An install that creates the home after that check
+   runs after the uninstall returned, as if the uninstall had come first. Any
+   other lstat error takes the locked path, so no path runs a mutating uninstall
+   without the lock.
+6. Maintainer decision: this rule covers a Windows path that cannot name a
+   directory, because Windows reports ENOENT for it. Such a home now reports
+   nothing to remove instead of raising the origin/main error. This replaces the
+   earlier rule that kept that error through hand-written Windows name checks.
 
 ## Consequences
 
