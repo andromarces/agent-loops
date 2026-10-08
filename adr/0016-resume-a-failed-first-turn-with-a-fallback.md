@@ -80,13 +80,19 @@ step budget runs out.
    so a restored id passes the same check. Otherwise the adapter raises the missing-session error
    before any CLI starts, and the runtime reruns the turn as a first turn, as in decision 3. A
    session store elsewhere reads as not owned, and the turn starts a fresh session. Both paths
-   save the id mid-turn (issue #564). The headless loop sets the id and its `sessionUnconfirmed` mark on the
-   role before the CLI starts and, when `--transcript` is set, rewrites the transcript at once, so a
-   parent crash during a first turn leaves a transcript whose `roles` hold the id and the mark.
-   `--continue-from` then restores both, and the ownership check runs before the resume. The
-   headless loop withdraws a rejected id through the same hook. A failed transcript write only
-   warns, as at exit, so the crash gap stays open for a run whose transcript cannot be written.
-   A headless run with no `--transcript` keeps no record, so it has no id to resume.
+   save the id mid-turn (issue #564). When `--transcript` is set, the headless loop rewrites the
+   transcript before the CLI of a Claude orchestrator, worker, or reviewer starts, with the id and
+   `sessionUnconfirmed` on that role, so a parent crash during a first turn leaves a transcript that
+   `--continue-from` restores, and the ownership check runs before the resume. A rejected id is
+   withdrawn through the same hook. The record holds the id only while that CLI call runs, and the
+   role state is not changed: the adapter alone decides what a failed turn keeps, so a reported id
+   wins, an unreported one keeps the pre-assigned id with its mark, and a rejected one keeps none.
+   Setting the id on the role instead made a reported id lose and dropped the mark, so a stale id
+   resumed unchecked. Three limits remain. A failed transcript write only warns, as at exit. A run
+   with no `--transcript` keeps no record. A transcript inside the work tree is not written before an
+   orchestrator or reviewer turn, because those turns run under the mutation check and the write
+   would fail it, so they keep the gap for that layout and log a warning. Separate processes that
+   share one transcript path have no write coordination: each write is atomic and the last wins.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
    stderr is the one verified line for the requested id, byte for byte, plus at most one

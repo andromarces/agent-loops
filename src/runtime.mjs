@@ -328,9 +328,10 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * sandbox with network off, and the reviewer prompt says so. The orchestrator turns
  * and the worker turns are unchanged, and the mutation check still wraps every
  * reviewer turn (ADR 0019).
- * `onSessionAssigned(roleName, id)` is awaited after a pre-assigned session id is set on the role
- * and before that CLI starts, and with `null` when the CLI rejected the id. The caller persists
- * the roles there (ADR 0016).
+ * `onSessionAssigned(roleName, id)` is awaited for the orchestrator, worker, and reviewer when an
+ * adapter pre-assigns a session id, before its CLI starts, and with `null` when the CLI rejected
+ * the id. It does not change the role state. The caller records the id and its unconfirmed mark
+ * (ADR 0016).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -424,10 +425,22 @@ export async function runLoop(options) {
   // the interactive `lastResult.reviewed` the role gate reads.
   let lastReviewed = restoredGate?.lastReviewed ?? null;
 
+  // The caller persists a pre-assigned id before the CLI starts, so a parent crash during a first
+  // turn leaves it (issue #564). The role state is not touched here: the adapter owns it.
+  const assignedHook = onSessionAssigned && ((roleName) => (id) => onSessionAssigned(roleName, id));
+
   const orchAdapter = {
     async run(state, p, opts) {
       return withMutationCheck(cwd, "orchestrator", () =>
-        invoke({ agents, state, roleName: "orchestrator", prompt: p, opts, onEvent, stepsUsed }),
+        invoke({
+          agents,
+          state,
+          roleName: "orchestrator",
+          prompt: p,
+          opts: assignedHook ? { ...opts, onSessionAssigned: assignedHook("orchestrator") } : opts,
+          onEvent,
+          stepsUsed,
+        }),
       );
     },
   };
@@ -653,17 +666,7 @@ export async function runLoop(options) {
                 timeoutSeconds: testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
               },
         reviewerWorkspaceWrite,
-        // The pre-assigned id lands on the role, and the caller persists the roles, before the
-        // CLI starts, so a parent crash during a first turn leaves the id (issue #564). The
-        // adapter has already set `sessionUnconfirmed` for a non-null id.
-        ...(onSessionAssigned
-          ? {
-              onSessionAssigned: async (id) => {
-                targetRole.sessionId = id;
-                await onSessionAssigned(roleName, id);
-              },
-            }
-          : {}),
+        ...(assignedHook ? { onSessionAssigned: assignedHook(roleName) } : {}),
         gh,
         readTimeoutMs,
         onEvent,
