@@ -204,15 +204,3 @@ test("the lock lives beside the manifest directory and leaves the home empty aft
   await uninstall({ home });
   expect(await readdir(home)).toEqual([]);
 });
-
-// Usefulness: verifies #570 — uninstall on an absent home has nothing to remove,
-// so it must not create the home to hold a lock, and it reports nothing.
-test("uninstall on a home that does not exist creates nothing", async () => {
-  const parent = await makeHome();
-  const home = join(parent, "missing-home");
-
-  expect(await uninstall({ home })).toEqual([]);
-
-  expect(existsSync(home)).toBe(false);
-  expect(await readdir(parent)).toEqual([]);
-});

@@ -136,8 +136,8 @@ A real `install` or `uninstall` holds the lock file `~/.agent-loops.lock` (besid
 contend whatever their `TMPDIR` or `TEMP` values are. The lock is released when the
 command ends, so a full `uninstall` leaves the home empty. A crash leaves a stale
 lock that the next command removes once its owner process is dead. A dry run takes
-no lock and writes nothing, and `uninstall` on a home that does not exist does the
-same, so it never creates the home. See [ADR 0025](adr/0025-lock-the-install-manifest-beside-the-home.md).
+no lock and writes nothing. `uninstall` on a home that does not exist returns at
+once without a lock and writes nothing, so it never creates the home. See [ADR 0025](adr/0025-lock-the-install-manifest-beside-the-home.md).
 
 `install` must run from an install whose package location survives an upgrade: a
 global install, a project install, or a linked clone. It writes the package

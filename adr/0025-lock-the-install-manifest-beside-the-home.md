@@ -28,8 +28,11 @@ directory, so the case is reachable (issue #198).
 3. The lock is removed in a `finally`, so a full uninstall leaves the home empty
    and the CI empty-home check holds.
 4. A dry run takes no lock and writes nothing.
-5. An uninstall on a home that does not exist takes no lock and writes nothing.
-   It has nothing to remove, so it must not create the home (issue #570).
+5. An uninstall on a home that does not exist returns no reports without a lock,
+   a read, or a write. It has nothing to remove, so it must not create the home
+   (issue #570). No path runs a mutating uninstall without the lock. If an install
+   creates the home after that check, the uninstall already returned, as if it ran
+   first. Only ENOENT counts as missing.
 
 ## Consequences
 
@@ -38,10 +41,8 @@ directory, so the case is reachable (issue #198).
 - This reverses the preference of #193 to keep the home free of lock files. The
   reason: install must write the home anyway, so a sandbox that blocks the home
   cannot install, and the lock adds no new write permission.
-- A real `uninstall` on a home that does not exist runs unlocked. No manifest
-  can exist there, so it reports nothing and leaves no directory behind. A
-  process that creates the home between the existence check and the manifest read
-  is not serialized with that uninstall.
+- A real `uninstall` on a home that does not exist writes nothing and leaves no
+  directory behind.
 
 ## Alternatives
 

@@ -10,7 +10,7 @@
 // beside `<home>/.agent-loops` serializes install and uninstall, so concurrent
 // read-modify-write of the manifest cannot drop a record, whatever the temp
 // root of each process (#193, #198).
-import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
@@ -760,18 +760,34 @@ async function planFileRestore(record, dryRun) {
 
 /**
  * Removes every target the manifest records for the selected harnesses under
- * the manifest lock. A dry run, or a home that does not exist, takes no lock
- * and writes nothing, so an uninstall never creates the home.
+ * the manifest lock. A dry run takes no lock and writes nothing. A home that
+ * does not exist has no manifest, so it returns no reports without reading or
+ * writing anything and never creates the home. No branch mutates without the
+ * lock: an install that creates the home after that check is serialized first.
  */
 export async function uninstall(options = {}) {
   const home = options.home ?? resolveHome();
-  if (options.dryRun || !existsSync(home)) {
+  if (homeIsMissing(home)) {
+    return [];
+  }
+  if (options.dryRun) {
     return runUninstall(options);
   }
   return withStateLock(manifestLockFile(home), () => runUninstall(options), {
     label: "The install manifest",
     noun: "install manifest",
   });
+}
+
+// Only ENOENT counts as missing; any other error falls through to the normal
+// path, which reports it as it did before.
+function homeIsMissing(home) {
+  try {
+    lstatSync(home);
+    return false;
+  } catch (err) {
+    return err.code === "ENOENT";
+  }
 }
 
 /** Runs the uninstall once the caller owns the manifest lock, or for a dry run. */
