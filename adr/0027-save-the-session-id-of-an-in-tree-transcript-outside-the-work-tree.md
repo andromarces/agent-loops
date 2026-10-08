@@ -60,7 +60,9 @@ Two directions were weighed. The first exempts the transcript path from the chec
 - A clean-up of the temporary directory, or a reboot that clears it, loses the record. The crash gap then stays open for that run.
 - A foreign or crafted record cannot supply an id. A record of another user, transcript, work tree, run, or older transcript state is ignored.
 - A same-user process can still forge a valid record, because it can also edit the transcript. The ownership check still requires a session file with the marker of this work tree and role.
-- An in-tree transcript is written once before the first turn and holds `runNonce`. A transcript outside the work tree keeps its earlier shape. A run that fails before any turn leaves the in-tree file with exit code 1 and no error text.
+- This changes the transcript contract of issue #337 for one case. A transcript inside the work tree holds one more top-level field, `runNonce`. A transcript outside the work tree keeps its earlier shape. Tests assert both shapes. The README states the exception. The repository owner must approve the change at merge.
+- The field is needed because no value of the transcript is unique to a run before the first turn. The transcript then holds the task, `cwd`, the options, role records with null ids, and no events. Two runs with the same inputs write the same bytes.
+- An in-tree transcript is written once before the first turn. A run that fails before any turn leaves that file with exit code 1 and no error text.
 - Not verified: Windows file system behavior, and the record that a real process kill leaves. The tests simulate a kill by restoring the files that a turn had on disk.
 - Separate processes that share one transcript path have no write coordination. Each write is atomic and the last one wins.
 
@@ -72,6 +74,8 @@ Two directions were weighed. The first exempts the transcript path from the chec
 4. **Skip the write and log a warning, as ADR 0016 did**: rejected. It leaves the gap that issue #581 reports.
 5. **Store a full copy of the transcript as the record**: rejected in review. It copies the task text out of the transcript. It also lets a record replace the roles and the mark that the transcript holds. The record now holds the id and its binding only.
 6. **Store the record in the install home**: rejected. The home is user scope and has its own lock (ADR 0025). The temporary directory already holds the run state of the interactive path.
+7. **Bind the record to a value that the transcript already holds**: rejected. No such value exists before the first turn (see Consequences). A continued run holds earlier event times, but a fresh run holds none.
+8. **Bind the record to the file identity and the modification time of the transcript**: rejected. Every atomic write makes a new file. The values differ across file systems and change when a tool touches the file. A test cannot restore them after a simulated kill.
 
 ## Authors
 
