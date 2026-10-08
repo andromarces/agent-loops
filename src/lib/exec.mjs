@@ -49,7 +49,7 @@ export class ExecError extends Error {
 }
 
 export async function exec(command, args = [], options = {}) {
-  const { cwd, input, timeout, signal, role, env } = options;
+  const { cwd, input, timeout, signal, role, env, maxBuffer } = options;
 
   const label = role ? `${role}: ${command}` : command;
   const startedAt = Date.now();
@@ -62,6 +62,11 @@ export async function exec(command, args = [], options = {}) {
     stdin: input === undefined ? "ignore" : undefined,
     killDescendants: true,
   };
+
+  // Characters of decoded text per output stream. Unset keeps the execa default.
+  if (maxBuffer !== undefined) {
+    execaOptions.maxBuffer = maxBuffer;
+  }
 
   // execa merges env with process.env; the child still inherits the launcher environment.
   const marked = MARKED_ROLES.has(role);
@@ -85,14 +90,18 @@ export async function exec(command, args = [], options = {}) {
   const timedOut = Boolean(result.timedOut);
   const isCanceled = Boolean(result.isCanceled);
   const isTerminated = Boolean(result.isTerminated);
+  // execa can report an overflow with exit code 0 and a cut stream.
+  const isMaxBuffer = Boolean(result.isMaxBuffer);
 
-  if (result.exitCode !== 0 || timedOut || isCanceled || isTerminated) {
+  if (result.exitCode !== 0 || timedOut || isCanceled || isTerminated || isMaxBuffer) {
     const signal = result.signalDescription ?? result.signal;
     let cause;
     if (timedOut) {
       cause = `${command} timed out after ${timeout} seconds.`;
     } else if (isCanceled) {
       cause = `${command} was canceled.`;
+    } else if (isMaxBuffer) {
+      cause = `${command} output exceeded the buffer limit and was cut.`;
     } else if (isTerminated) {
       // POSIX-only: execa cannot detect signal termination on Windows.
       cause = `${command} was killed by ${signal ?? "a signal"}.`;
