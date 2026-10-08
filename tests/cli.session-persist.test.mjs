@@ -543,6 +543,7 @@ test("the session record holds no transcript content", async () => {
   expect(Object.keys(record).sort()).toEqual([
     "cwd",
     "role",
+    "runNonce",
     "sessionId",
     "sessionUnconfirmed",
     "transcript",
@@ -551,6 +552,15 @@ test("the session record holds no transcript content", async () => {
   ]);
   expect(record).toMatchObject({ role: "orchestrator", sessionId: killedId, cwd: repo });
   expect(JSON.stringify(record)).not.toContain("long task");
+  expect(JSON.parse(disk.get(transcript)).runNonce).toBe(record.runNonce);
+});
+
+// Usefulness: verifies a transcript outside the work tree keeps its earlier shape: it has no run
+// nonce, because no record binds to it.
+test("a transcript outside the work tree holds no run nonce", async () => {
+  const transcript = join(scratch, "run.json");
+  await main([...roleArgs({}), "--cwd", repo, "--transcript", transcript], agentsFor([FINISH]));
+  expect(await readJson(transcript)).not.toHaveProperty("runNonce");
 });
 
 // Usefulness: verifies a record that does not bind to this transcript and work tree gives no id to
@@ -561,6 +571,9 @@ test.each([
   ["for another work tree", (r) => ({ ...r, cwd: join(r.cwd, "other") })],
   ["for another role", (r) => ({ ...r, role: "worker" })],
   ["with an id that is not a UUID", (r) => ({ ...r, sessionId: "../../x" })],
+  ["with an id that is an array holding a UUID", (r) => ({ ...r, sessionId: [r.sessionId] })],
+  ["with an id that is a number", (r) => ({ ...r, sessionId: 7 })],
+  ["with a run nonce that is not a UUID", (r) => ({ ...r, runNonce: "x" })],
   ["for another transcript key", (r) => ({ ...r, transcript: "0".repeat(32) })],
 ])("--continue-from refuses a record %s", async (_name, edit) => {
   const transcript = join(repo, "run.json");
@@ -593,6 +606,22 @@ test("--continue-from refuses the record of another transcript", async () => {
   expect(secondDisk).not.toBe(recordIn(disk, first));
   await saveSession(killedId, "orchestrator");
   const args = await continueFrom(second);
+  expect(process.exitCode).toBe(0);
+  expect(args).not.toContain("--resume");
+});
+
+// Usefulness: verifies a record that an earlier run left at the same transcript path never gives its
+// id to a later run, although both runs have the same task, work tree, and transcript bytes.
+test("--continue-from refuses the record of another run with identical content", async () => {
+  const transcript = join(repo, "run.json");
+  const first = await crashOrchestrator(transcript);
+  const second = await crashOrchestrator(transcript);
+  expect(second.killedId).not.toBe(first.killedId);
+  await restoreDisk(transcript, second.disk);
+  const file = recordIn(second.disk, transcript);
+  await writeFile(file, first.disk.get(recordIn(first.disk, transcript)));
+  await saveSession(first.killedId, "orchestrator");
+  const args = await continueFrom(transcript);
   expect(process.exitCode).toBe(0);
   expect(args).not.toContain("--resume");
 });

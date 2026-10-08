@@ -23,6 +23,7 @@ const ROLES = ["orchestrator", "reviewer"];
 const FIELDS = [
   "cwd",
   "role",
+  "runNonce",
   "sessionId",
   "sessionUnconfirmed",
   "transcript",
@@ -30,6 +31,8 @@ const FIELDS = [
   "version",
 ];
 const MAX_BYTES = 4096;
+// A test on a non-string value would coerce it, so an array that holds a UUID would pass.
+const isUuid = (value) => typeof value === "string" && UUID.test(value);
 
 /**
  * True when `path` is inside the directory `root`. The test compares file identity (device and
@@ -59,17 +62,22 @@ export async function sessionRecordPath(transcript) {
 }
 
 /**
- * Replaces the record of `transcript`, atomically. `transcriptSha256` is the digest of the
- * transcript file that the loop wrote last, so the record binds to that one state of the file.
+ * Replaces the record of `transcript`, atomically. `runNonce` is a random value of this run, which
+ * the transcript file also holds. `transcriptSha256` is the digest of the transcript file that the
+ * loop wrote last. Together they bind the record to one run and one state of the file.
  * @param {string} transcript
- * @param {{ cwd: string, transcriptSha256: string, role: string, sessionId: string }} fields
+ * @param {{ cwd: string, runNonce: string, transcriptSha256: string, role: string, sessionId: string }} fields
  */
-export async function writeSessionRecord(transcript, { cwd, transcriptSha256, role, sessionId }) {
+export async function writeSessionRecord(
+  transcript,
+  { cwd, runNonce, transcriptSha256, role, sessionId },
+) {
   const file = await sessionRecordPath(transcript);
   const record = {
     version: 1,
     transcript: await recordKey(transcript),
     cwd,
+    runNonce,
     transcriptSha256,
     role,
     sessionId,
@@ -87,15 +95,15 @@ export async function removeSessionRecord(transcript) {
 /**
  * The role and session id of the record of `transcript`, or null. The record counts only when all
  * of these hold: it is a small regular file of the current user, it has exactly the fields of
- * `writeSessionRecord` with valid values, it names this transcript and `cwd`, and its digest equals
- * `digest`, the digest of the transcript bytes now. A later transcript write changes the digest, so
- * a stale record never binds, whatever the file times are. A record that fails any other test is
- * refused with a warning.
+ * `writeSessionRecord` with string values of the right form, it names this transcript, `cwd`, and
+ * `runNonce`, and its digest equals `digest`, the digest of the transcript bytes now. A later
+ * transcript write changes the digest, so a stale record never binds, whatever the file times are.
+ * A record that fails any other test is refused with a warning.
  * @param {string} transcript
- * @param {{ digest: string, cwd: string }} bound
+ * @param {{ digest: string, cwd: string, runNonce: unknown }} bound
  * @returns {Promise<{ role: string, sessionId: string } | null>}
  */
-export async function readSessionRecord(transcript, { digest, cwd }) {
+export async function readSessionRecord(transcript, { digest, cwd, runNonce }) {
   let file;
   let text;
   try {
@@ -121,11 +129,16 @@ export async function readSessionRecord(transcript, { digest, cwd }) {
     Object.keys(record).sort().join() === FIELDS.join() &&
     record.version === 1 &&
     ROLES.includes(record.role) &&
-    UUID.test(record.sessionId) &&
+    isUuid(record.sessionId) &&
+    isUuid(record.runNonce) &&
     record.sessionUnconfirmed === true;
   if (!shaped) return refuse(file, "has an unexpected shape");
-  if (record.transcript !== (await recordKey(transcript)) || record.cwd !== cwd) {
-    return refuse(file, "belongs to another transcript or work tree");
+  if (
+    record.transcript !== (await recordKey(transcript)) ||
+    record.cwd !== cwd ||
+    record.runNonce !== runNonce
+  ) {
+    return refuse(file, "belongs to another transcript, work tree, or run");
   }
   return record.transcriptSha256 === digest
     ? { role: record.role, sessionId: record.sessionId }

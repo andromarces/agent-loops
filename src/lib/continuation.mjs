@@ -53,12 +53,16 @@ export async function readContinuation(path) {
 
 /**
  * Gives a claude role the pre-assigned id that a crashed run saved outside the work tree. The
- * record is untrusted: it applies only when it binds to this transcript state and work tree, the
+ * record is untrusted: it applies only when it binds to this transcript state, work tree, and run, the
  * role is a claude role with no id, and the id stays unconfirmed, so the ownership check of the
  * adapter always runs before the id resumes (ADR 0027).
  */
 async function applySessionRecord(path, bytes, transcript) {
-  const record = await readSessionRecord(path, { digest: sha256(bytes), cwd: transcript.cwd });
+  const record = await readSessionRecord(path, {
+    digest: sha256(bytes),
+    cwd: transcript.cwd,
+    runNonce: transcript.runNonce,
+  });
   const earlier = record && transcript.roles[record.role];
   if (earlier?.kind === "claude" && earlier.sessionId === null) {
     transcript.roles[record.role] = {

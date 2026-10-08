@@ -745,7 +745,8 @@ test("a Git work tree whose path contains spaces is not refused", async () => {
 test("a mode-free run writes the origin/main transcript shape", async () => {
   const runOnce = async (extra) => {
     const repo = await createTempRepo();
-    const transcriptPath = join(repo, "transcript.json");
+    // Outside the work tree: a transcript inside it also holds a run nonce (ADR 0027).
+    const transcriptPath = `${repo}-transcript.json`;
     const origExitCode = process.exitCode;
     const agents = {
       codex: {
@@ -773,6 +774,7 @@ test("a mode-free run writes the origin/main transcript shape", async () => {
     } finally {
       process.exitCode = origExitCode;
       await removePath(repo);
+      await removePath(transcriptPath);
     }
   };
 

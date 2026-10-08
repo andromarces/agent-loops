@@ -34,13 +34,21 @@ Two directions were weighed. The first exempts the transcript path from the chec
 7. The target of that save depends on the role and on the location of `--transcript`. This decision is new.
    - A worker turn runs under no mutation check. The loop writes the transcript file.
    - An orchestrator or reviewer turn with a transcript outside the work tree also writes the transcript file.
-   - A transcript inside the work tree gets one write before the first turn, outside every mutation check. An orchestrator or reviewer first turn then writes a session record outside the tree. The mutation check has no exemption and no new parameter.
+   - A transcript inside the work tree gets one write before the first turn, outside every mutation check. That write adds a top-level `runNonce`, a random UUID of this run. An orchestrator or reviewer first turn then writes a session record outside the tree. The mutation check has no exemption and no new parameter.
    - The record is the file `<tmpdir>/agent-loops/session-records/<key>.json`. The key is a digest of the identity of the transcript directory and the lowercase file name, so a case alias finds the same record.
-   - The record holds only `version`, `transcript` (the key), `cwd`, `transcriptSha256`, `role`, `sessionId`, and `sessionUnconfirmed` (always `true`). It holds no task text and no other transcript content.
+   - The record holds only `version`, `transcript` (the key), `cwd`, `runNonce`, `transcriptSha256`, `role`, `sessionId`, and `sessionUnconfirmed` (always `true`). It holds no task text and no other transcript content.
    - `transcriptSha256` is the digest of the transcript file that the loop wrote last. Every later transcript write changes it and removes the record. A removal that fails is harmless, because a changed digest makes the record stale.
+   - `runNonce` is unique to the run. Two runs can have the same task, work tree, transcript path, and transcript bytes before the nonce. The nonce makes their records differ, so a record of one run never binds to another.
    - A rejected id removes the record. The loop never writes the transcript during the turn.
    - The loop decides "inside" by file identity (device and inode) along the ancestors of the real path. A case alias, a symlink, and a directory inside a submodule all count as inside.
-   - The record is untrusted input. `--continue-from` uses it only when every test passes. The file is a small regular file of the current user. It is valid JSON with exactly the fields above. The role is the orchestrator or the reviewer. The id is a lowercase UUID. The key and `cwd` equal those of this transcript. The digest equals the digest of the transcript bytes now. Any failed test ignores the record. A mismatch other than a stale digest also logs a warning.
+   - The record is untrusted input. `--continue-from` uses it only when every test passes:
+     - The file is a small regular file of the current user.
+     - The file is valid JSON with exactly the fields above.
+     - Each string field is a string of the right form. The role is the orchestrator or the reviewer. The id and the nonce are lowercase UUID strings. A value of another type, such as an array that holds a UUID, fails.
+     - The key and `cwd` equal those of this transcript.
+     - `runNonce` equals the `runNonce` of the transcript.
+     - The digest equals the digest of the transcript bytes now.
+   - A failed test ignores the record. A mismatch other than a stale digest also logs a warning.
    - A valid record sets the id and the unconfirmed mark of one role. The role must be a Claude role with no id in the transcript. The adapter then runs the ownership check of decision 3 before the id resumes. A record cannot clear the mark or skip the check.
    - The loop saves nothing before the turn and logs a warning in two cases. The record location is inside the work tree, or the work tree root cannot be read.
 
@@ -50,9 +58,9 @@ Two directions were weighed. The first exempts the transcript path from the chec
 - The mutation check is unchanged for every path. The four flaws of the exemption do not exist, because there is no exempt path.
 - The record is not in the transcript file. A reader that opens only an in-tree transcript after a crash sees the state before the turn. Only `--continue-from` reads the record.
 - A clean-up of the temporary directory, or a reboot that clears it, loses the record. The crash gap then stays open for that run.
-- A foreign or crafted record cannot supply an id. A record that another user wrote, another transcript, another work tree, or an older transcript state is ignored.
+- A foreign or crafted record cannot supply an id. A record of another user, transcript, work tree, run, or older transcript state is ignored.
 - A same-user process can still forge a valid record, because it can also edit the transcript. The ownership check still requires a session file with the marker of this work tree and role.
-- An in-tree transcript is written once before the first turn. A run that fails before any turn leaves that file with exit code 1 and no error text.
+- An in-tree transcript is written once before the first turn and holds `runNonce`. A transcript outside the work tree keeps its earlier shape. A run that fails before any turn leaves the in-tree file with exit code 1 and no error text.
 - Not verified: Windows file system behavior, and the record that a real process kill leaves. The tests simulate a kill by restoring the files that a turn had on disk.
 - Separate processes that share one transcript path have no write coordination. Each write is atomic and the last one wins.
 

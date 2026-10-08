@@ -23,8 +23,11 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+const NONCE = "33333333-3333-4333-8333-333333333333";
+
 const fields = (extra = {}) => ({
   cwd: dir,
+  runNonce: NONCE,
   transcriptSha256: "a".repeat(64),
   role: "reviewer",
   sessionId: ID,
@@ -35,10 +38,12 @@ const fields = (extra = {}) => ({
 // that removal leaves nothing to read (ADR 0027).
 test("a record binds to one transcript digest and goes away on removal", async () => {
   await writeSessionRecord(transcript, fields());
-  const bound = { digest: "a".repeat(64), cwd: dir };
+  const bound = { digest: "a".repeat(64), cwd: dir, runNonce: NONCE };
   expect(await readSessionRecord(transcript, bound)).toEqual({ role: "reviewer", sessionId: ID });
   expect(await readSessionRecord(transcript, { ...bound, digest: "b".repeat(64) })).toBeNull();
   expect(await readSessionRecord(transcript, { ...bound, cwd: join(dir, "x") })).toBeNull();
+  expect(await readSessionRecord(transcript, { ...bound, runNonce: ID })).toBeNull();
+  expect(await readSessionRecord(transcript, { ...bound, runNonce: [NONCE] })).toBeNull();
   await removeSessionRecord(transcript);
   expect(await readSessionRecord(transcript, bound)).toBeNull();
 });
@@ -47,7 +52,9 @@ test("a record binds to one transcript digest and goes away on removal", async (
 // name the worker.
 test("a record for a role other than the orchestrator or reviewer is refused", async () => {
   await writeSessionRecord(transcript, fields({ role: "worker" }));
-  expect(await readSessionRecord(transcript, { digest: "a".repeat(64), cwd: dir })).toBeNull();
+  expect(
+    await readSessionRecord(transcript, { digest: "a".repeat(64), cwd: dir, runNonce: NONCE }),
+  ).toBeNull();
 });
 
 // Usefulness: verifies a path counts as inside a directory by file identity, so a symlink into the

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
@@ -692,6 +693,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   // pre-spawn save then goes to a session record outside the tree, and --continue-from reads it
   // (ADR 0027). The mode is "file" (write the transcript), "record" (write the record), or "none"
   // (no safe place: a root that cannot be read, or a record location inside the tree).
+  const runNonce = randomUUID();
   let saveMode = "file";
   const chooseSaveMode = async () => {
     try {
@@ -700,6 +702,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
       saveMode = (await isInside(root, await sessionRecordPath(options.transcript)))
         ? "none"
         : "record";
+      if (saveMode === "record") transcriptData.runNonce = runNonce;
     } catch {
       saveMode = "none";
     }
@@ -719,6 +722,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
       try {
         await writeSessionRecord(options.transcript, {
           cwd: options.cwd,
+          runNonce,
           transcriptSha256: transcriptDigest,
           role,
           sessionId: id,
