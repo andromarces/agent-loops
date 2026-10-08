@@ -1750,37 +1750,71 @@ test("opencode skips the export when the invocation timeout is spent", async () 
   expect(state.resolvedModel).toBeNull();
 });
 
-// Usefulness: verifies a cancel before the export stops it, and the turn ends canceled.
-test("opencode runs no export after a cancel and ends the turn canceled", async () => {
+// Usefulness: verifies a cancel before the export stops it and the completed turn result is kept.
+test("opencode runs no export after a cancel and returns the completed response", async () => {
   const controller = new AbortController();
   controller.abort();
   const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
-  let error;
-  try {
-    await runResolvedTurn(state, ["msg-1"], exportJson(assistantMessage("msg-1", MODEL_A)), {
-      cwd: "/dir",
-      signal: controller.signal,
-    });
-  } catch (err) {
-    error = err;
-  }
+  const response = await runResolvedTurn(
+    state,
+    ["msg-1"],
+    exportJson(assistantMessage("msg-1", MODEL_A)),
+    { cwd: "/dir", signal: controller.signal },
+  );
 
-  expect(error?.isCanceled).toBe(true);
+  expect(response).toBe("reply");
   expect(vi.mocked(exec)).toHaveBeenCalledTimes(1);
   expect(state.resolvedModel).toBeNull();
 });
 
-// Usefulness: verifies a cancel during the export ends the turn canceled instead of recording null
-// and returning success.
-test("opencode ends the turn canceled when the export is canceled", async () => {
-  const canceled = Object.assign(new Error("opencode was canceled."), {
-    name: "ExecError",
-    isCanceled: true,
-  });
-  const state = { kind: "opencode", sessionId: null, model: null };
-  const error = await runResolvedTurn(state, ["msg-1"], canceled).catch((err) => err);
+const EXPORT_SECRET_TEXT = "private transcript text of the session";
 
-  expect(error?.isCanceled).toBe(true);
+// Usefulness: verifies a canceled or failed export leaks none of its content into an error or a log
+// and never discards the completed turn response (#567 blocker 1).
+test.each([
+  ["a canceled export", { isCanceled: true }],
+  ["a timed out export", { timedOut: true }],
+  ["a failed export", { exitCode: 1 }],
+])("opencode keeps the response and leaks no export content for %s", async (_name, flags) => {
+  const failure = Object.assign(new Error(`opencode failed\n\n${EXPORT_SECRET_TEXT}`), {
+    name: "ExecError",
+    stdout: EXPORT_SECRET_TEXT,
+    stderr: EXPORT_SECRET_TEXT,
+    ...flags,
+  });
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+  const response = await runResolvedTurn(state, ["msg-1"], failure);
+
+  expect(response).toBe("reply");
+  expect(state.resolvedModel).toBeNull();
+  const logged = [logDebug, logInfo].flatMap((fn) => vi.mocked(fn).mock.calls.flat());
+  expect(JSON.stringify([state, logged])).not.toContain(EXPORT_SECRET_TEXT);
+});
+
+// Usefulness: verifies an export that cannot prove which assistant message belongs to the turn
+// records null: a message with no valid id, or two messages with the same id (#567 blocker 2).
+test.each([
+  [
+    "an assistant message with no id",
+    exportJson(assistantMessage("msg-1", MODEL_A), { type: "assistant", model: MODEL_B }),
+  ],
+  [
+    "an assistant message with a non-string id",
+    exportJson(assistantMessage("msg-1", MODEL_A), assistantMessage(7, MODEL_B)),
+  ],
+  [
+    "an empty message id",
+    exportJson(assistantMessage("msg-1", MODEL_A), assistantMessage("", MODEL_B)),
+  ],
+  [
+    "a repeated message id",
+    exportJson(assistantMessage("msg-1", MODEL_A), assistantMessage("msg-1", MODEL_B)),
+  ],
+  ["a message that is not an object", exportJson(assistantMessage("msg-1", MODEL_A), null)],
+])("opencode records resolvedModel null for %s", async (_name, exported) => {
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+  await runResolvedTurn(state, ["msg-1"], exported);
+
   expect(state.resolvedModel).toBeNull();
 });
 

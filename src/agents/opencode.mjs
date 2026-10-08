@@ -167,17 +167,20 @@ function streamSession(events) {
  * `opencode session export <id>`, because no stream event names the model. The export holds the
  * whole session, so only the messages whose id the stream names count. A streamed message that the
  * export lacks, or whose model is malformed or holds a secret environment value (ADR 0017),
- * contributes `undefined`, which makes the turn unresolved. An empty list, a failed or timed-out
- * export, a spent timeout, or output that is not JSON also makes it unresolved.
- * The export runs under the cancel signal and the time that the invocation has left. A cancel throws
- * the cancel error, so the turn ends canceled.
+ * contributes `undefined`, which makes the turn unresolved. An empty list, a failed, timed-out, or
+ * canceled export, a spent timeout, an aborted signal, or output that is not JSON also makes it
+ * unresolved. So does an export with a message that has no valid id or a repeated id, because the
+ * export then cannot prove which assistant message belongs to the turn.
+ * The export runs under the cancel signal and the time that the invocation has left. No failure of
+ * it reaches the caller: the error text can hold session content, and the completed turn result is
+ * never discarded. Only the model field leaves this function.
  * known-limit: the export prints the whole session, so a long session enlarges the buffered output.
  * @param {number} startedAt `Date.now()` at the start of the invocation
  */
 async function exportedModels(sessionId, events, { cwd, timeout, signal, role }, startedAt) {
   const ids = [...new Set(events.map((event) => event.part?.messageID).filter(isMessageId))];
   if (ids.length === 0) return [];
-  if (signal?.aborted) throw canceledError();
+  if (signal?.aborted) return [];
   const bounded = typeof timeout === "number" && timeout > 0;
   const remaining = bounded ? timeout - (Date.now() - startedAt) / 1000 : undefined;
   if (bounded && remaining <= 0) return [];
@@ -190,13 +193,17 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
       role,
     });
     messages = JSON.parse(stdout)?.messages;
-  } catch (err) {
-    if (err?.isCanceled) throw err;
+  } catch {
     return [];
   }
   if (!Array.isArray(messages)) return [];
+  const known = new Set();
+  for (const message of messages) {
+    if (!isJsonObject(message) || !isMessageId(message.id) || known.has(message.id)) return [];
+    known.add(message.id);
+  }
   return ids.map((id) => {
-    const message = messages.find((m) => isJsonObject(m) && m.type === "assistant" && m.id === id);
+    const message = messages.find((m) => m.type === "assistant" && m.id === id);
     const model = message?.model;
     if (!isJsonObject(model) || !isMessageId(model.providerID) || !isMessageId(model.id)) {
       return undefined;
@@ -204,10 +211,6 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
     const value = `${model.providerID}/${model.id}`;
     return redactEnvSecrets(value) === value ? value : undefined;
   });
-}
-
-function canceledError() {
-  return Object.assign(new Error("opencode was canceled."), { isCanceled: true });
 }
 
 /**
