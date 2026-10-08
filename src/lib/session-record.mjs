@@ -2,11 +2,14 @@ import { lstat, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { sha256 } from "./hash.mjs";
+import { logWarn } from "./log.mjs";
 import { writeFileAtomic } from "./runstate.mjs";
 
-// A record of the headless run that lives outside the work tree, for a run whose `--transcript`
-// is inside it (ADR 0027). The mutation check of an orchestrator or reviewer turn covers every file
-// of the work tree, so the loop cannot write its transcript there during such a turn.
+// A session record keeps the pre-assigned session id of a Claude first turn outside the work tree,
+// for a headless run whose `--transcript` is inside it (ADR 0027). The mutation check of an
+// orchestrator or reviewer turn covers every file of the work tree, so the loop cannot write the
+// transcript there during such a turn. The record is untrusted input. It holds only the id, the
+// unconfirmed mark, and the fields that bind it to one transcript state.
 
 const real = (path) => realpath(path).catch(() => resolve(path));
 const identity = (path) =>
@@ -14,6 +17,19 @@ const identity = (path) =>
     (info) => `${info.dev}:${info.ino}`,
     () => null,
   );
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ROLES = ["orchestrator", "reviewer"];
+const FIELDS = [
+  "cwd",
+  "role",
+  "sessionId",
+  "sessionUnconfirmed",
+  "transcript",
+  "transcriptSha256",
+  "version",
+];
+const MAX_BYTES = 4096;
 
 /**
  * True when `path` is inside the directory `root`. The test compares file identity (device and
@@ -29,40 +45,94 @@ export async function isInside(root, path) {
   }
 }
 
-/** The path of the record of one transcript file, keyed by its real directory and its name. */
+// The key names one transcript by the identity of its directory and its lowercase file name, so a
+// case alias of the path finds the same record.
+async function recordKey(transcript) {
+  const dir = await real(dirname(transcript));
+  const where = (await identity(dir)) ?? dir;
+  return sha256(`${where}\0${basename(transcript).toLowerCase()}`).slice(0, 32);
+}
+
+/** The path of the record of one transcript file. */
 export async function sessionRecordPath(transcript) {
-  const key = join(await real(dirname(transcript)), basename(transcript));
-  return join(tmpdir(), "agent-loops", "session-records", `${sha256(key).slice(0, 32)}.json`);
+  return join(tmpdir(), "agent-loops", "session-records", `${await recordKey(transcript)}.json`);
 }
 
-/** Replaces the record of `transcript` with `text`, atomically. */
-export async function writeSessionRecord(transcript, text) {
+/**
+ * Replaces the record of `transcript`, atomically. `transcriptSha256` is the digest of the
+ * transcript file that the loop wrote last, so the record binds to that one state of the file.
+ * @param {string} transcript
+ * @param {{ cwd: string, transcriptSha256: string, role: string, sessionId: string }} fields
+ */
+export async function writeSessionRecord(transcript, { cwd, transcriptSha256, role, sessionId }) {
   const file = await sessionRecordPath(transcript);
+  const record = {
+    version: 1,
+    transcript: await recordKey(transcript),
+    cwd,
+    transcriptSha256,
+    role,
+    sessionId,
+    sessionUnconfirmed: true,
+  };
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-  await writeFileAtomic(file, text);
+  await writeFileAtomic(file, JSON.stringify(record));
 }
 
-/** Removes the record of `transcript`. A failure is ignored: `readSessionRecord` ignores a stale record. */
+/** Removes the record of `transcript`. A failure is ignored: a stale record never binds. */
 export async function removeSessionRecord(transcript) {
   await rm(await sessionRecordPath(transcript), { force: true }).catch(() => {});
 }
 
 /**
- * The text of the record of `transcript`, or null. A record counts only when it is a regular file
- * of the current user, valid JSON, and not older than the transcript file, so a record that a
- * later transcript write superseded is never read.
+ * The role and session id of the record of `transcript`, or null. The record counts only when all
+ * of these hold: it is a small regular file of the current user, it has exactly the fields of
+ * `writeSessionRecord` with valid values, it names this transcript and `cwd`, and its digest equals
+ * `digest`, the digest of the transcript bytes now. A later transcript write changes the digest, so
+ * a stale record never binds, whatever the file times are. A record that fails any other test is
+ * refused with a warning.
+ * @param {string} transcript
+ * @param {{ digest: string, cwd: string }} bound
+ * @returns {Promise<{ role: string, sessionId: string } | null>}
  */
-export async function readSessionRecord(transcript) {
+export async function readSessionRecord(transcript, { digest, cwd }) {
+  let file;
+  let text;
   try {
-    const file = await sessionRecordPath(transcript);
+    file = await sessionRecordPath(transcript);
     const info = await lstat(file);
-    if (!info.isFile() || (process.getuid && info.uid !== process.getuid())) return null;
-    const written = await stat(transcript).catch(() => null);
-    if (written && written.mtimeMs > info.mtimeMs) return null;
-    const text = await readFile(file, "utf8");
-    JSON.parse(text);
-    return text;
-  } catch {
-    return null;
+    if (!info.isFile() || info.size > MAX_BYTES) return refuse(file, "not a small regular file");
+    if (process.getuid && info.uid !== process.getuid())
+      return refuse(file, "not owned by the user");
+    text = await readFile(file, "utf8");
+  } catch (err) {
+    return err?.code === "ENOENT" ? null : refuse(file, "unreadable");
   }
+  let record;
+  try {
+    record = JSON.parse(text);
+  } catch {
+    return refuse(file, "not valid JSON");
+  }
+  const shaped =
+    record !== null &&
+    typeof record === "object" &&
+    !Array.isArray(record) &&
+    Object.keys(record).sort().join() === FIELDS.join() &&
+    record.version === 1 &&
+    ROLES.includes(record.role) &&
+    UUID.test(record.sessionId) &&
+    record.sessionUnconfirmed === true;
+  if (!shaped) return refuse(file, "has an unexpected shape");
+  if (record.transcript !== (await recordKey(transcript)) || record.cwd !== cwd) {
+    return refuse(file, "belongs to another transcript or work tree");
+  }
+  return record.transcriptSha256 === digest
+    ? { role: record.role, sessionId: record.sessionId }
+    : null;
+}
+
+function refuse(file, reason) {
+  logWarn(`The session record ${file} is ignored: it is ${reason}.`);
+  return null;
 }

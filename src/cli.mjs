@@ -33,7 +33,8 @@ import {
   verifyResolvedModels,
 } from "./lib/continuation.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
-import { readProp, redactedText } from "./lib/error-message.mjs";
+import { sha256 } from "./lib/hash.mjs";
+import { readableErrorText, readProp, redactedText } from "./lib/error-message.mjs";
 import {
   runHarnessCheckCommand,
   runInstallCommand,
@@ -654,9 +655,11 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   // alone decides what a failed turn keeps (issue #564). Cleared when the CLI call ends.
   let pendingSession = null;
 
-  // `toRecord` writes the session record outside the work tree instead of the transcript file
-  // (ADR 0027). A transcript write supersedes the record, so it removes it.
-  const writeTranscript = async ({ toRecord = false } = {}) => {
+  // The digest of the transcript file that this run wrote last. A session record binds to it.
+  let transcriptDigest = null;
+
+  // A transcript write supersedes the session record of the file, so it removes the record.
+  const writeTranscript = async () => {
     if (!options.transcript) return;
     try {
       const { role, id } = pendingSession ?? {};
@@ -670,14 +673,11 @@ ${redactedText(readProp(err, "message") ?? err)}`);
           }
         : transcriptData;
       const text = JSON.stringify(data, null, 2);
-      if (toRecord) {
-        await writeSessionRecord(options.transcript, text);
-      } else {
-        // Atomic, because the file can be the --continue-from source: a crash or a
-        // failed write must leave the earlier record whole.
-        await writeFileAtomic(options.transcript, text);
-        await removeSessionRecord(options.transcript);
-      }
+      // Atomic, because the file can be the --continue-from source: a crash or a
+      // failed write must leave the earlier record whole.
+      await writeFileAtomic(options.transcript, text);
+      transcriptDigest = sha256(text);
+      await removeSessionRecord(options.transcript);
     } catch (err) {
       console.error(
         redactedText(
@@ -688,31 +688,49 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   };
 
   // The orchestrator and the reviewer run under the mutation check, which covers the whole Git work
-  // tree, not only --cwd, so a transcript inside that tree cannot be written during their turn. The
-  // session record goes to a file outside the tree instead, and --continue-from reads it (ADR 0027).
-  // A root that cannot be read, or a record location inside the tree, leaves the crash gap open.
-  const preSpawnTarget = async (role) => {
-    if (role === "worker") return "transcript";
+  // tree, not only --cwd, so a transcript inside that tree cannot be written during their turn. Their
+  // pre-spawn save then goes to a session record outside the tree, and --continue-from reads it
+  // (ADR 0027). The mode is "file" (write the transcript), "record" (write the record), or "none"
+  // (no safe place: a root that cannot be read, or a record location inside the tree).
+  let saveMode = "file";
+  const chooseSaveMode = async () => {
     try {
       const root = await workTreeRoot(options.cwd);
-      if (!(await isInside(root, options.transcript))) return "transcript";
-      if (!(await isInside(root, await sessionRecordPath(options.transcript)))) return "record";
+      if (!(await isInside(root, options.transcript))) return;
+      saveMode = (await isInside(root, await sessionRecordPath(options.transcript)))
+        ? "none"
+        : "record";
     } catch {
-      // Treated as inside.
+      saveMode = "none";
     }
-    return null;
   };
   const onSessionAssigned = async (role, id) => {
-    pendingSession = id ? { role, id } : null;
-    const target = id ? await preSpawnTarget(role) : "transcript";
-    if (target === null) {
-      logWarn(
-        `${role}: the session id is not saved before the turn: --transcript is inside the work tree and no record location outside it is available.`,
-      );
-      pendingSession = null;
+    if (role === "worker" || saveMode === "file") {
+      pendingSession = id ? { role, id } : null;
+      await writeTranscript();
       return;
     }
-    await writeTranscript({ toRecord: target === "record" });
+    // A withdrawn id leaves the transcript as it is, which holds no id for the role.
+    if (!id) {
+      await removeSessionRecord(options.transcript);
+      return;
+    }
+    if (saveMode === "record" && transcriptDigest !== null) {
+      try {
+        await writeSessionRecord(options.transcript, {
+          cwd: options.cwd,
+          transcriptSha256: transcriptDigest,
+          role,
+          sessionId: id,
+        });
+        return;
+      } catch (err) {
+        logWarn(`${role}: the session record was not written: ${readableErrorText(err)}`);
+      }
+    }
+    logWarn(
+      `${role}: the session id is not saved before the turn, because --transcript is inside the work tree and no record location outside it is usable.`,
+    );
   };
 
   // The command result and work tree compare of a turn that ended in a fatal error. The
@@ -779,6 +797,12 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     };
 
     try {
+      if (options.transcript) {
+        await chooseSaveMode();
+        // The record binds to a transcript file that exists, so the file is written once before the
+        // first turn, outside every mutation check.
+        if (saveMode === "record") await writeTranscript();
+      }
       const result = await runLoop({
         task: options.task,
         cwd: options.cwd,

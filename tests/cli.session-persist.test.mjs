@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -6,7 +15,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { runClaude } from "../src/agents/claude.mjs";
 import { main } from "../src/cli.mjs";
 import { exec } from "../src/lib/exec.mjs";
-import { readSessionRecord } from "../src/lib/session-record.mjs";
+import { readContinuation } from "../src/lib/continuation.mjs";
+import { sessionRecordPath } from "../src/lib/session-record.mjs";
 import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 vi.mock("../src/lib/exec.mjs", () => ({
@@ -46,6 +56,7 @@ beforeEach(async () => {
   scratch = await realpath(await mkdtemp(join(tmpdir(), "session-persist-")));
   vi.stubEnv("CLAUDE_CONFIG_DIR", join(scratch, "claude-config"));
   vi.mocked(exec).mockReset();
+  await rm(join(tmpdir(), "agent-loops"), { recursive: true, force: true });
   git.statusCalls = 0;
   git.failFrom = Infinity;
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -96,10 +107,9 @@ const timedOut = () =>
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 
-// What --continue-from reads for `transcript` while a turn runs: the session record of an in-tree
-// transcript, else the transcript file.
-const readMidTurn = async (transcript) =>
-  JSON.parse((await readSessionRecord(transcript)) ?? (await readFile(transcript, "utf8")));
+// What --continue-from restores from `transcript` while a turn runs: the transcript file with the
+// session record of an in-tree transcript applied.
+const readMidTurn = (transcript) => readContinuation(transcript).catch(() => undefined);
 
 /** Writes the session file that Claude Code writes for a first turn the CLI started. */
 async function saveSession(id, role) {
@@ -257,8 +267,8 @@ const expectRecorded = (role, midTurn) => {
   expect(midTurn.roles[role].sessionId).toMatch(UUID);
 };
 
-// Usefulness: verifies a --transcript file inside the work tree holds the pre-assigned id before a
-// Claude reviewer's CLI starts and never fails the turn's mutation check (issue #581).
+// Usefulness: verifies an in-tree transcript gives --continue-from the pre-assigned id before a
+// Claude reviewer CLI starts, and the turn passes its mutation check (issue #581).
 test("an in-tree transcript is written before a Claude reviewer turn without a mutation failure", async () => {
   const transcript = join(repo, "run.json");
   const midTurn = await reviewerRun(transcript, repo);
@@ -284,8 +294,8 @@ test("an in-tree transcript is written before a Claude orchestrator turn without
   expect((await readJson(transcript)).error).toBeNull();
 });
 
-// Usefulness: verifies the exemption covers the transcript path alone, so a reviewer that writes any
-// other file in the same turn still fails the mutation check (issue #581).
+// Usefulness: verifies the mutation check stays exact: a reviewer that writes another file in an
+// in-tree transcript run still fails the check (issue #581).
 test("an in-tree transcript leaves the mutation check exact for every other path", async () => {
   const transcript = join(repo, "run.json");
   await reviewerRun(transcript, repo, () => writeFile(join(repo, "leak.txt"), "leak\n"));
@@ -296,8 +306,8 @@ test("an in-tree transcript leaves the mutation check exact for every other path
   expect(error).not.toContain("run.json");
 });
 
-// Usefulness: verifies a --transcript inside the repository but outside --cwd is exempt by its
-// path from the repository root, because the mutation snapshot covers the whole Git work tree.
+// Usefulness: verifies a transcript inside the repository but outside --cwd counts as in tree,
+// because the mutation snapshot covers the whole Git work tree.
 test("a transcript inside the repository but outside --cwd is written before the reviewer turn", async () => {
   const cwd = join(repo, "sub");
   await mkdir(cwd);
@@ -308,8 +318,7 @@ test("a transcript inside the repository but outside --cwd is written before the
   expect((await readJson(transcript)).error).toBeNull();
 });
 
-// Usefulness: verifies a work tree directory whose name starts with two dots counts as inside the
-// work tree, so its transcript is written before the turn and exempt from the check.
+// Usefulness: verifies a work tree directory whose name starts with two dots counts as in tree.
 test("a transcript in a directory named '..records' inside the work tree is written before the reviewer turn", async () => {
   const dir = join(repo, "..records");
   await mkdir(dir);
@@ -346,8 +355,7 @@ async function addSubmodule() {
   await git_(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "sub");
 }
 
-// Usefulness: verifies a transcript that is named like a mutation marker never hides a commit that a
-// reviewer makes (issue #581 review, blocker 1).
+// Usefulness: verifies a transcript named like a mutation marker never hides a reviewer commit.
 test.skipIf(process.platform === "win32")(
   "a transcript named '<HEAD>' inside the work tree still reports a reviewer commit",
   async () => {
@@ -370,8 +378,7 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-// Usefulness: verifies a transcript path that names a submodule never hides a change inside it
-// (issue #581 review, blocker 2).
+// Usefulness: verifies a transcript path that names a submodule never hides a change inside it.
 test("a transcript path that names a submodule still reports a reviewer change inside it", async () => {
   await addSubmodule();
   await reviewerRun(join(repo, "sub"), repo, () =>
@@ -380,8 +387,8 @@ test("a transcript path that names a submodule still reports a reviewer change i
   expect(process.exitCode).toBe(1);
 });
 
-// Usefulness: verifies a transcript inside a submodule causes no mutation failure, because the
-// outer snapshot sees the submodule as dirty (issue #581 review, blocker 4).
+// Usefulness: verifies a transcript inside a submodule causes no mutation failure, although the
+// outer snapshot sees a write there as a dirty submodule.
 test("a transcript inside a submodule causes no reviewer mutation failure", async () => {
   await addSubmodule();
   await reviewerRun(join(repo, "sub", "run.json"), repo);
@@ -397,8 +404,8 @@ async function caseInsensitive() {
   );
 }
 
-// Usefulness: verifies a transcript path that differs only in case from the file on disk causes no
-// mutation failure on a case-insensitive file system (issue #581 review, blocker 3).
+// Usefulness: verifies a case alias of the transcript path causes no mutation failure on a
+// case-insensitive file system.
 test("a case alias of an in-tree transcript causes no reviewer mutation failure", async (ctx) => {
   if (!(await caseInsensitive())) ctx.skip();
   await writeFile(join(repo, "run.json"), "{}");
@@ -406,8 +413,8 @@ test("a case alias of an in-tree transcript causes no reviewer mutation failure"
   expect(process.exitCode).toBe(0);
 });
 
-// Everything the loop leaves on disk during a turn, outside the work tree and in the transcript. A
-// parent that dies mid-turn leaves exactly this.
+// The files that the loop leaves on disk during a turn: the transcript and the session records. A
+// parent that dies mid-turn leaves exactly these.
 async function captureDisk(transcript) {
   const files = new Map();
   const add = async (path) => {
@@ -484,6 +491,175 @@ test.each(["orchestrator", "reviewer"])(
     expect(first).toEqual(expect.arrayContaining(["--resume", killedId]));
   },
 );
+
+// Parent crash during an orchestrator first turn with an in-tree transcript. Returns the pre-assigned
+// id and the files on disk at that moment.
+async function crashOrchestrator(transcript) {
+  let killedId;
+  let disk;
+  vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
+    killedId = assignedIn(args);
+    disk = await captureDisk(transcript);
+    throw timedOut();
+  });
+  await main(
+    [...roleArgs({ orchestrator: "claude" }), "--cwd", repo, "--transcript", transcript],
+    agentsFor([]),
+  );
+  return { killedId, disk };
+}
+
+// Runs --continue-from on `transcript` and returns the arguments of the first Claude call.
+async function continueFrom(transcript) {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec).mockImplementation(async (_command, args) => {
+    const id = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : assignedIn(args);
+    return { stdout: JSON.stringify({ session_id: id, result: FINISH }), stderr: "" };
+  });
+  await main(
+    [
+      ...roleArgs({ orchestrator: "claude" }),
+      "--cwd",
+      repo,
+      "--continue-from",
+      transcript,
+      "--transcript",
+      transcript,
+    ],
+    agentsFor([]),
+  );
+  return vi.mocked(exec).mock.calls[0]?.[1];
+}
+
+// The one file of a captured disk that is not the transcript: the session record.
+const recordIn = (disk, transcript) => [...disk.keys()].find((path) => path !== transcript);
+
+// Usefulness: verifies the record holds only the id, the mark, and the binding fields. No task text
+// leaves the transcript file.
+test("the session record holds no transcript content", async () => {
+  const transcript = join(repo, "run.json");
+  const { killedId, disk } = await crashOrchestrator(transcript);
+  const record = JSON.parse(disk.get(recordIn(disk, transcript)));
+  expect(Object.keys(record).sort()).toEqual([
+    "cwd",
+    "role",
+    "sessionId",
+    "sessionUnconfirmed",
+    "transcript",
+    "transcriptSha256",
+    "version",
+  ]);
+  expect(record).toMatchObject({ role: "orchestrator", sessionId: killedId, cwd: repo });
+  expect(JSON.stringify(record)).not.toContain("long task");
+});
+
+// Usefulness: verifies a record that does not bind to this transcript and work tree gives no id to
+// --continue-from, although a session file backs the id.
+test.each([
+  ["without the unconfirmed mark", (r) => ({ ...r, sessionUnconfirmed: false })],
+  ["with an extra field", (r) => ({ ...r, task: "long task" })],
+  ["for another work tree", (r) => ({ ...r, cwd: join(r.cwd, "other") })],
+  ["for another role", (r) => ({ ...r, role: "worker" })],
+  ["with an id that is not a UUID", (r) => ({ ...r, sessionId: "../../x" })],
+  ["for another transcript key", (r) => ({ ...r, transcript: "0".repeat(32) })],
+])("--continue-from refuses a record %s", async (_name, edit) => {
+  const transcript = join(repo, "run.json");
+  const { killedId, disk } = await crashOrchestrator(transcript);
+  await restoreDisk(transcript, disk);
+  const file = recordIn(disk, transcript);
+  await writeFile(file, JSON.stringify(edit(JSON.parse(disk.get(file)))));
+  await saveSession(killedId, "orchestrator");
+  const args = await continueFrom(transcript);
+  expect(process.exitCode).toBe(0);
+  expect(args).not.toContain("--resume");
+  expect(args).toContain("--session-id");
+});
+
+// Usefulness: verifies a record that another transcript wrote is refused when it sits under the
+// key of this transcript.
+test("--continue-from refuses the record of another transcript", async () => {
+  const first = join(repo, "a.json");
+  const second = join(repo, "b.json");
+  const { killedId, disk } = await crashOrchestrator(first);
+  const secondDisk = await (async () => {
+    await restoreDisk(first, disk);
+    await rm(first);
+    await writeFile(second, disk.get(first));
+    const target = await sessionRecordPath(second);
+    await mkdir(join(target, ".."), { recursive: true });
+    await writeFile(target, disk.get(recordIn(disk, first)));
+    return target;
+  })();
+  expect(secondDisk).not.toBe(recordIn(disk, first));
+  await saveSession(killedId, "orchestrator");
+  const args = await continueFrom(second);
+  expect(process.exitCode).toBe(0);
+  expect(args).not.toContain("--resume");
+});
+
+// Usefulness: verifies a record that a later transcript write replaced is ignored, whatever the
+// file times are. The current transcript decides.
+test("--continue-from ignores a record that a later transcript write superseded", async () => {
+  const transcript = join(repo, "run.json");
+  const { killedId, disk } = await crashOrchestrator(transcript);
+  await restoreDisk(transcript, disk);
+  const current = JSON.parse(await readFile(transcript, "utf8"));
+  current.roles.orchestrator.sessionId = "22222222-2222-4222-8222-222222222222";
+  delete current.roles.orchestrator.sessionUnconfirmed;
+  await writeFile(transcript, JSON.stringify(current));
+  const when = new Date(Date.now() - 5000);
+  await utimes(transcript, when, when);
+  await utimes(recordIn(disk, transcript), when, when);
+  await saveSession(killedId, "orchestrator");
+  const args = await continueFrom(transcript);
+  expect(process.exitCode).toBe(0);
+  expect(args).toEqual(expect.arrayContaining(["--resume", current.roles.orchestrator.sessionId]));
+  expect(args).not.toContain(killedId);
+});
+
+// Usefulness: verifies a case alias of the transcript path finds the record on a case-insensitive
+// file system.
+test("--continue-from finds the record through a case alias of the transcript path", async (ctx) => {
+  if (!(await caseInsensitive())) ctx.skip();
+  const transcript = join(repo, "run.json");
+  const { killedId, disk } = await crashOrchestrator(transcript);
+  await restoreDisk(transcript, disk);
+  await saveSession(killedId, "orchestrator");
+  const args = await continueFrom(join(repo, "RUN.json"));
+  expect(args).toEqual(expect.arrayContaining(["--resume", killedId]));
+});
+
+// Usefulness: verifies the ownership check always runs on a recorded id. An orchestrator has no
+// first-turn rerun, so an id that no session file backs ends the run before any CLI starts.
+test("--continue-from refuses a recorded orchestrator id that no session file backs", async () => {
+  const transcript = join(repo, "run.json");
+  const { disk } = await crashOrchestrator(transcript);
+  await restoreDisk(transcript, disk);
+  const args = await continueFrom(transcript);
+  expect(args).toBeUndefined();
+  expect(process.exitCode).toBe(1);
+});
+
+// Usefulness: verifies a rejected id leaves no record, and the withdrawal writes no in-tree file,
+// so the reviewer turn passes its mutation check.
+test("a rejected id leaves no record for an in-tree reviewer turn", async () => {
+  const transcript = join(repo, "run.json");
+  vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
+    throw Object.assign(new Error("exit 1"), {
+      stdout: "",
+      stderr: `Error: Session ID ${assignedIn(args)} is already in use.\n`,
+      exitCode: 1,
+    });
+  });
+  await main(
+    [...roleArgs({ reviewer: "claude" }), "--cwd", repo, "--transcript", transcript],
+    agentsFor([REVIEW, FINISH]),
+  );
+  const disk = await captureDisk(transcript);
+  expect(process.exitCode).toBe(0);
+  expect(recordIn(disk, transcript)).toBeUndefined();
+  expect((await readJson(transcript)).roles.reviewer.sessionId).toBeNull();
+});
 
 // Usefulness: verifies an orchestrator id that the ownership check rejects keeps its unconfirmed
 // mark in the written record, so a later --continue-from checks it again, also when the snapshot

@@ -5,28 +5,29 @@ import { readableErrorText, readProp } from "./error-message.mjs";
 import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
+import { sha256 } from "./hash.mjs";
 import { readSessionRecord } from "./session-record.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
 
 /**
  * Reads the earlier headless run from its `--transcript` file, the only record
  * that holds the final role session ids (#362). A session record that a crashed run left outside the
- * work tree, and that is newer than the file, replaces it (ADR 0027). Rejects a file that is
+ * work tree can add the id of one claude first turn (ADR 0027). Rejects a file that is
  * unreadable, not JSON, has `events` that are not a list, or is missing a role
  * with a string `kind`, a string or null `sessionId`, and no `sessionUnconfirmed` or a boolean one.
  * @param {string} path
  * @returns {Promise<{ cwd: string, roles: object, events?: object[] }>}
  */
 export async function readContinuation(path) {
-  let text;
+  let bytes;
   try {
-    text = (await readSessionRecord(path)) ?? (await readFile(path, "utf8"));
+    bytes = await readFile(path);
   } catch (err) {
     throw new Error(`--continue-from cannot read ${path}: ${readableErrorText(err)}`);
   }
   let transcript;
   try {
-    transcript = JSON.parse(text);
+    transcript = JSON.parse(bytes.toString("utf8"));
   } catch {
     throw new Error(`--continue-from ${path} is not valid JSON.`);
   }
@@ -46,7 +47,26 @@ export async function readContinuation(path) {
       throw new Error(`--continue-from ${path} has an invalid ${role} role.`);
     }
   }
+  await applySessionRecord(path, bytes, transcript);
   return transcript;
+}
+
+/**
+ * Gives a claude role the pre-assigned id that a crashed run saved outside the work tree. The
+ * record is untrusted: it applies only when it binds to this transcript state and work tree, the
+ * role is a claude role with no id, and the id stays unconfirmed, so the ownership check of the
+ * adapter always runs before the id resumes (ADR 0027).
+ */
+async function applySessionRecord(path, bytes, transcript) {
+  const record = await readSessionRecord(path, { digest: sha256(bytes), cwd: transcript.cwd });
+  const earlier = record && transcript.roles[record.role];
+  if (earlier?.kind === "claude" && earlier.sessionId === null) {
+    transcript.roles[record.role] = {
+      ...earlier,
+      sessionId: record.sessionId,
+      sessionUnconfirmed: true,
+    };
+  }
 }
 
 /**

@@ -34,21 +34,25 @@ Two directions were weighed. The first exempts the transcript path from the chec
 7. The target of that save depends on the role and on the location of `--transcript`. This decision is new.
    - A worker turn runs under no mutation check. The loop writes the transcript file.
    - An orchestrator or reviewer turn with a transcript outside the work tree also writes the transcript file.
-   - An orchestrator or reviewer turn with a transcript inside the work tree writes the same record to a session record outside the tree. The file is `<tmpdir>/agent-loops/session-records/<key>.json`. The key is a digest of the real directory and the name of the transcript.
+   - A transcript inside the work tree gets one write before the first turn, outside every mutation check. An orchestrator or reviewer first turn then writes a session record outside the tree. The mutation check has no exemption and no new parameter.
+   - The record is the file `<tmpdir>/agent-loops/session-records/<key>.json`. The key is a digest of the identity of the transcript directory and the lowercase file name, so a case alias finds the same record.
+   - The record holds only `version`, `transcript` (the key), `cwd`, `transcriptSha256`, `role`, `sessionId`, and `sessionUnconfirmed` (always `true`). It holds no task text and no other transcript content.
+   - `transcriptSha256` is the digest of the transcript file that the loop wrote last. Every later transcript write changes it and removes the record. A removal that fails is harmless, because a changed digest makes the record stale.
+   - A rejected id removes the record. The loop never writes the transcript during the turn.
    - The loop decides "inside" by file identity (device and inode) along the ancestors of the real path. A case alias, a symlink, and a directory inside a submodule all count as inside.
-   - A transcript write removes the record. A failed removal is harmless, because `--continue-from` ignores a record that is older than the transcript.
-   - `--continue-from` reads the record in place of the transcript when the record is a regular file of the current user, is valid JSON, and is not older than the transcript. A missing transcript is allowed in that case.
-   - The mutation check has no exemption. It takes no new parameter.
-   - If the record location is itself inside the work tree, or the work tree root cannot be read, the loop saves nothing before the turn and logs a warning.
-   - The ownership check of decision 3 still runs before a restored id resumes. A forged record cannot make an unowned session resume.
+   - The record is untrusted input. `--continue-from` uses it only when every test passes. The file is a small regular file of the current user. It is valid JSON with exactly the fields above. The role is the orchestrator or the reviewer. The id is a lowercase UUID. The key and `cwd` equal those of this transcript. The digest equals the digest of the transcript bytes now. Any failed test ignores the record. A mismatch other than a stale digest also logs a warning.
+   - A valid record sets the id and the unconfirmed mark of one role. The role must be a Claude role with no id in the transcript. The adapter then runs the ownership check of decision 3 before the id resumes. A record cannot clear the mark or skip the check.
+   - The loop saves nothing before the turn and logs a warning in two cases. The record location is inside the work tree, or the work tree root cannot be read.
 
 ## Consequences
 
 - A parent crash during a Claude orchestrator or reviewer first turn leaves a record that `--continue-from` resumes, whatever the location of the transcript. This meets issue #581.
 - The mutation check is unchanged for every path. The four flaws of the exemption do not exist, because there is no exempt path.
-- The record is not in the transcript file. A reader that opens only an in-tree transcript after a crash sees the earlier transcript. Only `--continue-from` reads the record.
-- A clean-up of the temporary directory, or a reboot that clears it, loses the record. The crash gap then stays open for that run. A name collision of two transcripts cannot occur in practice, because the key is a truncated SHA-256 digest of the path.
-- A transcript path that differs only in case from another spelling of the same file has another key. A `--continue-from` with the other spelling does not find the record. It finds the transcript, as before.
+- The record is not in the transcript file. A reader that opens only an in-tree transcript after a crash sees the state before the turn. Only `--continue-from` reads the record.
+- A clean-up of the temporary directory, or a reboot that clears it, loses the record. The crash gap then stays open for that run.
+- A foreign or crafted record cannot supply an id. A record that another user wrote, another transcript, another work tree, or an older transcript state is ignored.
+- A same-user process can still forge a valid record, because it can also edit the transcript. The ownership check still requires a session file with the marker of this work tree and role.
+- An in-tree transcript is written once before the first turn. A run that fails before any turn leaves that file with exit code 1 and no error text.
 - Not verified: Windows file system behavior, and the record that a real process kill leaves. The tests simulate a kill by restoring the files that a turn had on disk.
 - Separate processes that share one transcript path have no write coordination. Each write is atomic and the last one wins.
 
@@ -58,7 +62,8 @@ Two directions were weighed. The first exempts the transcript path from the chec
 2. **Compare the hash of the transcript content instead of its path**: rejected. It keeps the exemption and its path forms.
 3. **Write the record beside the transcript with a hidden name**: rejected. It is inside the work tree, so the check covers it.
 4. **Skip the write and log a warning, as ADR 0016 did**: rejected. It leaves the gap that issue #581 reports.
-5. **Store the record in the install home**: rejected. The home is user scope and has its own lock (ADR 0025). The temporary directory already holds the run state of the interactive path.
+5. **Store a full copy of the transcript as the record**: rejected in review. It copies the task text out of the transcript. It also lets a record replace the roles and the mark that the transcript holds. The record now holds the id and its binding only.
+6. **Store the record in the install home**: rejected. The home is user scope and has its own lock (ADR 0025). The temporary directory already holds the run state of the interactive path.
 
 ## Authors
 
