@@ -19,7 +19,7 @@ function preassignedId() {
   return args[args.indexOf("--session-id") + 1];
 }
 
-// Usefulness: verifies claude adapter sends -p, --output-format json, adds --permission-mode plan when
+// Usefulness: verifies claude adapter sends -p, --output-format json --verbose (so the output carries the init event), adds --permission-mode plan when
 // readOnly is true, and disables the built-in Explore and Plan research subagents so a read-only turn
 // does not spawn hidden subagents on the role model (issue #46). It also verifies a first turn
 // pre-assigns a UUID with --session-id (issue #395).
@@ -50,6 +50,7 @@ test("claude sends correct argv for initial turn with readOnly", async () => {
       "claude-3-5",
       "--output-format",
       "json",
+      "--verbose",
     ],
     {
       cwd: "/path",
@@ -79,7 +80,7 @@ test("claude resumes session with effort and readOnly false", async () => {
   expect(response).toBe("done");
   expect(exec).toHaveBeenCalledWith(
     "claude",
-    ["-p", "--resume", "s1", "--effort", "high", "--output-format", "json"],
+    ["-p", "--resume", "s1", "--effort", "high", "--output-format", "json", "--verbose"],
     { cwd: "/path", input: "follow up", timeout: undefined, signal: undefined, role: undefined },
   );
 });
@@ -1112,7 +1113,8 @@ test("claude record follows the rerun after a missing session", async () => {
 });
 
 const eventsOf = (...events) => ({ stdout: JSON.stringify(events), stderr: "" });
-const systemEvent = (session_id) => ({ type: "system", subtype: "init", session_id });
+// A system event that is not `init`, so these cases read the model from `modelUsage`.
+const systemEvent = (session_id) => ({ type: "system", subtype: "status", session_id });
 const resultEvent = (session_id, models = { "claude-opus-5-6": {} }) => ({
   type: "result",
   ...(session_id === undefined ? {} : { session_id }),
@@ -1176,4 +1178,69 @@ test("claude failed turn with mixed sessions in an array records unresolved", as
   const same = { ...failedState(), sessionId: "s-kept" };
   await expect(runClaude(same, "p", { cwd: "/path" })).rejects.toThrow();
   expect(same.resolvedModel).toBe("claude-opus-5-6");
+});
+
+const initEvent = (session_id, model) => ({ type: "system", subtype: "init", session_id, model });
+
+// Usefulness: issue #566. The init event names the main-loop model, so a turn whose `modelUsage` lists a
+// subagent or helper model beside it records the main-loop model instead of unresolved.
+test("claude records the init model for a turn whose modelUsage names several models", async () => {
+  vi.mocked(exec).mockResolvedValueOnce(
+    eventsOf(
+      initEvent("s-kept", "claude-sonnet-5-5"),
+      resultEvent("s-kept", { "claude-sonnet-5-5": {}, "claude-haiku-5-5": {} }),
+    ),
+  );
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.resolvedModel).toBe("claude-sonnet-5-5");
+});
+
+// Usefulness: the init model governs even when the result lists only a helper model, and a failed turn
+// that printed the events follows the same source.
+test("claude takes the init model over modelUsage, on a failed turn too", async () => {
+  vi.mocked(exec).mockResolvedValueOnce(
+    eventsOf(
+      initEvent("s-kept", "claude-opus-5-6"),
+      resultEvent("s-kept", { "claude-haiku-5-5": {} }),
+    ),
+  );
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.resolvedModel).toBe("claude-opus-5-6");
+
+  vi.mocked(exec).mockRejectedValueOnce(
+    execFailure({
+      stdout: JSON.stringify([
+        initEvent("s-kept", "claude-opus-5-6"),
+        resultEvent("s-kept", { a: {}, b: {} }),
+      ]),
+    }),
+  );
+  const failed = { ...failedState(), sessionId: "s-kept" };
+  await expect(runClaude(failed, "p", { cwd: "/path" })).rejects.toThrow();
+  expect(failed.resolvedModel).toBe("claude-opus-5-6");
+});
+
+// Usefulness: an init event that names no valid model, or two init events that disagree, is ambiguous
+// evidence, so the turn is unresolved and never falls back to the helper-prone `modelUsage` key.
+test.each([
+  ["an init event with no model", [initEvent("s-kept", undefined)]],
+  ["an init event with a blank model", [initEvent("s-kept", " ")]],
+  ["two init events that disagree", [initEvent("s-kept", "a"), initEvent("s-kept", "b")]],
+])("claude records unresolved for %s", async (_label, inits) => {
+  vi.mocked(exec).mockResolvedValueOnce(eventsOf(...inits, resultEvent("s-kept")));
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: an init event of another session cannot tie its model to the kept session.
+test("claude records unresolved when the init event names another session", async () => {
+  vi.mocked(exec).mockResolvedValueOnce(
+    eventsOf(initEvent("s-other", "claude-opus-5-6"), resultEvent("s-kept")),
+  );
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" }).catch(() => {});
+  expect(state.resolvedModel).toBeNull();
 });
