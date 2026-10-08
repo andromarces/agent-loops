@@ -17,6 +17,10 @@ import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrat
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
 
+// Task of the preamble-only worker turn that follows a replaced conversation.
+const PREAMBLE_ONLY_TASK =
+  "No task this turn. Reply with the single word OK and change nothing. The rules above apply to every later turn.";
+
 /**
  * Every CLI call goes through here. Emits one `invocation` event per call, carrying the
  * usage the adapter exposed on `state.usage`, and clears that field so it never lingers.
@@ -142,7 +146,7 @@ export async function runChild(options) {
   // turn, so a worker gets its preamble again. The rerun belongs to the step already charged for
   // this turn: the failed resume ran no model turn, and the single rerun bounds the extra cost
   // (ADR 0016).
-  const runFn = async (finalPrompt) => {
+  const runTurn = async (finalPrompt) => {
     const resumedId = role.sessionId;
     try {
       return await invokeRole(finalPrompt);
@@ -155,6 +159,33 @@ export async function runChild(options) {
       delete role.sessionUnconfirmed;
       return invokeRole(isWorker ? workerPrompt(prompt, true) : finalPrompt);
     }
+  };
+
+  // An adapter sets `conversationReplaced` when a resume ran the turn in a new conversation, so
+  // that conversation never received the worker preamble. The turn already ran, so a rerun would
+  // repeat its edits. A preamble-only turn in the new conversation gives it the preamble instead.
+  // The turn that ran stays the result, so a failed preamble turn only warns (issue #396, ADR 0016).
+  const runFn = async (finalPrompt) => {
+    const response = await runTurn(finalPrompt);
+    if (!role.conversationReplaced) {
+      return response;
+    }
+    delete role.conversationReplaced;
+    if (isWorker) {
+      try {
+        await invokeRole(workerPrompt(PREAMBLE_ONLY_TASK, true));
+      } catch (err) {
+        if (readProp(err, "isCanceled")) {
+          throw err;
+        }
+        logWarn(
+          `worker: the preamble turn in the new conversation failed: ${readableErrorText(err).split("\n")[0]}`,
+        );
+      } finally {
+        delete role.conversationReplaced;
+      }
+    }
+    return response;
   };
 
   // The worker prompt needs no runtime read, so it is built once here. The

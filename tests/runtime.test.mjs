@@ -3524,6 +3524,110 @@ test("the orchestrator prompt names no wait when the turn timeout is too short",
   }
 });
 
+// Usefulness: verifies a worker turn that ran in a replacement conversation is followed by one
+// preamble-only turn in that conversation, in the same step, and never reruns the task, so its
+// edits are not repeated (issue #396, ADR 0016).
+test("a replaced worker conversation receives the preamble without a task rerun", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "do the work" }),
+      finish,
+    ]);
+    const calls = [];
+    const events = [];
+    const worker = {
+      async run(state, prompt) {
+        calls.push({ sessionId: state.sessionId, prompt });
+        if (calls.length === 1) {
+          state.sessionId = "replacement";
+          state.conversationReplaced = true;
+        } else {
+          delete state.conversationReplaced;
+        }
+        return "worker done";
+      },
+    };
+
+    const roles = {
+      orchestrator: { kind: "orch", sessionId: null },
+      worker: { kind: "work", sessionId: "gone" },
+      reviewer: { kind: "rev", sessionId: null },
+    };
+    const result = await runLoop({
+      task: "Task",
+      cwd: repo,
+      maxSteps: 1,
+      roles,
+      agents: { orch, work: worker, rev: scripted([]) },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(calls.map((call) => call.sessionId)).toEqual(["gone", "replacement"]);
+    expect(calls[0].prompt).toBe("do the work");
+    expect(calls[1].prompt).toContain("You are the implementation agent (worker)");
+    expect(calls[1].prompt).not.toContain("do the work");
+    expect(roles.worker.conversationReplaced).toBeUndefined();
+    expect(events.filter((e) => e.type === "invocation" && e.role === "worker")).toMatchObject([
+      { status: "ok", stepsUsed: 1 },
+      { status: "ok", stepsUsed: 1 },
+    ]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a failed preamble turn never fails the worker turn that already ran, so a
+// completed turn and its edits still reach the orchestrator (issue #396).
+test("a failed preamble turn keeps the worker result", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "do the work" }),
+      finish,
+    ]);
+    let calls = 0;
+    const worker = {
+      async run(state) {
+        calls += 1;
+        if (calls === 2) {
+          throw new Error("preamble turn failed");
+        }
+        state.sessionId = "replacement";
+        state.conversationReplaced = true;
+        return "worker done";
+      },
+    };
+
+    const result = await runLoop({
+      task: "Task",
+      cwd: repo,
+      maxSteps: 1,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: "gone" },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch, work: worker, rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toBe(2);
+    expect(orch.recorded.at(-1).prompt).toContain("worker done");
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a resume that fails because the CLI has no such session clears the id and
 // reruns the turn once as a first turn with the worker preamble, inside the one charged step
 // (issue #360, ADR 0016).
