@@ -431,6 +431,7 @@ export async function runLoop(options) {
 
   const orchAdapter = {
     async run(state, p, opts) {
+      const resumedUnconfirmed = state.sessionId !== null && state.sessionUnconfirmed === true;
       return withMutationCheck(cwd, "orchestrator", () =>
         invoke({
           agents,
@@ -441,7 +442,15 @@ export async function runLoop(options) {
           onEvent,
           stepsUsed,
         }),
-      );
+      ).catch((err) => {
+        // A refused ownership check clears the mark, and the orchestrator has no first-turn rerun:
+        // the missing prompt would start a session with no task. The id stays, so it keeps the
+        // mark and the next resume checks it again (issue #564).
+        if (resumedUnconfirmed && readProp(err, "sessionMissing") && state.sessionId !== null) {
+          state.sessionUnconfirmed = true;
+        }
+        throw err;
+      });
     },
   };
 

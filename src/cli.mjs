@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
   DEFAULT_MAX_STEPS,
@@ -41,7 +41,7 @@ import {
 } from "./install/commands.mjs";
 import { logWarn, setVerbose } from "./lib/log.mjs";
 import { writeFileAtomic } from "./lib/runstate.mjs";
-import { assertGitWorkTree } from "./lib/snapshot.mjs";
+import { assertGitWorkTree, workTreeRoot } from "./lib/snapshot.mjs";
 import { redactCommandText } from "./lib/test-cmd.mjs";
 import { runLoop, runProbeTurn, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
@@ -673,16 +673,20 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     }
   };
 
-  // The orchestrator and the reviewer run under the mutation check, so a transcript write inside
-  // the work tree during their turn would fail it. Their pre-spawn write is skipped there, and
-  // their crash gap stays open for that layout (issue #564).
+  // The orchestrator and the reviewer run under the mutation check, which covers the whole Git work
+  // tree, not only --cwd. A transcript write inside that tree during their turn would fail the
+  // check, so their pre-spawn write is skipped there, and their crash gap stays open for that
+  // layout (issue #564). A root that cannot be read counts as inside.
   const transcriptInTree = async () => {
     const real = (path) => realpath(path).catch(() => resolve(path));
-    const from = relative(
-      await real(options.cwd),
-      join(await real(dirname(options.transcript)), "x"),
-    );
-    return !from.startsWith("..") && !isAbsolute(from);
+    try {
+      const root = await real(await workTreeRoot(options.cwd));
+      const from = relative(root, join(await real(dirname(options.transcript)), "x"));
+      // Segment test: a directory named `..records` is inside.
+      return !(from === ".." || from.startsWith(`..${sep}`) || isAbsolute(from));
+    } catch {
+      return true;
+    }
   };
   const onSessionAssigned = async (role, id) => {
     pendingSession = id ? { role, id } : null;

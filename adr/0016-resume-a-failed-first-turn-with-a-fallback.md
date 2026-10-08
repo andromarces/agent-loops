@@ -89,9 +89,13 @@ step budget runs out.
    wins, an unreported one keeps the pre-assigned id with its mark, and a rejected one keeps none.
    Setting the id on the role instead made a reported id lose and dropped the mark, so a stale id
    resumed unchecked. Three limits remain. A failed transcript write only warns, as at exit. A run
-   with no `--transcript` keeps no record. A transcript inside the work tree is not written before an
-   orchestrator or reviewer turn, because those turns run under the mutation check and the write
-   would fail it, so they keep the gap for that layout and log a warning. Separate processes that
+   with no `--transcript` keeps no record. A transcript inside the Git work tree that the mutation check covers (the repository root, not
+   only `--cwd`) is not written before an orchestrator or reviewer turn, because those turns run
+   under the mutation check and the write would fail it, so they keep the gap for that layout and
+   log a warning. A refused ownership check on a resumed orchestrator id ends the run and keeps
+   the id with its mark, because the orchestrator has no first-turn rerun: a new session would
+   lack the task. Not verified: Windows file system behavior, and the transcript that a real
+   process kill leaves, which the tests simulate by reading the file mid-turn. Separate processes that
    share one transcript path have no write coordination: each write is atomic and the last wins.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and

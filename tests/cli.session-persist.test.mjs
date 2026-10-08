@@ -225,3 +225,83 @@ test("a Claude orchestrator's pre-assigned id reaches the transcript before the 
   expect(midTurn.roles.orchestrator).toMatchObject({ sessionUnconfirmed: true });
   expect(midTurn.roles.orchestrator.sessionId).toMatch(UUID);
 });
+
+// Runs a Claude reviewer turn whose --transcript is `transcript`, with `--cwd` set to `cwd`.
+async function reviewerRun(transcript, cwd) {
+  vi.mocked(exec).mockImplementation(async (_command, args) => ({
+    stdout: JSON.stringify({ session_id: assignedIn(args), result: "Verdict: accept" }),
+    stderr: "",
+  }));
+  await main(
+    [...roleArgs({ reviewer: "claude" }), "--cwd", cwd, "--transcript", transcript],
+    agentsFor([REVIEW, FINISH]),
+  );
+}
+
+// Usefulness: verifies a --transcript inside the repository but outside --cwd causes no mutation
+// failure, because the mutation snapshot covers the whole Git work tree, not only --cwd (#564 review).
+test("a transcript inside the repository but outside --cwd causes no reviewer mutation failure", async () => {
+  const cwd = join(repo, "sub");
+  await mkdir(cwd);
+  const transcript = join(repo, "run.json");
+  await reviewerRun(transcript, cwd);
+  expect(process.exitCode).toBe(0);
+  expect((await readJson(transcript)).error).toBeNull();
+});
+
+// Usefulness: verifies a work tree directory whose name starts with two dots counts as inside the
+// work tree, so the pre-spawn write is skipped there (#564 review).
+test("a transcript in a directory named '..records' inside the work tree causes no mutation failure", async () => {
+  const dir = join(repo, "..records");
+  await mkdir(dir);
+  const transcript = join(dir, "run.json");
+  await reviewerRun(transcript, repo);
+  expect(process.exitCode).toBe(0);
+  expect((await readJson(transcript)).error).toBeNull();
+});
+
+// Usefulness: verifies an orchestrator id that the ownership check rejects keeps its unconfirmed
+// mark in the written record, so a later --continue-from checks it again (#564 review).
+test("a rejected orchestrator id keeps its unconfirmed mark", async () => {
+  const earlier = join(scratch, "earlier.json");
+  const next = join(scratch, "next.json");
+  const role = (kind, sessionId, extra = {}) => ({
+    kind,
+    model: null,
+    effort: null,
+    sessionId,
+    ...extra,
+  });
+  await writeFile(
+    earlier,
+    JSON.stringify({
+      cwd: repo,
+      roles: {
+        orchestrator: role("claude", "11111111-1111-4111-8111-111111111111", {
+          sessionUnconfirmed: true,
+        }),
+        worker: role("agy", null),
+        reviewer: role("agy", null),
+      },
+      events: [],
+    }),
+  );
+  await main(
+    [
+      ...roleArgs({ orchestrator: "claude" }),
+      "--cwd",
+      repo,
+      "--continue-from",
+      earlier,
+      "--transcript",
+      next,
+    ],
+    agentsFor([]),
+  );
+  expect(exec).not.toHaveBeenCalled();
+  expect(process.exitCode).toBe(1);
+  expect((await readJson(next)).roles.orchestrator).toMatchObject({
+    sessionId: "11111111-1111-4111-8111-111111111111",
+    sessionUnconfirmed: true,
+  });
+});
