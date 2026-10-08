@@ -95,6 +95,7 @@ export async function runProbeTurn({
  * `onSessionAssigned(id)` is awaited by an adapter that pre-assigns a session id, before its CLI
  * starts, and with `null` when the CLI rejected that id. A dispatcher uses it to persist the id
  * ahead of a crash (issue #395).
+ * `exemptPath` is the one path that the read-only mutation check ignores (see `withMutationCheck`).
  * @param {object} options
  * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, testRun?: object }>}
  */
@@ -112,6 +113,7 @@ export async function runChild(options) {
     testCmd = null,
     reviewerWorkspaceWrite = false,
     onSessionAssigned,
+    exemptPath = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -228,19 +230,24 @@ export async function runChild(options) {
       testRun = await runTestCmd({ ...testCmd, cwd, signal });
     }
     const response = readOnly
-      ? await withMutationCheck(cwd, roleName, async (before) => {
-          // The reviewed state comes from the runtime snapshot, never from the
-          // child response, so the child cannot misreport it.
-          if (roleName === "reviewer") {
-            reviewed = reviewedState(before);
-            prChecks = await readStatus(reviewed);
-          }
-          return runFn(
-            isWorker
-              ? workerFinalPrompt
-              : reviewerPrompt(prompt, prChecks, testRun, sandbox !== null),
-          );
-        })
+      ? await withMutationCheck(
+          cwd,
+          roleName,
+          async (before) => {
+            // The reviewed state comes from the runtime snapshot, never from the
+            // child response, so the child cannot misreport it.
+            if (roleName === "reviewer") {
+              reviewed = reviewedState(before);
+              prChecks = await readStatus(reviewed);
+            }
+            return runFn(
+              isWorker
+                ? workerFinalPrompt
+                : reviewerPrompt(prompt, prChecks, testRun, sandbox !== null),
+            );
+          },
+          { exemptPath },
+        )
       : await runFn(workerFinalPrompt);
     return {
       role: roleName,
@@ -364,6 +371,8 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * adapter pre-assigns a session id, before its CLI starts, and with `null` when the CLI rejected
  * the id. It does not change the role state. The caller records the id and its unconfirmed mark
  * (ADR 0016).
+ * `exemptPath` names a path inside the work tree that the caller writes during a turn, and that
+ * the mutation check of the orchestrator and reviewer turns ignores (ADR 0016, issue #581).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -395,6 +404,7 @@ export async function runLoop(options) {
     earlierGate = null,
     copyLocalFiles = true,
     onSessionAssigned,
+    exemptPath = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -488,31 +498,40 @@ export async function runLoop(options) {
     async run(state, p, opts) {
       const call = (text) => {
         const resumedUnconfirmed = state.sessionId !== null && state.sessionUnconfirmed === true;
-        return withMutationCheck(cwd, "orchestrator", async () => {
-          try {
-            return await invoke({
-              agents,
-              state,
-              roleName: "orchestrator",
-              prompt: text,
-              opts: assignedHook
-                ? { ...opts, onSessionAssigned: assignedHook("orchestrator") }
-                : opts,
-              onEvent,
-              stepsUsed,
-            });
-          } catch (err) {
-            // A refused ownership check clears the mark, and the orchestrator has no first-turn
-            // rerun: the missing prompt would start a session with no task. The id stays, so it
-            // keeps the mark and the next resume checks it again. The restore sits inside the
-            // mutation check, because a failed snapshot after the turn replaces this error with
-            // one that wraps it (issue #564).
-            if (resumedUnconfirmed && readProp(err, "sessionMissing") && state.sessionId !== null) {
-              state.sessionUnconfirmed = true;
+        return withMutationCheck(
+          cwd,
+          "orchestrator",
+          async () => {
+            try {
+              return await invoke({
+                agents,
+                state,
+                roleName: "orchestrator",
+                prompt: text,
+                opts: assignedHook
+                  ? { ...opts, onSessionAssigned: assignedHook("orchestrator") }
+                  : opts,
+                onEvent,
+                stepsUsed,
+              });
+            } catch (err) {
+              // A refused ownership check clears the mark, and the orchestrator has no first-turn
+              // rerun: the missing prompt would start a session with no task. The id stays, so it
+              // keeps the mark and the next resume checks it again. The restore sits inside the
+              // mutation check, because a failed snapshot after the turn replaces this error with
+              // one that wraps it (issue #564).
+              if (
+                resumedUnconfirmed &&
+                readProp(err, "sessionMissing") &&
+                state.sessionId !== null
+              ) {
+                state.sessionUnconfirmed = true;
+              }
+              throw err;
             }
-            throw err;
-          }
-        });
+          },
+          { exemptPath },
+        );
       };
       try {
         const response = await call(p);
@@ -739,6 +758,7 @@ export async function runLoop(options) {
               },
         reviewerWorkspaceWrite,
         ...(assignedHook ? { onSessionAssigned: assignedHook(roleName) } : {}),
+        exemptPath,
         gh,
         readTimeoutMs,
         onEvent,

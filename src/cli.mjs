@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
   DEFAULT_MAX_STEPS,
@@ -674,29 +674,23 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   };
 
   // The orchestrator and the reviewer run under the mutation check, which covers the whole Git work
-  // tree, not only --cwd. A transcript write inside that tree during their turn would fail the
-  // check, so their pre-spawn write is skipped there, and their crash gap stays open for that
-  // layout (issue #564). A root that cannot be read counts as inside.
-  const transcriptInTree = async () => {
+  // tree, not only --cwd. A transcript inside that tree is written during their turn, so the check
+  // exempts that one path and still covers every other (issue #581). Returns the path from the
+  // repository root with `/` separators, or null when the transcript is outside the tree.
+  const transcriptTreePath = async () => {
     const real = (path) => realpath(path).catch(() => resolve(path));
-    try {
-      const root = await real(await workTreeRoot(options.cwd));
-      const from = relative(root, join(await real(dirname(options.transcript)), "x"));
-      // Segment test: a directory named `..records` is inside.
-      return !(from === ".." || from.startsWith(`..${sep}`) || isAbsolute(from));
-    } catch {
-      return true;
-    }
+    const root = await real(await workTreeRoot(options.cwd));
+    const from = relative(
+      root,
+      join(await real(dirname(options.transcript)), basename(options.transcript)),
+    );
+    // Segment test: a directory named `..records` is inside.
+    return from === ".." || from.startsWith(`..${sep}`) || isAbsolute(from)
+      ? null
+      : from.split(sep).join("/");
   };
   const onSessionAssigned = async (role, id) => {
     pendingSession = id ? { role, id } : null;
-    if (id && role !== "worker" && (await transcriptInTree())) {
-      logWarn(
-        `${role}: --transcript is inside the work tree, so the session id is not saved before the turn.`,
-      );
-      pendingSession = null;
-      return;
-    }
     await writeTranscript();
   };
 
@@ -764,6 +758,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     };
 
     try {
+      const exemptPath = options.transcript ? await transcriptTreePath() : null;
       const result = await runLoop({
         task: options.task,
         cwd: options.cwd,
@@ -782,7 +777,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
         // parent crash. known-limit: a failed write only warns, as at exit, and runs that share
         // one transcript path have no write coordination (issue #564).
-        ...(options.transcript ? { onSessionAssigned } : {}),
+        ...(options.transcript ? { onSessionAssigned, exemptPath } : {}),
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,

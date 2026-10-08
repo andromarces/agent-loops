@@ -205,24 +205,6 @@ test.each([
   }
 });
 
-// Usefulness: verifies a --transcript file inside the work tree never makes a read-only turn fail
-// the mutation check, because the pre-spawn write is skipped there (#564 review).
-test("an in-tree transcript causes no mutation failure for a Claude reviewer", async () => {
-  const transcript = join(repo, "run.json");
-  vi.mocked(exec).mockImplementation(async (_command, args) => ({
-    stdout: JSON.stringify({ session_id: assignedIn(args), result: "Verdict: accept" }),
-    stderr: "",
-  }));
-  await main(
-    [...roleArgs({ reviewer: "claude" }), "--cwd", repo, "--transcript", transcript],
-    agentsFor([REVIEW, FINISH]),
-  );
-  expect(process.exitCode).toBe(0);
-  const { error, roles } = await readJson(transcript);
-  expect(error).toBeNull();
-  expect(roles.reviewer.sessionId).toMatch(UUID);
-});
-
 // Usefulness: verifies a Claude orchestrator first turn is in the transcript before its CLI starts,
 // with the unconfirmed mark, like the worker and reviewer turns (#564 review).
 test("a Claude orchestrator's pre-assigned id reaches the transcript before the turn", async () => {
@@ -244,37 +226,90 @@ test("a Claude orchestrator's pre-assigned id reaches the transcript before the 
   expect(midTurn.roles.orchestrator.sessionId).toMatch(UUID);
 });
 
-// Runs a Claude reviewer turn whose --transcript is `transcript`, with `--cwd` set to `cwd`.
-async function reviewerRun(transcript, cwd) {
-  vi.mocked(exec).mockImplementation(async (_command, args) => ({
-    stdout: JSON.stringify({ session_id: assignedIn(args), result: "Verdict: accept" }),
-    stderr: "",
-  }));
+// Runs a Claude reviewer turn whose --transcript is `transcript`, with `--cwd` set to `cwd`. Returns
+// the transcript as the CLI saw it mid-turn. `during` runs inside the turn, before the CLI answers.
+async function reviewerRun(transcript, cwd, during = async () => {}) {
+  let midTurn;
+  vi.mocked(exec).mockImplementation(async (_command, args) => {
+    midTurn = await readJson(transcript);
+    await during();
+    return {
+      stdout: JSON.stringify({ session_id: assignedIn(args), result: "Verdict: accept" }),
+      stderr: "",
+    };
+  });
   await main(
     [...roleArgs({ reviewer: "claude" }), "--cwd", cwd, "--transcript", transcript],
     agentsFor([REVIEW, FINISH]),
   );
+  return midTurn;
 }
 
-// Usefulness: verifies a --transcript inside the repository but outside --cwd causes no mutation
-// failure, because the mutation snapshot covers the whole Git work tree, not only --cwd (#564 review).
-test("a transcript inside the repository but outside --cwd causes no reviewer mutation failure", async () => {
+const expectRecorded = (role, midTurn) => {
+  expect(midTurn.roles[role]).toMatchObject({ sessionUnconfirmed: true });
+  expect(midTurn.roles[role].sessionId).toMatch(UUID);
+};
+
+// Usefulness: verifies a --transcript file inside the work tree holds the pre-assigned id before a
+// Claude reviewer's CLI starts and never fails the turn's mutation check (issue #581).
+test("an in-tree transcript is written before a Claude reviewer turn without a mutation failure", async () => {
+  const transcript = join(repo, "run.json");
+  const midTurn = await reviewerRun(transcript, repo);
+  expect(process.exitCode).toBe(0);
+  expectRecorded("reviewer", midTurn);
+  expect((await readJson(transcript)).error).toBeNull();
+});
+
+// Usefulness: verifies the same for a Claude orchestrator first turn, the other turn under the check.
+test("an in-tree transcript is written before a Claude orchestrator turn without a mutation failure", async () => {
+  const transcript = join(repo, "run.json");
+  let midTurn;
+  vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
+    midTurn = await readJson(transcript);
+    return { stdout: JSON.stringify({ session_id: assignedIn(args), result: FINISH }), stderr: "" };
+  });
+  await main(
+    [...roleArgs({ orchestrator: "claude" }), "--cwd", repo, "--transcript", transcript],
+    agentsFor([]),
+  );
+  expect(process.exitCode).toBe(0);
+  expectRecorded("orchestrator", midTurn);
+  expect((await readJson(transcript)).error).toBeNull();
+});
+
+// Usefulness: verifies the exemption covers the transcript path alone, so a reviewer that writes any
+// other file in the same turn still fails the mutation check (issue #581).
+test("an in-tree transcript leaves the mutation check exact for every other path", async () => {
+  const transcript = join(repo, "run.json");
+  await reviewerRun(transcript, repo, () => writeFile(join(repo, "leak.txt"), "leak\n"));
+  expect(process.exitCode).toBe(1);
+  const { error } = await readJson(transcript);
+  expect(error).toContain("Mutation detected during reviewer turn");
+  expect(error).toContain("leak.txt");
+  expect(error).not.toContain("run.json");
+});
+
+// Usefulness: verifies a --transcript inside the repository but outside --cwd is exempt by its
+// path from the repository root, because the mutation snapshot covers the whole Git work tree.
+test("a transcript inside the repository but outside --cwd is written before the reviewer turn", async () => {
   const cwd = join(repo, "sub");
   await mkdir(cwd);
   const transcript = join(repo, "run.json");
-  await reviewerRun(transcript, cwd);
+  const midTurn = await reviewerRun(transcript, cwd);
   expect(process.exitCode).toBe(0);
+  expectRecorded("reviewer", midTurn);
   expect((await readJson(transcript)).error).toBeNull();
 });
 
 // Usefulness: verifies a work tree directory whose name starts with two dots counts as inside the
-// work tree, so the pre-spawn write is skipped there (#564 review).
-test("a transcript in a directory named '..records' inside the work tree causes no mutation failure", async () => {
+// work tree, so its transcript is written before the turn and exempt from the check.
+test("a transcript in a directory named '..records' inside the work tree is written before the reviewer turn", async () => {
   const dir = join(repo, "..records");
   await mkdir(dir);
   const transcript = join(dir, "run.json");
-  await reviewerRun(transcript, repo);
+  const midTurn = await reviewerRun(transcript, repo);
   expect(process.exitCode).toBe(0);
+  expectRecorded("reviewer", midTurn);
   expect((await readJson(transcript)).error).toBeNull();
 });
 

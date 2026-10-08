@@ -235,13 +235,17 @@ export function diffSnapshots(before, after) {
  * Any thrown value is rethrown unchanged, a falsy one (`null`, `undefined`) included.
  * `fn` receives the before snapshot, so a caller can derive the reviewed state
  * without taking a second snapshot.
+ * `exemptPath` is one repository-root-relative path, with `/` separators, whose change the check
+ * ignores: the headless loop writes its own `--transcript` there during the turn. Every other
+ * path, the index, and HEAD stay checked.
  * @template T
  * @param {string} cwd
  * @param {string} role
  * @param {(before: Awaited<ReturnType<typeof snapshot>>) => Promise<T>} fn
+ * @param {{ exemptPath?: string | null }} [options]
  * @returns {Promise<T>}
  */
-export async function withMutationCheck(cwd, role, fn) {
+export async function withMutationCheck(cwd, role, fn, { exemptPath = null } = {}) {
   const before = await snapshot(cwd);
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
   let threw = false;
@@ -269,7 +273,7 @@ export async function withMutationCheck(cwd, role, fn) {
   }
   logDebug(`snapshot after ${role} turn taken (${after.workTree.length} work tree entries)`);
 
-  const diff = diffSnapshots(before, after);
+  const diff = diffSnapshots(before, after).filter((path) => path !== exemptPath);
   if (diff.length > 0) {
     const mutationError = new MutationError(role, diff);
     logError(mutationError.message);
