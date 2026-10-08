@@ -6,8 +6,11 @@ import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES, hasClosingBlockAttempt, parseVerdict } from "../lib/report.mjs";
 import {
   asSessionId,
+  childRan,
   keepFailedSessionId,
+  recordResolvedModel,
   resumeMismatchError,
+  setResolvedModel,
   setUsageOrDelete,
 } from "./shared.mjs";
 
@@ -58,15 +61,20 @@ export async function runOpenCode(state, prompt, options = {}) {
   } else {
     // No --model: OpenCode selects its own default, which the JSON stream does not name.
     logInfo(
-      "opencode model: OpenCode selects its CLI default; the OpenCode session metadata records the model that ran.",
+      "opencode model: OpenCode selects its CLI default; the session export records the model that ran.",
     );
   }
 
+  const requestedSessionId = state.sessionId;
+  const startedAt = Date.now();
   let stdout;
   try {
     ({ stdout } = await exec("opencode", args, execOptions));
   } catch (err) {
     const events = parseJsonLines(err?.stdout ?? "");
+    // The failed stream names no model and the export is not read after a failure, so a turn that
+    // ran is unresolved (ADR 0026).
+    if (childRan(err)) setResolvedModel(state, []);
     // A non-zero exit, a timeout, or a cancel can still carry completed-step usage and the session
     // id. Expose both, then rethrow.
     setUsage(state, events);
@@ -89,16 +97,38 @@ export async function runOpenCode(state, prompt, options = {}) {
   // replaces the adapter error (issue #335).
   const events = parseJsonLines(stdout).filter(isJsonObject);
 
+  // Once the child has exited, an aborted signal at any point before this function returns ends the
+  // turn as a cancel that landed while the child ran: the same fixed cancel error, the session id and
+  // usage kept, and the model unresolved. One check covers every return path below, the early and the
+  // validation throws and the export, and the error of a failed path never replaces the cancel.
+  try {
+    const text = await settleTurn(state, events, { requestedSessionId, execOptions, startedAt });
+    if (!signal?.aborted) return text;
+  } catch (err) {
+    if (!signal?.aborted) throw err;
+  }
+  setResolvedModel(state, []);
+  setUsage(state, events);
+  keepFailedSessionId(state, events.map((event) => event.sessionID).find(Boolean));
+  throw canceledError();
+}
+
+/** Validates the stream of a turn whose child exited 0, records its session, usage, and model, and returns its text. */
+async function settleTurn(state, events, { requestedSessionId, execOptions, startedAt }) {
   // Select the first truthy id, so an empty id is skipped, then require it to be a non-empty
   // string: a later valid id never rescues a truthy invalid or mismatched first one.
   const sessionId = asSessionId(events.map((event) => event.sessionID).find(Boolean));
+
+  // Unresolved until the turn has passed every check below, so a turn that fails one records `null`
+  // and never reads the export.
+  setResolvedModel(state, []);
 
   if (!sessionId) {
     throw new Error("opencode did not return a session ID.");
   }
 
-  if (state.sessionId && state.sessionId !== sessionId) {
-    throw resumeMismatchError("opencode", "session", state.sessionId, sessionId);
+  if (requestedSessionId && requestedSessionId !== sessionId) {
+    throw resumeMismatchError("opencode", "session", requestedSessionId, sessionId);
   }
 
   state.sessionId = sessionId;
@@ -125,7 +155,90 @@ export async function runOpenCode(state, prompt, options = {}) {
     throw new Error("opencode did not return response text.");
   }
 
+  // The export reads only the session that every stream event confirms and the role keeps.
+  const confirmedId = streamSession(events);
+  const kept = confirmedId && (!requestedSessionId || confirmedId === requestedSessionId);
+  const models = kept ? await exportedModels(confirmedId, events, execOptions, startedAt) : [];
+  recordResolvedModel(state, models, requestedSessionId, confirmedId);
+
   return text.trim();
+}
+
+/**
+ * Returns the one session id that every stream event names, or undefined. Each event must carry a
+ * valid `sessionID`, and a part that carries one must name the same id, so a partial or mixed
+ * stream never ties the export to a guessed session.
+ */
+function streamSession(events) {
+  const ids = new Set();
+  for (const event of events) {
+    ids.add(asSessionId(event.sessionID) ?? null);
+    const part = event.part?.sessionID;
+    if (part !== undefined) ids.add(asSessionId(part) ?? null);
+  }
+  const [id] = ids;
+  return ids.size === 1 ? id || undefined : undefined;
+}
+
+/**
+ * Lists the `provider/model` of each assistant message that the turn streamed, read from
+ * `opencode session export <id>`, because no stream event names the model. The export holds the
+ * whole session, so only the messages whose id the stream names count. A streamed message that the
+ * export lacks, or whose model is malformed or holds a secret environment value (ADR 0017),
+ * contributes `undefined`, which makes the turn unresolved. An empty list, a failed or timed-out
+ * export, a spent timeout, or output that is not JSON also makes it unresolved. So does a stream
+ * part with no valid message id, and an export with a message that has no valid id or a repeated
+ * id, because neither side then proves which assistant message belongs to the turn.
+ * The export runs under the cancel signal and the time that the invocation has left. No failure of
+ * it reaches the caller, because the text of the failed call can hold session content, and only the
+ * model field leaves this function. `runOpenCode` ends the turn as canceled when the signal is
+ * aborted, whatever this function returned.
+ * known-limit: the export prints the whole session, so a long session enlarges the buffered output.
+ * @param {number} startedAt `Date.now()` at the start of the invocation
+ */
+async function exportedModels(sessionId, events, { cwd, timeout, signal, role }, startedAt) {
+  const ids = new Set();
+  for (const { part } of events) {
+    if (part === undefined) continue;
+    if (!isJsonObject(part) || !isMessageId(part.messageID)) return [];
+    ids.add(part.messageID);
+  }
+  if (ids.size === 0) return [];
+  if (signal?.aborted) return [];
+  const bounded = typeof timeout === "number" && timeout > 0;
+  const remaining = bounded ? timeout - (Date.now() - startedAt) / 1000 : undefined;
+  if (bounded && remaining <= 0) return [];
+  let messages;
+  try {
+    const { stdout } = await exec("opencode", ["session", "export", sessionId], {
+      cwd,
+      timeout: remaining,
+      signal,
+      role,
+    });
+    messages = JSON.parse(stdout)?.messages;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(messages)) return [];
+  const known = new Set();
+  for (const message of messages) {
+    if (!isJsonObject(message) || !isMessageId(message.id) || known.has(message.id)) return [];
+    known.add(message.id);
+  }
+  return [...ids].map((id) => {
+    const message = messages.find((m) => m.type === "assistant" && m.id === id);
+    const model = message?.model;
+    if (!isJsonObject(model) || !isMessageId(model.providerID) || !isMessageId(model.id)) {
+      return undefined;
+    }
+    const value = `${model.providerID}/${model.id}`;
+    return redactEnvSecrets(value) === value ? value : undefined;
+  });
+}
+
+function canceledError() {
+  return Object.assign(new Error("opencode was canceled."), { isCanceled: true });
 }
 
 /**
@@ -272,7 +385,7 @@ const isMessageId = (value) => typeof value === "string" && value !== "";
 /**
  * Sets `state.usage` from the `step_finish` parts of the stream, or removes it when the stream
  * carries none. Each completed step emits one `step_finish` part with `tokens` and `cost`, so
- * both fields sum across steps. No event names the model, so `models` is omitted. The read runs
+ * both fields sum across steps. No stream event names the model, so `models` is omitted. The read runs
  * before the failure message on the non-zero path, so it drops any value that is not a count
  * rather than letting a malformed one throw and cost the caller its exit code (issue #326).
  */
