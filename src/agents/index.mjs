@@ -40,4 +40,4 @@ export async function runAgent(state, prompt, options = {}, agents = defaultAgen
  * Adapters whose output names the model the CLI resolved, so they set `state.resolvedModel` and
  * `--continue-from` can compare it (ADR 0026). The others report no model.
  */
-export const REPORTS_RESOLVED_MODEL = new Set(["claude", "copilot"]);
+export const REPORTS_RESOLVED_MODEL = new Set(["claude", "copilot", "opencode"]);

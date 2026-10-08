@@ -426,16 +426,16 @@ Options:
                                 reviewer sessions. The role kinds, the recorded role models and
                                 efforts, and --cwd must equal the earlier run's, or the run is
                                 refused before any turn. An omitted model or effort matches only
-                                an omitted one. For claude and copilot, which report the model
-                                they resolved, a role whose earlier run recorded one is probed
+                                an omitted one. For claude, copilot, and opencode, which report the
+                                model they resolved, a role whose earlier run recorded one is probed
                                 with one read-only turn before any turn of the run, under the
                                 mutation check and SIGINT cancel of a child turn. A changed
                                 resolved model refuses the run: restore the earlier CLI default
                                 or start a new run, because a new --<role>-model value is refused
                                 too. A role whose latest recorded turn, failed or not, named no
                                 single model, or that has no record, is not checked, and the run
-                                warns that the check did not run. codex, agy, and opencode report
-                                no model, so a changed CLI default is not detected for them. The
+                                warns that the check did not run. codex and agy report no
+                                model, so a changed CLI default is not detected for them. The
                                 completion gate is restored only when the work tree is the state
                                 the earlier run's last reviewer turn reviewed, read from the
                                 transcript's events and must equal the gate event that ends it. Otherwise it is reset: no reviewer
