@@ -97,6 +97,24 @@ export async function runOpenCode(state, prompt, options = {}) {
   // replaces the adapter error (issue #335).
   const events = parseJsonLines(stdout).filter(isJsonObject);
 
+  // Once the child has exited, an aborted signal at any point before this function returns ends the
+  // turn as a cancel that landed while the child ran: the same fixed cancel error, the session id and
+  // usage kept, and the model unresolved. One check covers every return path below, the early and the
+  // validation throws and the export, and the error of a failed path never replaces the cancel.
+  try {
+    const text = await settleTurn(state, events, { requestedSessionId, execOptions, startedAt });
+    if (!signal?.aborted) return text;
+  } catch (err) {
+    if (!signal?.aborted) throw err;
+  }
+  setResolvedModel(state, []);
+  setUsage(state, events);
+  keepFailedSessionId(state, events.map((event) => event.sessionID).find(Boolean));
+  throw canceledError();
+}
+
+/** Validates the stream of a turn whose child exited 0, records its session, usage, and model, and returns its text. */
+async function settleTurn(state, events, { requestedSessionId, execOptions, startedAt }) {
   // Select the first truthy id, so an empty id is skipped, then require it to be a non-empty
   // string: a later valid id never rescues a truthy invalid or mismatched first one.
   const sessionId = asSessionId(events.map((event) => event.sessionID).find(Boolean));
@@ -171,11 +189,10 @@ function streamSession(events) {
  * export, a spent timeout, or output that is not JSON also makes it unresolved. So does a stream
  * part with no valid message id, and an export with a message that has no valid id or a repeated
  * id, because neither side then proves which assistant message belongs to the turn.
- * The export runs under the cancel signal and the time that the invocation has left. A cancel
- * before or during it throws the same cancel error as a canceled turn child (`isCanceled`), so the
- * run ends interrupted with exit 130 and never reads as a success. The error carries a fixed
- * message, because the text of the failed call can hold session content. No other failure reaches
- * the caller, and only the model field leaves this function.
+ * The export runs under the cancel signal and the time that the invocation has left. No failure of
+ * it reaches the caller, because the text of the failed call can hold session content, and only the
+ * model field leaves this function. `runOpenCode` ends the turn as canceled when the signal is
+ * aborted, whatever this function returned.
  * known-limit: the export prints the whole session, so a long session enlarges the buffered output.
  * @param {number} startedAt `Date.now()` at the start of the invocation
  */
@@ -187,7 +204,7 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
     ids.add(part.messageID);
   }
   if (ids.size === 0) return [];
-  if (signal?.aborted) throw canceledError();
+  if (signal?.aborted) return [];
   const bounded = typeof timeout === "number" && timeout > 0;
   const remaining = bounded ? timeout - (Date.now() - startedAt) / 1000 : undefined;
   if (bounded && remaining <= 0) return [];
@@ -201,7 +218,6 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
     });
     messages = JSON.parse(stdout)?.messages;
   } catch (err) {
-    if (err?.isCanceled || signal?.aborted) throw canceledError();
     return [];
   }
   if (!Array.isArray(messages)) return [];

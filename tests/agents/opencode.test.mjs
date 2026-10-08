@@ -1960,3 +1960,118 @@ test.each([
   expect(exportCalls).toBe(0);
   expect(state.resolvedModel).toBeNull();
 });
+
+const POST_EXIT_STREAMS = [
+  ["an invalid stream message id", [textEvent("a", "msg-1"), textEvent("b")]],
+  ["no session id", [JSON.stringify({ type: "text", part: { text: "a", messageID: "msg-1" } })]],
+  [
+    "an error event",
+    [textEvent("a", "msg-1"), errorEvent({ type: "ProviderError", message: "provider failed" })],
+  ],
+  [
+    "no response text",
+    [
+      JSON.stringify({
+        type: "step_start",
+        sessionID: "sess-oc",
+        part: { type: "step-start", messageID: "msg-1" },
+      }),
+    ],
+  ],
+];
+
+/** Queues one turn whose cancel lands right after the child exits, with `lines` as its stream. */
+function queueLateCancel(controller, lines) {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec).mockImplementationOnce(async () => {
+    controller.abort();
+    return { stdout: lines.join("\n"), stderr: "" };
+  });
+}
+
+// Usefulness: verifies a cancel that lands after the child exits ends `role dispatch` interrupted
+// with exit 130 on every adapter return path, not only the export path, so a validation return never
+// reads as active/ok (#567).
+test.each(POST_EXIT_STREAMS)(
+  "role dispatch ends interrupted with exit 130 for a late cancel and %s",
+  async (_name, lines) => {
+    const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
+    dispatchPaths.push(runsRoot);
+    const repo = await createTempRepo();
+    dispatchPaths.push(repo);
+    process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+    const agents = { opencode: { run: runOpenCode } };
+    const stdin = async () => "continue working";
+    vi.mocked(exec).mockResolvedValue({ stdout: "", stderr: "" });
+    await executeRoleCommand(
+      parseRoleArgs([
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        "--task",
+        "Cancel late.",
+        "--parent-session",
+        "sess-parent-1",
+        "--worker",
+        "opencode",
+        "--reviewer",
+        "opencode",
+      ]),
+      { agents, stdin },
+    );
+
+    const controller = new AbortController();
+    queueLateCancel(controller, lines);
+    const result = await executeRoleCommand(
+      parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo]),
+      { agents, stdin, signal: controller.signal },
+    );
+
+    const state = await readState(statePaths({ cwd: repo }).stateFile);
+    expect(result.exitCode).toBe(130);
+    expect(result.payload.status).toBe("error");
+    expect(state.lifecycle).toBe("interrupted");
+    expect(vi.mocked(exec)).toHaveBeenCalledTimes(1);
+  },
+);
+
+// Usefulness: verifies the same late cancel rejects the headless loop with the cancel error on every
+// return path and asks the orchestrator for no further action.
+test.each(POST_EXIT_STREAMS)(
+  "the headless loop ends canceled for a late cancel and %s",
+  async (_name, lines) => {
+    const repo = await createTempRepo();
+    dispatchPaths.push(repo);
+    const controller = new AbortController();
+    queueLateCancel(controller, lines);
+    const orchestrator = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+
+    const error = await runLoop({
+      task: "Task 1",
+      cwd: repo,
+      maxSteps: 5,
+      signal: controller.signal,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "opencode", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchestrator, opencode: { run: runOpenCode }, rev: scripted([]) },
+    }).then(
+      () => undefined,
+      (err) => err,
+    );
+
+    expect(error?.isCanceled).toBe(true);
+    expect(orchestrator.recorded).toHaveLength(1);
+    expect(vi.mocked(exec)).toHaveBeenCalledTimes(1);
+  },
+);
