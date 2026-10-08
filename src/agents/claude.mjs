@@ -157,7 +157,9 @@ export async function runClaude(state, prompt, options = {}) {
     args.push("--effort", state.effort);
   }
 
-  args.push("--output-format", "json");
+  // `--verbose` makes the `json` output an array of events, so it carries the `init` event that
+  // names the main-loop model (issue #566).
+  args.push("--output-format", "json", "--verbose");
 
   if (preassignedId) {
     execOptions.input = `${prompt}\n\n${sessionMarker(preassignedId, role)}`;
@@ -282,8 +284,17 @@ function reportedModels(resultEvent) {
 }
 
 /**
- * Records the resolved model of a turn that ran, from one consistent source. The session and the
- * model come from the same events: the output must name exactly one valid session across all its
+ * True for a `system` `init` event. It names the main-loop model, whatever subagent or helper model
+ * ran later, so its model takes the place of `modelUsage`. An `init` event without a model reports
+ * `undefined`, which is malformed evidence and is unresolved.
+ */
+const isInitEvent = (event) =>
+  isJsonObject(event) && event.type === "system" && event.subtype === "init";
+
+/**
+ * Records the resolved model of a turn that ran, from one consistent source. The model is the one
+ * the `init` event names, or the one key of `modelUsage` when the output has no `init` event. The
+ * session and the model come from the same events: the output must name exactly one valid session across all its
  * events, and every result event that carries model evidence must name that session itself. An
  * array of events that names more than one session, a malformed session, or a result event with no
  * session cannot tie the model to the session the role keeps, so the turn is unresolved. Every
@@ -302,11 +313,15 @@ function recordTurnModel(state, parsed, requestedSessionId) {
   const results = (
     Array.isArray(parsed) ? events.filter((e) => e?.type === "result") : events
   ).filter(isJsonObject);
+  const inits = events.filter(isInitEvent);
   const sourced =
-    session && results.length > 0 && results.every((e) => asSessionId(e.session_id) === session);
+    session &&
+    results.length > 0 &&
+    results.every((e) => asSessionId(e.session_id) === session) &&
+    inits.every((e) => asSessionId(e.session_id) === session);
   recordResolvedModel(
     state,
-    sourced ? results.flatMap(reportedModels) : [],
+    sourced ? (inits.length > 0 ? inits.map((e) => e.model) : results.flatMap(reportedModels)) : [],
     requestedSessionId,
     sourced ? session : null,
   );

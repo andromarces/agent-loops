@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
@@ -203,4 +203,54 @@ test("the lock lives beside the manifest directory and leaves the home empty aft
   expect(existsSync(manifestLockFile(home))).toBe(false);
   await uninstall({ home });
   expect(await readdir(home)).toEqual([]);
+});
+
+// Usefulness: verifies #569 — two spellings of one install home that differ only
+// in letter case contend on one lock where the file system folds case (Windows,
+// default macOS). A lock keyed by the raw path text would let both commands run.
+// Skipped on a case-sensitive file system, where the spellings name two homes.
+test("install homes that differ only in letter case share one lock", async (ctx) => {
+  const home = await makeHome();
+  const otherCase = join(dirname(home), basename(home).toUpperCase());
+  if (otherCase === home || !existsSync(otherCase)) {
+    ctx.skip();
+    return;
+  }
+  let releaseFirst;
+  const firstHolds = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  let signalHolding;
+  const holding = new Promise((resolve) => {
+    signalHolding = resolve;
+  });
+  const write = async (path, ...rest) => {
+    signalHolding();
+    await firstHolds;
+    return writeTextAtomic(path, ...rest);
+  };
+
+  const first = install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT, write });
+  await holding;
+
+  const errors = [];
+  for (const run of [
+    () => install({ harnesses: ["claude"], home: otherCase, packageRoot: PACKAGE_ROOT }),
+    () => uninstall({ home: otherCase }),
+  ]) {
+    errors.push(
+      await run().then(
+        () => null,
+        (err) => err,
+      ),
+    );
+  }
+  releaseFirst();
+  await first;
+
+  for (const error of errors) {
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/locked by a live process/);
+  }
+  expect(existsSync(manifestPath(home))).toBe(true);
 });

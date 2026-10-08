@@ -28,6 +28,17 @@ directory, so the case is reachable (issue #198).
 3. The lock is removed in a `finally`, so a full uninstall leaves the home empty
    and the CI empty-home check holds.
 4. A dry run takes no lock and writes nothing.
+5. If lstat of the home reports ENOENT, for any reason, `uninstall` takes no lock,
+   reads and writes nothing, reports nothing to remove, and exits 0. It never
+   creates the home (issue #570). No install can exist at a path that does not
+   exist, so no data is lost. An install that creates the home after that check
+   runs after the uninstall returned, as if the uninstall had come first. Any
+   other lstat error takes the locked path, so no path runs a mutating uninstall
+   without the lock.
+6. Maintainer decision: this rule covers a Windows path that cannot name a
+   directory, because Windows reports ENOENT for it. Such a home now reports
+   nothing to remove instead of raising the origin/main error. This replaces the
+   earlier rule that kept that error through hand-written Windows name checks.
 
 ## Consequences
 
@@ -36,8 +47,8 @@ directory, so the case is reachable (issue #198).
 - This reverses the preference of #193 to keep the home free of lock files. The
   reason: install must write the home anyway, so a sandbox that blocks the home
   cannot install, and the lock adds no new write permission.
-- A real `uninstall` on a home that does not exist creates an empty home
-  directory, because the lock directory is created before the lock.
+- A real `uninstall` on a home that does not exist writes nothing and leaves no
+  directory behind.
 
 ## Alternatives
 
@@ -54,6 +65,6 @@ Andro Marces
 
 ## Links
 
-- Issue #198, issue #193, PR #197
+- Issue #198, issue #193, issue #570, PR #197
 - Pull request: [PR #561](https://github.com/andromarces/agent-loops/pull/561)
 - Implementation: `manifestLockFile` in `src/install/manifest.mjs`
