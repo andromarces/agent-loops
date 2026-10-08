@@ -540,6 +540,18 @@ test("opencode reports a timeout instead of a partial-stream error event", async
   expect(error.message).not.toContain("stream ended early");
 });
 
+// Usefulness: verifies a buffer overflow keeps its cause through the adapter, not an exit-code
+// message that hides why the stream was cut (issue #578).
+test("opencode reports a buffer overflow instead of an exit-code message", async () => {
+  const error = await rejectTurnWith({
+    exitCode: 0,
+    stdout: "",
+    isMaxBuffer: true,
+  });
+
+  expect(error.message).toBe("opencode output exceeded the buffer limit and was cut.");
+});
+
 // Usefulness: verifies a turn whose CLI never started names the spawn failure rather than reading an
 // error event out of the empty output (issue #326).
 test("opencode reports a spawn failure with no exit code", async () => {

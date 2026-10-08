@@ -31,7 +31,17 @@ const MARKED_ROLES = new Set(["worker", "reviewer"]);
 export class ExecError extends Error {
   constructor(
     message,
-    { command, exitCode, stdout, stderr, timedOut, isCanceled, isTerminated, signal } = {},
+    {
+      command,
+      exitCode,
+      stdout,
+      stderr,
+      timedOut,
+      isCanceled,
+      isTerminated,
+      isMaxBuffer,
+      signal,
+    } = {},
   ) {
     super(message);
     this.name = "ExecError";
@@ -42,6 +52,7 @@ export class ExecError extends Error {
     this.timedOut = Boolean(timedOut);
     this.isCanceled = Boolean(isCanceled);
     this.isTerminated = Boolean(isTerminated);
+    this.isMaxBuffer = Boolean(isMaxBuffer);
     // The signal name or description, for a caller that reports the termination cause. It travels as
     // a field, not in the message, so every adapter keeps the message `exec` has always built.
     this.signal = signal ?? null;
@@ -113,9 +124,10 @@ export async function exec(command, args = [], options = {}) {
       cause = `${command} exited with code ${result.exitCode}.`;
     }
 
-    const message = [cause, result.stderr?.trim(), result.stdout?.trim()]
-      .filter(Boolean)
-      .join("\n\n");
+    // An overflow cuts a stream at an arbitrary character, so it can end inside a secret value
+    // that exact-value redaction no longer matches. The error therefore keeps none of the output.
+    const output = isMaxBuffer ? [] : [result.stderr?.trim(), result.stdout?.trim()];
+    const message = [cause, ...output].filter(Boolean).join("\n\n");
 
     // The caller owns the failure level (it knows whether the runtime recovers); this
     // debug line terminates the invocation trace when the caller does not log one.
@@ -124,11 +136,12 @@ export async function exec(command, args = [], options = {}) {
     throw new ExecError(message, {
       command,
       exitCode: result.exitCode,
-      stdout: result.stdout,
-      stderr: result.stderr,
+      stdout: isMaxBuffer ? "" : result.stdout,
+      stderr: isMaxBuffer ? "" : result.stderr,
       timedOut,
       isCanceled,
       isTerminated,
+      isMaxBuffer,
       signal,
     });
   }

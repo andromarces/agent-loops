@@ -1,4 +1,4 @@
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 
 import { ExecError, exec } from "../../src/lib/exec.mjs";
 
@@ -24,3 +24,27 @@ test("exec returns stdout that fits maxBuffer", async () => {
 
   expect(result.stdout).toBe("ok");
 });
+
+// Usefulness: verifies an overflow error carries no cut output, so a secret value cut mid-value
+// leaves no fragment that exact-value redaction misses (issue #578). A synthetic variable stands in
+// for a secret.
+test.each(["stdout", "stderr"])(
+  "exec overflow error on %s holds no fragment of a secret",
+  async (stream) => {
+    vi.stubEnv("SYNTHETIC_TEST_TOKEN", "synthetic-secret-value-0123456789");
+    try {
+      const script = `process.${stream}.write('x'.repeat(90) + process.env.SYNTHETIC_TEST_TOKEN)`;
+
+      const err = await exec(process.execPath, ["-e", script], { maxBuffer: 100 }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ExecError);
+      expect(err.isMaxBuffer).toBe(true);
+      for (const text of [err.message, err.stdout, err.stderr]) {
+        expect(text).not.toContain("synthetic");
+        expect(text).not.toContain("xxxx");
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  },
+);

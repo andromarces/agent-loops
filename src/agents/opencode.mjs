@@ -339,7 +339,7 @@ function failureMessage(err, events, timeout) {
 }
 
 /**
- * Returns the cause `exec` names for a timeout, a cancel, a signal, or a spawn failure, or an empty
+ * Returns the cause `exec` names for a timeout, a cancel, a buffer overflow, a signal, or a spawn failure, or an empty
  * string for an ordinary non-zero exit. The wording matches the message `exec` itself builds, so a
  * caller reads the same cause as it read before the adapter took the message over.
  */
@@ -352,6 +352,10 @@ function failureCause(err, timeout) {
 
   if (err?.isCanceled) {
     return "opencode was canceled.";
+  }
+
+  if (err?.isMaxBuffer) {
+    return "opencode output exceeded the buffer limit and was cut.";
   }
 
   if (err?.isTerminated) {
