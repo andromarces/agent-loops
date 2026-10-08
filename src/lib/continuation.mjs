@@ -5,11 +5,13 @@ import { readableErrorText, readProp } from "./error-message.mjs";
 import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
+import { readSessionRecord } from "./session-record.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
 
 /**
  * Reads the earlier headless run from its `--transcript` file, the only record
- * that holds the final role session ids (#362). Rejects a file that is
+ * that holds the final role session ids (#362). A session record that a crashed run left outside the
+ * work tree, and that is newer than the file, replaces it (ADR 0027). Rejects a file that is
  * unreadable, not JSON, has `events` that are not a list, or is missing a role
  * with a string `kind`, a string or null `sessionId`, and no `sessionUnconfirmed` or a boolean one.
  * @param {string} path
@@ -18,7 +20,7 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
 export async function readContinuation(path) {
   let text;
   try {
-    text = await readFile(path, "utf8");
+    text = (await readSessionRecord(path)) ?? (await readFile(path, "utf8"));
   } catch (err) {
     throw new Error(`--continue-from cannot read ${path}: ${readableErrorText(err)}`);
   }

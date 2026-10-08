@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { readFile, realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
   DEFAULT_MAX_STEPS,
@@ -39,8 +39,14 @@ import {
   runInstallCommand,
   runUninstallCommand,
 } from "./install/commands.mjs";
-import { setVerbose } from "./lib/log.mjs";
+import { logWarn, setVerbose } from "./lib/log.mjs";
 import { writeFileAtomic } from "./lib/runstate.mjs";
+import {
+  isInside,
+  removeSessionRecord,
+  sessionRecordPath,
+  writeSessionRecord,
+} from "./lib/session-record.mjs";
 import { assertGitWorkTree, workTreeRoot } from "./lib/snapshot.mjs";
 import { redactCommandText } from "./lib/test-cmd.mjs";
 import { runLoop, runProbeTurn, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
@@ -648,7 +654,9 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   // alone decides what a failed turn keeps (issue #564). Cleared when the CLI call ends.
   let pendingSession = null;
 
-  const writeTranscript = async () => {
+  // `toRecord` writes the session record outside the work tree instead of the transcript file
+  // (ADR 0027). A transcript write supersedes the record, so it removes it.
+  const writeTranscript = async ({ toRecord = false } = {}) => {
     if (!options.transcript) return;
     try {
       const { role, id } = pendingSession ?? {};
@@ -661,9 +669,15 @@ ${redactedText(readProp(err, "message") ?? err)}`);
             },
           }
         : transcriptData;
-      // Atomic, because the file can be the --continue-from source: a crash or a
-      // failed write must leave the earlier record whole.
-      await writeFileAtomic(options.transcript, JSON.stringify(data, null, 2));
+      const text = JSON.stringify(data, null, 2);
+      if (toRecord) {
+        await writeSessionRecord(options.transcript, text);
+      } else {
+        // Atomic, because the file can be the --continue-from source: a crash or a
+        // failed write must leave the earlier record whole.
+        await writeFileAtomic(options.transcript, text);
+        await removeSessionRecord(options.transcript);
+      }
     } catch (err) {
       console.error(
         redactedText(
@@ -674,24 +688,31 @@ ${redactedText(readProp(err, "message") ?? err)}`);
   };
 
   // The orchestrator and the reviewer run under the mutation check, which covers the whole Git work
-  // tree, not only --cwd. A transcript inside that tree is written during their turn, so the check
-  // exempts that one path and still covers every other (issue #581). Returns the path from the
-  // repository root with `/` separators, or null when the transcript is outside the tree.
-  const transcriptTreePath = async () => {
-    const real = (path) => realpath(path).catch(() => resolve(path));
-    const root = await real(await workTreeRoot(options.cwd));
-    const from = relative(
-      root,
-      join(await real(dirname(options.transcript)), basename(options.transcript)),
-    );
-    // Segment test: a directory named `..records` is inside.
-    return from === ".." || from.startsWith(`..${sep}`) || isAbsolute(from)
-      ? null
-      : from.split(sep).join("/");
+  // tree, not only --cwd, so a transcript inside that tree cannot be written during their turn. The
+  // session record goes to a file outside the tree instead, and --continue-from reads it (ADR 0027).
+  // A root that cannot be read, or a record location inside the tree, leaves the crash gap open.
+  const preSpawnTarget = async (role) => {
+    if (role === "worker") return "transcript";
+    try {
+      const root = await workTreeRoot(options.cwd);
+      if (!(await isInside(root, options.transcript))) return "transcript";
+      if (!(await isInside(root, await sessionRecordPath(options.transcript)))) return "record";
+    } catch {
+      // Treated as inside.
+    }
+    return null;
   };
   const onSessionAssigned = async (role, id) => {
     pendingSession = id ? { role, id } : null;
-    await writeTranscript();
+    const target = id ? await preSpawnTarget(role) : "transcript";
+    if (target === null) {
+      logWarn(
+        `${role}: the session id is not saved before the turn: --transcript is inside the work tree and no record location outside it is available.`,
+      );
+      pendingSession = null;
+      return;
+    }
+    await writeTranscript({ toRecord: target === "record" });
   };
 
   // The command result and work tree compare of a turn that ended in a fatal error. The
@@ -758,7 +779,6 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     };
 
     try {
-      const exemptPath = options.transcript ? await transcriptTreePath() : null;
       const result = await runLoop({
         task: options.task,
         cwd: options.cwd,
@@ -777,7 +797,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
         // parent crash. known-limit: a failed write only warns, as at exit, and runs that share
         // one transcript path have no write coordination (issue #564).
-        ...(options.transcript ? { onSessionAssigned, exemptPath } : {}),
+        ...(options.transcript ? { onSessionAssigned } : {}),
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,

@@ -1,10 +1,12 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execa } from "execa";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { runClaude } from "../src/agents/claude.mjs";
 import { main } from "../src/cli.mjs";
 import { exec } from "../src/lib/exec.mjs";
+import { readSessionRecord } from "../src/lib/session-record.mjs";
 import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 vi.mock("../src/lib/exec.mjs", () => ({
@@ -93,6 +95,11 @@ const timedOut = () =>
   Object.assign(new Error("claude timed out."), { stdout: "", stderr: "", timedOut: true });
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
+
+// What --continue-from reads for `transcript` while a turn runs: the session record of an in-tree
+// transcript, else the transcript file.
+const readMidTurn = async (transcript) =>
+  JSON.parse((await readSessionRecord(transcript)) ?? (await readFile(transcript, "utf8")));
 
 /** Writes the session file that Claude Code writes for a first turn the CLI started. */
 async function saveSession(id, role) {
@@ -211,7 +218,7 @@ test("a Claude orchestrator's pre-assigned id reaches the transcript before the 
   const transcript = join(scratch, "run.json");
   let midTurn;
   vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
-    midTurn = await readJson(transcript);
+    midTurn = await readMidTurn(transcript);
     return {
       stdout: JSON.stringify({ session_id: assignedIn(args), result: FINISH }),
       stderr: "",
@@ -231,7 +238,7 @@ test("a Claude orchestrator's pre-assigned id reaches the transcript before the 
 async function reviewerRun(transcript, cwd, during = async () => {}) {
   let midTurn;
   vi.mocked(exec).mockImplementation(async (_command, args) => {
-    midTurn = await readJson(transcript);
+    midTurn = await readMidTurn(transcript);
     await during();
     return {
       stdout: JSON.stringify({ session_id: assignedIn(args), result: "Verdict: accept" }),
@@ -265,7 +272,7 @@ test("an in-tree transcript is written before a Claude orchestrator turn without
   const transcript = join(repo, "run.json");
   let midTurn;
   vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
-    midTurn = await readJson(transcript);
+    midTurn = await readMidTurn(transcript);
     return { stdout: JSON.stringify({ session_id: assignedIn(args), result: FINISH }), stderr: "" };
   });
   await main(
@@ -312,6 +319,171 @@ test("a transcript in a directory named '..records' inside the work tree is writ
   expectRecorded("reviewer", midTurn);
   expect((await readJson(transcript)).error).toBeNull();
 });
+
+const git_ = (cwd, ...args) => execa("git", args, { cwd });
+
+// Adds a submodule `sub` to the test repository and commits it.
+async function addSubmodule() {
+  const source = join(scratch, "subsrc");
+  await mkdir(source);
+  await git_(source, "init", "-q");
+  await git_(
+    source,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "i",
+  );
+  await writeFile(join(source, "f.txt"), "f\n");
+  await git_(source, "add", ".");
+  await git_(source, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "f");
+  await git_(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "sub");
+  await git_(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "sub");
+}
+
+// Usefulness: verifies a transcript that is named like a mutation marker never hides a commit that a
+// reviewer makes (issue #581 review, blocker 1).
+test.skipIf(process.platform === "win32")(
+  "a transcript named '<HEAD>' inside the work tree still reports a reviewer commit",
+  async () => {
+    const transcript = join(repo, "<HEAD>");
+    await reviewerRun(transcript, repo, () =>
+      git_(
+        repo,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "x",
+      ),
+    );
+    expect(process.exitCode).toBe(1);
+  },
+);
+
+// Usefulness: verifies a transcript path that names a submodule never hides a change inside it
+// (issue #581 review, blocker 2).
+test("a transcript path that names a submodule still reports a reviewer change inside it", async () => {
+  await addSubmodule();
+  await reviewerRun(join(repo, "sub"), repo, () =>
+    writeFile(join(repo, "sub", "f.txt"), "changed\n"),
+  );
+  expect(process.exitCode).toBe(1);
+});
+
+// Usefulness: verifies a transcript inside a submodule causes no mutation failure, because the
+// outer snapshot sees the submodule as dirty (issue #581 review, blocker 4).
+test("a transcript inside a submodule causes no reviewer mutation failure", async () => {
+  await addSubmodule();
+  await reviewerRun(join(repo, "sub", "run.json"), repo);
+  expect(process.exitCode).toBe(0);
+});
+
+// Whether `A` and `a` name one file on this file system.
+async function caseInsensitive() {
+  await writeFile(join(scratch, "probe-a"), "");
+  return readFile(join(scratch, "PROBE-A")).then(
+    () => true,
+    () => false,
+  );
+}
+
+// Usefulness: verifies a transcript path that differs only in case from the file on disk causes no
+// mutation failure on a case-insensitive file system (issue #581 review, blocker 3).
+test("a case alias of an in-tree transcript causes no reviewer mutation failure", async (ctx) => {
+  if (!(await caseInsensitive())) ctx.skip();
+  await writeFile(join(repo, "run.json"), "{}");
+  await reviewerRun(join(repo, "RUN.json"), repo);
+  expect(process.exitCode).toBe(0);
+});
+
+// Everything the loop leaves on disk during a turn, outside the work tree and in the transcript. A
+// parent that dies mid-turn leaves exactly this.
+async function captureDisk(transcript) {
+  const files = new Map();
+  const add = async (path) => {
+    files.set(path, await readFile(path, "utf8").catch(() => null));
+  };
+  await add(transcript);
+  const root = join(tmpdir(), "agent-loops");
+  for (const entry of await readdir(root, { recursive: true, withFileTypes: true }).catch(
+    () => [],
+  )) {
+    if (entry.isFile()) await add(join(entry.parentPath, entry.name));
+  }
+  return files;
+}
+
+async function restoreDisk(transcript, files) {
+  await rm(transcript, { force: true });
+  await rm(join(tmpdir(), "agent-loops"), { recursive: true, force: true });
+  for (const [path, text] of files) {
+    if (text === null) continue;
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, text);
+  }
+}
+
+// Usefulness: verifies the acceptance of issue #581: a parent that dies during a Claude orchestrator
+// or reviewer first turn, with the transcript inside the work tree, leaves a record that
+// --continue-from resumes after the ownership check, and no turn fails its mutation check.
+test.each(["orchestrator", "reviewer"])(
+  "--continue-from resumes a %s turn that a parent crash left with an in-tree transcript",
+  async (role) => {
+    const transcript = join(repo, "run.json");
+    let killedId;
+    let disk;
+    vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
+      killedId = assignedIn(args);
+      disk = await captureDisk(transcript);
+      throw timedOut();
+    });
+    await main(
+      [...roleArgs({ [role]: "claude" }), "--cwd", repo, "--transcript", transcript],
+      agentsFor([REVIEW, FINISH]),
+    );
+    expect(killedId).toMatch(UUID);
+    expect((await readJson(transcript)).error ?? "").not.toContain("Mutation detected");
+
+    await restoreDisk(transcript, disk);
+    await saveSession(killedId, role);
+    vi.mocked(exec).mockReset();
+    vi.mocked(exec).mockImplementation(async (_command, args) => {
+      const id = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : assignedIn(args);
+      return {
+        stdout: JSON.stringify({
+          session_id: id,
+          result: role === "reviewer" ? "Verdict: accept" : FINISH,
+        }),
+        stderr: "",
+      };
+    });
+    await main(
+      [
+        ...roleArgs({ [role]: "claude" }),
+        "--cwd",
+        repo,
+        "--continue-from",
+        transcript,
+        "--transcript",
+        transcript,
+      ],
+      agentsFor([REVIEW, FINISH]),
+    );
+    expect(process.exitCode).toBe(0);
+    const first = vi.mocked(exec).mock.calls[0][1];
+    expect(first).toEqual(expect.arrayContaining(["--resume", killedId]));
+  },
+);
 
 // Usefulness: verifies an orchestrator id that the ownership check rejects keeps its unconfirmed
 // mark in the written record, so a later --continue-from checks it again, also when the snapshot

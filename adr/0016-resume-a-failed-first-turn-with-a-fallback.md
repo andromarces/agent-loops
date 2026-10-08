@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md). ADR 0027 restates the decisions of this ADR that still hold and closes the crash gap of an orchestrator or reviewer turn with a transcript inside the work tree.
 
 ## Date
 
@@ -108,9 +110,11 @@ step budget runs out.
    exit, records what the adapter decided: a reported id wins, an unreported one keeps the
    pre-assigned id with its mark, and a rejected one keeps none.
    Setting the id on the role instead made a reported id lose and dropped the mark, so a stale id
-   resumed unchecked. Two limits remain. A failed transcript write only warns, as at exit. A run
+   resumed unchecked. Three limits remain. A failed transcript write only warns, as at exit. A run
    with no `--transcript` keeps no record. A transcript inside the Git work tree that the mutation check covers (the repository root, not
-   only `--cwd`) is written before an orchestrator or reviewer turn too, and the mutation check of those turns exempts that one path, computed from the repository root (issue #581). Every other path, the index, and HEAD stay checked. The exemption also hides a change that the CLI itself makes to that one file during the turn. A refused ownership check on a resumed orchestrator id ends the run and keeps
+   only `--cwd`) is not written before an orchestrator or reviewer turn, because those turns run
+   under the mutation check and the write would fail it, so they keep the gap for that layout and
+   log a warning. A refused ownership check on a resumed orchestrator id ends the run and keeps
    the id with its mark, because the orchestrator has no first-turn rerun: a new session would
    lack the task. The restore runs inside the mutation check, so a failed snapshot after the turn cannot lose the mark. Not verified: Windows file system behavior, and the transcript that a real
    process kill leaves, which the tests simulate by reading the file mid-turn. Separate processes that
@@ -182,8 +186,8 @@ Andro Marces
 - [Issue #395](https://github.com/andromarces/agent-loops/issues/395)
 - [Issue #396](https://github.com/andromarces/agent-loops/issues/396)
 - [Issue #564](https://github.com/andromarces/agent-loops/issues/564)
-- [Issue #581](https://github.com/andromarces/agent-loops/issues/581)
 - Implementation: `keepFailedSessionId` and `flagMissingSession` in `src/agents/shared.mjs`,
   the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, the dispatch write in
-  `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/cli.mjs`, and the `exemptPath` option of `withMutationCheck` in `src/lib/snapshot.mjs`; documented in `README.md`
+  `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/cli.mjs`; documented in `README.md`
+- Superseded by [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR Index](README.md)
