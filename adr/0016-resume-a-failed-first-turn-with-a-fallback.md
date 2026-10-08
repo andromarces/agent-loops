@@ -36,14 +36,23 @@ step budget runs out.
    result carries, even when it differs from the resumed id. When it resumed an id and the
    result carries a different one, with or without the stderr text
    `conversation "<name>" not found`, the adapter logs a warning and sets
-   `state.conversationReplaced`. The runtime clears the mark after each turn. After a worker
-   turn that carries it, the runtime runs one preamble-only worker turn in the new conversation,
-   in the same step. That turn carries the worker preamble and a task that asks for no change, so
-   the turn that already ran is never rerun and its edits are not repeated. A failed preamble turn
-   logs a warning and leaves the worker result intact, and only a cancel propagates. A reviewer
-   prompt carries its full scope on every turn, so a replaced reviewer conversation needs
-   nothing. The mark is not stored in the state file, so a crash between the turn and the preamble
-   turn leaves the new conversation without the preamble. The Copilot adapter keeps the id that the result event of a failed first turn
+   `state.conversationReplaced`. The adapter clears the mark at the start of every call. The
+   runtime clears it after every worker, reviewer, and orchestrator turn, on success and on failure.
+   A worker turn that carries the mark is followed by one preamble-only worker turn in the new
+   conversation, in the same step. That turn carries the worker preamble and a task that asks for
+   no change, so the turn that already ran is never rerun and its edits are not repeated.
+   The preamble reaches the conversation after the task prompt, so the turn that ran acted on the
+   task without the rules. The preamble-only turn is a worker turn with no mutation check, so
+   it can still write although its prompt asks for no change. A failed preamble turn logs a
+   warning and leaves the worker result intact, and only a cancel propagates. A reviewer prompt
+   carries its full scope on every turn, so a replaced reviewer conversation needs nothing.
+   An orchestrator turn that carries the mark and was not the first turn is rerun once, under
+   the same mutation check, with the initial instructions placed before the same prompt. An
+   orchestrator turn is read-only, so the rerun repeats no edit, and its answer replaces the
+   answer of the instructionless conversation. The first orchestrator turn already carries the
+   instructions and is not rerun. The orchestrator conversation loses the earlier turns of the old
+   conversation. The mark is not stored in the state file, so a crash between a worker turn and its
+   preamble turn leaves the new conversation without the preamble. The Copilot adapter keeps the id that the result event of a failed first turn
    reports. It does not keep the pre-assigned id: a failed turn that reports no id does not show
    that the CLI created a session under it, and a kept id would send the next worker turn
    to a session that may not exist, without the preamble. On Copilot CLI 1.0.90-4, a first
@@ -117,9 +126,11 @@ step budget runs out.
   creates that session. In the probe, agy warned on stderr, exited 0, and started a
   new conversation with a new id. Neither can trigger the fallback. The agy adapter adopts the
   id the result carries and, for a resumed turn whose id differs, logs a warning and marks the
-  state. The runtime then gives the new conversation the worker preamble in a preamble-only
-  turn. That turn costs one model call and is not charged as a step. The model of the
-  preamble turn can still act on the tree despite a prompt that asks for no change.
+  state. A worker conversation then gets the preamble in a preamble-only turn. That turn costs
+  one model call and is not charged as a step. Its prompt asks for no change, but the worker
+  turn has no mutation check, so it can still write. The task prompt reaches the new
+  conversation before the preamble. An orchestrator turn is rerun once with the initial
+  instructions, which costs one more model call and loses the earlier orchestrator turns.
 - In the probe, Claude and agy printed no session id when killed at 20 to 25 s. A Claude first
   turn that ends that way keeps its pre-assigned id. An agy first turn keeps a null id.
 - A worker resumed after a failed first turn receives no second preamble. The failed turn
@@ -134,7 +145,8 @@ step budget runs out.
    each adapter owns its pattern and the runtime reads one flag.
 3. **Rerun the agy turn when the conversation is missing**: rejected. The turn already
    ran and can have edited the tree, so a rerun repeats the edits. A preamble-only turn
-   replaces it (issue #396).
+   replaces it for a worker. An orchestrator turn is read-only, so a rerun is safe there
+   (issue #396).
 4. **Pass a pre-assigned Claude session id with `--session-id`, as the Copilot adapter does**: adopted for Claude in
    issue #395 after a probe (decision 1). The Copilot adapter still keeps no pre-assigned id, because a Copilot
    probe did not show that a failed first turn saves a session.

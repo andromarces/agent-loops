@@ -451,15 +451,7 @@ export async function runLoop(options) {
   // the interactive `lastResult.reviewed` the role gate reads.
   let lastReviewed = restoredGate?.lastReviewed ?? null;
 
-  const orchAdapter = {
-    async run(state, p, opts) {
-      return withMutationCheck(cwd, "orchestrator", () =>
-        invoke({ agents, state, roleName: "orchestrator", prompt: p, opts, onEvent, stepsUsed }),
-      );
-    },
-  };
-
-  let prompt = initialPrompt({
+  const instructions = initialPrompt({
     task,
     maxSteps,
     requireAccept,
@@ -475,6 +467,45 @@ export async function runLoop(options) {
     orchestratorKind: orchestrator?.kind ?? null,
     reviewerKind: reviewer?.kind ?? null,
   });
+
+  // An adapter sets `conversationReplaced` when a resume ran the turn in a new conversation, which
+  // never received `instructions`. The turn is read-only under the mutation check, so a rerun
+  // repeats no edit: it carries the instructions before the same prompt, and its answer replaces
+  // the one the instructionless conversation gave. The earlier turns of the old conversation are
+  // lost. One rerun only, and the mark is cleared in every case (issue #396, ADR 0016).
+  const orchAdapter = {
+    async run(state, p, opts) {
+      return withMutationCheck(cwd, "orchestrator", async () => {
+        const call = (text) =>
+          invoke({
+            agents,
+            state,
+            roleName: "orchestrator",
+            prompt: text,
+            opts,
+            onEvent,
+            stepsUsed,
+          });
+        try {
+          const response = await call(p);
+          if (!state.conversationReplaced || p === instructions) {
+            return response;
+          }
+          delete state.conversationReplaced;
+          logWarn(
+            "orchestrator: conversation was replaced; rerunning the turn with its instructions",
+          );
+          return await call(
+            `${instructions}\n\nThe conversation restarted and earlier turns are lost. Ignore the request above to choose a first action. Answer the prompt below.\n\n${p}`,
+          );
+        } finally {
+          delete state.conversationReplaced;
+        }
+      });
+    },
+  };
+
+  let prompt = instructions;
 
   while (true) {
     let action;
