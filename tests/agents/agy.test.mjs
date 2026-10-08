@@ -1,9 +1,13 @@
 import { expect, test, vi } from "vite-plus/test";
 import { runAgy } from "../../src/agents/agy.mjs";
 import { exec } from "../../src/lib/exec.mjs";
+import { logWarn } from "../../src/lib/log.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
+}));
+vi.mock("../../src/lib/log.mjs", () => ({
+  logWarn: vi.fn(),
 }));
 
 // Usefulness: verifies agy adapter adds --mode plan when readOnly is true and passes input-format text.
@@ -145,9 +149,10 @@ test("agy rethrows a failure with no parseable stdout", async () => {
 });
 
 // Usefulness: verifies that a resumed turn whose stderr reports a missing conversation, with exit 0
-// and a new conversation id in the result, stores the new id (issue #360). The adapter has no
-// mismatch check; the warning log is not asserted here.
+// and a new conversation id in the result, stores the new id, warns, and marks the state so the
+// runtime can give the new conversation the role preamble (issues #360, #396).
 test("agy adopts the new conversation when the resumed one is missing", async () => {
+  vi.mocked(logWarn).mockClear();
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: JSON.stringify({ conversation_id: "conv-new", response: "ok" }),
     stderr: 'warning: conversation "conv-old" not found',
@@ -155,6 +160,58 @@ test("agy adopts the new conversation when the resumed one is missing", async ()
   const state = { kind: "agy", sessionId: "conv-old", model: null, effort: null };
   await expect(runAgy(state, "p", { cwd: "/dir" })).resolves.toBe("ok");
   expect(state.sessionId).toBe("conv-new");
+  expect(state.conversationReplaced).toBe(true);
+  expect(logWarn).toHaveBeenCalledOnce();
+  expect(vi.mocked(logWarn).mock.calls[0][0]).toContain("conv-old");
+});
+
+// Usefulness: verifies a different id without the missing-conversation text is adopted, warned, and
+// marked like the missing case, because the new conversation has no preamble either way (issue #396).
+test("agy adopts and warns on a different conversation id with no warning text", async () => {
+  vi.mocked(logWarn).mockClear();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ conversation_id: "conv-new", response: "ok" }),
+    stderr: "",
+  });
+  const state = { kind: "agy", sessionId: "conv-old", model: null, effort: null };
+  await expect(runAgy(state, "p", { cwd: "/dir" })).resolves.toBe("ok");
+  expect(state.sessionId).toBe("conv-new");
+  expect(state.conversationReplaced).toBe(true);
+  expect(logWarn).toHaveBeenCalledOnce();
+});
+
+// Usefulness: verifies a resumed turn that keeps its conversation id logs nothing, marks nothing,
+// and clears a mark left by an earlier turn, so only a replaced conversation triggers the preamble.
+test("agy leaves a resumed conversation unmarked", async () => {
+  vi.mocked(logWarn).mockClear();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ conversation_id: "conv-1", response: "ok" }),
+    stderr: "",
+  });
+  const state = {
+    kind: "agy",
+    sessionId: "conv-1",
+    conversationReplaced: true,
+    model: null,
+    effort: null,
+  };
+  await runAgy(state, "p", { cwd: "/dir" });
+  expect(state.sessionId).toBe("conv-1");
+  expect(state.conversationReplaced).toBeUndefined();
+  expect(logWarn).not.toHaveBeenCalled();
+});
+
+// Usefulness: verifies a first turn has no conversation to lose, so its new id is never a replacement.
+test("agy does not mark a first turn as a replaced conversation", async () => {
+  vi.mocked(logWarn).mockClear();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ conversation_id: "conv-1", response: "ok" }),
+    stderr: "",
+  });
+  const state = { kind: "agy", sessionId: null, model: null, effort: null };
+  await runAgy(state, "p", { cwd: "/dir" });
+  expect(state.conversationReplaced).toBeUndefined();
+  expect(logWarn).not.toHaveBeenCalled();
 });
 
 // Usefulness: verifies a first turn whose result names a conversation but carries no response keeps

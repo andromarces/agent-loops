@@ -255,3 +255,48 @@ test("a probe turn that changes the work tree is a fatal mutation", async () => 
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies an edit by the first orchestrator call that the rerun of a replaced
+// conversation restores is still a fatal mutation, because each call is checked on its own
+// (issue #396, ADR 0016).
+test("an orchestrator edit restored by the replaced-conversation rerun is detected", async () => {
+  const repo = await createTempRepo();
+  try {
+    const leak = join(repo, "orch-leak.txt");
+    const calls = [];
+    const orch = {
+      async run(state, prompt) {
+        calls.push(prompt);
+        if (calls.length === 1) {
+          state.sessionId = "orch-old";
+          return JSON.stringify({ action: "run_worker", prompt: "go" });
+        }
+        if (calls.length === 2) {
+          await writeFile(leak, "leak\n");
+          state.sessionId = "replacement";
+          state.conversationReplaced = true;
+          return "no decision";
+        }
+        await rm(leak);
+        return JSON.stringify({ action: "abort", reason: "restored" });
+      },
+    };
+
+    await expect(
+      runLoop({
+        task: "Task",
+        cwd: repo,
+        maxSteps: 5,
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: { orch, work: scripted(["done"]), rev: scripted([]) },
+      }),
+    ).rejects.toThrow(MutationError);
+    expect(calls).toHaveLength(2);
+  } finally {
+    await removePath(repo);
+  }
+});

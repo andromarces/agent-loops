@@ -33,10 +33,28 @@ step budget runs out.
    the id of a resumed session. Every adapter except agy keeps the resumed id or raises
    `resumeMismatchError` on a different one, and the Claude adapter now does so like
    Codex, Copilot, and opencode. agy adopts the `conversation_id` that its successful
-   result carries, even when it differs from the resumed id, and logs a warning only when
-   it resumed an id and stderr matches `conversation "<name>" not found`. A resumed agy
-   turn is sent without the role preamble, so a new conversation that agy started has not
-   received it. The Copilot adapter keeps the id that the result event of a failed first turn
+   result carries, even when it differs from the resumed id. When it resumed an id and the
+   result carries a different one, with or without the stderr text
+   `conversation "<name>" not found`, the adapter logs a warning and sets
+   `state.conversationReplaced`. The adapter clears the mark at the start of every call. The
+   runtime clears it after every worker, reviewer, and orchestrator turn, on success and on failure.
+   A worker turn that carries the mark is followed by one preamble-only worker turn in the new
+   conversation, in the same step. That turn carries the worker preamble and a task that asks for
+   no change, so the turn that already ran is never rerun and its edits are not repeated.
+   The preamble reaches the conversation after the task prompt, so the turn that ran acted on the
+   task without the rules. The preamble-only turn is a worker turn with no mutation check, so
+   it can still write although its prompt asks for no change. A failed preamble turn logs a
+   warning and leaves the worker result intact, and only a cancel propagates. A reviewer prompt
+   carries its full scope on every turn, so a replaced reviewer conversation needs nothing.
+   An orchestrator turn that carries the mark and was not the first turn is rerun once, with the
+   initial instructions placed before the same prompt. Each call has its own mutation check, and
+   the first call is checked before the rerun starts, so an edit of the first call that the rerun
+   restores is still detected. An
+   orchestrator turn is read-only, so the rerun repeats no edit, and its answer replaces the
+   answer of the instructionless conversation. The first orchestrator turn already carries the
+   instructions and is not rerun. The orchestrator conversation loses the earlier turns of the old
+   conversation. The mark is not stored in the state file, so a crash between a worker turn and its
+   preamble turn leaves the new conversation without the preamble. The Copilot adapter keeps the id that the result event of a failed first turn
    reports. It does not keep the pre-assigned id: a failed turn that reports no id does not show
    that the CLI created a session under it, and a kept id would send the next worker turn
    to a session that may not exist, without the preamble. On Copilot CLI 1.0.90-4, a first
@@ -108,11 +126,13 @@ step budget runs out.
 - A failed first turn resumes its own session, edits included, and reuses its prompt cache.
 - opencode and agy give no failure for a missing session. opencode accepts the id and
   creates that session. In the probe, agy warned on stderr, exited 0, and started a
-  new conversation with a new id. Neither can trigger the fallback. The agy adapter has
-  no mismatch check: it stores the valid id the result carries and logs a warning only
-  when stderr matches `conversation "<name>" not found`. A resumed turn carries no
-  preamble, so a new conversation lacks it. A new id without that stderr text is adopted
-  without a warning and was not seen in the probe.
+  new conversation with a new id. Neither can trigger the fallback. The agy adapter adopts the
+  id the result carries and, for a resumed turn whose id differs, logs a warning and marks the
+  state. A worker conversation then gets the preamble in a preamble-only turn. That turn costs
+  one model call and is not charged as a step. Its prompt asks for no change, but the worker
+  turn has no mutation check, so it can still write. The task prompt reaches the new
+  conversation before the preamble. An orchestrator turn is rerun once with the initial
+  instructions, which costs one more model call and loses the earlier orchestrator turns.
 - In the probe, Claude and agy printed no session id when killed at 20 to 25 s. A Claude first
   turn that ends that way keeps its pre-assigned id. An agy first turn keeps a null id.
 - A worker resumed after a failed first turn receives no second preamble. The failed turn
@@ -126,10 +146,17 @@ step budget runs out.
 2. **Match the error text in `runChild`**: rejected. The messages belong to the CLIs, so
    each adapter owns its pattern and the runtime reads one flag.
 3. **Rerun the agy turn when the conversation is missing**: rejected. The turn already
-   ran and can have edited the tree, so a rerun repeats the edits.
+   ran and can have edited the tree, so a rerun repeats the edits. A preamble-only turn
+   replaces it for a worker. An orchestrator turn is read-only, so a rerun is safe there
+   (issue #396).
 4. **Pass a pre-assigned Claude session id with `--session-id`, as the Copilot adapter does**: adopted for Claude in
    issue #395 after a probe (decision 1). The Copilot adapter still keeps no pre-assigned id, because a Copilot
    probe did not show that a failed first turn saves a session.
+5. **Refuse a different agy id**: rejected. The new conversation already holds the turn, and a
+   kept stale id would fail the same way on every later turn.
+6. **Store a preamble-owed mark and prepend the preamble to the next worker turn**: rejected.
+   It needs a new field in the state file and in `--continue-from`, and the preamble would
+   reach the conversation a turn later.
 
 ## Authors
 
@@ -139,6 +166,7 @@ Andro Marces
 
 - [Issue #360](https://github.com/andromarces/agent-loops/issues/360)
 - [Issue #395](https://github.com/andromarces/agent-loops/issues/395)
+- [Issue #396](https://github.com/andromarces/agent-loops/issues/396)
 - Implementation: `keepFailedSessionId` and `flagMissingSession` in `src/agents/shared.mjs`,
   the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, and the dispatch write in
   `src/role.mjs`; documented in `README.md`

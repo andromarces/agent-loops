@@ -3524,6 +3524,255 @@ test("the orchestrator prompt names no wait when the turn timeout is too short",
   }
 });
 
+// Usefulness: verifies a worker turn that ran in a replacement conversation is followed by one
+// preamble-only turn in that conversation, in the same step, and never reruns the task, so its
+// edits are not repeated (issue #396, ADR 0016).
+test("a replaced worker conversation receives the preamble without a task rerun", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "do the work" }),
+      finish,
+    ]);
+    const calls = [];
+    const events = [];
+    const worker = {
+      async run(state, prompt) {
+        calls.push({ sessionId: state.sessionId, prompt });
+        if (calls.length === 1) {
+          state.sessionId = "replacement";
+          state.conversationReplaced = true;
+        } else {
+          delete state.conversationReplaced;
+        }
+        return "worker done";
+      },
+    };
+
+    const roles = {
+      orchestrator: { kind: "orch", sessionId: null },
+      worker: { kind: "work", sessionId: "gone" },
+      reviewer: { kind: "rev", sessionId: null },
+    };
+    const result = await runLoop({
+      task: "Task",
+      cwd: repo,
+      maxSteps: 1,
+      roles,
+      agents: { orch, work: worker, rev: scripted([]) },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(calls.map((call) => call.sessionId)).toEqual(["gone", "replacement"]);
+    expect(calls[0].prompt).toBe("do the work");
+    expect(calls[1].prompt).toContain("You are the implementation agent (worker)");
+    expect(calls[1].prompt).not.toContain("do the work");
+    expect(roles.worker.conversationReplaced).toBeUndefined();
+    expect(events.filter((e) => e.type === "invocation" && e.role === "worker")).toMatchObject([
+      { status: "ok", stepsUsed: 1 },
+      { status: "ok", stepsUsed: 1 },
+    ]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a failed preamble turn never fails the worker turn that already ran, so a
+// completed turn and its edits still reach the orchestrator (issue #396).
+test("a failed preamble turn keeps the worker result", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orch = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "do the work" }),
+      finish,
+    ]);
+    let calls = 0;
+    const worker = {
+      async run(state) {
+        calls += 1;
+        if (calls === 2) {
+          throw new Error("preamble turn failed");
+        }
+        state.sessionId = "replacement";
+        state.conversationReplaced = true;
+        return "worker done";
+      },
+    };
+
+    const result = await runLoop({
+      task: "Task",
+      cwd: repo,
+      maxSteps: 1,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: "gone" },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch, work: worker, rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toBe(2);
+    expect(orch.recorded.at(-1).prompt).toContain("worker done");
+  } finally {
+    await removePath(repo);
+  }
+});
+
+const ORCHESTRATOR_FINISH = JSON.stringify({
+  action: "finish",
+  summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+});
+
+// Usefulness: verifies a replaced orchestrator conversation on a later turn reruns that read-only
+// turn once with the initial instructions, uses the rerun decision, and clears the mark, because the
+// new conversation never received the instructions (issue #396, ADR 0016).
+test("a replaced orchestrator conversation reruns the turn with its instructions", async () => {
+  const repo = await createTempRepo();
+  try {
+    const calls = [];
+    const orch = {
+      async run(state, prompt) {
+        calls.push({ sessionId: state.sessionId, prompt });
+        if (calls.length === 1) {
+          state.sessionId = "orch-old";
+          return JSON.stringify({ action: "run_worker", prompt: "do the work" });
+        }
+        if (calls.length === 2) {
+          state.sessionId = "replacement";
+          state.conversationReplaced = true;
+          return JSON.stringify({ action: "abort", reason: "decided without the instructions" });
+        }
+        return ORCHESTRATOR_FINISH;
+      },
+    };
+    const roles = {
+      orchestrator: { kind: "orch", sessionId: null },
+      worker: { kind: "work", sessionId: null },
+      reviewer: { kind: "rev", sessionId: null },
+    };
+
+    const result = await runLoop({
+      task: "Task",
+      cwd: repo,
+      maxSteps: 2,
+      roles,
+      agents: { orch, work: scripted(["worker done"]), rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toHaveLength(3);
+    expect(calls[1].prompt).toContain("Role execution result");
+    expect(calls[1].prompt).not.toContain("You are the orchestrator");
+    expect(calls[2].sessionId).toBe("replacement");
+    expect(calls[2].prompt).toContain("You are the orchestrator");
+    expect(calls[2].prompt).toContain("Role execution result");
+    expect(roles.orchestrator.conversationReplaced).toBeUndefined();
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a replaced orchestrator conversation on the turn that already carries the
+// initial instructions needs no rerun and only clears the mark (issue #396).
+test("a replaced orchestrator conversation on its first turn is not rerun", async () => {
+  const repo = await createTempRepo();
+  try {
+    const calls = [];
+    const orch = {
+      async run(state, prompt) {
+        calls.push(prompt);
+        state.sessionId = "replacement";
+        if (calls.length === 1) {
+          state.conversationReplaced = true;
+        }
+        return calls.length === 1
+          ? JSON.stringify({ action: "run_worker", prompt: "do the work" })
+          : ORCHESTRATOR_FINISH;
+      },
+    };
+    const roles = {
+      orchestrator: { kind: "orch", sessionId: "gone" },
+      worker: { kind: "work", sessionId: null },
+      reviewer: { kind: "rev", sessionId: null },
+    };
+
+    const result = await runLoop({
+      task: "Task",
+      cwd: repo,
+      maxSteps: 2,
+      roles,
+      agents: { orch, work: scripted(["worker done"]), rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain("You are the orchestrator");
+    expect(calls[1]).not.toContain("You are the orchestrator");
+    expect(roles.orchestrator.conversationReplaced).toBeUndefined();
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a worker or reviewer replacement mark never outlives a turn that fails after
+// the adapter succeeded, here an event handler that throws, so no later turn reads a stale mark
+// (issue #396, ADR 0016).
+test.each([
+  ["worker", "run_worker"],
+  ["reviewer", "run_reviewer"],
+])(
+  "a %s turn that fails after the adapter succeeded clears the replacement mark",
+  async (name, action) => {
+    const repo = await createTempRepo();
+    try {
+      const orch = scripted([JSON.stringify({ action, prompt: "go" }), ORCHESTRATOR_FINISH]);
+      const child = {
+        async run(state) {
+          state.sessionId = "replacement";
+          state.conversationReplaced = true;
+          return "done";
+        },
+      };
+      const roles = {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: "gone" },
+        reviewer: { kind: "rev", sessionId: "gone" },
+      };
+
+      await runLoop({
+        task: "Task",
+        cwd: repo,
+        maxSteps: 2,
+        roles,
+        agents: {
+          orch,
+          work: name === "worker" ? child : scripted([]),
+          rev: name === "reviewer" ? child : scripted([]),
+        },
+        onEvent: (event) => {
+          if (event.type === "invocation" && event.role === name) {
+            throw new Error("event handler failed");
+          }
+        },
+      });
+
+      expect(roles[name].conversationReplaced).toBeUndefined();
+    } finally {
+      await removePath(repo);
+    }
+  },
+);
+
 // Usefulness: verifies a resume that fails because the CLI has no such session clears the id and
 // reruns the turn once as a first turn with the worker preamble, inside the one charged step
 // (issue #360, ADR 0016).
