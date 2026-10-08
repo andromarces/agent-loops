@@ -97,10 +97,26 @@ step budget runs out.
    that it reads with a 256 KiB bound. `--continue-from` restores the unconfirmed mark with the id,
    so a restored id passes the same check. Otherwise the adapter raises the missing-session error
    before any CLI starts, and the runtime reruns the turn as a first turn, as in decision 3. A
-   session store elsewhere reads as not owned, and the turn starts a fresh session. Only the interactive dispatch path
-   saves the id mid-turn. The headless loop keeps the id in memory until the turn ends, so a
-   parent crash during a first turn there still loses the id, and the next run starts a new
-   session. That pre-spawn crash gap stays open for the headless loop.
+   session store elsewhere reads as not owned, and the turn starts a fresh session. Both paths
+   save the id mid-turn (issue #564). When `--transcript` is set, the headless loop rewrites the
+   transcript before the CLI of a Claude orchestrator, worker, or reviewer starts, with the id and
+   `sessionUnconfirmed` on that role, so a parent crash during a first turn leaves a transcript that
+   `--continue-from` restores, and the ownership check runs before the resume. A rejected id is
+   withdrawn through the same hook. The written file keeps the id until the next transcript write, so a
+   crash during the turn leaves it on disk. The id lives in an in-memory overlay that the end of the
+   CLI call clears, and the role state is not changed. The next write, at the latest the write at
+   exit, records what the adapter decided: a reported id wins, an unreported one keeps the
+   pre-assigned id with its mark, and a rejected one keeps none.
+   Setting the id on the role instead made a reported id lose and dropped the mark, so a stale id
+   resumed unchecked. Three limits remain. A failed transcript write only warns, as at exit. A run
+   with no `--transcript` keeps no record. A transcript inside the Git work tree that the mutation check covers (the repository root, not
+   only `--cwd`) is not written before an orchestrator or reviewer turn, because those turns run
+   under the mutation check and the write would fail it, so they keep the gap for that layout and
+   log a warning. A refused ownership check on a resumed orchestrator id ends the run and keeps
+   the id with its mark, because the orchestrator has no first-turn rerun: a new session would
+   lack the task. The restore runs inside the mutation check, so a failed snapshot after the turn cannot lose the mark. Not verified: Windows file system behavior, and the transcript that a real
+   process kill leaves, which the tests simulate by reading the file mid-turn. Separate processes that
+   share one transcript path have no write coordination: each write is atomic and the last wins.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
    stderr is the one verified line for the requested id, byte for byte, plus at most one
@@ -167,7 +183,8 @@ Andro Marces
 - [Issue #360](https://github.com/andromarces/agent-loops/issues/360)
 - [Issue #395](https://github.com/andromarces/agent-loops/issues/395)
 - [Issue #396](https://github.com/andromarces/agent-loops/issues/396)
+- [Issue #564](https://github.com/andromarces/agent-loops/issues/564)
 - Implementation: `keepFailedSessionId` and `flagMissingSession` in `src/agents/shared.mjs`,
-  the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, and the dispatch write in
-  `src/role.mjs`; documented in `README.md`
+  the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, the dispatch write in
+  `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/cli.mjs`; documented in `README.md`
 - [ADR Index](README.md)

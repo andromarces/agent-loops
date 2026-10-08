@@ -92,8 +92,8 @@ async function gitIn(cwd, args) {
   return result;
 }
 
-export async function snapshot(cwd) {
-  // git status/ls-files emit repository-root-relative paths, so run them at the root.
+/** The Git work tree root that `snapshot` covers for `cwd`. */
+export async function workTreeRoot(cwd) {
   const rootResult = await execa("git", ["rev-parse", "--show-toplevel"], {
     cwd,
     reject: false,
@@ -101,7 +101,12 @@ export async function snapshot(cwd) {
   if (rootResult.exitCode !== 0) {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
   }
-  const root = rootResult.stdout.trim();
+  return rootResult.stdout.trim();
+}
+
+export async function snapshot(cwd) {
+  // git status/ls-files emit repository-root-relative paths, so run them at the root.
+  const root = await workTreeRoot(cwd);
 
   // 1. Work tree status
   const statusResult = await gitIn(root, [

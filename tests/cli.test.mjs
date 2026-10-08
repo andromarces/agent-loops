@@ -1342,6 +1342,58 @@ test("--continue-from resumes the earlier role sessions with a new budget", asyn
   });
 });
 
+// Usefulness: verifies a pre-assigned worker session id is in the transcript before the CLI runs,
+// with its unconfirmed mark, so a parent killed during a first turn leaves a record that
+// --continue-from resumes after the ownership check (#564). No other test reads the transcript
+// mid-turn.
+test("a pre-assigned session id reaches the transcript before the turn and --continue-from restores it", async () => {
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    let midTurn = null;
+    const agents = sessionAgents([work], { codex: [], claude: [], agy: [] });
+    agents.claude = {
+      async run(state, _prompt, options) {
+        state.sessionUnconfirmed = true;
+        await options.onSessionAssigned("pre-worker");
+        midTurn = await readFile(transcriptPath, "utf8");
+        throw new Error("parent killed");
+      },
+    };
+    await main([...CONTINUE_BASE, "--cwd", repo, "--transcript", transcriptPath], agents);
+
+    const record = JSON.parse(midTurn);
+    expect(record.roles.worker).toMatchObject({
+      sessionId: "pre-worker",
+      sessionUnconfirmed: true,
+    });
+    expect(record.roles.reviewer.sessionId).toBeNull();
+
+    // The mid-turn file is what a kill leaves behind.
+    await writeFile(transcriptPath, midTurn);
+    let resumed = null;
+    const next = sessionAgents([work, FINISH], { codex: [], claude: [], agy: [] });
+    next.claude = {
+      async run(state) {
+        resumed = { sessionId: state.sessionId, unconfirmed: state.sessionUnconfirmed };
+        return "worker ok";
+      },
+    };
+    await main(
+      [
+        ...CONTINUE_BASE,
+        "--cwd",
+        repo,
+        "--continue-from",
+        transcriptPath,
+        "--transcript",
+        transcriptPath,
+      ],
+      next,
+    );
+    expect(resumed).toEqual({ sessionId: "pre-worker", unconfirmed: true });
+  });
+});
+
 // Usefulness: verifies the transcript carries the gate state across --continue-from through the
 // CLI (#393): a reviewer accept recorded by the first run satisfies --require-accept in the
 // continued run on the unchanged tree, so the continued run dispatches no reviewer.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
   DEFAULT_MAX_STEPS,
@@ -39,9 +39,9 @@ import {
   runInstallCommand,
   runUninstallCommand,
 } from "./install/commands.mjs";
-import { setVerbose } from "./lib/log.mjs";
+import { logWarn, setVerbose } from "./lib/log.mjs";
 import { writeFileAtomic } from "./lib/runstate.mjs";
-import { assertGitWorkTree } from "./lib/snapshot.mjs";
+import { assertGitWorkTree, workTreeRoot } from "./lib/snapshot.mjs";
 import { redactCommandText } from "./lib/test-cmd.mjs";
 import { runLoop, runProbeTurn, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
@@ -643,12 +643,27 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     error: null,
   };
 
+  // The pre-assigned session id of the turn that is running, with the mark that no CLI output
+  // confirmed it. It exists only in the written record, never on the role state, so the adapter
+  // alone decides what a failed turn keeps (issue #564). Cleared when the CLI call ends.
+  let pendingSession = null;
+
   const writeTranscript = async () => {
     if (!options.transcript) return;
     try {
+      const { role, id } = pendingSession ?? {};
+      const data = pendingSession
+        ? {
+            ...transcriptData,
+            roles: {
+              ...roles,
+              [role]: { ...roles[role], sessionId: id, sessionUnconfirmed: true },
+            },
+          }
+        : transcriptData;
       // Atomic, because the file can be the --continue-from source: a crash or a
       // failed write must leave the earlier record whole.
-      await writeFileAtomic(options.transcript, JSON.stringify(transcriptData, null, 2));
+      await writeFileAtomic(options.transcript, JSON.stringify(data, null, 2));
     } catch (err) {
       console.error(
         redactedText(
@@ -656,6 +671,33 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         ),
       );
     }
+  };
+
+  // The orchestrator and the reviewer run under the mutation check, which covers the whole Git work
+  // tree, not only --cwd. A transcript write inside that tree during their turn would fail the
+  // check, so their pre-spawn write is skipped there, and their crash gap stays open for that
+  // layout (issue #564). A root that cannot be read counts as inside.
+  const transcriptInTree = async () => {
+    const real = (path) => realpath(path).catch(() => resolve(path));
+    try {
+      const root = await real(await workTreeRoot(options.cwd));
+      const from = relative(root, join(await real(dirname(options.transcript)), "x"));
+      // Segment test: a directory named `..records` is inside.
+      return !(from === ".." || from.startsWith(`..${sep}`) || isAbsolute(from));
+    } catch {
+      return true;
+    }
+  };
+  const onSessionAssigned = async (role, id) => {
+    pendingSession = id ? { role, id } : null;
+    if (id && role !== "worker" && (await transcriptInTree())) {
+      logWarn(
+        `${role}: --transcript is inside the work tree, so the session id is not saved before the turn.`,
+      );
+      pendingSession = null;
+      return;
+    }
+    await writeTranscript();
   };
 
   // The command result and work tree compare of a turn that ended in a fatal error. The
@@ -693,6 +735,9 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     }
 
     const onEvent = (event) => {
+      if (event.type === "invocation") {
+        pendingSession = null;
+      }
       if (event.type === "test-run") {
         fatalTestRun = event.testRun;
       }
@@ -734,6 +779,10 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         continued: Boolean(options.continueFrom),
         earlierGate,
         copyLocalFiles: options.copyLocalFiles,
+        // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
+        // parent crash. known-limit: a failed write only warns, as at exit, and runs that share
+        // one transcript path have no write coordination (issue #564).
+        ...(options.transcript ? { onSessionAssigned } : {}),
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,

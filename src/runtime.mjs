@@ -360,6 +360,10 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * sandbox with network off, and the reviewer prompt says so. The orchestrator turns
  * and the worker turns are unchanged, and the mutation check still wraps every
  * reviewer turn (ADR 0019).
+ * `onSessionAssigned(roleName, id)` is awaited for the orchestrator, worker, and reviewer when an
+ * adapter pre-assigns a session id, before its CLI starts, and with `null` when the CLI rejected
+ * the id. It does not change the role state. The caller records the id and its unconfirmed mark
+ * (ADR 0016).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -390,6 +394,7 @@ export async function runLoop(options) {
     continued = false,
     earlierGate = null,
     copyLocalFiles = true,
+    onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -452,6 +457,10 @@ export async function runLoop(options) {
   // the interactive `lastResult.reviewed` the role gate reads.
   let lastReviewed = restoredGate?.lastReviewed ?? null;
 
+  // The caller persists a pre-assigned id before the CLI starts, so a parent crash during a first
+  // turn leaves it (issue #564). The role state is not touched here: the adapter owns it.
+  const assignedHook = onSessionAssigned && ((roleName) => (id) => onSessionAssigned(roleName, id));
+
   const instructions = initialPrompt({
     task,
     maxSteps,
@@ -477,18 +486,34 @@ export async function runLoop(options) {
   // One rerun only, and the mark is cleared on every exit (issue #396, ADR 0016).
   const orchAdapter = {
     async run(state, p, opts) {
-      const call = (text) =>
-        withMutationCheck(cwd, "orchestrator", () =>
-          invoke({
-            agents,
-            state,
-            roleName: "orchestrator",
-            prompt: text,
-            opts,
-            onEvent,
-            stepsUsed,
-          }),
-        );
+      const call = (text) => {
+        const resumedUnconfirmed = state.sessionId !== null && state.sessionUnconfirmed === true;
+        return withMutationCheck(cwd, "orchestrator", async () => {
+          try {
+            return await invoke({
+              agents,
+              state,
+              roleName: "orchestrator",
+              prompt: text,
+              opts: assignedHook
+                ? { ...opts, onSessionAssigned: assignedHook("orchestrator") }
+                : opts,
+              onEvent,
+              stepsUsed,
+            });
+          } catch (err) {
+            // A refused ownership check clears the mark, and the orchestrator has no first-turn
+            // rerun: the missing prompt would start a session with no task. The id stays, so it
+            // keeps the mark and the next resume checks it again. The restore sits inside the
+            // mutation check, because a failed snapshot after the turn replaces this error with
+            // one that wraps it (issue #564).
+            if (resumedUnconfirmed && readProp(err, "sessionMissing") && state.sessionId !== null) {
+              state.sessionUnconfirmed = true;
+            }
+            throw err;
+          }
+        });
+      };
       try {
         const response = await call(p);
         if (!state.conversationReplaced || p === instructions) {
@@ -713,6 +738,7 @@ export async function runLoop(options) {
                 timeoutSeconds: testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
               },
         reviewerWorkspaceWrite,
+        ...(assignedHook ? { onSessionAssigned: assignedHook(roleName) } : {}),
         gh,
         readTimeoutMs,
         onEvent,
