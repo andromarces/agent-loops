@@ -84,9 +84,11 @@ step budget runs out.
    transcript before the CLI of a Claude orchestrator, worker, or reviewer starts, with the id and
    `sessionUnconfirmed` on that role, so a parent crash during a first turn leaves a transcript that
    `--continue-from` restores, and the ownership check runs before the resume. A rejected id is
-   withdrawn through the same hook. The record holds the id only while that CLI call runs, and the
-   role state is not changed: the adapter alone decides what a failed turn keeps, so a reported id
-   wins, an unreported one keeps the pre-assigned id with its mark, and a rejected one keeps none.
+   withdrawn through the same hook. The written file keeps the id until the next transcript write, so a
+   crash during the turn leaves it on disk. The id lives in an in-memory overlay that the end of the
+   CLI call clears, and the role state is not changed. The next write, at the latest the write at
+   exit, records what the adapter decided: a reported id wins, an unreported one keeps the
+   pre-assigned id with its mark, and a rejected one keeps none.
    Setting the id on the role instead made a reported id lose and dropped the mark, so a stale id
    resumed unchecked. Three limits remain. A failed transcript write only warns, as at exit. A run
    with no `--transcript` keeps no record. A transcript inside the Git work tree that the mutation check covers (the repository root, not
@@ -94,7 +96,7 @@ step budget runs out.
    under the mutation check and the write would fail it, so they keep the gap for that layout and
    log a warning. A refused ownership check on a resumed orchestrator id ends the run and keeps
    the id with its mark, because the orchestrator has no first-turn rerun: a new session would
-   lack the task. Not verified: Windows file system behavior, and the transcript that a real
+   lack the task. The restore runs inside the mutation check, so a failed snapshot after the turn cannot lose the mark. Not verified: Windows file system behavior, and the transcript that a real
    process kill leaves, which the tests simulate by reading the file mid-turn. Separate processes that
    share one transcript path have no write coordination: each write is atomic and the last wins.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the

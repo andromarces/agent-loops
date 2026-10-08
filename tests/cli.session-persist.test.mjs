@@ -11,6 +11,22 @@ vi.mock("../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
 }));
 
+// Fails `git status` from its `failFrom`-th call on, so a test can break the snapshot that follows a
+// turn. The real `execa` answers every other call.
+const git = vi.hoisted(() => ({ statusCalls: 0, failFrom: Infinity }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) => {
+      if (command === "git" && args[0] === "status" && ++git.statusCalls >= git.failFrom) {
+        return Promise.resolve({ exitCode: 128, stdout: "", stderr: "git read failed" });
+      }
+      return real.execa(command, args, options);
+    },
+  };
+});
+
 const WORK = JSON.stringify({ action: "run_worker", prompt: "w" });
 const REVIEW = JSON.stringify({ action: "run_reviewer", prompt: "r" });
 const FINISH = JSON.stringify({
@@ -28,6 +44,8 @@ beforeEach(async () => {
   scratch = await realpath(await mkdtemp(join(tmpdir(), "session-persist-")));
   vi.stubEnv("CLAUDE_CONFIG_DIR", join(scratch, "claude-config"));
   vi.mocked(exec).mockReset();
+  git.statusCalls = 0;
+  git.failFrom = Infinity;
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
@@ -261,47 +279,53 @@ test("a transcript in a directory named '..records' inside the work tree causes 
 });
 
 // Usefulness: verifies an orchestrator id that the ownership check rejects keeps its unconfirmed
-// mark in the written record, so a later --continue-from checks it again (#564 review).
-test("a rejected orchestrator id keeps its unconfirmed mark", async () => {
-  const earlier = join(scratch, "earlier.json");
-  const next = join(scratch, "next.json");
-  const role = (kind, sessionId, extra = {}) => ({
-    kind,
-    model: null,
-    effort: null,
-    sessionId,
-    ...extra,
-  });
-  await writeFile(
-    earlier,
-    JSON.stringify({
-      cwd: repo,
-      roles: {
-        orchestrator: role("claude", "11111111-1111-4111-8111-111111111111", {
-          sessionUnconfirmed: true,
-        }),
-        worker: role("agy", null),
-        reviewer: role("agy", null),
-      },
-      events: [],
-    }),
-  );
-  await main(
-    [
-      ...roleArgs({ orchestrator: "claude" }),
-      "--cwd",
-      repo,
-      "--continue-from",
+// mark in the written record, so a later --continue-from checks it again, also when the snapshot
+// after the turn fails and wraps the refusal (#564 review).
+test.each([{ snapshotFails: false }, { snapshotFails: true }])(
+  "a rejected orchestrator id keeps its unconfirmed mark (snapshot fails: $snapshotFails)",
+  async ({ snapshotFails }) => {
+    const earlier = join(scratch, "earlier.json");
+    const next = join(scratch, "next.json");
+    const role = (kind, sessionId, extra = {}) => ({
+      kind,
+      model: null,
+      effort: null,
+      sessionId,
+      ...extra,
+    });
+    await writeFile(
       earlier,
-      "--transcript",
-      next,
-    ],
-    agentsFor([]),
-  );
-  expect(exec).not.toHaveBeenCalled();
-  expect(process.exitCode).toBe(1);
-  expect((await readJson(next)).roles.orchestrator).toMatchObject({
-    sessionId: "11111111-1111-4111-8111-111111111111",
-    sessionUnconfirmed: true,
-  });
-});
+      JSON.stringify({
+        cwd: repo,
+        roles: {
+          orchestrator: role("claude", "11111111-1111-4111-8111-111111111111", {
+            sessionUnconfirmed: true,
+          }),
+          worker: role("agy", null),
+          reviewer: role("agy", null),
+        },
+        events: [],
+      }),
+    );
+    // The turn takes one snapshot before and one after it. Only the second one fails.
+    if (snapshotFails) git.failFrom = 2;
+    await main(
+      [
+        ...roleArgs({ orchestrator: "claude" }),
+        "--cwd",
+        repo,
+        "--continue-from",
+        earlier,
+        "--transcript",
+        next,
+      ],
+      agentsFor([]),
+    );
+    expect(exec).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect((await readJson(next)).roles.orchestrator).toMatchObject({
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      sessionUnconfirmed: true,
+    });
+  },
+);

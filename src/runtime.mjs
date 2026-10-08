@@ -432,24 +432,30 @@ export async function runLoop(options) {
   const orchAdapter = {
     async run(state, p, opts) {
       const resumedUnconfirmed = state.sessionId !== null && state.sessionUnconfirmed === true;
-      return withMutationCheck(cwd, "orchestrator", () =>
-        invoke({
-          agents,
-          state,
-          roleName: "orchestrator",
-          prompt: p,
-          opts: assignedHook ? { ...opts, onSessionAssigned: assignedHook("orchestrator") } : opts,
-          onEvent,
-          stepsUsed,
-        }),
-      ).catch((err) => {
-        // A refused ownership check clears the mark, and the orchestrator has no first-turn rerun:
-        // the missing prompt would start a session with no task. The id stays, so it keeps the
-        // mark and the next resume checks it again (issue #564).
-        if (resumedUnconfirmed && readProp(err, "sessionMissing") && state.sessionId !== null) {
-          state.sessionUnconfirmed = true;
+      return withMutationCheck(cwd, "orchestrator", async () => {
+        try {
+          return await invoke({
+            agents,
+            state,
+            roleName: "orchestrator",
+            prompt: p,
+            opts: assignedHook
+              ? { ...opts, onSessionAssigned: assignedHook("orchestrator") }
+              : opts,
+            onEvent,
+            stepsUsed,
+          });
+        } catch (err) {
+          // A refused ownership check clears the mark, and the orchestrator has no first-turn
+          // rerun: the missing prompt would start a session with no task. The id stays, so it
+          // keeps the mark and the next resume checks it again. The restore sits inside the
+          // mutation check, because a failed snapshot after the turn replaces this error with
+          // one that wraps it (issue #564).
+          if (resumedUnconfirmed && readProp(err, "sessionMissing") && state.sessionId !== null) {
+            state.sessionUnconfirmed = true;
+          }
+          throw err;
         }
-        throw err;
       });
     },
   };
