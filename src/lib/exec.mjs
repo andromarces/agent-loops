@@ -31,7 +31,17 @@ const MARKED_ROLES = new Set(["worker", "reviewer"]);
 export class ExecError extends Error {
   constructor(
     message,
-    { command, exitCode, stdout, stderr, timedOut, isCanceled, isTerminated, signal } = {},
+    {
+      command,
+      exitCode,
+      stdout,
+      stderr,
+      timedOut,
+      isCanceled,
+      isTerminated,
+      isMaxBuffer,
+      signal,
+    } = {},
   ) {
     super(message);
     this.name = "ExecError";
@@ -42,6 +52,7 @@ export class ExecError extends Error {
     this.timedOut = Boolean(timedOut);
     this.isCanceled = Boolean(isCanceled);
     this.isTerminated = Boolean(isTerminated);
+    this.isMaxBuffer = Boolean(isMaxBuffer);
     // The signal name or description, for a caller that reports the termination cause. It travels as
     // a field, not in the message, so every adapter keeps the message `exec` has always built.
     this.signal = signal ?? null;
@@ -49,7 +60,7 @@ export class ExecError extends Error {
 }
 
 export async function exec(command, args = [], options = {}) {
-  const { cwd, input, timeout, signal, role, env } = options;
+  const { cwd, input, timeout, signal, role, env, maxBuffer } = options;
 
   const label = role ? `${role}: ${command}` : command;
   const startedAt = Date.now();
@@ -62,6 +73,11 @@ export async function exec(command, args = [], options = {}) {
     stdin: input === undefined ? "ignore" : undefined,
     killDescendants: true,
   };
+
+  // Characters of decoded text per output stream. Unset keeps the execa default.
+  if (maxBuffer !== undefined) {
+    execaOptions.maxBuffer = maxBuffer;
+  }
 
   // execa merges env with process.env; the child still inherits the launcher environment.
   const marked = MARKED_ROLES.has(role);
@@ -85,14 +101,18 @@ export async function exec(command, args = [], options = {}) {
   const timedOut = Boolean(result.timedOut);
   const isCanceled = Boolean(result.isCanceled);
   const isTerminated = Boolean(result.isTerminated);
+  // execa can report an overflow with exit code 0 and a cut stream.
+  const isMaxBuffer = Boolean(result.isMaxBuffer);
 
-  if (result.exitCode !== 0 || timedOut || isCanceled || isTerminated) {
+  if (result.exitCode !== 0 || timedOut || isCanceled || isTerminated || isMaxBuffer) {
     const signal = result.signalDescription ?? result.signal;
     let cause;
     if (timedOut) {
       cause = `${command} timed out after ${timeout} seconds.`;
     } else if (isCanceled) {
       cause = `${command} was canceled.`;
+    } else if (isMaxBuffer) {
+      cause = `${command} output exceeded the buffer limit and was cut.`;
     } else if (isTerminated) {
       // POSIX-only: execa cannot detect signal termination on Windows.
       cause = `${command} was killed by ${signal ?? "a signal"}.`;
@@ -104,9 +124,10 @@ export async function exec(command, args = [], options = {}) {
       cause = `${command} exited with code ${result.exitCode}.`;
     }
 
-    const message = [cause, result.stderr?.trim(), result.stdout?.trim()]
-      .filter(Boolean)
-      .join("\n\n");
+    // An overflow cuts a stream at an arbitrary character, so it can end inside a secret value
+    // that exact-value redaction no longer matches. The error therefore keeps none of the output.
+    const output = isMaxBuffer ? [] : [result.stderr?.trim(), result.stdout?.trim()];
+    const message = [cause, ...output].filter(Boolean).join("\n\n");
 
     // The caller owns the failure level (it knows whether the runtime recovers); this
     // debug line terminates the invocation trace when the caller does not log one.
@@ -115,11 +136,12 @@ export async function exec(command, args = [], options = {}) {
     throw new ExecError(message, {
       command,
       exitCode: result.exitCode,
-      stdout: result.stdout,
-      stderr: result.stderr,
+      stdout: isMaxBuffer ? "" : result.stdout,
+      stderr: isMaxBuffer ? "" : result.stderr,
       timedOut,
       isCanceled,
       isTerminated,
+      isMaxBuffer,
       signal,
     });
   }
