@@ -1623,3 +1623,182 @@ test("opencode role with a recorded model is probed and a changed model is refus
   await expect(verifyResolvedModels(roles, { probe })).rejects.toThrow(/prov\/model-b/);
   expect(probe).toHaveBeenCalledTimes(1);
 });
+
+/** Runs one turn on `stream` lines, with the export queued, and returns the state and the error. */
+async function runStreamTurn(lines, state, options = { cwd: "/dir" }) {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: lines.join("\n"), stderr: "" });
+  vi.mocked(exec).mockResolvedValueOnce(exportJson(assistantMessage("msg-1", MODEL_A)));
+  const error = await runOpenCode(state, "oc prompt", options).then(
+    () => undefined,
+    (err) => err,
+  );
+  return { error, exportCalls: vi.mocked(exec).mock.calls.length - 1 };
+}
+
+// Usefulness: verifies a turn that fails after exit 0 (an error event, or no response text) records
+// null and never reads the export, so a failed turn keeps no model (#567 blocker 2).
+test.each([
+  [
+    "an error event",
+    [
+      textEvent("partial", "msg-1"),
+      errorEvent({ type: "ProviderError", message: "provider failed" }),
+    ],
+  ],
+  [
+    "no response text",
+    [
+      JSON.stringify({
+        type: "step_start",
+        sessionID: "sess-oc",
+        part: { type: "step-start", messageID: "msg-1" },
+      }),
+    ],
+  ],
+])("opencode records null and skips the export for a turn with %s", async (_name, lines) => {
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+  const { error, exportCalls } = await runStreamTurn(lines, state);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(exportCalls).toBe(0);
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: verifies a stream that does not confirm one session on every event never reaches the
+// export on a guessed id, and the model stays null (#567 blocker 3).
+test.each([
+  [
+    "an event with another session id",
+    [textEvent("a", "msg-1"), textEvent("b", "msg-1").replace("sess-oc", "sess-other")],
+  ],
+  [
+    "an event with no session id",
+    [
+      textEvent("a", "msg-1"),
+      JSON.stringify({ type: "text", part: { text: "b", messageID: "msg-1" } }),
+    ],
+  ],
+  [
+    "a part with another session id",
+    [
+      textEvent("a", "msg-1"),
+      JSON.stringify({
+        type: "text",
+        sessionID: "sess-oc",
+        part: { text: "b", messageID: "msg-1", sessionID: "sess-other" },
+      }),
+    ],
+  ],
+])("opencode skips the export and records null for %s", async (_name, lines) => {
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+  const { exportCalls } = await runStreamTurn(lines, state);
+
+  expect(exportCalls).toBe(0);
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: verifies the export runs under the cancel signal and the time the invocation has
+// left, as the turn does (#567 blocker 1).
+test("opencode bounds the export by the remaining timeout and passes the cancel signal", async () => {
+  const now = vi.spyOn(Date, "now");
+  now.mockReturnValueOnce(1_000_000).mockReturnValue(1_004_000);
+  const controller = new AbortController();
+  const state = { kind: "opencode", sessionId: null, model: null };
+  try {
+    await runResolvedTurn(state, ["msg-1"], exportJson(assistantMessage("msg-1", MODEL_A)), {
+      cwd: "/dir",
+      timeout: 10,
+      signal: controller.signal,
+      role: "worker",
+    });
+  } finally {
+    now.mockRestore();
+  }
+
+  expect(state.resolvedModel).toBe("prov/model-a");
+  expect(vi.mocked(exec).mock.calls.at(-1)[2]).toEqual({
+    cwd: "/dir",
+    timeout: 6,
+    signal: controller.signal,
+    role: "worker",
+  });
+});
+
+// Usefulness: verifies a spent timeout skips the export and leaves the turn result alone.
+test("opencode skips the export when the invocation timeout is spent", async () => {
+  const now = vi.spyOn(Date, "now");
+  now.mockReturnValueOnce(1_000_000).mockReturnValue(1_011_000);
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+  let response;
+  try {
+    response = await runResolvedTurn(
+      state,
+      ["msg-1"],
+      exportJson(assistantMessage("msg-1", MODEL_A)),
+      {
+        cwd: "/dir",
+        timeout: 10,
+      },
+    );
+  } finally {
+    now.mockRestore();
+  }
+
+  expect(response).toBe("reply");
+  expect(vi.mocked(exec)).toHaveBeenCalledTimes(1);
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: verifies a cancel before the export stops it, and the turn ends canceled.
+test("opencode runs no export after a cancel and ends the turn canceled", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+  let error;
+  try {
+    await runResolvedTurn(state, ["msg-1"], exportJson(assistantMessage("msg-1", MODEL_A)), {
+      cwd: "/dir",
+      signal: controller.signal,
+    });
+  } catch (err) {
+    error = err;
+  }
+
+  expect(error?.isCanceled).toBe(true);
+  expect(vi.mocked(exec)).toHaveBeenCalledTimes(1);
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: verifies a cancel during the export ends the turn canceled instead of recording null
+// and returning success.
+test("opencode ends the turn canceled when the export is canceled", async () => {
+  const canceled = Object.assign(new Error("opencode was canceled."), {
+    name: "ExecError",
+    isCanceled: true,
+  });
+  const state = { kind: "opencode", sessionId: null, model: null };
+  const error = await runResolvedTurn(state, ["msg-1"], canceled).catch((err) => err);
+
+  expect(error?.isCanceled).toBe(true);
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: verifies a model value that holds a secret environment value is never recorded, so the
+// transcript and the refusal message cannot echo it (#567 blocker 4).
+test("opencode records null for an exported model that holds a secret environment value", async () => {
+  vi.stubEnv("OPENCODE_TEST_API_KEY", "sk-live-0123456789abcdef");
+  try {
+    const state = { kind: "opencode", sessionId: null, model: null };
+    await runResolvedTurn(
+      state,
+      ["msg-1"],
+      exportJson(assistantMessage("msg-1", { id: "sk-live-0123456789abcdef", providerID: "prov" })),
+    );
+
+    expect(JSON.stringify(state)).not.toContain("sk-live-0123456789abcdef");
+    expect(state.resolvedModel).toBeNull();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});

@@ -66,6 +66,7 @@ export async function runOpenCode(state, prompt, options = {}) {
   }
 
   const requestedSessionId = state.sessionId;
+  const startedAt = Date.now();
   let stdout;
   try {
     ({ stdout } = await exec("opencode", args, execOptions));
@@ -100,11 +101,9 @@ export async function runOpenCode(state, prompt, options = {}) {
   // string: a later valid id never rescues a truthy invalid or mismatched first one.
   const sessionId = asSessionId(events.map((event) => event.sessionID).find(Boolean));
 
-  // Set before the checks below, so a turn that fails them records unresolved. The export is read
-  // only for the session the role keeps.
-  const kept = sessionId && (!requestedSessionId || sessionId === requestedSessionId);
-  const models = kept ? await exportedModels(sessionId, events, execOptions) : [];
-  recordResolvedModel(state, models, requestedSessionId, sessionId);
+  // Unresolved until the turn has passed every check below, so a turn that fails one records `null`
+  // and never reads the export.
+  setResolvedModel(state, []);
 
   if (!sessionId) {
     throw new Error("opencode did not return a session ID.");
@@ -138,40 +137,77 @@ export async function runOpenCode(state, prompt, options = {}) {
     throw new Error("opencode did not return response text.");
   }
 
+  // The export reads only the session that every stream event confirms and the role keeps.
+  const confirmedId = streamSession(events);
+  const kept = confirmedId && (!requestedSessionId || confirmedId === requestedSessionId);
+  const models = kept ? await exportedModels(confirmedId, events, execOptions, startedAt) : [];
+  recordResolvedModel(state, models, requestedSessionId, confirmedId);
+
   return text.trim();
+}
+
+/**
+ * Returns the one session id that every stream event names, or undefined. Each event must carry a
+ * valid `sessionID`, and a part that carries one must name the same id, so a partial or mixed
+ * stream never ties the export to a guessed session.
+ */
+function streamSession(events) {
+  const ids = new Set();
+  for (const event of events) {
+    ids.add(asSessionId(event.sessionID) ?? null);
+    const part = event.part?.sessionID;
+    if (part !== undefined) ids.add(asSessionId(part) ?? null);
+  }
+  const [id] = ids;
+  return ids.size === 1 ? id || undefined : undefined;
 }
 
 /**
  * Lists the `provider/model` of each assistant message that the turn streamed, read from
  * `opencode session export <id>`, because no stream event names the model. The export holds the
  * whole session, so only the messages whose id the stream names count. A streamed message that the
- * export lacks, or whose model is malformed, contributes `undefined`, which makes the turn
- * unresolved. An empty list, a failed export, or output that is not JSON also makes it unresolved.
+ * export lacks, or whose model is malformed or holds a secret environment value (ADR 0017),
+ * contributes `undefined`, which makes the turn unresolved. An empty list, a failed or timed-out
+ * export, a spent timeout, or output that is not JSON also makes it unresolved.
+ * The export runs under the cancel signal and the time that the invocation has left. A cancel throws
+ * the cancel error, so the turn ends canceled.
  * known-limit: the export prints the whole session, so a long session enlarges the buffered output.
+ * @param {number} startedAt `Date.now()` at the start of the invocation
  */
-async function exportedModels(sessionId, events, { cwd, timeout, signal, role }) {
+async function exportedModels(sessionId, events, { cwd, timeout, signal, role }, startedAt) {
   const ids = [...new Set(events.map((event) => event.part?.messageID).filter(isMessageId))];
   if (ids.length === 0) return [];
+  if (signal?.aborted) throw canceledError();
+  const bounded = typeof timeout === "number" && timeout > 0;
+  const remaining = bounded ? timeout - (Date.now() - startedAt) / 1000 : undefined;
+  if (bounded && remaining <= 0) return [];
   let messages;
   try {
     const { stdout } = await exec("opencode", ["session", "export", sessionId], {
       cwd,
-      timeout,
+      timeout: remaining,
       signal,
       role,
     });
     messages = JSON.parse(stdout)?.messages;
-  } catch {
+  } catch (err) {
+    if (err?.isCanceled) throw err;
     return [];
   }
   if (!Array.isArray(messages)) return [];
   return ids.map((id) => {
     const message = messages.find((m) => isJsonObject(m) && m.type === "assistant" && m.id === id);
     const model = message?.model;
-    return isJsonObject(model) && isMessageId(model.providerID) && isMessageId(model.id)
-      ? `${model.providerID}/${model.id}`
-      : undefined;
+    if (!isJsonObject(model) || !isMessageId(model.providerID) || !isMessageId(model.id)) {
+      return undefined;
+    }
+    const value = `${model.providerID}/${model.id}`;
+    return redactEnvSecrets(value) === value ? value : undefined;
   });
+}
+
+function canceledError() {
+  return Object.assign(new Error("opencode was canceled."), { isCanceled: true });
 }
 
 /**
