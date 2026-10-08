@@ -10,7 +10,7 @@
 // beside `<home>/.agent-loops` serializes install and uninstall, so concurrent
 // read-modify-write of the manifest cannot drop a record, whatever the temp
 // root of each process (#193, #198).
-import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
@@ -760,11 +760,12 @@ async function planFileRestore(record, dryRun) {
 
 /**
  * Removes every target the manifest records for the selected harnesses under
- * the manifest lock. A dry run takes no lock and writes nothing.
+ * the manifest lock. A dry run, or a home that does not exist, takes no lock
+ * and writes nothing, so an uninstall never creates the home.
  */
 export async function uninstall(options = {}) {
   const home = options.home ?? resolveHome();
-  if (options.dryRun) {
+  if (options.dryRun || !existsSync(home)) {
     return runUninstall(options);
   }
   return withStateLock(manifestLockFile(home), () => runUninstall(options), {

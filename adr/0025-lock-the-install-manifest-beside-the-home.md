@@ -28,6 +28,8 @@ directory, so the case is reachable (issue #198).
 3. The lock is removed in a `finally`, so a full uninstall leaves the home empty
    and the CI empty-home check holds.
 4. A dry run takes no lock and writes nothing.
+5. An uninstall on a home that does not exist takes no lock and writes nothing.
+   It has nothing to remove, so it must not create the home (issue #570).
 
 ## Consequences
 
@@ -36,8 +38,10 @@ directory, so the case is reachable (issue #198).
 - This reverses the preference of #193 to keep the home free of lock files. The
   reason: install must write the home anyway, so a sandbox that blocks the home
   cannot install, and the lock adds no new write permission.
-- A real `uninstall` on a home that does not exist creates an empty home
-  directory, because the lock directory is created before the lock.
+- A real `uninstall` on a home that does not exist runs unlocked. No manifest
+  can exist there, so it reports nothing and leaves no directory behind. A
+  process that creates the home between the existence check and the manifest read
+  is not serialized with that uninstall.
 
 ## Alternatives
 
@@ -54,6 +58,6 @@ Andro Marces
 
 ## Links
 
-- Issue #198, issue #193, PR #197
+- Issue #198, issue #193, issue #570, PR #197
 - Pull request: [PR #561](https://github.com/andromarces/agent-loops/pull/561)
 - Implementation: `manifestLockFile` in `src/install/manifest.mjs`
