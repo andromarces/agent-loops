@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+superseded
+
+Superseded by [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md). ADR 0027 restates the decisions of this ADR that still hold and closes the crash gap of an orchestrator or reviewer turn with a transcript inside the work tree.
 
 ## Date
 
@@ -187,4 +189,5 @@ Andro Marces
 - Implementation: `keepFailedSessionId` and `flagMissingSession` in `src/agents/shared.mjs`,
   the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, the dispatch write in
   `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/cli.mjs`; documented in `README.md`
+- Superseded by [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR Index](README.md)
