@@ -1244,3 +1244,51 @@ test("claude records unresolved when the init event names another session", asyn
   await runClaude(state, "p", { cwd: "/path" }).catch(() => {});
   expect(state.resolvedModel).toBeNull();
 });
+
+// Usefulness: an `init` event with no session cannot be tied to the session the role keeps, so its model
+// must not resolve the turn, on a successful turn and on a failed one. Reviewer blocker on PR #576.
+test.each([
+  ["a successful turn", false],
+  ["a failed turn", true],
+])("claude records unresolved for a sessionless init event on %s", async (_label, fails) => {
+  const events = [
+    { type: "system", subtype: "init", model: "claude-opus-5-6" },
+    resultEvent("s-kept"),
+  ];
+  if (fails) {
+    vi.mocked(exec).mockRejectedValueOnce(execFailure({ stdout: JSON.stringify(events) }));
+  } else {
+    vi.mocked(exec).mockResolvedValueOnce(eventsOf(...events));
+  }
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" }).catch(() => {});
+  expect(state.resolvedModel).toBeNull();
+});
+
+// Usefulness: a sessionless init model must not reach the --continue-from comparison. The turn records
+// unresolved, so the check probes nothing and refuses nothing, even though the model differs from the
+// earlier run.
+test("a sessionless init model does not drive the continuation check", async () => {
+  vi.mocked(exec).mockResolvedValueOnce(
+    eventsOf({ type: "system", subtype: "init", model: "claude-opus-5-6" }, resultEvent("s-kept")),
+  );
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.resolvedModel).toBeNull();
+
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const roles = {
+      orchestrator: { kind: "codex", model: null, effort: null, resolvedModel: undefined },
+      worker: { ...state },
+      reviewer: { kind: "agy", model: null, effort: null, resolvedModel: undefined },
+    };
+    const probe = vi.fn();
+    await expect(verifyResolvedModels(roles, { probe })).resolves.toBeUndefined();
+    expect(probe).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+  }
+});

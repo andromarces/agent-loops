@@ -284,13 +284,12 @@ function reportedModels(resultEvent) {
 }
 
 /**
- * Lists the model ids the `init` events of a turn name. Each `init` event names the main-loop model,
- * whatever subagent or helper model ran later, so it takes the place of `modelUsage`. An `init`
- * event without a model reports `undefined`, which is malformed evidence and is unresolved.
+ * True for a `system` `init` event. It names the main-loop model, whatever subagent or helper model
+ * ran later, so its model takes the place of `modelUsage`. An `init` event without a model reports
+ * `undefined`, which is malformed evidence and is unresolved.
  */
-function initModels(events) {
-  return events.filter((e) => e?.type === "system" && e.subtype === "init").map((e) => e.model);
-}
+const isInitEvent = (event) =>
+  isJsonObject(event) && event.type === "system" && event.subtype === "init";
 
 /**
  * Records the resolved model of a turn that ran, from one consistent source. The model is the one
@@ -314,12 +313,15 @@ function recordTurnModel(state, parsed, requestedSessionId) {
   const results = (
     Array.isArray(parsed) ? events.filter((e) => e?.type === "result") : events
   ).filter(isJsonObject);
+  const inits = events.filter(isInitEvent);
   const sourced =
-    session && results.length > 0 && results.every((e) => asSessionId(e.session_id) === session);
-  const inits = initModels(events);
+    session &&
+    results.length > 0 &&
+    results.every((e) => asSessionId(e.session_id) === session) &&
+    inits.every((e) => asSessionId(e.session_id) === session);
   recordResolvedModel(
     state,
-    sourced ? (inits.length > 0 ? inits : results.flatMap(reportedModels)) : [],
+    sourced ? (inits.length > 0 ? inits.map((e) => e.model) : results.flatMap(reportedModels)) : [],
     requestedSessionId,
     sourced ? session : null,
   );
