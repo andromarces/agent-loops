@@ -7,8 +7,10 @@ import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { logDebug, logInfo } from "../../src/lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
+import { readState, statePaths } from "../../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
-import { createTempRepo, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
+import { runLoop } from "../../src/runtime.mjs";
+import { createTempRepo, removePath, restoreRunsRoot, scripted } from "../runtime-helpers.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
@@ -1750,29 +1752,11 @@ test("opencode skips the export when the invocation timeout is spent", async () 
   expect(state.resolvedModel).toBeNull();
 });
 
-// Usefulness: verifies a cancel before the export stops it and the completed turn result is kept.
-test("opencode runs no export after a cancel and returns the completed response", async () => {
-  const controller = new AbortController();
-  controller.abort();
-  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
-  const response = await runResolvedTurn(
-    state,
-    ["msg-1"],
-    exportJson(assistantMessage("msg-1", MODEL_A)),
-    { cwd: "/dir", signal: controller.signal },
-  );
-
-  expect(response).toBe("reply");
-  expect(vi.mocked(exec)).toHaveBeenCalledTimes(1);
-  expect(state.resolvedModel).toBeNull();
-});
-
 const EXPORT_SECRET_TEXT = "private transcript text of the session";
 
 // Usefulness: verifies a canceled or failed export leaks none of its content into an error or a log
 // and never discards the completed turn response (#567 blocker 1).
 test.each([
-  ["a canceled export", { isCanceled: true }],
   ["a timed out export", { timedOut: true }],
   ["a failed export", { exitCode: 1 }],
 ])("opencode keeps the response and leaks no export content for %s", async (_name, flags) => {
@@ -1835,4 +1819,144 @@ test("opencode records null for an exported model that holds a secret environmen
   } finally {
     vi.unstubAllEnvs();
   }
+});
+
+const EXPORT_LEAK = "private transcript text of the session";
+
+/** An export failure shaped like the `exec` error of a canceled call, with session content in its text. */
+const canceledExport = () =>
+  Object.assign(new Error(`opencode was canceled.\n\n${EXPORT_LEAK}`), {
+    name: "ExecError",
+    isCanceled: true,
+    stdout: EXPORT_LEAK,
+    stderr: EXPORT_LEAK,
+  });
+
+/**
+ * Queues the two opencode calls of one turn: the stream, then the export. `landing` says where the
+ * cancel lands: "export" cancels while the export runs, "before" cancels right after the turn child
+ * exits, so the export finds the signal already aborted.
+ */
+function queueCancel(controller, landing) {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec).mockImplementationOnce(async () => {
+    if (landing === "before") controller.abort();
+    return { stdout: textEvent("reply", "msg-1"), stderr: "" };
+  });
+  vi.mocked(exec).mockImplementationOnce(async () => {
+    controller.abort();
+    throw canceledExport();
+  });
+}
+
+// Usefulness: verifies a cancel that lands during or before the export ends `role dispatch` as an
+// interrupted turn with exit 130 and an error status, the same as a cancel of the turn child, and
+// that no export content reaches the envelope, the state file, or a log (#567).
+test.each([["export"], ["before"]])(
+  "role dispatch ends interrupted with exit 130 when a cancel lands at the %s",
+  async (landing) => {
+    const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
+    dispatchPaths.push(runsRoot);
+    const repo = await createTempRepo();
+    dispatchPaths.push(repo);
+    process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+    const agents = { opencode: { run: runOpenCode } };
+    const stdin = async () => "continue working";
+    vi.mocked(exec).mockResolvedValue({ stdout: "", stderr: "" });
+    await executeRoleCommand(
+      parseRoleArgs([
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        "--task",
+        "Cancel the export.",
+        "--parent-session",
+        "sess-parent-1",
+        "--worker",
+        "opencode",
+        "--reviewer",
+        "opencode",
+      ]),
+      { agents, stdin },
+    );
+
+    const controller = new AbortController();
+    queueCancel(controller, landing);
+    const result = await executeRoleCommand(
+      parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo]),
+      { agents, stdin, signal: controller.signal },
+    );
+
+    const state = await readState(statePaths({ cwd: repo }).stateFile);
+    expect(result.exitCode).toBe(130);
+    expect(result.payload.status).toBe("error");
+    expect(state.lifecycle).toBe("interrupted");
+    expect(state.roles.worker.sessionId).toBe("sess-oc");
+    expect(state.roles.worker.resolvedModel ?? null).toBeNull();
+    const logged = [logDebug, logInfo].flatMap((fn) => vi.mocked(fn).mock.calls.flat());
+    expect(JSON.stringify([result, state, logged])).not.toContain(EXPORT_LEAK);
+  },
+);
+
+// Usefulness: verifies the same cancel in the headless loop rejects with the cancel error, which the
+// CLI maps to exit 130, instead of returning exit 0, and starts no further child turn.
+test.each([["export"], ["before"]])(
+  "the headless loop ends canceled and starts no further turn when a cancel lands at the %s",
+  async (landing) => {
+    const repo = await createTempRepo();
+    dispatchPaths.push(repo);
+    const controller = new AbortController();
+    queueCancel(controller, landing);
+    const orchestrator = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+
+    const error = await runLoop({
+      task: "Task 1",
+      cwd: repo,
+      maxSteps: 5,
+      signal: controller.signal,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "opencode", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchestrator, opencode: { run: runOpenCode }, rev: scripted([]) },
+    }).then(
+      () => undefined,
+      (err) => err,
+    );
+
+    expect(error?.isCanceled).toBe(true);
+    expect(`${error?.message}\n${error?.stack}`).not.toContain(EXPORT_LEAK);
+    expect(orchestrator.recorded).toHaveLength(1);
+    expect(vi.mocked(exec)).toHaveBeenCalledTimes(landing === "export" ? 2 : 1);
+  },
+);
+
+// Usefulness: verifies a stream event with no valid message id leaves the turn unresolved and never
+// reaches the export, so the export alone cannot decide which messages belong to the turn (#567).
+test.each([
+  ["a text event with no message id", [textEvent("a", "msg-1"), textEvent("b")]],
+  ["a text event with a non-string message id", [textEvent("a", "msg-1"), textEvent("b", 7)]],
+  ["a text event with an empty message id", [textEvent("a", "msg-1"), textEvent("b", "")]],
+  [
+    "a step event with no message id",
+    [
+      textEvent("a", "msg-1"),
+      JSON.stringify({ type: "step_start", sessionID: "sess-oc", part: { type: "step-start" } }),
+    ],
+  ],
+])("opencode skips the export and records null for %s", async (_name, lines) => {
+  const state = { kind: "opencode", sessionId: null, model: null, resolvedModel: "prov/model-a" };
+  const { exportCalls } = await runStreamTurn(lines, state);
+
+  expect(exportCalls).toBe(0);
+  expect(state.resolvedModel).toBeNull();
 });
