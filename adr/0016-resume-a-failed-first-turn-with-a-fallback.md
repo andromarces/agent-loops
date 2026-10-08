@@ -79,10 +79,14 @@ step budget runs out.
    that it reads with a 256 KiB bound. `--continue-from` restores the unconfirmed mark with the id,
    so a restored id passes the same check. Otherwise the adapter raises the missing-session error
    before any CLI starts, and the runtime reruns the turn as a first turn, as in decision 3. A
-   session store elsewhere reads as not owned, and the turn starts a fresh session. Only the interactive dispatch path
-   saves the id mid-turn. The headless loop keeps the id in memory until the turn ends, so a
-   parent crash during a first turn there still loses the id, and the next run starts a new
-   session. That pre-spawn crash gap stays open for the headless loop.
+   session store elsewhere reads as not owned, and the turn starts a fresh session. Both paths
+   save the id mid-turn (issue #564). The headless loop sets the id and its `sessionUnconfirmed` mark on the
+   role before the CLI starts and, when `--transcript` is set, rewrites the transcript at once, so a
+   parent crash during a first turn leaves a transcript whose `roles` hold the id and the mark.
+   `--continue-from` then restores both, and the ownership check runs before the resume. The
+   headless loop withdraws a rejected id through the same hook. A failed transcript write only
+   warns, as at exit, so the crash gap stays open for a run whose transcript cannot be written.
+   A headless run with no `--transcript` keeps no record, so it has no id to resume.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
    stderr is the one verified line for the requested id, byte for byte, plus at most one
@@ -139,7 +143,8 @@ Andro Marces
 
 - [Issue #360](https://github.com/andromarces/agent-loops/issues/360)
 - [Issue #395](https://github.com/andromarces/agent-loops/issues/395)
+- [Issue #564](https://github.com/andromarces/agent-loops/issues/564)
 - Implementation: `keepFailedSessionId` and `flagMissingSession` in `src/agents/shared.mjs`,
-  the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, and the dispatch write in
-  `src/role.mjs`; documented in `README.md`
+  the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, the dispatch write in
+  `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/cli.mjs`; documented in `README.md`
 - [ADR Index](README.md)

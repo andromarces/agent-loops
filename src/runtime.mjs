@@ -328,6 +328,9 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * sandbox with network off, and the reviewer prompt says so. The orchestrator turns
  * and the worker turns are unchanged, and the mutation check still wraps every
  * reviewer turn (ADR 0019).
+ * `onSessionAssigned(roleName, id)` is awaited after a pre-assigned session id is set on the role
+ * and before that CLI starts, and with `null` when the CLI rejected the id. The caller persists
+ * the roles there (ADR 0016).
  *
  * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
  * covered: after a worker turn it needs a later reviewer `verdict: accept` with
@@ -358,6 +361,7 @@ export async function runLoop(options) {
     continued = false,
     earlierGate = null,
     copyLocalFiles = true,
+    onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -649,6 +653,17 @@ export async function runLoop(options) {
                 timeoutSeconds: testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
               },
         reviewerWorkspaceWrite,
+        // The pre-assigned id lands on the role, and the caller persists the roles, before the
+        // CLI starts, so a parent crash during a first turn leaves the id (issue #564). The
+        // adapter has already set `sessionUnconfirmed` for a non-null id.
+        ...(onSessionAssigned
+          ? {
+              onSessionAssigned: async (id) => {
+                targetRole.sessionId = id;
+                await onSessionAssigned(roleName, id);
+              },
+            }
+          : {}),
         gh,
         readTimeoutMs,
         onEvent,

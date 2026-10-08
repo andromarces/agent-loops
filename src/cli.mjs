@@ -734,6 +734,9 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         continued: Boolean(options.continueFrom),
         earlierGate,
         copyLocalFiles: options.copyLocalFiles,
+        // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
+        // parent crash. known-limit: a failed write only warns, as at exit (issue #564).
+        ...(options.transcript ? { onSessionAssigned: writeTranscript } : {}),
         signal: controller.signal,
         roles: transcriptData.roles,
         agents,
