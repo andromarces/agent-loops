@@ -764,8 +764,17 @@ checks, and in-process probes. `docs/parent-guard.md` records the same class on
 the `workspace-write` path: the unelevated Windows sandbox blocks a child spawn
 with `EPERM`.
 
-Not verified: a Codex read-only reviewer on macOS or Linux, and a Codex reviewer
-under the elevated Windows sandbox. Do not assume the test suite runs on either.
+Direct probe: on 2026-10-10, a `codex exec` run on macOS with codex-cli
+0.163.0-alpha.4 and `-c sandbox_mode="read-only"` ran `pnpm test` in the work
+tree. It exited 1 in under one second, before any test started. `vp` failed to
+load `vite.config.mjs` with `EPERM: operation not permitted, mkdir
+'<repo>/node_modules/.vite-temp'`. The pnpm store lock of the Windows probe did
+not appear. The work tree stayed clean. The same class of failure showed on
+2026-10-04 (codex-cli 0.162.0-alpha.9, `vitest` run directly). A read-only Codex
+reviewer on macOS therefore cannot run the test suite.
+
+Not verified: a Codex read-only reviewer on Linux, and a Codex reviewer under the
+elevated Windows sandbox. Do not assume the test suite runs on either.
 
 #### Read-only subagent fan-out
 
