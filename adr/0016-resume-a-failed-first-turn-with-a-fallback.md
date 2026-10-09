@@ -143,11 +143,11 @@ step budget runs out.
    under the mutation check and the write would fail it, so they keep the gap for that layout and
    log a warning. A refused ownership check on a resumed orchestrator id ends the run and keeps
    the id with its mark, because the orchestrator has no first-turn rerun: a new session would
-   lack the task. The restore runs inside the mutation check, so a failed snapshot after the turn cannot lose the mark. Windows file system behavior and a real
-   process kill were probed for issue #580 (Windows 11, Claude Code 2.1.295, `taskkill /F /T`), and the
-   results are in ADR 0027. A killed Claude first turn left its id with the mark, and `--continue-from`
-   resumed it after the ownership check. A turn killed before the session file existed was refused,
-   and a reviewer reran as a first turn. Not verified: SIGKILL and SIGTERM on POSIX. Separate processes that
+   lack the task. The restore runs inside the mutation check, so a failed snapshot after the turn cannot lose the mark. Issue #580 probed a real process kill and the Windows file system on
+   Windows 11 with Claude Code 2.1.295. ADR 0027 holds the commands and the results. A forced kill
+   with `taskkill /F /T` left the id with the mark. `--continue-from` resumed it after the ownership
+   check, when the session file existed at the kill. A kill that landed before the session file
+   existed was refused. A reviewer then reran as a first turn. Not verified: SIGKILL and SIGTERM on POSIX. Separate processes that
    share one transcript path have no write coordination: each write is atomic and the last wins.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
