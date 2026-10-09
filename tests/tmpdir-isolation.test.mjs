@@ -17,6 +17,7 @@ test(
         env: { TMPDIR: osTmp, TEMP: osTmp, TMP: osTmp },
         extendEnv: true,
         // Bound the nested run and end its whole process tree on expiry (as `runGh`).
+        // A forced timeout ended every descendant on Windows 11 and macOS (issue #513).
         timeout: NESTED_RUN_TIMEOUT_MS,
         forceKillAfterDelay: 1000,
         cleanup: true,
