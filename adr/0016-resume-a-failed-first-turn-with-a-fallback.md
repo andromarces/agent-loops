@@ -171,13 +171,26 @@ step budget runs out.
 - A failed first turn resumes its own session, edits included, and reuses its prompt cache.
 - opencode and agy give no failure for a missing session. opencode accepts the id and
   creates that session. In the probe, agy warned on stderr, exited 0, and started a
-  new conversation with a new id. Neither can trigger the fallback. The agy adapter adopts the
-  id the result carries and, for a resumed turn whose id differs, logs a warning and marks the
-  state. A worker conversation then gets the preamble in a preamble-only turn. That turn costs
-  one model call and is not charged as a step. Its prompt asks for no change, but the worker
-  turn has no mutation check, so it can still write. The task prompt reaches the new
-  conversation before the preamble. An orchestrator turn is rerun once with the initial
-  instructions, which costs one more model call and loses the earlier orchestrator turns.
+  new conversation with a new id. Neither can trigger the fallback.
+
+  A live probe on agy 1.3.2 (issue #579) found the same result for a missing name and for a
+  missing UUID. Each exited 0, printed the stderr warning, and returned a new id. A resume of an
+  existing id kept its id. The probes do not show that a missing id is the only cause of a
+  replaced conversation. No probe produced a replaced conversation without the stderr line.
+
+  The preamble-only worker turn answered `OK` and left the work tree unchanged. The rerun
+  orchestrator prompt answered with the action for the result, not with the first action that the
+  instructions ask for. The probe found no result that contradicts the adapter or the runtime.
+
+  The agy adapter adopts the id the result carries. For a resumed turn whose id differs, it logs a
+  warning and marks the state. A worker conversation then gets the preamble in a preamble-only
+  turn. That turn costs one model call and is not charged as a step.
+
+  Its prompt asks for no change, but the worker turn has no mutation check, so it can still
+  write. The task prompt reaches the new conversation before the preamble. An orchestrator turn is
+  rerun once with the initial instructions. That rerun costs one more model call and loses the
+  earlier orchestrator turns.
+
 - In the probe, Claude and agy printed no session id when killed at 20 to 25 s. A Claude first
   turn that ends that way keeps its pre-assigned id. An agy first turn keeps a null id.
 - A worker resumed after a failed first turn receives no second preamble. The failed turn
