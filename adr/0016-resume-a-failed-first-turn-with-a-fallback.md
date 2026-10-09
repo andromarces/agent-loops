@@ -93,7 +93,7 @@ step budget runs out.
    symlink could not be created (`EPERM`, no symlink privilege), so a file symlink is not
    verified. Forced terminate: Windows has no SIGKILL, so the child was ended with
    `taskkill /F /T /PID`. A first turn with a `sleep 90` tool call, killed at 0.4, 1, 2, and
-   2.5 s, left no session file, the check refused, and `--resume <id>` exited 1 with the
+   2.5 s, left no session file, the check refused (a worker or reviewer turn then reruns as a first turn, and an orchestrator turn ends the run), and `--resume <id>` exited 1 with the
    `No conversation found` line of decision 2. Killed at 3, 3.5, 4, 8, 15, and 30 s, it left a
    file whose first user record carried the marker, the check passed, and `--resume <id>`
    answered. Stdout was empty in every case. The file appears between 2.5 s and 3 s on this
