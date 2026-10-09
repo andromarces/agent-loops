@@ -146,8 +146,8 @@ step budget runs out.
    lack the task. The restore runs inside the mutation check, so a failed snapshot after the turn cannot lose the mark. Issue #580 probed a real process kill and the Windows file system on
    Windows 11 with Claude Code 2.1.295. ADR 0027 holds the commands and the results. A forced kill
    with `taskkill /F /T` left the id with the mark. `--continue-from` resumed it after the ownership
-   check, when the session file existed at the kill. A kill that landed before the session file
-   existed was refused. A reviewer then reran as a first turn. Not verified: SIGKILL and SIGTERM on POSIX. Separate processes that
+   check, when the driver sample before the kill showed the session file. A run whose sample showed
+   no session file was refused. A reviewer then reran as a first turn. Not verified: SIGKILL and SIGTERM on POSIX. Separate processes that
    share one transcript path have no write coordination: each write is atomic and the last wins.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
