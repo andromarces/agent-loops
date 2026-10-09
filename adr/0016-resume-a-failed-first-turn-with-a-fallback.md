@@ -144,7 +144,13 @@ step budget runs out.
 - A failed first turn resumes its own session, edits included, and reuses its prompt cache.
 - opencode and agy give no failure for a missing session. opencode accepts the id and
   creates that session. In the probe, agy warned on stderr, exited 0, and started a
-  new conversation with a new id. Neither can trigger the fallback. The agy adapter adopts the
+  new conversation with a new id. Neither can trigger the fallback.
+  A live probe on agy 1.3.2 (issue #579) found the same result for a missing name and for a
+  missing UUID: exit 0, the stderr warning, and a new id. A resume of an existing id kept its id.
+  The preamble-only worker turn answered `OK` and left the work tree unchanged. The rerun
+  orchestrator prompt answered with the action for the result, not with the first action that the
+  instructions ask for. The probe found no result that contradicts the adapter or the runtime.
+  No probe produced a replaced conversation without the stderr line. The agy adapter adopts the
   id the result carries and, for a resumed turn whose id differs, logs a warning and marks the
   state. A worker conversation then gets the preamble in a preamble-only turn. That turn costs
   one model call and is not charged as a step. Its prompt asks for no change, but the worker
