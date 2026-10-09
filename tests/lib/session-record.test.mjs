@@ -59,12 +59,18 @@ test("a record for a role other than the orchestrator or reviewer is refused", a
 
 // Usefulness: verifies a path counts as inside a directory by file identity, so a symlink into the
 // directory counts and a sibling does not.
-test("isInside follows a symlink and rejects a sibling directory", async () => {
+test("isInside follows a symlink and rejects a sibling directory", async (ctx) => {
   const root = join(dir, "root");
   const sibling = join(dir, "sibling");
   await mkdir(join(root, "sub"), { recursive: true });
   await mkdir(sibling);
-  await symlink(join(root, "sub"), join(dir, "link"));
+  try {
+    await symlink(join(root, "sub"), join(dir, "link"));
+  } catch (err) {
+    // A Windows host without symlink privilege refuses the call.
+    if (err?.code === "EPERM") ctx.skip();
+    throw err;
+  }
   expect(await isInside(root, join(root, "sub", "run.json"))).toBe(true);
   expect(await isInside(root, join(dir, "link", "run.json"))).toBe(true);
   expect(await isInside(root, join(sibling, "run.json"))).toBe(false);
