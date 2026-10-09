@@ -66,11 +66,22 @@ The #567 probe found these facts:
 - Claude Code names the main-loop model on the `system` `init` event of `--output-format json --verbose`, which prints an array of events with the same session id as the result (issue #566, probed on Claude Code 2.1.293 on macOS). A turn that ran a Haiku subagent beside a Sonnet main loop listed both models in `modelUsage` and named only the Sonnet model on `init`, so a multi-model Claude turn resolves. A Claude Code version whose output has no `init` event falls back to the one-key `modelUsage` rule.
 - **Accepted gap:** `--output-format json --verbose` prints the events of the turn as one JSON array, which includes the `system` `init` event, so a long turn enlarges the buffered `stdout` and, on a failed turn, the error text that `exec` builds from it. No adapter bound covers this. execa 10.0.1 caps each output stream at `maxBuffer`, 100,000,000 characters of decoded text by default. `exec` ignored the execa `isMaxBuffer` field, so an overflow went undetected and cut `stdout`. That defect predated this change. Issue #578 fixed it: `exec` now throws an `ExecError` that names the overflow and holds no cut output.
 - An `init` event counts only when it names the session the role keeps, like the result event. An `init` event with no session, or another session, leaves the turn unresolved.
-- On Claude Code 2.1.293 on macOS, with one first turn and one resumed turn, the resumed Claude turn resolves. The probe ran a first turn, then a turn with `--resume <id>`, both with `--output-format json --verbose`. Each output held one `init` event. Its `session_id` equaled the resumed id and the `session_id` of the result event, and its `model` was `claude-opus-5-5` on both turns (issue #582). A resumed turn does not record `null` for a session or model reason on that version. Other Claude Code versions are not verified.
+- On Claude Code 2.1.293 on macOS, with one first turn and one resumed turn, the resumed Claude turn resolves. The probe ran a first turn, then a turn with `--resume <id>`, both with `--output-format json --verbose`. Each output held one `init` event. Its `session_id` equaled the resumed id and the `session_id` of the result event, and its `model` was `claude-opus-5-5` on both turns (issue #582). A resumed turn does not record `null` for a session or model reason on that version.
+- Issue #589 repeated the probe on Windows 11 on 2026-10-10, with the prompt `Reply with the word ok.` from a scratch directory outside the repository. Each output held one `init` event whose `session_id` equaled the `session_id` of the result event. Each resumed `init` named the first-turn session id. Each `model` was `claude-opus-5-5[1m]`, a valid model id under decision 8, so no resumed turn records `null`:
+
+  | Claude Code | Turn    | `init` `session_id`                    | `init` `model`        |
+  | ----------- | ------- | -------------------------------------- | --------------------- |
+  | 2.1.295     | first   | `3887ae85-4103-4771-9792-2b425fdd8f18` | `claude-opus-5-5[1m]` |
+  | 2.1.295     | resumed | `3887ae85-4103-4771-9792-2b425fdd8f18` | `claude-opus-5-5[1m]` |
+  | 2.1.293     | first   | `6f21b1e6-4127-4102-9167-6e52edc2e5ff` | `claude-opus-5-5[1m]` |
+  | 2.1.293     | resumed | `6f21b1e6-4127-4102-9167-6e52edc2e5ff` | `claude-opus-5-5[1m]` |
+
+  Version 2.1.293 ran from a temporary npm install, so the global install (2.1.295) did not change. The `[1m]` suffix did not appear in the macOS probe of issue #582 and comes from the account configuration of the host. A change of that suffix between two runs counts as a changed model under decision 10.
+
 - **Accepted gap:** a Claude turn whose output has no `init` event and several models in `modelUsage`, a Copilot turn whose messages name different models, and a turn whose evidence is malformed are unresolved. The latest turn governs: a role whose latest turn is unresolved is not checked, even when an earlier turn named a model, and the operator gets the warning of decision 11. The alternative, an older model kept as the baseline, falsely refuses an unchanged model B after an ambiguous turn and passes a B-to-A change against a stale A (alternative 9).
 - A transcript written before this change records no `resolvedModel` (not reported), so it continues unchecked, with the warning of decision 11. A turn run after this change always records a model id or `null` for a Claude, Copilot, or opencode role.
 - The probe runs before `assertGitWorkTree`. A `--cwd` that is not a Git work tree fails the probe's snapshot, so the run is refused.
-- **Unverified:** the probe ran on macOS with the installed Claude Code, Copilot CLI, and opencode only. A Windows run and other CLI versions are not verified.
+- **Unverified:** the Copilot CLI and opencode probes ran on macOS only. The Claude `init` event of a resumed turn is verified on macOS (2.1.293) and on Windows (2.1.293 and 2.1.295). Other Claude Code versions are not verified.
 
 ## Alternatives
 
@@ -100,6 +111,7 @@ Andro Marces
 - [Issue #566: Resolve the Claude role model of a turn that ran more than one model](https://github.com/andromarces/agent-loops/issues/566)
 - [Issue #567: Probe whether Codex, agy, and opencode can report the resolved model](https://github.com/andromarces/agent-loops/issues/567)
 - [Issue #582: Verify the init event of a resumed Claude turn names the resumed session and model](https://github.com/andromarces/agent-loops/issues/582)
+- [Issue #589: Verify the resumed Claude init event on Windows and another Claude Code version](https://github.com/andromarces/agent-loops/issues/589)
 - [Pull Request #562](https://github.com/andromarces/agent-loops/pull/562)
 - [Pull Request #586: Record the opencode resolved model from session export](https://github.com/andromarces/agent-loops/pull/586)
 - Implementation: `gateFromTranscript`, `matchingGate`, `verifyResolvedModels`, and `restoreSessions` in `src/lib/continuation.mjs`, `runProbeTurn` in `src/runtime.mjs`, `setResolvedModel` in `src/agents/shared.mjs`, the adapters `src/agents/claude.mjs`, `src/agents/copilot.mjs`, and `src/agents/opencode.mjs` (`exportedModels`), and `--continue-from` in `src/cli.mjs`; tests in `tests/lib/continuation.test.mjs`, `tests/cli.test.mjs`, `tests/runtime.mutation.test.mjs`, `tests/agents/claude.test.mjs`, and `tests/agents/copilot.test.mjs`, and `tests/agents/opencode.test.mjs`; documented in `README.md`
