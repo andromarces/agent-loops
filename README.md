@@ -185,7 +185,7 @@ Not verified:
   Docker). The POSIX bin shim `process.argv[1]` prefix is reasoned, not executed.
 - A project on a UNC share: `pnpm add` fails there before `install` can run.
   Over `\\localhost\C$`, pnpm 12.8.1 reports `Failed to symlink
-"@andromarces/agent-loops" for importer "."` with `Access is denied. (os error 5)`.
+  "@andromarces/agent-loops" for importer "."` with `Access is denied. (os error 5)`.
   The render on a UNC share stays covered by the fallback test only.
 
 ```bash

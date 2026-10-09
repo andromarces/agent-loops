@@ -31,7 +31,7 @@ ships no GNU coreutils, so a bound needs a second installation there.
    `gh pr checks <pr> --required --json name,state,bucket` until no required
    check is pending or the bound elapses.
 2. The envelope is `{ "status": "ok", "pr": <pr>, "timedOut": <boolean>,
-"checks": [{ "name", "state", "bucket" }] }` on stdout, and the command exits
+   "checks": [{ "name", "state", "bucket" }] }` on stdout, and the command exits
    0 when the read resolved. `timedOut: true` marks a wait that reached the bound,
    which is a completed read and not a read failure, so the parent reads the flag
    instead of losing the result. This follows the `unresolvedCompare` precedent in
@@ -81,7 +81,7 @@ ships no GNU coreutils, so a bound needs a second installation there.
     injected into the operation, so a test can spend clock time on validation and
     check that the time comes out of the bound.
 12. A required check that has not started is absent from `gh pr checks
---required`, so an empty list is not a settled read. The wait keeps polling an
+    --required`, so an empty list is not a settled read. The wait keeps polling an
     empty list on exit 0 or exit 8, and returns it on the bound. The same empty
     list on exit 1 is a different case, and refuses.
 13. The interactive instructions name `agent-loop role wait-checks` as the only

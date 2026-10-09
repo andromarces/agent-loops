@@ -987,7 +987,7 @@ and each flag fails with a clear error.
   design, because it matches no unreadable shape and is not read as a source at all.
   The exception to ruleset readability is a private repository on the GitHub Free
   plan, where the plan does not allow the rule at all. The Free-plan 403, `Upgrade
-to GitHub Pro or make this repository public to enable this feature.`, was measured
+  to GitHub Pro or make this repository public to enable this feature.`, was measured
   on the classic protection, branch rules, and rulesets endpoints with an admin
   classic PAT and an admin fine-grained PAT, and a read-capable collaborator was not
   tested, so whether a non-admin sees the same 403 is unverified. That reply

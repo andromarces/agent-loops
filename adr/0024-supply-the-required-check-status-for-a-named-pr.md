@@ -69,7 +69,7 @@ decisions that still hold.
    during the read, and never passes a state the gate refuses. The gate reads
    every page of the commit statuses too, so the two reads see the same entries. A head that moves from A to B and back to A cannot put the checks of
    B in the status (issue #349). This replaces the head re-read around `gh pr
-checks`, which reports no commit and could not separate that case.
+   checks`, which reports no commit and could not separate that case.
 5. Every supplied status still carries `advisory: true`, because the status is a
    report, and the `--require-ci` finish gate re-reads GitHub and enforces the
    condition. The commit binding is exact, but the status is a snapshot taken
