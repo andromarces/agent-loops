@@ -25,6 +25,7 @@ Use a cross-platform Node entry point, exposed as `agent-loop-copilot`, to mint 
 - Trusted Copilot CLI sessions receive the same session-keyed parent-edit guard as Claude Code and OpenCode.
 - The Copilot hook covers the built-in file create and edit tools represented by `Write` and `Edit`. Shell and MCP tools remain outside the guard.
 - The hook remains fail-open for malformed input, absent or corrupt state, terminal lifecycles, and lookup errors.
+- Copilot CLI 1.0.95 repeats the pre-assigned id in the top-level `sessionId` of the `result` event of `--output-format json`, on a first turn and on a later call with the same id. A call with the id of an existing session resumes it (issue #375). The runtime adapter relies on this field.
 - Users need to trust the repository before Copilot CLI loads repository hooks. The current repository hook location is documented for Windows, macOS, and Linux.
 
 ## Alternatives
