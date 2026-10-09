@@ -1542,6 +1542,31 @@ test("a canceled turn keeps the session id the CLI reported", async () => {
   expect((await readRepoState(repo)).roles.worker.sessionId).toBe("sess-canceled");
 });
 
+// Usefulness: verifies a cancel that lands after the CLI exits and before the adapter returns ends
+// the turn interrupted with exit 130, not recorded ok with the run left active (#587).
+test("a cancel after the child exits records the turn as canceled", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const controller = new AbortController();
+  const worker = recordingAdapter([
+    () => {
+      controller.abort();
+      return REPORT;
+    },
+  ]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+    signal: controller.signal,
+  });
+
+  expect(result.exitCode).toBe(130);
+  expect(result.payload.status).toBe("error");
+  expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
+});
+
 // Usefulness: verifies that an empty parentSession on a parsed init command
 // stays an unguarded run, as before the statePaths call-site cleanup (#189),
 // while statePaths itself still rejects a null session id.

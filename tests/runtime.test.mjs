@@ -942,6 +942,51 @@ test("cancel signal stops loop", async () => {
   }
 });
 
+// Usefulness: verifies a cancel that lands after the worker CLI exits ends the loop as canceled and
+// records no ok result for that turn (#587); the cancel is not left for the next spawn to find.
+test("a cancel after the worker returns ends the loop with no ok result", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const events = [];
+  try {
+    const workerAdapter = scripted([
+      async () => {
+        controller.abort();
+        return "Conclusion: done\nWhy: ok\nBlockers: none";
+      },
+    ]);
+
+    await expect(
+      runLoop({
+        task: "Task late cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        onEvent: (event) => events.push(event),
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: {
+          orch: scripted([
+            JSON.stringify({ action: "run_worker", prompt: "go" }),
+            JSON.stringify({
+              action: "finish",
+              summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+            }),
+          ]),
+          work: workerAdapter,
+          rev: scripted([]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(events.filter((event) => event.type === "result")).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 23. Usefulness: verifies issue #26 acceptance — a timed-out child produces a log line naming the role and "timed out".
 test("timed-out child logs a line naming the role and timed out", async () => {
   const repo = await createTempRepo();

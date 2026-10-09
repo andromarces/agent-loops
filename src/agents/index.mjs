@@ -25,6 +25,7 @@ export const defaultAgents = {
 
 export const supportedAgents = new Set([...Object.keys(defaultAgents), "antigravity"]);
 
+/** Runs one turn on the adapter of `state.kind`. Throws an error with `isCanceled` when `options.signal` is aborted by the time the adapter returns. */
 export async function runAgent(state, prompt, options = {}, agents = defaultAgents) {
   const kind = normalizeAgent(state.kind);
   const adapter = agents[kind];
@@ -33,7 +34,14 @@ export async function runAgent(state, prompt, options = {}, agents = defaultAgen
     throw new Error(`Unsupported agent: ${state.kind}`);
   }
 
-  return adapter.run(state, prompt, options);
+  const response = await adapter.run(state, prompt, options);
+  // A cancel can land after the child exits and before the adapter returns. The adapter then returns
+  // a result, so one check here ends that turn as canceled for every adapter. The adapter has already
+  // kept the session id and usage on `state`.
+  if (options.signal?.aborted) {
+    throw Object.assign(new Error(`${kind} was canceled.`), { isCanceled: true });
+  }
+  return response;
 }
 
 /**
