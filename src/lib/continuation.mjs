@@ -14,7 +14,7 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
  * that holds the final role session ids (#362). A session record that a crashed run left outside the
  * work tree can add the id of one claude first turn (ADR 0027). Rejects a file that is
  * unreadable, not JSON, has `events` that are not a list, or is missing a role
- * with a string `kind`, a string or null `sessionId`, and no `sessionUnconfirmed` or a boolean one.
+ * with a string `kind`, a string or null `sessionId`, and no `sessionUnconfirmed` or `conversationReplaced`, or a boolean one.
  * @param {string} path
  * @returns {Promise<{ cwd: string, roles: object, events?: object[] }>}
  */
@@ -42,7 +42,10 @@ export async function readContinuation(path) {
     if (
       typeof earlier?.kind !== "string" ||
       (earlier.sessionId !== null && typeof earlier.sessionId !== "string") ||
-      (earlier.sessionUnconfirmed !== undefined && typeof earlier.sessionUnconfirmed !== "boolean")
+      (earlier.sessionUnconfirmed !== undefined &&
+        typeof earlier.sessionUnconfirmed !== "boolean") ||
+      (earlier.conversationReplaced !== undefined &&
+        typeof earlier.conversationReplaced !== "boolean")
     ) {
       throw new Error(`--continue-from ${path} has an invalid ${role} role.`);
     }
@@ -115,6 +118,10 @@ export function restoreSessions(roles, earlier, cwd) {
     // An id that no CLI output confirmed keeps its mark, so the adapter verifies its owner (#395).
     if (earlier.roles[role].sessionUnconfirmed === true && roles[role].sessionId !== null) {
       roles[role].sessionUnconfirmed = true;
+    }
+    // A canceled turn left a replaced conversation without its preamble, so the new worker turn sends it.
+    if (earlier.roles[role].conversationReplaced === true && roles[role].sessionId !== null) {
+      roles[role].conversationReplaced = true;
     }
     // A model id or null (unresolved) carries over; an absent or malformed value is "not reported".
     const resolved = earlier.roles[role].resolvedModel;

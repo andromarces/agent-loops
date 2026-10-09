@@ -74,6 +74,33 @@ step budget runs out.
    of its id exited 1 with the `No conversation found` line of decision 2, so the next turn
    reaches the fallback and reruns as a first turn with a new pre-assigned id. A pre-assigned id
    that names no session therefore costs one failed resume, not a lost run.
+   Windows 11, Claude Code 2.1.295 (issue #565), probed in scratch directories under the
+   temporary directory, with the unchanged adapter. Every result agrees with the adapter, so no
+   defect was found. Layout: a first turn with `--session-id <id> --output-format json --verbose`
+   printed a `session_id` equal to `<id>` and wrote `projects/<dir>/<id>.jsonl`, where `<dir>` is the
+   work tree path with each non-alphanumeric character replaced by `-`. The first `user` record
+   has `sessionId` equal to `<id>`, `cwd` as launched, and `message.content` as a string that ends
+   with the marker line. Id casing: an uppercase `--session-id` was kept as given in the file name
+   and in the output. The adapter generates lowercase ids only, so its canonical lowercase check
+   never refuses an id of its own. Drive letter: `realpath` of `C:...wt1` and `c:...wt1`
+   both returned `C:...wt1`. Claude Code records `cwd` as launched, so one session recorded
+   `C:...` and another `c:...`. Resumed through `runClaude` with the check on, all four pairs
+   of a `C:` or `c:` work tree and a `C:` or `c:` record passed, and a parent directory and
+   another role were refused. A drive letter difference does not make an owned session read as
+   not owned. Guard: `O_NOFOLLOW` is `undefined` in Node 26.8.1 on Windows. A directory junction
+   as the project directory reports `isSymbolicLink() === true` and `isDirectory() === false`
+   from `lstat`, and the check refused it. The same session in a real directory passed. A
+   symlink could not be created (`EPERM`, no symlink privilege), so a file symlink is not
+   verified. Forced terminate: Windows has no SIGKILL, so the child was ended with
+   `taskkill /F /T /PID`. A first turn with a `sleep 90` tool call, killed at 0.4, 1, 2, and
+   2.5 s, left no session file, the check refused (a worker or reviewer turn then reruns as a first turn, and an orchestrator turn ends the run), and `--resume <id>` exited 1 with the
+   `No conversation found` line of decision 2. Killed at 3, 3.5, 4, 8, 15, and 30 s, it left a
+   file whose first user record carried the marker, the check passed, and `--resume <id>`
+   answered. Stdout was empty in every case. The file appears between 2.5 s and 3 s on this
+   host, and that boundary is not a contract. Not verified: other Claude Code versions on
+   Windows (2.1.284 and 2.1.292 were probed on macOS for issue #395), a file symlink, and a
+   drive letter difference on a work tree that no longer exists, where `realpath` fails and the
+   case is kept as given.
    On the interactive dispatch path, the adapter reports the pre-assigned id to the dispatcher
    before it starts the CLI, and the dispatcher writes it to the state file at once. A crash
    during the turn then leaves the id, and the turn after `--resume-interrupted` resumes it. A
@@ -199,6 +226,7 @@ Andro Marces
 - [Issue #395](https://github.com/andromarces/agent-loops/issues/395)
 - [Issue #396](https://github.com/andromarces/agent-loops/issues/396)
 - [Issue #564](https://github.com/andromarces/agent-loops/issues/564)
+- [Issue #565](https://github.com/andromarces/agent-loops/issues/565)
 - Implementation: `keepFailedSessionId` and `flagMissingSession` in `src/agents/shared.mjs`,
   the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, the dispatch write in
   `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/cli.mjs`; documented in `README.md`

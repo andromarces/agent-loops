@@ -808,10 +808,10 @@ test.each([
 
 // Usefulness: verifies a symlinked project directory or session file is never followed out of the
 // projects directory, and that only a regular file counts (issue #395).
-test.each([
+test.for([
   ["a symlinked project directory", "dir"],
   ["a symlinked session file", "file"],
-])("claude refuses an unconfirmed id behind %s", async (_n, kind, ctx) => {
+])("claude refuses an unconfirmed id behind %s", async ([_n, kind], ctx) => {
   vi.mocked(exec).mockClear();
   const id = "66666666-6666-4666-8666-666666666666";
   await withSessionStore(
