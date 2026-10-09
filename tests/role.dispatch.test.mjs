@@ -1594,6 +1594,48 @@ test("a cancel during the post-turn snapshot records the reviewer turn as cancel
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
 });
 
+// Usefulness: verifies ADR 0027 decision 5 for a replaced conversation: a canceled dispatch persists the
+// id the CLI reported with the replaced mark, and the next worker dispatch sends the preamble (#587).
+test("a canceled dispatch persists the reported id and the next worker turn sends the preamble", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  const controller = new AbortController();
+  const replaced = recordingAdapter([
+    (state) => {
+      state.sessionId = "replacement";
+      state.conversationReplaced = true;
+      controller.abort();
+      return REPORT;
+    },
+  ]);
+
+  const canceled = await executeRoleCommand(withRepo(dispatchArgv([]), repo), {
+    agents: { fake1: replaced, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+    signal: controller.signal,
+  });
+  expect(canceled.exitCode).toBe(130);
+  expect((await readRepoState(repo)).roles.worker).toMatchObject({
+    sessionId: "replacement",
+    conversationReplaced: true,
+  });
+
+  const next = recordingAdapter([]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(["--resume-interrupted"]), repo), {
+    agents: { fake1: next, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(next.recorded[0].incomingSessionId).toBe("replacement");
+  expect(next.recorded[0].prompt).toContain("You are the implementation agent");
+  expect((await readRepoState(repo)).roles.worker.conversationReplaced).toBeUndefined();
+});
+
 // Usefulness: verifies that an empty parentSession on a parsed init command
 // stays an unguarded run, as before the statePaths call-site cleanup (#189),
 // while statePaths itself still rejects a null session id.

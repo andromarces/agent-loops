@@ -76,7 +76,7 @@ export async function runProbeTurn({
     }),
   );
   // A cancel can land in the post-turn snapshot, after the adapter returned (#587).
-  throwIfCanceled(signal, roleName, state);
+  throwIfCanceled(signal, roleName);
 }
 
 /**
@@ -122,7 +122,12 @@ export async function runChild(options) {
 
   const isWorker = roleName === "worker";
   const readOnly = !isWorker;
-  const requestedSessionId = role.sessionId;
+  // A canceled turn leaves `conversationReplaced` set, because the replaced conversation never
+  // received the worker preamble (ADR 0027, decision 5). This turn takes the mark over: the worker
+  // prompt carries the preamble, and `preamblePending` keeps the mark if this turn is canceled too.
+  const carriedReplaced = role.conversationReplaced === true;
+  delete role.conversationReplaced;
+  let preamblePending = isWorker && carriedReplaced;
   // The opt-in reaches the reviewer turn only. `readOnly` stays true there, so the mutation check
   // below still wraps the turn, and the orchestrator path never sets this input (ADR 0019).
   const sandbox = roleName === "reviewer" && reviewerWorkspaceWrite ? "workspace-write" : null;
@@ -169,14 +174,18 @@ export async function runChild(options) {
   // that conversation never received the worker preamble. The turn already ran, so a rerun would
   // repeat its edits. A preamble-only turn in the new conversation gives it the preamble instead.
   // The turn that ran stays the result, so a failed preamble turn only warns (issue #396, ADR 0016).
-  // The mark is cleared on every exit of `runChild`, so a step that throws after the adapter
-  // succeeded, such as an event handler, leaves no stale mark for a later turn.
+  // The mark is cleared on every exit of `runChild` except a cancel that leaves the replaced
+  // conversation without its preamble, so a step that throws after the adapter succeeded, such as
+  // an event handler, leaves no stale mark for a later turn.
   const runFn = async (finalPrompt) => {
     const response = await runTurn(finalPrompt);
+    preamblePending = false;
     if (role.conversationReplaced && isWorker) {
       delete role.conversationReplaced;
+      preamblePending = true;
       try {
         await invokeRole(workerPrompt(PREAMBLE_ONLY_TASK, true));
+        preamblePending = false;
       } catch (err) {
         if (readProp(err, "isCanceled")) {
           throw err;
@@ -192,7 +201,9 @@ export async function runChild(options) {
   // The worker prompt needs no runtime read, so it is built once here. The
   // reviewer prompt is built inside the mutation check, where the pre-turn
   // snapshot gives the local head the status read compares against (#320).
-  const workerFinalPrompt = isWorker ? workerPrompt(prompt, role.sessionId === null) : null;
+  const workerFinalPrompt = isWorker
+    ? workerPrompt(prompt, role.sessionId === null || carriedReplaced)
+    : null;
 
   /**
    * Reads the required-check status a PR-bearing run supplies to the reviewer,
@@ -216,6 +227,7 @@ export async function runChild(options) {
   // Declared outside the try so a turn that fails after the command ran still
   // reports what the runtime read and the work tree change it saw (ADR 0017).
   let testRun = null;
+  let keepReplacedMark = false;
   try {
     let reviewed = null;
     let prChecks = null;
@@ -243,15 +255,8 @@ export async function runChild(options) {
         })
       : await runFn(workerFinalPrompt);
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
-    // this function passes here, so no caller records a canceled turn as ok (#587). A reviewer turn
-    // that ran in a replaced conversation keeps the earlier id, as `runAgent` does for a cancel
-    // before the adapter returns (ADR 0027).
-    throwIfCanceled(
-      signal,
-      roleName,
-      role,
-      role.conversationReplaced ? requestedSessionId : undefined,
-    );
+    // this function passes here, so no caller records a canceled turn as ok (#587).
+    throwIfCanceled(signal, roleName);
     return {
       role: roleName,
       status: "ok",
@@ -266,6 +271,10 @@ export async function runChild(options) {
     if (name === "MutationError" || name === "SnapshotError" || isCanceled) {
       if (isCanceled) {
         logError(`${roleName} canceled by signal`);
+        // The canceled turn keeps the id the CLI reported, so a replaced conversation, or one whose
+        // preamble turn did not finish, keeps its mark for the next turn (ADR 0027, decision 5).
+        keepReplacedMark = preamblePending || role.conversationReplaced === true;
+        if (keepReplacedMark) role.conversationReplaced = true;
       }
       // A fatal error ends the turn, and the caller records it, so the result rides on it.
       // A cancel of the command itself already carries its own result.
@@ -289,7 +298,7 @@ export async function runChild(options) {
       ...(testRun ? { testRun } : {}),
     };
   } finally {
-    delete role.conversationReplaced;
+    if (!keepReplacedMark) delete role.conversationReplaced;
   }
 }
 
@@ -498,7 +507,6 @@ export async function runLoop(options) {
   // One rerun only, and the mark is cleared on every exit (issue #396, ADR 0016).
   const orchAdapter = {
     async run(state, p, opts) {
-      const earlierSessionId = state.sessionId;
       const call = (text) => {
         const resumedUnconfirmed = state.sessionId !== null && state.sessionUnconfirmed === true;
         return withMutationCheck(cwd, "orchestrator", async () => {
@@ -527,29 +535,37 @@ export async function runLoop(options) {
           }
         });
       };
+      // The mark of a canceled run reaches a continued run, whose first prompt is `instructions`,
+      // so no turn needs a carried mark. `instructionsPending` is true while a replaced
+      // conversation has not received the instructions.
+      let instructionsPending = false;
+      let keepReplacedMark = false;
       try {
         let response = await call(p);
-        const replaced = Boolean(state.conversationReplaced);
-        if (replaced && p !== instructions) {
+        if (state.conversationReplaced && p !== instructions) {
           delete state.conversationReplaced;
+          instructionsPending = true;
           logWarn(
             "orchestrator: conversation was replaced; rerunning the turn with its instructions",
           );
           response = await call(
             `${instructions}\n\nThe conversation restarted and earlier turns are lost. Ignore the request above to choose a first action. Answer the prompt below.\n\n${p}`,
           );
+          instructionsPending = false;
         }
-        // A cancel can land in the post-turn snapshot, after the adapter returned. The turn then
-        // keeps the earlier id of a replaced conversation, as `runAgent` does (#587, ADR 0027).
-        throwIfCanceled(
-          opts.signal,
-          "orchestrator",
-          state,
-          replaced ? earlierSessionId : undefined,
-        );
+        // A cancel can land in the post-turn snapshot, after the adapter returned (#587).
+        throwIfCanceled(opts.signal, "orchestrator");
         return response;
+      } catch (err) {
+        // A canceled turn keeps the id the CLI reported, so a replaced conversation that has not
+        // received the instructions keeps its mark (ADR 0027, decision 5).
+        if (readProp(err, "isCanceled") && (instructionsPending || state.conversationReplaced)) {
+          state.conversationReplaced = true;
+          keepReplacedMark = true;
+        }
+        throw err;
       } finally {
-        delete state.conversationReplaced;
+        if (!keepReplacedMark) delete state.conversationReplaced;
       }
     },
   };

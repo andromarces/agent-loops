@@ -20,7 +20,7 @@ vi.mock("execa", async (importOriginal) => {
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { gateFromTranscript } from "../src/lib/continuation.mjs";
-import { runLoop } from "../src/runtime.mjs";
+import { runChild, runLoop } from "../src/runtime.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
 import {
   apiArgs,
@@ -1068,8 +1068,8 @@ test("a cancel during the orchestrator post-turn snapshot does not finish the ru
 });
 
 // Usefulness: verifies a cancel during the post-turn snapshot of a reviewer turn that ran in a replaced
-// conversation keeps the earlier session id, as a cancel before the adapter returned does (#587, ADR 0027).
-test("a cancel during the reviewer snapshot keeps the earlier id of a replaced conversation", async () => {
+// conversation keeps the id the CLI reported and the replaced mark, as ADR 0027 requires (#587).
+test("a cancel during the reviewer snapshot keeps the reported id and the replaced mark", async () => {
   const repo = await createTempRepo();
   const controller = new AbortController();
   const roles = {
@@ -1099,16 +1099,16 @@ test("a cancel during the reviewer snapshot keeps the earlier id of a replaced c
         },
       }),
     ).rejects.toMatchObject({ isCanceled: true });
-    expect(roles.reviewer.sessionId).toBe("earlier-conversation");
-    expect(roles.reviewer.conversationReplaced).toBeUndefined();
+    expect(roles.reviewer.sessionId).toBe("replacement-conversation");
+    expect(roles.reviewer.conversationReplaced).toBe(true);
   } finally {
     await removePath(repo);
   }
 });
 
 // Usefulness: verifies the same for an orchestrator turn: a cancel during its post-turn snapshot keeps
-// the earlier session id of a replaced conversation (#587, ADR 0027).
-test("a cancel during the orchestrator snapshot keeps the earlier id of a replaced conversation", async () => {
+// the reported id and the replaced mark of a replaced conversation (#587, ADR 0027).
+test("a cancel during the orchestrator snapshot keeps the reported id and the replaced mark", async () => {
   const repo = await createTempRepo();
   const controller = new AbortController();
   const roles = {
@@ -1138,8 +1138,105 @@ test("a cancel during the orchestrator snapshot keeps the earlier id of a replac
         },
       }),
     ).rejects.toMatchObject({ isCanceled: true });
-    expect(roles.orchestrator.sessionId).toBe("earlier-conversation");
-    expect(roles.orchestrator.conversationReplaced).toBeUndefined();
+    expect(roles.orchestrator.sessionId).toBe("replacement-conversation");
+    expect(roles.orchestrator.conversationReplaced).toBe(true);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cancel of the instruction rerun after an orchestrator conversation replacement
+// keeps the reported id and the replaced mark, so the next orchestrator turn carries the instructions (#587).
+test("a canceled instruction rerun keeps the replacement id and the replaced mark", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const roles = {
+    orchestrator: { kind: "orch", sessionId: "earlier-conversation" },
+    worker: { kind: "work", sessionId: null },
+    reviewer: { kind: "rev", sessionId: null },
+  };
+  try {
+    await expect(
+      runLoop({
+        task: "Task canceled instruction rerun",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        roles,
+        agents: {
+          orch: scripted([
+            JSON.stringify({ action: "run_worker", prompt: "go" }),
+            (state) => {
+              state.sessionId = "replacement-conversation";
+              state.conversationReplaced = true;
+              return JSON.stringify({ action: "run_worker", prompt: "again" });
+            },
+            () => {
+              controller.abort();
+              throw new ExecError("canceled", { isCanceled: true });
+            },
+          ]),
+          work: scripted(["Conclusion: done\nWhy: ok\nBlockers: none"]),
+          rev: scripted([]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(roles.orchestrator.sessionId).toBe("replacement-conversation");
+    expect(roles.orchestrator.conversationReplaced).toBe(true);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cancel of the preamble-only turn of a replaced worker conversation keeps the
+// replaced mark, and the next worker turn then sends the preamble with its task and clears the mark (#587).
+test("a canceled preamble turn keeps the mark and the next worker turn sends the preamble", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  try {
+    const role = { kind: "work", sessionId: "gone" };
+    const calls = [];
+    const worker = {
+      async run(state, prompt) {
+        calls.push({ sessionId: state.sessionId, prompt });
+        if (calls.length === 1) {
+          state.sessionId = "replacement";
+          state.conversationReplaced = true;
+          return "worker done";
+        }
+        if (calls.length === 2) {
+          controller.abort();
+          throw new ExecError("canceled", { isCanceled: true });
+        }
+        return "worker done again";
+      },
+    };
+    const agents = { work: worker };
+
+    await expect(
+      runChild({
+        agents,
+        role,
+        roleName: "worker",
+        prompt: "do the work",
+        cwd: repo,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(role).toMatchObject({ sessionId: "replacement", conversationReplaced: true });
+
+    const result = await runChild({
+      agents,
+      role,
+      roleName: "worker",
+      prompt: "next task",
+      cwd: repo,
+    });
+    expect(result.status).toBe("ok");
+    expect(calls[2].sessionId).toBe("replacement");
+    expect(calls[2].prompt).toContain("You are the implementation agent (worker)");
+    expect(calls[2].prompt).toContain("next task");
+    expect(role.conversationReplaced).toBeUndefined();
   } finally {
     await removePath(repo);
   }

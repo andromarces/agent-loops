@@ -35,17 +35,11 @@ export async function runAgent(state, prompt, options = {}, agents = defaultAgen
     throw new Error(`Unsupported agent: ${state.kind}`);
   }
 
-  const requestedSessionId = state.sessionId;
   const response = await adapter.run(state, prompt, options);
   // A cancel can land after the child exits and before the adapter returns. The adapter then returns
   // a result, so one check here ends that turn as canceled for every adapter. The adapter has already
-  // kept the usage on `state`.
-  throwIfCanceled(
-    options.signal,
-    kind,
-    state,
-    state.conversationReplaced ? requestedSessionId : undefined,
-  );
+  // kept the id, the usage, and the replaced mark on `state`.
+  throwIfCanceled(options.signal, kind);
   return response;
 }
 
