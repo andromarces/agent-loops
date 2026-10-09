@@ -1,4 +1,5 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
+import { canceledError } from "./agents/shared.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import { readableErrorText, readProp } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
@@ -242,6 +243,11 @@ export async function runChild(options) {
           );
         })
       : await runFn(workerFinalPrompt);
+    // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
+    // this function passes here, so no caller records a canceled turn as ok (#587).
+    if (signal?.aborted) {
+      throw canceledError(roleName);
+    }
     return {
       role: roleName,
       status: "ok",

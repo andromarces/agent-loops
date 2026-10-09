@@ -1567,6 +1567,33 @@ test("a cancel after the child exits records the turn as canceled", async () => 
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
 });
 
+// Usefulness: verifies a cancel that lands during the post-turn snapshot of a reviewer turn, after the
+// adapter returned, ends the turn interrupted with exit 130 and records no ok result (#587).
+test("a cancel during the post-turn snapshot records the reviewer turn as canceled", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const controller = new AbortController();
+  const reviewer = recordingAdapter([
+    () => {
+      // The abort fires while the snapshot that follows the adapter runs `git`.
+      setImmediate(() => controller.abort());
+      return REPORT;
+    },
+  ]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+    signal: controller.signal,
+  });
+
+  expect(result.exitCode).toBe(130);
+  expect(result.payload.status).toBe("error");
+  expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
+});
+
 // Usefulness: verifies that an empty parentSession on a parsed init command
 // stays an unguarded run, as before the statePaths call-site cleanup (#189),
 // while statePaths itself still rejects a null session id.

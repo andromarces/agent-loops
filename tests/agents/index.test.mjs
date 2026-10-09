@@ -50,3 +50,21 @@ test("a turn with an unaborted signal returns its response", async () => {
     }),
   ).resolves.toBe("done");
 });
+
+// Requirement (#587, #577): a canceled turn that ran in a replaced agy conversation keeps the id the
+// role had, so the next resume replaces the conversation again and sends the worker preamble. Not
+// redundant: the adapter test covers the replacement, not the cancel that follows it.
+test("a cancel after agy replaced the conversation keeps the earlier id and no replaced mark", async () => {
+  const controller = new AbortController();
+  vi.mocked(exec).mockImplementationOnce(async () => {
+    controller.abort();
+    return { stdout: CLEAN_OUTPUT.agy, stderr: "" };
+  });
+  const state = { kind: "agy", sessionId: "earlier-conversation" };
+
+  await expect(
+    runAgent(state, "task", { cwd: "/path", signal: controller.signal }),
+  ).rejects.toMatchObject({ isCanceled: true });
+  expect(state.sessionId).toBe("earlier-conversation");
+  expect(state.conversationReplaced).toBeUndefined();
+});

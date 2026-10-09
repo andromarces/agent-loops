@@ -987,6 +987,86 @@ test("a cancel after the worker returns ends the loop with no ok result", async 
   }
 });
 
+// Usefulness: verifies a cancel that lands during the post-turn snapshot of a reviewer turn ends the
+// loop as canceled with no ok result for that turn (#587).
+test("a cancel during the reviewer post-turn snapshot ends the loop with no ok result", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const events = [];
+  try {
+    await expect(
+      runLoop({
+        task: "Task snapshot cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        onEvent: (event) => events.push(event),
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: {
+          orch: scripted([
+            JSON.stringify({ action: "run_reviewer", prompt: "inspect" }),
+            JSON.stringify({
+              action: "finish",
+              summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+            }),
+          ]),
+          work: scripted([]),
+          rev: scripted([
+            () => {
+              setImmediate(() => controller.abort());
+              return "reviewer inspected";
+            },
+          ]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(events.filter((event) => event.type === "result")).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cancel that lands during the post-turn snapshot of an orchestrator turn does
+// not let the finish action it returned end the run with exit 0 (#587).
+test("a cancel during the orchestrator post-turn snapshot does not finish the run", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  try {
+    await expect(
+      runLoop({
+        task: "Task orchestrator snapshot cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: {
+          orch: scripted([
+            () => {
+              setImmediate(() => controller.abort());
+              return JSON.stringify({
+                action: "finish",
+                summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+              });
+            },
+          ]),
+          work: scripted([]),
+          rev: scripted([]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 23. Usefulness: verifies issue #26 acceptance — a timed-out child produces a log line naming the role and "timed out".
 test("timed-out child logs a line naming the role and timed out", async () => {
   const repo = await createTempRepo();

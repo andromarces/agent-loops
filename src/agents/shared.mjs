@@ -157,3 +157,8 @@ export function recordResolvedModel(state, reported, requestedId, returnedId) {
   const keptSession = Boolean(session) && (!requestedId || session === requestedId);
   setResolvedModel(state, keptSession ? reported : []);
 }
+
+/** The error of a turn that ended on a cancel: `isCanceled` is set, as on an `exec` cancel. */
+export function canceledError(name) {
+  return Object.assign(new Error(`${name} was canceled.`), { isCanceled: true });
+}
