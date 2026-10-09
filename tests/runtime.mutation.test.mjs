@@ -1,10 +1,24 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the test that switches it on (see `gitAbortingPostTurn` in
+// runtime-helpers.mjs); every other test reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
 import { execa } from "execa";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { runLoop, runProbeTurn } from "../src/runtime.mjs";
-import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+import { createTempRepo, gitAbortingPostTurn, removePath, scripted } from "./runtime-helpers.mjs";
 
 // 16. Usefulness: verifies reviewer mutation is detected, fatal, and does not revert changes.
 test("reviewer mutation is detected and fatal", async () => {
@@ -261,10 +275,12 @@ test("a probe turn that changes the work tree is a fatal mutation", async () => 
 test("a cancel during the probe post-turn snapshot ends the probe as canceled", async () => {
   const repo = await createTempRepo();
   const controller = new AbortController();
+  const post = gitAbortingPostTurn(controller);
+  gitDouble.answer = post.git;
   try {
     const rev = scripted([
       () => {
-        setImmediate(() => controller.abort());
+        post.arm();
         return "OK";
       },
     ]);
@@ -277,7 +293,9 @@ test("a cancel during the probe post-turn snapshot ends the probe as canceled", 
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ isCanceled: true });
+    expect(post.fired).toBe(true);
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });

@@ -30,6 +30,7 @@ import {
   equalsArgs,
   expectNoReplyToMalformedCalls,
   gateReadCalls,
+  gitAbortingPostTurn,
   isApiRead,
   PAGED,
   prChecksArgs,
@@ -992,6 +993,8 @@ test("a cancel after the worker returns ends the loop with no ok result", async 
 test("a cancel during the reviewer post-turn snapshot ends the loop with no ok result", async () => {
   const repo = await createTempRepo();
   const controller = new AbortController();
+  const post = gitAbortingPostTurn(controller);
+  gitDouble.answer = post.git;
   const events = [];
   try {
     await expect(
@@ -1017,7 +1020,7 @@ test("a cancel during the reviewer post-turn snapshot ends the loop with no ok r
           work: scripted([]),
           rev: scripted([
             () => {
-              setImmediate(() => controller.abort());
+              post.arm();
               return "reviewer inspected";
             },
           ]),
@@ -1025,7 +1028,9 @@ test("a cancel during the reviewer post-turn snapshot ends the loop with no ok r
       }),
     ).rejects.toMatchObject({ isCanceled: true });
     expect(events.filter((event) => event.type === "result")).toEqual([]);
+    expect(post.fired).toBe(true);
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
@@ -1035,6 +1040,8 @@ test("a cancel during the reviewer post-turn snapshot ends the loop with no ok r
 test("a cancel during the orchestrator post-turn snapshot does not finish the run", async () => {
   const repo = await createTempRepo();
   const controller = new AbortController();
+  const post = gitAbortingPostTurn(controller);
+  gitDouble.answer = post.git;
   try {
     await expect(
       runLoop({
@@ -1050,7 +1057,7 @@ test("a cancel during the orchestrator post-turn snapshot does not finish the ru
         agents: {
           orch: scripted([
             () => {
-              setImmediate(() => controller.abort());
+              post.arm();
               return JSON.stringify({
                 action: "finish",
                 summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
@@ -1062,7 +1069,9 @@ test("a cancel during the orchestrator post-turn snapshot does not finish the ru
         },
       }),
     ).rejects.toMatchObject({ isCanceled: true });
+    expect(post.fired).toBe(true);
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
@@ -1072,6 +1081,8 @@ test("a cancel during the orchestrator post-turn snapshot does not finish the ru
 test("a cancel during the reviewer snapshot keeps the reported id and the replaced mark", async () => {
   const repo = await createTempRepo();
   const controller = new AbortController();
+  const post = gitAbortingPostTurn(controller);
+  gitDouble.answer = post.git;
   const roles = {
     orchestrator: { kind: "orch", sessionId: null },
     worker: { kind: "work", sessionId: null },
@@ -1092,7 +1103,7 @@ test("a cancel during the reviewer snapshot keeps the reported id and the replac
             (state) => {
               state.sessionId = "replacement-conversation";
               state.conversationReplaced = true;
-              setImmediate(() => controller.abort());
+              post.arm();
               return "reviewer inspected";
             },
           ]),
@@ -1101,7 +1112,9 @@ test("a cancel during the reviewer snapshot keeps the reported id and the replac
     ).rejects.toMatchObject({ isCanceled: true });
     expect(roles.reviewer.sessionId).toBe("replacement-conversation");
     expect(roles.reviewer.conversationReplaced).toBe(true);
+    expect(post.fired).toBe(true);
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
@@ -1111,6 +1124,8 @@ test("a cancel during the reviewer snapshot keeps the reported id and the replac
 test("a cancel during the orchestrator snapshot keeps the reported id and the replaced mark", async () => {
   const repo = await createTempRepo();
   const controller = new AbortController();
+  const post = gitAbortingPostTurn(controller);
+  gitDouble.answer = post.git;
   const roles = {
     orchestrator: { kind: "orch", sessionId: "earlier-conversation" },
     worker: { kind: "work", sessionId: null },
@@ -1129,7 +1144,7 @@ test("a cancel during the orchestrator snapshot keeps the reported id and the re
             (state) => {
               state.sessionId = "replacement-conversation";
               state.conversationReplaced = true;
-              setImmediate(() => controller.abort());
+              post.arm();
               return JSON.stringify({ action: "abort", reason: "stop" });
             },
           ]),
@@ -1140,7 +1155,9 @@ test("a cancel during the orchestrator snapshot keeps the reported id and the re
     ).rejects.toMatchObject({ isCanceled: true });
     expect(roles.orchestrator.sessionId).toBe("replacement-conversation");
     expect(roles.orchestrator.conversationReplaced).toBe(true);
+    expect(post.fired).toBe(true);
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
