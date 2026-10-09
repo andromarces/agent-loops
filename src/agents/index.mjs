@@ -3,6 +3,7 @@ import { runCodex } from "./codex.mjs";
 import { runAgy } from "./agy.mjs";
 import { runOpenCode } from "./opencode.mjs";
 import { runCopilot } from "./copilot.mjs";
+import { throwIfCanceled } from "./shared.mjs";
 
 export function normalizeAgent(kind) {
   return kind === "antigravity" ? "agy" : kind;
@@ -25,6 +26,7 @@ export const defaultAgents = {
 
 export const supportedAgents = new Set([...Object.keys(defaultAgents), "antigravity"]);
 
+/** Runs one turn on the adapter of `state.kind`. Throws an error with `isCanceled` when `options.signal` is aborted by the time the adapter returns. */
 export async function runAgent(state, prompt, options = {}, agents = defaultAgents) {
   const kind = normalizeAgent(state.kind);
   const adapter = agents[kind];
@@ -33,7 +35,12 @@ export async function runAgent(state, prompt, options = {}, agents = defaultAgen
     throw new Error(`Unsupported agent: ${state.kind}`);
   }
 
-  return adapter.run(state, prompt, options);
+  const response = await adapter.run(state, prompt, options);
+  // A cancel can land after the child exits and before the adapter returns. The adapter then returns
+  // a result, so one check here ends that turn as canceled for every adapter. The adapter has already
+  // kept the id, the usage, and the replaced mark on `state`.
+  throwIfCanceled(options.signal, kind);
+  return response;
 }
 
 /**

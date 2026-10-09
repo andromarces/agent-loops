@@ -2,7 +2,9 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
+import { readableErrorText } from "../../src/lib/error-message.mjs";
+import { logInfo } from "../../src/lib/log.mjs";
 import { redactEnvSecrets } from "../../src/lib/redact.mjs";
 import { TAIL_CHARS, redactCommandText, runTestCmd } from "../../src/lib/test-cmd.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
@@ -316,6 +318,36 @@ test("a secret-named value is redacted whatever the case of the variable name", 
     "x [redacted:My_Token] y",
   );
 });
+
+// Usefulness: verifies the Windows behavior that ADR 0017 records (issue #497): `process.env` holds one
+// slot for the names `Probe497_Token` and `probe497_token`, so the value of that slot is redacted in the
+// command text, an error text, and a log line, under the one name that the OS reports. POSIX keeps two
+// variables, so this check does not apply there.
+test.skipIf(process.platform !== "win32")(
+  "one Windows environment slot under two name casings is redacted under one name",
+  () => {
+    const value = "synthetic-casing-value-0001";
+    const text = `run ${value} then ${value}`;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    process.env.Probe497_Token = value;
+    process.env.probe497_token = value;
+    try {
+      const names = Object.keys(process.env).filter((k) => k.toLowerCase() === "probe497_token");
+      expect(names).toEqual(["Probe497_Token"]);
+      const logged = (logInfo(text), logSpy.mock.calls.flat().join(""));
+      for (const shown of [redactCommandText(text), readableErrorText(new Error(text)), logged]) {
+        expect(shown).not.toContain(value);
+        expect(shown.match(/\[redacted:[^\]]*\]/g)).toEqual([
+          "[redacted:Probe497_Token]",
+          "[redacted:Probe497_Token]",
+        ]);
+      }
+    } finally {
+      delete process.env.Probe497_Token;
+      logSpy.mockRestore();
+    }
+  },
+);
 
 // Usefulness: verifies the trade-off of ADR 0017: a secret-named value that is also a common word
 // is still redacted, and the marker names the variable, so a reader knows what the text masked.

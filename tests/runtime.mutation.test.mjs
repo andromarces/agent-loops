@@ -256,6 +256,32 @@ test("a probe turn that changes the work tree is a fatal mutation", async () => 
   }
 });
 
+// Usefulness: verifies a cancel that lands during the post-turn snapshot of the resolved-model probe
+// ends it as canceled, so `--continue-from` exits 130 and not on a probe that read as clean (#587).
+test("a cancel during the probe post-turn snapshot ends the probe as canceled", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  try {
+    const rev = scripted([
+      () => {
+        setImmediate(() => controller.abort());
+        return "OK";
+      },
+    ]);
+    await expect(
+      runProbeTurn({
+        agents: { rev },
+        state: { kind: "rev", sessionId: null },
+        roleName: "reviewer",
+        cwd: repo,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies an edit by the first orchestrator call that the rerun of a replaced
 // conversation restores is still a fatal mutation, because each call is checked on its own
 // (issue #396, ADR 0016).

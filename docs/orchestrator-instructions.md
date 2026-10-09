@@ -481,7 +481,13 @@ Reports recorded in issue #342, not re-observed: the reviewer turns of the
 #301, #302, #311, and #326 runs, on the same CLI version, mode, and OS, each
 reported `Vitest failed at startup (spawn EPERM)`. Their `Checks` lines
 therefore excluded the test suite. Other platforms, other Codex versions, and
-the elevated Windows sandbox are not verified.
+the elevated Windows sandbox are not verified, except the macOS result below.
+
+Direct probe: on 2026-10-10, a `codex exec` run on macOS with codex-cli
+0.163.0-alpha.4 and `sandbox_mode="read-only"` ran `pnpm test`. It exited 1
+before any test started: `vp` failed to load `vite.config.mjs` with `EPERM` on
+`mkdir '<repo>/node_modules/.vite-temp'`. The reviewer cannot run the suite on
+macOS either. Linux and the elevated Windows sandbox stay not verified.
 
 When a reviewer `Checks` line shows that tests did not run, for any reason, the
 reviewer accept is not test evidence. Use the required CI checks for test

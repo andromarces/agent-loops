@@ -95,6 +95,26 @@ test("readContinuation rejects an unconfirmed mark that is not a boolean", async
   await expect(readJson(bad)).rejects.toThrow("invalid worker role");
 });
 
+// Usefulness: the replaced mark of a canceled run reaches the new role with its id, so the next worker
+// turn sends the preamble to the replacement conversation (#587). A role with no id restores none.
+test("restoreSessions keeps the replaced mark of a restored session id", () => {
+  const next = roles();
+  const earlier = transcript();
+  earlier.roles.worker.conversationReplaced = true;
+  earlier.roles.reviewer.conversationReplaced = true;
+  restoreSessions(next, earlier, CWD);
+  expect(next.worker.conversationReplaced).toBe(true);
+  expect(next.reviewer.conversationReplaced).toBeUndefined();
+  expect(next.orchestrator.conversationReplaced).toBeUndefined();
+});
+
+// Usefulness: a mark that is not a boolean is refused, so a crafted value cannot reach the prompt choice (#587).
+test("readContinuation rejects a replaced mark that is not a boolean", async () => {
+  const bad = transcript();
+  bad.roles.worker.conversationReplaced = "yes";
+  await expect(readJson(bad)).rejects.toThrow("invalid worker role");
+});
+
 // Usefulness: a session id is valid only for the CLI that made it, so a changed
 // role kind is refused, and the refusal names the role and both kinds.
 test("restoreSessions rejects a changed role kind", () => {

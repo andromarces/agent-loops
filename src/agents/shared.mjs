@@ -157,3 +157,16 @@ export function recordResolvedModel(state, reported, requestedId, returnedId) {
   const keptSession = Boolean(session) && (!requestedId || session === requestedId);
   setResolvedModel(state, keptSession ? reported : []);
 }
+
+/**
+ * Throws the cancel error (`isCanceled`) when `signal` is aborted, for a turn whose adapter already
+ * returned. The state is left as the adapter set it: the id the CLI reported and the
+ * `conversationReplaced` mark both stay, so the next turn sends the preamble or instructions that a
+ * replaced conversation never received (ADR 0027, decision 5).
+ * @param {AbortSignal | undefined} signal
+ * @param {string} name the name in the error message
+ */
+export function throwIfCanceled(signal, name) {
+  if (!signal?.aborted) return;
+  throw Object.assign(new Error(`${name} was canceled.`), { isCanceled: true });
+}
