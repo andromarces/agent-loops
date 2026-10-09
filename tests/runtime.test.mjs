@@ -20,7 +20,7 @@ vi.mock("execa", async (importOriginal) => {
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { gateFromTranscript } from "../src/lib/continuation.mjs";
-import { runLoop } from "../src/runtime.mjs";
+import { runChild, runLoop } from "../src/runtime.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
 import {
   apiArgs,
@@ -937,6 +937,306 @@ test("cancel signal stops loop", async () => {
         agents: { orch: scripted(orchReplies), work: workerAdapter, rev: scripted([]) },
       }),
     ).rejects.toMatchObject({ isCanceled: true });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cancel that lands after the worker CLI exits ends the loop as canceled and
+// records no ok result for that turn (#587); the cancel is not left for the next spawn to find.
+test("a cancel after the worker returns ends the loop with no ok result", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const events = [];
+  try {
+    const workerAdapter = scripted([
+      async () => {
+        controller.abort();
+        return "Conclusion: done\nWhy: ok\nBlockers: none";
+      },
+    ]);
+
+    await expect(
+      runLoop({
+        task: "Task late cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        onEvent: (event) => events.push(event),
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: {
+          orch: scripted([
+            JSON.stringify({ action: "run_worker", prompt: "go" }),
+            JSON.stringify({
+              action: "finish",
+              summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+            }),
+          ]),
+          work: workerAdapter,
+          rev: scripted([]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(events.filter((event) => event.type === "result")).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cancel that lands during the post-turn snapshot of a reviewer turn ends the
+// loop as canceled with no ok result for that turn (#587).
+test("a cancel during the reviewer post-turn snapshot ends the loop with no ok result", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const events = [];
+  try {
+    await expect(
+      runLoop({
+        task: "Task snapshot cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        onEvent: (event) => events.push(event),
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: {
+          orch: scripted([
+            JSON.stringify({ action: "run_reviewer", prompt: "inspect" }),
+            JSON.stringify({
+              action: "finish",
+              summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+            }),
+          ]),
+          work: scripted([]),
+          rev: scripted([
+            () => {
+              setImmediate(() => controller.abort());
+              return "reviewer inspected";
+            },
+          ]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(events.filter((event) => event.type === "result")).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cancel that lands during the post-turn snapshot of an orchestrator turn does
+// not let the finish action it returned end the run with exit 0 (#587).
+test("a cancel during the orchestrator post-turn snapshot does not finish the run", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  try {
+    await expect(
+      runLoop({
+        task: "Task orchestrator snapshot cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        roles: {
+          orchestrator: { kind: "orch", sessionId: null },
+          worker: { kind: "work", sessionId: null },
+          reviewer: { kind: "rev", sessionId: null },
+        },
+        agents: {
+          orch: scripted([
+            () => {
+              setImmediate(() => controller.abort());
+              return JSON.stringify({
+                action: "finish",
+                summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+              });
+            },
+          ]),
+          work: scripted([]),
+          rev: scripted([]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cancel during the post-turn snapshot of a reviewer turn that ran in a replaced
+// conversation keeps the id the CLI reported and the replaced mark, as ADR 0027 requires (#587).
+test("a cancel during the reviewer snapshot keeps the reported id and the replaced mark", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const roles = {
+    orchestrator: { kind: "orch", sessionId: null },
+    worker: { kind: "work", sessionId: null },
+    reviewer: { kind: "rev", sessionId: "earlier-conversation" },
+  };
+  try {
+    await expect(
+      runLoop({
+        task: "Task replaced reviewer cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        roles,
+        agents: {
+          orch: scripted([JSON.stringify({ action: "run_reviewer", prompt: "inspect" })]),
+          work: scripted([]),
+          rev: scripted([
+            (state) => {
+              state.sessionId = "replacement-conversation";
+              state.conversationReplaced = true;
+              setImmediate(() => controller.abort());
+              return "reviewer inspected";
+            },
+          ]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(roles.reviewer.sessionId).toBe("replacement-conversation");
+    expect(roles.reviewer.conversationReplaced).toBe(true);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the same for an orchestrator turn: a cancel during its post-turn snapshot keeps
+// the reported id and the replaced mark of a replaced conversation (#587, ADR 0027).
+test("a cancel during the orchestrator snapshot keeps the reported id and the replaced mark", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const roles = {
+    orchestrator: { kind: "orch", sessionId: "earlier-conversation" },
+    worker: { kind: "work", sessionId: null },
+    reviewer: { kind: "rev", sessionId: null },
+  };
+  try {
+    await expect(
+      runLoop({
+        task: "Task replaced orchestrator cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        roles,
+        agents: {
+          orch: scripted([
+            (state) => {
+              state.sessionId = "replacement-conversation";
+              state.conversationReplaced = true;
+              setImmediate(() => controller.abort());
+              return JSON.stringify({ action: "abort", reason: "stop" });
+            },
+          ]),
+          work: scripted([]),
+          rev: scripted([]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(roles.orchestrator.sessionId).toBe("replacement-conversation");
+    expect(roles.orchestrator.conversationReplaced).toBe(true);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cancel of the instruction rerun after an orchestrator conversation replacement
+// keeps the reported id and the replaced mark, so the next orchestrator turn carries the instructions (#587).
+test("a canceled instruction rerun keeps the replacement id and the replaced mark", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const roles = {
+    orchestrator: { kind: "orch", sessionId: "earlier-conversation" },
+    worker: { kind: "work", sessionId: null },
+    reviewer: { kind: "rev", sessionId: null },
+  };
+  try {
+    await expect(
+      runLoop({
+        task: "Task canceled instruction rerun",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        roles,
+        agents: {
+          orch: scripted([
+            JSON.stringify({ action: "run_worker", prompt: "go" }),
+            (state) => {
+              state.sessionId = "replacement-conversation";
+              state.conversationReplaced = true;
+              return JSON.stringify({ action: "run_worker", prompt: "again" });
+            },
+            () => {
+              controller.abort();
+              throw new ExecError("canceled", { isCanceled: true });
+            },
+          ]),
+          work: scripted(["Conclusion: done\nWhy: ok\nBlockers: none"]),
+          rev: scripted([]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(roles.orchestrator.sessionId).toBe("replacement-conversation");
+    expect(roles.orchestrator.conversationReplaced).toBe(true);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cancel of the preamble-only turn of a replaced worker conversation keeps the
+// replaced mark, and the next worker turn then sends the preamble with its task and clears the mark (#587).
+test("a canceled preamble turn keeps the mark and the next worker turn sends the preamble", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  try {
+    const role = { kind: "work", sessionId: "gone" };
+    const calls = [];
+    const worker = {
+      async run(state, prompt) {
+        calls.push({ sessionId: state.sessionId, prompt });
+        if (calls.length === 1) {
+          state.sessionId = "replacement";
+          state.conversationReplaced = true;
+          return "worker done";
+        }
+        if (calls.length === 2) {
+          controller.abort();
+          throw new ExecError("canceled", { isCanceled: true });
+        }
+        return "worker done again";
+      },
+    };
+    const agents = { work: worker };
+
+    await expect(
+      runChild({
+        agents,
+        role,
+        roleName: "worker",
+        prompt: "do the work",
+        cwd: repo,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(role).toMatchObject({ sessionId: "replacement", conversationReplaced: true });
+
+    const result = await runChild({
+      agents,
+      role,
+      roleName: "worker",
+      prompt: "next task",
+      cwd: repo,
+    });
+    expect(result.status).toBe("ok");
+    expect(calls[2].sessionId).toBe("replacement");
+    expect(calls[2].prompt).toContain("You are the implementation agent (worker)");
+    expect(calls[2].prompt).toContain("next task");
+    expect(role.conversationReplaced).toBeUndefined();
   } finally {
     await removePath(repo);
   }
