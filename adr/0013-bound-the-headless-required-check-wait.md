@@ -20,7 +20,7 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
 ## Decision
 
 1. The headless orchestrator runs each wait through `role wait-checks --pr <pr>
---timeout <seconds>`, the operation ADR 0010 defined. The prompt no longer
+   --timeout <seconds>`, the operation ADR 0010 defined. The prompt no longer
    names a `gh` watch.
 2. The prompt renders the whole command, not a bare `agent-loop`.
    `waitChecksCommand` names `process.execPath`, the `src/cli.mjs` that this

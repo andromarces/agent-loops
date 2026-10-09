@@ -39,7 +39,7 @@
     "execa": "^10.0.1"
   },
   "devDependencies": {
-    "vite-plus": "1.0.0"
+    "vite-plus": "1.1.0"
   },
   "engines": {
     "node": "^22.18.0 || ^24.11.0 || >=26.0.0"

@@ -69,7 +69,7 @@ files is a new runtime contract, and it handles files that can hold secrets.
    privileges and a copy does not follow later edits in the main work tree.
 7. **Work trees and Git files are excluded.** Isolation holds on both sides. In the
    main work tree, `.claude/worktrees/`, every registered work tree that `git
-worktree list` names (even when its `.git` entry is gone), every directory that
+   worktree list` names (even when its `.git` entry is gone), every directory that
    holds a `.git` entry (a file or a directory), and any path component named
    `.git` are never walked and never reported. In `--cwd`, a target is never
    written inside a registered work tree other than `--cwd` itself, nor inside a
