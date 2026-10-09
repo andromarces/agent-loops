@@ -57,8 +57,10 @@ Node `^22.18.0 || ^24.11.0 || >=26.0.0`.
    `.vite-hooks/` and are committed. `vp config` generates the dispatcher in
    `.vite-hooks/_/`, which is ignored, and points `core.hooksPath` at it.
 9. `"prepare": "node .vite-hooks/install.mjs"`. The guard exits 0 in CI
-   (`CI=true`), in production (`NODE_ENV=production`), with `VP_GIT_HOOKS=0`, and
-   when `vite-plus` is absent, so a registry or Git URL install never requires it.
+   (`CI=true`), in production (`NODE_ENV=production`), with `VP_GIT_HOOKS=0`,
+   when `vite-plus` is absent, and when the package directory has no `.git` (the
+   temporary checkout of a Git URL install), so a registry or Git URL install never
+   requires it and never warns.
    Otherwise it runs `vp config --no-agent` with the current Node binary. `--no-agent`
    keeps `vp config` away from `AGENTS.md` and `CLAUDE.md`. The guard always exits
    0 and writes nothing to stdout: the `vp config` stdout goes to stderr. Any other

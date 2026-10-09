@@ -99,3 +99,17 @@ test.each(huskyForms)("prepare clears the local Husky hooks path %s", async (for
 
   expect((await git("config", "--local", "core.hooksPath")).exitCode).toBe(1);
 });
+
+// Usefulness: verifies that a package directory outside any Git work tree, such as
+// the temporary checkout of an `npm install github:...`, installs silently, so a Git
+// URL install prints no hook warning; no other test runs `prepare` without a repo.
+test("prepare is a silent no-op outside a Git work tree", async () => {
+  const { repo, prepare } = await setup();
+  await removePath(join(repo, ".git"));
+
+  const result = await prepare();
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("");
+});
