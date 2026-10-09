@@ -1067,6 +1067,84 @@ test("a cancel during the orchestrator post-turn snapshot does not finish the ru
   }
 });
 
+// Usefulness: verifies a cancel during the post-turn snapshot of a reviewer turn that ran in a replaced
+// conversation keeps the earlier session id, as a cancel before the adapter returned does (#587, ADR 0027).
+test("a cancel during the reviewer snapshot keeps the earlier id of a replaced conversation", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const roles = {
+    orchestrator: { kind: "orch", sessionId: null },
+    worker: { kind: "work", sessionId: null },
+    reviewer: { kind: "rev", sessionId: "earlier-conversation" },
+  };
+  try {
+    await expect(
+      runLoop({
+        task: "Task replaced reviewer cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        roles,
+        agents: {
+          orch: scripted([JSON.stringify({ action: "run_reviewer", prompt: "inspect" })]),
+          work: scripted([]),
+          rev: scripted([
+            (state) => {
+              state.sessionId = "replacement-conversation";
+              state.conversationReplaced = true;
+              setImmediate(() => controller.abort());
+              return "reviewer inspected";
+            },
+          ]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(roles.reviewer.sessionId).toBe("earlier-conversation");
+    expect(roles.reviewer.conversationReplaced).toBeUndefined();
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the same for an orchestrator turn: a cancel during its post-turn snapshot keeps
+// the earlier session id of a replaced conversation (#587, ADR 0027).
+test("a cancel during the orchestrator snapshot keeps the earlier id of a replaced conversation", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  const roles = {
+    orchestrator: { kind: "orch", sessionId: "earlier-conversation" },
+    worker: { kind: "work", sessionId: null },
+    reviewer: { kind: "rev", sessionId: null },
+  };
+  try {
+    await expect(
+      runLoop({
+        task: "Task replaced orchestrator cancel",
+        cwd: repo,
+        maxSteps: 5,
+        signal: controller.signal,
+        roles,
+        agents: {
+          orch: scripted([
+            (state) => {
+              state.sessionId = "replacement-conversation";
+              state.conversationReplaced = true;
+              setImmediate(() => controller.abort());
+              return JSON.stringify({ action: "abort", reason: "stop" });
+            },
+          ]),
+          work: scripted([]),
+          rev: scripted([]),
+        },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(roles.orchestrator.sessionId).toBe("earlier-conversation");
+    expect(roles.orchestrator.conversationReplaced).toBeUndefined();
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 23. Usefulness: verifies issue #26 acceptance — a timed-out child produces a log line naming the role and "timed out".
 test("timed-out child logs a line naming the role and timed out", async () => {
   const repo = await createTempRepo();

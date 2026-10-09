@@ -3,7 +3,7 @@ import { runCodex } from "./codex.mjs";
 import { runAgy } from "./agy.mjs";
 import { runOpenCode } from "./opencode.mjs";
 import { runCopilot } from "./copilot.mjs";
-import { canceledError } from "./shared.mjs";
+import { throwIfCanceled } from "./shared.mjs";
 
 export function normalizeAgent(kind) {
   return kind === "antigravity" ? "agy" : kind;
@@ -40,15 +40,12 @@ export async function runAgent(state, prompt, options = {}, agents = defaultAgen
   // A cancel can land after the child exits and before the adapter returns. The adapter then returns
   // a result, so one check here ends that turn as canceled for every adapter. The adapter has already
   // kept the usage on `state`.
-  if (options.signal?.aborted) {
-    // A replaced conversation never received the worker preamble, and a canceled turn cannot send
-    // it. The earlier id stays, so the next resume replaces the conversation again and sends it.
-    if (state.conversationReplaced) {
-      state.sessionId = requestedSessionId;
-      delete state.conversationReplaced;
-    }
-    throw canceledError(kind);
-  }
+  throwIfCanceled(
+    options.signal,
+    kind,
+    state,
+    state.conversationReplaced ? requestedSessionId : undefined,
+  );
   return response;
 }
 

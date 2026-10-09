@@ -1,5 +1,5 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
-import { canceledError } from "./agents/shared.mjs";
+import { throwIfCanceled } from "./agents/shared.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import { readableErrorText, readProp } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
@@ -75,6 +75,8 @@ export async function runProbeTurn({
       stepsUsed: 0,
     }),
   );
+  // A cancel can land in the post-turn snapshot, after the adapter returned (#587).
+  throwIfCanceled(signal, roleName, state);
 }
 
 /**
@@ -120,6 +122,7 @@ export async function runChild(options) {
 
   const isWorker = roleName === "worker";
   const readOnly = !isWorker;
+  const requestedSessionId = role.sessionId;
   // The opt-in reaches the reviewer turn only. `readOnly` stays true there, so the mutation check
   // below still wraps the turn, and the orchestrator path never sets this input (ADR 0019).
   const sandbox = roleName === "reviewer" && reviewerWorkspaceWrite ? "workspace-write" : null;
@@ -166,28 +169,24 @@ export async function runChild(options) {
   // that conversation never received the worker preamble. The turn already ran, so a rerun would
   // repeat its edits. A preamble-only turn in the new conversation gives it the preamble instead.
   // The turn that ran stays the result, so a failed preamble turn only warns (issue #396, ADR 0016).
-  // The mark is cleared on every exit, so a step that throws after the adapter succeeded, such
-  // as an event handler, leaves no stale mark for a later turn.
+  // The mark is cleared on every exit of `runChild`, so a step that throws after the adapter
+  // succeeded, such as an event handler, leaves no stale mark for a later turn.
   const runFn = async (finalPrompt) => {
-    try {
-      const response = await runTurn(finalPrompt);
-      if (role.conversationReplaced && isWorker) {
-        delete role.conversationReplaced;
-        try {
-          await invokeRole(workerPrompt(PREAMBLE_ONLY_TASK, true));
-        } catch (err) {
-          if (readProp(err, "isCanceled")) {
-            throw err;
-          }
-          logWarn(
-            `worker: the preamble turn in the new conversation failed: ${readableErrorText(err).split("\n")[0]}`,
-          );
-        }
-      }
-      return response;
-    } finally {
+    const response = await runTurn(finalPrompt);
+    if (role.conversationReplaced && isWorker) {
       delete role.conversationReplaced;
+      try {
+        await invokeRole(workerPrompt(PREAMBLE_ONLY_TASK, true));
+      } catch (err) {
+        if (readProp(err, "isCanceled")) {
+          throw err;
+        }
+        logWarn(
+          `worker: the preamble turn in the new conversation failed: ${readableErrorText(err).split("\n")[0]}`,
+        );
+      }
     }
+    return response;
   };
 
   // The worker prompt needs no runtime read, so it is built once here. The
@@ -244,10 +243,15 @@ export async function runChild(options) {
         })
       : await runFn(workerFinalPrompt);
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
-    // this function passes here, so no caller records a canceled turn as ok (#587).
-    if (signal?.aborted) {
-      throw canceledError(roleName);
-    }
+    // this function passes here, so no caller records a canceled turn as ok (#587). A reviewer turn
+    // that ran in a replaced conversation keeps the earlier id, as `runAgent` does for a cancel
+    // before the adapter returns (ADR 0027).
+    throwIfCanceled(
+      signal,
+      roleName,
+      role,
+      role.conversationReplaced ? requestedSessionId : undefined,
+    );
     return {
       role: roleName,
       status: "ok",
@@ -284,6 +288,8 @@ export async function runChild(options) {
       error: errorMessage,
       ...(testRun ? { testRun } : {}),
     };
+  } finally {
+    delete role.conversationReplaced;
   }
 }
 
@@ -492,6 +498,7 @@ export async function runLoop(options) {
   // One rerun only, and the mark is cleared on every exit (issue #396, ADR 0016).
   const orchAdapter = {
     async run(state, p, opts) {
+      const earlierSessionId = state.sessionId;
       const call = (text) => {
         const resumedUnconfirmed = state.sessionId !== null && state.sessionUnconfirmed === true;
         return withMutationCheck(cwd, "orchestrator", async () => {
@@ -521,17 +528,26 @@ export async function runLoop(options) {
         });
       };
       try {
-        const response = await call(p);
-        if (!state.conversationReplaced || p === instructions) {
-          return response;
+        let response = await call(p);
+        const replaced = Boolean(state.conversationReplaced);
+        if (replaced && p !== instructions) {
+          delete state.conversationReplaced;
+          logWarn(
+            "orchestrator: conversation was replaced; rerunning the turn with its instructions",
+          );
+          response = await call(
+            `${instructions}\n\nThe conversation restarted and earlier turns are lost. Ignore the request above to choose a first action. Answer the prompt below.\n\n${p}`,
+          );
         }
-        delete state.conversationReplaced;
-        logWarn(
-          "orchestrator: conversation was replaced; rerunning the turn with its instructions",
+        // A cancel can land in the post-turn snapshot, after the adapter returned. The turn then
+        // keeps the earlier id of a replaced conversation, as `runAgent` does (#587, ADR 0027).
+        throwIfCanceled(
+          opts.signal,
+          "orchestrator",
+          state,
+          replaced ? earlierSessionId : undefined,
         );
-        return await call(
-          `${instructions}\n\nThe conversation restarted and earlier turns are lost. Ignore the request above to choose a first action. Answer the prompt below.\n\n${p}`,
-        );
+        return response;
       } finally {
         delete state.conversationReplaced;
       }

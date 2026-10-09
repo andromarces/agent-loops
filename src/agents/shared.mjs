@@ -158,7 +158,20 @@ export function recordResolvedModel(state, reported, requestedId, returnedId) {
   setResolvedModel(state, keptSession ? reported : []);
 }
 
-/** The error of a turn that ended on a cancel: `isCanceled` is set, as on an `exec` cancel. */
-export function canceledError(name) {
-  return Object.assign(new Error(`${name} was canceled.`), { isCanceled: true });
+/**
+ * Throws the cancel error (`isCanceled`) when `signal` is aborted, for a turn whose adapter already
+ * returned. A turn that ran in a replaced conversation never received the role preamble or
+ * instructions, and a canceled turn cannot send them. `replacedFrom`, the id the turn resumed, then
+ * goes back on `state`, so the next resume replaces the conversation again and sends them (ADR 0027).
+ * Pass it only when the conversation was replaced.
+ * @param {AbortSignal | undefined} signal
+ * @param {string} name the name in the error message
+ * @param {object} state role state; mutated on a cancel
+ * @param {string | null} [replacedFrom]
+ */
+export function throwIfCanceled(signal, name, state, replacedFrom) {
+  if (!signal?.aborted) return;
+  if (replacedFrom !== undefined) state.sessionId = replacedFrom;
+  delete state.conversationReplaced;
+  throw Object.assign(new Error(`${name} was canceled.`), { isCanceled: true });
 }

@@ -1,4 +1,3 @@
-import { canceledError } from "./agents/shared.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 import { logWarn } from "./lib/log.mjs";
 import { extractJsonObject } from "./lib/json.mjs";
@@ -15,18 +14,12 @@ export async function decide({ agent, state, prompt, options = {} }) {
   const { cwd, timeout, signal } = options;
 
   async function executeTurn(turnPrompt) {
-    const response = await agent.run(state, turnPrompt, {
+    return agent.run(state, turnPrompt, {
       cwd,
       readOnly: true,
       timeout,
       signal,
     });
-    // A cancel that lands after the adapter returned, in the post-turn snapshot, must not let the
-    // action in `response` run or finish the run (#587).
-    if (signal?.aborted) {
-      throw canceledError("orchestrator");
-    }
-    return response;
   }
 
   function parseAndValidate(rawResponse) {
