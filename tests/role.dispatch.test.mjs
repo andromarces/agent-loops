@@ -777,6 +777,52 @@ test("resume-interrupted from dispatched marks interrupted first and runs no chi
   expect(resumedState.resumeDecision).toBeTruthy();
 });
 
+// Usefulness: verifies `--resume-interrupted` refuses, before the step is charged, a claude session
+// that a live process holds, the orphan that a hard kill of the dispatch leaves (#671, ADR 0029). No
+// other test reaches the holder check on the resume path. A later resume with no holder succeeds.
+test("resume-interrupted refuses a claude session that a live process holds", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+  const heldId = "11111111-2222-4333-8444-555555555555";
+  const worker = recordingAdapter([]);
+  const deps = (processes) => ({
+    agents: { claude: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+    readProcessCommands: async () => processes,
+  });
+
+  await executeRoleCommand(
+    withRepo(dispatchArgv(INIT_OVERRIDES.map((v) => (v === "fake1" ? "claude" : v))), repo),
+    deps([]),
+  );
+  const state = await readState(paths.stateFile);
+  state.lifecycle = "interrupted";
+  state.roles.worker.sessionId = heldId;
+  await writeState(paths.stateFile, state);
+  const stepsBefore = state.stepsUsed;
+  const recordedBefore = worker.recorded.length;
+
+  const refused = await executeRoleCommand(
+    withRepo(dispatchArgv(["--resume-interrupted"]), repo),
+    deps([{ pid: 4242, command: `claude -p --session-id ${heldId} --model haiku` }]),
+  );
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toMatch(new RegExp(`worker session ${heldId}.*process 4242`));
+  expect(worker.recorded.length).toBe(recordedBefore);
+  const after = await readState(paths.stateFile);
+  expect(after.stepsUsed).toBe(stepsBefore);
+  expect(after.lifecycle).toBe("interrupted");
+
+  const resumed = await executeRoleCommand(
+    withRepo(dispatchArgv(["--resume-interrupted"]), repo),
+    deps([]),
+  );
+  expect(resumed.exitCode).toBe(0);
+  expect(worker.recorded.at(-1).incomingSessionId).toBe(heldId);
+});
+
 // Usefulness: verifies only the role kind is normalized in the change
 // comparison — model and effort are opaque pass-through strings, so repeating
 // an identical `--worker-model antigravity` passes and a changed one is
