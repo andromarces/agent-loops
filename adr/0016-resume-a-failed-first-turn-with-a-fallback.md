@@ -152,9 +152,9 @@ step budget runs out.
    headless parent pid. ADR 0027 holds the commands and the results. Every result agrees with the
    decisions here. With a transcript outside the work tree and the session file seen in the driver sample,
    both signals left the id with the mark, and `--continue-from` resumed it for the orchestrator, the
-   reviewer, and the worker. A sample before the session file existed gave the refusal for an orchestrator
-   id, and a rerun as a first turn for a reviewer id and for an in-tree worker id. `SIGTERM` left no child process.
-   `SIGKILL` of the parent left the `claude` child as an orphan for at least 1.5 s. Not verified: Linux.
+   reviewer, and the worker. A run whose sample showed no session file gave the refusal for an orchestrator
+   id, and a rerun as a first turn for a reviewer id and for an in-tree worker id. After `SIGTERM`, the same check found no child process.
+   `SIGKILL` of the parent left a `claude` child with parent pid 1 in 12 of 14 probes, at a check 1.5 s after the parent exit. Not verified: Linux.
    Separate processes that
    share one transcript path have no write coordination: each write is atomic and the last wins.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
