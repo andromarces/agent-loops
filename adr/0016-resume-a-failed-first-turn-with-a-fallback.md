@@ -147,7 +147,15 @@ step budget runs out.
    Windows 11 with Claude Code 2.1.295. ADR 0027 holds the commands and the results. A forced kill
    with `taskkill /F /T` left the id with the mark. `--continue-from` resumed it after the ownership
    check, when the driver sample before the kill showed the session file. A run whose sample showed
-   no session file was refused. A reviewer then reran as a first turn. Not verified: SIGKILL and SIGTERM on POSIX. Separate processes that
+   no session file was refused. A reviewer then reran as a first turn. Issue #580 also probed
+   `SIGKILL` and `SIGTERM` on macOS 27.2 (arm64), Node v26.11.1, Claude Code 2.1.296, with `kill` of the
+   headless parent pid. ADR 0027 holds the commands and the results. Every result agrees with the
+   decisions here. With a transcript outside the work tree and the session file seen in the driver sample,
+   both signals left the id with the mark, and `--continue-from` resumed it for the orchestrator, the
+   reviewer, and the worker. A sample before the session file existed gave the refusal for an orchestrator
+   id, and a rerun as a first turn for a reviewer id and for an in-tree worker id. `SIGTERM` left no child process.
+   `SIGKILL` of the parent left the `claude` child as an orphan for at least 1.5 s. Not verified: Linux.
+   Separate processes that
    share one transcript path have no write coordination: each write is atomic and the last wins.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
