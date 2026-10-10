@@ -21,6 +21,13 @@ Direct probes, macOS, codex-cli 0.162.0-alpha.9 (issue #421, 2026-10-04) and 0.1
 - `workspace-write` with `sandbox_workspace_write.network_access=false` (2026-10-05): `./node_modules/.bin/vitest run` exits 0 (66 files passed, 1 skipped; 1249 tests passed, 8 skipped), and the shell commands `curl https://api.github.com` and `gh pr checks` fail to connect (`Could not resolve host`, `error connecting to api.github.com`). The work tree stayed clean. Only shell commands were probed. The Codex `web_search` tool ran under `read-only` in the 2026-10-04 probe, because it is a model-side tool that the sandbox does not cover, and no model-side tool or connector was probed under `workspace-write`.
 - `workspace-write` with no `network_access` setting on the command line (2026-10-05): `curl` returned HTTP 200 and `gh pr checks` listed the checks. The user Codex config on that machine sets `[sandbox_workspace_write] network_access = true`, so the mode inherits network from the user config.
 
+Live probe of the merged adapter, macOS 27.2 arm64, codex-cli 0.163.0-alpha.5, Node v26.11.1, repository commit `76bb63c` (issue #499, 2026-10-10). Each turn ran through `agent-loop role dispatch --role reviewer --reviewer codex --reviewer-workspace-write` against a disposable clone in the system temporary directory, with `./node_modules/.bin/vp` as the project's local test binary. The test and network results come from the output that the reviewer reported, and the exit code and message of the halted run come from the `role dispatch` call:
+
+- The reviewer ran `./node_modules/.bin/vp test run tests/lib/args.test.mjs` (exit 0, 4 passed) and a Node child spawn (`execFileSync` of `process.execPath`, exit 0, printed `child-ok`). A second turn ran the full suite with `./node_modules/.bin/vp test run`: exit 0, 82 files passed and 1 skipped, 1884 tests passed and 17 skipped. The same suite outside the sandbox gave 1892 passed and 9 skipped. The 8 extra skips are the `tests/lib/runstate.test.mjs` tests that skip when `ps` cannot run on macOS, so the sandbox blocks `ps` (inferred from that skip guard, not probed directly). The test runner spawned its workers and its child processes under the sandbox.
+- A shell `curl https://api.github.com` failed with exit 6 and `Could not resolve host: api.github.com`. The explicit `network_access=false` setting held. Only shell commands were probed, as before.
+- A reviewer shell command that appended a line to `README.md` made the run halt: the `role dispatch` call exited 1 with `Mutation detected during reviewer turn: README.md`, which is the `MutationError` message, and the edit stayed on disk.
+- Not verified: Linux, Windows (unelevated and elevated), `pnpm exec`, `gh`, and any model-side tool or connector under `workspace-write`.
+
 The headless orchestrator has three guards that this change leaves in place: `readOnly: true` on the first and the repair turn in `decide`, the Codex `read-only` flag that follows from it, and the `withMutationCheck(cwd, "orchestrator", ...)` wrapper in `orchAdapter`. The adapter and `runChild` shared one `readOnly` boolean, so the opt-in needs a separate reviewer-only input.
 
 ## Decision
@@ -56,7 +63,7 @@ The headless orchestrator has three guards that this change leaves in place: `re
 
 ## Consequences
 
-- An operator who accepts the gaps gets a Codex reviewer that can run a targeted test or an ad-hoc probe, without a package manager and without shell network, on macOS (probed) and probably Linux (not probed).
+- An operator who accepts the gaps gets a Codex reviewer that can run a targeted test or an ad-hoc probe, without a package manager and without shell network, on macOS (probed, including the live probe of the merged adapter) and probably Linux (not probed).
 - A reviewer that edits the work tree halts the run and leaves the change on disk. The parent reads the `MutationError` and decides.
 - The default is unchanged, and so are the other four adapters, the worker, and every orchestrator turn.
 - A run that needs `gh` or another shell network read from the reviewer keeps the runtime read of ADR 0011, or its own decision for network.
@@ -79,6 +86,7 @@ Andro Marces
 
 - [Issue #421: Add an opt-in workspace-write sandbox for the Codex reviewer](https://github.com/andromarces/agent-loops/issues/421)
 - [Issue #342: Document that a Codex reviewer on Windows cannot spawn the test runner](https://github.com/andromarces/agent-loops/issues/342)
+- [Issue #499: Verify the opt-in workspace-write Codex reviewer sandbox on live runs](https://github.com/andromarces/agent-loops/issues/499)
 - [Issue #384: Verify the Codex read-only test-runner spawn on macOS, Linux, and the elevated Windows sandbox](https://github.com/andromarces/agent-loops/issues/384)
 - [Issue #420: Run a --test-cmd before each reviewer turn and supply the result to the reviewer](https://github.com/andromarces/agent-loops/issues/420)
 - [Issue #422: Forbid GitHub and remote writes in every reviewer and orchestrator turn](https://github.com/andromarces/agent-loops/issues/422)
