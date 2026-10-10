@@ -1723,10 +1723,10 @@ test("the network denial scan flags an unqualified denial and accepts a qualifie
   ).toEqual([]);
 });
 
-// A Codex shell network denial holds only without a user execpolicy rule that allows `bash -c`,
-// `sh -c`, or `zsh -c`: such a rule ran a shell command outside the sandbox, with network (issue
-// #640). The runtime does not prevent that (issue #655), so every runtime prompt sentence that
-// denies shell network must be followed, within six sentences, by this exact exception text.
+// A user execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception to the Codex
+// shell network limit. Such a rule ran a shell command outside the sandbox, with network (issue
+// #640). The runtime does not prevent that (issue #655). Every runtime prompt sentence that denies
+// shell network must carry this exact exception text, within six sentences after the denial.
 const USER_RULE_EXCEPTION =
   "A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.";
 function denialsWithoutUserRuleException(text) {
@@ -1741,9 +1741,9 @@ function denialsWithoutUserRuleException(text) {
   );
 }
 
-// Usefulness: verifies every rendered orchestrator prompt and the opted-in reviewer prompt state
-// the user-rule exception next to a shell network denial, so neither role treats a shell network
-// result as impossible (issue #655). The qualification scan above does not check the exception.
+// Usefulness: verifies that each rendered orchestrator prompt and the opted-in reviewer prompt
+// carry the user-rule exception after a shell network denial (issue #655). No role then treats a
+// shell network result as impossible. The qualification scan above does not check the exception.
 describe.each([
   ["default", false],
   ["opted-in", true],
@@ -1769,15 +1769,15 @@ describe.each([
   });
 });
 
-// Usefulness: verifies the opted-in reviewer prompt states the user-rule exception, and the
-// default reviewer prompt has no sandbox line to qualify (issue #655).
+// Usefulness: verifies that the opted-in reviewer prompt carries the exact user-rule exception
+// text (issue #655).
 test("the opted-in reviewer prompt states the user-rule exception", () => {
   expect(denialsWithoutUserRuleException(reviewerPrompt("x", null, null, true))).toEqual([]);
   expect(reviewerPrompt("x", null, null, true).replace(/\s+/g, " ")).toContain(USER_RULE_EXCEPTION);
 });
 
-// Usefulness: verifies the exception scan flags a denial with no exception, so a pass is not a
-// blind detector.
+// Usefulness: verifies that the exception scan flags a denial with no exception or a contradicting
+// one. A pass then means the prompts are clean, not that the detector is blind.
 test("the exception scan flags a denial without the user-rule exception", () => {
   expect(
     denialsWithoutUserRuleException("The shell commands that you run have no network access."),

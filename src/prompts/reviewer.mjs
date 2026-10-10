@@ -80,7 +80,9 @@ const remoteWriteRule =
 // package manager fail and the local binary that does not.
 const workspaceWriteLine = [
   "Sandbox note, supplied by the runtime:",
-  "- This turn runs in a workspace-write sandbox. The shell commands that you run have no network access, so you can run a targeted test or a probe in the work tree. That limit covers shell commands only: it does not block model-side tools, such as web search, or any other channel outside the sandbox. A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that. A shell network result is therefore possible. A package manager that writes to a store or cache outside the work tree fails here: call the project's local binary directly instead.",
+  "- This turn runs in a workspace-write sandbox. The shell commands that you run have no network access, so you can run a targeted test or a probe in the work tree. That limit covers shell commands only: it does not block model-side tools, such as web search, or any other channel outside the sandbox.",
+  "- A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that. A shell network result is therefore possible.",
+  "- A package manager that writes to a store or cache outside the work tree fails here: call the project's local binary directly instead.",
   "- The rule against file changes still holds. The runtime compares the work tree before and after this turn, and a change halts the run.",
 ].join("\n");
 
