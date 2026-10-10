@@ -702,11 +702,18 @@ test.skipIf(process.platform === "win32")(
       (err) => err,
     );
     await shim.ready();
+    const canceledAt = Date.now();
     controller.abort();
+    // Primary evidence: the read rejected as canceled, well inside the 5 s force-kill delay.
     expect(await within(canceled, 20_000, "The canceled read")).toMatchObject({ isCanceled: true });
-    expect(await shim.endedBeforeCeiling()).toBe(true);
+    expect(Date.now() - canceledAt).toBeLessThan(5000);
+    // Secondary evidence: the heartbeat of the shim stopped and its marker is absent.
+    expect(await shim.heartbeatStopped()).toBe(true);
 
+    const boundedAt = Date.now();
     await within(refuseHeldSessions(heldRoles(), { timeout: 1 }), 20_000, "The bounded read");
+    // The 1 s bound plus the 5 s force-kill delay of a SIGTERM-ignoring process.
+    expect(Date.now() - boundedAt).toBeLessThan(12_000);
     const printed = warn.mock.calls.flat().join("\n");
     expect(printed).toContain("the process table read timed out after 1 second.");
     expect(printed).not.toContain(SENTINEL);

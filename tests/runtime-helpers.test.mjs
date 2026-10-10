@@ -72,6 +72,20 @@ test("pollUntil rejects at its deadline when a probe never settles", async () =>
   await expect(pollUntil(async () => 7, 100)).resolves.toBe(7);
 });
 
+// Usefulness: a probe result that arrives after the deadline must be rejected, even when the timer
+// callback has not run yet (#647 review). The probe blocks the event loop past the deadline, so the
+// timer cannot fire first.
+test("pollUntil rejects a probe result that arrives after the deadline", async () => {
+  const late = () => {
+    const until = performance.now() + 150;
+    while (performance.now() < until) {
+      // Busy wait: the result is ready only after the 100 ms deadline.
+    }
+    return 7;
+  };
+  await expect(pollUntil(late, 100)).rejects.toThrow(/not met within 100 ms/);
+});
+
 // Usefulness: the shim readiness reader must never accept a partial heartbeat, and its wait must
 // end at its own deadline.
 test("createPsShim.ready accepts only a complete newline-terminated heartbeat", async () => {
@@ -98,7 +112,7 @@ test.skipIf(process.platform === "win32")(
     try {
       await shim.ready();
       expect(await within(exited, 10_000, "The shim exit")).toBe(0);
-      expect(await shim.endedBeforeCeiling()).toBe(false);
+      expect(await shim.heartbeatStopped()).toBe(false);
       expect(await readFile(join(shim.dir, "done"), "utf8")).toBe("done\n");
     } finally {
       if (child.exitCode === null && child.signalCode === null) {

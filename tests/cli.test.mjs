@@ -21,6 +21,7 @@ vi.mock("execa", async (importOriginal) => {
 
 import { execa } from "execa";
 import { main, parseArgs } from "../src/cli.mjs";
+import { readProcessCommands } from "../src/lib/process-ancestry.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
 import {
   cleanRepoGit,
@@ -32,6 +33,12 @@ import {
 } from "./runtime-helpers.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
+
+// True when the process-table read of the product works on this host and lists this process.
+const processTableReadable = await readProcessCommands().then(
+  (table) => table.some((entry) => entry.pid === process.pid),
+  () => false,
+);
 
 // Usefulness: verifies missing required --orchestrator flag throws error.
 test("missing --orchestrator fails", () => {
@@ -1411,7 +1418,13 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
 
 // Usefulness: verifies --continue-from refuses, before any turn, a claude session that a live
 // process still holds (#647), through the real process table. No other CLI test starts a holder.
-test("--continue-from refuses a claude session that a live process holds", async () => {
+test("--continue-from refuses a claude session that a live process holds", async (ctx) => {
+  // A sandbox can deny the process table (ADR 0019: `ps` exits 127 with `operation not permitted`).
+  // The read then fails, the check fails open, and the run exits 0. The test fails only when the
+  // read works and the refusal is missing.
+  if (!processTableReadable) {
+    ctx.skip("The host process table cannot be read, so the check fails open here.");
+  }
   const heldId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
   await withContinueRepo(async (repo, transcriptPath) => {
     const work = JSON.stringify({ action: "run_worker", prompt: "w" });
@@ -1986,7 +1999,7 @@ test.skipIf(process.platform === "win32")(
       const { code, signal } = await within(exited, 15_000, "The CLI exit");
       expect(code === 130 || signal === "SIGINT").toBe(true);
       // The cancel ends the shim before its 10 s ceiling (11.2 s at most).
-      expect(await shim.endedBeforeCeiling()).toBe(true);
+      expect(await shim.heartbeatStopped()).toBe(true);
     } finally {
       // Ends only the child that this test spawned, through its handle, when it still runs.
       if (child && child.exitCode === null && child.signalCode === null) {

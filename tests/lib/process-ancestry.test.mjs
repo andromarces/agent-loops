@@ -111,7 +111,8 @@ test.skipIf(!posix)(
     expect(printed).not.toContain(SENTINEL);
     // The shell ignores SIGTERM, so the read ends at the 1 s bound plus the 5 s force-kill delay.
     expect(Date.now() - started).toBeLessThan(12_000);
-    expect(await shim.endedBeforeCeiling()).toBe(true);
+    // Secondary evidence: the heartbeat of the shim stopped and its marker is absent.
+    expect(await shim.heartbeatStopped()).toBe(true);
   },
   40_000,
 );
@@ -125,12 +126,16 @@ test.skipIf(!posix)(
     const controller = new AbortController();
     const read = failureAndOutput(() => readProcessCommands({ signal: controller.signal }));
     await shim.ready();
+    const canceledAt = Date.now();
     controller.abort();
     const { error, printed } = await read;
+    // Primary evidence: the read rejected as canceled, well inside the 5 s force-kill delay.
+    expect(Date.now() - canceledAt).toBeLessThan(5000);
     expect(error).toMatchObject({ isCanceled: true, reason: "was canceled" });
     expect(JSON.stringify([error.message, error.reason])).not.toContain(SENTINEL);
     expect(printed).not.toContain(SENTINEL);
-    expect(await shim.endedBeforeCeiling()).toBe(true);
+    // Secondary evidence: the heartbeat of the shim stopped and its marker is absent.
+    expect(await shim.heartbeatStopped()).toBe(true);
   },
   30_000,
 );
