@@ -25,11 +25,28 @@ Live probe of the merged adapter, macOS 27.2 arm64, codex-cli 0.163.0-alpha.5, N
 
 - The reviewer ran `./node_modules/.bin/vp test run tests/lib/args.test.mjs` (exit 0, 4 passed). It also ran a Node child spawn (`execFileSync` of `process.execPath`, exit 0, printed `child-ok`).
 - A second turn ran the full suite with `./node_modules/.bin/vp test run`: exit 0, 82 files passed and 1 skipped, 1884 tests passed and 17 skipped. The same suite outside the sandbox gave 1892 passed and 9 skipped.
-- The 8 extra skips are the `tests/lib/runstate.test.mjs` tests that skip when `ps` cannot run on macOS. This suggests that the sandbox blocks `ps`. That is inferred from the skip guard and was not probed directly.
+- The 8 extra skips are the `tests/lib/runstate.test.mjs` tests that skip when `ps` cannot run on macOS. The probe of issue #640 below confirms that the sandbox blocks `ps`.
 - The test runner spawned its workers and its child processes under the sandbox.
 - A shell `curl https://api.github.com` failed with exit 6 and `Could not resolve host: api.github.com`. The explicit `network_access=false` setting held. Only shell commands were probed, as before.
 - A reviewer shell command appended a line to `README.md`. The `role dispatch` call then exited 1 with `Mutation detected during reviewer turn: README.md`, which is the `MutationError` message. The edit stayed on disk.
-- Not verified: Linux, Windows (unelevated and elevated), `pnpm exec`, `gh`, and any model-side tool or connector under `workspace-write`.
+- Not verified: Linux, Windows (unelevated and elevated), and any model-side tool or connector under `workspace-write`.
+
+Live probe of `ps`, `pnpm exec`, and `gh`, macOS 27.2 arm64, codex-cli 0.163.0-alpha.5, Node v26.11.1, repository commit `d9930d7` (issue #640, 2026-10-10). The setup is the same as above: `agent-loop role dispatch --role reviewer --reviewer codex --reviewer-workspace-write` against a disposable clone in the system temporary directory. The reviewer ran each command as its own shell call and reported the exit code and the output. `CODEX_HOME` pointed at a directory with no `rules/` and only `[sandbox_workspace_write] network_access = true` as config, so the probe saw the sandbox of the adapter alone (see the note on user rules below). Two turns gave the same results.
+
+| Command                       | Exit | Decisive output                      |
+| ----------------------------- | ---- | ------------------------------------ |
+| `ps -p $$ -o pid=`            | 127  | `zsh:1: operation not permitted: ps` |
+| `ps -p 1 -o pid=`             | 127  | `zsh:1: operation not permitted: ps` |
+| `ps -o lstart= -p 1`          | 127  | `zsh:1: operation not permitted: ps` |
+| `pnpm exec vp --version`      | 0    | `vp v1.1.0`                          |
+| `gh pr checks 637 --required` | 1    | `error connecting to api.github.com` |
+
+- The sandbox blocks `ps`. This is why the 8 `ps`-gated tests skip. The `darwin-lstart` stamp is therefore never read in a sandboxed reviewer turn, and the lock check there falls back to the pid-only check.
+- `pnpm exec vp --version` runs under `workspace-write`. Only `--version` was probed. The 2026-10-05 probe above still holds that `pnpm exec vitest run` fails when pnpm writes to its store outside the work tree, and that was not run again.
+- `gh` cannot reach `api.github.com` with shell network off. This matches the `curl` result: `curl` exited 6 with `Could not resolve host: api.github.com`. The reviewer cannot read check status with `gh`, so the runtime read of ADR 0011 stays the source.
+- The work tree stayed clean.
+- User rules can run a command outside the sandbox. The Codex config on the probe machine has an execpolicy rule (`~/.codex/rules/default.rules`) that allows `bash -c`, `sh -c`, and `zsh -c`. A command that Codex cannot split into plain words, for example one with `$$`, `$?`, or `$HOME`, runs through that wrapper and skipped the sandbox. With that config, `ps -p $$ -o pid=` exited 0, `touch "$HOME/<file>"` created a file outside the work tree, and `gh pr checks` and `curl` reached the network when a `; echo "exit=$?"` followed them. The same commands without an expansion were blocked. This is a property of the user config, not of the adapter. The explicit `network_access=false` and the mutation check do not see it for a write outside the repository (gap 2). Not verified on other machines.
+- Not run: Linux and Windows. The task has only a macOS host.
 
 The headless orchestrator has three guards that this change leaves in place: `readOnly: true` on the first and the repair turn in `decide`, the Codex `read-only` flag that follows from it, and the `withMutationCheck(cwd, "orchestrator", ...)` wrapper in `orchAdapter`. The adapter and `runChild` shared one `readOnly` boolean, so the opt-in needs a separate reviewer-only input.
 
@@ -90,6 +107,7 @@ Andro Marces
 - [Issue #421: Add an opt-in workspace-write sandbox for the Codex reviewer](https://github.com/andromarces/agent-loops/issues/421)
 - [Issue #342: Document that a Codex reviewer on Windows cannot spawn the test runner](https://github.com/andromarces/agent-loops/issues/342)
 - [Issue #499: Verify the opt-in workspace-write Codex reviewer sandbox on live runs](https://github.com/andromarces/agent-loops/issues/499)
+- [Issue #640: Probe ps, pnpm exec, and gh in the workspace-write Codex reviewer sandbox on macOS](https://github.com/andromarces/agent-loops/issues/640)
 - [Issue #384: Verify the Codex read-only test-runner spawn on macOS, Linux, and the elevated Windows sandbox](https://github.com/andromarces/agent-loops/issues/384)
 - [Issue #420: Run a --test-cmd before each reviewer turn and supply the result to the reviewer](https://github.com/andromarces/agent-loops/issues/420)
 - [Issue #422: Forbid GitHub and remote writes in every reviewer and orchestrator turn](https://github.com/andromarces/agent-loops/issues/422)

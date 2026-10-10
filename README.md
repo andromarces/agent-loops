@@ -804,6 +804,13 @@ A shell `curl https://api.github.com` failed with `Could not resolve host`.
 A reviewer edit of `README.md` halted the run with `Mutation detected during reviewer turn` (`MutationError`), exit 1.
 Linux and Windows are not verified.
 
+A live probe of `ps`, `pnpm exec`, and `gh` ran on 2026-10-10 (macOS 27.2 arm64, codex-cli 0.163.0-alpha.5, Node v26.11.1), in two reviewer turns with the same results:
+
+- `ps -p $$ -o pid=` exited 127 with `zsh:1: operation not permitted: ps`. The sandbox blocks `ps`, so the 8 `ps`-gated tests in `tests/lib/runstate.test.mjs` skip.
+- `pnpm exec vp --version` exited 0 (`vp v1.1.0`). Only `--version` was probed.
+- `gh pr checks 637 --required` exited 1 with `error connecting to api.github.com`, because shell network is off.
+- A Codex user rule that allows `bash -c`, `sh -c`, or `zsh -c` runs a command that has an expansion such as `$$` or `$HOME` outside the sandbox. The probe used a `CODEX_HOME` with no rules to avoid that. Details are in the ADR.
+
 Accepted gaps, as the ADR states them:
 
 - Detection only. The sandbox no longer prevents an edit. An edit succeeds, and the run then halts with a `MutationError`, exit 1, with no revert.
