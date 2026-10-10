@@ -222,3 +222,42 @@ test("a second SIGINT during a turn writes one complete envelope and the normal 
     await dispatch.cleanup();
   }
 });
+
+// Usefulness: acceptance (#669) — a permanent write error after a partial write leaves the
+// truncated envelope on stdout, logs the error, and still exits 130 (ADR 0029 decision 8).
+test("a permanent error after a partial envelope write leaves it truncated, logs, and exits 130", async () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const bytes = [];
+  let calls = 0;
+  fsDouble.writeSync = (_fd, buffer, offset = 0) => {
+    calls += 1;
+    if (calls === 2) throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+    bytes.push(...Buffer.from(buffer).subarray(offset, offset + 1));
+    return 1;
+  };
+  const stdout = spyStdoutWrite();
+  const dispatch = await dispatchInProcess({
+    fake1: {
+      async run() {
+        process.emit("SIGINT");
+        process.emit("SIGINT");
+        throw Object.assign(new Error("canceled"), { isCanceled: true });
+      },
+    },
+    fake2: recordingAdapter([]),
+  });
+  try {
+    await dispatch.run();
+    expect(exit).toHaveBeenCalledWith(130);
+    expect(Buffer.from(bytes).toString("utf8")).toBe("{");
+    expect(stdout).not.toHaveBeenCalled();
+    const logged = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logged).toMatch(/error: second SIGINT: the final write failed: ENOSPC/);
+  } finally {
+    stdout.mockRestore();
+    errorSpy.mockRestore();
+    exit.mockRestore();
+    await dispatch.cleanup();
+  }
+});
