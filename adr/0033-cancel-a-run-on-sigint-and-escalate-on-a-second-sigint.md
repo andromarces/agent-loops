@@ -10,15 +10,15 @@ accepted
 
 ## Context
 
-`Ctrl-C` sends SIGINT to the runtime. Issue #669 found that a `once` listener lets the exit handler of execa find no SIGINT listener after the first signal. The handler then re-raises the signal and ends the runtime by signal, before the run sets exit code 130 and writes its transcript. A second SIGINT also had no defined effect on a stuck child.
+`Ctrl-C` sends SIGINT to the runtime. Issue #669 found that a `once` listener lets the exit handler of execa find no SIGINT listener after the first signal. The handler then re-raises the signal and ends the runtime by signal, before the run sets exit code 130 and writes its transcript.
 
 PR #689 recorded this decision in ADR 0029 (decision 8 and a SIGINT sentence in decision 2). ADR 0029 is `superseded` by ADR 0031, so the decision sat in a superseded record and in no index entry of an active ADR (issue #693). The SIGINT decision does not depend on the held-session refusal of ADR 0029 and ADR 0031.
 
 ## Decision
 
 1. The runtime keeps one persistent SIGINT listener for the whole run (`cancelOnSigInt` in `src/lib/sigint.mjs`). The listener uses `on`, not `once`. Node removes a `once` listener before it runs, so the exit handler of execa would find no listener and re-raise the signal (issue #669). Every exit path of the caller removes the listener. The run keeps the listener until the run ends, so the exit handler of execa finds another listener and does not re-raise the signal.
-2. The first SIGINT aborts the run signal and returns. The run ends through its normal path with exit code 130 and the transcript or envelope that it holds. A read of the process table (ADR 0031) and every child turn end on this signal, and a cancel is not a warning.
-3. A second SIGINT escalates and does not abandon the run. It does these steps in this order: force-kills the process tree of every live child, writes the transcript or envelope that the run holds, and exits with code 130. The kill is SIGKILL to the process group on POSIX, and `taskkill /pid <pid> /T /F` with `spawnSync` on Windows (`killLiveTrees` in `src/lib/exec-tree.mjs`, ADR 0028). It reaches each child that `killTreeOnExit` records: `exec`, `runGh`, `assertGitWorkTree`, and the test command. `src/cli.mjs` writes the transcript with `exitCode` 130, the error `Interrupted by SIGINT`, the events and session ids that the run holds, by a synchronous temp-file write and rename (`writeFileAtomicSync`). `src/role.mjs` writes one error envelope with the same error. The write is synchronous and skips the async removal of the session record.
+2. The first SIGINT aborts the run signal. The read of the process table (ADR 0029 decision 2, ADR 0031) also ends on the cancel signal of the run, and a cancel is not a warning. It ends the run before any turn. The exit code is 130.
+3. A second SIGINT escalates and does not abandon the run. It does these steps in this order: force-kills the process tree of every live child, writes the transcript or envelope that the run holds, and exits with code 130. The kill is SIGKILL to the process group on POSIX, and `taskkill /pid <pid> /T /F` with `spawnSync` on Windows (`killLiveTrees` in `src/lib/exec-tree.mjs`, ADR 0028). It reaches each child that `killTreeOnExit` records: `exec`, `runGh`, `assertGitWorkTree`, and the test command. `src/cli.mjs` writes the transcript with `exitCode` 130, the error `Interrupted by SIGINT`, the events and session ids that the run holds, by a synchronous temp-file write and rename (`writeFileAtomicSync`). `src/role.mjs` writes one error envelope with the same error.
 4. The second SIGINT keeps:
    - A SIGKILL to each recorded child. Exit code 130.
    - An earlier transcript whole, because the write is a rename. A file symlink at the transcript path, dangling or not, keeps its link and the write lands at its final target, as in the async write. A transcript that names the `--continue-from` file is replaced as in a normal exit.
@@ -30,8 +30,7 @@ PR #689 recorded this decision in ADR 0029 (decision 8 and a SIGINT sentence in 
 
 ## Consequences
 
-- A first `Ctrl-C` always ends the run with exit code 130 and a written transcript or envelope, not by signal.
-- A second `Ctrl-C` ends a stuck run at once, with the kept and dropped guarantees of decisions 4 to 8. The operator gives up the mutation check, the `gate` event, and the state-file writes of that run, and a stale session record can stay.
+- A second SIGINT ends the run with the kept and dropped guarantees of decisions 4 to 8. The operator gives up the mutation check, the `gate` event, and the state-file writes of that run, and a stale session record can stay.
 - A child can survive a second SIGINT in the cases of decision 5. The operator must check for it.
 - A write that stalls in the OS blocks the exit (decision 7), and a consumer that does not read stdout can leave one cut envelope (decision 6).
 - The Windows console path stays unverified (decision 9).
@@ -39,9 +38,6 @@ PR #689 recorded this decision in ADR 0029 (decision 8 and a SIGINT sentence in 
 ## Alternatives
 
 1. **A `once` listener**: rejected. It is the cause of issue #669: the exit handler of execa re-raises the signal before the run sets exit 130.
-2. **A second SIGINT that exits at once, with no write**: rejected. The operator loses the transcript and the session ids that `--continue-from` needs.
-3. **A second SIGINT that waits for a clean end**: rejected. The second signal exists for a run that does not end after the first.
-4. **An asynchronous write of the transcript on the second SIGINT**: rejected. The exit follows the signal, and a synchronous write finishes before it (decision 3).
 
 ## Authors
 
