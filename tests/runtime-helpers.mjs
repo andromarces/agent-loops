@@ -601,53 +601,103 @@ function isAlive(pid) {
 }
 
 /**
- * Waits up to `ms` for the exact `pid` to leave the process table.
+ * Calls `probe` until it returns a value other than `undefined`, or until one absolute deadline of
+ * `ms` on a monotonic clock. The deadline covers the time of every probe call and every timer delay,
+ * so a slow call cannot stretch the budget. One last probe runs at the deadline.
+ * @returns {Promise<unknown>} the probe value, or `undefined` at the deadline
+ */
+async function pollUntil(probe, ms) {
+  const deadline = performance.now() + ms;
+  for (;;) {
+    const value = await probe();
+    if (value !== undefined || performance.now() >= deadline) {
+      return value;
+    }
+    await delay(Math.min(25, Math.max(0, deadline - performance.now())));
+  }
+}
+
+/**
+ * Waits up to `ms` (one absolute deadline) for the exact `pid` to leave the process table.
  * @returns {Promise<boolean>} true when the process is gone
  */
-export async function waitForExit(pid, ms = 3000) {
-  for (let waited = 0; waited < ms && isAlive(pid); waited += 50) {
-    await delay(50);
-  }
-  return !isAlive(pid);
+export async function waitForExit(pid, ms = 5000) {
+  return (await pollUntil(() => (isAlive(pid) ? undefined : true), ms)) === true;
 }
 
 /**
  * Creates a POSIX `ps` shell script from `body` in a new directory under the system temporary
- * directory. The directory name holds a space, so an unquoted path fails. In the body, `__DIR__`
- * stands for the shell-quoted directory, so the body writes its pid with
- * `echo $$ > __DIR__/pid.txt`. A test puts `dir` first on `PATH`.
+ * directory. The directory name holds a space, so an unquoted path fails. In the body:
  *
- * - `pid()` polls for at most `ms` until the pid file holds a whole pid, and throws on timeout. A
- *   read of the file before the shim wrote it never yields an empty or partial pid.
- * - `cleanup()` ends the recorded pid by its exact value when it is alive, then removes the
- *   directory. It is safe to call twice and after a test failure.
+ * - `__DIR__` stands for the shell-quoted directory.
+ * - `__RECORD_PID__` writes the pid of the shim to a temporary file and renames it into place, so
+ *   a reader sees the whole record or none.
+ * - `__STALL__` replaces the shim with a process that sleeps 30 s. Its command line holds the
+ *   directory path, so cleanup can tell it from an unrelated process.
+ *
+ * A test puts `dir` first on `PATH`. A stalled body must end by itself within one minute.
+ *
+ * - `pid()` polls until one absolute deadline of `ms` for a record that is a whole number and a
+ *   newline, and throws at the deadline.
+ * - `cleanup()` signals the recorded pid only when the live process is still the shim: its command
+ *   line must hold the unique directory path. A pid that an unrelated process reused, a process
+ *   that already exited, and a failed command-line read all skip the signal. It then removes the
+ *   directory, and is safe to call twice and after a test failure.
  */
 export async function createPsShim(body) {
   const dir = await mkdtemp(join(tmpdir(), "ps shim-"));
-  await writeFile(join(dir, "ps"), `#!/bin/sh\n${body.replaceAll("__DIR__", shellQuote(dir))}\n`, {
-    mode: 0o755,
-  });
+  const quoted = shellQuote(dir);
+  // Replacer functions: a replacement string would read `$$` as one `$`.
+  const expanded = body
+    .replaceAll(
+      "__RECORD_PID__",
+      () => `echo $$ > ${quoted}/pid.tmp && mv ${quoted}/pid.tmp ${quoted}/pid.txt`,
+    )
+    .replaceAll(
+      "__STALL__",
+      () => `exec ${shellQuote(process.execPath)} -e 'setTimeout(() => {}, 30000)' ${quoted}/stall`,
+    )
+    .replaceAll("__DIR__", () => quoted);
+  await writeFile(join(dir, "ps"), `#!/bin/sh\n${expanded}\n`, { mode: 0o755 });
   const pidFile = join(dir, "pid.txt");
   const readPid = async () => {
     const text = await readFile(pidFile, "utf8").catch(() => "");
-    return /^\d+\n?$/.test(text) && Number(text) > 0 ? Number(text) : undefined;
+    return /^\d+\n$/.test(text) && Number(text) > 0 ? Number(text) : undefined;
+  };
+  // The `ps` of the host, found without the shim directory on PATH.
+  const hostPath = (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter((entry) => entry !== dir)
+    .join(delimiter);
+  const isShim = async (pid) => {
+    try {
+      const { stdout } = await execa("ps", ["-p", String(pid), "-o", "command="], {
+        env: { PATH: hostPath },
+        extendEnv: false,
+        timeout: 5000,
+      });
+      return stdout.includes(dir);
+    } catch {
+      return false;
+    }
   };
   return {
     dir,
-    async pid(ms = 10_000) {
-      for (let waited = 0; waited < ms; waited += 25) {
-        const pid = await readPid();
-        if (pid !== undefined) {
-          return pid;
-        }
-        await delay(25);
+    async pid(ms = 15_000) {
+      const pid = await pollUntil(readPid, ms);
+      if (pid === undefined) {
+        throw new Error(`The ps shim wrote no pid within ${ms} ms.`);
       }
-      throw new Error(`The ps shim wrote no pid within ${ms} ms.`);
+      return pid;
     },
     async cleanup() {
       const pid = await readPid();
-      if (pid !== undefined && isAlive(pid)) {
-        process.kill(pid, "SIGKILL");
+      if (pid !== undefined && isAlive(pid) && (await isShim(pid))) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The process ended between the check and the signal.
+        }
       }
       await removePath(dir);
     },

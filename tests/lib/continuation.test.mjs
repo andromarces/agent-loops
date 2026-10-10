@@ -694,9 +694,7 @@ test("refuseHeldSessions rethrows a canceled read", async () => {
 test.skipIf(process.platform === "win32")(
   "refuseHeldSessions ends a stalled read on cancel or bound and prints no output",
   async () => {
-    await useShim(
-      `echo $$ > __DIR__/pid.txt\necho ${SENTINEL}\necho ${SENTINEL} >&2\nexec sleep 30`,
-    );
+    await useShim(`__RECORD_PID__\necho ${SENTINEL}\necho ${SENTINEL} >&2\n__STALL__`);
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     const controller = new AbortController();

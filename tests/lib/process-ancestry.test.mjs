@@ -101,7 +101,7 @@ test.skipIf(!posix)(
   "readProcessCommands names the timeout and ends the stalled process",
   async () => {
     await useShim(
-      `echo $$ > __DIR__/pid.txt\necho ${SENTINEL}\necho ${SENTINEL} >&2\ntrap '' TERM\nwhile :; do sleep 1; done`,
+      `__RECORD_PID__\necho ${SENTINEL}\necho ${SENTINEL} >&2\ntrap '' TERM\ni=0\nwhile [ $i -lt 40 ]; do sleep 1; i=$((i+1)); done`,
     );
     const started = Date.now();
     const { error, printed } = await failureAndOutput(() => readProcessCommands({ timeout: 1 }));
@@ -120,9 +120,7 @@ test.skipIf(!posix)(
 test.skipIf(!posix)(
   "readProcessCommands names the cancel and ends the stalled process",
   async () => {
-    await useShim(
-      `echo $$ > __DIR__/pid.txt\necho ${SENTINEL}\necho ${SENTINEL} >&2\nexec sleep 30`,
-    );
+    await useShim(`__RECORD_PID__\necho ${SENTINEL}\necho ${SENTINEL} >&2\n__STALL__`);
     const controller = new AbortController();
     const read = failureAndOutput(() => readProcessCommands({ signal: controller.signal }));
     const pid = await shim.pid();

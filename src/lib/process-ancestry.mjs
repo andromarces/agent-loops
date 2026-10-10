@@ -59,7 +59,7 @@ const COMMANDS_READ_TIMEOUT_SECONDS = 30;
 
 /**
  * Failure of the command-line read. The message and `reason` hold the reason class only: timeout,
- * cancel, exit code, spawn failure, or unreadable output. They never hold output of the read,
+ * cancel, exit code, signal termination, spawn failure, or unreadable output. They never hold output of the read,
  * because the process table carries the command lines of every process on the host, and those
  * lines can carry the secrets of other programs.
  */

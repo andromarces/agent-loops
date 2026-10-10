@@ -1,7 +1,17 @@
+import { spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { pidAlive } from "../src/lib/runstate.mjs";
-import { cleanRepoGit, deadPid, untrackedFilesGit } from "./runtime-helpers.mjs";
+import {
+  cleanRepoGit,
+  createPsShim,
+  deadPid,
+  untrackedFilesGit,
+  waitForExit,
+  within,
+} from "./runtime-helpers.mjs";
 
 const options = { cwd: tmpdir() };
 const expected = ["rev-parse", "--verify", "-q", "HEAD"];
@@ -50,3 +60,59 @@ test("deadPid is a valid pid that no OS assigns and the production liveness chec
   expect(pid % 4).not.toBe(0);
   expect(pidAlive(pid)).toBe(false);
 });
+
+// Usefulness: the shim pid reader must never return a partial record (#647 review), and its wait
+// must end at its own deadline. No other test covers the reader.
+test("createPsShim.pid accepts only a complete newline-terminated pid and ends at its deadline", async () => {
+  const shim = await createPsShim("exit 0");
+  try {
+    await writeFile(join(shim.dir, "pid.txt"), "12");
+    const started = performance.now();
+    await expect(shim.pid(100)).rejects.toThrow(/wrote no pid/);
+    expect(performance.now() - started).toBeLessThan(2000);
+    await writeFile(join(shim.dir, "pid.txt"), "12\n");
+    await expect(shim.pid(100)).resolves.toBe(12);
+  } finally {
+    await shim.cleanup();
+  }
+});
+
+// Usefulness: cleanup must not signal a process that only reuses the recorded pid (#647 review).
+// The owned child stands for an unrelated process with that pid. Its command line holds no shim path.
+test.skipIf(process.platform === "win32")(
+  "createPsShim.cleanup leaves an unrelated process that holds the recorded pid",
+  async () => {
+    const shim = await createPsShim("exit 0");
+    const other = spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], {
+      stdio: "ignore",
+    });
+    try {
+      await writeFile(join(shim.dir, "pid.txt"), `${other.pid}\n`);
+      await shim.cleanup();
+      expect(other.exitCode === null && other.signalCode === null).toBe(true);
+      expect(await waitForExit(other.pid, 200)).toBe(false);
+    } finally {
+      other.kill("SIGKILL");
+    }
+  },
+);
+
+// Usefulness: cleanup must still end a stalled shim that a failed assertion left running.
+test.skipIf(process.platform === "win32")(
+  "createPsShim.cleanup ends the recorded shim process",
+  async () => {
+    const shim = await createPsShim("__RECORD_PID__\n__STALL__");
+    const child = spawn(join(shim.dir, "ps"), [], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", (_code, signal) => resolve(signal)));
+    try {
+      expect(await shim.pid()).toBe(child.pid);
+      await shim.cleanup();
+      expect(await within(exited, 10_000, "The shim exit")).toBe("SIGKILL");
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+    }
+  },
+  30_000,
+);

@@ -1948,7 +1948,7 @@ test("--continue-from cancels a probe on SIGINT and exits 130", async () => {
 test.skipIf(process.platform === "win32")(
   "--continue-from exits 130 on SIGINT during a stalled holder check",
   async () => {
-    const shim = await createPsShim("echo $$ > __DIR__/pid.txt\nexec sleep 30");
+    const shim = await createPsShim("__RECORD_PID__\n__STALL__");
     let repo;
     let child;
     try {
