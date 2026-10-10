@@ -83,10 +83,11 @@ async function applySessionRecord(path, bytes, transcript) {
  * running, and the CLI accepts a resume of that session, so two processes would write one session
  * file. Only a claude id in the UUID form is checked, so a short id cannot match another
  * command line. No other adapter is verified to leave such an orphan. A process table that cannot
- * be read logs a warning and lets the run continue.
+ * be read logs a warning and lets the run continue. The read is bounded by `deps.timeout`
+ * (seconds) and ends on `deps.signal`. A cancel rejects, so SIGINT still cancels the run.
  * known-limit: the match is by command line, so a holder that does not carry the id there is not found.
  * @param {object} roles roles keyed by role name, after `restoreSessions`
- * @param {{ readProcessCommands?: () => Promise<{ pid: number, command: string }[]> }} [deps]
+ * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number }} [deps]
  */
 export async function refuseHeldSessions(roles, deps = {}) {
   const ids = ROLE_KINDS.filter(
@@ -97,8 +98,14 @@ export async function refuseHeldSessions(roles, deps = {}) {
   }
   let table;
   try {
-    table = await (deps.readProcessCommands ?? readProcessCommands)();
+    table = await (deps.readProcessCommands ?? readProcessCommands)({
+      signal: deps.signal,
+      timeout: deps.timeout,
+    });
   } catch (err) {
+    if (readProp(err, "isCanceled")) {
+      throw err;
+    }
     logWarn(
       `--continue-from: cannot check for a live holder of a session: ${readableErrorText(err)}`,
     );

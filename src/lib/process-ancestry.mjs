@@ -6,6 +6,7 @@
 // registering the wrong parent.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { exec } from "./exec.mjs";
 import { harnessForCommand } from "./harnesses.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -51,28 +52,40 @@ async function readPosixProcesses() {
     .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), name: match[3] }));
 }
 
+// Seconds that the command-line read waits before it gives up.
+const COMMANDS_READ_TIMEOUT_SECONDS = 30;
+
 /**
- * Lists every process with its full command line, for a check that needs the arguments.
+ * Lists every process with its full command line, for a check that needs the arguments. The read
+ * runs through `exec`, so `signal` cancels it and `timeout` (seconds) bounds it. Both reject with
+ * an `ExecError`.
+ * @param {{ signal?: AbortSignal, timeout?: number }} [options]
  * @returns {Promise<{ pid: number, command: string }[]>}
  */
-export async function readProcessCommands() {
-  if (process.platform === "win32") {
-    const script =
-      "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
-    const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", script],
-      { windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
-    );
+export async function readProcessCommands({
+  signal,
+  timeout = COMMANDS_READ_TIMEOUT_SECONDS,
+} = {}) {
+  const windows = process.platform === "win32";
+  const { stdout } = windows
+    ? await exec(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+        ],
+        { signal, timeout, maxBuffer: 32 * 1024 * 1024 },
+      )
+    : await exec("ps", ["-eo", "pid=,command="], { signal, timeout, maxBuffer: 32 * 1024 * 1024 });
+  if (windows) {
     const parsed = JSON.parse(stdout.trim() || "[]");
     return (Array.isArray(parsed) ? parsed : [parsed]).map((row) => ({
       pid: row.ProcessId,
       command: row.CommandLine ?? "",
     }));
   }
-  const { stdout } = await execFileAsync("ps", ["-eo", "pid=,command="], {
-    maxBuffer: 32 * 1024 * 1024,
-  });
   return stdout
     .split("\n")
     .map((line) => line.match(/^\s*(\d+)\s+(.*)$/))
