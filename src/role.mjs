@@ -649,7 +649,7 @@ async function dispatchLocked(
       );
     }
     // A hard kill of the dispatch leaves its claude child running, and the CLI accepts a resume of
-    // that session, so the check comes before the step is charged (#671, ADR 0029).
+    // that session, so the check comes before the step is charged (#671, ADR 0031).
     await refuseHeldSessions(
       { [roleName]: state.roles[roleName] },
       { signal, flag: "--resume-interrupted", readProcessCommands },
