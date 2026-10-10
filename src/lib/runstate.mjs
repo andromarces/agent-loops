@@ -911,7 +911,9 @@ async function removeTemp(path) {
 const MAX_LINK_HOPS = 40;
 
 const ASYNC_FS = { realpath, readlink };
-const SYNC_FS = { realpath: realpathSync, readlink: readlinkSync };
+// `realpathSync.native`, not `realpathSync`: the JS `realpathSync` folds `dir-link/..` away before it
+// resolves the link, while `fs.promises.realpath` and the native call apply the link first, as the OS does.
+const SYNC_FS = { realpath: realpathSync.native, readlink: readlinkSync };
 
 // The one traversal behind `resolveWriteTarget` and `resolveWriteTargetSync`. It yields each fs
 // step as `{ op, path }`. The driver runs the step and sends back the result, or throws the error
