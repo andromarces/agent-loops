@@ -13,7 +13,7 @@
 // and the directory name avoids a file-versus-directory clash at that path.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { readlinkSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import {
   link,
   mkdir,
@@ -929,19 +929,41 @@ export async function writeFileAtomic(file, text) {
   }
 }
 
+// Synchronous twin of `resolveWriteTarget`: the same hops, the same `ELOOP`, and the same result
+// for a dangling link, a missing path, and a path that is no link. Keep the two in step.
+function resolveWriteTargetSync(file) {
+  let current = resolve(file);
+  for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
+    let dir;
+    try {
+      dir = realpathSync(dirname(current));
+    } catch {
+      dir = resolve(dirname(current));
+    }
+    current = join(dir, basename(current));
+    let target;
+    try {
+      target = readlinkSync(current);
+    } catch (err) {
+      if (["EINVAL", "ENOENT", "ENOTDIR"].includes(err.code)) {
+        return current;
+      }
+      throw err;
+    }
+    current = isAbsolute(target) ? target : `${dir}${sep}${target}`;
+  }
+  throw Object.assign(new Error(`Too many levels of symbolic links: ${file}`), { code: "ELOOP" });
+}
+
 /**
  * Synchronous `writeFileAtomic` for a forced exit, where no event loop turn is left (#669). It
- * follows a file symlink chain through `realpathSync`. A dangling link, and a rename that Windows
- * refuses because a reader holds the destination, fail: there is no retry and no async wait.
- * A write that stalls in the OS blocks the caller, because a sync call cannot be bounded.
+ * resolves the target as the async write does, so a file symlink, dangling or not, keeps its link.
+ * A rename that Windows refuses because a reader holds the destination fails: there is no retry
+ * and no async wait. A write that stalls in the OS blocks the caller, because a sync call cannot
+ * be bounded.
  */
 export function writeFileAtomicSync(file, text) {
-  let destination;
-  try {
-    destination = realpathSync(file);
-  } catch {
-    destination = resolve(file);
-  }
+  const destination = resolveWriteTargetSync(file);
   const temp = `${destination}.${process.pid}.${stateTempCounter++}.tmp`;
   try {
     writeFileSync(temp, text, "utf8");

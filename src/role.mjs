@@ -1340,6 +1340,26 @@ async function printEnvelope(payload, exitCode) {
 }
 
 /**
+ * Writes all of `text` to `fd` with `writeSync`. It continues after a partial write and retries
+ * `EAGAIN` (a non-blocking pipe that is full) for at most 2 s, then throws. A text shorter than
+ * `PIPE_BUF` (4096 bytes) reaches a pipe whole or not at all, so the cancel envelope never lands
+ * cut there. Any other failure throws.
+ */
+function writeAllSync(fd, text) {
+  const buffer = Buffer.from(text);
+  const deadline = Date.now() + 2000;
+  let offset = 0;
+  while (offset < buffer.length) {
+    try {
+      offset += writeSync(fd, buffer, offset, buffer.length - offset);
+    } catch (err) {
+      if (err?.code !== "EAGAIN" || Date.now() > deadline) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
+  }
+}
+
+/**
  * Entry point for `agent-loop role ...`. Prints exactly one JSON envelope on
  * stdout and sets the process exit code, except `--help`, which prints plain
  * usage and exits 0. All lifecycle logging goes to stderr. A stdout write that
@@ -1349,16 +1369,34 @@ export async function main(argv, { agents = defaultAgents } = {}) {
   setLogsToStderr(true);
 
   const controller = new AbortController();
-  // A second SIGINT prints the cancel envelope at once, unless the normal path started printing one.
-  let envelopeStarted = false;
+  // One guard for every envelope of the run, so stdout holds exactly one. The normal path and the
+  // second SIGINT share it: a state other than "idle" blocks a second envelope.
+  const envelope = { state: "idle", done: null };
+  const emitEnvelope = (payload, exitCode) => {
+    if (envelope.state !== "idle") return Promise.resolve();
+    envelope.state = "writing";
+    // Set before the write starts: a SIGINT can arrive inside the write call.
+    let settle;
+    envelope.done = new Promise((resolve) => {
+      settle = resolve;
+    });
+    return printEnvelope(payload, exitCode).finally(() => {
+      envelope.state = "done";
+      settle();
+    });
+  };
   const removeSigIntListener = cancelOnSigInt(controller, {
     onForceExit: () => {
-      if (envelopeStarted) return;
-      writeSync(
+      // A write in flight finishes first, so the exit never cuts it.
+      if (envelope.state === "writing") return envelope.done;
+      if (envelope.state === "done") return undefined;
+      envelope.state = "done";
+      writeAllSync(
         1,
         `${JSON.stringify({ status: "error", error: "Interrupted by SIGINT" })}
 `,
       );
+      return undefined;
     },
   });
 
@@ -1369,7 +1407,7 @@ export async function main(argv, { agents = defaultAgents } = {}) {
       setVerbose(args.verbose);
     } catch (err) {
       const { payload } = errorResult(err);
-      await printEnvelope(payload, 1);
+      await emitEnvelope(payload, 1);
       return;
     }
 
@@ -1383,8 +1421,7 @@ export async function main(argv, { agents = defaultAgents } = {}) {
       signal: controller.signal,
     });
 
-    envelopeStarted = true;
-    await printEnvelope(payload, exitCode);
+    await emitEnvelope(payload, exitCode);
   } finally {
     removeSigIntListener();
   }

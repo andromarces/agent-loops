@@ -21,7 +21,10 @@ function taskkillFile() {
 function killTree(subprocess) {
   if (process.platform !== "win32") {
     // execa signals the process group when the run set `killDescendants`, else the direct child.
-    subprocess.kill("SIGKILL");
+    // It returns false, and never throws, when the signal reaches no process.
+    if (!subprocess.kill("SIGKILL")) {
+      logWarn(`process tree of pid ${subprocess.pid} not ended: SIGKILL was not delivered`);
+    }
     return;
   }
   // execa keeps the exit state on the Node child process that it wraps.
