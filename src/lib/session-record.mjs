@@ -36,16 +36,21 @@ const isUuid = (value) => typeof value === "string" && UUID.test(value);
 
 /**
  * True when `path` is inside the directory `root`. The test compares file identity (device and
- * inode) along the ancestors of the path, so a case alias, a symlink, and a directory inside a
- * submodule all count as inside, which a comparison of path text would miss.
+ * inode) along the ancestors of the real path and along the ancestors of the path as written, so a
+ * case alias, a symlink, and a directory inside a submodule all count as inside, which a comparison
+ * of path text would miss. The path as written also catches a Windows junction inside the tree that
+ * points outside it: the real path is outside, but Git follows the junction and lists the file.
  */
 export async function isInside(root, path) {
   const rootId = await identity(root);
-  for (let dir = await real(dirname(path)); ; dir = dirname(dir)) {
-    const id = await identity(dir);
-    if (id !== null && id === rootId) return true;
-    if (dirname(dir) === dir) return false;
+  for (const start of [await real(dirname(path)), dirname(resolve(path))]) {
+    for (let dir = start; ; dir = dirname(dir)) {
+      const id = await identity(dir);
+      if (id !== null && id === rootId) return true;
+      if (dirname(dir) === dir) break;
+    }
   }
+  return false;
 }
 
 // The key names one transcript by the identity of its directory and its lowercase file name, so a
