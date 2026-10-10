@@ -591,38 +591,35 @@ export async function within(promise, ms, label) {
 
 const shellQuote = (text) => `'${text.replaceAll("'", "'\\''")}'`;
 
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Calls `probe` until it returns a value other than `undefined`, or until one absolute deadline of
- * `ms` on a monotonic clock. The deadline covers the time of every probe call and every timer delay,
- * so a slow call cannot stretch the budget. One last probe runs at the deadline.
- * @returns {Promise<unknown>} the probe value, or `undefined` at the deadline
+ * Calls `probe` until it returns a value other than `undefined`. Rejects at one absolute deadline
+ * of `ms` on a monotonic clock. Each probe races the time that remains, so a probe that never
+ * settles cannot hold the wait past the deadline, and slow I/O or timer delay cannot stretch it.
+ * A probe that settles after the deadline is ignored.
+ * @returns {Promise<unknown>} the first value that is not `undefined`
  */
-async function pollUntil(probe, ms) {
+export async function pollUntil(probe, ms) {
   const deadline = performance.now() + ms;
+  const expired = Symbol("expired");
   for (;;) {
-    const value = await probe();
-    if (value !== undefined || performance.now() >= deadline) {
+    const pending = Promise.resolve().then(probe);
+    // A late failure of an abandoned probe must not become an unhandled rejection.
+    pending.catch(() => {});
+    let timer;
+    const value = await Promise.race([
+      pending,
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, Math.max(0, deadline - performance.now()), expired);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (value !== undefined && value !== expired) {
       return value;
+    }
+    if (value === expired || performance.now() >= deadline) {
+      throw new Error(`The condition was not met within ${ms} ms.`);
     }
     await delay(Math.min(25, Math.max(0, deadline - performance.now())));
   }
-}
-
-/**
- * Waits up to `ms` (one absolute deadline) for the exact `pid` to leave the process table.
- * @returns {Promise<boolean>} true when the process is gone
- */
-export async function waitForExit(pid, ms = 5000) {
-  return (await pollUntil(() => (isAlive(pid) ? undefined : true), ms)) === true;
 }
 
 /**
@@ -630,76 +627,56 @@ export async function waitForExit(pid, ms = 5000) {
  * directory. The directory name holds a space, so an unquoted path fails. In the body:
  *
  * - `__DIR__` stands for the shell-quoted directory.
- * - `__RECORD_PID__` writes the pid of the shim to a temporary file and renames it into place, so
- *   a reader sees the whole record or none.
- * - `__STALL__` replaces the shim with a process that sleeps 30 s. Its command line holds the
- *   directory path, so cleanup can tell it from an unrelated process.
+ * - `__STALL__` runs a loop that stalls the read. Every 0.2 s it writes a counter to the heartbeat
+ *   file through a temporary file and a rename, so a reader sees a whole record or none. It checks
+ *   real elapsed time (`date +%s`) and leaves the loop at the ceiling, whatever signal the body
+ *   ignores, then writes the `done` marker. The ceiling is `ceilingSeconds` (default 10). Whole
+ *   seconds of `date` and the 0.2 s sleep make the real ceiling at most `ceilingSeconds + 1` s
+ *   plus 0.2 s.
  *
- * A test puts `dir` first on `PATH`. A stalled body must end by itself within one minute.
+ * The test never signals the shim. The code under test (the `exec` timeout or cancel) must end it,
+ * and the test observes that:
  *
- * - `pid()` polls until one absolute deadline of `ms` for a record that is a whole number and a
- *   newline, and throws at the deadline.
- * - `cleanup()` signals the recorded pid only when the live process is still the shim: its command
- *   line must hold the unique directory path. A pid that an unrelated process reused, a process
- *   that already exited, and a failed command-line read all skip the signal. It then removes the
- *   directory, and is safe to call twice and after a test failure.
+ * - `ready()` resolves when the heartbeat holds a whole counter and a newline, and rejects at its
+ *   deadline.
+ * - `endedBeforeCeiling()` is true when the heartbeat stops changing over 1 s and the `done`
+ *   marker is absent, so the shim ended before its ceiling. It is false while the shim still runs
+ *   and after it ran to the ceiling.
+ * - `cleanup()` removes the directory. It signals no process, so a shim that a failed test left
+ *   running ends at its ceiling.
  */
-export async function createPsShim(body) {
+export async function createPsShim(body, { ceilingSeconds = 10 } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "ps shim-"));
   const quoted = shellQuote(dir);
-  // Replacer functions: a replacement string would read `$$` as one `$`.
-  const expanded = body
-    .replaceAll(
-      "__RECORD_PID__",
-      () => `echo $$ > ${quoted}/pid.tmp && mv ${quoted}/pid.tmp ${quoted}/pid.txt`,
-    )
-    .replaceAll(
-      "__STALL__",
-      () => `exec ${shellQuote(process.execPath)} -e 'setTimeout(() => {}, 30000)' ${quoted}/stall`,
-    )
-    .replaceAll("__DIR__", () => quoted);
+  const stall = [
+    "__start=$(date +%s)",
+    "__n=0",
+    `while [ $(( $(date +%s) - __start )) -lt ${ceilingSeconds} ]; do`,
+    "  __n=$((__n + 1))",
+    `  echo $__n > ${quoted}/beat.tmp && mv ${quoted}/beat.tmp ${quoted}/beat`,
+    "  sleep 0.2",
+    "done",
+    `echo done > ${quoted}/done`,
+  ].join("\n");
+  // Replacer functions: a replacement string would read `$` sequences.
+  const expanded = body.replaceAll("__STALL__", () => stall).replaceAll("__DIR__", () => quoted);
   await writeFile(join(dir, "ps"), `#!/bin/sh\n${expanded}\n`, { mode: 0o755 });
-  const pidFile = join(dir, "pid.txt");
-  const readPid = async () => {
-    const text = await readFile(pidFile, "utf8").catch(() => "");
-    return /^\d+\n$/.test(text) && Number(text) > 0 ? Number(text) : undefined;
-  };
-  // The `ps` of the host, found without the shim directory on PATH.
-  const hostPath = (process.env.PATH ?? "")
-    .split(delimiter)
-    .filter((entry) => entry !== dir)
-    .join(delimiter);
-  const isShim = async (pid) => {
-    try {
-      const { stdout } = await execa("ps", ["-p", String(pid), "-o", "command="], {
-        env: { PATH: hostPath },
-        extendEnv: false,
-        timeout: 5000,
-      });
-      return stdout.includes(dir);
-    } catch {
-      return false;
-    }
+  const readBeat = async () => {
+    const text = await readFile(join(dir, "beat"), "utf8").catch(() => "");
+    return /^\d+\n$/.test(text) ? Number(text) : undefined;
   };
   return {
     dir,
-    async pid(ms = 15_000) {
-      const pid = await pollUntil(readPid, ms);
-      if (pid === undefined) {
-        throw new Error(`The ps shim wrote no pid within ${ms} ms.`);
-      }
-      return pid;
+    ready: (ms = 15_000) => pollUntil(readBeat, ms),
+    async endedBeforeCeiling() {
+      const before = await readBeat();
+      await delay(1000);
+      const done = await readFile(join(dir, "done"), "utf8").then(
+        () => true,
+        () => false,
+      );
+      return before !== undefined && before === (await readBeat()) && !done;
     },
-    async cleanup() {
-      const pid = await readPid();
-      if (pid !== undefined && isAlive(pid) && (await isShim(pid))) {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          // The process ended between the check and the signal.
-        }
-      }
-      await removePath(dir);
-    },
+    cleanup: () => removePath(dir),
   };
 }

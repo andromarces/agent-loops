@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
@@ -8,8 +8,8 @@ import {
   cleanRepoGit,
   createPsShim,
   deadPid,
+  pollUntil,
   untrackedFilesGit,
-  waitForExit,
   within,
 } from "./runtime-helpers.mjs";
 
@@ -61,57 +61,50 @@ test("deadPid is a valid pid that no OS assigns and the production liveness chec
   expect(pidAlive(pid)).toBe(false);
 });
 
-// Usefulness: the shim pid reader must never return a partial record (#647 review), and its wait
-// must end at its own deadline. No other test covers the reader.
-test("createPsShim.pid accepts only a complete newline-terminated pid and ends at its deadline", async () => {
+// Usefulness: a probe that never settles must not hold the wait past its deadline (#647 review).
+// No other test covers the polling helper.
+test("pollUntil rejects at its deadline when a probe never settles", async () => {
+  const started = performance.now();
+  await expect(pollUntil(() => new Promise(() => {}), 100)).rejects.toThrow(
+    /not met within 100 ms/,
+  );
+  expect(performance.now() - started).toBeLessThan(2000);
+  await expect(pollUntil(async () => 7, 100)).resolves.toBe(7);
+});
+
+// Usefulness: the shim readiness reader must never accept a partial heartbeat, and its wait must
+// end at its own deadline.
+test("createPsShim.ready accepts only a complete newline-terminated heartbeat", async () => {
   const shim = await createPsShim("exit 0");
   try {
-    await writeFile(join(shim.dir, "pid.txt"), "12");
-    const started = performance.now();
-    await expect(shim.pid(100)).rejects.toThrow(/wrote no pid/);
-    expect(performance.now() - started).toBeLessThan(2000);
-    await writeFile(join(shim.dir, "pid.txt"), "12\n");
-    await expect(shim.pid(100)).resolves.toBe(12);
+    await writeFile(join(shim.dir, "beat"), "1");
+    await expect(shim.ready(100)).rejects.toThrow(/not met within 100 ms/);
+    await writeFile(join(shim.dir, "beat"), "1\n");
+    await expect(shim.ready(100)).resolves.toBe(1);
   } finally {
     await shim.cleanup();
   }
 });
 
-// Usefulness: cleanup must not signal a process that only reuses the recorded pid (#647 review).
-// The owned child stands for an unrelated process with that pid. Its command line holds no shim path.
+// Usefulness: the shim must end by itself at its wall-clock ceiling, so a failed test cannot leave
+// it running, and the helper must tell an early end from a run to the ceiling without a signal.
+// The test owns the child handle and ends it through that handle if the shim does not exit.
 test.skipIf(process.platform === "win32")(
-  "createPsShim.cleanup leaves an unrelated process that holds the recorded pid",
+  "createPsShim stalls only until its ceiling and reports how it ended",
   async () => {
-    const shim = await createPsShim("exit 0");
-    const other = spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], {
-      stdio: "ignore",
-    });
-    try {
-      await writeFile(join(shim.dir, "pid.txt"), `${other.pid}\n`);
-      await shim.cleanup();
-      expect(other.exitCode === null && other.signalCode === null).toBe(true);
-      expect(await waitForExit(other.pid, 200)).toBe(false);
-    } finally {
-      other.kill("SIGKILL");
-    }
-  },
-);
-
-// Usefulness: cleanup must still end a stalled shim that a failed assertion left running.
-test.skipIf(process.platform === "win32")(
-  "createPsShim.cleanup ends the recorded shim process",
-  async () => {
-    const shim = await createPsShim("__RECORD_PID__\n__STALL__");
+    const shim = await createPsShim("trap '' TERM\n__STALL__", { ceilingSeconds: 1 });
     const child = spawn(join(shim.dir, "ps"), [], { stdio: "ignore" });
-    const exited = new Promise((resolve) => child.once("exit", (_code, signal) => resolve(signal)));
+    const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));
     try {
-      expect(await shim.pid()).toBe(child.pid);
-      await shim.cleanup();
-      expect(await within(exited, 10_000, "The shim exit")).toBe("SIGKILL");
+      await shim.ready();
+      expect(await within(exited, 10_000, "The shim exit")).toBe(0);
+      expect(await shim.endedBeforeCeiling()).toBe(false);
+      expect(await readFile(join(shim.dir, "done"), "utf8")).toBe("done\n");
     } finally {
       if (child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }
+      await shim.cleanup();
     }
   },
   30_000,

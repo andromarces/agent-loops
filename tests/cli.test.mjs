@@ -28,7 +28,6 @@ import {
   removePath,
   untrackedFilesGit,
   createPsShim,
-  waitForExit,
   within,
 } from "./runtime-helpers.mjs";
 
@@ -1942,13 +1941,13 @@ test("--continue-from cancels a probe on SIGINT and exits 130", async () => {
 });
 
 // Usefulness: verifies a real SIGINT during a stalled process-table read ends the continued run
-// with exit 130 (or death by SIGINT, which a shell reports as 130) before any turn, and ends the read's process, so the holder check cannot defeat
+// with exit 130 (or death by SIGINT, which a shell reports as 130) before any turn, and ends the read's shim, so the holder check cannot defeat
 // cancellation (#647). A child process is needed: an in-process emit reaches the exit handler of
 // execa, which re-raises the signal and ends the test worker.
 test.skipIf(process.platform === "win32")(
   "--continue-from exits 130 on SIGINT during a stalled holder check",
   async () => {
-    const shim = await createPsShim("__RECORD_PID__\n__STALL__");
+    const shim = await createPsShim("__STALL__");
     let repo;
     let child;
     try {
@@ -1979,16 +1978,17 @@ test.skipIf(process.platform === "win32")(
       const exited = new Promise((resolve) =>
         child.once("exit", (code, signal) => resolve({ code, signal })),
       );
-      // The shim records its pid only after the read started, so the signal cancels a running read.
-      const readPid = await shim.pid();
+      // The shim beats only after the read started, so the signal cancels a running read.
+      await shim.ready();
       child.kill("SIGINT");
       // The run handler sets exit 130. The exit handler of execa can re-raise SIGINT first, which
       // a shell also reports as 130.
       const { code, signal } = await within(exited, 15_000, "The CLI exit");
       expect(code === 130 || signal === "SIGINT").toBe(true);
-      expect(await waitForExit(readPid)).toBe(true);
+      // The cancel ends the shim before its 10 s ceiling (11.2 s at most).
+      expect(await shim.endedBeforeCeiling()).toBe(true);
     } finally {
-      // Ends only the child that this test spawned, by its exact pid, when it still runs.
+      // Ends only the child that this test spawned, through its handle, when it still runs.
       if (child && child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }

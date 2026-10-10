@@ -15,7 +15,7 @@ import {
   verifyResolvedModels,
 } from "../../src/lib/continuation.mjs";
 import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
-import { createPsShim, removePath, waitForExit, within } from "../runtime-helpers.mjs";
+import { createPsShim, removePath, within } from "../runtime-helpers.mjs";
 
 // Value that the mocked `readFile` throws while `active`; otherwise it reads the real file.
 const readControl = vi.hoisted(() => ({ active: false, value: undefined }));
@@ -689,22 +689,22 @@ test("refuseHeldSessions rethrows a canceled read", async () => {
 });
 
 // Usefulness: verifies through the real read that a stalled `ps` with output in both streams ends
-// on the cancel signal once the read runs, and on the bound, that the read's process is gone after
-// each, and that the warning of the bound holds no output.
+// on the cancel signal once the read runs, and on the bound, that `exec` ends the shim before its
+// 10 s ceiling (11.2 s at most) after the cancel, and that the warning of the bound holds no output.
 test.skipIf(process.platform === "win32")(
   "refuseHeldSessions ends a stalled read on cancel or bound and prints no output",
   async () => {
-    await useShim(`__RECORD_PID__\necho ${SENTINEL}\necho ${SENTINEL} >&2\n__STALL__`);
+    await useShim(`echo ${SENTINEL}\necho ${SENTINEL} >&2\n__STALL__`);
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     const controller = new AbortController();
     const canceled = refuseHeldSessions(heldRoles(), { signal: controller.signal }).catch(
       (err) => err,
     );
-    const canceledPid = await shim.pid();
+    await shim.ready();
     controller.abort();
     expect(await within(canceled, 20_000, "The canceled read")).toMatchObject({ isCanceled: true });
-    expect(await waitForExit(canceledPid)).toBe(true);
+    expect(await shim.endedBeforeCeiling()).toBe(true);
 
     await within(refuseHeldSessions(heldRoles(), { timeout: 1 }), 20_000, "The bounded read");
     const printed = warn.mock.calls.flat().join("\n");

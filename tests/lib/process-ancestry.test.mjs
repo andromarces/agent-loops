@@ -6,7 +6,7 @@ import {
   nearestHarness,
   readProcessCommands,
 } from "../../src/lib/process-ancestry.mjs";
-import { createPsShim, waitForExit, within } from "../runtime-helpers.mjs";
+import { createPsShim, within } from "../runtime-helpers.mjs";
 
 vi.mock("../../src/lib/exec.mjs", async (importOriginal) => {
   const real = await importOriginal();
@@ -24,8 +24,8 @@ afterEach(async () => {
   shim = undefined;
 });
 
-async function useShim(body) {
-  shim = await createPsShim(body);
+async function useShim(body, options) {
+  shim = await createPsShim(body, options);
   vi.stubEnv("PATH", `${shim.dir}${delimiter}${process.env.PATH}`);
 }
 
@@ -95,14 +95,15 @@ test.skipIf(!posix)(
 );
 
 // Usefulness: verifies the timeout of a read that already wrote output names only the reason
-// class, and that the read's process is gone after it, so it outlives neither the bound nor the
-// force-kill delay that follows it.
+// class, and that `exec` ends the stalled shim before its own ceiling, so the read outlives
+// neither the bound nor the force-kill delay that follows it. The shim ignores SIGTERM and ends
+// by itself at 20 s (21.2 s at most), well after the 6 s force kill.
 test.skipIf(!posix)(
   "readProcessCommands names the timeout and ends the stalled process",
   async () => {
-    await useShim(
-      `__RECORD_PID__\necho ${SENTINEL}\necho ${SENTINEL} >&2\ntrap '' TERM\ni=0\nwhile [ $i -lt 40 ]; do sleep 1; i=$((i+1)); done`,
-    );
+    await useShim(`echo ${SENTINEL}\necho ${SENTINEL} >&2\ntrap '' TERM\n__STALL__`, {
+      ceilingSeconds: 20,
+    });
     const started = Date.now();
     const { error, printed } = await failureAndOutput(() => readProcessCommands({ timeout: 1 }));
     expect(error.reason).toBe("timed out after 1 second");
@@ -110,26 +111,26 @@ test.skipIf(!posix)(
     expect(printed).not.toContain(SENTINEL);
     // The shell ignores SIGTERM, so the read ends at the 1 s bound plus the 5 s force-kill delay.
     expect(Date.now() - started).toBeLessThan(12_000);
-    expect(await waitForExit(await shim.pid())).toBe(true);
+    expect(await shim.endedBeforeCeiling()).toBe(true);
   },
-  30_000,
+  40_000,
 );
 
 // Usefulness: verifies a cancel that arrives while the read runs names only the reason class and
-// ends the read's process.
+// that `exec` ends the shim before its 10 s ceiling (11.2 s at most).
 test.skipIf(!posix)(
   "readProcessCommands names the cancel and ends the stalled process",
   async () => {
-    await useShim(`__RECORD_PID__\necho ${SENTINEL}\necho ${SENTINEL} >&2\n__STALL__`);
+    await useShim(`echo ${SENTINEL}\necho ${SENTINEL} >&2\n__STALL__`);
     const controller = new AbortController();
     const read = failureAndOutput(() => readProcessCommands({ signal: controller.signal }));
-    const pid = await shim.pid();
+    await shim.ready();
     controller.abort();
     const { error, printed } = await read;
     expect(error).toMatchObject({ isCanceled: true, reason: "was canceled" });
     expect(JSON.stringify([error.message, error.reason])).not.toContain(SENTINEL);
     expect(printed).not.toContain(SENTINEL);
-    expect(await waitForExit(pid)).toBe(true);
+    expect(await shim.endedBeforeCeiling()).toBe(true);
   },
   30_000,
 );
