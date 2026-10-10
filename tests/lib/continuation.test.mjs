@@ -10,6 +10,7 @@ import {
   resetGate,
   matchingGate,
   readContinuation,
+  refuseHeldIds,
   refuseHeldSessions,
   restoreSessions,
   verifyResolvedModels,
@@ -720,3 +721,17 @@ test.skipIf(process.platform === "win32")(
   },
   60_000,
 );
+
+// Usefulness: verifies the shared check applies the platform match to a process-table row, so a quoted flag or a session flag with the id refuses a run, and a bare id or a path that contains the id does not (#673). The match rules have their own tests in command-line.test.mjs.
+test("refuseHeldIds refuses a holder by argument and passes a path that contains the id", async () => {
+  const check = (command, platform) =>
+    refuseHeldIds([{ role: "worker", sessionId: HELD_ID }], {
+      platform,
+      readProcessCommands: async () => [{ pid: 4242, command }],
+    });
+  await expect(check(`claude -p "--resume" ${HELD_ID}`, "win32")).rejects.toThrow("process 4242");
+  await expect(check(`claude -p --session-id ${HELD_ID}`, "linux")).rejects.toThrow("process 4242");
+  await expect(check(`claude ${HELD_ID}`, "linux")).resolves.toBeUndefined();
+  await expect(check(`tail -f /logs/${HELD_ID}.log`, "linux")).resolves.toBeUndefined();
+  await expect(check(`claude -p --resume ${HELD_ID}-copy`, "win32")).resolves.toBeUndefined();
+});

@@ -6,6 +6,7 @@ import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
 import { sha256 } from "./hash.mjs";
+import { holdsSession } from "./command-line.mjs";
 import { ProcessReadError, readProcessCommands } from "./process-ancestry.mjs";
 import { isUuid, readSessionRecord } from "./session-record.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
@@ -78,8 +79,9 @@ async function applySessionRecord(path, bytes, transcript) {
 }
 
 /**
- * Refuses a continuation when another live process names the id of a claude role session in its
- * command line (#647, #671, ADR 0031). A `SIGKILL` of the earlier parent leaves its `claude` child
+ * Refuses a continuation when a live process passes the id of a claude role session through a
+ * session flag in its command line (#647, #671, #673, ADR 0031, ADR 0032, `holdsSession`). A
+ * `SIGKILL` of the earlier parent leaves its `claude` child
  * running, and the CLI accepts a resume of that session, so two processes would write one session
  * file. Only a claude id in the UUID form is checked, so a short id cannot match another
  * command line. No other adapter is verified to leave such an orphan. A process table that cannot
@@ -87,18 +89,33 @@ async function applySessionRecord(path, bytes, transcript) {
  * (seconds) and ends on `deps.signal`. A cancel rejects, so SIGINT still cancels the run.
  * `deps.flag` names the flag in the messages (`--continue-from` by default). A role that is absent
  * from `roles` is skipped, so the interactive path passes only the role it resumes.
- * known-limit: the match is by command line, so a holder that does not carry the id there is not found.
+ * known-limit: the match is by command line, so a holder that does not carry a session flag is not found.
  * @param {object} roles roles keyed by role name, after `restoreSessions`
- * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number, flag?: string }} [deps]
+ * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number, flag?: string, platform?: string }} [deps]
  */
 export async function refuseHeldSessions(roles, deps = {}) {
-  const flag = deps.flag ?? "--continue-from";
-  const ids = ROLE_KINDS.filter(
-    (role) => roles[role]?.kind === "claude" && isUuid(roles[role].sessionId),
-  ).map((role) => [role, roles[role].sessionId]);
+  await refuseHeldIds(
+    ROLE_KINDS.filter((role) => roles[role]?.kind === "claude").map((role) => ({
+      role,
+      sessionId: roles[role].sessionId,
+    })),
+    { ...deps, label: deps.flag ?? "--continue-from" },
+  );
+}
+
+/**
+ * The check of `refuseHeldSessions` for a list of `{ role, sessionId }` entries of claude roles.
+ * `deps.label` prefixes the warning and the refusal. `deps.platform` (default `process.platform`)
+ * selects the command-line rules. Entries whose id is not a UUID are ignored.
+ */
+export async function refuseHeldIds(entries, deps = {}) {
+  const ids = entries
+    .filter(({ sessionId }) => isUuid(sessionId))
+    .map(({ role, sessionId }) => [role, sessionId]);
   if (ids.length === 0) {
     return;
   }
+  const label = deps.label ?? "session check";
   let table;
   try {
     table = await (deps.readProcessCommands ?? readProcessCommands)({
@@ -112,15 +129,19 @@ export async function refuseHeldSessions(roles, deps = {}) {
     // Only the reason class of a `ProcessReadError` is printed: the process table holds the command
     // lines of every process on the host.
     logWarn(
-      `${flag}: cannot check for a live holder of a session: the process table read ${err instanceof ProcessReadError ? err.reason : "failed"}.`,
+      `${label}: cannot check for a live holder of a session: the process table read ${err instanceof ProcessReadError ? err.reason : "failed"}.`,
     );
     return;
   }
   for (const [role, id] of ids) {
-    const holder = table.find((entry) => entry.pid !== process.pid && entry.command.includes(id));
+    const holder = table.find(
+      (entry) =>
+        entry.pid !== process.pid &&
+        holdsSession(entry.command, id, deps.platform ?? process.platform),
+    );
     if (holder) {
       throw new Error(
-        `${flag}: the ${role} session ${id} is held by process ${holder.pid}, a leftover of the earlier run. End that process, or wait for it to finish, and run again.`,
+        `${label}: the ${role} session ${id} is held by process ${holder.pid}, a leftover of an earlier run. End that process, or wait for it to finish, and run again.`,
       );
     }
   }

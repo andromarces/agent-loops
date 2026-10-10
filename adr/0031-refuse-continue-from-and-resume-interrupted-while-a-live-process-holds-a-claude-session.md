@@ -4,6 +4,8 @@
 
 accepted
 
+Partly superseded by [ADR 0032: Detect a live session holder on interactive init, keep the headless gap](0032-detect-a-live-session-holder-on-interactive-init.md): the match rule of decision 1 no longer holds. A process holds a session when its command line passes the id through `--session-id`, `--resume`, or `-r` (as `--flag <id>` or `--flag=<id>`), not when it names the id anywhere. The rule applies to the check of decision 5 as well. The other decisions hold, so this ADR stays `accepted`.
+
 Supersedes: [ADR 0029: Refuse --continue-from while a live process holds a Claude session](0029-refuse-continue-from-while-a-live-process-holds-a-claude-session.md). ADR 0029 is `superseded` as a whole. This ADR carries every decision of ADR 0029 and changes decision 5.
 
 ## Date
@@ -31,8 +33,8 @@ The interactive `agent-loop role dispatch` path has the same exposure. A `role d
 ## Consequences
 
 - The reproduction of issue #647 now ends with exit 1 and a named holder, before any turn. The orphan is left alone.
-- A process that carries the id in its command line for another reason also refuses the run, for example a shell that runs `claude --resume <id>`. The error names the pid, so the operator can inspect it. The refusal is the safe side.
-- A holder that does not carry the id in its command line is not found. The check also does not cover a fresh run in the same work tree, because a fresh run holds no earlier id. An orphan from an earlier run can still write to that tree.
+- A process that passes the id through a session flag for another reason also refuses the run, for example a shell that runs `claude --resume <id>` or `grep -r <id> logs/` (ADR 0032). The error names the pid, so the operator can inspect it. The refusal is the safe side.
+- A holder that does not carry a session flag with the id is not found. The check also does not cover a fresh run in the same work tree, because a fresh run holds no earlier id. An orphan from an earlier run can still write to that tree.
 - The check does not run for the orchestrator or the reviewer of another CLI. Only the Claude orphan is observed (ADR 0027), so the other adapters are not verified to leave one.
 - The check and the resume are not atomic. A holder that starts between them is not found.
 - With the check on the interactive path, the probe sequence refused with exit 1 and `the worker session <id> is held by process <pid>`, and the orphan stayed alive. After the orphan ended, `--resume-interrupted` exited 0. A resume checks only the role that it dispatches. The Windows command is not run on a Windows host.
@@ -63,5 +65,6 @@ Andro Marces
 - [Issue #627](https://github.com/andromarces/agent-loops/issues/627)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR 0029: Refuse --continue-from while a live process holds a Claude session](0029-refuse-continue-from-while-a-live-process-holds-a-claude-session.md)
+- [ADR 0032: Detect a live session holder on interactive init, keep the headless gap](0032-detect-a-live-session-holder-on-interactive-init.md)
 - Implementation: `refuseHeldSessions` in `src/lib/continuation.mjs`, `readProcessCommands` in `src/lib/process-ancestry.mjs`, the call in `src/cli.mjs`, and `dispatchLocked` in `src/role.mjs`. Documented in `README.md`.
 - [ADR Index](README.md)
