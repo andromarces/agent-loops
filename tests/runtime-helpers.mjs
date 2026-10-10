@@ -317,7 +317,7 @@ export const ABORT_KILL_TEST_TIMEOUT_MS =
 /**
  * Writes a `command` shim into `dir` that hangs, so a kill is exercised against
  * a real child process. The long-lived node process records its own pid in
- * `started`. It stays alive only while the `keep` or the `hold` file exists, so it
+ * `started` with its own wall-clock start time (epoch ms), as `<pid> <start>`. It stays alive only while the `keep` or the `hold` file exists, so it
  * exits when both are gone by any means, when `dir` is gone, or at the wall-clock
  * ceiling `ceilingMs`. A ceiling exit writes the `ceiling` marker first, so a helper
  * can tell it from a kill. If that write fails, the shim does not exit: it stays alive
@@ -340,7 +340,7 @@ async function writeHangingShim(dir, command, ceilingMs) {
   await writeFile(
     script,
     `const fs = require("fs");
-fs.writeFileSync(${JSON.stringify(started)}, String(process.pid));
+fs.writeFileSync(${JSON.stringify(started)}, process.pid + " " + Date.now());
 const begun = Date.now();
 process.on("exit", () => {
   try {
@@ -376,13 +376,14 @@ const watch = setInterval(() => {
   return { started };
 }
 
-// Returns the pid the shim recorded, or null if none appears within `waitMs`.
-async function waitForPid(started, waitMs) {
+// Returns the record the shim wrote, `{ pid, startMs }`, or null if no whole record
+// appears within `waitMs`. `startMs` is the shim's own wall-clock start (epoch ms).
+async function waitForRecord(started, waitMs) {
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const pid = Number.parseInt(await readFile(started, "utf8").catch(() => ""), 10);
-    if (Number.isInteger(pid)) {
-      return pid;
+    const match = /^(\d+) (\d+)$/.exec(await readFile(started, "utf8").catch(() => ""));
+    if (match) {
+      return { pid: Number(match[1]), startMs: Number(match[2]) };
     }
     if (Date.now() >= deadline) {
       return null;
@@ -409,20 +410,32 @@ function processExists(pid) {
 // have passed after the call returned. The force-kill timer starts when the kill
 // is sent, which is at or before the return, so a child alive past this point was
 // not force-killed.
-async function assertGone(pid, forceKillAfterDelayMs, dir) {
+//
+// A kill is proven only when the exit was first observed before the shim's start
+// plus its ceiling (both wall clock). An exit observed at or after that deadline
+// may be the shim ending itself at its ceiling or hard deadline, with a marker
+// that was never written or never read, so it fails whatever the markers say. This
+// rule needs no write at exit time. The ceiling marker is an extra signal.
+async function assertGone({ pid, startMs }, forceKillAfterDelayMs, dir, ceilingMs) {
   const deadline = Date.now() + forceKillAfterDelayMs + TEARDOWN_MARGIN_MS;
-  while (processExists(pid) && Date.now() < deadline) {
+  let alive = processExists(pid);
+  let observedAt = Date.now();
+  while (alive && Date.now() < deadline) {
     await delay(50);
+    alive = processExists(pid);
+    observedAt = Date.now();
   }
   assert.ok(
-    !processExists(pid),
+    !alive,
     `the shim child ${pid} outlived the ${forceKillAfterDelayMs} ms force-kill boundary`,
   );
-  // The shim writes this marker before it exits on its own ceiling, so an exit the
-  // runtime did not cause cannot pass as a kill.
   assert.ok(
     !statSync(join(dir, CEILING_FILE), { throwIfNoEntry: false })?.isFile(),
     `the shim child ${pid} exited on its wall-clock ceiling, so the code under test did not kill it`,
+  );
+  assert.ok(
+    observedAt < startMs + ceilingMs,
+    `the shim child ${pid} exit was first observed ${observedAt - startMs} ms after its start, not before its ${ceilingMs} ms ceiling, so the test cannot prove a runtime kill`,
   );
 }
 
@@ -477,7 +490,7 @@ async function stopShim(dir, gone, ceilingMs) {
   const survivor = (pid) =>
     `the shim in ${dir} (pid ${pid ?? "unknown"}) did not exit within ${SHIM_EXIT_WAIT_MS} ms of cleanup. ` +
     `The test does not own it and sends it no signal; its own hard wall-clock deadline of ${Math.ceil(hardDeadlineMs(ceilingMs) / 1000)} s ends it`;
-  const pid = await waitForPid(join(dir, "started.txt"), 0);
+  const pid = (await waitForRecord(join(dir, "started.txt"), 0))?.pid ?? null;
   if (!(await until(async () => existsSync(join(dir, EXITED_FILE))))) {
     errors.push(new Error(survivor(pid)));
     return errors;
@@ -565,9 +578,9 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS, opt
       );
       // The record was written before the bound expired, so a short wait only
       // covers file visibility.
-      const pid = await waitForPid(shim.started, RECORD_VISIBLE_MS);
-      assert.notEqual(pid, null, `the shim did not start within the ${boundMs} ms bound`);
-      await assertGone(pid, FORCE_KILL_AFTER_DELAY_MS, dir);
+      const record = await waitForRecord(shim.started, RECORD_VISIBLE_MS);
+      assert.notEqual(record, null, `the shim did not start within the ${boundMs} ms bound`);
+      await assertGone(record, FORCE_KILL_AFTER_DELAY_MS, dir, ceilingMs);
       markGone();
       return result;
     });
@@ -591,15 +604,15 @@ export async function expectAbortKillsShim(command, start) {
     return withShimOnPath(dir, async () => {
       const controller = new AbortController();
       const pending = start(controller.signal);
-      const pid = await waitForPid(shim.started, START_WAIT_MS);
-      assert.notEqual(pid, null, "the shim never started");
+      const record = await waitForRecord(shim.started, START_WAIT_MS);
+      assert.notEqual(record, null, "the shim never started");
       controller.abort();
       const result = await returnsWithin(
         pending,
         CALL_CEILING_MS,
         "the call did not return after the abort",
       );
-      await assertGone(pid, ABORT_FORCE_KILL_AFTER_DELAY_MS, dir);
+      await assertGone(record, ABORT_FORCE_KILL_AFTER_DELAY_MS, dir, ceilingMs);
       markGone();
       return result;
     });

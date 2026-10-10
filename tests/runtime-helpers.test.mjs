@@ -145,7 +145,7 @@ test(
         held = execa("leftover-shim", { reject: false });
         pid = await pollUntil(async () => {
           const text = await readFile(join(shimDir, "started.txt"), "utf8").catch(() => "");
-          return text === "" ? undefined : Number(text);
+          return text === "" ? undefined : Number(text.split(" ")[0]);
         }, 10_000);
       }).then(
         () => undefined,
@@ -285,7 +285,7 @@ test(
         held.catch(() => {});
         const started = join(shimDir, "started.txt");
         await pollUntil(async () => (existsSync(started) ? true : undefined), 10_000);
-        const pid = Number(await readFile(started, "utf8"));
+        const pid = Number((await readFile(started, "utf8")).split(" ")[0]);
         await pollUntil(() => (pidAlive(pid) ? undefined : true), 10_000);
       },
       undefined,
@@ -346,15 +346,43 @@ test(
         held.catch(() => {});
         const started = join(shimDir, "started.txt");
         await pollUntil(async () => (existsSync(started) ? true : undefined), 10_000);
-        const pid = Number(await readFile(started, "utf8"));
-        const begun = performance.now();
+        const [pid, startMs] = (await readFile(started, "utf8")).split(" ").map(Number);
         await pollUntil(() => (pidAlive(pid) ? undefined : true), 10_000);
-        lived = performance.now() - begun;
+        lived = Date.now() - startMs;
       },
       undefined,
       { ceilingMs: 500 },
     ).catch(() => {});
     expect(lived).toBeGreaterThanOrEqual(400);
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: acceptance (#670 review) — an exit that is not proven to precede the shim's ceiling must
+// not pass as a kill. The marker path is a directory, so a hard-deadline exit leaves no marker, and
+// the call returns only after that exit, as a delayed record read or a paused parent would.
+test(
+  "expectBoundKillsShim fails when the shim exit is first observed after its ceiling",
+  async () => {
+    const failure = await expectBoundKillsShim(
+      "late-shim",
+      async () => {
+        const shimDir = process.env.PATH.split(delimiter)[0];
+        await mkdir(join(shimDir, "ceiling"));
+        const held = execa("late-shim", { reject: false });
+        held.catch(() => {});
+        const started = join(shimDir, "started.txt");
+        await pollUntil(async () => (existsSync(started) ? true : undefined), 10_000);
+        const pid = Number((await readFile(started, "utf8")).split(" ")[0]);
+        await pollUntil(() => (pidAlive(pid) ? undefined : true), 10_000);
+      },
+      undefined,
+      { ceilingMs: 500 },
+    ).then(
+      () => undefined,
+      (error) => error,
+    );
+    expect(failure?.message).toMatch(/cannot prove a runtime kill/);
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
