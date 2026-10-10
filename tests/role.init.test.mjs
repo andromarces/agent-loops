@@ -598,3 +598,93 @@ test("init --timeout persists in state and reaches the adapter", async () => {
   expect(resultZero.exitCode).toBe(0);
   expect((await readRepoState(repo)).timeout).toBeNull();
 });
+
+const HELD_ID = "11111111-2222-4333-8444-555555555555";
+
+// Ends a first run, then records a claude worker session on it, as a turn that a hard kill cut leaves.
+async function endedRunWithClaudeWorker(repo, sessionId) {
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), { ...basicDeps() });
+  const stateFile = statePaths({ cwd: repo }).stateFile;
+  const state = JSON.parse(await readFile(stateFile, "utf8"));
+  state.lifecycle = "aborted";
+  state.roles.worker = { ...state.roles.worker, kind: "claude", sessionId };
+  await writeFile(stateFile, JSON.stringify(state));
+}
+
+function initWithTable(repo, table) {
+  const init = {
+    calls: 0,
+    run: () =>
+      executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+        ...basicDeps(),
+        readProcessCommands: async () => {
+          init.calls += 1;
+          return table;
+        },
+      }),
+  };
+  return init;
+}
+
+// Usefulness: verifies a fresh init refuses while a live process holds a claude session of the earlier run in the same work tree (#673), which the --continue-from check cannot cover.
+test("init refuses while a live process holds a session of the ended run in the work tree", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await endedRunWithClaudeWorker(repo, HELD_ID);
+
+  const init = initWithTable(repo, [
+    { pid: 4242, command: `claude -p --resume ${HELD_ID} --output-format json` },
+  ]);
+  const result = await init.run();
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toMatch(new RegExp(`worker.*${HELD_ID}.*process 4242`));
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("aborted");
+  const names = await readdir(statePaths({ cwd: repo }).stateDir);
+  expect(names.filter((name) => /^state\..+\.json$/.test(name))).toEqual([]);
+});
+
+// Usefulness: verifies the check reads the archived state of earlier runs, not only the current file, so an orphan of a run that an earlier init archived is still found (#673).
+test("init refuses for a session held from an archived earlier run", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await endedRunWithClaudeWorker(repo, HELD_ID);
+  const clean = initWithTable(repo, []);
+  expect((await clean.run()).exitCode).toBe(0);
+  await executeRoleCommand(
+    withRepo(
+      ["abort", "--cwd", "<repo>", "--parent-session", "parent-sess-1", "--reason", "x"],
+      repo,
+    ),
+    { ...basicDeps() },
+  );
+  const archivedBefore = (await readdir(statePaths({ cwd: repo }).stateDir)).filter((name) =>
+    /^state\..+\.json$/.test(name),
+  );
+  expect(archivedBefore.length).toBe(1);
+
+  const held = initWithTable(repo, [{ pid: 77, command: `claude -p --session-id ${HELD_ID}` }]);
+  const result = await held.run();
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain(`process 77`);
+});
+
+// Usefulness: verifies an earlier session that no live process names does not block a fresh init, and that a work tree with no earlier claude session reads no process table.
+test("init proceeds when no live process holds an earlier session", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await endedRunWithClaudeWorker(repo, HELD_ID);
+  const none = initWithTable(repo, [{ pid: 5, command: "node other.js" }]);
+  expect((await none.run()).exitCode).toBe(0);
+
+  const fresh = await createTempRepo();
+  repos.push(fresh);
+  const unread = initWithTable(fresh, [{ pid: 4242, command: `claude --resume ${HELD_ID}` }]);
+  expect((await unread.run()).exitCode).toBe(0);
+  expect(unread.calls).toBe(0);
+});

@@ -90,12 +90,27 @@ async function applySessionRecord(path, bytes, transcript) {
  * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number }} [deps]
  */
 export async function refuseHeldSessions(roles, deps = {}) {
-  const ids = ROLE_KINDS.filter(
-    (role) => roles[role].kind === "claude" && isUuid(roles[role].sessionId),
-  ).map((role) => [role, roles[role].sessionId]);
+  await refuseHeldIds(
+    ROLE_KINDS.filter((role) => roles[role].kind === "claude").map((role) => ({
+      role,
+      sessionId: roles[role].sessionId,
+    })),
+    { ...deps, label: "--continue-from" },
+  );
+}
+
+/**
+ * The check of `refuseHeldSessions` for a list of `{ role, sessionId }` entries of claude roles.
+ * `deps.label` prefixes the warning and the refusal. Entries whose id is not a UUID are ignored.
+ */
+export async function refuseHeldIds(entries, deps = {}) {
+  const ids = entries
+    .filter(({ sessionId }) => isUuid(sessionId))
+    .map(({ role, sessionId }) => [role, sessionId]);
   if (ids.length === 0) {
     return;
   }
+  const label = deps.label ?? "session check";
   let table;
   try {
     table = await (deps.readProcessCommands ?? readProcessCommands)({
@@ -109,7 +124,7 @@ export async function refuseHeldSessions(roles, deps = {}) {
     // Only the reason class of a `ProcessReadError` is printed: the process table holds the command
     // lines of every process on the host.
     logWarn(
-      `--continue-from: cannot check for a live holder of a session: the process table read ${err instanceof ProcessReadError ? err.reason : "failed"}.`,
+      `${label}: cannot check for a live holder of a session: the process table read ${err instanceof ProcessReadError ? err.reason : "failed"}.`,
     );
     return;
   }
@@ -117,7 +132,7 @@ export async function refuseHeldSessions(roles, deps = {}) {
     const holder = table.find((entry) => entry.pid !== process.pid && entry.command.includes(id));
     if (holder) {
       throw new Error(
-        `--continue-from: the ${role} session ${id} is held by process ${holder.pid}, a leftover of the earlier run. End that process, or wait for it to finish, and run again.`,
+        `${label}: the ${role} session ${id} is held by process ${holder.pid}, a leftover of an earlier run. End that process, or wait for it to finish, and run again.`,
       );
     }
   }

@@ -29,6 +29,7 @@ import {
   testCmdError,
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
+import { refuseHeldIds } from "./lib/continuation.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import {
   errorMessage,
@@ -44,6 +45,7 @@ import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
   cwdHash,
+  readClaudeSessions,
   readState,
   statePaths,
   withStateLock,
@@ -563,7 +565,7 @@ function createEventSink(transcriptFile) {
  * Dispatch operation: initialize on the first call, then charge the step,
  * mark `dispatched`, run exactly one child turn, and record the result.
  */
-async function dispatch(args, { agents, stdin = readStdin, signal, gh }) {
+async function dispatch(args, { agents, stdin = readStdin, signal, gh, readProcessCommands }) {
   if (!args.role) {
     throw new RoleError("dispatch requires --role worker or reviewer.");
   }
@@ -589,14 +591,17 @@ async function dispatch(args, { agents, stdin = readStdin, signal, gh }) {
 
   try {
     return await withStateLock(paths.lockFile, () =>
-      dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh }),
+      dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh, readProcessCommands }),
     );
   } finally {
     await onEvent.flush();
   }
 }
 
-async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh }) {
+async function dispatchLocked(
+  args,
+  { agents, stdin, signal, paths, onEvent, gh, readProcessCommands },
+) {
   const existing = await readState(paths.stateFile);
   const init = isInitCall(args);
   let state;
@@ -676,6 +681,13 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
 
   let localFiles = null;
   if (init) {
+    // A hard kill of an earlier run can leave its `claude` child alive and writing to this work
+    // tree, so a live holder of a session that the earlier states recorded refuses the init (ADR 0031).
+    await refuseHeldIds(await readClaudeSessions(paths.stateDir), {
+      readProcessCommands,
+      signal,
+      label: "init",
+    });
     // Every check and the prompt read passed. The copy comes first, before the
     // state file exists, so a copy that throws leaves no run to abort, and
     // before the first child turn and snapshot, so every turn sees the files.

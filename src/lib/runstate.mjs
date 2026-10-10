@@ -848,6 +848,36 @@ export async function readState(stateFile) {
   return value;
 }
 
+/**
+ * The claude role sessions that the current and the archived state files of one work tree record,
+ * as `{ role, sessionId }` entries (#673). The pre-spawn write of a turn puts the id there before
+ * the CLI starts, so a hard kill still leaves it. An unreadable or malformed file is skipped.
+ * known-limit: every archived file is read, so a work tree with many earlier runs reads them all.
+ */
+export async function readClaudeSessions(stateDir) {
+  let names;
+  try {
+    names = await readdir(stateDir);
+  } catch {
+    return [];
+  }
+  const entries = [];
+  for (const name of names.filter((n) => /^state(\..+)?\.json$/.test(n))) {
+    let roles;
+    try {
+      roles = (await readState(join(stateDir, name))).roles;
+    } catch {
+      continue;
+    }
+    for (const [role, state] of Object.entries(isJsonObject(roles) ? roles : {})) {
+      if (isJsonObject(state) && state.kind === "claude" && typeof state.sessionId === "string") {
+        entries.push({ role, sessionId: state.sessionId });
+      }
+    }
+  }
+  return entries;
+}
+
 export async function writeState(stateFile, state) {
   await writeFileAtomic(stateFile, `${JSON.stringify(state, null, 2)}\n`);
 }
