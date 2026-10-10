@@ -79,14 +79,14 @@ async function applySessionRecord(path, bytes, transcript) {
 }
 
 /**
- * Refuses a continuation when a live Claude CLI process holds the id of a claude role session in its
+ * Refuses a continuation when a live process passes the id of a claude role session through a session flag in its
  * command line (#647, ADR 0029, `holdsSession`). A `SIGKILL` of the earlier parent leaves its `claude` child
  * running, and the CLI accepts a resume of that session, so two processes would write one session
  * file. Only a claude id in the UUID form is checked, so a short id cannot match another
  * command line. No other adapter is verified to leave such an orphan. A process table that cannot
  * be read logs a warning and lets the run continue. The read is bounded by `deps.timeout`
  * (seconds) and ends on `deps.signal`. A cancel rejects, so SIGINT still cancels the run.
- * known-limit: the match is by command line, so a holder that does not carry the id as an argument is not found.
+ * known-limit: the match is by command line, so a holder that does not carry a session flag is not found.
  * @param {object} roles roles keyed by role name, after `restoreSessions`
  * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number }} [deps]
  */

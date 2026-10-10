@@ -61,22 +61,26 @@ test("splitWindowsArguments matches the C runtime parser on the probed command l
 
 const ID = "11111111-2222-4333-8444-555555555555";
 
-// Usefulness: verifies a Claude CLI process is a holder for a flag value, a quoted flag, a doubled-quote form, or a bare id, as the adapter spawns it, and never for a substring of an argument (#673).
-test("holdsSession on Windows counts a Claude CLI argument equal to the id or a session flag with the id", () => {
+// Usefulness: verifies a Windows process holds the session only through a session flag with the id, as the adapter passes it, including a quoted flag and a doubled-quote form, and never for a substring of an argument (#673).
+test("holdsSession on Windows counts a session flag followed by the id", () => {
   for (const command of [
     `claude -p --resume ${ID} --output-format json`,
+    `claude -p --session-id ${ID} --model haiku`,
+    `claude -p -r ${ID}`,
     `claude -p --session-id=${ID}`,
+    `claude -p --resume=${ID}`,
     `claude -p -r=${ID}`,
     `claude -p "--resume" ${ID}`,
     `claude -p "--session-id=${ID}"`,
     `claude -p --resume="${ID}"`,
+    `claude -p --resume "${ID}"`,
     `claude -p --resume ""${ID}""`,
     `claude -p ""--resume"" ${ID}`,
-    `claude ${ID}`,
     `claude -p --resume ${ID.toUpperCase()}`,
     String.raw`"C:\Program Files\claude.exe" -p --resume "${ID}"`,
-    String.raw`C:\Users\u\.local\bin\claude.exe -p --session-id ${ID}`,
     String.raw`C:\nvm\node.exe C:\nvm\node_modules\@anthropic-ai\claude-code\cli.js -p --resume ${ID}`,
+    // The flag decides, not the program.
+    `any-wrapper.exe --session-id ${ID}`,
   ]) {
     expect(holdsSession(command, ID, "win32"), command).toBe(true);
   }
@@ -84,42 +88,49 @@ test("holdsSession on Windows counts a Claude CLI argument equal to the id or a 
     `claude -p --resume ${ID}-copy`,
     `claude -p --resume x${ID}`,
     `claude -p --session-id-file=${ID}`,
+    `claude -p --session-id-file ${ID}`,
     `claude -p --model=${ID}`,
+    `claude -p --model ${ID}`,
+    `claude -p --resume --verbose ${ID}`,
     String.raw`claude -p --log "C:\logs\${ID}.log"`,
     String.raw`claude -p --resume\"${ID}\"`,
     // A doubled quote inside a quoted section is a literal quote for the C runtime parser, which
     // `claude.exe` uses, so the id is not a whole argument.
     `claude -p "a "" ${ID}"`,
-    `claude -p "x ""${ID}"" y"`,
+    `claude -p --resume "x ""${ID}"" y"`,
   ]) {
     expect(holdsSession(command, ID, "win32"), command).toBe(false);
   }
 });
 
-// Usefulness: verifies a process that is not a Claude CLI never holds a session, whatever its arguments, so an unrelated process that carries the id in a larger argument or as a bare argument does not block a run (#673).
-test("holdsSession ignores a process that is not a Claude CLI", () => {
+// Usefulness: verifies a bare id argument is not a holder, whatever the program, so an unrelated program that carries the id, or a data argument named claude, does not block a run. This narrows the earlier bare-id refusal of ADR 0029 by maintainer decision (#673).
+test("holdsSession ignores a bare id argument and an unrelated program", () => {
   for (const [command, platform] of [
-    [`tool.exe "a "" ${ID}"`, "win32"],
+    [`claude ${ID}`, "win32"],
+    [`claude -p ${ID}`, "linux"],
     [`node app.js ${ID}`, "win32"],
-    [`node app.js --resume ${ID}`, "win32"],
-    [`tail -f /logs/${ID}.log`, "linux"],
     [`node test ${ID}`, "linux"],
-    [`sh -c run --resume ${ID}`, "linux"],
-    [`vim /notes/claude.md --resume ${ID}`, "linux"],
+    [`tool.exe "a "" ${ID}"`, "win32"],
+    [`tail -f /logs/${ID}.log`, "linux"],
+    [`cat claude ${ID}`, "linux"],
+    [`vim /notes/claude ${ID}`, "linux"],
+    [`grep claude ${ID} notes.txt`, "win32"],
   ]) {
     expect(holdsSession(command, ID, platform), command).toBe(false);
   }
 });
 
-// Usefulness: verifies a POSIX Claude CLI holder is found from the space-joined text of ps, where a quote or an apostrophe inside an earlier argument must not hide a later id (#673).
-test("holdsSession on POSIX counts a Claude CLI and splits on white space only", () => {
+// Usefulness: verifies a POSIX holder is found from the space-joined text of ps, where a quote or an apostrophe inside an earlier argument, or a space in a script path, must not hide a later flag and id (#673).
+test("holdsSession on POSIX counts a session flag followed by the id and splits on white space only", () => {
   for (const command of [
     `claude -p --resume ${ID} --output-format json`,
+    `claude -p --session-id ${ID}`,
+    `claude -p -r ${ID}`,
     `claude -p --session-id=${ID}`,
     `claude -p -r=${ID}`,
-    `claude ${ID}`,
     `/Users/John Doe/.local/bin/claude -p --session-id ${ID}`,
     `node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js -p --resume ${ID}`,
+    `node /Users/John Doe/lib/node_modules/@anthropic-ai/claude-code/cli.js -p --resume ${ID}`,
     `claude -p --append-system-prompt it's a "test --resume ${ID}`,
     `claude -p --append-system-prompt "don't --resume ${ID}`,
   ]) {
@@ -131,6 +142,7 @@ test("holdsSession on POSIX counts a Claude CLI and splits on white space only",
     `claude -p --session-id-file=${ID}`,
     `claude -p --resume"${ID}"`,
     `claude -p "--resume=${ID}"`,
+    `claude -p --resume --verbose ${ID}`,
   ]) {
     expect(holdsSession(command, ID, "linux"), command).toBe(false);
   }

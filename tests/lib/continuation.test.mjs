@@ -730,7 +730,8 @@ test("refuseHeldIds refuses a holder by argument and passes a path that contains
       readProcessCommands: async () => [{ pid: 4242, command }],
     });
   await expect(check(`claude -p "--resume" ${HELD_ID}`, "win32")).rejects.toThrow("process 4242");
-  await expect(check(`claude ${HELD_ID}`, "linux")).rejects.toThrow("process 4242");
+  await expect(check(`claude -p --session-id ${HELD_ID}`, "linux")).rejects.toThrow("process 4242");
+  await expect(check(`claude ${HELD_ID}`, "linux")).resolves.toBeUndefined();
   await expect(check(`tail -f /logs/${HELD_ID}.log`, "linux")).resolves.toBeUndefined();
   await expect(check(`claude -p --resume ${HELD_ID}-copy`, "win32")).resolves.toBeUndefined();
 });

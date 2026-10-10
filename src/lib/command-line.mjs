@@ -58,58 +58,35 @@ export function splitWindowsArguments(command) {
   return args;
 }
 
-/** The last path segment without its extension, lower-cased. */
-function stem(path) {
-  return path
-    .split(/[\\/]/)
-    .pop()
-    .toLowerCase()
-    .replace(/\.(exe|cmd|bat|com|js|mjs|cjs)$/, "");
-}
+const SESSION_FLAGS = ["--session-id", "--resume", "-r"];
 
 /**
- * True when the arguments before the first option name a Claude CLI: an executable or an entry
- * script whose name is `claude`, or a path under the `claude-code` package directory. The adapter
- * starts `claude`, which resolves to `claude.exe`, to the `claude` binary, or to a Node entry
- * script of the npm package (`src/agents/claude.mjs`). A real child of this adapter shows as
- * `claude -p --session-id <id>`. Any other program is not a holder, whatever its arguments hold.
- * known-limit: a Claude CLI started through another launcher or under another name is not found.
- */
-function isClaudeCli(args) {
-  const firstOption = args.findIndex((arg) => arg.startsWith("-"));
-  return args
-    .slice(0, firstOption === -1 ? args.length : firstOption)
-    .some((arg) => stem(arg) === "claude" || /(^|[\\/])claude-code([\\/]|$)/i.test(arg));
-}
-
-/**
- * True when `command` is a Claude CLI process that holds the session `id`: an argument equals the
- * id, or is `--resume=<id>`, `--session-id=<id>`, or `-r=<id>`, compared without case. A path or a
- * longer token that merely contains the id does not count, and a process that is not a Claude CLI
- * never counts.
+ * True when `command` holds the session `id` through a session flag, compared without case: an
+ * argument `--session-id`, `--resume`, or `-r` immediately followed by an argument equal to the id,
+ * or one argument `--session-id=<id>`, `--resume=<id>`, or `-r=<id>`. The adapter passes the id
+ * only so, as `--resume <id>` or `--session-id <id>` (`src/agents/claude.mjs`). A bare id argument,
+ * a path or a longer token that contains the id, and a flag that is not one of these never count,
+ * and the program is not examined (ADR 0031).
  *
- * Windows: the arguments come from the C runtime parser. POSIX: `ps` prints the arguments joined by
- * single spaces with no quoting, so the boundaries are lost. The text is split on white space only,
- * because a quote in it can be a literal character of an earlier argument, and a UUID holds no
- * white space, so the id of a holder is one field.
- * known-limit: on POSIX an argument that holds spaces and has the id as a separate word counts in
- * a Claude CLI process, which refuses a run on the safe side.
+ * Windows: the arguments come from the C runtime parser, so quotes are stripped. POSIX: `ps` prints
+ * the arguments joined by single spaces with no quoting, so the boundaries are lost. The text is
+ * split on white space only, because a quote in it can be a literal character of an earlier
+ * argument, and a UUID holds no white space, so the id of a holder is one field.
+ * known-limit: a holder that does not carry a session flag is not found. On POSIX a flag and an id
+ * that sit inside one argument that holds spaces, for example a prompt text, count as a holder,
+ * which refuses a run on the safe side.
  * @param {string} command
  * @param {string} id a UUID
  * @param {string} platform a `process.platform` value
  */
 export function holdsSession(command, id, platform) {
-  const args =
-    platform === "win32" ? splitWindowsArguments(command) : command.split(/\s+/).filter(Boolean);
-  if (!isClaudeCli(args)) {
-    return false;
-  }
+  const args = (platform === "win32" ? splitWindowsArguments(command) : command.split(/\s+/)).map(
+    (arg) => arg.toLowerCase(),
+  );
   const wanted = id.toLowerCase();
-  const accepted = new Set([
-    wanted,
-    `--resume=${wanted}`,
-    `--session-id=${wanted}`,
-    `-r=${wanted}`,
-  ]);
-  return args.some((arg) => accepted.has(arg.toLowerCase()));
+  return args.some(
+    (arg, i) =>
+      SESSION_FLAGS.some((flag) => arg === `${flag}=${wanted}`) ||
+      (SESSION_FLAGS.includes(arg) && args[i + 1] === wanted),
+  );
 }
