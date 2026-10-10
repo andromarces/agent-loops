@@ -201,11 +201,10 @@ async function blockedShimFailure(after) {
       async () => (existsSync(join(shimDir, "started.txt")) ? true : undefined),
       10_000,
     );
-    // The hold file keeps the shim alive while the keep file is swapped for a directory.
+    // The hold file stays until the directory goes, so the shim sees `keep` or `hold` throughout.
     await writeFile(join(shimDir, "hold"), "");
     await rm(join(shimDir, "keep"));
     await mkdir(join(shimDir, "keep"));
-    await rm(join(shimDir, "hold"));
     await after();
   }).then(
     () => undefined,
@@ -267,6 +266,34 @@ test(
     );
     expect(failure).toBeInstanceOf(AggregateError);
     expect(failure.errors.some((error) => /exit is unconfirmed/.test(error.message))).toBe(true);
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: acceptance (#670 review) — a shim that ends on its own ceiling was not killed by the
+// code under test, so the kill check must fail instead of accepting the exit as a kill. The call
+// under test never kills the shim and returns only after the shim has gone.
+test(
+  "expectBoundKillsShim fails when the shim exits on its ceiling instead of being killed",
+  async () => {
+    const failure = await expectBoundKillsShim(
+      "ceiling-shim",
+      async () => {
+        const shimDir = process.env.PATH.split(delimiter)[0];
+        const held = execa("ceiling-shim", { reject: false });
+        held.catch(() => {});
+        const started = join(shimDir, "started.txt");
+        await pollUntil(async () => (existsSync(started) ? true : undefined), 10_000);
+        const pid = Number(await readFile(started, "utf8"));
+        await pollUntil(() => (pidAlive(pid) ? undefined : true), 10_000);
+      },
+      undefined,
+      { ceilingMs: 500 },
+    ).then(
+      () => undefined,
+      (error) => error,
+    );
+    expect(failure?.message).toMatch(/exited on its wall-clock ceiling/);
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );

@@ -252,6 +252,8 @@ export async function deadPid() {
 const SHIM_POLL_MS = 50;
 const KEEP_FILE = "keep";
 const EXITED_FILE = "exited";
+const CEILING_FILE = "ceiling";
+const HOLD_FILE = "hold";
 // The longest cleanup waits for a surviving shim to acknowledge its exit. The shim polls every
 // SHIM_POLL_MS, so a live shim answers within a few polls even on a loaded machine.
 const SHIM_EXIT_WAIT_MS = 5000;
@@ -310,17 +312,23 @@ export const ABORT_KILL_TEST_TIMEOUT_MS =
 /**
  * Writes a `command` shim into `dir` that hangs, so a kill is exercised against
  * a real child process. The long-lived node process records its own pid in
- * `started`. It stays alive only while the `keep` file exists, so it exits when
- * that file is gone by any means, when `dir` is gone, or at the wall-clock
- * ceiling `ceilingMs`. A `hold` file keeps it alive like the `keep` file, so a test can
- * swap the keep file without a window where the shim exits. On exit it writes the `exited` marker when `dir` still
+ * `started`. It stays alive only while the `keep` or the `hold` file exists, so it
+ * exits when both are gone by any means, when `dir` is gone, or at the wall-clock
+ * ceiling `ceilingMs`. A ceiling exit writes the `ceiling` marker first, so a helper
+ * can tell it from a kill. On exit it writes the `exited` marker when `dir` still
  * exists. The test never signals that pid.
+ *
+ * Each poll reads `keep` first and `hold` second. A test that swaps the keep file
+ * creates `hold` before it removes `keep` and never removes `hold` while the shim
+ * must live. The shim reads `keep` absent only after the test removed it, and `hold`
+ * was created before that removal, so the later `hold` read sees it: no poll finds
+ * both absent during the swap.
  */
 async function writeHangingShim(dir, command, ceilingMs) {
   const started = join(dir, "started.txt");
   const script = join(dir, "hang.js");
   const keep = join(dir, KEEP_FILE);
-  const hold = join(dir, "hold");
+  const hold = join(dir, HOLD_FILE);
   await writeFile(keep, "");
   await writeFile(
     script,
@@ -336,7 +344,14 @@ process.on("exit", () => {
 });
 const watch = setInterval(() => {
   const alive = fs.existsSync(${JSON.stringify(keep)}) || fs.existsSync(${JSON.stringify(hold)});
-  if (!alive || !fs.existsSync(${JSON.stringify(dir)}) || Date.now() - begun >= ${ceilingMs}) {
+  if (!alive || !fs.existsSync(${JSON.stringify(dir)})) {
+    clearInterval(watch);
+  } else if (Date.now() - begun >= ${ceilingMs}) {
+    try {
+      fs.writeFileSync(${JSON.stringify(join(dir, CEILING_FILE))}, "");
+    } catch {
+      // The directory is already gone, so nobody checks the marker.
+    }
     clearInterval(watch);
   }
 }, ${SHIM_POLL_MS});
@@ -383,7 +398,7 @@ function processExists(pid) {
 // have passed after the call returned. The force-kill timer starts when the kill
 // is sent, which is at or before the return, so a child alive past this point was
 // not force-killed.
-async function assertGone(pid, forceKillAfterDelayMs) {
+async function assertGone(pid, forceKillAfterDelayMs, dir) {
   const deadline = Date.now() + forceKillAfterDelayMs + TEARDOWN_MARGIN_MS;
   while (processExists(pid) && Date.now() < deadline) {
     await delay(50);
@@ -391,6 +406,12 @@ async function assertGone(pid, forceKillAfterDelayMs) {
   assert.ok(
     !processExists(pid),
     `the shim child ${pid} outlived the ${forceKillAfterDelayMs} ms force-kill boundary`,
+  );
+  // The shim writes this marker before it exits on its own ceiling, so an exit the
+  // runtime did not cause cannot pass as a kill.
+  assert.ok(
+    !existsSync(join(dir, CEILING_FILE)),
+    `the shim child ${pid} exited on its wall-clock ceiling, so the code under test did not kill it`,
   );
 }
 
@@ -515,11 +536,13 @@ async function withShimOnPath(dir, body) {
  * child that never ran proves nothing about the kill, so `boundMs` must leave the
  * shim time to start on a loaded machine. That value is not what is under test
  * here. Pass BOUND_KILL_TEST_TIMEOUT_MS as the test timeout. Returns the call
- * result.
+ * result. `options.ceilingMs` shortens the shim's wall-clock ceiling for a test of the
+ * ceiling check itself.
  */
-export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
+export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
   const ceilingMs =
+    options.ceilingMs ??
     boundMs + CALL_CEILING_MS + RECORD_VISIBLE_MS + FORCE_KILL_AFTER_DELAY_MS + TEARDOWN_MARGIN_MS;
   return runWithShimCleanup(dir, ceilingMs, async (markGone) => {
     const shim = await writeHangingShim(dir, command, ceilingMs);
@@ -533,7 +556,7 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
       // covers file visibility.
       const pid = await waitForPid(shim.started, RECORD_VISIBLE_MS);
       assert.notEqual(pid, null, `the shim did not start within the ${boundMs} ms bound`);
-      await assertGone(pid, FORCE_KILL_AFTER_DELAY_MS);
+      await assertGone(pid, FORCE_KILL_AFTER_DELAY_MS, dir);
       markGone();
       return result;
     });
@@ -565,7 +588,7 @@ export async function expectAbortKillsShim(command, start) {
         CALL_CEILING_MS,
         "the call did not return after the abort",
       );
-      await assertGone(pid, ABORT_FORCE_KILL_AFTER_DELAY_MS);
+      await assertGone(pid, ABORT_FORCE_KILL_AFTER_DELAY_MS, dir);
       markGone();
       return result;
     });
