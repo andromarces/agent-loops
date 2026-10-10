@@ -160,7 +160,20 @@ Issue #676 checked whether a released OpenCode build can bound the retry of a re
 
 In those runs OpenCode stopped the retry on its own. Three direct runs and one run through `runOpenCode`, all on `opencode v2.0.26` on Windows 11 with `Retry-After: 1`, made 11 attempts over 84 to 98 seconds, each attempt after a growing delay of about 2 to 12 seconds. The stream carried one `step_start` event per attempt, with no text, `step_finish`, or error event between them. Then it ended with exit 1 and the event `{"type":"provider.rate-limit","message":"<provider message>","status":429,"response":{"body":"<JSON string>"}}`. The adapter envelope was `opencode exited with code 1: provider.rate-limit: <provider message> (status 429)`, which names the rate limit. The adapter passes no limit and detects no retry loop, because these runs needed neither. These four runs do not show a general bound: a rate-limited turn that ends before the dispatch timeout is not verified. The #638 observation of a retry past 110 seconds stays unresolved beside them. The four runs ended before 110 seconds and did not reproduce it, and the #638 setup is not known to differ.
 
-Not verified: the retry count and duration with a `Retry-After` other than 1 or with no `Retry-After` (a long `Retry-After` can lengthen each wait), a rate limit on a build other than `v2.0.26`, and macOS or Linux.
+Issue #699 repeated the mock probe on macOS 27.2 (arm64) with other `Retry-After` values and two builds. The builds were the released `opencode v2.0.26` (`@opencode/cli`, installed in a temporary prefix) and the installed dev build `opencode v0.0.0-dev-20800`. Each run was `opencode run --standalone --format json --model mock/m` in a disposable Git repository, with isolated `XDG_*` directories. A local mock on 127.0.0.1 answered every request with HTTP 429 and a `rate_limit_error` body. The probe set a timeout, but its value is not recorded in a saved field. The released build ran through the one-line `exec` wrapper described below.
+
+| `Retry-After` | Duration on `v2.0.26` | Duration on `v0.0.0-dev-20800` | Attempts                                 | Final event                               |
+| ------------- | --------------------- | ------------------------------ | ---------------------------------------- | ----------------------------------------- |
+| 0             | 86.1 s                | 85.7 s                         | 11 `step_start` events, 12 mock requests | `provider.rate-limit`, status 429, exit 1 |
+| 5             | 94.6 s                | 85.6 s                         | 11 `step_start` events, 12 mock requests | `provider.rate-limit`, status 429, exit 1 |
+| 30            | 302.4 s               | 302.0 s                        | 11 `step_start` events, 12 mock requests | `provider.rate-limit`, status 429, exit 1 |
+| none          | 88.6 s                | 86.8 s                         | 11 `step_start` events, 12 mock requests | `provider.rate-limit`, status 429, exit 1 |
+
+Observed: `timedOut` is false in each of the eight saved results of these runs, so each run ended on its own. In every run the first two mock requests arrived together, within 1.0 to 1.7 seconds. With `Retry-After: 30`, the later requests were about 30 seconds apart. With `Retry-After` 0, 5, or none, the runs took 85.6 to 94.6 seconds. The adapter passes no limit and detects no retry loop, because none of these runs needed either. No ADR was written.
+
+One run went through `agent-loop role dispatch --role worker --worker opencode` on `v2.0.26`. It used `Retry-After: 1` and `--timeout 200`. The turn interval was 90.254 seconds, from `lastDispatch.at` to `lastResult.at` in the saved run state. The envelope was `opencode exited with code 1: provider.rate-limit: <provider message> (status 429)`. The #638 retry past 110 seconds did not reproduce on this host, and its cause is not identified. The default dispatch timeout is 3600 seconds, and no case came near it.
+
+Not verified: Linux, a `Retry-After` above 30, and a 429 body that is not JSON. The npm package `opencode-ai` (version 1.18.35 on 2026-10-10) was not run. The turn ends before the dispatch timeout only in the cases above.
 
 Issue #677 ran the signal probes on macOS 27.2 (arm64) on the released build `opencode v2.0.26`, installed in a temporary prefix as above. Each probe ran through `agent-loop role dispatch --role worker --worker opencode --worker-model mock/hang --timeout 120` in a disposable Git repository in the system temporary directory, with isolated `XDG_*` directories and a separate `AGENT_LOOP_RUNS_ROOT`. A local mock server on 127.0.0.1 stood in for the provider. It sent one content chunk with a marker string, then held the stream open. The probe sent the signal to the PID of the `opencode run` process that the dispatch started, three seconds after the mock received the request.
 
@@ -175,7 +188,7 @@ Neither envelope holds the streamed marker text. The `SIGKILL` envelope names th
 
 In a direct run of `opencode run --standalone --format json` with `SIGTERM`, the stdout held two lines, `step_start` and `error` with `error.type` `unknown`, and the stderr was empty. The mock stream text never reached a `text` event. No bug was opened, because no envelope held stream text and each names the exit code or the signal.
 
-Not verified: Linux. The rate-limit error event that issue #676 observed on Windows was not probed on macOS.
+Not verified: Linux.
 
 ### OpenCode model default
 
