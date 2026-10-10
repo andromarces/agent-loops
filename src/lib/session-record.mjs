@@ -55,12 +55,13 @@ export async function isInside(root, path) {
   return false;
 }
 
-// The key names one transcript by the identity of its directory and its lowercase file name, so a
-// case alias of the path finds the same record.
+// The key names one transcript by the identity of the directory and the lowercase file name of its
+// write target, so a case alias of the path and a file symlink to it find the same record (#658).
 async function recordKey(transcript) {
-  const dir = await real(dirname(transcript));
+  const target = await resolveWriteTarget(transcript).catch(() => resolve(transcript));
+  const dir = await real(dirname(target));
   const where = (await identity(dir)) ?? dir;
-  return sha256(`${where}\0${basename(transcript).toLowerCase()}`).slice(0, 32);
+  return sha256(`${where}\0${basename(target).toLowerCase()}`).slice(0, 32);
 }
 
 /** The path of the record of one transcript file. */
