@@ -66,7 +66,7 @@ The headless orchestrator has three guards that this change leaves in place: `re
 
 ## Consequences
 
-- An operator who accepts the gaps gets a Codex reviewer that can run a targeted test or an ad-hoc probe. The reviewer has no package manager and no shell network. This holds on macOS, where the live probe of the merged adapter confirmed it. It probably holds on Linux (not probed).
+- An operator who accepts the gaps gets a Codex reviewer that can run a targeted test or an ad-hoc probe. The reviewer needs no package manager to do so, and its shell commands have no network. This holds on macOS, where the live probe of the merged adapter confirmed it. It probably holds on Linux (not probed).
 - A reviewer that edits the work tree halts the run and leaves the change on disk. The parent reads the `MutationError` and decides.
 - The default is unchanged, and so are the other four adapters, the worker, and every orchestrator turn.
 - A run that needs `gh` or another shell network read from the reviewer keeps the runtime read of ADR 0011, or its own decision for network.
