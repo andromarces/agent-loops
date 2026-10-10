@@ -1726,14 +1726,18 @@ test("the network denial scan flags an unqualified denial and accepts a qualifie
 // A Codex shell network denial holds only without a user execpolicy rule that allows `bash -c`,
 // `sh -c`, or `zsh -c`: such a rule ran a shell command outside the sandbox, with network (issue
 // #640). The runtime does not prevent that (issue #655), so every runtime prompt sentence that
-// denies shell network must state the exception, in the sentence or in the next two.
-const USER_RULE_EXCEPTION = /user (Codex )?execpolicy rule/i;
+// denies shell network must be followed, within six sentences, by this exact exception text.
+const USER_RULE_EXCEPTION =
+  "A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.";
 function denialsWithoutUserRuleException(text) {
   const sentences = sentencesOf(text);
   return sentences.filter(
     (sentence, i) =>
       NETWORK_DENIAL.test(sentence) &&
-      !USER_RULE_EXCEPTION.test(sentences.slice(i, i + 3).join(" ")),
+      !sentences
+        .slice(i, i + 6)
+        .join(" ")
+        .includes(USER_RULE_EXCEPTION),
   );
 }
 
@@ -1769,7 +1773,7 @@ describe.each([
 // default reviewer prompt has no sandbox line to qualify (issue #655).
 test("the opted-in reviewer prompt states the user-rule exception", () => {
   expect(denialsWithoutUserRuleException(reviewerPrompt("x", null, null, true))).toEqual([]);
-  expect(reviewerPrompt("x", null, null, true)).toMatch(USER_RULE_EXCEPTION);
+  expect(reviewerPrompt("x", null, null, true).replace(/\s+/g, " ")).toContain(USER_RULE_EXCEPTION);
 });
 
 // Usefulness: verifies the exception scan flags a denial with no exception, so a pass is not a
@@ -1780,9 +1784,14 @@ test("the exception scan flags a denial without the user-rule exception", () => 
   ).toHaveLength(1);
   expect(
     denialsWithoutUserRuleException(
-      "The shell commands have no network access. A user Codex execpolicy rule that allows `zsh -c` can lift that.",
+      `The shell commands have no network access. ${USER_RULE_EXCEPTION}`,
     ),
   ).toEqual([]);
+  expect(
+    denialsWithoutUserRuleException(
+      "The shell commands have no network access. A user Codex execpolicy rule is never an exception.",
+    ),
+  ).toHaveLength(1);
 });
 
 // Usefulness: verifies the reviewer prompt, the README, the orchestrator instructions, the other

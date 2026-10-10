@@ -17,7 +17,7 @@ names a pull request to read `gh pr checks <pr> --required` and to report a
 failing required check as a blocker. The read depends on the reviewer: a
 reviewer whose CLI cannot reach the network, for example a sandboxed `codex`
 reviewer, can only report the status as unresolved, and the `--require-ci` gate
-refuses the finish on the real condition. The run then spends a worker turn and
+refuses the finish on the real condition. A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception, as ADR 0019 states. The run then spends a worker turn and
 another reviewer turn to learn a status the runtime could have read.
 
 The runtime could not supply that status, because it did not know the pull

@@ -312,7 +312,7 @@ worker turn and no extra reviewer turn for that failure.
 ## The runtime supplies the required-check status
 
 A reviewer turn whose shell commands cannot reach the network, for example a
-sandboxed Codex reviewer, could only report the status as unresolved before. A run that declares
+sandboxed Codex reviewer without the user-rule exception of ADR 0019, only reported the status as unresolved before. A run that declares
 its PR with `--pr <pr>`, or a headless run that gates a PR with `--require-ci <pr>`,
 knows the pull request before the first turn, so the
 runtime reads the required-check status for that PR head and supplies it to every
@@ -432,15 +432,14 @@ other reviewer is refused at init. The run is unchanged without it.
   `sandbox_mode="workspace-write"` and `sandbox_workspace_write.network_access=false`.
   Network access stays off for the shell commands that the sandbox runs. The
   runtime sets it explicitly, because the mode takes network from the user Codex
-  config otherwise. A user Codex execpolicy rule that allows `bash -c`, `sh -c`,
-  or `zsh -c` is an exception, as the gaps below state. The limit covers shell commands only: it does not block
+  config otherwise. A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception, as ADR 0019 states. The limit covers shell commands only: it does not block
   model-side tools such as Codex `web_search`, or any other channel outside the
   sandbox.
 - Only reviewer turns change. Every orchestrator turn, every worker turn, and the
   other four adapters keep their invocations, and the runtime mutation check
   still wraps every reviewer turn.
 - The reviewer prompt gains one line: the turn has the sandbox, its shell
-  commands have no network, that covers shell commands only, and a package
+  commands have no network, a user execpolicy rule is an exception, that covers shell commands only, and a package
   manager that writes outside the work tree fails there, so the reviewer calls
   the project's local binary. Without the opt-in the line is
   absent. The reviewer still must not change files. The headless initial prompt
@@ -578,10 +577,7 @@ The orchestrator CLI and the reviewer CLI are chosen independently, so each
 statement below names the role whose CLI performs the read. A read-only
 invocation keeps shell network access for `claude`, `agy`, and `opencode`. The
 `codex` read-only sandbox blocks the network of shell
-commands (not model-side tools). A user Codex execpolicy rule that allows `bash -c`,
-`sh -c`, or `zsh -c` is an exception: it can run a shell command that has an
-expansion outside the sandbox and with network, and the runtime does not prevent
-that. A `copilot` read-only turn refuses most
+commands (not model-side tools). A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that. A `copilot` read-only turn refuses most
 shell commands without approval: the issue #432 probe found `gh pr checks`
 allowed and `role wait-checks` refused. A `copilot` orchestrator therefore does not
 wait (#495), and a `copilot` reviewer still reads the checks with `gh pr checks`.
