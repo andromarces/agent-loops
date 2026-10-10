@@ -993,6 +993,52 @@ test.each([
   },
 );
 
+// Usefulness: acceptance (#669) — the SIGINT listener of role main stays registered after the signal
+// fires, so the execa exit handler finds another listener and does not re-raise it before the
+// envelope prints.
+test("the SIGINT listener of role main stays registered after the signal fires", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const logSpy = spyStdoutWrite();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const origExitCode = process.exitCode;
+  const before = process.listenerCount("SIGINT");
+  let during;
+
+  try {
+    const promptFile = join(repo, "main-prompt.txt");
+    await writeFile(promptFile, "work it", "utf8");
+    const agents = {
+      get fake1() {
+        process.emit("SIGINT");
+        during = process.listenerCount("SIGINT");
+        throw Object.assign(new Error("canceled"), { isCanceled: true });
+      },
+      fake2: recordingAdapter([]),
+    };
+    await runRoleMain(
+      [
+        "dispatch",
+        "--role",
+        "worker",
+        "--cwd",
+        repo,
+        ...INIT_OVERRIDES,
+        "--prompt-file",
+        promptFile,
+      ],
+      { agents },
+    );
+    expect(during).toBe(before + 1);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+  } finally {
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.exitCode = origExitCode;
+  }
+});
+
 // Usefulness: verifies a thrown value whose message is not a string (BigInt, circular object,
 // throwing toJSON) still yields one JSON error envelope through main instead of a stringify crash.
 test.each([
