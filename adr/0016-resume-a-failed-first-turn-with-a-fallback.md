@@ -238,6 +238,63 @@ step budget runs out.
 
 - In the probe, Claude and agy printed no session id when killed at 20 to 25 s. A Claude first
   turn that ends that way keeps its pre-assigned id. An agy first turn keeps a null id.
+
+  Issue #398 probed the remaining kill cases on macOS 27.2 (arm64), Node v26.11.1, Git 2.56.0,
+  with the installed Copilot CLI 1.0.96-2, agy 1.3.2, and Claude Code 2.1.296. Each probe ran in
+  a disposable Git repository in the system temporary directory. A driver script spawned the
+  CLI in its own process group, read stdout, sent one signal to the CLI pid, listed the process
+  group 1.5 s later, and then ended the group. Each resume used the same prompt shape: ask for
+  the word of the first prompt and the state of the tool call.
+
+  - Copilot, missing session. Command: `echo '<prompt>' | copilot --session-id <fresh uuid> -s
+    --no-ask-user --output-format json`. The prompt asked what word the user told the model
+    earlier, with `NONE` as the answer for nothing. The call exited 0, answered `NONE`, and the
+    `result` event echoed the id. A missing id creates a session.
+  - Copilot, kill during a tool call. Command: the same call with `--allow-all-tools`. The
+    prompt asked to remember `MANGO` and to run `sleep 60; echo hi`. The driver sent `SIGKILL`
+    to the `copilot` pid 3 s after the first `tool.execution_start` event. Stdout held no
+    `result` event. The session directory held `events.jsonl` with one `user.message` and one
+    `tool.execution_start` event. The resume exited 0, echoed the id in its `result` event, and
+    answered `MANGO; no, the sleep command did not finish.`. The adapter keeps no id for this
+    failure, so it drops a session that resumes. Issue #642 tracks that, and the probe matches
+    the Windows probe of issue #641.
+  - Copilot, earlier kills with `sleep 61`. A kill 2.5 s after the start printed only MCP status
+    events and left a session directory with no `events.jsonl`. The resume answered `MANGO`. A
+    kill 0.3 s after the start left no session directory, and the resume answered `NONE`. A
+    resume of an id with no session therefore exits 0 and starts a session, so a kept
+    pre-assigned id does not fail. It does lose the preamble.
+  - Copilot, process cleanup. `copilot` is a shell shim. A kill of its pid left the native
+    `copilot` process with parent pid 1, and the tool shell and `sleep` with parent pid 1 in
+    their own process group. The driver ended them by pid.
+  - agy, kill during a tool call. Command: `agy --input-format text --output-format json
+    --dangerously-skip-permissions`, with a prompt on stdin that asked to remember `PAPAYA` and
+    to run `sleep 63; echo hi`. The driver sent `SIGKILL` 15 s after the start. Stdout was empty
+    and stderr read `root agent idle; waiting up to 30m0s for 1 background task(s)`. The
+    transcript under `~/.gemini/antigravity-cli/brain/<id>/` shows a `run_command` step with
+    status `RUNNING` as a background task. The conversation file
+    `~/.gemini/antigravity-cli/conversations/<id>.db` existed. `agy --input-format text
+    --output-format json --conversation <id>` exited 0, returned the same `conversation_id`,
+    and answered that the word is `PAPAYA` and that the sleep did not finish. A kill during a
+    tool call leaves a conversation that resumes, but the output names no id, so the adapter
+    keeps null and cannot resume it. The `init` event of `--output-format stream-json` carries
+    `conversation_id` before any step, so a later change can read the id from that format. The
+    `zsh` shell of the tool call kept running with parent pid 1 and was ended by pid.
+  - Claude, id read from the output. Command: `claude -p --model haiku --allowedTools Bash
+    --output-format stream-json --verbose`. The prompt asked to remember `GUAVA` and to run
+    `node -e "setTimeout(function(){},64000)"` with the `Bash` tool. A first attempt with
+    `sleep 64; echo hi` was blocked by the tool (`Blocked: sleep 64 followed by: echo hi`), so it
+    did not test a running call. The driver sent `SIGKILL` 4 s after the `Bash` `tool_use`
+    event. The `init` event had printed the `session_id`, and the session file
+    `<id>.jsonl` existed. `claude -p --model haiku --resume <id> --output-format json
+    --verbose` exited 0. Its `init` and `result` events carried the same id, and the answer named
+    `GUAVA` and said that the timer result was not recorded. The `zsh` shell of the tool call and
+    its `node` child kept running with parent pid 1 and were ended by pid. The adapter uses
+    `--output-format json`, which prints nothing before the end, so it relies on the
+    pre-assigned id. The probe did not rerun that format with a kill on this version.
+  - Result. No probe contradicts the adapter. The Copilot result repeats the open issue #642.
+    Not verified: Linux and Windows for the agy and Claude cases of this probe, a model error in the
+    middle of a Copilot turn, and a kill of the native `copilot` process instead of the shim.
+
 - A worker resumed after a failed first turn receives no second preamble. The failed turn
   carried it, and the CLI saved it with the session.
 
@@ -270,6 +327,7 @@ Andro Marces
 - [Issue #360](https://github.com/andromarces/agent-loops/issues/360)
 - [Issue #395](https://github.com/andromarces/agent-loops/issues/395)
 - [Issue #396](https://github.com/andromarces/agent-loops/issues/396)
+- [Issue #398](https://github.com/andromarces/agent-loops/issues/398)
 - [Issue #564](https://github.com/andromarces/agent-loops/issues/564)
 - [Issue #565](https://github.com/andromarces/agent-loops/issues/565)
 - [Issue #580](https://github.com/andromarces/agent-loops/issues/580)
