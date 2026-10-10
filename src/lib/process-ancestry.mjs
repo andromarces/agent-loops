@@ -77,7 +77,7 @@ function readFailure(err, timeout) {
     return new ProcessReadError("was canceled", { isCanceled: true });
   }
   if (err?.timedOut) {
-    return new ProcessReadError(`timed out after ${timeout} seconds`);
+    return new ProcessReadError(`timed out after ${timeout} second${timeout === 1 ? "" : "s"}`);
   }
   if (Number.isInteger(err?.exitCode)) {
     return new ProcessReadError(`exited with code ${err.exitCode}`);

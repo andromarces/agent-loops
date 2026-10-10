@@ -1,7 +1,6 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { delimiter } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import {
   carryEarlierEvents,
@@ -16,7 +15,7 @@ import {
   verifyResolvedModels,
 } from "../../src/lib/continuation.mjs";
 import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
-import { removePath, writePsShim } from "../runtime-helpers.mjs";
+import { createPsShim, removePath, waitForExit, within } from "../runtime-helpers.mjs";
 
 // Value that the mocked `readFile` throws while `active`; otherwise it reads the real file.
 const readControl = vi.hoisted(() => ({ active: false, value: undefined }));
@@ -640,20 +639,18 @@ test("refuseHeldSessions ignores an id that is not a UUID", async () => {
 });
 
 const SENTINEL = "SECRET-SENTINEL-4f9a1c";
-let shimDir;
+let shim;
 
 afterEach(async () => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  if (shimDir) {
-    await removePath(shimDir);
-    shimDir = undefined;
-  }
+  await shim?.cleanup();
+  shim = undefined;
 });
 
 async function useShim(body) {
-  shimDir = await writePsShim(body);
-  vi.stubEnv("PATH", `${shimDir}${delimiter}${process.env.PATH}`);
+  shim = await createPsShim(body);
+  vi.stubEnv("PATH", `${shim.dir}${delimiter}${process.env.PATH}`);
 }
 
 // Usefulness: verifies the fail-open warning tells the operator the reason class of a failed
@@ -692,21 +689,29 @@ test("refuseHeldSessions rethrows a canceled read", async () => {
 });
 
 // Usefulness: verifies through the real read that a stalled `ps` with output in both streams ends
-// on the cancel signal and on the bound, and that the warning of the bound holds no output.
+// on the cancel signal once the read runs, and on the bound, that the read's process is gone after
+// each, and that the warning of the bound holds no output.
 test.skipIf(process.platform === "win32")(
   "refuseHeldSessions ends a stalled read on cancel or bound and prints no output",
   async () => {
-    await useShim(`echo ${SENTINEL}\necho ${SENTINEL} >&2\nexec sleep 30`);
+    await useShim(
+      `echo $$ > __DIR__/pid.txt\necho ${SENTINEL}\necho ${SENTINEL} >&2\nexec sleep 30`,
+    );
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 300);
-    await expect(
-      refuseHeldSessions(heldRoles(), { signal: controller.signal }),
-    ).rejects.toMatchObject({ isCanceled: true });
-    await refuseHeldSessions(heldRoles(), { timeout: 1 });
+    const canceled = refuseHeldSessions(heldRoles(), { signal: controller.signal }).catch(
+      (err) => err,
+    );
+    const canceledPid = await shim.pid();
+    controller.abort();
+    expect(await within(canceled, 20_000, "The canceled read")).toMatchObject({ isCanceled: true });
+    expect(await waitForExit(canceledPid)).toBe(true);
+
+    await within(refuseHeldSessions(heldRoles(), { timeout: 1 }), 20_000, "The bounded read");
     const printed = warn.mock.calls.flat().join("\n");
-    expect(printed).toContain("the process table read timed out after 1 seconds.");
+    expect(printed).toContain("the process table read timed out after 1 second.");
     expect(printed).not.toContain(SENTINEL);
   },
+  60_000,
 );

@@ -572,15 +572,84 @@ export function gitWhileDotGitExists(command, args, options) {
 }
 
 /**
- * Writes a POSIX `ps` shell script with the given body into a new directory under the system
- * temporary directory and returns the directory. A test puts the directory first on `PATH`, so the
- * process-table read runs the script. `__DIR__` in the body stands for the directory. The caller
- * removes the directory.
+ * Rejects when `promise` has not settled within `ms`, so a hung process fails its test with
+ * `label` instead of holding the suite until the test timeout.
  */
-export async function writePsShim(body) {
-  const dir = await mkdtemp(join(tmpdir(), "ps-shim-"));
-  await writeFile(join(dir, "ps"), `#!/bin/sh\n${body.replaceAll("__DIR__", dir)}\n`, {
+export async function within(promise, ms, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} did not finish within ${ms} ms.`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const shellQuote = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Waits up to `ms` for the exact `pid` to leave the process table.
+ * @returns {Promise<boolean>} true when the process is gone
+ */
+export async function waitForExit(pid, ms = 3000) {
+  for (let waited = 0; waited < ms && isAlive(pid); waited += 50) {
+    await delay(50);
+  }
+  return !isAlive(pid);
+}
+
+/**
+ * Creates a POSIX `ps` shell script from `body` in a new directory under the system temporary
+ * directory. The directory name holds a space, so an unquoted path fails. In the body, `__DIR__`
+ * stands for the shell-quoted directory, so the body writes its pid with
+ * `echo $$ > __DIR__/pid.txt`. A test puts `dir` first on `PATH`.
+ *
+ * - `pid()` polls for at most `ms` until the pid file holds a whole pid, and throws on timeout. A
+ *   read of the file before the shim wrote it never yields an empty or partial pid.
+ * - `cleanup()` ends the recorded pid by its exact value when it is alive, then removes the
+ *   directory. It is safe to call twice and after a test failure.
+ */
+export async function createPsShim(body) {
+  const dir = await mkdtemp(join(tmpdir(), "ps shim-"));
+  await writeFile(join(dir, "ps"), `#!/bin/sh\n${body.replaceAll("__DIR__", shellQuote(dir))}\n`, {
     mode: 0o755,
   });
-  return dir;
+  const pidFile = join(dir, "pid.txt");
+  const readPid = async () => {
+    const text = await readFile(pidFile, "utf8").catch(() => "");
+    return /^\d+\n?$/.test(text) && Number(text) > 0 ? Number(text) : undefined;
+  };
+  return {
+    dir,
+    async pid(ms = 10_000) {
+      for (let waited = 0; waited < ms; waited += 25) {
+        const pid = await readPid();
+        if (pid !== undefined) {
+          return pid;
+        }
+        await delay(25);
+      }
+      throw new Error(`The ps shim wrote no pid within ${ms} ms.`);
+    },
+    async cleanup() {
+      const pid = await readPid();
+      if (pid !== undefined && isAlive(pid)) {
+        process.kill(pid, "SIGKILL");
+      }
+      await removePath(dir);
+    },
+  };
 }

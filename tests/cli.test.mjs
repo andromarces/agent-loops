@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
 import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -28,7 +27,9 @@ import {
   createTempRepo,
   removePath,
   untrackedFilesGit,
-  writePsShim,
+  createPsShim,
+  waitForExit,
+  within,
 } from "./runtime-helpers.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
@@ -1947,11 +1948,13 @@ test("--continue-from cancels a probe on SIGINT and exits 130", async () => {
 test.skipIf(process.platform === "win32")(
   "--continue-from exits 130 on SIGINT during a stalled holder check",
   async () => {
-    const shim = await writePsShim("echo $$ > __DIR__/pid.txt\nexec sleep 30");
-    const repo = await createTempRepo();
+    const shim = await createPsShim("echo $$ > __DIR__/pid.txt\nexec sleep 30");
+    let repo;
+    let child;
     try {
+      repo = await createTempRepo();
       const role = (kind, sessionId) => ({ kind, model: null, effort: null, sessionId });
-      const transcript = join(shim, "run.json");
+      const transcript = join(shim.dir, "run.json");
       await writeFile(
         transcript,
         JSON.stringify({
@@ -1965,53 +1968,38 @@ test.skipIf(process.platform === "win32")(
           events: [],
         }),
       );
-      const child = spawn(
+      child = spawn(
         process.execPath,
         [CLI, ...CONTINUE_BASE, "--cwd", repo, "--continue-from", transcript],
         {
-          env: { ...process.env, PATH: `${shim}${delimiter}${process.env.PATH}` },
+          env: { ...process.env, PATH: `${shim.dir}${delimiter}${process.env.PATH}` },
           stdio: "ignore",
         },
       );
       const exited = new Promise((resolve) =>
         child.once("exit", (code, signal) => resolve({ code, signal })),
       );
-      const pidFile = join(shim, "pid.txt");
-      let readPid;
-      try {
-        for (let waited = 0; waited < 10_000 && readPid === undefined; waited += 50) {
-          readPid = await readFile(pidFile, "utf8").then(Number, () => undefined);
-          await delay(50);
-        }
-        expect(readPid).toBeGreaterThan(0);
-        child.kill("SIGINT");
-        // The run handler sets exit 130. The exit handler of execa can re-raise SIGINT first, which
-        // a shell also reports as 130.
-        const { code, signal } = await exited;
-        expect(code === 130 || signal === "SIGINT").toBe(true);
-        for (let waited = 0; waited < 3000 && isAlive(readPid); waited += 50) {
-          await delay(50);
-        }
-        expect(isAlive(readPid)).toBe(false);
-      } finally {
+      // The shim records its pid only after the read started, so the signal cancels a running read.
+      const readPid = await shim.pid();
+      child.kill("SIGINT");
+      // The run handler sets exit 130. The exit handler of execa can re-raise SIGINT first, which
+      // a shell also reports as 130.
+      const { code, signal } = await within(exited, 15_000, "The CLI exit");
+      expect(code === 130 || signal === "SIGINT").toBe(true);
+      expect(await waitForExit(readPid)).toBe(true);
+    } finally {
+      // Ends only the child that this test spawned, by its exact pid, when it still runs.
+      if (child && child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }
-    } finally {
-      await removePath(shim);
-      await removePath(repo);
+      await shim.cleanup();
+      if (repo) {
+        await removePath(repo);
+      }
     }
   },
   30_000,
 );
-
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // Usefulness: verifies --continue-from takes a value, in both forms.
 test("--continue-from requires a value and accepts the inline form", () => {
