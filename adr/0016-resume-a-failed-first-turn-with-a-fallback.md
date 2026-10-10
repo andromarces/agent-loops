@@ -361,5 +361,5 @@ Andro Marces
   the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, the dispatch write in
   `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/cli.mjs`; documented in `README.md`
 - Superseded by [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
-- [0030. Keep the pre-assigned id of a failed first Copilot turn that saved a turn](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md)
+- [ADR 0030: Keep the pre-assigned id of a failed first Copilot turn that saved a turn](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md)
 - [ADR Index](README.md)
