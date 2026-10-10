@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { sha256 } from "./hash.mjs";
 import { logWarn } from "./log.mjs";
-import { writeFileAtomic } from "./runstate.mjs";
+import { resolveWriteTarget, writeFileAtomic } from "./runstate.mjs";
 
 // A session record keeps the pre-assigned session id of a Claude first turn outside the work tree,
 // for a headless run whose `--transcript` is inside it (ADR 0027). The mutation check of an
@@ -40,10 +40,12 @@ const isUuid = (value) => typeof value === "string" && UUID.test(value);
  * case alias, a symlink, and a directory inside a submodule all count as inside, which a comparison
  * of path text would miss. The path as written also catches a Windows junction inside the tree that
  * points outside it: the real path is outside, but Git follows the junction and lists the file.
+ * The write target of a file symlink counts too, because the write lands there (#658).
  */
 export async function isInside(root, path) {
   const rootId = await identity(root);
-  for (const start of [await real(dirname(path)), dirname(resolve(path))]) {
+  const target = await resolveWriteTarget(path).catch(() => resolve(path));
+  for (const start of [await real(dirname(path)), dirname(resolve(path)), dirname(target)]) {
     for (let dir = start; ; dir = dirname(dir)) {
       const id = await identity(dir);
       if (id !== null && id === rootId) return true;
@@ -53,12 +55,13 @@ export async function isInside(root, path) {
   return false;
 }
 
-// The key names one transcript by the identity of its directory and its lowercase file name, so a
-// case alias of the path finds the same record.
+// The key names one transcript by the identity of the directory and the lowercase file name of its
+// write target, so a case alias of the path and a file symlink to it find the same record (#658).
 async function recordKey(transcript) {
-  const dir = await real(dirname(transcript));
+  const target = await resolveWriteTarget(transcript).catch(() => resolve(transcript));
+  const dir = await real(dirname(target));
   const where = (await identity(dir)) ?? dir;
-  return sha256(`${where}\0${basename(transcript).toLowerCase()}`).slice(0, 32);
+  return sha256(`${where}\0${basename(target).toLowerCase()}`).slice(0, 32);
 }
 
 /** The path of the record of one transcript file. */

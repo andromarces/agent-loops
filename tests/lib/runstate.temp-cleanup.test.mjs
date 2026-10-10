@@ -121,9 +121,9 @@ test("a failed state write does not remove a concurrent write's temp", async () 
   const secondHasWritten = deferred();
   const failingCallHasCleaned = deferred();
 
-  // The failing call is created first, so it takes the first stub. It writes,
-  // then fails only once the second call's temp is on disk, so its cleanup runs
-  // while that temp still exists.
+  // The call that reaches `writeFile` first takes the first stub. Resolving the write target is
+  // real I/O, so that is not always the call created first. It writes, then fails only once the
+  // other call's temp is on disk, so its cleanup runs while that temp still exists.
   vi.mocked(writeFile).mockImplementationOnce(async (file, text, options) => {
     await realFs.writeFile(file, text, options);
     firstTempIsOnDisk.resolve();
@@ -141,15 +141,20 @@ test("a failed state write does not remove a concurrent write's temp", async () 
     await failingCallHasCleaned.promise;
   });
 
-  const failing = writeState(stateFile, { lifecycle: "active" }).catch((err) => {
-    failingCallHasCleaned.resolve();
-    return err;
-  });
-  const succeeding = writeState(stateFile, { lifecycle: "finished" });
+  // A call that fails resolves its error and the other resolves undefined. Which call fails depends
+  // on which reaches `writeFile` first, so the survivor is read from the results.
+  const lifecycles = ["active", "finished"];
+  const results = await Promise.all(
+    lifecycles.map((lifecycle) =>
+      writeState(stateFile, { lifecycle }).catch((err) => {
+        failingCallHasCleaned.resolve();
+        return err;
+      }),
+    ),
+  );
 
-  expect(await failing).toMatchObject({ code: "ENOSPC" });
-  await succeeding;
-
-  expect(await readFile(stateFile, "utf8")).toBe('{\n  "lifecycle": "finished"\n}\n');
+  expect(results.filter((result) => result !== undefined)).toMatchObject([{ code: "ENOSPC" }]);
+  const survivor = lifecycles[results.findIndex((result) => result === undefined)];
+  expect(await readFile(stateFile, "utf8")).toBe(`{\n  "lifecycle": "${survivor}"\n}\n`);
   expect(await readdir(dir)).toEqual(["state.json"]);
 });
