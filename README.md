@@ -291,8 +291,17 @@ npm 12 disables git fetches by default. On npm 12, pass `--allow-git=all`:
 npm install -g --allow-git=all github:andromarces/agent-loops
 ```
 
-A Git URL install also installs the devDependencies, including `vite-plus`, and
-runs `prepare` before it packs the package. The package `engines.node` range
+A Git URL install also installs the devDependencies, including `vite-plus`.
+On npm 12, the install blocks the `prepare` script and prints a message like
+`1 package had install scripts blocked`. That message is expected. The install still exits 0, and `agent-loop`
+works without `prepare`. To run `prepare`, add
+`--allow-scripts=@andromarces/agent-loops`:
+
+```bash
+npm install -g --allow-git=all --allow-scripts=@andromarces/agent-loops github:andromarces/agent-loops
+```
+
+The package `engines.node` range
 matches the `vite-plus` range. On a Node version outside it, npm warns, and with
 `engine-strict` set the install fails.
 
