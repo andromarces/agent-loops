@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
@@ -66,13 +66,7 @@ test("isInside follows a symlink and rejects a sibling directory", async (ctx) =
   const sibling = join(dir, "sibling");
   await mkdir(join(root, "sub"), { recursive: true });
   await mkdir(sibling);
-  try {
-    await symlink(join(root, "sub"), join(dir, "link"));
-  } catch (err) {
-    // A Windows host without symlink privilege refuses the call.
-    if (err?.code === "EPERM") ctx.skip();
-    throw err;
-  }
+  await symlinkOrSkip(ctx, join(root, "sub"), join(dir, "link"));
   expect(await isInside(root, join(root, "sub", "run.json"))).toBe(true);
   expect(await isInside(root, join(dir, "link", "run.json"))).toBe(true);
   expect(await isInside(root, join(sibling, "run.json"))).toBe(false);
@@ -88,14 +82,9 @@ test("isInside counts a path behind a junction inside the directory, whatever it
   const target = join(root, "sub");
   await mkdir(target, { recursive: true });
   await mkdir(outside);
-  try {
-    await symlink(outside, join(root, "jn"), "junction");
-    await symlink(target, join(dir, "jin"), "junction");
-  } catch (err) {
-    // A junction exists on Windows only.
-    if (err?.code === "EPERM" || err?.code === "ENOTSUP") ctx.skip();
-    throw err;
-  }
+  await symlinkOrSkip(ctx, outside, join(root, "jn"), "junction");
+  await symlinkOrSkip(ctx, target, join(dir, "jin"), "junction");
+  // A junction exists on Windows only.
   if (process.platform !== "win32") ctx.skip();
   expect(await isInside(root, join(root, "jn", "t.json"))).toBe(true);
   expect(await isInside(root, join(dir, "jin", "t.json"))).toBe(true);
@@ -123,4 +112,22 @@ test("a file symlink and its target share one session record path", async (ctx) 
   expect(await sessionRecordPath(join(dir, "link.json"))).toBe(
     await sessionRecordPath(join(dir, "t.json")),
   );
+});
+
+// Usefulness: verifies a record that an earlier version keyed by the link path is still found through the link, and that removal clears it.
+test("a record keyed by the link path as written is found and removed through the link", async (ctx) => {
+  const link = join(dir, "link.json");
+  // No link exists yet, so the writer keys the record by the path as written, as the earlier version did.
+  await writeSessionRecord(link, fields());
+  await symlinkOrSkip(ctx, join(dir, "t.json"), link);
+  expect(
+    await readSessionRecord(link, { digest: "a".repeat(64), cwd: dir, runNonce: NONCE }),
+  ).toEqual({
+    role: "reviewer",
+    sessionId: ID,
+  });
+  await removeSessionRecord(link);
+  expect(
+    await readSessionRecord(link, { digest: "a".repeat(64), cwd: dir, runNonce: NONCE }),
+  ).toBeNull();
 });

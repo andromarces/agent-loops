@@ -26,7 +26,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { sha256 } from "./hash.mjs";
 import { isJsonObject } from "./json.mjs";
@@ -882,15 +882,17 @@ const MAX_LINK_HOPS = 40;
 /**
  * The path that a write to `file` lands at: the final target of a chain of file symlinks, which a
  * rename over a link would replace instead (#658). Each hop resolves the real directory of the link
- * first, so a relative target reached through a directory link means what the OS means. `readlink`
- * works on a dangling link, where `realpath` fails. A path that is no link or does not exist
- * resolves to itself. Every guard that judges where a write lands must use this path, so the guard
- * and the writer agree. A loop fails with `ELOOP`.
+ * first, and joins a relative target to it without normalizing, so the next hop resolves the
+ * directory part of the target with `realpath`. A directory link that the target passes through
+ * then applies before a `..` that follows it, as the OS applies it. `readlink` works on a dangling
+ * link, where `realpath` fails. A path that is no link or does not exist resolves to itself. Every
+ * guard that judges where a write lands must use this path, so the guard and the writer agree. A
+ * loop fails with `ELOOP`.
  */
 export async function resolveWriteTarget(file) {
   let current = resolve(file);
   for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
-    const dir = await realpath(dirname(current)).catch(() => dirname(current));
+    const dir = await realpath(dirname(current)).catch(() => resolve(dirname(current)));
     current = join(dir, basename(current));
     let target;
     try {
@@ -901,7 +903,7 @@ export async function resolveWriteTarget(file) {
       }
       throw err;
     }
-    current = resolve(dir, target);
+    current = isAbsolute(target) ? target : `${dir}${sep}${target}`;
   }
   throw Object.assign(new Error(`Too many levels of symbolic links: ${file}`), { code: "ELOOP" });
 }

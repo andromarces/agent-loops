@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
@@ -72,15 +72,16 @@ async function expectEarlierEventsSurvive(ctx, linkRole) {
     agents([FINISH]),
   );
 
+  expect((await lstat(link)).isSymbolicLink()).toBe(true);
   const later = JSON.parse(await readFile(real, "utf8")).events;
+  expect(later.length).toBeGreaterThan(earlier.length);
   expect(later.slice(0, earlier.length)).toEqual(earlier);
 }
 
-// Usefulness: verifies --continue-from and --transcript that name one file through a link still
-// carry the earlier events into the rewrite (#658); a text compare of the paths calls them two files
-// and drops the earlier events. One case per side that holds the link.
-test("--transcript names a link to the --continue-from file: earlier events survive", (ctx) =>
+// Usefulness: verifies a --transcript link to the --continue-from file keeps the link, writes the target, and carries the earlier events (#658); the rewrite replaced the link before.
+test("--transcript names a link to the --continue-from file: link kept, earlier events survive", (ctx) =>
   expectEarlierEventsSurvive(ctx, "link"));
 
+// Usefulness: verifies a --continue-from link to the --transcript file counts as the same file, so the rewrite carries the earlier events instead of dropping them (#658).
 test("--continue-from names a link to the --transcript file: earlier events survive", (ctx) =>
   expectEarlierEventsSurvive(ctx, "source"));
