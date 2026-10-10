@@ -6,6 +6,8 @@ accepted
 
 Supersedes [ADR 0016: Resume the session of a failed first turn, with a fallback to a new session](0016-resume-a-failed-first-turn-with-a-fallback.md). The decisions of ADR 0016 that still hold are restated below. One changes: a headless run whose `--transcript` is inside the Git work tree now saves the session id before an orchestrator or reviewer first turn. ADR 0016 left that crash gap open.
 
+Partly superseded by [ADR 0030: Keep the pre-assigned id of a failed first Copilot turn that saved a turn](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md): decision 2 no longer holds. The other decisions hold, so this ADR stays `accepted`.
+
 ## Date
 
 2026-10-08
@@ -26,7 +28,7 @@ Two directions were weighed. The first exempts the transcript path from the chec
 ## Decision
 
 1. Each adapter reads the session id from the output when the CLI printed one. It keeps the id on the role state on every failure path of a first turn. The paths include a non-zero exit, a timeout, and a response-validation failure after the id was read. Claude and opencode select the first truthy id. Codex selects the `thread_id` of its first `thread.started` event. Copilot selects the id of its last result event. agy selects the `conversation_id` of its one result object. The selected id must be a non-empty string, or the turn fails. A failed turn never changes the id of a resumed session. Every adapter except agy keeps the resumed id or raises `resumeMismatchError` on a different one. agy adopts the `conversation_id` of its successful result and, when it differs from the resumed id, logs a warning and sets `state.conversationReplaced`. Issue #396 and the README define the follow-up turns for that mark.
-2. The Copilot adapter keeps the id that the result event of a failed first turn reports. It never keeps the pre-assigned id, because a failed turn that reports no id does not show that a session exists.
+2. **Superseded by ADR 0030.** The Copilot adapter keeps the id that the result event of a failed first turn reports. It never keeps the pre-assigned id, because a failed turn that reports no id does not show that a session exists. ADR 0030 keeps the pre-assigned id, marked `sessionUnconfirmed`, when the session holds a saved turn.
 3. The Claude adapter passes a pre-assigned UUID with `--session-id` on every first turn. It keeps the id when the turn fails, unless the failed output reported another id. A resumed turn passes no `--session-id`. A first turn that the CLI rejects with `Error: Session ID <id> is already in use.` never keeps the id, and the adapter withdraws it through `onSessionAssigned`. The role state carries `sessionUnconfirmed` until the CLI output reports the session. The adapter resumes an unconfirmed id only after a check. A Claude Code session file for this work tree and role must carry the marker `[agent-loop session <id> role <role>]` (issue #395).
 4. The Claude and Codex adapters mark a resume error with `sessionMissing` in one case only. The process must exit 1 with empty stdout and no timeout, cancel, or signal. Stderr must be the one verified line of the requested id. `runChild` then clears the id and reruns the turn once as a first turn, with no second step charged. The transcript shows two `invocation` events with the same `stepsUsed`.
 5. A dispatch that ends in a cancel or a fatal guard error still persists the id that the CLI reported. The runtime writes the cleared id when the rerun fails. On the interactive path, the dispatcher writes the pre-assigned id to the state file before the CLI starts.
@@ -177,6 +179,7 @@ Andro Marces
 - [Issue #647](https://github.com/andromarces/agent-loops/issues/647)
 - [Issue #641](https://github.com/andromarces/agent-loops/issues/641)
 - [Issue #642](https://github.com/andromarces/agent-loops/issues/642)
+- Partly superseded by [ADR 0030](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md) (decision 2)
 - [Issue #652](https://github.com/andromarces/agent-loops/issues/652)
 - [Issue #658](https://github.com/andromarces/agent-loops/issues/658)
 - [Pull request #661](https://github.com/andromarces/agent-loops/pull/661)

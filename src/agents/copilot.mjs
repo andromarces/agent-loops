@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
@@ -12,12 +16,84 @@ import {
   setMainLoopUsage,
 } from "./shared.mjs";
 
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const SESSION_HEAD_BYTES = 256 * 1024;
+
+/**
+ * True when Copilot saved a turn under `id`: `events.jsonl` of the session is a regular file whose
+ * first 256 KiB holds a `user.message` event. The session directory must be a real directory, and
+ * neither it nor the file is followed through a link, as the Claude ownership check does. A first turn that fails before Copilot records the
+ * prompt (a bad model, an unsupported effort, a kill at startup) leaves `workspace.yaml` only, and
+ * a resume of that id holds nothing (issue #642).
+ * known-limit: a session store outside `COPILOT_HOME` or `~/.copilot` reads as holding no turn, and
+ * the next turn then starts a fresh session.
+ */
+async function holdsTurn(id) {
+  if (!CANONICAL_UUID.test(id)) {
+    return false;
+  }
+  const dir = join(process.env.COPILOT_HOME || join(homedir(), ".copilot"), "session-state", id);
+  const path = join(dir, "events.jsonl");
+  try {
+    if (!(await lstat(dir)).isDirectory() || !(await lstat(path)).isFile()) {
+      return false;
+    }
+    // O_NOFOLLOW is undefined on Windows, where the lstat checks above are the guard.
+    const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      if (!(await file.stat()).isFile()) {
+        return false;
+      }
+      const buffer = Buffer.alloc(SESSION_HEAD_BYTES);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      return buffer
+        .toString("utf8", 0, bytesRead)
+        .split("\n")
+        .some((line) => {
+          try {
+            return JSON.parse(line)?.type === "user.message";
+          } catch {
+            return false;
+          }
+        });
+    } finally {
+      await file.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Keeps the pre-assigned id of a failed first turn that saved a session, marked
+ * `sessionUnconfirmed` because no output reported it. Nothing is kept when the process never
+ * started, when the turn kept a reported id, or when no turn was saved. The caller must not call
+ * it when the output reported an id, valid or not: an invalid reported id stores nothing.
+ */
+async function keepSavedPreassignedId(state, sessionId, error) {
+  if (!state.sessionId && childRan(error) && (await holdsTurn(sessionId))) {
+    state.sessionId = sessionId;
+    state.sessionUnconfirmed = true;
+  }
+}
+
+/**
+ * Runs one Copilot turn. A first turn pre-assigns the session id. The role state keeps it when the
+ * result event reports it, or when the turn fails after Copilot saved a turn under it, marked
+ * `state.sessionUnconfirmed` (issue #642, ADR 0030). A failure that saved no turn keeps no id, so
+ * the next worker turn carries its preamble. A resume of an unconfirmed id first checks that the
+ * session holds a turn, and a missing one raises a `sessionMissing` error before any CLI starts, so
+ * the runtime reruns the turn as a first turn. A result or a reported id clears the mark.
+ */
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
-  // A new session id reaches the role state only after Copilot reports it in a result event, on
-  // a successful or a failed first turn. A failure with no reported id leaves `state.sessionId`
-  // null and the next worker turn keeps its preamble.
   const requestedSessionId = state.sessionId;
+  if (requestedSessionId && state.sessionUnconfirmed && !(await holdsTurn(requestedSessionId))) {
+    delete state.sessionUnconfirmed;
+    throw Object.assign(new Error(`Copilot session ${requestedSessionId} holds no saved turn.`), {
+      sessionMissing: true,
+    });
+  }
   const sessionId = requestedSessionId ?? randomUUID();
 
   const args = ["--session-id", sessionId, "-s", "--no-ask-user", "--output-format", "json"];
@@ -51,12 +127,19 @@ export async function runCopilot(state, prompt, options = {}) {
       );
     }
     setMainLoopUsage(state, objectUsage(failedResult));
-    // Keep only an id the CLI reported. A failed turn that reports no id does not show that a
-    // session holding the turn's content exists, and keeping the pre-assigned id would skip the
-    // role preamble on the next turn. A Copilot CLI 1.0.95 and 1.0.96-2 probe (issue #641) showed
-    // that a first turn killed after a tool call leaves a session under the pre-assigned id that
-    // holds the turn. Issue #642 tracks keeping that id.
-    keepFailedSessionId(state, failedResult?.sessionId ?? failedResult?.session_id);
+    // An id the CLI reported wins. Otherwise the pre-assigned id stays only when Copilot saved a
+    // turn under it: a failed first turn that ran a tool leaves such a session (issue #641), and
+    // one that fails before the prompt is recorded does not, so keeping its id would skip the role
+    // preamble for nothing.
+    const rawId = failedResult?.sessionId ?? failedResult?.session_id;
+    const reportedId = asSessionId(rawId);
+    keepFailedSessionId(state, reportedId);
+    if (rawId == null) {
+      await keepSavedPreassignedId(state, sessionId, error);
+    } else if (reportedId === state.sessionId) {
+      // Only the id that the result confirms loses the mark.
+      delete state.sessionUnconfirmed;
+    }
     throw error;
   }
 
@@ -64,11 +147,15 @@ export async function runCopilot(state, prompt, options = {}) {
   const resultEvent = findResultEvent(events);
   setMainLoopUsage(state, objectUsage(resultEvent));
 
-  const returnedId = asSessionId(resultEvent?.sessionId ?? resultEvent?.session_id);
+  const rawReturnedId = resultEvent?.sessionId ?? resultEvent?.session_id;
+  const returnedId = asSessionId(rawReturnedId);
   // Set before the checks below, so a turn that fails them records unresolved when its output is
   // not the session the role keeps.
   recordResolvedModel(state, reportedModels(events), requestedSessionId, streamSession(events));
   if (!returnedId) {
+    if (rawReturnedId == null) {
+      await keepSavedPreassignedId(state, sessionId, null);
+    }
     throw new Error("Copilot did not return a session ID.");
   }
 
@@ -76,6 +163,9 @@ export async function runCopilot(state, prompt, options = {}) {
   // turn resumes that session (issue #360). A resumed turn keeps its id, and the check below
   // refuses a changed one.
   keepFailedSessionId(state, returnedId);
+  if (state.sessionId === returnedId) {
+    delete state.sessionUnconfirmed;
+  }
 
   // A resumed id must come back unchanged.
   if (requestedSessionId && returnedId !== requestedSessionId) {

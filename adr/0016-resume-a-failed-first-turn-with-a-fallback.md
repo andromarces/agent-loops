@@ -66,7 +66,8 @@ step budget runs out.
    saved a session.
 
    The probes of issues #641 and #398 later showed that a first turn killed after a tool call
-   saves a session under the pre-assigned id. The adapter still drops it. Issue #642 tracks that.
+   saves a session under the pre-assigned id. ADR 0030 keeps that id when the session holds a saved
+   turn (issue #642).
 
    The Claude adapter passes a pre-assigned UUID with `--session-id` on every first turn and
    keeps it when the turn fails, unless the failed output reported an id, which wins (issue
@@ -274,8 +275,8 @@ step budget runs out.
     one `tool.execution_start` event.
 
     The resume exited 0 and echoed the id in its `result` event. It answered `MANGO; no, the
-    sleep command did not finish.`. The adapter keeps no id for this failure, so it drops a
-    session that resumes. Issue #642 tracks that. The probe matches the Windows probe of issue
+    sleep command did not finish.`. At the time of the probe the adapter kept no id for this
+    failure, so it dropped a session that resumes. ADR 0030 now keeps it (issue #642). The probe matches the Windows probe of issue
     #641.
 
   - Copilot, earlier kills with `sleep 61`: a kill 2.5 s after the start printed only MCP status
@@ -321,7 +322,7 @@ step budget runs out.
     The adapter uses `--output-format json`, which prints nothing before the end. The adapter
     relies on the pre-assigned id.
 
-  - Result: no probe contradicts the adapter. The Copilot result repeats the open issue #642.
+  - Result: no probe contradicts the adapter. The Copilot result repeats issue #642, which ADR 0030 resolves.
   - Not verified, Claude format: this probe did not verify a kill under the Claude adapter
     format `--output-format json` on Claude Code 2.1.296. The Claude probe used `stream-json`.
   - Not verified, other cases: this probe did not verify Linux, or Windows for the agy and Claude
@@ -343,9 +344,9 @@ step budget runs out.
    replaces it for a worker. An orchestrator turn is read-only, so a rerun is safe there
    (issue #396).
 4. **Pass a pre-assigned Claude session id with `--session-id`, as the Copilot adapter does**: adopted for Claude in
-   issue #395 after a probe (decision 1). The Copilot adapter still keeps no pre-assigned id. The probes of
-   issues #641 and #398 later showed that a first turn killed after a tool call leaves a session under that id.
-   Issue #642 tracks the change to keep the id.
+   issue #395 after a probe (decision 1). The Copilot adapter kept no pre-assigned id. The probes of issues #641
+   and #398 later showed that a first turn killed after a tool call leaves a session under that id. ADR 0030
+   keeps the id when the session holds a saved turn (issue #642).
 5. **Refuse a different agy id**: rejected. The new conversation already holds the turn, and a
    kept stale id would fail the same way on every later turn.
 6. **Store a preamble-owed mark and prepend the preamble to the next worker turn**: rejected.
@@ -370,4 +371,5 @@ Andro Marces
   the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, the dispatch write in
   `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/cli.mjs`; documented in `README.md`
 - Superseded by [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
+- [ADR 0030: Keep the pre-assigned id of a failed first Copilot turn that saved a turn](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md)
 - [ADR Index](README.md)
