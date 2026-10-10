@@ -19,6 +19,7 @@ vi.mock("execa", async (importOriginal) => {
 
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { reviewedState, snapshot } from "../src/lib/snapshot.mjs";
+import { ProcessReadError } from "../src/lib/process-ancestry.mjs";
 import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";
 import {
   basicDeps,
@@ -819,6 +820,42 @@ test("resume-interrupted refuses a claude session that a live process holds", as
   );
   expect(resumed.exitCode).toBe(0);
   expect(worker.recorded.at(-1).incomingSessionId).toBe(heldId);
+});
+
+// Usefulness: verifies a cancel of the process-table read during `--resume-interrupted` exits 130 with the SIGINT envelope and charges no step (#725, ADR 0031 decision 2), which the refusal test does not cover.
+test("resume-interrupted exits 130 when the process-table read is canceled", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+  const worker = recordingAdapter([]);
+  const deps = {
+    agents: { claude: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+    readProcessCommands: async () => {
+      throw new ProcessReadError("was canceled", { isCanceled: true });
+    },
+  };
+
+  await executeRoleCommand(
+    withRepo(dispatchArgv(INIT_OVERRIDES.map((v) => (v === "fake1" ? "claude" : v))), repo),
+    { ...deps, readProcessCommands: async () => [] },
+  );
+  const state = await readState(paths.stateFile);
+  state.lifecycle = "interrupted";
+  state.roles.worker.sessionId = "11111111-2222-4333-8444-555555555555";
+  await writeState(paths.stateFile, state);
+  const recordedBefore = worker.recorded.length;
+
+  const result = await executeRoleCommand(
+    withRepo(dispatchArgv(["--resume-interrupted"]), repo),
+    deps,
+  );
+
+  expect(result.exitCode).toBe(130);
+  expect(result.payload).toEqual({ status: "error", error: "Interrupted by SIGINT" });
+  expect(worker.recorded.length).toBe(recordedBefore);
+  expect((await readState(paths.stateFile)).stepsUsed).toBe(state.stepsUsed);
 });
 
 // Usefulness: verifies only the role kind is normalized in the change
