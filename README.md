@@ -137,7 +137,9 @@ Issue #638 repeated the probes on Windows 11 on the released build `opencode v2.
 | Timeout        | The mock sent one content chunk with a marker string, then held the stream open. `--timeout 20`. | Envelope `worker timed out after 20 seconds`. It names no exit code, because the turn has none, and no provider detail. No `opencode.exe` process stayed behind.                                     |
 | Signal         | The same hung stream. `taskkill /F /IM opencode.exe` ended the CLI.                              | Windows reports a forced end as exit code 1, not as a signal. Envelope `opencode exited with code 1: no provider error event in the output`.                                                         |
 
-Every envelope holds no streamed marker text and no `response.body` JSON. The no-route and quota envelopes also ran on `opencode v2.0.0`, the oldest release of `@opencode/cli`, and matched. No bug was opened, because no envelope leaked stream text or omitted the exit code.
+Every envelope holds no streamed marker text and no `response.body` JSON. The no-route and quota envelopes also ran on `opencode v2.0.0`, the oldest release of `@opencode/cli`, and matched.
+
+The no-route, authentication, quota, and forced-end envelopes name the exit code. The timeout envelope `worker timed out after 20 seconds` does not. The runtime ended the turn at the `--timeout` bound, so the process never exited on its own and no exit code exists to name. The envelope names the bound instead. This is by design, and the adapter reports a timeout or a signal as the cause and not as an exit code, so a killed process cannot pass off a provider error that is not why the turn ended (issue #326). No bug was opened, because no envelope leaked stream text and every envelope that has an exit code names it.
 
 The live quota event has the shape `{"type":"provider.quota","message":"<provider message>","status":429,"response":{"body":"<JSON string>"}}`. The fixtures in `tests/agents/opencode.test.mjs` already cover that shape: the exit-code path ignores `response`, so no fixture changed.
 
