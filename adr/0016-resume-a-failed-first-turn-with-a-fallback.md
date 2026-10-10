@@ -233,6 +233,16 @@ step budget runs out.
   orchestrator prompt answered with the action for the result, not with the first action that the
   instructions ask for. The probe found no result that contradicts the adapter or the runtime.
 
+  Issue #657 repeated the three probes on agy 1.3.2 on Windows 11 Pro (10.0.26220), on 2026-10-10,
+  in a disposable Git repository in the system temporary directory. The flags were
+  `--input-format text --output-format json`, with the prompt on stdin and `--mode plan` except in
+  probe 2. A missing name and a missing UUID each exited 0, printed
+  `warning: conversation "<id>" not found`, and returned `SUCCESS` with a new id. An existing id
+  returned the same id and no warning. The preamble-only worker prompt answered `OK` and left HEAD
+  and `git status` unchanged. The rerun orchestrator prompt answered `run_reviewer`, and the same
+  result prompt alone also answered `run_reviewer`. The result matches macOS, and no result
+  contradicts the adapter or the runtime. No Linux host was available, so Linux stays unverified.
+
   The agy adapter adopts the id the result carries. For a resumed turn whose id differs, it logs a
   warning and marks the state. A worker conversation then gets the preamble in a preamble-only
   turn. That turn costs one model call and is not charged as a step.
