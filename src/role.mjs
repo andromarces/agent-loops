@@ -3,6 +3,7 @@
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
 // envelope per invocation, except `--help`, which prints plain usage; all logs go
 // to stderr.
+import { writeSync } from "node:fs";
 import { readFile, appendFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
@@ -1348,7 +1349,18 @@ export async function main(argv, { agents = defaultAgents } = {}) {
   setLogsToStderr(true);
 
   const controller = new AbortController();
-  const removeSigIntListener = cancelOnSigInt(controller);
+  // A second SIGINT prints the cancel envelope at once, unless the normal path started printing one.
+  let envelopeStarted = false;
+  const removeSigIntListener = cancelOnSigInt(controller, {
+    onForceExit: () => {
+      if (envelopeStarted) return;
+      writeSync(
+        1,
+        `${JSON.stringify({ status: "error", error: "Interrupted by SIGINT" })}
+`,
+      );
+    },
+  });
 
   try {
     let args;
@@ -1371,6 +1383,7 @@ export async function main(argv, { agents = defaultAgents } = {}) {
       signal: controller.signal,
     });
 
+    envelopeStarted = true;
     await printEnvelope(payload, exitCode);
   } finally {
     removeSigIntListener();

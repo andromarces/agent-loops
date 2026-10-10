@@ -2,7 +2,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, writeFile } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
-import { writeFileAtomic } from "../../src/lib/runstate.mjs";
+import { writeFileAtomic, writeFileAtomicSync } from "../../src/lib/runstate.mjs";
 import { removePath, symlinkOrSkip } from "../runtime-helpers.mjs";
 
 let dir;
@@ -86,4 +86,25 @@ test("writeFileAtomic applies a directory link inside a relative target before i
   const landed = process.platform === "win32" ? "a" : "b";
   expect(await readFile(join(dir, landed, "t.json"), "utf8")).toBe("data");
   expect((await readdir(join(dir, "a"))).includes("t.json")).toBe(landed === "a");
+});
+
+// Usefulness: acceptance (#669) — the synchronous write of a forced exit replaces the file whole,
+// leaves no temp file, and keeps an existing file symlink like the async write does.
+test("writeFileAtomicSync replaces the file and writes through a file symlink", async (ctx) => {
+  const path = join(dir, "repo", "t.json");
+  const target = join(dir, "outdir", "t.json");
+  await writeFile(target, "old");
+  await symlinkOrSkip(ctx, target, path);
+  writeFileAtomicSync(path, "new");
+  expect((await lstat(path)).isSymbolicLink()).toBe(true);
+  expect(await readFile(target, "utf8")).toBe("new");
+  expect(await readdir(join(dir, "outdir"))).toEqual(["t.json"]);
+});
+
+// Usefulness: acceptance (#669) — the synchronous write creates a file that does not exist yet.
+test("writeFileAtomicSync creates a missing file", async () => {
+  const path = join(dir, "repo", "new.json");
+  writeFileAtomicSync(path, "data");
+  expect(await readFile(path, "utf8")).toBe("data");
+  expect(await readdir(join(dir, "repo"))).toEqual(["new.json"]);
 });

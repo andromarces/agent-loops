@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
-import { killTreeOnExit } from "../../src/lib/exec-tree.mjs";
+import { killLiveTrees, killTreeOnExit } from "../../src/lib/exec-tree.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const EXEC_TREE_URL = new URL("../../src/lib/exec-tree.mjs", import.meta.url).href;
@@ -276,3 +276,32 @@ test("a subprocess with no pid passes through unchanged", () => {
   const failed = Promise.resolve({ exitCode: 1 });
   expect(killTreeOnExit(failed)).toBe(failed);
 });
+
+// Usefulness: acceptance (#669) — killLiveTrees ends a live child that ignores SIGTERM, on every
+// platform, so a forced exit of the runtime leaves no child alive.
+test("killLiveTrees ends a live child that ignores SIGTERM", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exec-tree-force-"));
+  const pidFile = join(dir, "child.pid");
+  const script =
+    'require("fs").writeFileSync(process.argv[1], String(process.pid));' +
+    'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);';
+  const subprocess = killTreeOnExit(
+    execa(process.execPath, ["-e", script, pidFile], {
+      reject: false,
+      cleanup: true,
+      killDescendants: true,
+    }),
+  );
+  let pid;
+  try {
+    expect(await waitUntil(async () => (pid = await readPid(pidFile)) !== undefined, 20_000)).toBe(
+      true,
+    );
+    killLiveTrees();
+    expect(await waitUntil(() => !isAlive(pid), 5000)).toBe(true);
+  } finally {
+    endProcess(pid);
+    await subprocess;
+    await removePath(dir);
+  }
+}, 40_000);

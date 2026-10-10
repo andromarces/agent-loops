@@ -13,6 +13,7 @@
 // and the directory name avoids a file-versus-directory clash at that path.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import {
   link,
   mkdir,
@@ -924,6 +925,33 @@ export async function writeFileAtomic(file, text) {
     await renameWithRetry(temp, destination);
   } catch (err) {
     await removeTemp(temp);
+    throw err;
+  }
+}
+
+/**
+ * Synchronous `writeFileAtomic` for a forced exit, where no event loop turn is left (#669). It
+ * follows a file symlink chain through `realpathSync`. A dangling link, and a rename that Windows
+ * refuses because a reader holds the destination, fail: there is no retry and no async wait.
+ * A write that stalls in the OS blocks the caller, because a sync call cannot be bounded.
+ */
+export function writeFileAtomicSync(file, text) {
+  let destination;
+  try {
+    destination = realpathSync(file);
+  } catch {
+    destination = resolve(file);
+  }
+  const temp = `${destination}.${process.pid}.${stateTempCounter++}.tmp`;
+  try {
+    writeFileSync(temp, text, "utf8");
+    renameSync(temp, destination);
+  } catch (err) {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // The temp file never existed or is gone.
+    }
     throw err;
   }
 }

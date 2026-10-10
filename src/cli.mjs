@@ -44,7 +44,7 @@ import {
   runUninstallCommand,
 } from "./install/commands.mjs";
 import { logWarn, setVerbose } from "./lib/log.mjs";
-import { resolveWriteTarget, writeFileAtomic } from "./lib/runstate.mjs";
+import { resolveWriteTarget, writeFileAtomic, writeFileAtomicSync } from "./lib/runstate.mjs";
 import {
   isInside,
   removeSessionRecord,
@@ -596,7 +596,11 @@ export async function main(
   }
   // Created before the continuation check, so a SIGINT during a probe turn cancels it.
   const controller = new AbortController();
-  const removeSigIntListener = cancelOnSigInt(controller);
+  // Set once the transcript data exists. A refused continuation writes none, so it stays a no-op.
+  let writeTranscriptOnForceExit = () => {};
+  const removeSigIntListener = cancelOnSigInt(controller, {
+    onForceExit: () => writeTranscriptOnForceExit(),
+  });
   try {
     let earlierGate = null;
     // A refused continuation writes no transcript: --transcript may name the
@@ -669,20 +673,23 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     let transcriptDigest = null;
 
     // A transcript write supersedes the session record of the file, so it removes the record.
+    const transcriptText = () => {
+      const { role, id } = pendingSession ?? {};
+      const data = pendingSession
+        ? {
+            ...transcriptData,
+            roles: {
+              ...roles,
+              [role]: { ...roles[role], sessionId: id, sessionUnconfirmed: true },
+            },
+          }
+        : transcriptData;
+      return JSON.stringify(data, null, 2);
+    };
     const writeTranscript = async () => {
       if (!options.transcript) return;
       try {
-        const { role, id } = pendingSession ?? {};
-        const data = pendingSession
-          ? {
-              ...transcriptData,
-              roles: {
-                ...roles,
-                [role]: { ...roles[role], sessionId: id, sessionUnconfirmed: true },
-              },
-            }
-          : transcriptData;
-        const text = JSON.stringify(data, null, 2);
+        const text = transcriptText();
         // Atomic, because the file can be the --continue-from source: a crash or a
         // failed write must leave the earlier record whole.
         await writeFileAtomic(options.transcript, text);
@@ -695,6 +702,15 @@ ${redactedText(readProp(err, "message") ?? err)}`);
           ),
         );
       }
+    };
+
+    // A second SIGINT writes the transcript as the run holds it, with exit 130. The write is
+    // synchronous and skips the session-record removal, which is async (ADR 0029).
+    writeTranscriptOnForceExit = () => {
+      if (!options.transcript) return;
+      transcriptData.exitCode = 130;
+      transcriptData.error = "Interrupted by SIGINT";
+      writeFileAtomicSync(options.transcript, transcriptText());
     };
 
     // The orchestrator and the reviewer run under the mutation check, which covers the whole Git work
