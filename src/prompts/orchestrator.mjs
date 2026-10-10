@@ -132,7 +132,7 @@ function prGateBlock({
 const SHELL_NETWORK = "from the shell commands that its sandbox runs";
 const SHELL_READ = "through a shell command that its sandbox runs";
 const SHELL_ONLY_LIMIT =
-  "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything.";
+  "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. A user Codex execpolicy rule that allows bash -c, sh -c, or zsh -c is an exception: it can run a shell command that has an expansion, such as $HOME, outside the sandbox and with network, and the runtime does not prevent that. This run counts on none of them for the check read, and none of them enforces anything.";
 
 // A `copilot` read-only turn keeps shell network, so the Codex sandbox wording above is false for
 // it. Its limit is a permission refusal of `role wait-checks` without approval (#432 probe, #495),
@@ -276,7 +276,7 @@ function testCmdBlock(testCmd) {
  */
 function reviewerSandboxBlock(reviewerWorkspaceWrite) {
   if (!reviewerWorkspaceWrite) return "";
-  return "\n- This run lets the Codex reviewer run targeted tests and probes: the runtime runs each reviewer turn in the workspace-write sandbox, and the shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox. Your own turns stay read-only. The reviewer still must not change files: the runtime compares the work tree around every reviewer turn, and a change halts the run with no revert.";
+  return "\n- This run lets the Codex reviewer run targeted tests and probes: the runtime runs each reviewer turn in the workspace-write sandbox, and the shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox. A user Codex execpolicy rule that allows bash -c, sh -c, or zsh -c is an exception: it can run a shell command that has an expansion, such as $HOME, outside the sandbox and with network, and the runtime does not prevent that. Your own turns stay read-only. The reviewer still must not change files: the runtime compares the work tree around every reviewer turn, and a change halts the run with no revert.";
 }
 
 /**
@@ -401,7 +401,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
 - Treat an accept without a Checks line as not accepted.
-- When the PR head cannot be resolved, for example a read-only turn whose shell commands have no network access, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.
+- When the PR head cannot be resolved, do not finish as verified: abort, or record the unresolved compare under notDone and open in the finish summary.
 - When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event and the headless run exits 4 instead of 0, so the recorded finish stays machine-distinct from a verified one. That marker is the only machine-readable record of the compare, and nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.
 
 Map the report fields into the finish summary:

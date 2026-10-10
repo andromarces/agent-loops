@@ -29,9 +29,6 @@ export async function runCodex(state, prompt, options = {}) {
   } else if (readOnly) {
     configArgs.push("-c", 'sandbox_mode="read-only"');
   }
-  // A user execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` runs a shell command with an
-  // expansion outside the sandbox, so a sandboxed turn ignores user and project rules (ADR 0019).
-  if (configArgs.length > 0) configArgs.push("--ignore-rules");
 
   const modelArgs = [];
   if (state.model) {

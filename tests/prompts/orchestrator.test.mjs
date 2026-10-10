@@ -1723,6 +1723,68 @@ test("the network denial scan flags an unqualified denial and accepts a qualifie
   ).toEqual([]);
 });
 
+// A Codex shell network denial holds only without a user execpolicy rule that allows `bash -c`,
+// `sh -c`, or `zsh -c`: such a rule ran a shell command outside the sandbox, with network (issue
+// #640). The runtime does not prevent that (issue #655), so every runtime prompt sentence that
+// denies shell network must state the exception, in the sentence or in the next two.
+const USER_RULE_EXCEPTION = /user (Codex )?execpolicy rule/i;
+function denialsWithoutUserRuleException(text) {
+  const sentences = sentencesOf(text);
+  return sentences.filter(
+    (sentence, i) =>
+      NETWORK_DENIAL.test(sentence) &&
+      !USER_RULE_EXCEPTION.test(sentences.slice(i, i + 3).join(" ")),
+  );
+}
+
+// Usefulness: verifies every rendered orchestrator prompt and the opted-in reviewer prompt state
+// the user-rule exception next to a shell network denial, so neither role treats a shell network
+// result as impossible (issue #655). The qualification scan above does not check the exception.
+describe.each([
+  ["default", false],
+  ["opted-in", true],
+])("the %s runtime prompts state the user-rule exception", (_name, reviewerWorkspaceWrite) => {
+  test.each([
+    ["codex", "codex", null],
+    ["codex", "codex", 42],
+    ["codex", "claude", 42],
+    ["copilot", "codex", 42],
+    ["claude", "codex", null],
+    [null, null, null],
+  ])("%s orchestrator, %s reviewer, pr %s", (orchestratorKind, reviewerKind, pr) => {
+    const prompt = gated({ orchestratorKind, reviewerKind, pr, reviewerWorkspaceWrite });
+    expect(denialsWithoutUserRuleException(prompt)).toEqual([]);
+  });
+
+  test("the ungated prompt", () => {
+    expect(
+      denialsWithoutUserRuleException(
+        initialPrompt({ task: "t", maxSteps: 5, reviewerWorkspaceWrite }),
+      ),
+    ).toEqual([]);
+  });
+});
+
+// Usefulness: verifies the opted-in reviewer prompt states the user-rule exception, and the
+// default reviewer prompt has no sandbox line to qualify (issue #655).
+test("the opted-in reviewer prompt states the user-rule exception", () => {
+  expect(denialsWithoutUserRuleException(reviewerPrompt("x", null, null, true))).toEqual([]);
+  expect(reviewerPrompt("x", null, null, true)).toMatch(USER_RULE_EXCEPTION);
+});
+
+// Usefulness: verifies the exception scan flags a denial with no exception, so a pass is not a
+// blind detector.
+test("the exception scan flags a denial without the user-rule exception", () => {
+  expect(
+    denialsWithoutUserRuleException("The shell commands that you run have no network access."),
+  ).toHaveLength(1);
+  expect(
+    denialsWithoutUserRuleException(
+      "The shell commands have no network access. A user Codex execpolicy rule that allows `zsh -c` can lift that.",
+    ),
+  ).toEqual([]);
+});
+
 // Usefulness: verifies the reviewer prompt, the README, the orchestrator instructions, the other
 // docs, the help text, and ADR 0019 carry no unqualified denial, so the prompt and the docs state
 // one rule about what the Codex sandbox blocks.

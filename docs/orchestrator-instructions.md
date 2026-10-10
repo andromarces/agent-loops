@@ -203,7 +203,7 @@ Apply these parent rules:
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.
-- When the PR head cannot be resolved, for example a read-only turn whose shell commands have no network access, do not finish as verified: abort, or record the unresolved
+- When the PR head cannot be resolved, do not finish as verified: abort, or record the unresolved
   compare under notDone and open in the finish summary. A recorded compare also
   sets the marker described under Finish output, so the record never reads the
   same as a verified finish. That marker is the only machine-readable record of
@@ -432,8 +432,8 @@ other reviewer is refused at init. The run is unchanged without it.
   `sandbox_mode="workspace-write"` and `sandbox_workspace_write.network_access=false`.
   Network access stays off for the shell commands that the sandbox runs. The
   runtime sets it explicitly, because the mode takes network from the user Codex
-  config otherwise. Every sandboxed Codex turn also passes `--ignore-rules`, so a
-  user execpolicy rule cannot run a shell command outside the sandbox. The limit covers shell commands only: it does not block
+  config otherwise. A user Codex execpolicy rule that allows `bash -c`, `sh -c`,
+  or `zsh -c` is an exception, as the gaps below state. The limit covers shell commands only: it does not block
   model-side tools such as Codex `web_search`, or any other channel outside the
   sandbox.
 - Only reviewer turns change. Every orchestrator turn, every worker turn, and the
@@ -460,7 +460,7 @@ other reviewer is refused at init. The run is unchanged without it.
     seen on one machine only (issue #640): a user Codex rule that allows
     `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion such
     as `$$` or `$HOME` outside the sandbox, with network and with a write
-    outside the work tree. The adapter now passes `--ignore-rules` to prevent that, and a probe shows shell network blocked with such a rule present. The sandbox does not block a channel outside it, for example a
+    outside the work tree. The runtime does not prevent that. The sandbox does not block a channel outside it, for example a
     GitHub app connector or another model-side tool. The local snapshot does
     not see a remote write over any channel, so a push, a merge, a review, or a
     comment could change remote state unseen. Codex is the only adapter that
@@ -578,7 +578,10 @@ The orchestrator CLI and the reviewer CLI are chosen independently, so each
 statement below names the role whose CLI performs the read. A read-only
 invocation keeps shell network access for `claude`, `agy`, and `opencode`. The
 `codex` read-only sandbox blocks the network of shell
-commands (not model-side tools). A `copilot` read-only turn refuses most
+commands (not model-side tools). A user Codex execpolicy rule that allows `bash -c`,
+`sh -c`, or `zsh -c` is an exception: it can run a shell command that has an
+expansion outside the sandbox and with network, and the runtime does not prevent
+that. A `copilot` read-only turn refuses most
 shell commands without approval: the issue #432 probe found `gh pr checks`
 allowed and `role wait-checks` refused. A `copilot` orchestrator therefore does not
 wait (#495), and a `copilot` reviewer still reads the checks with `gh pr checks`.
