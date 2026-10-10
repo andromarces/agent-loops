@@ -608,9 +608,7 @@ test("opencode reports the last well-formed error event", async () => {
   expect(error.message).not.toContain("R".repeat(40));
 });
 
-// Usefulness: verifies the live authentication failure shape, which carries a `response.body` the
-// other fixtures lack, reports the status and message only, so a provider response body cannot reach
-// the envelope (issue #605).
+// Usefulness: verifies a live 401 event with `response.body` leaks no body, which no other fixture covers.
 test("opencode omits the provider response body from an authentication failure", async () => {
   const error = await rejectTurnWith({
     exitCode: 1,
