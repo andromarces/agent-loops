@@ -126,7 +126,24 @@ In the invalid-stream probe OpenCode retried. On both builds the stdout held 32 
 
 The live shapes match the fixtures, with one addition. The authentication event carries a `response.body` that no fixture had. `tests/agents/opencode.test.mjs` gained one test with that shape. The test passed with no code change, so it guards the behavior and was not red first.
 
-Not verified: other released versions, a provider rate limit, a timeout, a signal, and Windows.
+Issue #638 repeated the probes on Windows 11 on the released build `opencode v2.0.26`, installed in a temporary prefix as above. The installed global build was the dev build `v0.0.0-dev-20800`, so it was not used. Each probe ran through `agent-loop role dispatch --role worker --worker opencode` in a disposable Git repository in the system temporary directory, with isolated `XDG_*` directories. A local mock server on 127.0.0.1, configured as a custom `providers` entry in the repository `opencode.jsonc`, stood in for the provider, so no probe spent money or changed an account setting.
+
+| Failure mode   | How provoked                                                                                     | Result                                                                                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No route       | `--worker-model opencode-go/no-such-model-xyz`. This is the Windows probe.                       | Exit 1. Envelope `opencode exited with code 1: provider.no-route: Model unavailable: opencode-go/no-such-model-xyz`. Same as on macOS.                                                               |
+| Authentication | `anthropic/claude-sonnet-4-5` with `ANTHROPIC_API_KEY` set to a dummy value.                     | Exit 1. Envelope `opencode exited with code 1: provider.auth: invalid x-api-key (status 401)`. Same as on macOS.                                                                                     |
+| Rate limit     | The mock answered every request with HTTP 429, a `rate_limit_error` body, and `Retry-After: 1`.  | No error event. OpenCode retried with a growing delay and ran until the dispatch timeout, so the envelope was the timeout envelope below. A direct run was still retrying after 110 seconds.         |
+| Quota 429      | The mock answered HTTP 429 with an `insufficient_quota` body and no `Retry-After`.               | Exit 1 after 2 seconds. Error event `provider.quota`, status 429, with `response.body`. Envelope `opencode exited with code 1: provider.quota: <provider message> (status 429)`. The body is absent. |
+| Timeout        | The mock sent one content chunk with a marker string, then held the stream open. `--timeout 20`. | Envelope `worker timed out after 20 seconds`. It names no exit code, because the turn has none, and no provider detail. No `opencode.exe` process stayed behind.                                     |
+| Signal         | The same hung stream. `taskkill /F /IM opencode.exe` ended the CLI.                              | Windows reports a forced end as exit code 1, not as a signal. Envelope `opencode exited with code 1: no provider error event in the output`.                                                         |
+
+Every envelope holds no streamed marker text and no `response.body` JSON. The no-route and quota envelopes also ran on `opencode v2.0.0`, the oldest release of `@opencode/cli`, and matched.
+
+The no-route, authentication, quota, and forced-end envelopes name the exit code. The timeout envelope `worker timed out after 20 seconds` does not. The runtime ended the turn at the `--timeout` bound, so the process never exited on its own and no exit code exists to name. The envelope names the bound instead. This is by design, and the adapter reports a timeout or a signal as the cause and not as an exit code, so a killed process cannot pass off a provider error that is not why the turn ended (issue #326). No bug was opened, because no envelope leaked stream text and every envelope that has an exit code names it.
+
+The live quota event has the shape `{"type":"provider.quota","message":"<provider message>","status":429,"response":{"body":"<JSON string>"}}`. The fixtures in `tests/agents/opencode.test.mjs` already cover that shape: the exit-code path ignores `response`, so no fixture changed.
+
+Not verified: a rate limit that ends in an error event on its own (the 429 retry has no bound that the probe reached), the message `opencode was killed by <signal>` (Windows never reports a signal, and the probe host has no POSIX signal path), and Linux.
 
 ### OpenCode model default
 
