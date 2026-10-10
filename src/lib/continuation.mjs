@@ -6,6 +6,7 @@ import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
 import { sha256 } from "./hash.mjs";
+import { holdsSession } from "./command-line.mjs";
 import { ProcessReadError, readProcessCommands } from "./process-ancestry.mjs";
 import { isUuid, readSessionRecord } from "./session-record.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
@@ -97,75 +98,6 @@ export async function refuseHeldSessions(roles, deps = {}) {
     })),
     { ...deps, label: "--continue-from" },
   );
-}
-
-/**
- * Splits a command line into arguments with the rules of its platform. Windows follows
- * `CommandLineToArgvW`: quotes toggle a quoted section and are dropped, `2n` backslashes before a
- * quote give `n` backslashes and the quote toggles, `2n+1` give `n` backslashes and a literal quote,
- * and other backslashes stay. POSIX follows a shell: single and double quotes group, a backslash
- * escapes the next character outside single quotes. An unterminated quote runs to the end.
- */
-function splitArguments(command, windows) {
-  const args = [];
-  let current = "";
-  let started = false;
-  let quote = null;
-  const end = () => {
-    if (started) args.push(current);
-    current = "";
-    started = false;
-  };
-  for (let i = 0; i < command.length; i++) {
-    const c = command[i];
-    if (windows && c === "\\") {
-      let n = 0;
-      while (command[i + n] === "\\") n++;
-      started = true;
-      if (command[i + n] === '"') {
-        current += "\\".repeat(n >> 1);
-        if (n & 1) current += '"';
-        else quote = quote ? null : '"';
-      } else {
-        current += "\\".repeat(n);
-        i += n - 1;
-        continue;
-      }
-      i += n;
-    } else if (!windows && c === "\\" && quote !== "'" && i + 1 < command.length) {
-      current += command[++i];
-      started = true;
-    } else if (quote === null && (c === '"' || (!windows && c === "'"))) {
-      quote = c;
-      started = true;
-    } else if (c === quote) {
-      quote = null;
-    } else if (quote === null && /\s/.test(c)) {
-      end();
-    } else {
-      current += c;
-      started = true;
-    }
-  }
-  end();
-  return args;
-}
-
-/**
- * True when an argument of `command` is exactly `id`, or is `--resume=<id>`, `--session-id=<id>`, or
- * `-r=<id>`. The arguments come from the rules of `platform`, so a quoted flag counts, a bare id
- * counts, and a path, a longer token, or another flag that merely contains the id does not (#673,
- * ADR 0031). `id` is a UUID, so the compare is case-insensitive.
- */
-function holdsSession(command, id, platform) {
-  const wanted = id.toLowerCase();
-  return splitArguments(command, platform === "win32").some((arg) => {
-    const lower = arg.toLowerCase();
-    return (
-      lower === wanted ||
-      [`--resume=${wanted}`, `--session-id=${wanted}`, `-r=${wanted}`].includes(lower)
-    );
-  });
 }
 
 /**

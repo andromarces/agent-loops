@@ -722,63 +722,15 @@ test.skipIf(process.platform === "win32")(
   60_000,
 );
 
-// Usefulness: verifies the holder match tokenizes the command line with the platform rules (#673), so a quoted flag or a bare id counts and a path or a longer token that contains the id never refuses a run.
-const holds = (command, platform) =>
-  refuseHeldIds([{ role: "worker", sessionId: HELD_ID }], {
-    platform,
-    readProcessCommands: async () => [{ pid: 4242, command }],
-  }).then(
-    () => false,
-    (err) => err.message.includes("process 4242"),
-  );
-
-const HELD_NEGATIVES = [
-  `tail -f /home/u/.claude/projects/p/${HELD_ID}.jsonl`,
-  `claude -p --resume ${HELD_ID}-copy`,
-  `claude -p --resume x${HELD_ID}`,
-  `claude -p --resume ${HELD_ID}0`,
-  `claude -p --session-id-file=${HELD_ID}`,
-  `claude -p --model=${HELD_ID}`,
-  String.raw`claude -p --resume\"${HELD_ID}\"`,
-];
-
-test("a Windows command line holds the session for a flag value, a quoted flag, or a bare id", async () => {
-  for (const command of [
-    `claude -p --resume ${HELD_ID} --output-format json`,
-    `claude -p --session-id ${HELD_ID} --model haiku`,
-    `claude -p --resume=${HELD_ID}`,
-    `claude -p -r=${HELD_ID}`,
-    `claude -p "--resume" ${HELD_ID}`,
-    `claude -p "--session-id=${HELD_ID}"`,
-    `claude -p --resume="${HELD_ID}"`,
-    String.raw`"C:\Program Files\claude.exe" -p --resume "${HELD_ID}"`,
-    `claude ${HELD_ID}`,
-    `claude -p --resume ${HELD_ID.toUpperCase()}`,
-  ]) {
-    expect(await holds(command, "win32"), command).toBe(true);
-  }
-  for (const command of [
-    ...HELD_NEGATIVES,
-    String.raw`node app.js --log "C:\logs\${HELD_ID}.log"`,
-    String.raw`node app.js --log C:\logs\${HELD_ID}.log`,
-  ]) {
-    expect(await holds(command, "win32"), command).toBe(false);
-  }
-});
-
-test("a POSIX command line holds the session for a flag value, a quoted flag, or a bare id", async () => {
-  for (const command of [
-    `claude -p --resume ${HELD_ID} --output-format json`,
-    `claude -p --session-id=${HELD_ID}`,
-    `claude -p '--resume' ${HELD_ID}`,
-    `claude -p "--session-id=${HELD_ID}"`,
-    `claude -p -r=${HELD_ID}`,
-    `claude ${HELD_ID}`,
-    `node test ${HELD_ID}`,
-  ]) {
-    expect(await holds(command, "linux"), command).toBe(true);
-  }
-  for (const command of [...HELD_NEGATIVES, `node app.js --log /logs/${HELD_ID}.log`]) {
-    expect(await holds(command, "linux"), command).toBe(false);
-  }
+// Usefulness: verifies the shared check applies the platform match to a process-table row, so a quoted flag or a bare id refuses a run and a path that contains the id does not (#673). The match rules have their own tests in command-line.test.mjs.
+test("refuseHeldIds refuses a holder by argument and passes a path that contains the id", async () => {
+  const check = (command, platform) =>
+    refuseHeldIds([{ role: "worker", sessionId: HELD_ID }], {
+      platform,
+      readProcessCommands: async () => [{ pid: 4242, command }],
+    });
+  await expect(check(`claude -p "--resume" ${HELD_ID}`, "win32")).rejects.toThrow("process 4242");
+  await expect(check(`claude ${HELD_ID}`, "linux")).rejects.toThrow("process 4242");
+  await expect(check(`tail -f /logs/${HELD_ID}.log`, "linux")).resolves.toBeUndefined();
+  await expect(check(`claude -p --resume ${HELD_ID}-copy`, "win32")).resolves.toBeUndefined();
 });
