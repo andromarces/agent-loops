@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
@@ -25,14 +25,19 @@ const SESSION_HEAD_BYTES = 256 * 1024;
  * neither it nor the file is followed through a link, as the Claude ownership check does. A first turn that fails before Copilot records the
  * prompt (a bad model, an unsupported effort, a kill at startup) leaves `workspace.yaml` only, and
  * a resume of that id holds nothing (issue #642).
+ * A relative `COPILOT_HOME` resolves against `cwd`, the role cwd that the CLI runs in (issue #678).
  * known-limit: a session store outside `COPILOT_HOME` or `~/.copilot` reads as holding no turn, and
  * the next turn then starts a fresh session.
  */
-async function holdsTurn(id) {
+async function holdsTurn(id, cwd) {
   if (!CANONICAL_UUID.test(id)) {
     return false;
   }
-  const dir = join(process.env.COPILOT_HOME || join(homedir(), ".copilot"), "session-state", id);
+  const home = resolve(
+    cwd ?? process.cwd(),
+    process.env.COPILOT_HOME || join(homedir(), ".copilot"),
+  );
+  const dir = join(home, "session-state", id);
   const path = join(dir, "events.jsonl");
   try {
     if (!(await lstat(dir)).isDirectory() || !(await lstat(path)).isFile()) {
@@ -70,8 +75,8 @@ async function holdsTurn(id) {
  * started, when the turn kept a reported id, or when no turn was saved. The caller must not call
  * it when the output reported an id, valid or not: an invalid reported id stores nothing.
  */
-async function keepSavedPreassignedId(state, sessionId, error) {
-  if (!state.sessionId && childRan(error) && (await holdsTurn(sessionId))) {
+async function keepSavedPreassignedId(state, sessionId, error, cwd) {
+  if (!state.sessionId && childRan(error) && (await holdsTurn(sessionId, cwd))) {
     state.sessionId = sessionId;
     state.sessionUnconfirmed = true;
   }
@@ -88,7 +93,11 @@ async function keepSavedPreassignedId(state, sessionId, error) {
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
   const requestedSessionId = state.sessionId;
-  if (requestedSessionId && state.sessionUnconfirmed && !(await holdsTurn(requestedSessionId))) {
+  if (
+    requestedSessionId &&
+    state.sessionUnconfirmed &&
+    !(await holdsTurn(requestedSessionId, cwd))
+  ) {
     delete state.sessionUnconfirmed;
     throw Object.assign(new Error(`Copilot session ${requestedSessionId} holds no saved turn.`), {
       sessionMissing: true,
@@ -135,7 +144,7 @@ export async function runCopilot(state, prompt, options = {}) {
     const reportedId = asSessionId(rawId);
     keepFailedSessionId(state, reportedId);
     if (rawId == null) {
-      await keepSavedPreassignedId(state, sessionId, error);
+      await keepSavedPreassignedId(state, sessionId, error, cwd);
     } else if (reportedId === state.sessionId) {
       // Only the id that the result confirms loses the mark.
       delete state.sessionUnconfirmed;
@@ -154,7 +163,7 @@ export async function runCopilot(state, prompt, options = {}) {
   recordResolvedModel(state, reportedModels(events), requestedSessionId, streamSession(events));
   if (!returnedId) {
     if (rawReturnedId == null) {
-      await keepSavedPreassignedId(state, sessionId, null);
+      await keepSavedPreassignedId(state, sessionId, null, cwd);
     }
     throw new Error("Copilot did not return a session ID.");
   }

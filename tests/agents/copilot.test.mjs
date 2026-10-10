@@ -909,6 +909,31 @@ test("a first copilot turn that fails mid-turn with an error event keeps the pre
   });
 });
 
+// Usefulness: a relative COPILOT_HOME resolves against the role cwd, as Copilot CLI 1.0.96-2 does (issue #678, ADR 0030), so the session that the CLI saved there is found and kept.
+test("a failed first copilot turn keeps the id of a session under a relative COPILOT_HOME of the role cwd", async () => {
+  const roleCwd = await mkdtemp(join(tmpdir(), "copilot-role-cwd-"));
+  vi.stubEnv("COPILOT_HOME", "relative-home");
+  try {
+    vi.mocked(exec).mockReset();
+    vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
+      const dir = join(roleCwd, "relative-home", "session-state", args[1]);
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, "events.jsonl"),
+        JSON.stringify({ type: "user.message", data: {} }),
+      );
+      throw copilotFailure({ stdout: '{"type":"tool.execution_start","data":{}}' });
+    });
+    const state = freshState();
+    await expect(runCopilot(state, "p", { cwd: roleCwd })).rejects.toThrow();
+    expect(state.sessionId).toBe(vi.mocked(exec).mock.calls[0][1][1]);
+    expect(state.sessionUnconfirmed).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(roleCwd, { recursive: true, force: true });
+  }
+});
+
 // Usefulness: a process that never started saved nothing, so a session file under the id (a stale one from another run) cannot make the adapter keep it.
 test("a first copilot turn whose process never started keeps no id", async () => {
   await withCopilotHome(async (writeSession) => {
