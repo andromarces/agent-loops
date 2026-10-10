@@ -6,7 +6,7 @@ import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
 import { sha256 } from "./hash.mjs";
-import { holdsSession } from "./command-line.mjs";
+import { heldSessionIds } from "./command-line.mjs";
 import { ProcessReadError, readProcessCommands } from "./process-ancestry.mjs";
 import { isUuid, readSessionRecord } from "./session-record.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
@@ -106,13 +106,16 @@ export async function refuseHeldSessions(roles, deps = {}) {
 /**
  * The check of `refuseHeldSessions` for a list of `{ role, sessionId }` entries of claude roles.
  * `deps.label` prefixes the warning and the refusal. `deps.platform` (default `process.platform`)
- * selects the command-line rules. Entries whose id is not a UUID are ignored.
+ * selects the command-line rules. Entries whose id is not a UUID are ignored, and an id that repeats (without case) is checked once.
  */
 export async function refuseHeldIds(entries, deps = {}) {
-  const ids = entries
-    .filter(({ sessionId }) => isUuid(sessionId))
-    .map(({ role, sessionId }) => [role, sessionId]);
-  if (ids.length === 0) {
+  const roleById = new Map();
+  for (const { role, sessionId } of entries) {
+    if (isUuid(sessionId) && !roleById.has(sessionId.toLowerCase())) {
+      roleById.set(sessionId.toLowerCase(), role);
+    }
+  }
+  if (roleById.size === 0) {
     return;
   }
   const label = deps.label ?? "session check";
@@ -133,12 +136,13 @@ export async function refuseHeldIds(entries, deps = {}) {
     );
     return;
   }
-  for (const [role, id] of ids) {
-    const holder = table.find(
-      (entry) =>
-        entry.pid !== process.pid &&
-        holdsSession(entry.command, id, deps.platform ?? process.platform),
-    );
+  // Each command line is tokenized once, then every id is looked up in the tokens.
+  const platform = deps.platform ?? process.platform;
+  const held = table
+    .filter((entry) => entry.pid !== process.pid)
+    .map((entry) => ({ pid: entry.pid, ids: heldSessionIds(entry.command, platform) }));
+  for (const [id, role] of roleById) {
+    const holder = held.find((entry) => entry.ids.has(id));
     if (holder) {
       throw new Error(
         `${label}: the ${role} session ${id} is held by process ${holder.pid}, a leftover of an earlier run. End that process, or wait for it to finish, and run again.`,
