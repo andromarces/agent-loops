@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
@@ -340,10 +340,7 @@ test("copilot keeps the stored id when a resumed turn fails response validation"
   expect(state.sessionId).toBe("copilot-stored");
 });
 
-// Usefulness: verifies a failed first turn keeps the session id the CLI reported in its result
-// event, so the next turn resumes it, and keeps none when the failed output reports none. The
-// pre-assigned id is never kept: a failed turn that reports no id does not show that a session
-// exists (issue #360).
+// Usefulness: verifies a failed first turn keeps the session id the CLI reported in its result event, and keeps none when the failed output reports none and saved no turn (issue #360, ADR 0030).
 test("copilot keeps the reported session id of a failed first turn", async () => {
   const error = new Error("Copilot failed");
   error.stdout = '{"type":"result","sessionId":"copilot-reported","exitCode":1}';
@@ -372,9 +369,7 @@ test("copilot keeps the stored session id when a resumed turn fails", async () =
   expect(state.sessionId).toBe("copilot-stored");
 });
 
-// Usefulness: verifies a successful result whose session id is truthy but not a string, such as a
-// number or an object, fails the turn with a clear error instead of returning success with no
-// stored id. A first turn keeps no id, and a resumed turn keeps its stored id (issue #360).
+// Usefulness: verifies a successful result whose session id is truthy but not a string, such as a number or an object, fails the turn with a clear error instead of returning success with no stored id. A first turn keeps no id, and a resumed turn keeps its stored id (issue #360).
 test.each([
   ["a number", 42],
   ["an object", { id: "x" }],
@@ -400,9 +395,7 @@ test.each([
   expect(resumed.sessionId).toBe("stored");
 });
 
-// Usefulness: verifies the adapter selects the id from the last result event, then validates
-// that selected id, so a later valid id never rescues an invalid or mismatched selected one. A
-// resumed turn keeps its stored id on every failure (issue #360).
+// Usefulness: verifies the adapter selects the id from the last result event, then validates that selected id, so a later valid id never rescues an invalid or mismatched selected one. A resumed turn keeps its stored id on every failure (issue #360).
 test.each([
   ["invalid then valid, first turn", [42, "good"], null, "good"],
   ["valid then invalid, first turn", ["good", 42], null, "ERR_ID"],
@@ -521,8 +514,7 @@ test("copilot keeps a final letter-prefixed list report over an earlier accept b
   expect(parseVerdict(response)).toBe("unknown");
 });
 
-// Usefulness: verifies the reviewer-only Codex sandbox input changes no copilot invocation, so the
-// opt-in reaches Codex alone (issue #421).
+// Usefulness: verifies the reviewer-only Codex sandbox input changes no copilot invocation, so the opt-in reaches Codex alone (issue #421).
 test("copilot invocation is identical with the reviewer sandbox input on and off", async () => {
   vi.mocked(exec).mockClear();
   const reply = {
@@ -561,15 +553,13 @@ const resolvedFrom = async (
   return state.resolvedModel;
 };
 
-// Usefulness: --continue-from compares the model Copilot resolved, which its assistant messages
-// name; one model across the messages is unambiguous.
+// Usefulness: --continue-from compares the model Copilot resolved, which its assistant messages name; one model across the messages is unambiguous.
 test("copilot records the one model its assistant messages name as resolvedModel", async () => {
   expect(await resolvedFrom([message({ model: "m-1" }), message({ model: "m-1" })])).toBe("m-1");
   expect(await resolvedFrom([message({ model: "m-1" }), message({})])).toBe("m-1");
 });
 
-// Usefulness: a false resolved model would refuse or pass a continuation wrongly, so messages that
-// name different models, and every malformed `model` value, record none.
+// Usefulness: a false resolved model would refuse or pass a continuation wrongly, so messages that name different models, and every malformed `model` value, record none.
 test.each([
   ["different models", [message({ model: "m-1" }), message({ model: "m-2" })]],
   ["no model", [message({})]],
@@ -583,9 +573,7 @@ test.each([
   expect(await resolvedFrom(messages)).toBeNull();
 });
 
-// Usefulness: the record describes the latest turn, so a turn with unreadable or ambiguous evidence
-// replaces an earlier model with unresolved (null) instead of leaving a stale model that a later
-// --continue-from would compare against.
+// Usefulness: the record describes the latest turn, so a turn with unreadable or ambiguous evidence replaces an earlier model with unresolved (null) instead of leaving a stale model that a later --continue-from would compare against.
 test.each([
   ["no model", [message({})]],
   ["different models", [message({ model: "m-2" }), message({ model: "m-3" })]],
@@ -622,8 +610,7 @@ const recordedState = () => ({
   resolvedModel: "m-1",
 });
 
-// Usefulness: the session ran on the model a failed turn names, so the record must follow it (review
-// probe: the record kept A while the failed turn named B).
+// Usefulness: the session ran on the model a failed turn names, so the record must follow it (review probe: the record kept A while the failed turn named B).
 test("copilot records the model a failed turn names, replacing the earlier one", async () => {
   vi.mocked(exec).mockRejectedValueOnce(
     copilotFailure({
@@ -635,9 +622,7 @@ test("copilot records the model a failed turn names, replacing the earlier one",
   expect(state.resolvedModel).toBe("m-2");
 });
 
-// Usefulness: a turn that ran and named no single model may have run on another model, so the record
-// becomes unresolved on every failure path: a non-zero exit with no or ambiguous output, a timeout, a
-// cancel, a signal, and an exit 0 with no result event.
+// Usefulness: a turn that ran and named no single model may have run on another model, so the record becomes unresolved on every failure path: a non-zero exit with no or ambiguous output, a timeout, a cancel, a signal, and an exit 0 with no result event.
 test.each([
   ["a non-zero exit with no output", copilotFailure()],
   [
@@ -661,8 +646,7 @@ test("copilot marks the record unresolved after an exit 0 with no result event",
   expect(state.resolvedModel).toBeNull();
 });
 
-// Usefulness: the record describes the session the role keeps. A turn whose output reports no session
-// cannot be tied to the kept session, so the record is unresolved even when the output names a model.
+// Usefulness: the record describes the session the role keeps. A turn whose output reports no session cannot be tied to the kept session, so the record is unresolved even when the output names a model.
 test("copilot marks the record unresolved when the output names no session", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: message({ model: "m-2" }), stderr: "" });
   const state = recordedState();
@@ -673,9 +657,7 @@ test("copilot marks the record unresolved when the output names no session", asy
 const turnOf = (sessionId, model) =>
   [message({ model }), JSON.stringify({ type: "result", sessionId, exitCode: 0 })].join("\n");
 
-// Usefulness: reported outcome. A resumed turn whose result is another session naming B keeps the
-// original session id, so the record must not become B (a continuation would refuse A and accept B
-// against the kept session). The record is unresolved, so a continuation compares nothing.
+// Usefulness: reported outcome. A resumed turn whose result is another session naming B keeps the original session id, so the record must not become B (a continuation would refuse A and accept B against the kept session). The record is unresolved, so a continuation compares nothing.
 test("copilot does not record the model of a session the role does not keep", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: turnOf("s-other", "m-2"), stderr: "" });
   const state = { ...recordedState(), sessionId: "s-kept" };
@@ -704,8 +686,7 @@ test("copilot does not record the model of a session the role does not keep", as
   }
 });
 
-// Usefulness: a resumed turn that reports the retained session records its model, and a first turn
-// records the session it adopts.
+// Usefulness: a resumed turn that reports the retained session records its model, and a first turn records the session it adopts.
 test("copilot records the model of the retained or adopted session", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: turnOf("s-kept", "m-2"), stderr: "" });
   const resumed = { ...recordedState(), sessionId: "s-kept" };
@@ -763,10 +744,7 @@ test("copilot leaves the record alone when the process never started", async () 
 
 const resultOf = (sessionId) => JSON.stringify({ type: "result", sessionId, exitCode: 0 });
 
-// Usefulness: one consistent source. The adapter takes the session from the last result event, so a
-// stream whose events name more than one session cannot tie its messages' model to the session the role
-// keeps, and records unresolved. Before, a first result of another session was ignored and the model was
-// recorded for the retained session.
+// Usefulness: one consistent source. The adapter takes the session from the last result event, so a stream whose events name more than one session cannot tie its messages' model to the session the role keeps, and records unresolved. Before, a first result of another session was ignored and the model was recorded for the retained session.
 test.each([
   [
     "two result events of different sessions",
@@ -792,8 +770,7 @@ test.each([
   expect(state.resolvedModel).toBeNull();
 });
 
-// Usefulness: a normal single-session stream still records its model, also when another event repeats
-// the same session.
+// Usefulness: a normal single-session stream still records its model, also when another event repeats the same session.
 test("copilot records the model of a single-session stream", async () => {
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: [
@@ -838,7 +815,7 @@ async function withCopilotHome(body) {
     }
   };
   try {
-    await body(writeSession);
+    await body(writeSession, home);
   } finally {
     vi.unstubAllEnvs();
     await rm(home, { recursive: true, force: true });
@@ -854,9 +831,7 @@ const failAfterSession = (writeSession, events, error) =>
     throw error;
   });
 
-// Usefulness: a failed first turn that printed no id but left a session holding the turn keeps the
-// pre-assigned id with the unconfirmed mark, so the next turn resumes it without the preamble
-// (issue #642, ADR 0030).
+// Usefulness: a failed first turn that printed no id but left a session holding the turn keeps the pre-assigned id with the unconfirmed mark, so the next turn resumes it without the preamble (issue #642, ADR 0030).
 test("a failed first copilot worker turn that saved a session keeps the pre-assigned id", async () => {
   await withCopilotHome(async (writeSession) => {
     vi.mocked(exec).mockReset();
@@ -893,8 +868,7 @@ test("a failed first copilot worker turn that saved a session keeps the pre-assi
   });
 });
 
-// Usefulness: a failure that saved no user message, such as a bad model, an unsupported effort, or a
-// kill before the prompt was recorded, leaves no stale id, so the next turn carries the preamble.
+// Usefulness: a failure that saved no user message, such as a bad model, an unsupported effort, or a kill before the prompt was recorded, leaves no stale id, so the next turn carries the preamble.
 test.each([
   ["no session directory at all", undefined],
   ["a session directory with no events file (bad model)", null],
@@ -913,8 +887,7 @@ test.each([
   });
 });
 
-// Usefulness: an error in the middle of a model call ends the stream with no result event, like a
-// kill does. The session file decides, so the saved turn is kept.
+// Usefulness: an error in the middle of a model call ends the stream with no result event, like a kill does. The session file decides, so the saved turn is kept.
 test("a first copilot turn that fails mid-turn with an error event keeps the pre-assigned id", async () => {
   await withCopilotHome(async (writeSession) => {
     vi.mocked(exec).mockReset();
@@ -936,8 +909,7 @@ test("a first copilot turn that fails mid-turn with an error event keeps the pre
   });
 });
 
-// Usefulness: a process that never started saved nothing, so a session file under the id (a stale
-// one from another run) cannot make the adapter keep it.
+// Usefulness: a process that never started saved nothing, so a session file under the id (a stale one from another run) cannot make the adapter keep it.
 test("a first copilot turn whose process never started keeps no id", async () => {
   await withCopilotHome(async (writeSession) => {
     vi.mocked(exec).mockReset();
@@ -952,8 +924,7 @@ test("a first copilot turn whose process never started keeps no id", async () =>
   });
 });
 
-// Usefulness: an id that the result event reports is confirmed, so it wins over the pre-assigned id
-// and carries no mark.
+// Usefulness: an id that the result event reports is confirmed, so it wins over the pre-assigned id and carries no mark.
 test("a failed first copilot turn keeps a reported id without the unconfirmed mark", async () => {
   await withCopilotHome(async (writeSession) => {
     vi.mocked(exec).mockReset();
@@ -969,8 +940,7 @@ test("a failed first copilot turn keeps a reported id without the unconfirmed ma
   });
 });
 
-// Usefulness: an unconfirmed id whose session file is gone (the store was cleared) is refused before
-// any CLI starts, so the runtime reruns the turn as a first turn with the preamble.
+// Usefulness: an unconfirmed id whose session file is gone (the store was cleared) is refused before any CLI starts, so the runtime reruns the turn as a first turn with the preamble.
 test("a worker turn reruns as a first turn when the unconfirmed copilot session is gone", async () => {
   await withCopilotHome(async () => {
     vi.mocked(exec).mockReset();
@@ -996,8 +966,7 @@ test("a worker turn reruns as a first turn when the unconfirmed copilot session 
   });
 });
 
-// Usefulness: a confirmed id resumes with no session file check, so a CLI that keeps its sessions
-// elsewhere is never refused for an id that its own output reported.
+// Usefulness: a confirmed id resumes with no session file check, so a CLI that keeps its sessions elsewhere is never refused for an id that its own output reported.
 test("copilot resumes a confirmed id without a session file", async () => {
   await withCopilotHome(async () => {
     vi.mocked(exec).mockReset();
@@ -1010,5 +979,116 @@ test("copilot resumes a confirmed id without a session file", async () => {
     });
     const state = { ...freshState(), sessionId: "copilot-confirmed" };
     await expect(runCopilot(state, "p", { cwd: "/dir" })).resolves.toBe("ok");
+  });
+});
+
+const SAVED = ["session.start", "user.message"];
+
+// Usefulness: an id that the failed output reports but that is not a valid session id stores nothing on a first turn, even when a turn was saved under the pre-assigned id (ADR 0027 decision 1, ADR 0030 decision 1).
+test.each([
+  ["an empty string", ""],
+  ["a number", 42],
+  ["an object", { id: "x" }],
+])("a failed first copilot turn that reports %s as its id keeps none", async (_name, id) => {
+  await withCopilotHome(async (writeSession) => {
+    vi.mocked(exec).mockReset();
+    failAfterSession(
+      writeSession,
+      SAVED,
+      copilotFailure({ stdout: JSON.stringify({ type: "result", sessionId: id, exitCode: 1 }) }),
+    );
+    const state = freshState();
+    await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+    expect(state.sessionId).toBeNull();
+    expect(state.sessionUnconfirmed).toBeUndefined();
+  });
+});
+
+// Usefulness: a successful exit whose result id is not a valid session id stores nothing on a first turn, even when a turn was saved under the pre-assigned id.
+test("a first copilot turn whose exit 0 result reports an invalid id keeps none", async () => {
+  await withCopilotHome(async (writeSession) => {
+    vi.mocked(exec).mockReset();
+    vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
+      await writeSession(args[1], SAVED);
+      return {
+        stdout: [
+          '{"type":"assistant.message","data":{"content":"ok"}}',
+          '{"type":"result","sessionId":42,"exitCode":0}',
+        ].join("\n"),
+        stderr: "",
+      };
+    });
+    const state = freshState();
+    await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow("session ID");
+    expect(state.sessionId).toBeNull();
+    expect(state.sessionUnconfirmed).toBeUndefined();
+  });
+});
+
+// Usefulness: the mark clears only for the id that a result confirms, so a result of another id never lets a later resume skip the session check for the retained id.
+test.each([
+  ["succeeds", async (id) => ({ stdout: [message({ model: "m" }), resultOf(id)].join("\n") })],
+  ["fails", async (id) => Promise.reject(copilotFailure({ stdout: resultOf(id) }))],
+])(
+  "a resumed unconfirmed copilot turn that %s with another id keeps the mark",
+  async (_name, answer) => {
+    await withCopilotHome(async (writeSession) => {
+      vi.mocked(exec).mockReset();
+      const kept = "55555555-5555-4555-8555-555555555555";
+      await writeSession(kept, SAVED);
+      vi.mocked(exec).mockImplementationOnce(() => answer("copilot-other"));
+      const state = { ...freshState(), sessionId: kept, sessionUnconfirmed: true };
+      await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+      expect(state.sessionId).toBe(kept);
+      expect(state.sessionUnconfirmed).toBe(true);
+    });
+  },
+);
+
+// Usefulness: a resumed unconfirmed turn that reports its own id is confirmed, so the mark clears on a failure as on a success.
+test("a resumed unconfirmed copilot turn that fails with its own id clears the mark", async () => {
+  await withCopilotHome(async (writeSession) => {
+    vi.mocked(exec).mockReset();
+    const kept = "66666666-6666-4666-8666-666666666666";
+    await writeSession(kept, SAVED);
+    vi.mocked(exec).mockRejectedValueOnce(copilotFailure({ stdout: resultOf(kept) }));
+    const state = { ...freshState(), sessionId: kept, sessionUnconfirmed: true };
+    await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+    expect(state.sessionId).toBe(kept);
+    expect(state.sessionUnconfirmed).toBeUndefined();
+  });
+});
+
+// Usefulness: a symlinked session directory or events file is never followed out of the session store, as the Claude ownership check refuses a symlinked project directory or session file.
+test.for([
+  ["a symlinked session directory", "dir"],
+  ["a symlinked events file", "file"],
+])("copilot finds no saved turn behind %s", async ([_name, kind], ctx) => {
+  await withCopilotHome(async (writeSession, home) => {
+    vi.mocked(exec).mockReset();
+    const id = "77777777-7777-4777-8777-777777777777";
+    const real = "88888888-8888-4888-8888-888888888888";
+    await writeSession(real, SAVED);
+    const store = join(home, "session-state");
+    try {
+      if (kind === "dir") {
+        await symlink(join(store, real), join(store, id), "junction");
+      } else {
+        await mkdir(join(store, id));
+        await symlink(join(store, real, "events.jsonl"), join(store, id, "events.jsonl"), "file");
+      }
+    } catch (err) {
+      if (err?.code === "EPERM") ctx.skip();
+      throw err;
+    }
+    const caught = await runCopilot(
+      { ...freshState(), sessionId: id, sessionUnconfirmed: true },
+      "p",
+      {
+        cwd: "/dir",
+      },
+    ).catch((e) => e);
+    expect(caught.sessionMissing).toBe(true);
+    expect(exec).not.toHaveBeenCalled();
   });
 });
