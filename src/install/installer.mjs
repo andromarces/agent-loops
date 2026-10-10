@@ -11,7 +11,7 @@
 // read-modify-write of the manifest cannot drop a record, whatever the temp
 // root of each process (#193, #198).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
-import { access } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
@@ -949,20 +949,32 @@ function executableCandidates(command) {
   return [command, ...extensions.map((extension) => `${command}${extension.toLowerCase()}`)];
 }
 
-async function exists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
+// Lists a directory once per detectHarnesses call. A missing or unreadable directory is empty.
+// Windows file names compare case-insensitively.
+function directoryLister() {
+  const listings = new Map();
+  return (dir) => {
+    if (!listings.has(dir)) {
+      listings.set(
+        dir,
+        readdir(dir).then(
+          (names) =>
+            new Set(process.platform === "win32" ? names.map((n) => n.toLowerCase()) : names),
+          () => new Set(),
+        ),
+      );
+    }
+    return listings.get(dir);
+  };
 }
 
-// Walks PATH in order and stops at the first match.
-async function onPath(command, path) {
+// Walks PATH in order and stops at the first match. One listing per PATH entry replaces one probe per
+// PATH entry x PATHEXT x command, which took seconds on a loaded Windows host (#376).
+async function onPath(command, path, list) {
   for (const dir of path.split(delimiter).filter(Boolean)) {
+    const names = await list(dir);
     for (const candidate of executableCandidates(command)) {
-      if (await exists(join(dir, candidate))) {
+      if (names.has(process.platform === "win32" ? candidate.toLowerCase() : candidate)) {
         return true;
       }
     }
@@ -972,15 +984,16 @@ async function onPath(command, path) {
 
 /**
  * Harnesses whose CLI is found on PATH, in registry order. Harnesses are
- * probed concurrently, at most one probe outstanding per harness, so the scan
- * stays short on a long PATH or a loaded machine (#365). `path` overrides
- * `process.env.PATH`.
+ * scanned concurrently over one shared directory listing per PATH entry, so
+ * the scan stays short on a long PATH or a loaded machine (#365, #376). `path`
+ * overrides `process.env.PATH`.
  */
 export async function detectHarnesses({ path = process.env.PATH ?? "" } = {}) {
+  const list = directoryLister();
   const found = await Promise.all(
     HARNESS_ORDER.map(async (harness) => {
       for (const command of HARNESS_META[harness].commands) {
-        if (await onPath(command, path)) {
+        if (await onPath(command, path, list)) {
           return true;
         }
       }
