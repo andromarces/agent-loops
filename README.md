@@ -253,9 +253,12 @@ location as an absolute path into every entry point and guard, and `npx`,
 directory that the runner or the system can delete. When it detects its own
 package root inside that directory, `install` refuses with a
 message that asks for a global install first, so it never writes a path that can
-disappear. The `yarn dlx` and `bunx` layouts were observed on macOS only, with
-bun 1.2.20 and yarn 4.9.2. They are not verified on Windows or Linux, or with
-yarn 1.x. `uninstall` reads only the manifest and the harness files, so it still
+disappear. The `yarn dlx` and `bunx` layouts were observed on macOS with bun
+1.2.20 and yarn 4.9.2. They were also observed on Windows 11 with bun 1.3.8 and
+yarn 4.9.2. Yarn 1.22.22 has no `dlx` command. Its `create` command installed a
+probe package into the stable global directory. Linux (#707) and a `%TEMP%`
+that is an 8.3 short path or a junction (#709) are not verified. `uninstall`
+reads only the manifest and the harness files, so it still
 removes them after the package is gone.
 
 A pnpm install resolves the package into a version-named virtual store entry, so

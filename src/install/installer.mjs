@@ -57,7 +57,12 @@ import {
 // ends. `<tmp>` is the system temporary directory, not a runner cache. The
 // runner or the OS can delete each directory at any time. A global install, a
 // project `node_modules`, and a linked clone all keep a stable package root.
-// Verified on macOS with bun 1.2.20 and yarn 4.9.2 (#207).
+// Observed on macOS with bun 1.2.20 and yarn 4.9.2, and on Windows 11 with bun
+// 1.3.8 and yarn 4.9.2 (#207). yarn 1.22.22 has no `dlx` command, and its
+// `create` command installed a probe package under `<home>/.config/yarn/global`,
+// a stable root.
+// Not verified: Linux (#707), and a `%TEMP%` that is an 8.3 short path or a
+// junction (#709).
 const EPHEMERAL_CACHE_DIRS = new Set(["_npx", "dlx"]);
 const BUNX_TEMP_DIR = /^bunx-\d+-[^@]+@[^@]+$/;
 const BUNX_SCOPE_TEMP_DIR = /^bunx-\d+-@[^@]+$/;
