@@ -143,8 +143,11 @@ step budget runs out.
    under the mutation check and the write would fail it, so they keep the gap for that layout and
    log a warning. A refused ownership check on a resumed orchestrator id ends the run and keeps
    the id with its mark, because the orchestrator has no first-turn rerun: a new session would
-   lack the task. The restore runs inside the mutation check, so a failed snapshot after the turn cannot lose the mark. Not verified: Windows file system behavior, and the transcript that a real
-   process kill leaves, which the tests simulate by reading the file mid-turn. Separate processes that
+   lack the task. The restore runs inside the mutation check, so a failed snapshot after the turn cannot lose the mark. Issue #580 probed a real process kill and the Windows file system on
+   Windows 11 with Claude Code 2.1.295. ADR 0027 holds the commands and the results. A forced kill
+   with `taskkill /F /T` left the id with the mark. `--continue-from` resumed it after the ownership
+   check, when the driver sample before the kill showed the session file. A run whose sample showed
+   no session file was refused. A reviewer then reran as a first turn. Not verified: SIGKILL and SIGTERM on POSIX. Separate processes that
    share one transcript path have no write coordination: each write is atomic and the last wins.
 2. The Claude and Codex adapters mark a resume error with `sessionMissing` only when the
    process exited 1 with no timeout, cancel, or signal, stdout is the empty string, and
@@ -227,6 +230,7 @@ Andro Marces
 - [Issue #396](https://github.com/andromarces/agent-loops/issues/396)
 - [Issue #564](https://github.com/andromarces/agent-loops/issues/564)
 - [Issue #565](https://github.com/andromarces/agent-loops/issues/565)
+- [Issue #580](https://github.com/andromarces/agent-loops/issues/580)
 - Implementation: `keepFailedSessionId` and `flagMissingSession` in `src/agents/shared.mjs`,
   the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `src/runtime.mjs`, the dispatch write in
   `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/cli.mjs`; documented in `README.md`
