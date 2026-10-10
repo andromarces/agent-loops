@@ -229,7 +229,7 @@ test(
       /did not exit within \d+ ms of cleanup/.test(message),
     );
     expect(survivor).toMatch(/pid \d+/);
-    expect(survivor).toMatch(/wall-clock ceiling of \d+ s ends it/);
+    expect(survivor).toMatch(/hard wall-clock deadline of \d+ s ends it/);
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
@@ -302,6 +302,7 @@ test(
 // Usefulness: acceptance (#670 review) — a shim whose ceiling marker cannot be written must not exit
 // silently, or the kill check reads its ceiling exit as a kill. The marker path is a directory, so
 // the write fails; the shim must stay alive past its ceiling and the helper must report it.
+const CEILING_MS = 4000;
 test(
   "expectBoundKillsShim fails when the ceiling marker cannot be written",
   async () => {
@@ -314,15 +315,46 @@ test(
         held.catch(() => {});
         const started = join(shimDir, "started.txt");
         await pollUntil(async () => (existsSync(started) ? true : undefined), 10_000);
-        await delay(1500);
+        // Past the ceiling, and early enough that the kill check ends before the hard deadline
+        // (twice the ceiling), as it does with the real ceilings.
+        await delay(CEILING_MS + 200);
       },
       undefined,
-      { ceilingMs: 500 },
+      { ceilingMs: CEILING_MS },
     ).then(
       () => undefined,
       (error) => error,
     );
     expect(failure?.message).toMatch(/outlived the 1000 ms force-kill boundary/);
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: acceptance (#670 review) — a shim that keeps failing to write its ceiling marker must
+// still end on its own, or a survivor lives without limit. The marker path is a directory, so the
+// write never succeeds; the shim must still exit at its hard deadline, never before its ceiling.
+test(
+  "a shim whose ceiling marker cannot be written still ends at its hard deadline",
+  async () => {
+    let lived;
+    await expectBoundKillsShim(
+      "endless-shim",
+      async () => {
+        const shimDir = process.env.PATH.split(delimiter)[0];
+        await mkdir(join(shimDir, "ceiling"));
+        const held = execa("endless-shim", { reject: false });
+        held.catch(() => {});
+        const started = join(shimDir, "started.txt");
+        await pollUntil(async () => (existsSync(started) ? true : undefined), 10_000);
+        const pid = Number(await readFile(started, "utf8"));
+        const begun = performance.now();
+        await pollUntil(() => (pidAlive(pid) ? undefined : true), 10_000);
+        lived = performance.now() - begun;
+      },
+      undefined,
+      { ceilingMs: 500 },
+    ).catch(() => {});
+    expect(lived).toBeGreaterThanOrEqual(400);
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );

@@ -254,6 +254,11 @@ const KEEP_FILE = "keep";
 const EXITED_FILE = "exited";
 const CEILING_FILE = "ceiling";
 const HOLD_FILE = "hold";
+// The shim exits unconditionally at this multiple of its ceiling, whatever the marker or file
+// state. Every helper's kill check ends within the ceiling, so the hard deadline comes after it
+// and a failed kill is reported as outlived first. It is the bound on any survivor.
+const HARD_DEADLINE_FACTOR = 2;
+const hardDeadlineMs = (ceilingMs) => ceilingMs * HARD_DEADLINE_FACTOR;
 // The longest cleanup waits for a surviving shim to acknowledge its exit. The shim polls every
 // SHIM_POLL_MS, so a live shim answers within a few polls even on a loaded machine.
 const SHIM_EXIT_WAIT_MS = 5000;
@@ -316,7 +321,8 @@ export const ABORT_KILL_TEST_TIMEOUT_MS =
  * exits when both are gone by any means, when `dir` is gone, or at the wall-clock
  * ceiling `ceilingMs`. A ceiling exit writes the `ceiling` marker first, so a helper
  * can tell it from a kill. If that write fails, the shim does not exit: it stays alive
- * and retries, so no ceiling exit goes unmarked. On exit it writes the `exited` marker when `dir` still
+ * and retries, so no ceiling exit goes unmarked. At the hard deadline it exits whatever
+ * the marker or file state, so a survivor has a bound. On exit it writes the `exited` marker when `dir` still
  * exists. The test never signals that pid.
  *
  * Each poll reads `keep` first and `hold` second. A test that swaps the keep file
@@ -345,7 +351,9 @@ process.on("exit", () => {
 });
 const watch = setInterval(() => {
   const alive = fs.existsSync(${JSON.stringify(keep)}) || fs.existsSync(${JSON.stringify(hold)});
-  if (!alive || !fs.existsSync(${JSON.stringify(dir)})) {
+  if (Date.now() - begun >= ${hardDeadlineMs(ceilingMs)}) {
+    clearInterval(watch);
+  } else if (!alive || !fs.existsSync(${JSON.stringify(dir)})) {
     clearInterval(watch);
   } else if (Date.now() - begun >= ${ceilingMs}) {
     try {
@@ -354,7 +362,7 @@ const watch = setInterval(() => {
     } catch {
       // Fail closed: a ceiling exit without its marker would pass as a kill. The shim stays
       // alive, so the helper reports it as a survivor, and retries the write on the next
-      // poll. A removed directory or keep file ends it through the checks above.
+      // poll. A removed directory or keep file, or the hard deadline, ends it.
     }
   }
 }, ${SHIM_POLL_MS});
@@ -468,7 +476,7 @@ async function stopShim(dir, gone, ceilingMs) {
   };
   const survivor = (pid) =>
     `the shim in ${dir} (pid ${pid ?? "unknown"}) did not exit within ${SHIM_EXIT_WAIT_MS} ms of cleanup. ` +
-    `The test does not own it and sends it no signal; its own wall-clock ceiling of ${Math.ceil(ceilingMs / 1000)} s ends it`;
+    `The test does not own it and sends it no signal; its own hard wall-clock deadline of ${Math.ceil(hardDeadlineMs(ceilingMs) / 1000)} s ends it`;
   const pid = await waitForPid(join(dir, "started.txt"), 0);
   if (!(await until(async () => existsSync(join(dir, EXITED_FILE))))) {
     errors.push(new Error(survivor(pid)));
