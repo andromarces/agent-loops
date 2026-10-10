@@ -1350,7 +1350,9 @@ export async function main(argv, { agents = defaultAgents } = {}) {
   const onSigInt = () => {
     controller.abort();
   };
-  process.once("SIGINT", onSigInt);
+  // `on`, not `once`: the listener must stay until `finally`, or the execa exit handler re-raises
+  // the signal before the envelope prints (#669).
+  process.on("SIGINT", onSigInt);
 
   try {
     let args;

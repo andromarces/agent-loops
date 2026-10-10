@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
@@ -1084,6 +1084,128 @@ test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () 
   }
 });
 
+// Usefulness: acceptance (#669) — a real SIGINT while an execa child runs ends the run through its
+// handler (exit 130, transcript written), not by re-raised signal. A child process is needed: the
+// execa exit handler re-raises the signal only when no other SIGINT listener remains. Windows has
+// no signals, so `kill("SIGINT")` ends the process there at once and the case cannot run.
+test.skipIf(process.platform === "win32")(
+  "a real SIGINT during a child turn exits 130 and writes the transcript",
+  async () => {
+    const repo = await createTempRepo();
+    const transcriptPath = join(repo, "transcript.json");
+    const runner = [
+      `import { main } from ${JSON.stringify(pathToFileURL(CLI).href)};`,
+      `import { exec } from ${JSON.stringify(pathToFileURL(CLI.replace("cli.mjs", "lib/exec.mjs")).href)};`,
+      "const stall = { async run(_prompt, { signal }) {",
+      '  console.log("ready");',
+      '  await exec(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { signal });',
+      "} };",
+      "const ok = { async run() { return 'ok'; } };",
+      "await main(process.argv.slice(1), { codex: stall, claude: ok, agy: ok });",
+    ].join("\n");
+    let child;
+    try {
+      child = spawn(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          runner,
+          "--",
+          "--orchestrator",
+          "codex",
+          "--worker",
+          "claude",
+          "--reviewer",
+          "agy",
+          "--task",
+          "task",
+          "--cwd",
+          repo,
+          "--transcript",
+          transcriptPath,
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      const exited = new Promise((resolve) =>
+        child.once("exit", (code, signal) => resolve({ code, signal })),
+      );
+      await within(
+        new Promise((resolve) =>
+          child.stdout.on("data", (chunk) => /ready/.test(chunk) && resolve()),
+        ),
+        20_000,
+        "The stalled turn start",
+      );
+      child.kill("SIGINT");
+      const { code, signal } = await within(exited, 20_000, "The CLI exit");
+      expect({ code, signal }).toEqual({ code: 130, signal: null });
+      const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+      expect(transcript.exitCode).toBe(130);
+      expect(transcript.error).toContain("Interrupted by SIGINT");
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await removePath(repo);
+    }
+  },
+  60_000,
+);
+
+// Usefulness: acceptance (#669) — the SIGINT listener stays registered while the run handles the
+// first signal, so the exit handler of execa finds another listener and does not re-raise it.
+// Holds on every platform, unlike the real-signal case above.
+test("the SIGINT listener of a run stays registered after the signal fires", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const before = process.listenerCount("SIGINT");
+  let during;
+  const fakeAgents = {
+    codex: {
+      async run() {
+        process.emit("SIGINT");
+        during = process.listenerCount("SIGINT");
+        throw Object.assign(new Error("canceled"), { isCanceled: true });
+      },
+    },
+    claude: {
+      async run() {
+        return "ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "ok";
+      },
+    },
+  };
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "t",
+        "--cwd",
+        repo,
+      ],
+      fakeAgents,
+    );
+    expect(during).toBe(before + 1);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await removePath(repo);
+  }
+});
+
 // Usefulness: acceptance (#523) — a thrown value whose `isCanceled` getter throws still reaches
 // the generic failure path (exit 1) instead of hiding the original failure.
 test("headless run survives a thrown value with a throwing isCanceled getter", async () => {
@@ -1954,9 +2076,8 @@ test("--continue-from cancels a probe on SIGINT and exits 130", async () => {
 });
 
 // Usefulness: verifies a real SIGINT during a stalled process-table read ends the continued run
-// with exit 130 (or death by SIGINT, which a shell reports as 130) before any turn, and ends the read's shim, so the holder check cannot defeat
-// cancellation (#647). A child process is needed: an in-process emit reaches the exit handler of
-// execa, which re-raises the signal and ends the test worker.
+// with exit 130 before any turn, and ends the read's shim, so the holder check cannot defeat
+// cancellation (#647). A child process is needed: a real signal exercises the exit handler of execa.
 test.skipIf(process.platform === "win32")(
   "--continue-from exits 130 on SIGINT during a stalled holder check",
   async () => {
@@ -1994,10 +2115,8 @@ test.skipIf(process.platform === "win32")(
       // The shim beats only after the read started, so the signal cancels a running read.
       await shim.ready();
       child.kill("SIGINT");
-      // The run handler sets exit 130. The exit handler of execa can re-raise SIGINT first, which
-      // a shell also reports as 130.
       const { code, signal } = await within(exited, 15_000, "The CLI exit");
-      expect(code === 130 || signal === "SIGINT").toBe(true);
+      expect({ code, signal }).toEqual({ code: 130, signal: null });
       // The cancel ends the shim before its 10 s ceiling (11.2 s at most).
       expect(await shim.heartbeatStopped()).toBe(true);
     } finally {

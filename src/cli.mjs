@@ -598,7 +598,10 @@ export async function main(
   const onSigInt = () => {
     controller.abort();
   };
-  process.once("SIGINT", onSigInt);
+  // `on`, not `once`: a `once` listener leaves before it runs, so the execa exit handler finds no
+  // SIGINT listener and re-raises the signal before the run sets exit 130 and writes the transcript.
+  // known-limit: a second SIGINT during the cleanup is ignored until `finally` removes the listener.
+  process.on("SIGINT", onSigInt);
   let earlierGate = null;
   // A refused continuation writes no transcript: --transcript may name the
   // --continue-from file, and a refusal must not overwrite the sessions it holds.
