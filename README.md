@@ -761,12 +761,11 @@ connector, are not covered, and no probe of those under `workspace-write` was ru
 The runtime read of the required-check status for a named PR ([ADR 0024](adr/0024-supply-the-required-check-status-for-a-named-pr.md)) still reaches
 the reviewer.
 
-A live probe of the merged adapter on 2026-10-10 (macOS 27.2 arm64, codex-cli 0.163.0-alpha.5,
-Node v26.11.1) matched this: the reviewer ran `./node_modules/.bin/vp test run` to exit 0
-(82 files passed, 1 skipped), a shell `curl https://api.github.com` failed with
-`Could not resolve host`, and a reviewer edit of `README.md` halted the run with
-`Mutation detected during reviewer turn` (`MutationError`), exit 1. Linux and Windows are
-not verified.
+A live probe of the merged adapter ran on 2026-10-10 (macOS 27.2 arm64, codex-cli 0.163.0-alpha.5, Node v26.11.1) and matched this.
+The reviewer ran `./node_modules/.bin/vp test run` to exit 0 (82 files passed, 1 skipped).
+A shell `curl https://api.github.com` failed with `Could not resolve host`.
+A reviewer edit of `README.md` halted the run with `Mutation detected during reviewer turn` (`MutationError`), exit 1.
+Linux and Windows are not verified.
 
 Accepted gaps, as the ADR states them:
 
