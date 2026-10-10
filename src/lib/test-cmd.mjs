@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { killTreeOnExit } from "./exec-tree.mjs";
 import { readProp } from "./error-message.mjs";
 import { logInfo } from "./log.mjs";
 import { redactEnvSecrets } from "./redact.mjs";
@@ -96,16 +97,18 @@ export async function runTestCmd({
   const startedAt = Date.now();
   logInfo(`test command started (bound ${timeoutSeconds}s)`);
 
-  const subprocess = execa(command, {
-    cwd,
-    shell: true,
-    reject: false,
-    stdin: "ignore",
-    all: true,
-    buffer: false,
-    cleanup: true,
-    killDescendants: true,
-  });
+  const subprocess = killTreeOnExit(
+    execa(command, {
+      cwd,
+      shell: true,
+      reject: false,
+      stdin: "ignore",
+      all: true,
+      buffer: false,
+      cleanup: true,
+      killDescendants: true,
+    }),
+  );
   // The runtime owns the bound and the cancel. Both kill the process group of the command on
   // POSIX and its tree on Windows, and an orphan that left it can survive (ADR 0017).
   let timedOut = false;

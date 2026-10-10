@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { killTreeOnExit } from "./exec-tree.mjs";
 import { logDebug, logInfo } from "./log.mjs";
 import { cwdHash } from "./runstate.mjs";
 
@@ -96,7 +97,7 @@ export async function exec(command, args = [], options = {}) {
     execaOptions.cancelSignal = signal;
   }
 
-  const result = await execa(command, args, execaOptions);
+  const result = await killTreeOnExit(execa(command, args, execaOptions));
 
   const timedOut = Boolean(result.timedOut);
   const isCanceled = Boolean(result.isCanceled);

@@ -6,6 +6,7 @@
 // The `gh` runner is injected so a caller can run the gate against captured
 // responses. The default runner shells out to the `gh` CLI.
 import { execa } from "execa";
+import { killTreeOnExit } from "./exec-tree.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { isJsonObject } from "./json.mjs";
 
@@ -30,7 +31,7 @@ export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
   if (signal) {
     options.cancelSignal = signal;
   }
-  const result = await execa("gh", args, options);
+  const result = await killTreeOnExit(execa("gh", args, options));
   return {
     status: result.exitCode,
     stdout: result.stdout ?? "",
