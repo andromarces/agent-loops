@@ -2,7 +2,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, writeFile } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
-import { writeFileAtomic } from "../../src/lib/runstate.mjs";
+import { writeFileAtomic, writeFileAtomicSync } from "../../src/lib/runstate.mjs";
 import { removePath, symlinkOrSkip } from "../runtime-helpers.mjs";
 
 let dir;
@@ -86,4 +86,64 @@ test("writeFileAtomic applies a directory link inside a relative target before i
   const landed = process.platform === "win32" ? "a" : "b";
   expect(await readFile(join(dir, landed, "t.json"), "utf8")).toBe("data");
   expect((await readdir(join(dir, "a"))).includes("t.json")).toBe(landed === "a");
+});
+
+// Usefulness: acceptance (#669) — the synchronous write of a forced exit replaces the file whole,
+// leaves no temp file, and keeps an existing file symlink like the async write does.
+test("writeFileAtomicSync replaces the file and writes through a file symlink", async (ctx) => {
+  const path = join(dir, "repo", "t.json");
+  const target = join(dir, "outdir", "t.json");
+  await writeFile(target, "old");
+  await symlinkOrSkip(ctx, target, path);
+  writeFileAtomicSync(path, "new");
+  expect((await lstat(path)).isSymbolicLink()).toBe(true);
+  expect(await readFile(target, "utf8")).toBe("new");
+  expect(await readdir(join(dir, "outdir"))).toEqual(["t.json"]);
+});
+
+// Usefulness: acceptance (#669) — the synchronous write creates a file that does not exist yet.
+test("writeFileAtomicSync creates a missing file", async () => {
+  const path = join(dir, "repo", "new.json");
+  writeFileAtomicSync(path, "data");
+  expect(await readFile(path, "utf8")).toBe("data");
+  expect(await readdir(join(dir, "repo"))).toEqual(["new.json"]);
+});
+
+// Usefulness: acceptance (#669) — the synchronous write keeps a dangling file symlink and writes
+// at its target, as the async write does (#658).
+test("writeFileAtomicSync writes through a dangling file symlink and keeps the link", async (ctx) => {
+  const path = join(dir, "repo", "t.json");
+  await symlinkOrSkip(ctx, join("..", "outdir", "t.json"), path);
+  writeFileAtomicSync(path, "data");
+  expect((await lstat(path)).isSymbolicLink()).toBe(true);
+  expect(await readlink(path)).toBe(join("..", "outdir", "t.json"));
+  expect(await readFile(join(dir, "outdir", "t.json"), "utf8")).toBe("data");
+  expect(await readdir(join(dir, "repo"))).toEqual(["t.json"]);
+  expect(await readdir(join(dir, "outdir"))).toEqual(["t.json"]);
+});
+
+// Usefulness: acceptance (#669) — the synchronous write follows a chain of file symlinks to the
+// final target and keeps every link.
+test("writeFileAtomicSync follows a chain of file symlinks", async (ctx) => {
+  const first = join(dir, "repo", "a.json");
+  const second = join(dir, "repo", "b.json");
+  await symlinkOrSkip(ctx, "b.json", first);
+  await symlinkOrSkip(ctx, join("..", "outdir", "c.json"), second);
+  writeFileAtomicSync(first, "data");
+  expect((await lstat(first)).isSymbolicLink()).toBe(true);
+  expect((await lstat(second)).isSymbolicLink()).toBe(true);
+  expect(await readFile(join(dir, "outdir", "c.json"), "utf8")).toBe("data");
+});
+
+// Usefulness: acceptance (#669) — a symlink loop fails with ELOOP like the async write, and leaves
+// no temp file.
+test("writeFileAtomicSync fails on a symlink loop with ELOOP", async (ctx) => {
+  const first = join(dir, "repo", "a.json");
+  const second = join(dir, "repo", "b.json");
+  await symlinkOrSkip(ctx, "b.json", first);
+  await symlinkOrSkip(ctx, "a.json", second);
+  expect(() => writeFileAtomicSync(first, "data")).toThrow(
+    expect.objectContaining({ code: "ELOOP" }),
+  );
+  expect(await readdir(join(dir, "repo"))).toEqual(["a.json", "b.json"]);
 });

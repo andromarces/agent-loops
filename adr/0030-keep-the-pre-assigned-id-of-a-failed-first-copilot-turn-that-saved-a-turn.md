@@ -30,6 +30,65 @@ A bad model or an unsupported effort creates the session directory but no turn. 
 
 A relative `COPILOT_HOME` (issue #678) was probed on 2026-10-10 (Copilot CLI 1.0.96-2, Windows 11 Pro 10.0.26220). A first turn with a bad `--model` ran in an empty directory with `COPILOT_HOME=reltest`. The CLI created `reltest/session-state/<id>/` under its own cwd, and none under `~/.copilot`. A second run from another empty directory with the same value created a second store under that directory. The CLI therefore resolves a relative `COPILOT_HOME` against its own cwd, which is the role cwd. The probe did not cover `~` or an environment variable reference inside the value, and it ran on Windows only (not verified on macOS).
 
+The adapter reads `events.jsonl` once, right after the child process ends. Issue #679 probed that timing against a CLI that still writes the session. The host ran Copilot CLI 1.0.96-2 on macOS 27.2 (Apple silicon) with Node.js 26.11.1. `COPILOT_HOME` was unset. The probe ran on 2026-10-10.
+
+The probe made 56 runs through `runCopilot`. Each run used a fresh role state, a scratch git repository under the system temporary directory, and a separate `AGENT_LOOP_RUNS_ROOT`. The probe killed no process.
+
+After each return, the probe listed the processes that had the scratch repository as working directory. It also read the event types of `events.jsonl`. The probe changed during the work, so two schemes apply. The first 11 runs (timeouts of 1 s to 20 s) took the first listing and read at once after the return. Their labels `t+2s` and `t+10s` count from that first listing.
+
+The last 45 runs polled the process list and the event types every 100 ms from the return, for 1.5 s to 5 s. Their labels `t+0`, `t+2s`, and `t+10s` count from the end of that polling. They fell at least 1.5 s, 3.5 s, and 11.5 s after the return.
+
+A separate list came from the start of each run. It was taken 0.7 s before the configured timeout or cancel time (0.5 s after the start for the 1 s timeout). No label counts from the kill. Three earlier runs, made while the probe was built, are not counted.
+
+The table lists the 53 failed first turns by the file that the CLI left. They are 48 timeouts from 1 s to 16 s and 5 cancels from 3 s to 12 s. Three timeouts and one cancel ran with `COPILOT_ALLOW_ALL=1`. Three more turns finished before the timeout fired. They kept a confirmed id and held `user.message`.
+
+| File after the failed turn                                                 | Timeouts | Cancels | Adapter id         |
+| -------------------------------------------------------------------------- | -------- | ------- | ------------------ |
+| No `events.jsonl`                                                          | 21       | 1       | none kept          |
+| `session.start` and `session.shutdown` only                                | 1        | 0       | none kept          |
+| `user.message` and an `abort` event, before any `session.shutdown`         | 22       | 3       | kept               |
+| `user.message` and a finished turn, with no `abort` event                  | 1        | 1       | kept               |
+| `user.message` listed after `session.shutdown` (1 file also holds `abort`) | 3        | 0       | kept by file check |
+
+The adapter kept an id in exactly the 30 runs whose final file held `user.message`, and in none of the other 23. It took 27 of the 30 ids from the result of the failed output. It took the 3 others from the file check, and it marked them `sessionUnconfirmed`. A timeout of 4.9 s to 5.15 s after the spawn gave both outcomes. The final file held an `abort` event in 26 of the 53 runs.
+
+The event types of the file did not change after the first read in any of the 56 runs. In the first 11 runs, the three reads were equal. In the last 45 runs, no poll differed from the first read, and the three later reads were equal. The probe compared event types, not bytes. It did not read the file at the instant of the adapter read. A change between that read and the first probe read is not excluded.
+
+The list from the start of each of the 53 failed runs showed the `node` shim and the native `copilot` process. It listed 4 or more processes in 49 runs. The first listing after the return listed a process in 5 runs. In 4 of them `ps` found no such process when it read the entry, so those 4 stay unidentified. The fifth listed an executable path under `@colbymchenry/codegraph-darwin-arm64` and had parent pid 1.
+
+Every later listing, in all 56 runs, listed no process of the scratch repository. The last listing came 10 s after the first listing in runs 1 to 11. It came at least 11.5 s after the return in runs 12 to 56. In the 4 polled runs, the first empty listing finished 184 ms to 244 ms after the polling started. In the unpolled run, the next listing was the `t+2s` one, 2 s after the first.
+
+In the saved first-probe lists from the start of runs p11, p15, p16, and p26, a `codegraph` process ran under another process. That process ran under the native `copilot` process. The saved results hold no other source for the identity of a first-listing process.
+
+Four more probes followed. Probes 2 to 4 ran six runs in parallel with 5 s timeouts. Each probe tagged its runs through an inherited environment variable and listed the tagged processes right after the return. A listing kept pid, parent pid, elapsed time, and the fields named below. The command line and the environment were dropped.
+
+Probe 2 (48 runs) kept the name of argv[0]. Its first listing finished 26 ms to 45 ms after the return. In 11 runs it listed one process named `node` with parent pid 1. The next listing finished 79 ms to 105 ms after the return and listed no process. A `kind` field in the last 24 runs came from `ps` text that can hold environment variables, so this ADR does not use it. The identity of the 11 processes is unknown.
+
+Probe 3 (48 runs) kept a truncated executable field (`/Users/andromarc`). Its first listing listed one process with parent pid 1 in 3 runs, and the field identified none.
+
+Probe 4 (72 runs) kept the argv[0] path, and the path of argv[1] when it ended in `.js`. Its first listing finished 25 ms to 48 ms after the return in all 72 runs. It listed one process with parent pid 1 in 12 runs.
+
+The first listing of those 12 finished 26 ms to 31 ms after the return. In all 12, the argv[0] path ended in `@colbymchenry/codegraph-darwin-arm64/node`. The next listing finished 82 ms to 92 ms after the return and listed no process. No path in probe 4 named `copilot`.
+
+Probe 5 (117 runs) used the probe 4 script. It ran 45 sequential timeouts of 5 s. It ran 72 more runs in groups of six, with three runs per cell unless noted:
+
+- Cancels at 3 s, 6 s, 9 s, and 12 s, and at 5 s (6 runs).
+- Timeouts at 3 s, 4 s, 6 s, 7 s, 9 s, and 12 s.
+- Timeouts at 4.8 s, 4.9 s, 5.1 s, 5.2 s, 5.5 s, and 5.8 s.
+- `COPILOT_ALLOW_ALL=1` timeouts at 5 s, 9 s, 12 s, and 16 s, and cancels at 5 s and 12 s.
+
+The prompt asked for `sleep 25`. The first listing finished 23 ms to 47 ms after the return in all 117 runs. It listed a process with parent pid 1 in 7 runs. They were 2 of the 45 sequential runs, 3 runs at 4.8 s, and 2 runs at 4.9 s. It listed none in the other 67 grouped runs.
+
+Of the 7 processes, 6 had an argv[0] path that ended in `@colbymchenry/codegraph-darwin-arm64/node`. One had argv[0] `node` and an argv[1] path that ended in `@colbymchenry/codegraph/npm-shim.js`. The next listing finished 83 ms to 103 ms after the return and listed no process. No path in probe 5 named `copilot`.
+
+The 18 first-listing processes of probes 1 to 3 stay unidentified, because no saved field holds their path. All 18 came from 5 s timeouts with the default flags and the same prompt. Probe 1 had one sequential run and three parallel runs, and probes 2 and 3 had parallel runs. Probes 4 and 5 reran that condition with the path capture, in 72 parallel runs and 45 sequential runs. All 19 processes that probes 4 and 5 listed ran CodeGraph files. Probe 5 also reran the cancels, the timeouts around the prompt record, and the `COPILOT_ALLOW_ALL=1` runs of probe 1.
+
+Result for issue #679: no mismatch appeared, and no saved path names `copilot`. No bug or follow-up issue is opened. The cells of probe 5 hold three runs each, so a rare process in them is not excluded. The saved files do not exclude a write by a process that lived only between the adapter read and the first listing.
+
+With `COPILOT_ALLOW_ALL=1`, the `sleep` shell was in the list from the start of 3 runs, taken 0.7 s before the configured time. The first listing after the return listed no process in those 3 runs. The live process of issue #398 was not reproduced through the adapter, because that probe killed the shim pid alone.
+
+Limits of the probe: the adapter passes no `--allow-tool` flag, so the shell tool is denied and no tool shell started without `COPILOT_ALLOW_ALL=1`. On a loaded host, 2 timeouts returned 3.5 s and 3.6 s late. Both listed `user.message` after `session.shutdown`. The probe tested no other host and no other CLI version.
+
 A model error in the middle of a model call could not be produced on this host. Its stream ends with no result event, like a kill, so the same file check decides it. The test covers it with an error event in the failed output.
 
 ## Decision
@@ -66,6 +125,7 @@ Andro Marces
 - [Issue #642](https://github.com/andromarces/agent-loops/issues/642)
 - [Issue #678](https://github.com/andromarces/agent-loops/issues/678)
 - [Issue #397](https://github.com/andromarces/agent-loops/issues/397)
+- [Issue #679](https://github.com/andromarces/agent-loops/issues/679)
 - [Pull request #668](https://github.com/andromarces/agent-loops/pull/668)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR 0016: Resume the session of a failed first turn, with a fallback to a new session](0016-resume-a-failed-first-turn-with-a-fallback.md)

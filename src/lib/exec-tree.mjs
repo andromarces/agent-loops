@@ -19,6 +19,14 @@ function taskkillFile() {
 }
 
 function killTree(subprocess) {
+  if (process.platform !== "win32") {
+    // execa signals the process group when the run set `killDescendants`, else the direct child.
+    // It returns false, and never throws, when the signal reaches no process.
+    if (!subprocess.kill("SIGKILL")) {
+      logWarn(`process tree of pid ${subprocess.pid} not ended: SIGKILL was not delivered`);
+    }
+    return;
+  }
   // execa keeps the exit state on the Node child process that it wraps.
   const { pid, exitCode, signalCode } = subprocess.nodeChildProcess ?? subprocess;
   // A child that exited can leave a pid that the OS reassigned, so its tree is never signaled.
@@ -48,8 +56,12 @@ function killTree(subprocess) {
   }
 }
 
-// An exit handler must not throw: the remaining runs still need their kill.
-function killLiveTrees() {
+/**
+ * Force-kills the process tree of every live run at once, on every platform: SIGKILL to the process
+ * group on POSIX, and `taskkill /T /F` on Windows. It never throws, so the remaining runs still get
+ * their kill, and it blocks for up to one `taskkill` bound per live run on Windows.
+ */
+export function killLiveTrees() {
   for (const subprocess of liveRuns) {
     try {
       killTree(subprocess);
@@ -60,8 +72,9 @@ function killLiveTrees() {
 }
 
 /**
- * Ends the process tree of `subprocess` when this process exits while the subprocess is live.
- * Returns `subprocess`. Only Windows needs it: execa `cleanup` starts `taskkill` without waiting,
+ * Records `subprocess` for `killLiveTrees` on every platform, and ends its process tree when this
+ * process exits while the subprocess is live. Returns `subprocess`. Only Windows needs the exit
+ * handler: execa `cleanup` starts `taskkill` without waiting,
  * and `taskkill /T` cannot find the descendants of a process that already exited, so a tree
  * outlived a parent that called `process.exit` (issue #612). A `taskkill` that finishes inside
  * the `exit` event ends the tree before the parent ends. The handler skips a child that exited,
@@ -71,13 +84,13 @@ function killLiveTrees() {
  */
 export function killTreeOnExit(subprocess) {
   const pid = subprocess?.pid;
-  if (process.platform !== "win32" || !Number.isInteger(pid) || pid <= 0) {
+  if (!Number.isInteger(pid) || pid <= 0) {
     return subprocess;
   }
   liveRuns.add(subprocess);
   const release = () => liveRuns.delete(subprocess);
   subprocess.then(release, release);
-  if (!exitHandlerInstalled) {
+  if (process.platform === "win32" && !exitHandlerInstalled) {
     exitHandlerInstalled = true;
     process.on("exit", killLiveTrees);
   }
