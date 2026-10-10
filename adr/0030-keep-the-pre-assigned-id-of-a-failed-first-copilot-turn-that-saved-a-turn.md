@@ -62,6 +62,7 @@ Andro Marces
 - [Issue #641](https://github.com/andromarces/agent-loops/issues/641)
 - [Issue #642](https://github.com/andromarces/agent-loops/issues/642)
 - [Issue #397](https://github.com/andromarces/agent-loops/issues/397)
+- [Pull request #668](https://github.com/andromarces/agent-loops/pull/668)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR 0016: Resume the session of a failed first turn, with a fallback to a new session](0016-resume-a-failed-first-turn-with-a-fallback.md)
 - Implementation: `holdsTurn` and `runCopilot` in `src/agents/copilot.mjs`; tests in `tests/agents/copilot.test.mjs`. Documented in `README.md`.
