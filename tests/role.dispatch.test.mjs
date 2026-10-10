@@ -41,6 +41,7 @@ import {
   equalsArgs,
   expectNoReplyToMalformedCalls,
   gateReadCalls,
+  gitAbortingPostTurn,
   gitWhileDotGitExists,
   isApiRead,
   PAGED,
@@ -1575,10 +1576,11 @@ test("a cancel during the post-turn snapshot records the reviewer turn as cancel
   repos.push(repo);
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   const controller = new AbortController();
+  const post = gitAbortingPostTurn(controller);
+  gitDouble.answer = post.git;
   const reviewer = recordingAdapter([
     () => {
-      // The abort fires while the snapshot that follows the adapter runs `git`.
-      setImmediate(() => controller.abort());
+      post.arm();
       return REPORT;
     },
   ]);
@@ -1589,6 +1591,7 @@ test("a cancel during the post-turn snapshot records the reviewer turn as cancel
     signal: controller.signal,
   });
 
+  expect(post.fired).toBe(true);
   expect(result.exitCode).toBe(130);
   expect(result.payload.status).toBe("error");
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");

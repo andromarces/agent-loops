@@ -515,6 +515,30 @@ export function cleanRepoGit(command, args, options) {
   }
 }
 
+/**
+ * A `git` double that puts a cancel inside the post-turn snapshot by construction. The adapter
+ * calls `arm()` as its last act, so the next `git` call is that snapshot. It aborts `controller`
+ * and then answers as `cleanRepoGit`. `fired` is true once the abort ran, so a test can assert that
+ * it reached the window.
+ */
+export function gitAbortingPostTurn(controller) {
+  const window = {
+    fired: false,
+    armed: false,
+    arm: () => {
+      window.armed = true;
+    },
+    git: (command, args, options) => {
+      if (window.armed && !window.fired) {
+        window.fired = true;
+        controller.abort();
+      }
+      return cleanRepoGit(command, args, options);
+    },
+  };
+  return window;
+}
+
 // `cleanRepoGit` for a repo with no tracked files, whose `status` lists each regular
 // file in the top level of the directory as untracked, read from the real work tree
 // at call time. A write by the test command or an agent therefore shows up in the
