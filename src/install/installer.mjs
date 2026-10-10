@@ -12,6 +12,7 @@
 // root of each process (#193, #198).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
 import { logWarn } from "../lib/log.mjs";
@@ -51,12 +52,12 @@ import {
 
 // `npx` installs the package under `<npm-cache>/_npx/<hash>/node_modules` and
 // `pnpm dlx` under `<pnpm-home>/dlx/<hash>/<work>/node_modules`. `bunx` installs
-// it under `<tmp>/bunx-<uid>-<package>/node_modules` (the system temp directory,
-// not the bun cache). `yarn dlx` installs it into a zip under
-// `<tmp>/xfs-<id>/dlx-<pid>/.yarn/cache` and deletes that directory when the
-// command ends. The runner or the OS can delete each directory at any time. A
-// global install, a project `node_modules`, and a linked clone all keep a stable
-// package root. Verified on macOS with bun 1.2.20 and yarn 4.9.2 (#207).
+// it under `<tmp>/bunx-<uid>-<package>/node_modules`, and `yarn dlx` into a zip
+// under `<tmp>/xfs-<id>/dlx-<pid>/.yarn/cache` that yarn deletes when the command
+// ends. `<tmp>` is the system temporary directory, not a runner cache. The
+// runner or the OS can delete each directory at any time. A global install, a
+// project `node_modules`, and a linked clone all keep a stable package root.
+// Verified on macOS with bun 1.2.20 and yarn 4.9.2 (#207).
 const EPHEMERAL_CACHE_DIRS = new Set(["_npx", "dlx"]);
 const BUNX_TEMP_DIR = /^bunx-\d+-[^@]+@[^@]+$/;
 const BUNX_SCOPE_TEMP_DIR = /^bunx-\d+-@[^@]+$/;
@@ -70,30 +71,83 @@ const EPHEMERAL_ROOT_MESSAGE =
   "@andromarces/agent-loops or pnpm add -g @andromarces/agent-loops), then run " +
   "install again.";
 
+const splitPath = (path) => path.split(/[\\/]+/).filter(Boolean);
+
+/** A root and its realpath. */
+function withRealpath(root) {
+  try {
+    return [root, realpathSync(root)];
+  } catch {
+    return [root];
+  }
+}
+
+/** The temporary roots: yarn dlx uses `os.tmpdir()`, bunx also uses `/tmp`. */
+function temporaryRoots() {
+  const yarn = withRealpath(tmpdir());
+  return { yarn, bunx: [...yarn, ...withRealpath("/tmp")] };
+}
+
+/** True when the package root sits in an npx or pnpm dlx cache (#205). */
+function isCacheRoot(packageRoot) {
+  const segments = splitPath(packageRoot);
+  for (let i = 0; i < segments.length - 2; i++) {
+    if (!EPHEMERAL_CACHE_DIRS.has(segments[i])) continue;
+    if (!/^[0-9a-f]{16,}$/.test(segments[i + 1])) continue;
+    if (segments.slice(i + 2).includes("node_modules")) return true;
+  }
+  return false;
+}
+
 /**
- * True when the package root resolves inside an npx, pnpm dlx, yarn dlx, or bunx
- * temporary layout. Each layout is matched as a whole, with a `node_modules`
- * segment below it: a hex hash after `_npx` or `dlx`, `bunx-<uid>-<name>@<version>`
- * (or `bunx-<uid>-@<scope>` then `<name>@<version>`), or `xfs-<hex>` then
- * `dlx-<pid>`. A path that merely names one segment does not match (#205, #207).
- * On Windows the segments compare case-insensitively, as the file system does.
- * @param {string} packageRoot
- * @param {NodeJS.Platform} [platform]
+ * True when the package root sits in a bunx or yarn dlx layout directly under a
+ * temporary root. The layout is `bunx-<uid>-<name>@<version>` (or
+ * `bunx-<uid>-@<scope>` then `<name>@<version>`) then `node_modules`, or
+ * `xfs-<hex>` then `dlx-<pid>` with `node_modules` below. The same layout under a
+ * stable parent does not match (#207).
  */
-export function isEphemeralPackageRoot(packageRoot, platform = process.platform) {
-  const folded = platform === "win32" ? packageRoot.toLowerCase() : packageRoot;
-  const segments = folded.split(/[\\/]+/).filter(Boolean);
-  const hasModules = (from) => segments.slice(from).includes("node_modules");
+function isTempRunnerRoot(packageRoot, platform, tempRoots) {
+  const fold = platform === "win32" ? (text) => text.toLowerCase() : (text) => text;
+  const segments = splitPath(fold(packageRoot));
+  const keys = (roots) => roots.map((root) => splitPath(fold(root)).join("/"));
+  const bunxRoots = keys(tempRoots.bunx);
+  const yarnRoots = keys(tempRoots.yarn);
+  const under = (roots, i) => roots.includes(segments.slice(0, i).join("/"));
   return segments.some((segment, i) => {
     const next = segments[i + 1] ?? "";
-    if (EPHEMERAL_CACHE_DIRS.has(segment)) return /^[0-9a-f]{16,}$/.test(next) && hasModules(i + 2);
-    if (BUNX_TEMP_DIR.test(segment)) return next === "node_modules";
+    if (BUNX_TEMP_DIR.test(segment)) return under(bunxRoots, i) && next === "node_modules";
     if (BUNX_SCOPE_TEMP_DIR.test(segment)) {
-      return BUNX_SCOPED_VERSION_DIR.test(next) && segments[i + 2] === "node_modules";
+      return (
+        under(bunxRoots, i) &&
+        BUNX_SCOPED_VERSION_DIR.test(next) &&
+        segments[i + 2] === "node_modules"
+      );
     }
-    if (YARN_DLX_XFS_DIR.test(segment)) return YARN_DLX_TEMP_DIR.test(next) && hasModules(i + 2);
+    if (YARN_DLX_XFS_DIR.test(segment)) {
+      return (
+        under(yarnRoots, i) &&
+        YARN_DLX_TEMP_DIR.test(next) &&
+        segments.slice(i + 2).includes("node_modules")
+      );
+    }
     return false;
   });
+}
+
+/**
+ * True when the package root resolves inside an npx, pnpm dlx, yarn dlx, or bunx
+ * temporary layout. The npx and pnpm dlx match is case-sensitive, as in #205. On
+ * Windows the bunx and yarn dlx match compares case-insensitively.
+ * @param {string} packageRoot
+ * @param {NodeJS.Platform} [platform]
+ * @param {{ bunx: string[], yarn: string[] }} [tempRoots] Temporary roots to compare against, for tests.
+ */
+export function isEphemeralPackageRoot(
+  packageRoot,
+  platform = process.platform,
+  tempRoots = temporaryRoots(),
+) {
+  return isCacheRoot(packageRoot) || isTempRunnerRoot(packageRoot, platform, tempRoots);
 }
 
 // pnpm resolves a global package into a version-named virtual store entry

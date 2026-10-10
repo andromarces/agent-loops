@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -269,27 +269,8 @@ test("install refuses an npx or dlx cache package root", async () => {
 test("install refuses a bunx or yarn dlx temporary package root", async () => {
   const home = await makeHome();
   const roots = [
-    join(
-      home,
-      "tmp",
-      "bunx-501-@andromarces",
-      "agent-loops@0.5.0",
-      "node_modules",
-      "@andromarces",
-      "agent-loops",
-    ),
-    join(
-      home,
-      "tmp",
-      "xfs-8de51b90",
-      "dlx-31536",
-      ".yarn",
-      "cache",
-      "@andromarces-agent-loops-npm-0.5.0-67c80bf43c-f9ecf7737e.zip",
-      "node_modules",
-      "@andromarces",
-      "agent-loops",
-    ),
+    join(tmpdir(), "bunx-501-@andromarces", "agent-loops@0.5.0", "node_modules", "pkg"),
+    join(tmpdir(), "xfs-8de51b90", "dlx-31536", ".yarn", "cache", "x.zip", "node_modules", "pkg"),
   ];
   for (const packageRoot of roots) {
     const error = await install({ harnesses: ["claude"], home, packageRoot }).then(
@@ -303,33 +284,68 @@ test("install refuses a bunx or yarn dlx temporary package root", async () => {
   }
 });
 
-// Usefulness: verifies #207 does not over-match — a stable root that holds a bunx-like or dlx-like segment outside the runner layout is still accepted.
-test("a stable root with a bunx-like or yarn dlx-like segment is not refused", () => {
-  const stable = [
-    join("home", "bunx-501-tools", "node_modules", "@andromarces", "agent-loops"),
-    join("home", "bunx-demo", "node_modules", "@andromarces", "agent-loops"),
-    join("home", "bunx-501-@andromarces", "project", "node_modules", "agent-loops"),
-    join("home", "dlx-31536", "node_modules", "@andromarces", "agent-loops"),
-    join("home", "xfs-8de51b90", "project", "dlx-31536", "node_modules", "agent-loops"),
-    join("home", "projects", "dlx-31536", "agent-loops"),
-  ];
-  for (const packageRoot of stable) {
-    expect(isEphemeralPackageRoot(packageRoot, "darwin"), packageRoot).toBe(false);
-    expect(isEphemeralPackageRoot(packageRoot, "win32"), packageRoot).toBe(false);
+const BUNX_LAYOUT = ["bunx-501-@andromarces", "agent-loops@0.5.0", "node_modules", "pkg"];
+const BUNX_UNSCOPED_LAYOUT = ["bunx-501-ccstatusline@latest", "node_modules", "pkg"];
+const YARN_LAYOUT = ["xfs-8de51b90", "dlx-31536", ".yarn", "cache", "x.zip", "node_modules", "pkg"];
+
+// Usefulness: verifies #207 — a complete bunx or yarn dlx layout is refused directly under each resolved temporary root.
+test("a bunx or yarn dlx layout directly under a temporary root is refused", () => {
+  const tempRoots = new Set([tmpdir(), realpathSync(tmpdir())]);
+  for (const root of tempRoots) {
+    for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
+      expect(isEphemeralPackageRoot(join(root, ...layout)), join(root, ...layout)).toBe(true);
+    }
+  }
+  const bunxRoots = ["/tmp", "/private/tmp"].filter((root) => existsSync(root));
+  for (const root of bunxRoots) {
+    for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT]) {
+      expect(isEphemeralPackageRoot(join(root, ...layout)), join(root, ...layout)).toBe(true);
+    }
   }
 });
 
-// Usefulness: verifies #207 on Windows — a differently cased runner segment is still refused because the file system ignores case there.
-test("a runner temp root in another letter case is refused on Windows only", () => {
-  const roots = [
-    join("C:", "Temp", "BUNX-501-@andromarces", "agent-loops@0.5.0", "node_modules", "pkg"),
-    join("C:", "Temp", "XFS-8DE51B90", "DLX-31536", ".yarn", "node_modules", "pkg"),
-    join("C:", "Temp", "_NPX", "09F5E92D3F3F415F", "node_modules", "pkg"),
-  ];
-  for (const packageRoot of roots) {
-    expect(isEphemeralPackageRoot(packageRoot, "win32"), packageRoot).toBe(true);
-    expect(isEphemeralPackageRoot(packageRoot, "linux"), packageRoot).toBe(false);
+// Usefulness: verifies #207 does not over-match — a complete bunx or yarn dlx layout under a stable parent is still accepted.
+test("a bunx or yarn dlx layout under a stable parent is not refused", () => {
+  const stableParents = [join("home", "user", "projects"), join("home", "user", "tmp")];
+  for (const parent of stableParents) {
+    for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
+      expect(isEphemeralPackageRoot(join(parent, ...layout)), join(parent, ...layout)).toBe(false);
+    }
   }
+  const split = { bunx: ["/var/T", "/tmp"], yarn: ["/var/T"] };
+  expect(isEphemeralPackageRoot(join("/tmp", ...BUNX_LAYOUT), "linux", split)).toBe(true);
+  expect(isEphemeralPackageRoot(join("/tmp", ...YARN_LAYOUT), "linux", split)).toBe(false);
+  const lookalikes = [
+    join(tmpdir(), "bunx-501-tools", "node_modules", "pkg"),
+    join(tmpdir(), "bunx-demo", "node_modules", "pkg"),
+    join(tmpdir(), "dlx-31536", "node_modules", "pkg"),
+    join(tmpdir(), "xfs-8de51b90", "project", "dlx-31536", "node_modules", "pkg"),
+  ];
+  for (const packageRoot of lookalikes) {
+    expect(isEphemeralPackageRoot(packageRoot), packageRoot).toBe(false);
+  }
+});
+
+// Usefulness: verifies #207 on Windows — the temp-parent bunx and yarn dlx layouts compare case-insensitively, and the npx and pnpm dlx matching stays as on main.
+test("windows folds case for the bunx and yarn dlx layouts only", () => {
+  const winTemp = "C:\\Users\\Dev\\AppData\\Local\\Temp";
+  const temp = { bunx: [winTemp], yarn: [winTemp] };
+  const upperTemp = "C:\\USERS\\DEV\\APPDATA\\LOCAL\\TEMP";
+  for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+    const upper = [upperTemp, ...layout.map((segment) => segment.toUpperCase())].join("\\");
+    expect(isEphemeralPackageRoot(upper, "win32", temp), upper).toBe(true);
+    expect(isEphemeralPackageRoot(upper, "linux", temp), upper).toBe(false);
+  }
+  const stable = ["C:\\Projects", ...BUNX_LAYOUT].join("\\");
+  expect(isEphemeralPackageRoot(stable, "win32", temp), stable).toBe(false);
+  const lowerNpx = ["C:", "cache", "_npx", "09f5e92d3f3f415f", "node_modules", "pkg"].join("\\");
+  const upperNpx = ["C:", "cache", "_NPX", "09F5E92D3F3F415F", "node_modules", "pkg"].join("\\");
+  const upperDlx = ["C:", "pnpm", "DLX", "0DD49D4F3230C83239C085437BFEA068", "node_modules"].join(
+    "\\",
+  );
+  expect(isEphemeralPackageRoot(lowerNpx, "win32", temp)).toBe(true);
+  expect(isEphemeralPackageRoot(upperNpx, "win32", temp)).toBe(false);
+  expect(isEphemeralPackageRoot(upperDlx, "win32", temp)).toBe(false);
 });
 
 // Usefulness: verifies the negative of acceptance #205 — a path that merely
