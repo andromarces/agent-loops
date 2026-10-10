@@ -346,6 +346,13 @@ orchestrator receives after a reviewer turn, as `prChecks` beside the response a
 the reviewed state, so the orchestrator holds the status and the reviewer Checks
 line in one prompt. A turn that made no read carries no `prChecks` field.
 
+A worker or reviewer turn on a CLI that refuses a tool call (Copilot, under
+`--no-ask-user`) can carry `"shellDenied": true`, in the dispatch envelope and in
+the headless result prompt. It means the turn text reports a refused command, so
+a check that the turn claims may not have run. Run the validation yourself, or
+choose another worker CLI, before you rely on it. A turn with no denial carries
+no field, and an orchestrator turn never carries it.
+
 The runtime reads the PR head and compares it with the local reviewed head, so a
 status is reported only for the head it describes. A read whose PR head
 differs from the local head, and a read with no local head to compare, are

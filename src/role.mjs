@@ -889,6 +889,9 @@ function dispatchPayload(roleName, result) {
   }
   const report = parseReportBlock(result.response);
   const payload = { role: roleName, status: "ok", report };
+  if (result.shellDenied) {
+    payload.shellDenied = true;
+  }
   if (roleName === "reviewer") {
     payload.verdict = parseVerdict(result.response);
     if (result.reviewed) {

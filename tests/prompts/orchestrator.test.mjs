@@ -1827,3 +1827,16 @@ test.each([
 ])("%s qualifies every network denial", async (_name, load) => {
   expect(unqualifiedDenials(await load())).toEqual([]);
 });
+
+// Usefulness: verifies requirement "a denied shell call shows in the result of the turn" (issue #713) for a headless parent: `resultPrompt` was the only place a child result is rendered, so a dropped field is lost to the orchestrator.
+test("the result prompt carries shellDenied only when the result has it", () => {
+  const base = { role: "worker", status: "ok", response: "done" };
+  const denied = resultPrompt({
+    result: { ...base, shellDenied: true },
+    stepsUsed: 1,
+    maxSteps: 5,
+  });
+  const clean = resultPrompt({ result: base, stepsUsed: 1, maxSteps: 5 });
+  expect(denied).toContain('"shellDenied": true');
+  expect(clean).not.toContain("shellDenied");
+});

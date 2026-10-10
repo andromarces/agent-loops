@@ -1864,3 +1864,50 @@ test("the state file marks a pre-assigned id unconfirmed until the turn confirms
   expect(after.sessionId).toBe("pre-2");
   expect(after.sessionUnconfirmed).toBeUndefined();
 });
+
+// Usefulness: verifies requirement "a denied shell call shows in the result of the turn" (issue #713) at the envelope: the parent sees `shellDenied`, and the role state keeps no stale flag.
+test("worker dispatch carries shellDenied in the envelope when the adapter flags a denied shell call", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const worker = recordingAdapter([]);
+  worker.run = async (state) => {
+    state.sessionId = "sess-denied";
+    state.shellDenied = true;
+    return REPORT;
+  };
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.status).toBe("ok");
+  expect(result.payload.shellDenied).toBe(true);
+  expect((await readRepoState(repo)).roles.worker).not.toHaveProperty("shellDenied");
+});
+
+// Usefulness: verifies requirement "the flag follows read-only turns too" (issue #713, ADR 0035): a reviewer envelope carries `shellDenied`, and a later reviewer turn with no denial carries none.
+test("reviewer dispatch carries shellDenied only for the turn that had it", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const reviewer = recordingAdapter([
+    (state) => {
+      state.sessionId = "rev-denied";
+      state.shellDenied = true;
+      return `${REPORT}\nVerdict: accept`;
+    },
+    `${REPORT}\nVerdict: accept`,
+  ]);
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const deps = { agents: { fake1: recordingAdapter([]), fake2: reviewer }, stdin: stdinPrompt };
+  const first = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), deps);
+  const second = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), deps);
+
+  expect(first.payload.shellDenied).toBe(true);
+  expect(second.payload.status).toBe("ok");
+  expect(second.payload).not.toHaveProperty("shellDenied");
+});

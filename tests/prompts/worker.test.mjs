@@ -138,3 +138,11 @@ test("first worker turn keeps the closing block as the last message", () => {
 test("later worker turns pass the prompt through unchanged", () => {
   expect(workerPrompt("next step", false)).toBe("next step");
 });
+
+// Usefulness: verifies requirement "the worker contract states that a shell command can be refused" (issue #713): a refused command is named in the report, not reported as run.
+test("first worker turn tells a worker to name a refused command in the report", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.",
+  );
+});
