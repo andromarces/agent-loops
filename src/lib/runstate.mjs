@@ -19,13 +19,14 @@ import {
   readFile,
   readdir,
   readlink,
+  realpath,
   rename,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { sha256 } from "./hash.mjs";
 import { isJsonObject } from "./json.mjs";
@@ -875,17 +876,52 @@ async function removeTemp(path) {
   }
 }
 
+// Same hop limit as the common kernel symlink limit.
+const MAX_LINK_HOPS = 40;
+
+/**
+ * The path that a write to `file` lands at: the final target of a chain of file symlinks, which a
+ * rename over a link would replace instead (#658). Each hop resolves the real directory of the link
+ * first, and joins a relative target to it without normalizing, so the next hop resolves the
+ * directory part of the target with `realpath`. A directory link that the target passes through
+ * then applies before a `..` that follows it, as the OS applies it. `readlink` works on a dangling
+ * link, where `realpath` fails. A path that is no link or does not exist resolves to itself. Every
+ * guard that judges where a write lands must use this path, so the guard and the writer agree. A
+ * loop fails with `ELOOP`.
+ */
+export async function resolveWriteTarget(file) {
+  let current = resolve(file);
+  for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
+    const dir = await realpath(dirname(current)).catch(() => resolve(dirname(current)));
+    current = join(dir, basename(current));
+    let target;
+    try {
+      target = await readlink(current);
+    } catch (err) {
+      if (["EINVAL", "ENOENT", "ENOTDIR"].includes(err.code)) {
+        return current;
+      }
+      throw err;
+    }
+    current = isAbsolute(target) ? target : `${dir}${sep}${target}`;
+  }
+  throw Object.assign(new Error(`Too many levels of symbolic links: ${file}`), { code: "ELOOP" });
+}
+
 // Writes `text` to `file` atomically: a private temp file in the same directory
 // is renamed over the destination, so a concurrent reader sees the old content
 // or the new content, never a partial write. Node rename replaces an existing
-// destination on Windows and POSIX. A failed write or rename leaves the temp
-// behind, and it sits in the state directory beside the lock temp, so the guard
-// removes it and keeps the original error as the one that surfaces (#353).
+// destination on Windows and POSIX. A file symlink keeps its link: the write
+// goes to the final target, with the temp beside it (#658). A failed write or
+// rename leaves the temp behind, and it sits in the state directory beside the
+// lock temp, so the guard removes it and keeps the original error as the one
+// that surfaces (#353).
 export async function writeFileAtomic(file, text) {
-  const temp = `${file}.${process.pid}.${stateTempCounter++}.tmp`;
+  const destination = await resolveWriteTarget(file);
+  const temp = `${destination}.${process.pid}.${stateTempCounter++}.tmp`;
   try {
     await writeFile(temp, text, "utf8");
-    await renameWithRetry(temp, file);
+    await renameWithRetry(temp, destination);
   } catch (err) {
     await removeTemp(temp);
     throw err;

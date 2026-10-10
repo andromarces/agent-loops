@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -84,6 +84,19 @@ export async function expectNoReplyToMalformedCalls(gh, calls) {
       assert.equal(reply.stdout, "");
       assert.ok(reply.stderr.includes(JSON.stringify(bad)), `no array in: ${reply.stderr}`);
     }
+  }
+}
+
+/**
+ * Creates a symlink, or skips the test where the host cannot: Windows without the symlink
+ * privilege. Every other failure throws, so Linux and macOS never skip silently.
+ */
+export async function symlinkOrSkip(ctx, target, path, type) {
+  try {
+    await symlink(target, path, type);
+  } catch (err) {
+    if (process.platform === "win32" && err?.code === "EPERM") ctx.skip();
+    throw err;
   }
 }
 

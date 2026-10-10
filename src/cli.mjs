@@ -42,7 +42,7 @@ import {
   runUninstallCommand,
 } from "./install/commands.mjs";
 import { logWarn, setVerbose } from "./lib/log.mjs";
-import { writeFileAtomic } from "./lib/runstate.mjs";
+import { resolveWriteTarget, writeFileAtomic } from "./lib/runstate.mjs";
 import {
   isInside,
   removeSessionRecord,
@@ -379,12 +379,14 @@ Role flags:
                                 orphan that left the group, or whose parent exited on Windows,
                                 can survive (ADR 0017). Requires --test-cmd.
   --reviewer-workspace-write    init only. Run each Codex reviewer turn in the workspace-write
-                                sandbox, instead of read-only, with network access off for the
+                                sandbox instead of read-only. Network access stays off for the
                                 shell commands that the sandbox runs. That limit covers shell
                                 commands only: model-side tools such as web_search and other
-                                channels outside the sandbox are not blocked. Needs --reviewer
-                                codex. The orchestrator turns stay read-only, and the mutation
-                                check still halts the run on a change (ADR 0019). Off by default.
+                                channels outside the sandbox are not blocked. A user Codex
+                                execpolicy rule that allows bash -c, sh -c, or zsh -c is an
+                                exception (ADR 0019). Needs --reviewer codex, and is off by
+                                default. The orchestrator turns stay read-only, and the mutation
+                                check still halts the run on a change (ADR 0019).
 
 Options:
 
@@ -492,13 +494,15 @@ Options:
                                 is killed at the bound, and the run reports timed out. An
                                 orphan that left the group, or whose parent exited on Windows,
                                 can survive (ADR 0017). Requires --test-cmd.
-  --reviewer-workspace-write    Run each Codex reviewer turn in the workspace-write sandbox,
-                                instead of read-only, with network access off for the shell
-                                commands that the sandbox runs. That limit covers shell
-                                commands only: model-side tools such as web_search and other
-                                channels outside the sandbox are not blocked. Needs --reviewer
-                                codex. The orchestrator turns stay read-only, and the mutation
-                                check still halts the run on a change (ADR 0019). Off by default.
+  --reviewer-workspace-write    Run each Codex reviewer turn in the workspace-write sandbox
+                                instead of read-only. Network access stays off for the shell
+                                commands that the sandbox runs. That limit covers shell commands
+                                only: model-side tools such as web_search and other channels
+                                outside the sandbox are not blocked. A user Codex execpolicy rule
+                                that allows bash -c, sh -c, or zsh -c is an exception (ADR 0019).
+                                Needs --reviewer codex, and is off by default. The orchestrator
+                                turns stay read-only, and the mutation check still halts the run
+                                on a change (ADR 0019).
 
   A value flag also accepts the inline form --flag=value, for example
   --task=-x, which allows a value that starts with a dash. A boolean flag,
@@ -515,8 +519,10 @@ Agents:
   );
 }
 
-function sameFile(a, b) {
-  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+// Compares the write targets, so a file symlink and its target count as one file (#658).
+async function sameFile(a, b) {
+  const [left, right] = await Promise.all([resolveWriteTarget(a), resolveWriteTarget(b)]);
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
 function formatSummary(summary) {
@@ -614,7 +620,7 @@ export async function main(
       // --transcript rewrites its file at exit, so a run that names the file it
       // continues carries the earlier events into the rewrite, then a boundary
       // event that keeps the earlier outcome the rewrite replaces.
-      if (options.transcript && sameFile(options.transcript, options.continueFrom)) {
+      if (options.transcript && (await sameFile(options.transcript, options.continueFrom))) {
         carryEarlierEvents(events, earlier);
       }
     } catch (err) {
