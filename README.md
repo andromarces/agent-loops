@@ -843,7 +843,7 @@ A live probe of the merged adapter ran on 2026-10-10 (macOS 27.2 arm64, codex-cl
 The reviewer ran `./node_modules/.bin/vp test run` to exit 0 (82 files passed, 1 skipped).
 A shell `curl https://api.github.com` failed with `Could not resolve host`.
 A reviewer edit of `README.md` halted the run with `Mutation detected during reviewer turn` (`MutationError`), exit 1.
-Linux and Windows are not verified.
+Linux and the elevated Windows sandbox are not verified. The unelevated Windows sandbox is covered by the probe below.
 
 A live probe of `ps`, `pnpm exec`, and `gh` ran on 2026-10-10 (macOS 27.2 arm64, codex-cli 0.163.0-alpha.5, Node v26.11.1), in two reviewer turns with the same results:
 
@@ -852,13 +852,22 @@ A live probe of `ps`, `pnpm exec`, and `gh` ran on 2026-10-10 (macOS 27.2 arm64,
 - `gh pr checks 637 --required` exited 1 with `error connecting to api.github.com`, because shell network is off.
 - A Codex user rule that allows `bash -c`, `sh -c`, or `zsh -c` runs a command that has an expansion such as `$$` or `$HOME` outside the sandbox. The probe used a `CODEX_HOME` with no rules to avoid that. Details are in the ADR.
 
+A live probe on the unelevated Windows sandbox ran on 2026-10-10 (Windows 11 Pro 10.0.26220, codex-cli 0.163.0-alpha.4, Node v26.8.1), with a `CODEX_HOME` that held no rules, in two reviewer turns. The reviewer shell is PowerShell:
+
+- `ps -p $PID -o pid=` exited 1 with an ambiguous-parameter error, because `ps` is the PowerShell alias of `Get-Process`. `(Get-Process -Id $PID).Id` exited 0 and printed `44772`.
+- `pnpm exec vp --version` exited 1 with `Error: ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK`. This differs from macOS, where it exited 0.
+- `gh pr checks 649 --required` exited 1 with `Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connectex: ...`, because shell network is off.
+- A child `node` spawn from Node returned an error (`spawn error`, exit 0 for the wrapper). The error code and Vitest were not captured.
+- Elevated Windows sandbox: attempted and not recorded. A `codex exec` run with `[windows] sandbox = "elevated"` ran the machine setup of that mode (sandbox users, firewall rules, WFP filters) without an interactive prompt, and the first shell command then did not finish within 150 s. No reviewer turn ran under it.
+- Linux: no Linux host was available.
+
 Accepted gaps, as the ADR states them:
 
 - Detection only. The sandbox no longer prevents an edit. An edit succeeds, and the run then halts with a `MutationError`, exit 1, with no revert.
 - Snapshot blind spots. The snapshot does not see a write to an ignored file (for example `.env` or `node_modules/`), a write outside the repository, a write that the turn restores before it ends, or Git state other than the index and `HEAD` (other refs, the stash, the config).
 - Remote GitHub writes. Shell network is off here, so the opt-in does not open the shell path for `gh` and `git`, except under the user-rule exception in this item. Exception, seen on one machine only (issue #640): a user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion such as `$$` or `$HOME` outside the sandbox, with network and with a write outside the work tree. The runtime does not prevent that. The sandbox does not block a channel outside it, for example a GitHub app connector or another model-side tool, and the local snapshot does not see a remote write over any channel, so a push, a merge, a review, or a comment could change remote state unseen. Codex is the only adapter that blocks shell network in a read-only turn today. Issue #422 holds the rule against remote writes, which is advisory and not enforced.
 - A larger prompt-injection blast radius. Reviewed content that holds an instruction can steer a command that writes, not only one that reads.
-- Likely no gain on the unelevated Windows sandbox, which blocks a child spawn with `EPERM` under `workspace-write` (`docs/parent-guard.md`). Not verified for a test runner.
+- Likely no gain on the unelevated Windows sandbox, which blocks a child spawn with `EPERM` under `workspace-write` (`docs/parent-guard.md`). The probe above shows a failed child `node` spawn and a pnpm store lock failure. Not verified for a test runner.
 
 #### Codex read-only child-spawn limit
 
