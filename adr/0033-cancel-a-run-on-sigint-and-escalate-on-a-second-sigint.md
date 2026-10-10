@@ -34,6 +34,13 @@ PR #689 recorded this decision in ADR 0029 (decision 8 and a SIGINT sentence in 
 - A child can survive a second SIGINT in the cases of decision 5. The operator must check for it.
 - A write that stalls in the OS blocks the exit (decision 7), and a consumer that does not read stdout can leave one cut envelope (decision 6).
 - The Windows console path stays unverified (decision 9).
+- Verified on macOS 27.2 (Darwin 27.2.0, arm64), Node v26.11.1, Claude Code 2.1.296, with live `claude` turns (issue #695, probe on 2026-10-10). Each probe ran in a throwaway Git repository under the system temporary directory. The worker turn ran one long `Bash` call, `node -e "setTimeout(()=>{},600000)"`. The probe sent `kill -INT` to the runtime pid only, not to the process group.
+  - Headless `agent-loop` with `claude` as orchestrator, worker, and reviewer, one SIGINT: exit 130. Stderr held `worker canceled by signal` and `Interrupted by SIGINT`. The transcript held `exitCode` 130, the error `Interrupted by SIGINT`, and the events `invocation` (orchestrator, `ok`), `action`, and `invocation` (worker, `error`).
+  - Headless, a second SIGINT sent after a 0.2 s sleep, with the runtime alive: exit 130. Stderr held `second SIGINT: ending the child processes and exiting with code 130`. The transcript held `exitCode` 130, the same error, the events `invocation` (orchestrator) and `action`, and the worker session id. It held no worker `invocation` event.
+  - `role dispatch --role worker` with `--transcript`, one SIGINT: exit 130. Stdout held `{"role":"worker","status":"error","error":"claude was canceled."}`. The transcript file held an `invocation` event and a `result` event for the worker.
+  - `role dispatch`, a second SIGINT after a 0.2 s sleep: exit 130. Stdout held `{"status":"error","error":"Interrupted by SIGINT"}` and stderr held the `second SIGINT` warning. No transcript file existed.
+  - In each of the four runs, no pid from the process listing taken before the first signal was alive after the exit. The listing held the `claude` child, its helper processes, the `Bash` tool shell, and the `node` sleeper. The `Bash` tool shell and the sleeper ran in a process group other than that of `claude`.
+  - Not covered: a second SIGINT after the cleanup took longer than 0.2 s, a real terminal Ctrl-C to the process group, and the `codex` adapter.
 
 ## Alternatives
 

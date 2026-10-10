@@ -38,7 +38,15 @@ A working directory match was also examined. Probed on Windows 11 Pro 10.0.26220
 - The `--resume-interrupted` check of ADR 0031 decision 5 and the `--continue-from` check use the same `holdsSession` through `refuseHeldSessions`, so the session-flag rule narrows both. An orphan that carries no session flag is not found on either path.
 - The check and the init are not atomic. A holder that starts between them is not found.
 - Verified on Windows 11 Pro 10.0.26220, Node v26.8.1, Claude Code 2.1.296, through the real process table: a live `claude -p --session-id <id>` and a live `claude -p --resume <id>`, started as the adapter starts them, are found by their pid, and nothing is found after the first exits. A live `node` child whose arguments are `-- "a "" <id>"`, the shape that `CommandLineToArgvW` splits, a child with `claude <id>`, and a child with `--resume --verbose <id>` are not found. A `claude -p` child with stdin left open exits after about 3 seconds in this probe, so the read must run sooner. Tests cover the refusal, the archived-state case, the no-holder case, the unrelated-program case, the bare-id case, and the match rules, with an injected process table. `tests/cli.test.mjs` starts a holder that passes `--resume <id>`.
-- Not verified: a real `claude` orphan of a hard-killed `role dispatch` on any platform, the npm package layout of Claude Code, a macOS or Linux process table, the Windows bound of the read, `/proc/<pid>/cwd` on Linux, and `lsof -d cwd` on macOS. The decision does not depend on the last two.
+- Verified on macOS 27.2 (Darwin 27.2.0, arm64), Node v26.11.1, Claude Code 2.1.296, through the real `ps` table, with a real orphan (issue #697, probe on 2026-10-10). The work tree was a throwaway Git repository under the system temporary directory. `AGENT_LOOP_RUNS_ROOT` named a directory beside it.
+  1. A worker turn of `role dispatch` on `claude` ran one long `Bash` call, `node -e "setTimeout(()=>{},600000)"`.
+  2. A `SIGKILL` to the dispatch pid only left the `claude -p --session-id <id> --output-format json --verbose` child alive, with parent pid 1.
+  3. `role abort` exited 0 with `{"status":"ok","lifecycle":"aborted"}`.
+  4. A fresh `role dispatch` init in the same work tree exited 1 with `init: the worker session <id> is held by process <pid>, a leftover of an earlier run. End that process, or wait for it to finish, and run again.` The id and the pid were those of the orphan.
+  5. After the refusal, the state directory held only `state.json`, and `session-runs` held only the first parent session. The init archived and wrote nothing.
+  6. The `ps` read ended in 20 ms with exit 0.
+  7. The probe ended the orphan tree by exact pid.
+- Not verified: a real `claude` orphan of a hard-killed `role dispatch` on Windows and Linux, the npm package layout of Claude Code, a Linux process table, the Windows bound of the read, `/proc/<pid>/cwd` on Linux, and `lsof -d cwd` on macOS. The decision does not depend on the last two.
 
 ## Alternatives
 

@@ -717,6 +717,15 @@ ancestor, and 1 when the check cannot run or finds no harness ancestor, so the
 skill separates a refusal from a check that did not decide. See
 [Parent guard details](docs/parent-guard.md) for every guard target.
 
+Live check (issue #144): on 2026-10-10, two checks ran on macOS 27.2 with Node v26.11.1.
+The tools were codex-cli 0.163.0-alpha.5 and GitHub Copilot CLI 1.0.96-2.
+A `codex exec` session in full access ran each check, in a throwaway Git repository outside this work tree.
+`CODEX_THREAD_ID` was set in both checks, and `COPILOT_CLI` in the second.
+
+- `harness-check copilot` from the Codex shell exited 3 with `nearest harness ancestor is codex, not copilot`.
+- `harness-check codex` from the shell of a Copilot session that the Codex shell started exited 3 with `nearest harness ancestor is copilot, not codex`.
+  The Copilot session ran as `copilot -p` with model `gpt-5-mini`.
+
 - The `~/.agents/skills` directory is shared. Copilot CLI and OpenCode also
   discover personal skills there, so the installed Codex skill appears in both.
   The Codex selection owns that directory; install and uninstall for Copilot
