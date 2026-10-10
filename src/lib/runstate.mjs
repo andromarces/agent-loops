@@ -875,17 +875,44 @@ async function removeTemp(path) {
   }
 }
 
+// Same hop limit as the common kernel symlink limit.
+const MAX_LINK_HOPS = 40;
+
+// Follows a chain of file symlinks to the path that holds the content. A rename
+// over a symlink replaces the link itself, so the write must land at the final
+// target. `readlink` works on a dangling link, where `realpath` fails. A path
+// that is no link or does not exist resolves to itself (#658).
+async function resolveFileLink(file) {
+  let current = file;
+  for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
+    let target;
+    try {
+      target = await readlink(current);
+    } catch (err) {
+      if (["EINVAL", "ENOENT", "ENOTDIR"].includes(err.code)) {
+        return current;
+      }
+      throw err;
+    }
+    current = resolve(dirname(current), target);
+  }
+  throw Object.assign(new Error(`Too many levels of symbolic links: ${file}`), { code: "ELOOP" });
+}
+
 // Writes `text` to `file` atomically: a private temp file in the same directory
 // is renamed over the destination, so a concurrent reader sees the old content
 // or the new content, never a partial write. Node rename replaces an existing
-// destination on Windows and POSIX. A failed write or rename leaves the temp
-// behind, and it sits in the state directory beside the lock temp, so the guard
-// removes it and keeps the original error as the one that surfaces (#353).
+// destination on Windows and POSIX. A file symlink keeps its link: the write
+// goes to the final target, with the temp beside it (#658). A failed write or
+// rename leaves the temp behind, and it sits in the state directory beside the
+// lock temp, so the guard removes it and keeps the original error as the one
+// that surfaces (#353).
 export async function writeFileAtomic(file, text) {
-  const temp = `${file}.${process.pid}.${stateTempCounter++}.tmp`;
+  const destination = await resolveFileLink(file);
+  const temp = `${destination}.${process.pid}.${stateTempCounter++}.tmp`;
   try {
     await writeFile(temp, text, "utf8");
-    await renameWithRetry(temp, file);
+    await renameWithRetry(temp, destination);
   } catch (err) {
     await removeTemp(temp);
     throw err;
