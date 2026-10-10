@@ -794,6 +794,7 @@ fails under network on as well, because pnpm writes to its store outside the wor
 `network_access=false` covers the shell commands that the sandbox runs. A model-side tool
 (for example Codex `web_search`) and any other channel outside the sandbox, such as a
 connector, are not covered, and no probe of those under `workspace-write` was run.
+A user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` also runs a shell command with an expansion outside the sandbox, as the probe of 2026-10-10 below shows for one machine.
 
 The runtime read of the required-check status for a named PR ([ADR 0024](adr/0024-supply-the-required-check-status-for-a-named-pr.md)) still reaches
 the reviewer.
@@ -815,7 +816,7 @@ Accepted gaps, as the ADR states them:
 
 - Detection only. The sandbox no longer prevents an edit. An edit succeeds, and the run then halts with a `MutationError`, exit 1, with no revert.
 - Snapshot blind spots. The snapshot does not see a write to an ignored file (for example `.env` or `node_modules/`), a write outside the repository, a write that the turn restores before it ends, or Git state other than the index and `HEAD` (other refs, the stash, the config).
-- Remote GitHub writes. Shell network is off here, so the opt-in does not open the shell path for `gh` and `git`. The sandbox does not block a channel outside it, for example a GitHub app connector or another model-side tool, and the local snapshot does not see a remote write over any channel, so a push, a merge, a review, or a comment could change remote state unseen. Codex is the only adapter that blocks shell network in a read-only turn today. Issue #422 holds the rule against remote writes, which is advisory and not enforced.
+- Remote GitHub writes. Shell network is off here, so the opt-in does not open the shell path for `gh` and `git`, except under the user-rule exception in this item. Exception, seen on one machine only (issue #640): a user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion such as `$$` or `$HOME` outside the sandbox, with network and with a write outside the work tree. The runtime does not prevent that. The sandbox does not block a channel outside it, for example a GitHub app connector or another model-side tool, and the local snapshot does not see a remote write over any channel, so a push, a merge, a review, or a comment could change remote state unseen. Codex is the only adapter that blocks shell network in a read-only turn today. Issue #422 holds the rule against remote writes, which is advisory and not enforced.
 - A larger prompt-injection blast radius. Reviewed content that holds an instruction can steer a command that writes, not only one that reads.
 - Likely no gain on the unelevated Windows sandbox, which blocks a child spawn with `EPERM` under `workspace-write` (`docs/parent-guard.md`). Not verified for a test runner.
 

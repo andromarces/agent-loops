@@ -455,7 +455,11 @@ other reviewer is refused at init. The run is unchanged without it.
     restores before it ends, or Git state other than the index and `HEAD`
     (other refs, the stash, the config).
   - Shell network is off, so the opt-in does not open the shell path for `gh`
-    and `git`. The sandbox does not block a channel outside it, for example a
+    and `git`, except under the user-rule exception in this item. Exception,
+    seen on one machine only (issue #640): a user Codex rule that allows
+    `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion such
+    as `$$` or `$HOME` outside the sandbox, with network and with a write
+    outside the work tree. The runtime does not prevent that. The sandbox does not block a channel outside it, for example a
     GitHub app connector or another model-side tool. The local snapshot does
     not see a remote write over any channel, so a push, a merge, a review, or a
     comment could change remote state unseen. Codex is the only adapter that
