@@ -36,6 +36,7 @@ import {
 } from "./lib/continuation.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { sha256 } from "./lib/hash.mjs";
+import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { readableErrorText, readProp, redactedText } from "./lib/error-message.mjs";
 import {
   runHarnessCheckCommand,
@@ -595,186 +596,182 @@ export async function main(
   }
   // Created before the continuation check, so a SIGINT during a probe turn cancels it.
   const controller = new AbortController();
-  const onSigInt = () => {
-    controller.abort();
-  };
-  // `on`, not `once`: a `once` listener leaves before it runs, so the execa exit handler finds no
-  // SIGINT listener and re-raises the signal before the run sets exit 130 and writes the transcript.
-  // known-limit: a second SIGINT during the cleanup is ignored until `finally` removes the listener.
-  process.on("SIGINT", onSigInt);
-  let earlierGate = null;
-  // A refused continuation writes no transcript: --transcript may name the
-  // --continue-from file, and a refusal must not overwrite the sessions it holds.
-  if (options.continueFrom) {
-    try {
-      const earlier = await readContinuation(options.continueFrom);
-      restoreSessions(roles, earlier, options.cwd);
-      await refuseHeldSessions(roles, { signal: controller.signal });
-      await verifyResolvedModels(roles, {
-        probe: (state, role) =>
-          runProbeTurn({
-            agents,
-            state,
-            roleName: role,
-            cwd: options.cwd,
-            timeout: options.timeout,
-            signal: controller.signal,
-          }),
-      });
-      earlierGate = gateFromTranscript(earlier);
-      // --transcript rewrites its file at exit, so a run that names the file it
-      // continues carries the earlier events into the rewrite, then a boundary
-      // event that keeps the earlier outcome the rewrite replaces.
-      if (options.transcript && (await sameFile(options.transcript, options.continueFrom))) {
-        carryEarlierEvents(events, earlier);
-      }
-    } catch (err) {
-      process.removeListener("SIGINT", onSigInt);
-      console.error(`
-${redactedText(readProp(err, "message") ?? err)}`);
-      process.exitCode = readProp(err, "isCanceled") ? 130 : 1;
-      return;
-    }
-  }
-  // The mode is recorded only when the run named one, so a mode-free run writes
-  // the transcript shape origin/main wrote and a consumer of that file sees no
-  // field this flag introduced (#337).
-  const transcriptData = {
-    task: options.task,
-    cwd: options.cwd,
-    options: {
-      maxSteps: options.maxSteps,
-      timeout: options.timeout,
-      requireAccept: options.requireAccept,
-      pr: options.pr,
-      requireCi: options.requireCi,
-      ...(options.testCmd === null
-        ? {}
-        : { testCmd: redactCommandText(options.testCmd), testCmdTimeout: options.testCmdTimeout }),
-      ...(options.reviewerWorkspaceWrite ? { reviewerWorkspaceWrite: true } : {}),
-      ...(options.mode === null ? {} : { mode: options.mode }),
-      ...(options.continueFrom ? { continueFrom: options.continueFrom } : {}),
-      ...(options.copyLocalFiles ? {} : { copyLocalFiles: false }),
-    },
-    roles,
-    events,
-    exitCode: 1,
-    error: null,
-  };
-
-  // The pre-assigned session id of the turn that is running, with the mark that no CLI output
-  // confirmed it. It exists only in the written record, never on the role state, so the adapter
-  // alone decides what a failed turn keeps (issue #564). Cleared when the CLI call ends.
-  let pendingSession = null;
-
-  // The digest of the transcript file that this run wrote last. A session record binds to it.
-  let transcriptDigest = null;
-
-  // A transcript write supersedes the session record of the file, so it removes the record.
-  const writeTranscript = async () => {
-    if (!options.transcript) return;
-    try {
-      const { role, id } = pendingSession ?? {};
-      const data = pendingSession
-        ? {
-            ...transcriptData,
-            roles: {
-              ...roles,
-              [role]: { ...roles[role], sessionId: id, sessionUnconfirmed: true },
-            },
-          }
-        : transcriptData;
-      const text = JSON.stringify(data, null, 2);
-      // Atomic, because the file can be the --continue-from source: a crash or a
-      // failed write must leave the earlier record whole.
-      await writeFileAtomic(options.transcript, text);
-      transcriptDigest = sha256(text);
-      await removeSessionRecord(options.transcript);
-    } catch (err) {
-      console.error(
-        redactedText(
-          `Warning: Failed to write transcript to ${options.transcript}: ${redactedText(readProp(err, "message"))}`,
-        ),
-      );
-    }
-  };
-
-  // The orchestrator and the reviewer run under the mutation check, which covers the whole Git work
-  // tree, not only --cwd, so a transcript inside that tree cannot be written during their turn. Their
-  // pre-spawn save then goes to a session record outside the tree, and --continue-from reads it
-  // (ADR 0027). The mode is "file" (write the transcript), "record" (write the record), or "none"
-  // (no safe place: a root that cannot be read, or a record location inside the tree).
-  const runNonce = randomUUID();
-  let saveMode = "file";
-  const chooseSaveMode = async () => {
-    try {
-      const root = await workTreeRoot(options.cwd);
-      if (!(await isInside(root, options.transcript))) return;
-      saveMode = (await isInside(root, await sessionRecordPath(options.transcript)))
-        ? "none"
-        : "record";
-      if (saveMode === "record") transcriptData.runNonce = runNonce;
-    } catch {
-      saveMode = "none";
-    }
-  };
-  const onSessionAssigned = async (role, id) => {
-    if (role === "worker" || saveMode === "file") {
-      pendingSession = id ? { role, id } : null;
-      await writeTranscript();
-      return;
-    }
-    // A withdrawn id leaves the transcript as it is, which holds no id for the role.
-    if (!id) {
-      await removeSessionRecord(options.transcript);
-      return;
-    }
-    if (saveMode === "record" && transcriptDigest !== null) {
+  const removeSigIntListener = cancelOnSigInt(controller);
+  try {
+    let earlierGate = null;
+    // A refused continuation writes no transcript: --transcript may name the
+    // --continue-from file, and a refusal must not overwrite the sessions it holds.
+    if (options.continueFrom) {
       try {
-        await writeSessionRecord(options.transcript, {
-          cwd: options.cwd,
-          runNonce,
-          transcriptSha256: transcriptDigest,
-          role,
-          sessionId: id,
+        const earlier = await readContinuation(options.continueFrom);
+        restoreSessions(roles, earlier, options.cwd);
+        await refuseHeldSessions(roles, { signal: controller.signal });
+        await verifyResolvedModels(roles, {
+          probe: (state, role) =>
+            runProbeTurn({
+              agents,
+              state,
+              roleName: role,
+              cwd: options.cwd,
+              timeout: options.timeout,
+              signal: controller.signal,
+            }),
         });
-        return;
+        earlierGate = gateFromTranscript(earlier);
+        // --transcript rewrites its file at exit, so a run that names the file it
+        // continues carries the earlier events into the rewrite, then a boundary
+        // event that keeps the earlier outcome the rewrite replaces.
+        if (options.transcript && (await sameFile(options.transcript, options.continueFrom))) {
+          carryEarlierEvents(events, earlier);
+        }
       } catch (err) {
-        logWarn(`${role}: the session record was not written: ${readableErrorText(err)}`);
+        console.error(`
+${redactedText(readProp(err, "message") ?? err)}`);
+        process.exitCode = readProp(err, "isCanceled") ? 130 : 1;
+        return;
       }
     }
-    logWarn(
-      `${role}: the session id is not saved before the turn, because --transcript is inside the work tree and no record location outside it is usable.`,
-    );
-  };
+    // The mode is recorded only when the run named one, so a mode-free run writes
+    // the transcript shape origin/main wrote and a consumer of that file sees no
+    // field this flag introduced (#337).
+    const transcriptData = {
+      task: options.task,
+      cwd: options.cwd,
+      options: {
+        maxSteps: options.maxSteps,
+        timeout: options.timeout,
+        requireAccept: options.requireAccept,
+        pr: options.pr,
+        requireCi: options.requireCi,
+        ...(options.testCmd === null
+          ? {}
+          : {
+              testCmd: redactCommandText(options.testCmd),
+              testCmdTimeout: options.testCmdTimeout,
+            }),
+        ...(options.reviewerWorkspaceWrite ? { reviewerWorkspaceWrite: true } : {}),
+        ...(options.mode === null ? {} : { mode: options.mode }),
+        ...(options.continueFrom ? { continueFrom: options.continueFrom } : {}),
+        ...(options.copyLocalFiles ? {} : { copyLocalFiles: false }),
+      },
+      roles,
+      events,
+      exitCode: 1,
+      error: null,
+    };
 
-  // The command result and work tree compare of a turn that ended in a fatal error. The
-  // run has no result event for that turn, so the error report carries them, and a parent
-  // that gave no --transcript still receives the evidence the runtime read (ADR 0017).
-  let fatalTestRun = null;
+    // The pre-assigned session id of the turn that is running, with the mark that no CLI output
+    // confirmed it. It exists only in the written record, never on the role state, so the adapter
+    // alone decides what a failed turn keeps (issue #564). Cleared when the CLI call ends.
+    let pendingSession = null;
 
-  // `failed` is explicit, because a thrown value can be falsy (null, 0, "") and must still record.
-  // An empty error text gets a fallback so a failed run never records or prints a blank error.
-  const finish = async ({ exitCode, error, failed }) => {
-    const errorText = failed
-      ? redactedText(readProp(error, "message") ?? error) ||
-        redactedText("Run failed with an empty error message.")
-      : null;
-    transcriptData.exitCode = exitCode;
-    transcriptData.error = errorText;
-    await writeTranscript();
-    if (failed) {
-      console.error(`\n${errorText}`);
-      if (fatalTestRun) {
+    // The digest of the transcript file that this run wrote last. A session record binds to it.
+    let transcriptDigest = null;
+
+    // A transcript write supersedes the session record of the file, so it removes the record.
+    const writeTranscript = async () => {
+      if (!options.transcript) return;
+      try {
+        const { role, id } = pendingSession ?? {};
+        const data = pendingSession
+          ? {
+              ...transcriptData,
+              roles: {
+                ...roles,
+                [role]: { ...roles[role], sessionId: id, sessionUnconfirmed: true },
+              },
+            }
+          : transcriptData;
+        const text = JSON.stringify(data, null, 2);
+        // Atomic, because the file can be the --continue-from source: a crash or a
+        // failed write must leave the earlier record whole.
+        await writeFileAtomic(options.transcript, text);
+        transcriptDigest = sha256(text);
+        await removeSessionRecord(options.transcript);
+      } catch (err) {
         console.error(
-          `\nTest command result before the failed turn (advisory):\n${JSON.stringify(fatalTestRun, null, 2)}`,
+          redactedText(
+            `Warning: Failed to write transcript to ${options.transcript}: ${redactedText(readProp(err, "message"))}`,
+          ),
         );
       }
-    }
-    process.exitCode = exitCode;
-  };
+    };
 
-  try {
+    // The orchestrator and the reviewer run under the mutation check, which covers the whole Git work
+    // tree, not only --cwd, so a transcript inside that tree cannot be written during their turn. Their
+    // pre-spawn save then goes to a session record outside the tree, and --continue-from reads it
+    // (ADR 0027). The mode is "file" (write the transcript), "record" (write the record), or "none"
+    // (no safe place: a root that cannot be read, or a record location inside the tree).
+    const runNonce = randomUUID();
+    let saveMode = "file";
+    const chooseSaveMode = async () => {
+      try {
+        const root = await workTreeRoot(options.cwd);
+        if (!(await isInside(root, options.transcript))) return;
+        saveMode = (await isInside(root, await sessionRecordPath(options.transcript)))
+          ? "none"
+          : "record";
+        if (saveMode === "record") transcriptData.runNonce = runNonce;
+      } catch {
+        saveMode = "none";
+      }
+    };
+    const onSessionAssigned = async (role, id) => {
+      if (role === "worker" || saveMode === "file") {
+        pendingSession = id ? { role, id } : null;
+        await writeTranscript();
+        return;
+      }
+      // A withdrawn id leaves the transcript as it is, which holds no id for the role.
+      if (!id) {
+        await removeSessionRecord(options.transcript);
+        return;
+      }
+      if (saveMode === "record" && transcriptDigest !== null) {
+        try {
+          await writeSessionRecord(options.transcript, {
+            cwd: options.cwd,
+            runNonce,
+            transcriptSha256: transcriptDigest,
+            role,
+            sessionId: id,
+          });
+          return;
+        } catch (err) {
+          logWarn(`${role}: the session record was not written: ${readableErrorText(err)}`);
+        }
+      }
+      logWarn(
+        `${role}: the session id is not saved before the turn, because --transcript is inside the work tree and no record location outside it is usable.`,
+      );
+    };
+
+    // The command result and work tree compare of a turn that ended in a fatal error. The
+    // run has no result event for that turn, so the error report carries them, and a parent
+    // that gave no --transcript still receives the evidence the runtime read (ADR 0017).
+    let fatalTestRun = null;
+
+    // `failed` is explicit, because a thrown value can be falsy (null, 0, "") and must still record.
+    // An empty error text gets a fallback so a failed run never records or prints a blank error.
+    const finish = async ({ exitCode, error, failed }) => {
+      const errorText = failed
+        ? redactedText(readProp(error, "message") ?? error) ||
+          redactedText("Run failed with an empty error message.")
+        : null;
+      transcriptData.exitCode = exitCode;
+      transcriptData.error = errorText;
+      await writeTranscript();
+      if (failed) {
+        console.error(`\n${errorText}`);
+        if (fatalTestRun) {
+          console.error(
+            `\nTest command result before the failed turn (advisory):\n${JSON.stringify(fatalTestRun, null, 2)}`,
+          );
+        }
+      }
+      process.exitCode = exitCode;
+    };
+
     try {
       await assertGitWorkTree(options.cwd);
     } catch (err) {
@@ -868,7 +865,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
       }
     }
   } finally {
-    process.removeListener("SIGINT", onSigInt);
+    removeSigIntListener();
   }
 }
 

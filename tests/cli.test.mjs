@@ -1096,7 +1096,7 @@ test.skipIf(process.platform === "win32")(
     const runner = [
       `import { main } from ${JSON.stringify(pathToFileURL(CLI).href)};`,
       `import { exec } from ${JSON.stringify(pathToFileURL(CLI.replace("cli.mjs", "lib/exec.mjs")).href)};`,
-      "const stall = { async run(_prompt, { signal }) {",
+      "const stall = { async run(_state, _prompt, { signal }) {",
       '  console.log("ready");',
       '  await exec(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { signal });',
       "} };",

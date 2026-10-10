@@ -52,6 +52,7 @@ import {
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { sha256 } from "./lib/hash.mjs";
+import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, failedTestRun } from "./lib/test-cmd.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
@@ -1347,12 +1348,7 @@ export async function main(argv, { agents = defaultAgents } = {}) {
   setLogsToStderr(true);
 
   const controller = new AbortController();
-  const onSigInt = () => {
-    controller.abort();
-  };
-  // `on`, not `once`: the listener must stay until `finally`, or the execa exit handler re-raises
-  // the signal before the envelope prints (#669).
-  process.on("SIGINT", onSigInt);
+  const removeSigIntListener = cancelOnSigInt(controller);
 
   try {
     let args;
@@ -1377,6 +1373,6 @@ export async function main(argv, { agents = defaultAgents } = {}) {
 
     await printEnvelope(payload, exitCode);
   } finally {
-    process.removeListener("SIGINT", onSigInt);
+    removeSigIntListener();
   }
 }
