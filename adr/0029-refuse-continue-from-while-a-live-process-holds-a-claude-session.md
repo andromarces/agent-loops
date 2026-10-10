@@ -28,7 +28,7 @@ The adapter matches `Error: Session ID <id> is already in use.` only on a failed
 
 - The reproduction of issue #647 now ends with exit 1 and a named holder, before any turn. The orphan is left alone.
 - A process that carries the id in its command line for another reason also refuses the run, for example a shell that runs `claude --resume <id>`. The error names the pid, so the operator can inspect it. The refusal is the safe side.
-- A holder that does not carry the id in its command line is not found. The check also does not cover a fresh run in the same work tree, because a fresh run holds no earlier id. An orphan from an earlier run can still write to that tree.
+- A holder that does not carry the id in its command line is not found. The check also does not cover a fresh run in the same work tree, because a fresh run holds no earlier id. An orphan from an earlier run can still write to that tree. [ADR 0031](0031-keep-the-orphan-writer-gap-of-a-fresh-run-open.md) examines both gaps and keeps them open.
 - The check does not run for the orchestrator or the reviewer of another CLI. Only the Claude orphan is observed (ADR 0027), so the other adapters are not verified to leave one.
 - The check and the resume are not atomic. A holder that starts between them is not found.
 - Interactive path, read from the code and not probed. A `role dispatch` process that a hard kill ends leaves its `claude` child alive in the same way, because both paths start the child through `exec`. The next dispatch marks the run `interrupted` and starts no child. `--resume-interrupted` then runs the turn with the kept session id (`src/role.mjs`), and the code holds no check for a live holder. The exposure is therefore the same as for `--continue-from`. This PR does not cover it for three reasons. Issue #647 and its acceptance name `--continue-from`. The interactive path has its own state file and lifecycle, and a check there needs its own design and its own probe. No probe of an interactive orphan exists. A follow-up must probe it first, then call `refuseHeldSessions` before the resumed turn of `--resume-interrupted`.
@@ -52,6 +52,8 @@ Andro Marces
 
 - [Pull request #660](https://github.com/andromarces/agent-loops/pull/660)
 - [Issue #669: SIGINT can end the runtime by signal before the cancel handler finishes](https://github.com/andromarces/agent-loops/issues/669)
+- [Issue #673: Detect a live orphan writer of an earlier run before a fresh run in the same work tree](https://github.com/andromarces/agent-loops/issues/673)
+- [ADR 0031: Keep the orphan writer gap of a fresh run open](0031-keep-the-orphan-writer-gap-of-a-fresh-run-open.md)
 - [Issue #647](https://github.com/andromarces/agent-loops/issues/647)
 - [Issue #627](https://github.com/andromarces/agent-loops/issues/627)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
