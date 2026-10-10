@@ -1201,6 +1201,16 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   }
 });
 
+// Usefulness: verifies the interactive instructions and the headless prompt state the same held-session rule, so neither parent ends a live holder of a Claude session that `--resume-interrupted` refused on (#671).
+test("interactive instructions and headless prompt share the held-session rule", async () => {
+  const rule =
+    "`dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the Claude session of the role. Do not end that process. The maintainer ends it or waits for it.";
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
+  expect(instructions).toContain(rule);
+  expect(prompt).toContain(rule);
+});
+
 // Usefulness: verifies refusalPrompt carries the refusal reason and the supported
 // actions, so the orchestrator can recover with a reviewer turn (issue #234).
 test("refusalPrompt states the reason and the supported actions", () => {
