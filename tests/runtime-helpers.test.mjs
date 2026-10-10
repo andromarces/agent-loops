@@ -201,8 +201,11 @@ async function blockedShimFailure(after) {
       async () => (existsSync(join(shimDir, "started.txt")) ? true : undefined),
       10_000,
     );
+    // The hold file keeps the shim alive while the keep file is swapped for a directory.
+    await writeFile(join(shimDir, "hold"), "");
     await rm(join(shimDir, "keep"));
     await mkdir(join(shimDir, "keep"));
+    await rm(join(shimDir, "hold"));
     await after();
   }).then(
     () => undefined,
@@ -222,9 +225,11 @@ test(
     expect(failure).toBeInstanceOf(AggregateError);
     const messages = failure.errors.map((error) => error.message);
     expect(messages).toContain("body failed first");
-    expect(messages.some((message) => /did not exit within \d+ ms of cleanup/.test(message))).toBe(
-      true,
+    const survivor = messages.find((message) =>
+      /did not exit within \d+ ms of cleanup/.test(message),
     );
+    expect(survivor).toMatch(/pid \d+/);
+    expect(survivor).toMatch(/wall-clock ceiling of \d+ s ends it/);
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
@@ -240,6 +245,28 @@ test(
     expect(
       failure.errors.some((error) => error.syscall === "rm" || /EISDIR|EPERM/.test(error.code)),
     ).toBe(true);
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: acceptance (#670 review) — a pid record that is missing is not proof that the shim
+// ended, so the cleanup reports an unconfirmed exit instead of passing silently.
+test(
+  "expectBoundKillsShim reports an unconfirmed exit when the pid record is missing",
+  async () => {
+    const failure = await expectBoundKillsShim("recordless-shim", async () => {
+      const shimDir = process.env.PATH.split(delimiter)[0];
+      const held = execa("recordless-shim", { reject: false });
+      held.catch(() => {});
+      const started = join(shimDir, "started.txt");
+      await pollUntil(async () => (existsSync(started) ? true : undefined), 10_000);
+      await rm(started);
+    }).then(
+      () => undefined,
+      (error) => error,
+    );
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.errors.some((error) => /exit is unconfirmed/.test(error.message))).toBe(true);
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
