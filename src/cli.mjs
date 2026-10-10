@@ -705,7 +705,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     };
 
     // A second SIGINT writes the transcript as the run holds it, with exit 130. The write is
-    // synchronous and skips the session-record removal, which is async (ADR 0029).
+    // synchronous and skips the session-record removal, which is async (ADR 0033).
     writeTranscriptOnForceExit = () => {
       if (!options.transcript) return;
       transcriptData.exitCode = 130;

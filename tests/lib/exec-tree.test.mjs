@@ -307,7 +307,7 @@ test("killLiveTrees ends a live child that ignores SIGTERM", async () => {
 }, 40_000);
 
 // Usefulness: acceptance (#669) — a SIGKILL that execa does not deliver (it returns false) is
-// logged at warn level and does not stop the kill of the next live run, so ADR 0029 can name it.
+// logged at warn level and does not stop the kill of the next live run, so ADR 0033 can name it.
 test("killLiveTrees warns when a SIGKILL is not delivered and still kills the next run", () => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform");
   Object.defineProperty(process, "platform", { value: "linux" });

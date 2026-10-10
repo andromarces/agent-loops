@@ -224,7 +224,7 @@ test("a second SIGINT during a turn writes one complete envelope and the normal 
 });
 
 // Usefulness: acceptance (#669) — a permanent write error after a partial write leaves the
-// truncated envelope on stdout, logs the error, and still exits 130 (ADR 0029 decision 8).
+// truncated envelope on stdout, logs the error, and still exits 130 (ADR 0033 decision 6).
 test("a permanent error after a partial envelope write leaves it truncated, logs, and exits 130", async () => {
   const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

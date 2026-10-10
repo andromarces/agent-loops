@@ -12,7 +12,7 @@ const FORCE_EXIT_WAIT_MS = 2000;
  *
  * The listener uses `on`, not `once`: Node removes a `once` listener before it runs, so the execa
  * exit handler finds no SIGINT listener and re-raises the signal before the run sets exit 130 and
- * writes its transcript (#669). ADR 0029 lists what the second SIGINT keeps and drops.
+ * writes its transcript (#669). ADR 0033 lists what the second SIGINT keeps and drops.
  * @param {AbortController} controller
  * @param {{ onForceExit?: () => void }} [options]
  * @returns {() => void} removes the listener; every exit path of the caller must call it
