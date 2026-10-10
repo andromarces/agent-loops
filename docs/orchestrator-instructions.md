@@ -1078,6 +1078,8 @@ the state file's `mode` and `lifecycle`, and continue from `stepsUsed` and
 `lastResult`. A resumed review-only task keeps its prohibition on worker
 dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
 to resume with `dispatch --resume-interrupted`.
+`dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the
+Claude session of the role. Do not end that process. The maintainer ends it or waits for it.
 
 A run stores the `--parent-session` of the session that started it. The
 parent-edit guard and `extend` match that id, and no later call changes it. After init,

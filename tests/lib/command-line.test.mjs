@@ -5,8 +5,8 @@ import { holdsSession, splitWindowsArguments } from "../../src/lib/command-line.
 // the column is `process.argv.slice(2)` of a child that node started with the raw command line
 // `<node> child.mjs <line>`, run on Windows 11 Pro 10.0.26220 with Node v26.8.1 (#673). The native
 // `claude.exe` 2.1.296 on this host reads a command line the same way: `claude.exe --output-format
-// "b""c" d` reports the argument `b"c`, and `"b""" c` reports `b"`. `CommandLineToArgvW` differs for
-// a doubled quote inside a quoted section (it leaves the section), so it is not used (ADR 0031).
+// "b""c" d` reports the argument `b"c`, and `"b""" c` reports `b"`. `CommandLineToArgvW` (called through PowerShell 7.6.6 on the same host) differs for
+// a doubled quote inside a quoted section (it leaves the section), so it is not used (ADR 0032).
 // Each row is [command line, tokens].
 const NATIVE_TOKENS = [
   ['a ""b"" c', ["a", "b", "c"]],
@@ -103,7 +103,7 @@ test("holdsSession on Windows counts a session flag followed by the id", () => {
   }
 });
 
-// Usefulness: verifies a bare id argument is not a holder, whatever the program, so an unrelated program that carries the id, or a data argument named claude, does not block a run. This narrows the earlier bare-id refusal of ADR 0029 by maintainer decision (#673).
+// Usefulness: verifies a bare id argument is not a holder, whatever the program, so an unrelated program that carries the id, or a data argument named claude, does not block a run. This narrows the earlier bare-id refusal of ADR 0031 by maintainer decision (#673).
 test("holdsSession ignores a bare id argument and an unrelated program", () => {
   for (const [command, platform] of [
     [`claude ${ID}`, "win32"],

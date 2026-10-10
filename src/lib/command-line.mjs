@@ -1,9 +1,9 @@
-// Reads a process command line for a held Claude session (#673, ADR 0031). The process table gives
+// Reads a process command line for a held Claude session (#673, ADR 0032). The process table gives
 // one string per process, and each platform builds it differently, so the split follows the platform.
 
 /**
  * Splits a Windows command line into arguments with the argument parser of the C runtime, which
- * gives `process.argv` in Node and which the native `claude.exe` uses (ADR 0031). Space and tab
+ * gives `process.argv` in Node and which the native `claude.exe` uses (ADR 0032). Space and tab
  * separate arguments outside quotes, a quote toggles the quoted section and is dropped, `2n`
  * backslashes before a quote give `n` backslashes and the quote acts, `2n+1` give `n` backslashes
  * and a literal quote, other backslashes stay, and a doubled quote inside a quoted section gives a
@@ -66,7 +66,7 @@ const SESSION_FLAGS = ["--session-id", "--resume", "-r"];
  * or one argument `--session-id=<id>`, `--resume=<id>`, or `-r=<id>`. The adapter passes the id
  * only so, as `--resume <id>` or `--session-id <id>` (`src/agents/claude.mjs`). A bare id argument,
  * a path or a longer token that contains the id, and a flag that is not one of these never count,
- * and the program is not examined (ADR 0031).
+ * and the program is not examined (ADR 0032).
  *
  * Windows: the arguments come from the C runtime parser, so quotes are stripped. POSIX: `ps` prints
  * the arguments joined by single spaces with no quoting, so the boundaries are lost. The text is

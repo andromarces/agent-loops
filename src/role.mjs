@@ -29,7 +29,7 @@ import {
   testCmdError,
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
-import { refuseHeldIds } from "./lib/continuation.mjs";
+import { refuseHeldIds, refuseHeldSessions } from "./lib/continuation.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import {
   errorMessage,
@@ -649,6 +649,12 @@ async function dispatchLocked(
         "Previous turn is interrupted. Use abort, or dispatch --resume-interrupted to continue.",
       );
     }
+    // A hard kill of the dispatch leaves its claude child running, and the CLI accepts a resume of
+    // that session, so the check comes before the step is charged (#671, ADR 0031).
+    await refuseHeldSessions(
+      { [roleName]: state.roles[roleName] },
+      { signal, flag: "--resume-interrupted", readProcessCommands },
+    );
     state.resumeDecision = { at: new Date().toISOString() };
   } else if (state.lifecycle === "dispatched") {
     // A live lock owner would have thrown in withStateLock, so the previous
@@ -682,7 +688,7 @@ async function dispatchLocked(
   let localFiles = null;
   if (init) {
     // A hard kill of an earlier run can leave its `claude` child alive and writing to this work
-    // tree, so a live holder of a session that the earlier states recorded refuses the init (ADR 0031).
+    // tree, so a live holder of a session that the earlier states recorded refuses the init (ADR 0032).
     await refuseHeldIds(await readClaudeSessions(paths.stateDir), {
       readProcessCommands,
       signal,

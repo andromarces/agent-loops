@@ -79,24 +79,27 @@ async function applySessionRecord(path, bytes, transcript) {
 }
 
 /**
- * Refuses a continuation when a live process passes the id of a claude role session through a session flag in its
- * command line (#647, ADR 0029, `holdsSession`). A `SIGKILL` of the earlier parent leaves its `claude` child
+ * Refuses a continuation when a live process passes the id of a claude role session through a
+ * session flag in its command line (#647, #671, #673, ADR 0031, ADR 0032, `holdsSession`). A
+ * `SIGKILL` of the earlier parent leaves its `claude` child
  * running, and the CLI accepts a resume of that session, so two processes would write one session
  * file. Only a claude id in the UUID form is checked, so a short id cannot match another
  * command line. No other adapter is verified to leave such an orphan. A process table that cannot
  * be read logs a warning and lets the run continue. The read is bounded by `deps.timeout`
  * (seconds) and ends on `deps.signal`. A cancel rejects, so SIGINT still cancels the run.
+ * `deps.flag` names the flag in the messages (`--continue-from` by default). A role that is absent
+ * from `roles` is skipped, so the interactive path passes only the role it resumes.
  * known-limit: the match is by command line, so a holder that does not carry a session flag is not found.
  * @param {object} roles roles keyed by role name, after `restoreSessions`
- * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number }} [deps]
+ * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number, flag?: string, platform?: string }} [deps]
  */
 export async function refuseHeldSessions(roles, deps = {}) {
   await refuseHeldIds(
-    ROLE_KINDS.filter((role) => roles[role].kind === "claude").map((role) => ({
+    ROLE_KINDS.filter((role) => roles[role]?.kind === "claude").map((role) => ({
       role,
       sessionId: roles[role].sessionId,
     })),
-    { ...deps, label: "--continue-from" },
+    { ...deps, label: deps.flag ?? "--continue-from" },
   );
 }
 
