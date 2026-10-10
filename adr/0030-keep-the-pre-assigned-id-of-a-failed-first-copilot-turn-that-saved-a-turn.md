@@ -28,6 +28,19 @@ Issue #642 asks to keep that id without keeping a stale one. Claude solves the s
 
 A bad model or an unsupported effort creates the session directory but no turn. The directory alone cannot show that a session holds a turn. `events.jsonl` with a `user.message` event can.
 
+The adapter reads `events.jsonl` once, right after the child process ends. Issue #679 probed that timing on macOS against a CLI that still writes the session (Copilot CLI 1.0.96-2, macOS 27.2 on Apple silicon, Node.js 26.11.1, `COPILOT_HOME` unset, 2026-10-10). Each probe called `runCopilot` with a fresh role state, a scratch git repository under the system temporary directory, and a separate `AGENT_LOOP_RUNS_ROOT`. The probe killed no process. It listed the processes whose working directory was the scratch repository, and it polled `events.jsonl` every 100 ms for 1.5 s to 5 s after the adapter returned, then read both again at 2 s and 10 s.
+
+| Probe                                                                                       | Runs | Adapter id vs final `events.jsonl`                                                                                                                    | Live process after the adapter returned                                            |
+| ------------------------------------------------------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| First turn, `timeout` from 1 s to 12 s (45 runs, 18 of them in parallel at 5 s)             | 45   | 22 kept no id and the file had no `user.message`. 23 kept the id and the file held `user.message`. The prompt was recorded about 5 s after the spawn. | None at the next poll. The file never changed after the adapter returned.          |
+| First turn, abort signal (cancel) at 3 s, 6 s, 9 s, and 12 s                                | 4    | 1 kept no id and the file had no `user.message` (3 s). 3 kept the id and the file held `user.message`.                                                | The same.                                                                          |
+| `COPILOT_ALLOW_ALL=1` (the prompt runs `sleep 25`): timeout 9 s, 12 s, 16 s and cancel 12 s | 4    | All 4 kept the id and the file held `user.message`.                                                                                                   | At 12 s and 16 s the `sleep` shell was live at the end. It ended with the adapter. |
+| A turn that completed (timeout 15 s and 20 s, one grep prompt)                              | 3    | All kept the confirmed id and the file held `user.message`.                                                                                           | None.                                                                              |
+
+The adapter result matched the final file in every run, and the file never changed after the adapter returned. A timeout or a cancel makes the CLI write `abort` and end within the adapter turn, so a failed turn left `user.message` in `events.jsonl` or no `events.jsonl` at all. The native `copilot` process, its `node` shim, and the tool shell ended with the adapter. The probe did not test which `exec` option causes it. The only process seen after a return was an MCP server child of the CLI, reparented to pid 1, which ended on its own within 0.25 s (once in 56 runs). No process that was alive at 2 s remained. The live process of issue #398 was not reproduced through the adapter. That probe killed the shim pid alone.
+
+Limits of the probe: the adapter passes no `--allow-tool` flag, so the shell tool is denied (`denied-no-approval-rule-and-could-not-request-from-user`) and no tool shell started unless `COPILOT_ALLOW_ALL=1` was set. On a loaded host, some timed-out children ended up to 3.5 s after the timeout, and the adapter returned only after the exit. No other host or CLI version was probed.
+
 A model error in the middle of a model call could not be produced on this host. Its stream ends with no result event, like a kill, so the same file check decides it. The test covers it with an error event in the failed output.
 
 ## Decision
@@ -63,6 +76,7 @@ Andro Marces
 - [Issue #641](https://github.com/andromarces/agent-loops/issues/641)
 - [Issue #642](https://github.com/andromarces/agent-loops/issues/642)
 - [Issue #397](https://github.com/andromarces/agent-loops/issues/397)
+- [Issue #679](https://github.com/andromarces/agent-loops/issues/679)
 - [Pull request #668](https://github.com/andromarces/agent-loops/pull/668)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR 0016: Resume the session of a failed first turn, with a fallback to a new session](0016-resume-a-failed-first-turn-with-a-fallback.md)
