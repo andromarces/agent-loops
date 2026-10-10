@@ -137,7 +137,26 @@ step budget runs out.
    on `PATH` stood for the CLI. A regular file in a real directory passed the check, and the stub ran.
    Four cases were each refused with `sessionMissing`, and no CLI turn started. The cases were a file symlink,
    a directory symlink as the project directory, and a marker with another role. The fourth case was a `cwd` that differs by one character.
-   Not verified: Linux, and a real-session symlink probe. Not verified on Windows: a file symlink, a directory symlink,
+
+   Real-session symlink probe (issue #710). The host was macOS 27.2 (Darwin 27.2.0, arm64), Node v26.11.1, Claude Code 2.1.296, and repository head `6139965`.
+   A real first turn ran in a disposable Git repository under the temporary directory.
+   Command: `claude -p --session-id <id> --model haiku --permission-mode bypassPermissions --output-format json --verbose`, with the prompt `Reply OK. Change no file.` and the marker line.
+   The result was `OK` with `is_error` false. The CLI wrote the session file under `~/.claude/projects`.
+
+   An unchanged `runClaude` then resumed the id with `sessionUnconfirmed` set. Case A used the default store.
+   It resumed the session, and the log showed one CLI start.
+   Cases B and C used a throwaway `CLAUDE_CONFIG_DIR`, with the symlink pointing at the real session.
+
+   B replaced the session file with a symlink. C replaced the project directory with a symlink.
+   Each raised `sessionMissing` with the line `Claude Code session <id> is not verified as owned by this work tree.`
+   Neither case started a CLI.
+   The guard does not follow a symlink. `lstat` reports a symlink for the project directory in C and for the file in B, so `readSessionHead` returns null before any `open`.
+
+   Case D, a regular copy of the real file in the throwaway store, passed the check and started the CLI. The CLI exited 1 in that store.
+   Only the symlink differs between D and B or C, so the symlink caused the refusal.
+   Every result agrees with the adapter. No bug was opened.
+
+   Not verified: Linux. Not verified on Windows: a file symlink, a directory symlink,
    and a drive letter difference for a work tree that no longer exists.
    Not verified: a Claude Code version other than 2.1.284, 2.1.292, 2.1.295, and 2.1.296.
    On the interactive dispatch path, the adapter reports the pre-assigned id to the dispatcher
