@@ -331,6 +331,7 @@ step budget runs out.
     --session-id <fresh uuid>`, with the prompt on stdin. The prompt asked to remember `GUAVA` and
     to run `node -e "setTimeout(function(){},64017)"` with the `Bash` tool. The driver sent
     `SIGKILL` to the `claude` pid 4 s after the `node` timer process appeared in its process tree.
+
     Stdout and stderr were empty, and the exit was by `SIGKILL`. The session file `<id>.jsonl`
     existed, with the prompt and two `assistant` records. The `zsh` shell of the tool call and its
     `node` timer stayed alive with parent pid 1. The driver ended them by pid.
