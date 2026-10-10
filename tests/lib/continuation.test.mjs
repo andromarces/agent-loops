@@ -756,6 +756,24 @@ test("refuseHeldIds reads each process command line once for many distinct ids",
   expect(reads).toBe(1);
 });
 
+// Usefulness: verifies a repeated id, also in another case, gets one lookup per process, so archived state files that repeat one session id do not multiply the matches (#696). A counting set stands in for the ids of a command line.
+test("refuseHeldIds looks a repeated id up once per process", async () => {
+  const lookups = [];
+  const entries = [HELD_ID, HELD_ID, HELD_ID.toUpperCase(), HELD_ID].map((sessionId) => ({
+    role: "worker",
+    sessionId,
+  }));
+  await refuseHeldIds(entries, {
+    platform: "linux",
+    readProcessCommands: async () => [
+      { pid: 1, command: "claude -p" },
+      { pid: 2, command: "claude -p" },
+    ],
+    heldSessionIds: () => ({ has: (id) => lookups.push(id) && false }),
+  });
+  expect(lookups).toEqual([HELD_ID, HELD_ID]);
+});
+
 // Usefulness: verifies a repeated id is checked once and still refuses a holder, so archived state files that repeat one session id do not multiply the work (#696).
 test("refuseHeldIds checks a repeated id once and still refuses its holder", async () => {
   let reads = 0;
