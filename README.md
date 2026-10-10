@@ -185,8 +185,9 @@ a temporary `AGENT_LOOP_HOME` and store (#340):
   second `install` reported `noop` for every file.
 
 The macOS check used Darwin 27.2.0, pnpm 12.10.1, Node v26.11.1, a temporary `HOME` and
-`AGENT_LOOP_HOME`, and a scratch store. Every pnpm command passed `--store-dir`. A
-`pnpm store path` check confirmed the scratch store before the prune (#340):
+`AGENT_LOOP_HOME`, and a scratch store. Every pnpm command that reads or writes a store
+passed `--store-dir`. Only `pnpm --version` ran without it. A `pnpm store path` check
+confirmed the scratch store before the prune (#340):
 
 - `pnpm add @andromarces/agent-loops@0.5.0`, then `pnpm exec agent-loop install --harness claude --yes`,
   rendered `node "<project>/node_modules/@andromarces/agent-loops/src/hook/parent-guard.mjs"`.
