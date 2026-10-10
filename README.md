@@ -146,8 +146,9 @@ name a directory, which now reports nothing to remove instead of an error. See [
 `install` must run from an install whose package location survives an upgrade: a
 global install, a project install, or a linked clone. It writes the package
 location as an absolute path into every entry point and guard, and `npx` and
-`pnpm dlx` place the package in a cache directory that npm or pnpm can delete.
-When it detects its own package root inside that cache, `install` refuses with a
+`pnpm dlx`, `yarn dlx`, and `bunx` place the package in a cache or temporary
+directory that the runner or the system can delete. When it detects its own
+package root inside that directory, `install` refuses with a
 message that asks for a global install first, so it never writes a path that can
 disappear. `uninstall` reads only the manifest and the harness files, so it still
 removes them after the package is gone.

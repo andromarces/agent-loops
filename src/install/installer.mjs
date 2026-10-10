@@ -50,28 +50,46 @@ import {
 } from "./settings.mjs";
 
 // `npx` installs the package under `<npm-cache>/_npx/<hash>/node_modules` and
-// `pnpm dlx` under `<pnpm-home>/dlx/<hash>/<work>/node_modules`. npm or pnpm
-// can delete either directory at any time. A global install, a project
-// `node_modules`, and a linked clone all keep a stable package root.
+// `pnpm dlx` under `<pnpm-home>/dlx/<hash>/<work>/node_modules`. `bunx` installs
+// it under `<tmp>/bunx-<uid>-<package>/node_modules` (the system temp directory,
+// not the bun cache). `yarn dlx` installs it into a zip under
+// `<tmp>/xfs-<id>/dlx-<pid>/.yarn/cache` and deletes that directory when the
+// command ends. The runner or the OS can delete each directory at any time. A
+// global install, a project `node_modules`, and a linked clone all keep a stable
+// package root. Verified on macOS with bun 1.2.20 and yarn 4.9.2 (#207).
 const EPHEMERAL_CACHE_DIRS = new Set(["_npx", "dlx"]);
+const BUNX_TEMP_DIR = /^bunx-[^-]+-./;
+const YARN_DLX_TEMP_DIR = /^dlx-\d+$/;
 const EPHEMERAL_ROOT_MESSAGE =
-  "Refusing to install from an npx or pnpm dlx cache: npm or pnpm can delete it, " +
-  "and the entry points and guards written here would then point at missing " +
-  "files. Install globally first (npm install -g @andromarces/agent-loops or " +
-  "pnpm add -g @andromarces/agent-loops), then run install again.";
+  "Refusing to install from an npx, pnpm dlx, yarn dlx, or bunx cache: the runner " +
+  "or the system can delete it, and the entry points and guards written here would " +
+  "then point at missing files. Install globally first (npm install -g " +
+  "@andromarces/agent-loops or pnpm add -g @andromarces/agent-loops), then run " +
+  "install again.";
 
 /**
- * True when the package root resolves inside an npx or pnpm dlx cache. The
- * cache layout is a `_npx` or `dlx` directory segment, a longer hex hash, and a
- * `node_modules` segment below both, so a path that merely names `dlx` does not
- * match (#205).
+ * True when the package root resolves inside an npx, pnpm dlx, yarn dlx, or bunx
+ * temporary layout. Each layout is a runner directory segment with a
+ * `node_modules` segment below it. npx and pnpm dlx add a longer hex hash after
+ * the segment, so a path that merely names `dlx` does not match (#205, #207).
  */
 export function isEphemeralPackageRoot(packageRoot) {
   const segments = packageRoot.split(/[\\/]+/).filter(Boolean);
-  for (let i = 0; i < segments.length - 2; i++) {
-    if (!EPHEMERAL_CACHE_DIRS.has(segments[i])) continue;
-    if (!/^[0-9a-f]{16,}$/.test(segments[i + 1])) continue;
-    if (segments.slice(i + 2).includes("node_modules")) return true;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const rest = segments.slice(i + 1);
+    if (
+      (BUNX_TEMP_DIR.test(segments[i]) || YARN_DLX_TEMP_DIR.test(segments[i])) &&
+      rest.includes("node_modules")
+    ) {
+      return true;
+    }
+    if (
+      EPHEMERAL_CACHE_DIRS.has(segments[i]) &&
+      /^[0-9a-f]{16,}$/.test(segments[i + 1]) &&
+      rest.slice(1).includes("node_modules")
+    ) {
+      return true;
+    }
   }
   return false;
 }

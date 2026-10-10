@@ -260,6 +260,47 @@ test("install refuses an npx or dlx cache package root", async () => {
   }
 });
 
+// Usefulness: verifies acceptance #207 — install refuses the temporary roots
+// that `bunx` (`<tmp>/bunx-<uid>-<package>/node_modules`) and `yarn dlx`
+// (`<tmp>/xfs-<id>/dlx-<pid>/.yarn/cache/<package>.zip/node_modules`) place the
+// package in, because the runner or the OS can delete them.
+test("install refuses a bunx or yarn dlx temporary package root", async () => {
+  const home = await makeHome();
+  const roots = [
+    join(
+      home,
+      "tmp",
+      "bunx-501-@andromarces",
+      "agent-loops@0.5.0",
+      "node_modules",
+      "@andromarces",
+      "agent-loops",
+    ),
+    join(
+      home,
+      "tmp",
+      "xfs-8de51b90",
+      "dlx-31536",
+      ".yarn",
+      "cache",
+      "@andromarces-agent-loops-npm-0.5.0-67c80bf43c-f9ecf7737e.zip",
+      "node_modules",
+      "@andromarces",
+      "agent-loops",
+    ),
+  ];
+  for (const packageRoot of roots) {
+    const error = await install({ harnesses: ["claude"], home, packageRoot }).then(
+      () => null,
+      (err) => err,
+    );
+    expect(error, packageRoot).toBeInstanceOf(Error);
+    expect(error.message, packageRoot).toMatch(/^Refusing to install.*(bunx|yarn dlx)/);
+    expect(error.message, packageRoot).toMatch(/install globally/i);
+    expect(existsSync(manifestPath(home)), packageRoot).toBe(false);
+  }
+});
+
 // Usefulness: verifies the negative of acceptance #205 — a path that merely
 // contains a `dlx` segment is a normal install root, so the refusal keys on the
 // npx or dlx cache layout and not on the bare directory name.
