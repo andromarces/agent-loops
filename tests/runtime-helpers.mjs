@@ -583,3 +583,129 @@ export function gitWhileDotGitExists(command, args, options) {
     stderr: "fatal: not a git repository (or any of the parent directories): .git",
   };
 }
+
+/**
+ * Rejects when `promise` has not settled within `ms`, so a hung process fails its test with
+ * `label` instead of holding the suite until the test timeout.
+ */
+export async function within(promise, ms, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} did not finish within ${ms} ms.`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const shellQuote = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+
+/**
+ * Calls `probe` until it returns a value other than `undefined`. Rejects at one absolute deadline
+ * of `ms` on a monotonic clock. Each probe races the time that remains, so a probe that never
+ * settles cannot hold the wait past the deadline, and slow I/O or timer delay cannot stretch it.
+ * A result counts only when the probe settled at or before the deadline: a result that arrives
+ * later, even before the timer callback runs, is rejected, and a late settle is ignored.
+ * @returns {Promise<unknown>} the first value that is not `undefined`
+ */
+export async function pollUntil(probe, ms) {
+  const deadline = performance.now() + ms;
+  const expired = Symbol("expired");
+  for (;;) {
+    const pending = Promise.resolve()
+      .then(probe)
+      .then((value) => ({ value, at: performance.now() }));
+    // A late failure of an abandoned probe must not become an unhandled rejection.
+    pending.catch(() => {});
+    let timer;
+    const result = await Promise.race([
+      pending,
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, Math.max(0, deadline - performance.now()), expired);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (result === expired || result.at > deadline) {
+      throw new Error(`The condition was not met within ${ms} ms.`);
+    }
+    if (result.value !== undefined) {
+      return result.value;
+    }
+    if (performance.now() >= deadline) {
+      throw new Error(`The condition was not met within ${ms} ms.`);
+    }
+    await delay(Math.min(25, Math.max(0, deadline - performance.now())));
+  }
+}
+
+/**
+ * Creates a POSIX `ps` shell script from `body` in a new directory under the system temporary
+ * directory. The directory name holds a space, so an unquoted path fails. In the body:
+ *
+ * - `__DIR__` stands for the shell-quoted directory.
+ * - `__STALL__` runs a loop that stalls the read. Every 0.2 s it writes a counter to the heartbeat
+ *   file through a temporary file and a rename, so a reader sees a whole record or none. It checks
+ *   real elapsed time (`date +%s`) and leaves the loop at the ceiling, whatever signal the body
+ *   ignores, then writes the `done` marker. The ceiling is `ceilingSeconds` (default 10). Whole
+ *   seconds of `date` and the 0.2 s sleep make the real ceiling at most `ceilingSeconds + 1` s
+ *   plus 0.2 s.
+ *
+ * The test never signals the shim. The code under test (the `exec` timeout or cancel) must end it,
+ * and the test observes that:
+ *
+ * - `ready()` resolves when the heartbeat holds a whole counter and a newline, and rejects at its
+ *   deadline.
+ * - `heartbeatStopped()` is true when the heartbeat stops changing over 1 s and the `done` marker
+ *   is absent. This is secondary evidence only: a paused live shim, or a shim that exited for an
+ *   unrelated reason, gives the same answer. A test must first assert the production result (the
+ *   read rejected with the expected reason inside the expected bound). Each file read is bounded
+ *   by `ms` (default 5 s).
+ * - `cleanup()` removes the directory. It signals no process, so a shim that a failed test left
+ *   running ends at its ceiling.
+ */
+export async function createPsShim(body, { ceilingSeconds = 10 } = {}) {
+  const dir = await mkdtemp(join(tmpdir(), "ps shim-"));
+  const quoted = shellQuote(dir);
+  const stall = [
+    "__start=$(date +%s)",
+    "__n=0",
+    `while [ $(( $(date +%s) - __start )) -lt ${ceilingSeconds} ]; do`,
+    "  __n=$((__n + 1))",
+    `  echo $__n > ${quoted}/beat.tmp && mv ${quoted}/beat.tmp ${quoted}/beat`,
+    "  sleep 0.2",
+    "done",
+    `echo done > ${quoted}/done`,
+  ].join("\n");
+  // Replacer functions: a replacement string would read `$` sequences.
+  const expanded = body.replaceAll("__STALL__", () => stall).replaceAll("__DIR__", () => quoted);
+  await writeFile(join(dir, "ps"), `#!/bin/sh\n${expanded}\n`, { mode: 0o755 });
+  const readBeat = async () => {
+    const text = await readFile(join(dir, "beat"), "utf8").catch(() => "");
+    return /^\d+\n$/.test(text) ? Number(text) : undefined;
+  };
+  return {
+    dir,
+    ready: (ms = 15_000) => pollUntil(readBeat, ms),
+    async heartbeatStopped(ms = 5000) {
+      const before = await within(readBeat(), ms, "The first heartbeat read");
+      await delay(1000);
+      const done = await within(
+        readFile(join(dir, "done"), "utf8").then(
+          () => true,
+          () => false,
+        ),
+        ms,
+        "The done marker read",
+      );
+      return (
+        before !== undefined &&
+        before === (await within(readBeat(), ms, "The second heartbeat read")) &&
+        !done
+      );
+    },
+    cleanup: () => removePath(dir),
+  };
+}
