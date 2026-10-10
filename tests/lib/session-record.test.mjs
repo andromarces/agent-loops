@@ -2,10 +2,12 @@ import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
+import { symlinkOrSkip } from "../runtime-helpers.mjs";
 import {
   isInside,
   readSessionRecord,
   removeSessionRecord,
+  sessionRecordPath,
   writeSessionRecord,
 } from "../../src/lib/session-record.mjs";
 
@@ -98,4 +100,27 @@ test("isInside counts a path behind a junction inside the directory, whatever it
   expect(await isInside(root, join(root, "jn", "t.json"))).toBe(true);
   expect(await isInside(root, join(dir, "jin", "t.json"))).toBe(true);
   expect(await isInside(root, join(outside, "t.json"))).toBe(false);
+});
+
+// Usefulness: verifies a file symlink outside the directory whose target is inside counts as inside
+// (the write lands there), and a link inside that points outside still counts (path as written).
+test("isInside judges the target of a file symlink as well as the path as written", async (ctx) => {
+  const root = join(dir, "root");
+  const outside = join(dir, "outside");
+  await mkdir(root);
+  await mkdir(outside);
+  await symlinkOrSkip(ctx, join(root, "t.json"), join(outside, "to-inside.json"));
+  await symlinkOrSkip(ctx, join(outside, "t.json"), join(root, "to-outside.json"));
+  expect(await isInside(root, join(outside, "to-inside.json"))).toBe(true);
+  expect(await isInside(root, join(root, "to-outside.json"))).toBe(true);
+  expect(await isInside(root, join(outside, "plain.json"))).toBe(false);
+});
+
+// Usefulness: verifies a link and its target share one session record, so the record the writer
+// keeps for the target is the one a read through the link finds.
+test("a file symlink and its target share one session record path", async (ctx) => {
+  await symlinkOrSkip(ctx, join(dir, "t.json"), join(dir, "link.json"));
+  expect(await sessionRecordPath(join(dir, "link.json"))).toBe(
+    await sessionRecordPath(join(dir, "t.json")),
+  );
 });

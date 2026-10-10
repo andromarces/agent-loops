@@ -42,7 +42,7 @@ import {
   runUninstallCommand,
 } from "./install/commands.mjs";
 import { logWarn, setVerbose } from "./lib/log.mjs";
-import { writeFileAtomic } from "./lib/runstate.mjs";
+import { resolveWriteTarget, writeFileAtomic } from "./lib/runstate.mjs";
 import {
   isInside,
   removeSessionRecord,
@@ -515,8 +515,10 @@ Agents:
   );
 }
 
-function sameFile(a, b) {
-  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+// Compares the write targets, so a file symlink and its target count as one file (#658).
+async function sameFile(a, b) {
+  const [left, right] = await Promise.all([resolveWriteTarget(a), resolveWriteTarget(b)]);
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
 function formatSummary(summary) {
@@ -614,7 +616,7 @@ export async function main(
       // --transcript rewrites its file at exit, so a run that names the file it
       // continues carries the earlier events into the rewrite, then a boundary
       // event that keeps the earlier outcome the rewrite replaces.
-      if (options.transcript && sameFile(options.transcript, options.continueFrom)) {
+      if (options.transcript && (await sameFile(options.transcript, options.continueFrom))) {
         carryEarlierEvents(events, earlier);
       }
     } catch (err) {

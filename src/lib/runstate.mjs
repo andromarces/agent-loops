@@ -19,6 +19,7 @@ import {
   readFile,
   readdir,
   readlink,
+  realpath,
   rename,
   rm,
   stat,
@@ -878,13 +879,19 @@ async function removeTemp(path) {
 // Same hop limit as the common kernel symlink limit.
 const MAX_LINK_HOPS = 40;
 
-// Follows a chain of file symlinks to the path that holds the content. A rename
-// over a symlink replaces the link itself, so the write must land at the final
-// target. `readlink` works on a dangling link, where `realpath` fails. A path
-// that is no link or does not exist resolves to itself (#658).
-async function resolveFileLink(file) {
-  let current = file;
+/**
+ * The path that a write to `file` lands at: the final target of a chain of file symlinks, which a
+ * rename over a link would replace instead (#658). Each hop resolves the real directory of the link
+ * first, so a relative target reached through a directory link means what the OS means. `readlink`
+ * works on a dangling link, where `realpath` fails. A path that is no link or does not exist
+ * resolves to itself. Every guard that judges where a write lands must use this path, so the guard
+ * and the writer agree. A loop fails with `ELOOP`.
+ */
+export async function resolveWriteTarget(file) {
+  let current = resolve(file);
   for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
+    const dir = await realpath(dirname(current)).catch(() => dirname(current));
+    current = join(dir, basename(current));
     let target;
     try {
       target = await readlink(current);
@@ -894,7 +901,7 @@ async function resolveFileLink(file) {
       }
       throw err;
     }
-    current = resolve(dirname(current), target);
+    current = resolve(dir, target);
   }
   throw Object.assign(new Error(`Too many levels of symbolic links: ${file}`), { code: "ELOOP" });
 }
@@ -908,7 +915,7 @@ async function resolveFileLink(file) {
 // lock temp, so the guard removes it and keeps the original error as the one
 // that surfaces (#353).
 export async function writeFileAtomic(file, text) {
-  const destination = await resolveFileLink(file);
+  const destination = await resolveWriteTarget(file);
   const temp = `${destination}.${process.pid}.${stateTempCounter++}.tmp`;
   try {
     await writeFile(temp, text, "utf8");

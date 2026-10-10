@@ -1,18 +1,9 @@
-import {
-  lstat,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  readlink,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { writeFileAtomic } from "../../src/lib/runstate.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath, symlinkOrSkip } from "../runtime-helpers.mjs";
 
 let dir;
 
@@ -26,21 +17,10 @@ afterEach(async () => {
   await removePath(dir);
 });
 
-async function link(target, path, ctx) {
-  try {
-    await symlink(target, path);
-  } catch (err) {
-    // A Windows host without symlink privilege refuses the call.
-    if (err?.code === "EPERM") ctx.skip();
-    throw err;
-  }
-}
-
-// Usefulness: verifies a dangling file symlink keeps its link and the write lands at the target
-// (issue #658); a rename over the link would replace the link itself.
+// Usefulness: verifies a dangling file symlink keeps its link and the write lands at the target (#658).
 test("writeFileAtomic writes through a dangling file symlink and keeps the link", async (ctx) => {
   const path = join(dir, "repo", "t.json");
-  await link(join("..", "outdir", "t.json"), path, ctx);
+  await symlinkOrSkip(ctx, join("..", "outdir", "t.json"), path);
   await writeFileAtomic(path, "data");
   expect((await lstat(path)).isSymbolicLink()).toBe(true);
   expect(await readlink(path)).toBe(join("..", "outdir", "t.json"));
@@ -54,7 +34,7 @@ test("writeFileAtomic writes through an existing file symlink and keeps the link
   const path = join(dir, "repo", "t.json");
   const target = join(dir, "outdir", "t.json");
   await writeFile(target, "old");
-  await link(target, path, ctx);
+  await symlinkOrSkip(ctx, target, path);
   await writeFileAtomic(path, "new");
   expect((await lstat(path)).isSymbolicLink()).toBe(true);
   expect(await readFile(target, "utf8")).toBe("new");
@@ -64,8 +44,8 @@ test("writeFileAtomic writes through an existing file symlink and keeps the link
 test("writeFileAtomic follows a chain of file symlinks", async (ctx) => {
   const first = join(dir, "repo", "a.json");
   const second = join(dir, "repo", "b.json");
-  await link("b.json", first, ctx);
-  await link(join("..", "outdir", "c.json"), second, ctx);
+  await symlinkOrSkip(ctx, "b.json", first);
+  await symlinkOrSkip(ctx, join("..", "outdir", "c.json"), second);
   await writeFileAtomic(first, "data");
   expect((await lstat(first)).isSymbolicLink()).toBe(true);
   expect((await lstat(second)).isSymbolicLink()).toBe(true);
@@ -76,8 +56,21 @@ test("writeFileAtomic follows a chain of file symlinks", async (ctx) => {
 test("writeFileAtomic rejects a symlink loop and keeps the links", async (ctx) => {
   const first = join(dir, "repo", "a.json");
   const second = join(dir, "repo", "b.json");
-  await link("b.json", first, ctx);
-  await link("a.json", second, ctx);
+  await symlinkOrSkip(ctx, "b.json", first);
+  await symlinkOrSkip(ctx, "a.json", second);
   await expect(writeFileAtomic(first, "data")).rejects.toMatchObject({ code: "ELOOP" });
   expect((await lstat(first)).isSymbolicLink()).toBe(true);
+});
+
+// Usefulness: verifies a relative link target resolves against the real directory of the link, not
+// the directory path as written, when the link is reached through a directory symlink.
+test("writeFileAtomic resolves a relative target against the real directory of the link", async (ctx) => {
+  const deep = join(dir, "real", "deep");
+  await mkdir(deep, { recursive: true });
+  await mkdir(join(dir, "x"));
+  await symlinkOrSkip(ctx, join("..", "t.json"), join(deep, "link.json"));
+  await symlinkOrSkip(ctx, deep, join(dir, "x", "alias"), "dir");
+  await writeFileAtomic(join(dir, "x", "alias", "link.json"), "data");
+  expect(await readFile(join(dir, "real", "t.json"), "utf8")).toBe("data");
+  expect(await readdir(join(dir, "x"))).toEqual(["alias"]);
 });
