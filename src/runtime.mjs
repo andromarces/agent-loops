@@ -28,6 +28,7 @@ const PREAMBLE_ONLY_TASK =
  */
 async function invoke({ agents, state, roleName, prompt, opts, onEvent, stepsUsed }) {
   delete state.usage;
+  delete state.shellDenied;
   const emit = (status) => {
     const event = { type: "invocation", role: roleName, status, stepsUsed };
     if (state.usage) {
@@ -257,10 +258,13 @@ export async function runChild(options) {
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
     throwIfCanceled(signal, roleName);
+    // An adapter sets `shellDenied` when the turn reported a refused tool call (ADR 0035).
+    const shellDenied = role.shellDenied === true;
     return {
       role: roleName,
       status: "ok",
       response,
+      ...(shellDenied ? { shellDenied } : {}),
       ...(reviewed ? { reviewed } : {}),
       ...(prChecks ? { prChecks } : {}),
       ...(testRun ? { testRun } : {}),
@@ -299,6 +303,7 @@ export async function runChild(options) {
     };
   } finally {
     if (!keepReplacedMark) delete role.conversationReplaced;
+    delete role.shellDenied;
   }
 }
 

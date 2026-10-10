@@ -1864,3 +1864,26 @@ test("the state file marks a pre-assigned id unconfirmed until the turn confirms
   expect(after.sessionId).toBe("pre-2");
   expect(after.sessionUnconfirmed).toBeUndefined();
 });
+
+// Usefulness: verifies requirement "a denied shell call shows in the result of the turn" (issue #713) at the envelope: the parent sees `shellDenied`, and the role state keeps no stale flag.
+test("worker dispatch carries shellDenied in the envelope when the adapter flags a denied shell call", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const worker = recordingAdapter([]);
+  worker.run = async (state) => {
+    state.sessionId = "sess-denied";
+    state.shellDenied = true;
+    return REPORT;
+  };
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.status).toBe("ok");
+  expect(result.payload.shellDenied).toBe(true);
+  expect((await readRepoState(repo)).roles.worker).not.toHaveProperty("shellDenied");
+});

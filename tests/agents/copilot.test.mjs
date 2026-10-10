@@ -1117,3 +1117,52 @@ test.for([
     expect(exec).not.toHaveBeenCalled();
   });
 });
+
+const DENIAL_TEXT = "Permission denied because no interactive user response was available.";
+
+// Usefulness: verifies requirement "a denied shell call shows in the result of the turn" (issue #713): the turn stays ok and its result flags the denial, which no other field carries.
+test("copilot worker result flags a turn whose assistant text reports a denied shell call", async () => {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      `{"type":"assistant.message","data":{"content":${JSON.stringify(`The command failed: ${DENIAL_TEXT}`)}}}`,
+      '{"type":"result","sessionId":"copilot-sess-1","exitCode":0}',
+    ].join("\n"),
+    stderr: "",
+  });
+  const role = { kind: "copilot", sessionId: "copilot-sess-1", model: null, effort: null };
+
+  const result = await runChild({ role, roleName: "worker", prompt: "run tests", cwd: "/dir" });
+
+  expect(result.status).toBe("ok");
+  expect(result.shellDenied).toBe(true);
+  expect(role.shellDenied).toBeUndefined();
+});
+
+// Usefulness: verifies the flag does not appear on a turn with no denial, and that a flag from an earlier turn does not carry over.
+test("copilot worker result carries no denial flag after a turn with no denial", async () => {
+  vi.mocked(exec).mockReset();
+  vi.mocked(exec)
+    .mockResolvedValueOnce({
+      stdout: [
+        `{"type":"assistant.message","data":{"content":${JSON.stringify(DENIAL_TEXT)}}}`,
+        '{"type":"result","sessionId":"copilot-sess-1","exitCode":0}',
+      ].join("\n"),
+      stderr: "",
+    })
+    .mockResolvedValueOnce({
+      stdout: [
+        '{"type":"assistant.message","data":{"content":"all tests pass"}}',
+        '{"type":"result","sessionId":"copilot-sess-1","exitCode":0}',
+      ].join("\n"),
+      stderr: "",
+    });
+  const role = { kind: "copilot", sessionId: "copilot-sess-1", model: null, effort: null };
+
+  const first = await runChild({ role, roleName: "worker", prompt: "run tests", cwd: "/dir" });
+  const second = await runChild({ role, roleName: "worker", prompt: "again", cwd: "/dir" });
+
+  expect(first.shellDenied).toBe(true);
+  expect(second.status).toBe("ok");
+  expect(second).not.toHaveProperty("shellDenied");
+});

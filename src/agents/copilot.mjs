@@ -18,6 +18,8 @@ import {
 
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SESSION_HEAD_BYTES = 256 * 1024;
+// Text Copilot returns for a tool call that `--no-ask-user` leaves without an approval (issue #713).
+const SHELL_DENIAL_TEXT = "Permission denied because no interactive user response was available";
 
 /**
  * True when Copilot saved a turn under `id`: `events.jsonl` of the session is a regular file whose
@@ -89,6 +91,9 @@ async function keepSavedPreassignedId(state, sessionId, error, cwd) {
  * the next worker turn carries its preamble. A resume of an unconfirmed id first checks that the
  * session holds a turn, and a missing one raises a `sessionMissing` error before any CLI starts, so
  * the runtime reruns the turn as a first turn. A result or a reported id clears the mark.
+ * A turn whose assistant text holds the denial text of a refused tool call sets
+ * `state.shellDenied` for the runtime to report (issue #713, ADR 0035). known-limit: a denial that
+ * the text does not repeat is not flagged, because no recorded event stream shows the denial.
  */
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
@@ -188,6 +193,11 @@ export async function runCopilot(state, prompt, options = {}) {
 
   if (messages.length === 0) {
     throw new Error("Copilot did not return response text.");
+  }
+
+  if (messages.some((message) => message.includes(SHELL_DENIAL_TEXT))) {
+    state.shellDenied = true;
+    logWarn("Copilot refused a tool call for lack of an interactive approval");
   }
 
   if (returnedId !== sessionId) {
