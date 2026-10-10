@@ -1,13 +1,17 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { expect, test } from "vite-plus/test";
+import { delimiter, join } from "node:path";
+import { execa } from "execa";
+import { expect, test, vi } from "vite-plus/test";
 import { pidAlive } from "../src/lib/runstate.mjs";
 import {
+  BOUND_KILL_TEST_TIMEOUT_MS,
   cleanRepoGit,
   createPsShim,
   deadPid,
+  expectBoundKillsShim,
   pollUntil,
   untrackedFilesGit,
   within,
@@ -122,4 +126,42 @@ test.skipIf(process.platform === "win32")(
     }
   },
   30_000,
+);
+
+// Usefulness: acceptance (#670) — cleanup after a failed kill check must end the shim child and free
+// its directory without a signal to a pid that a file supplied. A pid that a file names can belong to
+// an unrelated process once the shim exits, so a SIGKILL read from the record is the defect.
+test(
+  "expectBoundKillsShim ends a surviving shim without signalling a recorded pid",
+  async () => {
+    const kill = vi.spyOn(process, "kill");
+    let held;
+    let shimDir;
+    let pid;
+    try {
+      const failure = await expectBoundKillsShim("leftover-shim", async () => {
+        shimDir = process.env.PATH.split(delimiter)[0];
+        held = execa("leftover-shim", { reject: false });
+        pid = await pollUntil(async () => {
+          const text = await readFile(join(shimDir, "started.txt"), "utf8").catch(() => "");
+          return text === "" ? undefined : Number(text);
+        }, 10_000);
+      }).then(
+        () => undefined,
+        (error) => error,
+      );
+      expect(failure?.message).toMatch(/outlived the 1000 ms force-kill boundary/);
+      const signals = kill.mock.calls.filter(([, signal]) => signal !== 0 && signal !== undefined);
+      expect(signals).toEqual([]);
+      await pollUntil(() => (pidAlive(pid) ? undefined : true), 10_000);
+      expect(existsSync(shimDir)).toBe(false);
+    } finally {
+      kill.mockRestore();
+      // The shim ends itself on the stop file, so the handle is only released here. It is not
+      // awaited: a killed wrapper can leave its pipes open.
+      held?.catch(() => {});
+      held?.kill("SIGKILL");
+    }
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
 );
