@@ -162,9 +162,12 @@ the installed package before using it.
   `install` writes it.
 - A pnpm 10 install puts its store directory beside the `node_modules` it links the
   package under, which `pnpm root -g` reports, so `install` writes that link.
-- A pnpm 12 project install links the package from a global store whose path names
-  no project, so `install` writes the project link instead, which the bin shim calls.
-  The project `node_modules/.pnpm` directory holds no store entry there.
+- A pnpm 12 project install on Windows links the package from a global store whose path
+  names no project. The project `node_modules/.pnpm` directory holds no store entry there.
+  `install` writes the project link instead, which the bin shim calls.
+- A pnpm 12 project install on macOS links the package into the project
+  `node_modules/.pnpm` directory, which holds a version-named entry. `install` writes the
+  project link there too, so the rendered path carries no version.
 
 An upgrade repoints every one of them. An npm global install, a clone, and a linked
 package have no version in their root and render unchanged, and so does any layout
@@ -181,20 +184,19 @@ a temporary `AGENT_LOOP_HOME` and store (#340):
   the old one. The rendered hook path still existed and ran with exit code 0, and a
   second `install` reported `noop` for every file.
 
-The same layout was checked on macOS (Darwin 27.2.0) with pnpm 12.10.1, Node v26.11.1,
-a temporary `HOME` and `AGENT_LOOP_HOME`, and a store passed as `--store-dir` on every pnpm
-command (#340):
+The macOS check used Darwin 27.2.0, pnpm 12.10.1, Node v26.11.1, a temporary `HOME` and
+`AGENT_LOOP_HOME`, and a scratch store. Every pnpm command passed `--store-dir`. A
+`pnpm store path` check confirmed the scratch store before the prune (#340):
 
 - `pnpm add @andromarces/agent-loops@0.5.0`, then `pnpm exec agent-loop install --harness claude --yes`,
   rendered `node "<project>/node_modules/@andromarces/agent-loops/src/hook/parent-guard.mjs"`.
-  No store path appears in it. The `node_modules/.pnpm` directory of the project holds
-  the version-named entry that the link points to, and the rendered path does not use it.
-  Version 0.4.0, which predates the project link, renders that version-named path.
-- `pnpm add <0.5.1 tarball>` replaced the link target, and `pnpm store prune` removed the old
-  store files. The rendered hook path still existed and ran with exit code 0, and a second
-  `install` reported `noop` for every file.
-- pnpm 12.10.1 ignores `npm_config_store_dir`. Pass `--store-dir` to every pnpm command,
-  including `pnpm store prune`.
+  No store path appears in it. The hook file existed and the hook exited with code 0.
+- Version 0.4.0, which predates the project link, rendered
+  `node "<project>/node_modules/.pnpm/@andromarces+agent-loops@0.4.0/node_modules/@andromarces/agent-loops/src/hook/parent-guard.mjs"`.
+- `pnpm add <0.5.1 tarball>` moved the project link to a new `node_modules/.pnpm` entry.
+  `pnpm store prune` then reported `Removed 382 files (2183484 bytes)` and
+  `Removed 21 packages`. The rendered hook path still existed and exited with code 0.
+  A second `install` reported `noop` for both files.
 
 Not verified:
 
