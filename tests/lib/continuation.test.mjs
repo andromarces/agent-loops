@@ -735,3 +735,63 @@ test("refuseHeldIds refuses a holder by argument and passes a path that contains
   await expect(check(`tail -f /logs/${HELD_ID}.log`, "linux")).resolves.toBeUndefined();
   await expect(check(`claude -p --resume ${HELD_ID}-copy`, "win32")).resolves.toBeUndefined();
 });
+
+// Usefulness: verifies the check reads and tokenizes each process command line once however many ids it matches, so the cost does not grow with ids times processes (#696). A counting getter stands in for the read of the command line.
+test("refuseHeldIds reads each process command line once for many distinct ids", async () => {
+  let reads = 0;
+  const table = [
+    {
+      pid: 4242,
+      get command() {
+        reads += 1;
+        return "claude -p";
+      },
+    },
+  ];
+  const entries = ["1", "2", "3", "4"].map((n) => ({
+    role: "worker",
+    sessionId: `${n.repeat(8)}-2222-4333-8444-555555555555`,
+  }));
+  await refuseHeldIds(entries, { platform: "linux", readProcessCommands: async () => table });
+  expect(reads).toBe(1);
+});
+
+// Usefulness: verifies a repeated id, also in another case, gets one lookup per process, so archived state files that repeat one session id do not multiply the matches (#696). A counting set stands in for the ids of a command line.
+test("refuseHeldIds looks a repeated id up once per process", async () => {
+  const lookups = [];
+  const entries = [HELD_ID, HELD_ID, HELD_ID.toUpperCase(), HELD_ID].map((sessionId) => ({
+    role: "worker",
+    sessionId,
+  }));
+  await refuseHeldIds(entries, {
+    platform: "linux",
+    readProcessCommands: async () => [
+      { pid: 1, command: "claude -p" },
+      { pid: 2, command: "claude -p" },
+    ],
+    heldSessionIds: () => ({ has: (id) => lookups.push(id) && false }),
+  });
+  expect(lookups).toEqual([HELD_ID, HELD_ID]);
+});
+
+// Usefulness: verifies a repeated id is checked once and still refuses a holder, so archived state files that repeat one session id do not multiply the work (#696).
+test("refuseHeldIds checks a repeated id once and still refuses its holder", async () => {
+  let reads = 0;
+  const table = [
+    {
+      pid: 4242,
+      get command() {
+        reads += 1;
+        return "claude -p";
+      },
+    },
+  ];
+  const repeated = Array.from({ length: 5 }, () => ({ role: "worker", sessionId: HELD_ID }));
+  await refuseHeldIds(repeated, { platform: "linux", readProcessCommands: async () => table });
+  expect(reads).toBe(1);
+
+  const holder = [{ pid: 4343, command: `claude -p --resume ${HELD_ID.toUpperCase()}` }];
+  await expect(
+    refuseHeldIds(repeated, { platform: "linux", readProcessCommands: async () => holder }),
+  ).rejects.toThrow("process 4343");
+});

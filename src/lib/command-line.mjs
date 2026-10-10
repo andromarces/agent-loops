@@ -61,7 +61,7 @@ export function splitWindowsArguments(command) {
 const SESSION_FLAGS = ["--session-id", "--resume", "-r"];
 
 /**
- * True when `command` holds the session `id` through a session flag, compared without case: an
+ * The lower-case ids that `command` holds through a session flag: an
  * argument `--session-id`, `--resume`, or `-r` immediately followed by an argument equal to the id,
  * or one argument `--session-id=<id>`, `--resume=<id>`, or `-r=<id>`. The adapter passes the id
  * only so, as `--resume <id>` or `--session-id <id>` (`src/agents/claude.mjs`). A bare id argument,
@@ -76,17 +76,33 @@ const SESSION_FLAGS = ["--session-id", "--resume", "-r"];
  * that sit inside one argument that holds spaces, for example a prompt text, count as a holder,
  * which refuses a run on the safe side.
  * @param {string} command
+ * @param {string} platform a `process.platform` value
+ * @returns {Set<string>} the ids in lower case, from one tokenization of `command`
+ */
+export function heldSessionIds(command, platform) {
+  const args = (platform === "win32" ? splitWindowsArguments(command) : command.split(/\s+/)).map(
+    (arg) => arg.toLowerCase(),
+  );
+  const ids = new Set();
+  args.forEach((arg, i) => {
+    if (SESSION_FLAGS.includes(arg)) {
+      if (i + 1 < args.length) ids.add(args[i + 1]);
+      return;
+    }
+    for (const flag of SESSION_FLAGS) {
+      if (arg.startsWith(`${flag}=`)) ids.add(arg.slice(flag.length + 1));
+    }
+  });
+  return ids;
+}
+
+/**
+ * True when `command` holds the session `id` through a session flag, compared without case. The
+ * rules are those of `heldSessionIds`.
+ * @param {string} command
  * @param {string} id a UUID
  * @param {string} platform a `process.platform` value
  */
 export function holdsSession(command, id, platform) {
-  const args = (platform === "win32" ? splitWindowsArguments(command) : command.split(/\s+/)).map(
-    (arg) => arg.toLowerCase(),
-  );
-  const wanted = id.toLowerCase();
-  return args.some(
-    (arg, i) =>
-      SESSION_FLAGS.some((flag) => arg === `${flag}=${wanted}`) ||
-      (SESSION_FLAGS.includes(arg) && args[i + 1] === wanted),
-  );
+  return heldSessionIds(command, platform).has(id.toLowerCase());
 }
