@@ -777,9 +777,7 @@ test("resume-interrupted from dispatched marks interrupted first and runs no chi
   expect(resumedState.resumeDecision).toBeTruthy();
 });
 
-// Usefulness: verifies `--resume-interrupted` refuses, before the step is charged, a claude session
-// that a live process holds, the orphan that a hard kill of the dispatch leaves (#671, ADR 0029). No
-// other test reaches the holder check on the resume path. A later resume with no holder succeeds.
+// Usefulness: verifies `--resume-interrupted` refuses a claude session that a live process holds, before the step is charged (#671, ADR 0031), which no other test covers.
 test("resume-interrupted refuses a claude session that a live process holds", async () => {
   await setup();
   const repo = await createTempRepo();

@@ -431,6 +431,8 @@ Abort only when a non-terminal run exists at the refused \`--cwd\`. With no run 
 One rule covers every refused \`--cwd\`: a path that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost all report \`--cwd must be inside a Git work tree: <path>\`, so the reason names that path and that message.
 A headless run cannot act on a refused \`--cwd\`: the runtime snapshots its \`--cwd\` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure, and no turn of yours runs after it. A maintainer decides whether to recreate the work tree and start a new run.
 
+\`dispatch --resume-interrupted\` exits 1 and names the process when a live process still holds the Claude session of the role. Do not end that process. The maintainer ends it or waits for it.
+
 User Task:
 ${task}
 `.trim();
