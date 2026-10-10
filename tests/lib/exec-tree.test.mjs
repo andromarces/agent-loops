@@ -8,7 +8,6 @@ import { removePath } from "../runtime-helpers.mjs";
 
 const EXEC_TREE_URL = new URL("../../src/lib/exec-tree.mjs", import.meta.url).href;
 const EXECA_URL = import.meta.resolve("execa");
-
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -47,7 +46,7 @@ async function runToExit(script) {
   expect(await waitUntil(() => !isAlive(parentPid), 30000)).toBe(true);
 }
 
-// Usefulness: acceptance (#612) — a parent that exits through `process.exit` while a nested `pnpm`
+// Usefulness: acceptance (#612) — a parent that exits through `process.exit` while a nested
 // run is live leaves no process of that run. Windows `taskkill /T` cannot find the descendants of a
 // process that already exited, and execa cleanup starts it without waiting, so only a kill that
 // finishes inside the exit handler covers this row. Not redundant: the timeout row is covered by
@@ -57,30 +56,45 @@ test("a parent that exits with a nested run live leaves no process of that run",
   let nestedPid;
   try {
     const pidFile = join(dir, "nested.pid");
-    // The nested process records its pid, then stays alive. `pnpm exec` puts launcher processes
-    // between the direct child and it, as in the nested vp run of issue #612.
+    // The shell starts the child, and the child starts a grandchild that records its pid. The chain
+    // is as deep as the nested `pnpm exec vp` run of issue #612, and a plain child with no shell
+    // does not show the defect. Both processes end on their own after 60 s if a failure leaves them.
     await writeFile(
       join(dir, "hang.cjs"),
       [
         'require("node:fs").writeFileSync(process.argv[2], String(process.pid));',
-        "setInterval(() => {}, 1000);",
+        "setTimeout(() => {}, 60000);",
       ].join("\n"),
     );
-    const nested = ["exec", "node", join(dir, "hang.cjs"), pidFile];
+    await writeFile(
+      join(dir, "child.cjs"),
+      [
+        'const { spawn } = require("node:child_process");',
+        'spawn(process.execPath, [process.argv[2], process.argv[3]], { stdio: "ignore" });',
+        "setTimeout(() => {}, 60000);",
+      ].join("\n"),
+    );
+    const command = [process.execPath, join(dir, "child.cjs"), join(dir, "hang.cjs"), pidFile]
+      .map((part) => `"${part}"`)
+      .join(" ");
+    const failedFile = join(dir, "failed.txt");
     await writeFile(
       join(dir, "parent.mjs"),
       [
         `import { execa } from ${JSON.stringify(EXECA_URL)};`,
         `import { killTreeOnExit } from ${JSON.stringify(EXEC_TREE_URL)};`,
-        'import { existsSync } from "node:fs";',
-        `const run = killTreeOnExit(execa("pnpm", ${JSON.stringify(nested)}, { cwd: ${JSON.stringify(dir)}, reject: false, cleanup: true, killDescendants: true }));`,
-        "run.catch(() => {});",
+        'import { existsSync, writeFileSync } from "node:fs";',
+        `const run = killTreeOnExit(execa(${JSON.stringify(command)}, { shell: true, cwd: ${JSON.stringify(dir)}, reject: false, cleanup: true, killDescendants: true }));`,
+        // The nested run ended before it recorded a pid: report why, so a CI failure names the cause.
+        `run.then((r) => { if (!existsSync(${JSON.stringify(pidFile)})) { writeFileSync(${JSON.stringify(failedFile)}, String(r.shortMessage ?? r.message ?? r.exitCode)); process.exit(3); } });`,
         `setInterval(() => { if (existsSync(${JSON.stringify(pidFile)})) process.exit(0); }, 50);`,
         "setTimeout(() => process.exit(2), 20000);",
       ].join("\n"),
     );
 
     await runToExit(join(dir, "parent.mjs"));
+    const failed = await readFile(failedFile, "utf8").catch(() => "");
+    expect(failed).toBe("");
 
     nestedPid = Number(await readFile(pidFile, "utf8"));
     expect(await waitUntil(() => !isAlive(nestedPid), 8000)).toBe(true);
