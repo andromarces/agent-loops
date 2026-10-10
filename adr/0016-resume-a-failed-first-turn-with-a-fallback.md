@@ -323,11 +323,50 @@ step budget runs out.
     relies on the pre-assigned id.
 
   - Result: no probe contradicts the adapter. The Copilot result repeats issue #642, which ADR 0030 resolves.
-  - Not verified, Claude format: this probe did not verify a kill under the Claude adapter
-    format `--output-format json` on Claude Code 2.1.296. The Claude probe used `stream-json`.
-  - Not verified, other cases: this probe did not verify Linux, or Windows for the agy and Claude
-    cases. It did not verify a model error in the middle of a Copilot turn. It did not verify a
-    kill of the native `copilot` process instead of the shim.
+  - Claude, kill under the adapter format: issue #675 repeated the kill on macOS 27.2 (arm64) with
+    Node v26.11.1 and Claude Code 2.1.296, in a disposable Git repository in the system temporary
+    directory. The command was `claude -p --allowedTools Bash --model haiku --output-format json
+    --verbose --session-id <fresh uuid>`, with the prompt on stdin. The prompt asked to remember
+    `GUAVA` and to run `node -e "setTimeout(function(){},64017)"` with the `Bash` tool. The driver
+    sent `SIGKILL` to the `claude` pid 4 s after the `node` timer process appeared in its process
+    tree. Stdout and stderr were empty, and the exit was by `SIGKILL`. The session file
+    `<id>.jsonl` existed, with the prompt and two `assistant` records. The `zsh` shell of the tool
+    call and its `node` timer stayed alive with parent pid 1. The driver ended them by pid.
+
+    The resume command was `claude -p --model haiku --output-format json --verbose --resume
+    <id>`. It exited 0. Its `init` and `result` events carried the same id. The answer was `The
+    word was GUAVA. The timer command's result is unknown because the session ended before its
+    outcome was recorded, so I can't confirm it finished.`. The result matches the `stream-json`
+    probe. The adapter keeps the pre-assigned id on this kill, and the id resumes.
+
+  - Copilot, kill of the native process: issue #675 repeated the Copilot kill on macOS 27.2
+    (arm64) with Node v26.11.1 and Copilot CLI 1.0.96-2 (native package
+    `@github/copilot-darwin-arm64` 1.0.96-1). The `copilot` command is a shell script that runs a
+    Node loader (`npm-loader.js`), and the loader starts the native binary. The command was
+    `copilot -s --no-ask-user --output-format json --allow-all-tools --session-id <fresh uuid>`,
+    with the prompt on stdin: remember `MANGO`, then run `sleep 61; echo hi`. The driver took the
+    pid of the native `copilot` child of the loader pid, and sent `SIGKILL` to it 3 s after the
+    first `tool.execution_start` event.
+
+    The loader exited with code 1, not by a signal, 0.2 s after the signal. Stdout held no
+    `result` event. Stderr read `GitHub Copilot native binary at <path> was terminated by signal
+    SIGKILL.` and `GitHub Copilot CLI: no platform package found. Reinstall with ...`. The second
+    line misleads. The `bash` tool shell and its `sleep` stayed alive with parent pid 1 in their
+    own process group, and were still alive 8 s later. The driver ended them by pid. The session
+    file `events.jsonl` held `user.message` and `tool.execution_start` (`bash`) events and nothing
+    after the signal.
+
+    The resume used the same `--session-id`. It exited 0, echoed the id in its `result` event,
+    and answered `MANGO; the sleep command did not finish.`. The result matches the kill of the
+    loader pid and the Windows probe of issue #641. ADR 0030 applies: a non-zero exit, no
+    `result` event, and a `user.message` event in `events.jsonl` keep the id. The tool shell that
+    outlives the native process belongs to the process cleanup gap that issue #679 probes.
+
+  - Result of issue #675: no probe contradicts the adapter, so no bug was opened.
+  - Not verified, other cases: no Linux host and no Windows host was available in issue #675, so
+    Linux, and Windows for the agy and Claude kill cases, stay unverified. The Windows probe stays
+    open for the Windows collaborator. A model error in the middle of a Copilot turn is out of
+    scope (issue #642).
 
 - A worker resumed after a failed first turn receives no second preamble. The failed turn
   carried it, and the CLI saved it with the session.
@@ -364,6 +403,7 @@ Andro Marces
 - [Issue #396](https://github.com/andromarces/agent-loops/issues/396)
 - [Issue #398](https://github.com/andromarces/agent-loops/issues/398)
 - [Pull request #663](https://github.com/andromarces/agent-loops/pull/663)
+- [Issue #675](https://github.com/andromarces/agent-loops/issues/675)
 - [Issue #564](https://github.com/andromarces/agent-loops/issues/564)
 - [Issue #565](https://github.com/andromarces/agent-loops/issues/565)
 - [Issue #580](https://github.com/andromarces/agent-loops/issues/580)
