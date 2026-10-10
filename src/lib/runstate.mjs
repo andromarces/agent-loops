@@ -910,6 +910,36 @@ async function removeTemp(path) {
 // Same hop limit as the common kernel symlink limit.
 const MAX_LINK_HOPS = 40;
 
+const ASYNC_FS = { realpath, readlink };
+const SYNC_FS = { realpath: realpathSync, readlink: readlinkSync };
+
+// The one traversal behind `resolveWriteTarget` and `resolveWriteTargetSync`. It yields each fs
+// step as `{ op, path }`. The driver runs the step and sends back the result, or throws the error
+// into the generator, so only the fs calls differ between the async and the sync resolver.
+function* traverseWriteTarget(file) {
+  let current = resolve(file);
+  for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
+    let dir;
+    try {
+      dir = yield { op: "realpath", path: dirname(current) };
+    } catch {
+      dir = resolve(dirname(current));
+    }
+    current = join(dir, basename(current));
+    let target;
+    try {
+      target = yield { op: "readlink", path: current };
+    } catch (err) {
+      if (["EINVAL", "ENOENT", "ENOTDIR"].includes(err.code)) {
+        return current;
+      }
+      throw err;
+    }
+    current = isAbsolute(target) ? target : `${dir}${sep}${target}`;
+  }
+  throw Object.assign(new Error(`Too many levels of symbolic links: ${file}`), { code: "ELOOP" });
+}
+
 /**
  * The path that a write to `file` lands at: the final target of a chain of file symlinks, which a
  * rename over a link would replace instead (#658). Each hop resolves the real directory of the link
@@ -921,22 +951,16 @@ const MAX_LINK_HOPS = 40;
  * loop fails with `ELOOP`.
  */
 export async function resolveWriteTarget(file) {
-  let current = resolve(file);
-  for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
-    const dir = await realpath(dirname(current)).catch(() => resolve(dirname(current)));
-    current = join(dir, basename(current));
-    let target;
+  const steps = traverseWriteTarget(file);
+  let step = steps.next();
+  while (!step.done) {
     try {
-      target = await readlink(current);
+      step = steps.next(await ASYNC_FS[step.value.op](step.value.path));
     } catch (err) {
-      if (["EINVAL", "ENOENT", "ENOTDIR"].includes(err.code)) {
-        return current;
-      }
-      throw err;
+      step = steps.throw(err);
     }
-    current = isAbsolute(target) ? target : `${dir}${sep}${target}`;
   }
-  throw Object.assign(new Error(`Too many levels of symbolic links: ${file}`), { code: "ELOOP" });
+  return step.value;
 }
 
 // Writes `text` to `file` atomically: a private temp file in the same directory
@@ -959,30 +983,18 @@ export async function writeFileAtomic(file, text) {
   }
 }
 
-// Synchronous twin of `resolveWriteTarget`: the same hops, the same `ELOOP`, and the same result
-// for a dangling link, a missing path, and a path that is no link. Keep the two in step.
+// Synchronous twin of `resolveWriteTarget`, driven by the same traversal.
 function resolveWriteTargetSync(file) {
-  let current = resolve(file);
-  for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
-    let dir;
+  const steps = traverseWriteTarget(file);
+  let step = steps.next();
+  while (!step.done) {
     try {
-      dir = realpathSync(dirname(current));
-    } catch {
-      dir = resolve(dirname(current));
-    }
-    current = join(dir, basename(current));
-    let target;
-    try {
-      target = readlinkSync(current);
+      step = steps.next(SYNC_FS[step.value.op](step.value.path));
     } catch (err) {
-      if (["EINVAL", "ENOENT", "ENOTDIR"].includes(err.code)) {
-        return current;
-      }
-      throw err;
+      step = steps.throw(err);
     }
-    current = isAbsolute(target) ? target : `${dir}${sep}${target}`;
   }
-  throw Object.assign(new Error(`Too many levels of symbolic links: ${file}`), { code: "ELOOP" });
+  return step.value;
 }
 
 /**
