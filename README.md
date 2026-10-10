@@ -181,10 +181,24 @@ a temporary `AGENT_LOOP_HOME` and store (#340):
   the old one. The rendered hook path still existed and ran with exit code 0, and a
   second `install` reported `noop` for every file.
 
+The same layout was checked on macOS (Darwin 27.2.0) with pnpm 12.10.1, Node v26.11.1,
+a temporary `HOME` and `AGENT_LOOP_HOME`, and a store passed as `--store-dir` on every pnpm
+command (#340):
+
+- `pnpm add @andromarces/agent-loops@0.5.0`, then `pnpm exec agent-loop install --harness claude --yes`,
+  rendered `node "<project>/node_modules/@andromarces/agent-loops/src/hook/parent-guard.mjs"`.
+  No store path appears in it. The `node_modules/.pnpm` directory of the project holds
+  the version-named entry that the link points to, and the rendered path does not use it.
+  Version 0.4.0, which predates the project link, renders that version-named path.
+- `pnpm add <0.5.1 tarball>` replaced the link target, and `pnpm store prune` removed the old
+  store files. The rendered hook path still existed and ran with exit code 0, and a second
+  `install` reported `noop` for every file.
+- pnpm 12.10.1 ignores `npm_config_store_dir`. Pass `--store-dir` to every pnpm command,
+  including `pnpm store prune`.
+
 Not verified:
 
-- macOS and Linux: the check host had no Linux environment (no WSL distribution, no
-  Docker). The POSIX bin shim `process.argv[1]` prefix is reasoned, not executed.
+- Linux: the check ran on macOS only.
 - A project on a UNC share: `pnpm add` fails there before `install` can run.
   Over `\\localhost\C$`, pnpm 12.8.1 reports `Failed to symlink
   "@andromarces/agent-loops" for importer "."` with `Access is denied. (os error 5)`.
