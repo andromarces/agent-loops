@@ -28,18 +28,33 @@ Issue #642 asks to keep that id without keeping a stale one. Claude solves the s
 
 A bad model or an unsupported effort creates the session directory but no turn. The directory alone cannot show that a session holds a turn. `events.jsonl` with a `user.message` event can.
 
-The adapter reads `events.jsonl` once, right after the child process ends. Issue #679 probed that timing on macOS against a CLI that still writes the session (Copilot CLI 1.0.96-2, macOS 27.2 on Apple silicon, Node.js 26.11.1, `COPILOT_HOME` unset, 2026-10-10). Each probe called `runCopilot` with a fresh role state, a scratch git repository under the system temporary directory, and a separate `AGENT_LOOP_RUNS_ROOT`. The probe killed no process. It listed the processes whose working directory was the scratch repository, and it polled `events.jsonl` every 100 ms for 1.5 s to 5 s after the adapter returned, then read both again at 2 s and 10 s.
+The adapter reads `events.jsonl` once, right after the child process ends. Issue #679 probed that timing against a CLI that still writes the session. The host ran Copilot CLI 1.0.96-2 on macOS 27.2 (Apple silicon) with Node.js 26.11.1. `COPILOT_HOME` was unset. The probe ran on 2026-10-10.
 
-| Probe                                                                                       | Runs | Adapter id vs final `events.jsonl`                                                                                                                    | Live process after the adapter returned                                            |
-| ------------------------------------------------------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| First turn, `timeout` from 1 s to 12 s (45 runs, 18 of them in parallel at 5 s)             | 45   | 22 kept no id and the file had no `user.message`. 23 kept the id and the file held `user.message`. The prompt was recorded about 5 s after the spawn. | None at the next poll. The file never changed after the adapter returned.          |
-| First turn, abort signal (cancel) at 3 s, 6 s, 9 s, and 12 s                                | 4    | 1 kept no id and the file had no `user.message` (3 s). 3 kept the id and the file held `user.message`.                                                | The same.                                                                          |
-| `COPILOT_ALLOW_ALL=1` (the prompt runs `sleep 25`): timeout 9 s, 12 s, 16 s and cancel 12 s | 4    | All 4 kept the id and the file held `user.message`.                                                                                                   | At 12 s and 16 s the `sleep` shell was live at the end. It ended with the adapter. |
-| A turn that completed (timeout 15 s and 20 s, one grep prompt)                              | 3    | All kept the confirmed id and the file held `user.message`.                                                                                           | None.                                                                              |
+The probe made 56 runs through `runCopilot`. Each run used a fresh role state, a scratch git repository under the system temporary directory, and a separate `AGENT_LOOP_RUNS_ROOT`. The probe killed no process.
 
-The adapter result matched the final file in every run, and the file never changed after the adapter returned. A timeout or a cancel makes the CLI write `abort` and end within the adapter turn, so a failed turn left `user.message` in `events.jsonl` or no `events.jsonl` at all. The native `copilot` process, its `node` shim, and the tool shell ended with the adapter. The probe did not test which `exec` option causes it. The only process seen after a return was an MCP server child of the CLI, reparented to pid 1, which ended on its own within 0.25 s (once in 56 runs). No process that was alive at 2 s remained. The live process of issue #398 was not reproduced through the adapter. That probe killed the shim pid alone.
+After each return, the probe listed the processes that had the scratch repository as working directory. It also read the event types of `events.jsonl`. The first read followed the return at once, and later reads came 2 s and 10 s after the first. The last 45 runs also polled every 100 ms for 1.5 s to 5 s after the return. Three earlier runs, made while the probe was built, are not counted.
 
-Limits of the probe: the adapter passes no `--allow-tool` flag, so the shell tool is denied (`denied-no-approval-rule-and-could-not-request-from-user`) and no tool shell started unless `COPILOT_ALLOW_ALL=1` was set. On a loaded host, some timed-out children ended up to 3.5 s after the timeout, and the adapter returned only after the exit. No other host or CLI version was probed.
+The table lists the 53 failed first turns by the file that the CLI left. They are 48 timeouts from 1 s to 16 s and 5 cancels from 3 s to 12 s. Three timeouts and one cancel ran with `COPILOT_ALLOW_ALL=1`. Three more turns finished before the timeout fired. They kept a confirmed id and held `user.message`.
+
+| File after the failed turn                                                 | Timeouts | Cancels | Adapter id         |
+| -------------------------------------------------------------------------- | -------- | ------- | ------------------ |
+| No `events.jsonl`                                                          | 21       | 1       | none kept          |
+| `session.start` and `session.shutdown` only                                | 1        | 0       | none kept          |
+| `user.message` and an `abort` event, before any `session.shutdown`         | 22       | 3       | kept               |
+| `user.message` and a finished turn, with no `abort` event                  | 1        | 1       | kept               |
+| `user.message` listed after `session.shutdown` (1 file also holds `abort`) | 3        | 0       | kept by file check |
+
+The adapter kept an id in exactly the 30 runs whose final file held `user.message`, and in none of the other 23. It took 27 of the 30 ids from the result of the failed output. It took the 3 others from the file check, and it marked them `sessionUnconfirmed`. The prompt was recorded about 5 s after the spawn, so timeouts of 4.9 s to 5.15 s gave both outcomes. The final file held an `abort` event in 26 of the 53 runs.
+
+The event types of the file did not change after the first read in any of the 56 runs. The probe compared event types, not bytes. It did not read the file at the instant of the adapter read. A change between that read and the first probe read is not excluded.
+
+A list taken 0.7 s before the end of each of the 53 failed runs showed the `node` shim and the native `copilot` process. It also showed MCP server children in 49 runs. No process of the scratch repository was listed at 2 s or 10 s in any of the 56 runs.
+
+The first look after the return still listed a process in 5 runs. In 4 of them the process ended before `ps` read its data, so its identity is unknown. The fifth was an MCP server child of the CLI, reparented to pid 1. Each was gone at the next look, within 0.25 s in the polled runs.
+
+With `COPILOT_ALLOW_ALL=1`, the `sleep` shell was live 0.7 s before the end in 3 runs. The first look after the return listed no process. The live process of issue #398 was not reproduced through the adapter, because that probe killed the shim pid alone.
+
+Limits of the probe: the adapter passes no `--allow-tool` flag, so the shell tool is denied and no tool shell started without `COPILOT_ALLOW_ALL=1`. On a loaded host, 2 timeouts returned 3.5 s and 3.6 s late. Both listed `user.message` after `session.shutdown`. The probe tested no other host and no other CLI version.
 
 A model error in the middle of a model call could not be produced on this host. Its stream ends with no result event, like a kill, so the same file check decides it. The test covers it with an error event in the failed output.
 
