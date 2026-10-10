@@ -3,7 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { logDebug, logWarn } from "./log.mjs";
 
 const TASKKILL_TIMEOUT_MS = 5000;
-// `taskkill` reports 128 when no process has the pid, so a tree that ended first is not a failure.
+// `taskkill` reports 128 when no process has the pid. It is neither a failure nor a confirmed kill.
 const TASKKILL_NO_SUCH_PROCESS = 128;
 
 const liveRuns = new Set();
@@ -39,6 +39,10 @@ function killTree(subprocess) {
   if (result.error || (result.status !== 0 && result.status !== TASKKILL_NO_SUCH_PROCESS)) {
     const reason = result.error?.code ?? `exit code ${result.status}`;
     logWarn(`process tree of pid ${pid} not ended on exit: taskkill failed (${reason})`);
+  } else if (result.status === TASKKILL_NO_SUCH_PROCESS) {
+    // The root ended between the exit check and the kill. `taskkill /T` walks parent links from a
+    // live root, so nothing shows that its descendants ended.
+    logDebug(`taskkill found no process with pid ${pid} on exit: descendants not checked`);
   } else {
     logDebug(`process tree of pid ${pid} ended on exit`);
   }

@@ -7,6 +7,7 @@ import { killTreeOnExit } from "../../src/lib/exec-tree.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const EXEC_TREE_URL = new URL("../../src/lib/exec-tree.mjs", import.meta.url).href;
+const LOG_URL = new URL("../../src/lib/log.mjs", import.meta.url).href;
 const EXECA_URL = import.meta.resolve("execa");
 const IS_WINDOWS = process.platform === "win32";
 const MISSING_ROOT = "Z:/exec-tree-missing-root";
@@ -29,8 +30,25 @@ async function waitUntil(predicate, ms) {
   return predicate();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function endProcess(pid) {
   if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) process.kill(pid, "SIGKILL");
+}
+
+/**
+ * Ends every process that a failed run can have left: the pids in `known`, then the pids that the
+ * `files` hold now. A second round reads the files again, so a process that recorded its pid while
+ * the first round ran is ended too, and a failure before a pid file exists leaves no reader behind.
+ */
+async function endRecorded(known, files) {
+  for (let round = 0; round < 2; round += 1) {
+    const recorded = await Promise.all(files.map(readPid));
+    [...known, ...recorded].forEach(endProcess);
+    await sleep(300);
+  }
 }
 
 async function readPid(file) {
@@ -74,10 +92,9 @@ test.skipIf(!IS_WINDOWS)(
     const dir = await mkdtemp(join(tmpdir(), "exec-tree-"));
     const pidFile = join(dir, "nested.pid");
     const childPidFile = join(dir, "child.pid");
+    const shellPidFile = join(dir, "shell.pid");
     const failedFile = join(dir, "failed.txt");
     let parentPid;
-    let childPid;
-    let nestedPid;
     try {
       // The shell starts the child, and the child starts a grandchild that records its pid. The
       // chain is as deep as the nested `pnpm exec vp` run of issue #612, and a plain child with no
@@ -115,6 +132,8 @@ test.skipIf(!IS_WINDOWS)(
           `import { killTreeOnExit } from ${JSON.stringify(EXEC_TREE_URL)};`,
           'import { existsSync, writeFileSync } from "node:fs";',
           `const run = killTreeOnExit(execa(${JSON.stringify(command)}, { shell: true, cwd: ${JSON.stringify(dir)}, reject: false, cleanup: true, killDescendants: true }));`,
+          // The pid of the shell, which is the root that the exit handler kills.
+          `writeFileSync(${JSON.stringify(shellPidFile)}, String(run.pid));`,
           // The nested run ended before it recorded a pid: report why, so a CI failure names the cause.
           `run.then((r) => { if (!existsSync(${JSON.stringify(pidFile)})) { writeFileSync(${JSON.stringify(failedFile)}, String(r.shortMessage ?? r.message ?? r.exitCode)); process.exit(3); } });`,
           `setInterval(() => { if (existsSync(${JSON.stringify(pidFile)})) process.exit(0); }, 50);`,
@@ -126,13 +145,11 @@ test.skipIf(!IS_WINDOWS)(
       expect(await waitUntil(() => !isAlive(parentPid), 30000)).toBe(true);
       expect(await readFile(failedFile, "utf8").catch(() => "")).toBe("");
 
-      nestedPid = await readPid(pidFile);
-      childPid = await readPid(childPidFile);
-      expect(nestedPid).toBeTypeOf("number");
-      expect(childPid).toBeTypeOf("number");
-      expect(await waitUntil(() => !isAlive(nestedPid) && !isAlive(childPid), 8000)).toBe(true);
+      const tree = await Promise.all([shellPidFile, childPidFile, pidFile].map(readPid));
+      expect(tree.every((pid) => typeof pid === "number")).toBe(true);
+      expect(await waitUntil(() => tree.every((pid) => !isAlive(pid)), 8000)).toBe(true);
     } finally {
-      [parentPid, childPid, nestedPid ?? (await readPid(pidFile))].forEach(endProcess);
+      await endRecorded([parentPid], [shellPidFile, childPidFile, pidFile]);
       await removePath(dir);
     }
   },
@@ -202,6 +219,37 @@ test.skipIf(!IS_WINDOWS)("a failed taskkill on exit is logged and does not throw
     endProcess(childPid);
   }
 });
+
+// Usefulness: `taskkill` exit code 128 (no process with that pid) must not read as a confirmed tree
+// kill, because `taskkill /T` walks the parent links of a live root only. Not redundant: the first
+// test covers a kill that ends a live tree, and no other test covers a root that is gone. The pid
+// is odd, and Windows pids are multiples of 4, so no process can have it.
+test.skipIf(!IS_WINDOWS)(
+  "a taskkill that finds no process is not logged as a tree kill",
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), "exec-tree-"));
+    try {
+      const script = join(dir, "parent.mjs");
+      await writeFile(
+        script,
+        [
+          `import { killTreeOnExit } from ${JSON.stringify(EXEC_TREE_URL)};`,
+          `import { setVerbose } from ${JSON.stringify(LOG_URL)};`,
+          "setVerbose(true);",
+          "killTreeOnExit(Object.assign(Promise.resolve({}), { pid: 999999999, exitCode: null, signalCode: null }));",
+          "process.exit(0);",
+        ].join("\n"),
+      );
+      const result = await execa(process.execPath, [script], { reject: false });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toMatch(/debug: taskkill found no process with pid 999999999/);
+      expect(result.stdout).not.toMatch(/ended on exit/);
+    } finally {
+      await removePath(dir);
+    }
+  },
+);
 
 // Usefulness: the exit handler never signals a child that already exited, because the OS can
 // reassign its pid (a stale pid). Not redundant: only an attempted kill logs here, so the silence
