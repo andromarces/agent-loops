@@ -245,10 +245,13 @@ export async function deadPid() {
 // clock by tests/lib/spawn-bounds.test.mjs, so every wait here is a generous
 // ceiling that load cannot reach, and none of them measures the bound.
 const SHIM_HANG_MS = 60_000;
-// The shim checks for the stop file and for its directory this often. A removed directory ends
-// the shim too, so a cleanup that removes the directory before the next check cannot strand it.
+// The shim checks its `keep` file this often.
 const SHIM_POLL_MS = 50;
-const STOP_FILE = "stop";
+const KEEP_FILE = "keep";
+const EXITED_FILE = "exited";
+// The longest cleanup waits for a surviving shim to acknowledge its exit. The shim polls every
+// SHIM_POLL_MS, so a live shim answers within a few polls even on a loaded machine.
+const SHIM_EXIT_WAIT_MS = 5000;
 // The force-kill delay the runners pass with a bound. The source sets it in
 // runGh and assertGitWorkTree, and spawn-bounds.test.mjs pins the value there, so
 // a change to it fails that test until this constant follows.
@@ -268,9 +271,9 @@ const CALL_CEILING_MS = 10_000;
 // The longest the shim may take to record its pid, and to make the record visible.
 const START_WAIT_MS = 10_000;
 const RECORD_VISIBLE_MS = 500;
-// The most the cleanup after a test can take: writing the stop file is instant, and
-// `removePath` costs at most its full retry backoff.
-const CLEANUP_MS = REMOVE_MAX_WAIT_MS + REMOVE_SYSCALL_SLACK_MS;
+// The most the cleanup after a test can take: the wait for a surviving shim to exit, then
+// `removePath` at its full retry backoff.
+const CLEANUP_MS = SHIM_EXIT_WAIT_MS + REMOVE_MAX_WAIT_MS + REMOVE_SYSCALL_SLACK_MS;
 // The most the fixture setup before a test can take: `mkdtemp`, then writing the
 // hang script and the wrapper, are three file system calls. A call is
 // milliseconds unless an antivirus scan or an indexer holds the file, so each
@@ -304,20 +307,30 @@ export const ABORT_KILL_TEST_TIMEOUT_MS =
 /**
  * Writes a `command` shim into `dir` that hangs, so a kill is exercised against
  * a real child process. The long-lived node process records its own pid in
- * `started`, then exits when the `stop` file appears, when `dir` is removed, or at
- * the wall-clock ceiling SHIM_HANG_MS, whichever comes first. The test never signals that pid.
+ * `started`. It stays alive only while the `keep` file exists, so it exits when
+ * that file is gone by any means, when `dir` is gone, or at the wall-clock
+ * ceiling SHIM_HANG_MS. On exit it writes the `exited` marker when `dir` still
+ * exists. The test never signals that pid.
  */
 async function writeHangingShim(dir, command) {
   const started = join(dir, "started.txt");
   const script = join(dir, "hang.js");
-  const stop = join(dir, STOP_FILE);
+  const keep = join(dir, KEEP_FILE);
+  await writeFile(keep, "");
   await writeFile(
     script,
-    `require("fs").writeFileSync(${JSON.stringify(started)}, String(process.pid));
-const fs = require("fs");
+    `const fs = require("fs");
+fs.writeFileSync(${JSON.stringify(started)}, String(process.pid));
 const begun = Date.now();
+process.on("exit", () => {
+  try {
+    fs.writeFileSync(${JSON.stringify(join(dir, EXITED_FILE))}, "");
+  } catch {
+    // The directory is already gone, so nobody waits for the marker.
+  }
+});
 const watch = setInterval(() => {
-  if (fs.existsSync(${JSON.stringify(stop)}) || !fs.existsSync(${JSON.stringify(dir)}) || Date.now() - begun >= ${SHIM_HANG_MS}) {
+  if (!fs.existsSync(${JSON.stringify(keep)}) || !fs.existsSync(${JSON.stringify(dir)}) || Date.now() - begun >= ${SHIM_HANG_MS}) {
     clearInterval(watch);
   }
 }, ${SHIM_POLL_MS});
@@ -392,11 +405,35 @@ async function returnsWithin(call, limitMs, message) {
 }
 
 // A child that survived a failed test would hold its directory open until its
-// ceiling. The stop file is a handle the test owns: the shim reads it and exits
-// by itself. No pid from a file is ever signalled, because the OS may hand that
-// pid to an unrelated process once the shim exits.
-async function stopShim(dir) {
-  await writeFile(join(dir, STOP_FILE), "");
+// ceiling. The `keep` file is a handle the test owns: the test deletes it, the
+// shim sees that and exits by itself, and the `exited` marker acknowledges it.
+// No pid from a file is ever signalled, because the OS may hand that pid to an
+// unrelated process once the shim exits. `gone` is true when the test already
+// proved the child ended, so no acknowledgment is awaited. Returns false when a
+// shim that was still running did not acknowledge within SHIM_EXIT_WAIT_MS.
+async function stopShim(dir, gone) {
+  await rm(join(dir, KEEP_FILE), { force: true });
+  if (gone) {
+    return true;
+  }
+  const deadline = Date.now() + SHIM_EXIT_WAIT_MS;
+  while (!existsSync(join(dir, EXITED_FILE))) {
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await delay(SHIM_POLL_MS);
+  }
+  return true;
+}
+
+// Runs the cleanup of a helper. A shim that does not acknowledge its exit fails the
+// helper, unless the body already failed: that failure is the one to report.
+async function cleanupShim(dir, gone, bodyFailed) {
+  const acknowledged = await stopShim(dir, gone);
+  await removePath(dir);
+  if (!acknowledged && !bodyFailed) {
+    throw new Error(`the shim in ${dir} did not exit within ${SHIM_EXIT_WAIT_MS} ms of cleanup`);
+  }
 }
 
 async function withShimOnPath(dir, body) {
@@ -422,9 +459,11 @@ async function withShimOnPath(dir, body) {
  */
 export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
+  let gone = false;
+  let bodyFailed = true;
   try {
     const shim = await writeHangingShim(dir, command);
-    return await withShimOnPath(dir, async () => {
+    const outcome = await withShimOnPath(dir, async () => {
       const result = await returnsWithin(
         run(boundMs),
         boundMs + CALL_CEILING_MS,
@@ -435,11 +474,13 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
       const pid = await waitForPid(shim.started, RECORD_VISIBLE_MS);
       assert.notEqual(pid, null, `the shim did not start within the ${boundMs} ms bound`);
       await assertGone(pid, FORCE_KILL_AFTER_DELAY_MS);
+      gone = true;
       return result;
     });
+    bodyFailed = false;
+    return outcome;
   } finally {
-    await stopShim(dir);
-    await removePath(dir);
+    await cleanupShim(dir, gone, bodyFailed);
   }
 }
 
@@ -453,9 +494,11 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
  */
 export async function expectAbortKillsShim(command, start) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
+  let gone = false;
+  let bodyFailed = true;
   try {
     const shim = await writeHangingShim(dir, command);
-    return await withShimOnPath(dir, async () => {
+    const outcome = await withShimOnPath(dir, async () => {
       const controller = new AbortController();
       const pending = start(controller.signal);
       const pid = await waitForPid(shim.started, START_WAIT_MS);
@@ -467,11 +510,13 @@ export async function expectAbortKillsShim(command, start) {
         "the call did not return after the abort",
       );
       await assertGone(pid, ABORT_FORCE_KILL_AFTER_DELAY_MS);
+      gone = true;
       return result;
     });
+    bodyFailed = false;
+    return outcome;
   } finally {
-    await stopShim(dir);
-    await removePath(dir);
+    await cleanupShim(dir, gone, bodyFailed);
   }
 }
 

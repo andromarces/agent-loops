@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { execa } from "execa";
@@ -129,7 +129,7 @@ test.skipIf(process.platform === "win32")(
 );
 
 // Usefulness: acceptance (#670) — cleanup after a failed kill check must end the shim child and free
-// its directory without a signal to a pid that a file supplied. A pid that a file names can belong to
+// its directory, and must not return while the shim lives, without a signal to a pid that a file supplied. A pid that a file names can belong to
 // an unrelated process once the shim exits, so a SIGKILL read from the record is the defect.
 test(
   "expectBoundKillsShim ends a surviving shim without signalling a recorded pid",
@@ -153,7 +153,8 @@ test(
       expect(failure?.message).toMatch(/outlived the 1000 ms force-kill boundary/);
       const signals = kill.mock.calls.filter(([, signal]) => signal !== 0 && signal !== undefined);
       expect(signals).toEqual([]);
-      await pollUntil(() => (pidAlive(pid) ? undefined : true), 10_000);
+      // No wait: the helper must not return while the shim is alive.
+      expect(pidAlive(pid)).toBe(false);
       expect(existsSync(shimDir)).toBe(false);
     } finally {
       kill.mockRestore();
@@ -162,6 +163,28 @@ test(
       held?.catch(() => {});
       held?.kill("SIGKILL");
     }
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: acceptance (#670 review) — a shim must end when its stop request is deleted while its
+// directory stays, as a Windows lock on a file inside the directory leaves it. The call under test
+// deletes the keep file and nothing else, so the helper passes only if the shim exits on its own.
+test(
+  "expectBoundKillsShim sees a shim end when its keep file is deleted and its directory stays",
+  async () => {
+    await expect(
+      expectBoundKillsShim("keepless-shim", async () => {
+        const shimDir = process.env.PATH.split(delimiter)[0];
+        const held = execa("keepless-shim", { reject: false });
+        held.catch(() => {});
+        await pollUntil(
+          async () => (existsSync(join(shimDir, "started.txt")) ? true : undefined),
+          10_000,
+        );
+        await rm(join(shimDir, "keep"));
+      }),
+    ).resolves.toBeUndefined();
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
