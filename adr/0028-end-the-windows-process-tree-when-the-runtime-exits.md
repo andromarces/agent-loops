@@ -2,7 +2,7 @@
 
 ## Status
 
-proposed
+proposed. Approval of the hard-kill limit (decision 4) by the repository owner is pending. The status stays `proposed` until the owner approves.
 
 ## Date
 
@@ -26,15 +26,17 @@ A parent that the Vitest runner spawned lost its nested run at once with or with
 
 ## Decision
 
-1. `killTreeOnExit` in `src/lib/exec-tree.mjs` wraps each `execa` call that sets `killDescendants`. On Windows it records the child pid, drops it when the run settles, and registers one `process.on("exit")` handler that runs `taskkill /pid <pid> /T /F` with `spawnSync` for each live pid. The call finishes before the parent ends. On other platforms it changes nothing: execa signals the process group in its own exit handler.
-2. The handler kills only a pid that the runtime started and that has not settled. It never signals by name, by environment, or by a host-wide scan (ADR 0017 item 4).
-3. **Proposed limit, needs approval from the repository owner.** A parent that a hard kill ends (`TerminateProcess`, Task Manager, `taskkill /F` on the parent) runs no handler, and its nested run survives. Neither Node nor execa exposes a Windows job object, and a native addon or helper process would add a dependency for a rare case. The owner must approve this limit before the status becomes `accepted`.
+1. `killTreeOnExit` in `src/lib/exec-tree.mjs` wraps each `execa` call that sets `killDescendants`: `exec`, `runGh`, `assertGitWorkTree`, the `--test-cmd` run, and the nested run of `tests/tmpdir-isolation.test.mjs`. On Windows it records the run and registers one `process.on("exit")` handler. Off Windows it changes nothing: execa signals the process group in its own exit handler. A spawn with no pid, or a pid that is not a positive integer, is not recorded.
+2. For each recorded run, the handler runs `taskkill /pid <pid> /T /F` with `spawnSync`, so the call finishes before the parent ends. It skips a run that settled, and a child that exited (read from the Node child process that execa wraps), because the OS can reassign the pid of an exited child. It never signals by name, by environment, or by a host-wide scan (ADR 0017 item 4).
+3. The handler runs `taskkill.exe` from `<SystemRoot>\System32` only, where `SystemRoot` or `windir` is a drive-absolute path, as execa does. It never uses a relative path or a `PATH` lookup. If neither variable is valid, it logs a warning and kills the direct child only. Each call has a 5 s bound. An exit code of 128 (no such process) is not a failure. Any other failure, including a timeout, logs at `warn` level, and the handler never throws, so the remaining runs still get their kill. A kill that ended a tree logs at `debug` level.
+4. **Proposed limit, needs approval from the repository owner.** A parent that a hard kill ends (`TerminateProcess`, Task Manager, `taskkill /F` on the parent) runs no handler, and its nested run survives. Neither Node nor execa exposes a Windows job object, and a native addon or helper process would add a dependency for a rare case. The owner must approve this limit before the status becomes `accepted`.
 
 ## Consequences
 
 - A runtime that exits through `process.exit`, a fatal error, or a normal end leaves no child tree on Windows.
 - A hard kill of the runtime, and a signal that ends it with no `exit` event, can still leave a tree. The operator ends it by hand.
-- The exit handler blocks the exit for the length of one `taskkill` per live child.
+- The exit handler blocks the exit for the length of one `taskkill` per live child, up to 5 s each.
+- A run that no wrapped call started has no handler. The `git` calls of `src/lib/local-files.mjs` and the `copilot` launcher set no `killDescendants` and stay out of scope.
 
 ## Alternatives
 
@@ -48,8 +50,9 @@ Andro Marces
 
 ## Links
 
+- [Pull request #623: fix: end the Windows process tree of a child when the runtime exits](https://github.com/andromarces/agent-loops/pull/623)
 - [Issue #612: Windows: nested process tree outlives a parent that exits before the execa timeout](https://github.com/andromarces/agent-loops/issues/612)
 - [Issue #602: Verify the nested isolation tree kill](https://github.com/andromarces/agent-loops/issues/602)
 - [ADR 0017: Run an operator test command before each reviewer turn](0017-run-a-test-command-before-each-reviewer-turn.md)
-- Implementation: `killTreeOnExit` in `src/lib/exec-tree.mjs`, used in `src/lib/exec.mjs`, `src/lib/ci-gate.mjs`, `src/lib/snapshot.mjs`, and `src/lib/test-cmd.mjs`; test in `tests/lib/exec-tree.test.mjs`
+- Implementation: `killTreeOnExit` in `src/lib/exec-tree.mjs`, used in `src/lib/exec.mjs`, `src/lib/ci-gate.mjs`, `src/lib/snapshot.mjs`, `src/lib/test-cmd.mjs`, and `tests/tmpdir-isolation.test.mjs`; test in `tests/lib/exec-tree.test.mjs`
 - [ADR Index](README.md)

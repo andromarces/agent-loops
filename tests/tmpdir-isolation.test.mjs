@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
+import { killTreeOnExit } from "../src/lib/exec-tree.mjs";
 import { removePath } from "./runtime-helpers.mjs";
 
 const NESTED_RUN_TIMEOUT_MS = 60000;
@@ -13,16 +14,19 @@ test(
   async () => {
     const osTmp = await mkdtemp(join(tmpdir(), "tmpdir-isolation-"));
     try {
-      await execa("pnpm", ["exec", "vp", "test", "run", "tests/install/install.lock.test.mjs"], {
-        env: { TMPDIR: osTmp, TEMP: osTmp, TMP: osTmp },
-        extendEnv: true,
-        // Bound the nested run and end its whole process tree on expiry (as `runGh`).
-        // A forced timeout ended every descendant on Windows 11 and macOS (issue #513).
-        timeout: NESTED_RUN_TIMEOUT_MS,
-        forceKillAfterDelay: 1000,
-        cleanup: true,
-        killDescendants: true,
-      });
+      // `killTreeOnExit` ends the tree on Windows when this worker exits before the nested run (issue #612).
+      await killTreeOnExit(
+        execa("pnpm", ["exec", "vp", "test", "run", "tests/install/install.lock.test.mjs"], {
+          env: { TMPDIR: osTmp, TEMP: osTmp, TMP: osTmp },
+          extendEnv: true,
+          // Bound the nested run and end its whole process tree on expiry (as `runGh`).
+          // A forced timeout ended every descendant on Windows 11 and macOS (issue #513).
+          timeout: NESTED_RUN_TIMEOUT_MS,
+          forceKillAfterDelay: 1000,
+          cleanup: true,
+          killDescendants: true,
+        }),
+      );
       expect(await readdir(osTmp)).not.toContain("agent-loops");
     } finally {
       await removePath(osTmp);
