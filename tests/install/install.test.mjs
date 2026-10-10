@@ -326,8 +326,8 @@ test("a bunx or yarn dlx layout under a stable parent is not refused", () => {
   }
 });
 
-// Usefulness: verifies #207 on Windows — the temp-parent bunx and yarn dlx layouts compare case-insensitively, and the npx and pnpm dlx matching stays as on main.
-test("windows folds case for the bunx and yarn dlx layouts only", () => {
+// Usefulness: verifies #207 and #625 on Windows — every runner layout compares case-insensitively there, and only there.
+test("windows folds case for every runner layout", () => {
   const winTemp = "C:\\Users\\Dev\\AppData\\Local\\Temp";
   const temp = { bunx: [winTemp], yarn: [winTemp] };
   const upperTemp = "C:\\USERS\\DEV\\APPDATA\\LOCAL\\TEMP";
@@ -338,14 +338,40 @@ test("windows folds case for the bunx and yarn dlx layouts only", () => {
   }
   const stable = ["C:\\Projects", ...BUNX_LAYOUT].join("\\");
   expect(isEphemeralPackageRoot(stable, "win32", temp), stable).toBe(false);
-  const lowerNpx = ["C:", "cache", "_npx", "09f5e92d3f3f415f", "node_modules", "pkg"].join("\\");
-  const upperNpx = ["C:", "cache", "_NPX", "09F5E92D3F3F415F", "node_modules", "pkg"].join("\\");
-  const upperDlx = ["C:", "pnpm", "DLX", "0DD49D4F3230C83239C085437BFEA068", "node_modules"].join(
-    "\\",
+  const npxRoots = [
+    ["C:", "cache", "_npx", "09f5e92d3f3f415f", "node_modules", "pkg"],
+    ["C:", "cache", "_NPX", "09F5E92D3F3F415F", "node_modules", "pkg"],
+    ["C:", "cache", "_Npx", "09f5e92d3f3f415f", "Node_Modules", "pkg"],
+  ].map((segments) => segments.join("\\"));
+  const dlxRoots = [
+    ["C:", "pnpm", "dlx", "0dd49d4f3230c83239c085437bfea068", "node_modules"],
+    ["C:", "pnpm", "DLX", "0DD49D4F3230C83239C085437BFEA068", "node_modules"],
+    ["C:", "pnpm", "Dlx", "0dd49d4f3230c83239c085437bfea068", "work", "NODE_MODULES"],
+  ].map((segments) => segments.join("\\"));
+  for (const packageRoot of [...npxRoots, ...dlxRoots]) {
+    expect(isEphemeralPackageRoot(packageRoot, "win32", temp), packageRoot).toBe(true);
+  }
+  const mixedCase = [...npxRoots, ...dlxRoots].filter(
+    (root) => root !== npxRoots[0] && root !== dlxRoots[0],
   );
-  expect(isEphemeralPackageRoot(lowerNpx, "win32", temp)).toBe(true);
-  expect(isEphemeralPackageRoot(upperNpx, "win32", temp)).toBe(false);
-  expect(isEphemeralPackageRoot(upperDlx, "win32", temp)).toBe(false);
+  for (const packageRoot of mixedCase) {
+    expect(isEphemeralPackageRoot(packageRoot, "linux", temp), packageRoot).toBe(false);
+  }
+});
+
+// Usefulness: verifies #625 does not over-match — on Windows a `_NPX` or `DLX` segment outside the cache layout (hash directory, then node_modules) is still accepted.
+test("windows accepts a case-different npx or dlx look-alike outside the cache layout", () => {
+  const temp = { bunx: [], yarn: [] };
+  const lookalikes = [
+    ["C:", "work", "DLX", "project", "node_modules", "pkg"],
+    ["C:", "work", "_NPX", "tools", "node_modules", "pkg"],
+    ["C:", "work", "DLX", "09F5E92D3F3F415F", "src", "pkg"],
+    ["C:", "work", "_NPX", "short", "node_modules", "pkg"],
+    ["C:", "DLX", "node_modules", "09F5E92D3F3F415F", "pkg"],
+  ].map((segments) => segments.join("\\"));
+  for (const packageRoot of lookalikes) {
+    expect(isEphemeralPackageRoot(packageRoot, "win32", temp), packageRoot).toBe(false);
+  }
 });
 
 // Usefulness: verifies the negative of acceptance #205 — a path that merely

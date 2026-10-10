@@ -88,9 +88,13 @@ function temporaryRoots() {
   return { yarn, bunx: [...yarn, ...withRealpath("/tmp")] };
 }
 
-/** True when the package root sits in an npx or pnpm dlx cache (#205). */
-function isCacheRoot(packageRoot) {
-  const segments = splitPath(packageRoot);
+/**
+ * True when the package root sits in an npx or pnpm dlx cache (#205): the cache
+ * directory, a hash directory, then `node_modules`. On Windows the match folds
+ * case, because an existing `_NPX` or `DLX` directory keeps its spelling (#625).
+ */
+function isCacheRoot(packageRoot, platform) {
+  const segments = splitPath(platform === "win32" ? packageRoot.toLowerCase() : packageRoot);
   for (let i = 0; i < segments.length - 2; i++) {
     if (!EPHEMERAL_CACHE_DIRS.has(segments[i])) continue;
     if (!/^[0-9a-f]{16,}$/.test(segments[i + 1])) continue;
@@ -136,8 +140,7 @@ function isTempRunnerRoot(packageRoot, platform, tempRoots) {
 
 /**
  * True when the package root resolves inside an npx, pnpm dlx, yarn dlx, or bunx
- * temporary layout. The npx and pnpm dlx match is case-sensitive, as in #205. On
- * Windows the bunx and yarn dlx match compares case-insensitively.
+ * temporary layout. On Windows every match compares case-insensitively.
  * @param {string} packageRoot
  * @param {NodeJS.Platform} [platform]
  * @param {{ bunx: string[], yarn: string[] }} [tempRoots] Temporary roots to compare against, for tests.
@@ -147,7 +150,7 @@ export function isEphemeralPackageRoot(
   platform = process.platform,
   tempRoots = temporaryRoots(),
 ) {
-  return isCacheRoot(packageRoot) || isTempRunnerRoot(packageRoot, platform, tempRoots);
+  return isCacheRoot(packageRoot, platform) || isTempRunnerRoot(packageRoot, platform, tempRoots);
 }
 
 // pnpm resolves a global package into a version-named virtual store entry
