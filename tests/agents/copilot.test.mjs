@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import { runCopilot } from "../../src/agents/copilot.mjs";
 import { exec } from "../../src/lib/exec.mjs";
@@ -815,4 +818,197 @@ test("copilot failed turn with mixed sessions records unresolved", async () => {
   const state = { ...recordedState(), sessionId: "s-kept" };
   await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
   expect(state.resolvedModel).toBeNull();
+});
+
+// Session files in a fake Copilot home, in the shape that Copilot CLI 1.0.96-2 writes (issue #642).
+// `events` lists the event types of `events.jsonl`; null writes `workspace.yaml` only, as a failed
+// first turn with a bad model leaves.
+async function withCopilotHome(body) {
+  const home = await mkdtemp(join(tmpdir(), "copilot-home-"));
+  vi.stubEnv("COPILOT_HOME", home);
+  const writeSession = async (id, events) => {
+    const dir = join(home, "session-state", id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "workspace.yaml"), `id: ${id}\n`);
+    if (events) {
+      await writeFile(
+        join(dir, "events.jsonl"),
+        events.map((type) => JSON.stringify({ type, data: {} })).join("\n"),
+      );
+    }
+  };
+  try {
+    await body(writeSession);
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+const freshState = () => ({ kind: "copilot", sessionId: null, model: null, effort: null });
+
+// Rejects like a failed first turn after the CLI saved a session under the pre-assigned id.
+const failAfterSession = (writeSession, events, error) =>
+  vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
+    await writeSession(args[1], events);
+    throw error;
+  });
+
+// Usefulness: a failed first turn that printed no id but left a session holding the turn keeps the
+// pre-assigned id with the unconfirmed mark, so the next turn resumes it without the preamble
+// (issue #642, ADR 0030).
+test("a failed first copilot worker turn that saved a session keeps the pre-assigned id", async () => {
+  await withCopilotHome(async (writeSession) => {
+    vi.mocked(exec).mockReset();
+    failAfterSession(
+      writeSession,
+      ["session.start", "user.message", "tool.execution_start"],
+      copilotFailure({ stdout: '{"type":"tool.execution_start","data":{}}' }),
+    );
+    vi.mocked(exec).mockImplementationOnce(async (_command, args) => ({
+      stdout: [
+        '{"type":"assistant.message","data":{"content":"done"}}',
+        `{"type":"result","sessionId":${JSON.stringify(String(args[1]))},"exitCode":0}`,
+      ].join("\n"),
+      stderr: "",
+    }));
+
+    const role = freshState();
+    const first = await runChild({ role, roleName: "worker", prompt: "do the task", cwd: "/dir" });
+    const preassigned = vi.mocked(exec).mock.calls[0][1][1];
+
+    expect(first.status).toBe("error");
+    expect(role.sessionId).toBe(preassigned);
+    expect(role.sessionUnconfirmed).toBe(true);
+
+    const second = await runChild({ role, roleName: "worker", prompt: "retry", cwd: "/dir" });
+
+    expect(second.status).toBe("ok");
+    expect(vi.mocked(exec).mock.calls[1][1][1]).toBe(preassigned);
+    expect(vi.mocked(exec).mock.calls[1][2].input).not.toContain(
+      "You are the implementation agent (worker)",
+    );
+    expect(role.sessionId).toBe(preassigned);
+    expect(role.sessionUnconfirmed).toBeUndefined();
+  });
+});
+
+// Usefulness: a failure that saved no user message, such as a bad model, an unsupported effort, or a
+// kill before the prompt was recorded, leaves no stale id, so the next turn carries the preamble.
+test.each([
+  ["no session directory at all", undefined],
+  ["a session directory with no events file (bad model)", null],
+  ["an events file with no user message", ["session.start", "session.shutdown"]],
+])("a failed first copilot turn keeps no id with %s", async (_name, events) => {
+  await withCopilotHome(async (writeSession) => {
+    vi.mocked(exec).mockReset();
+    vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
+      if (events !== undefined) await writeSession(args[1], events);
+      throw copilotFailure({ stdout: '{"type":"session.mcp_servers_loaded","data":{}}' });
+    });
+    const state = freshState();
+    await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+    expect(state.sessionId).toBeNull();
+    expect(state.sessionUnconfirmed).toBeUndefined();
+  });
+});
+
+// Usefulness: an error in the middle of a model call ends the stream with no result event, like a
+// kill does. The session file decides, so the saved turn is kept.
+test("a first copilot turn that fails mid-turn with an error event keeps the pre-assigned id", async () => {
+  await withCopilotHome(async (writeSession) => {
+    vi.mocked(exec).mockReset();
+    failAfterSession(
+      writeSession,
+      ["session.start", "user.message", "assistant.turn_start"],
+      copilotFailure({
+        stdout: [
+          '{"type":"assistant.turn_start","data":{}}',
+          '{"type":"model.call_start","data":{}}',
+          '{"type":"session.error","data":{"message":"model error"}}',
+        ].join("\n"),
+      }),
+    );
+    const state = freshState();
+    await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+    expect(state.sessionId).toBe(vi.mocked(exec).mock.calls[0][1][1]);
+    expect(state.sessionUnconfirmed).toBe(true);
+  });
+});
+
+// Usefulness: a process that never started saved nothing, so a session file under the id (a stale
+// one from another run) cannot make the adapter keep it.
+test("a first copilot turn whose process never started keeps no id", async () => {
+  await withCopilotHome(async (writeSession) => {
+    vi.mocked(exec).mockReset();
+    failAfterSession(
+      writeSession,
+      ["session.start", "user.message"],
+      copilotFailure({ exitCode: undefined }),
+    );
+    const state = freshState();
+    await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+    expect(state.sessionId).toBeNull();
+  });
+});
+
+// Usefulness: an id that the result event reports is confirmed, so it wins over the pre-assigned id
+// and carries no mark.
+test("a failed first copilot turn keeps a reported id without the unconfirmed mark", async () => {
+  await withCopilotHome(async (writeSession) => {
+    vi.mocked(exec).mockReset();
+    failAfterSession(
+      writeSession,
+      ["session.start", "user.message"],
+      copilotFailure({ stdout: '{"type":"result","sessionId":"copilot-reported","exitCode":1}' }),
+    );
+    const state = freshState();
+    await expect(runCopilot(state, "p", { cwd: "/dir" })).rejects.toThrow();
+    expect(state.sessionId).toBe("copilot-reported");
+    expect(state.sessionUnconfirmed).toBeUndefined();
+  });
+});
+
+// Usefulness: an unconfirmed id whose session file is gone (the store was cleared) is refused before
+// any CLI starts, so the runtime reruns the turn as a first turn with the preamble.
+test("a worker turn reruns as a first turn when the unconfirmed copilot session is gone", async () => {
+  await withCopilotHome(async () => {
+    vi.mocked(exec).mockReset();
+    vi.mocked(exec).mockImplementationOnce(async (_command, args) => ({
+      stdout: [
+        '{"type":"assistant.message","data":{"content":"done"}}',
+        `{"type":"result","sessionId":${JSON.stringify(String(args[1]))},"exitCode":0}`,
+      ].join("\n"),
+      stderr: "",
+    }));
+    const stale = "44444444-4444-4444-8444-444444444444";
+    const role = { ...freshState(), sessionId: stale, sessionUnconfirmed: true };
+
+    const result = await runChild({ role, roleName: "worker", prompt: "retry", cwd: "/dir" });
+
+    expect(result.status).toBe("ok");
+    expect(vi.mocked(exec)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(exec).mock.calls[0][1][1]).not.toBe(stale);
+    expect(vi.mocked(exec).mock.calls[0][2].input).toContain(
+      "You are the implementation agent (worker)",
+    );
+    expect(role.sessionUnconfirmed).toBeUndefined();
+  });
+});
+
+// Usefulness: a confirmed id resumes with no session file check, so a CLI that keeps its sessions
+// elsewhere is never refused for an id that its own output reported.
+test("copilot resumes a confirmed id without a session file", async () => {
+  await withCopilotHome(async () => {
+    vi.mocked(exec).mockReset();
+    vi.mocked(exec).mockResolvedValueOnce({
+      stdout: [
+        '{"type":"assistant.message","data":{"content":"ok"}}',
+        '{"type":"result","sessionId":"copilot-confirmed","exitCode":0}',
+      ].join("\n"),
+      stderr: "",
+    });
+    const state = { ...freshState(), sessionId: "copilot-confirmed" };
+    await expect(runCopilot(state, "p", { cwd: "/dir" })).resolves.toBe("ok");
+  });
 });
