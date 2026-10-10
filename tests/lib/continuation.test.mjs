@@ -10,6 +10,7 @@ import {
   resetGate,
   matchingGate,
   readContinuation,
+  refuseHeldSessions,
   restoreSessions,
   verifyResolvedModels,
 } from "../../src/lib/continuation.mjs";
@@ -596,4 +597,42 @@ test.each([
     warn.mockRestore();
     info.mockRestore();
   }
+});
+
+const HELD_ID = "11111111-2222-4333-8444-555555555555";
+const heldRoles = () =>
+  roles({ worker: { kind: "claude", model: null, effort: null, sessionId: HELD_ID } });
+
+// Usefulness: verifies a continued run refuses a Claude session that a live process holds (#647), which no other test covers.
+test("refuseHeldSessions refuses a claude session whose id a live process names", async () => {
+  const readProcessCommands = async () => [
+    { pid: 4242, command: `claude -p --resume ${HELD_ID} --output-format json` },
+  ];
+  await expect(refuseHeldSessions(heldRoles(), { readProcessCommands })).rejects.toThrow(
+    new RegExp(`worker.*${HELD_ID}.*process 4242`),
+  );
+});
+
+// Usefulness: verifies the check does not block a continuation when no live process holds the id or the holder is this process.
+test("refuseHeldSessions passes when no other process names the session id", async () => {
+  const readProcessCommands = async () => [
+    { pid: 1, command: "claude -p --resume 99999999-2222-4333-8444-555555555555" },
+    { pid: process.pid, command: `node test ${HELD_ID}` },
+  ];
+  await expect(refuseHeldSessions(heldRoles(), { readProcessCommands })).resolves.toBeUndefined();
+});
+
+// Usefulness: verifies an unreadable process table warns and lets the run continue instead of blocking every --continue-from.
+test("refuseHeldSessions continues when the process table cannot be read", async () => {
+  const readProcessCommands = async () => {
+    throw new Error("ps failed");
+  };
+  await expect(refuseHeldSessions(heldRoles(), { readProcessCommands })).resolves.toBeUndefined();
+});
+
+// Usefulness: verifies a short non-UUID id is never matched against command lines, so it cannot refuse a run because of an unrelated process.
+test("refuseHeldSessions ignores an id that is not a UUID", async () => {
+  const readProcessCommands = async () => [{ pid: 1, command: "launchd s w-1" }];
+  const short = roles({ worker: { kind: "claude", model: null, effort: null, sessionId: "s" } });
+  await expect(refuseHeldSessions(short, { readProcessCommands })).resolves.toBeUndefined();
 });

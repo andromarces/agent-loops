@@ -6,7 +6,8 @@ import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
 import { sha256 } from "./hash.mjs";
-import { readSessionRecord } from "./session-record.mjs";
+import { readProcessCommands } from "./process-ancestry.mjs";
+import { isUuid, readSessionRecord } from "./session-record.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
 
 /**
@@ -73,6 +74,43 @@ async function applySessionRecord(path, bytes, transcript) {
       sessionId: record.sessionId,
       sessionUnconfirmed: true,
     };
+  }
+}
+
+/**
+ * Refuses a continuation when another live process names the id of a claude role session in its
+ * command line (#647, ADR 0029). A `SIGKILL` of the earlier parent leaves its `claude` child
+ * running, and the CLI accepts a resume of that session, so two processes would write one session
+ * file. Only a claude id in the UUID form is checked, so a short id cannot match another
+ * command line. No other adapter is verified to leave such an orphan. A process table that cannot
+ * be read logs a warning and lets the run continue.
+ * known-limit: the match is by command line, so a holder that does not carry the id there is not found.
+ * @param {object} roles roles keyed by role name, after `restoreSessions`
+ * @param {{ readProcessCommands?: () => Promise<{ pid: number, command: string }[]> }} [deps]
+ */
+export async function refuseHeldSessions(roles, deps = {}) {
+  const ids = ROLE_KINDS.filter(
+    (role) => roles[role].kind === "claude" && isUuid(roles[role].sessionId),
+  ).map((role) => [role, roles[role].sessionId]);
+  if (ids.length === 0) {
+    return;
+  }
+  let table;
+  try {
+    table = await (deps.readProcessCommands ?? readProcessCommands)();
+  } catch (err) {
+    logWarn(
+      `--continue-from: cannot check for a live holder of a session: ${readableErrorText(err)}`,
+    );
+    return;
+  }
+  for (const [role, id] of ids) {
+    const holder = table.find((entry) => entry.pid !== process.pid && entry.command.includes(id));
+    if (holder) {
+      throw new Error(
+        `--continue-from: the ${role} session ${id} is held by process ${holder.pid}, a leftover of the earlier run. End that process, or wait for it to finish, and run again.`,
+      );
+    }
   }
 }
 

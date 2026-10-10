@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -1398,6 +1399,36 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
       next,
     );
     expect(resumed).toEqual({ sessionId: "pre-worker", unconfirmed: true });
+  });
+});
+
+// Usefulness: verifies --continue-from refuses, before any turn, a claude session that a live
+// process still holds (#647), through the real process table. No other CLI test starts a holder.
+test("--continue-from refuses a claude session that a live process holds", async () => {
+  const heldId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--transcript", transcriptPath],
+      sessionAgents([work, FINISH], { codex: [], claude: [], agy: [] }),
+    );
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    transcript.roles.worker.sessionId = heldId;
+    await writeFile(transcriptPath, JSON.stringify(transcript));
+    const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", heldId], {
+      stdio: "ignore",
+    });
+    try {
+      const seen = { codex: [], claude: [], agy: [] };
+      await main(
+        [...CONTINUE_BASE, "--cwd", repo, "--continue-from", transcriptPath],
+        sessionAgents([FINISH], seen),
+      );
+      expect(process.exitCode).toBe(1);
+      expect(seen.codex).toEqual([]);
+    } finally {
+      holder.kill("SIGKILL");
+    }
   });
 });
 

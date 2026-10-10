@@ -32,7 +32,7 @@ const FIELDS = [
 ];
 const MAX_BYTES = 4096;
 // A test on a non-string value would coerce it, so an array that holds a UUID would pass.
-const isUuid = (value) => typeof value === "string" && UUID.test(value);
+export const isUuid = (value) => typeof value === "string" && UUID.test(value);
 
 /**
  * True when `path` is inside the directory `root`. The test compares file identity (device and

@@ -51,6 +51,35 @@ async function readPosixProcesses() {
     .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), name: match[3] }));
 }
 
+/**
+ * Lists every process with its full command line, for a check that needs the arguments.
+ * @returns {Promise<{ pid: number, command: string }[]>}
+ */
+export async function readProcessCommands() {
+  if (process.platform === "win32") {
+    const script =
+      "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      { windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
+    );
+    const parsed = JSON.parse(stdout.trim() || "[]");
+    return (Array.isArray(parsed) ? parsed : [parsed]).map((row) => ({
+      pid: row.ProcessId,
+      command: row.CommandLine ?? "",
+    }));
+  }
+  const { stdout } = await execFileAsync("ps", ["-eo", "pid=,command="], {
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return stdout
+    .split("\n")
+    .map((line) => line.match(/^\s*(\d+)\s+(.*)$/))
+    .filter(Boolean)
+    .map((match) => ({ pid: Number(match[1]), command: match[2] }));
+}
+
 export async function readProcessTable() {
   return process.platform === "win32" ? readWindowsProcesses() : readPosixProcesses();
 }
