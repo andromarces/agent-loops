@@ -1,6 +1,7 @@
 import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
+import { killTreeOnExit } from "./exec-tree.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
@@ -36,7 +37,9 @@ export async function assertGitWorkTree(cwd, { timeoutMs = 0 } = {}) {
     options.timeout = timeoutMs;
     options.forceKillAfterDelay = 1000;
   }
-  const result = await execa("git", ["rev-parse", "--is-inside-work-tree"], options);
+  const result = await killTreeOnExit(
+    execa("git", ["rev-parse", "--is-inside-work-tree"], options),
+  );
 
   if (result.timedOut) {
     throw new SnapshotError(
