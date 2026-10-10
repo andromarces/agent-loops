@@ -75,7 +75,7 @@ test("writeFileAtomic resolves a relative target against the real directory of t
   expect(await readdir(join(dir, "x"))).toEqual(["alias"]);
 });
 
-// Usefulness: verifies a directory link that a relative link target passes through applies before the `..` after it, so `dl/../t.json` lands beside the directory that `dl` points to.
+// Usefulness: verifies a directory link inside a relative link target applies before the `..` after it, as the OS applies it: `dl/../t.json` lands beside the directory that `dl` points to on POSIX.
 test("writeFileAtomic applies a directory link inside a relative target before its dot-dot", async (ctx) => {
   await mkdir(join(dir, "a"));
   await mkdir(join(dir, "b", "deep"), { recursive: true });
@@ -83,6 +83,8 @@ test("writeFileAtomic applies a directory link inside a relative target before i
   // A literal string: `path.join` would fold `dl/..` away before the link is made.
   await symlinkOrSkip(ctx, "dl/../t.json", join(dir, "a", "link.json"));
   await writeFileAtomic(join(dir, "a", "link.json"), "data");
-  expect(await readFile(join(dir, "b", "t.json"), "utf8")).toBe("data");
-  expect((await readdir(join(dir, "a"))).sort()).toEqual(["dl", "link.json"]);
+  // Windows folds `dl/..` away before it touches the file system, so there the file lands in `a`.
+  const landed = process.platform === "win32" ? "a" : "b";
+  expect(await readFile(join(dir, landed, "t.json"), "utf8")).toBe("data");
+  expect((await readdir(join(dir, "a"))).includes("t.json")).toBe(landed === "a");
 });
