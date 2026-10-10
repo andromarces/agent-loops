@@ -341,8 +341,9 @@ step budget runs out.
 
     Limit: this probe called the CLI directly, and its prompt carried no ownership marker. The
     adapter appends `[agent-loop session <id> role <role>]` to a first-turn prompt. `ownsSession`
-    requires that marker before the adapter resumes an unconfirmed id. The adapter would refuse
-    this probe session, and the runtime would rerun the turn as a first turn.
+    requires that marker before the adapter resumes an unconfirmed id. The adapter refuses this
+    probe session. A worker or reviewer turn then reruns as a first turn. An orchestrator turn
+    has no rerun, so the run ends and the id keeps its mark.
 
     The probe shows that Claude Code resumes a session that `SIGKILL` left, and that the format
     prints no id. It does not show the adapter recovery path. The probes of issues #565 and #580
