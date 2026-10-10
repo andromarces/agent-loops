@@ -127,9 +127,11 @@ The worker turn was asked to run one shell command. The command printed whether
 - Copilot CLI: the worker shell command was denied in both runs. The error read `Permission denied
   because no interactive user response was available.` The command did not run, so the marker and
   the child refusal are not verified. The probe did not change the approval settings of Copilot CLI.
-- The Copilot denial is expected for the adapter flags, and it is not a defect. A worker turn
-  passes `--session-id <id> -s --no-ask-user --output-format json`, with no allow flag
-  (`src/agents/copilot.mjs`, line 108, read from source, not from a runtime log). The README
-  records that `--no-ask-user` alone returns `Permission denied` for a shell call. It also calls
-  the denial a Copilot default, not a runtime setting (`README.md`, lines 86 and 971).
+- Copilot flags: a worker turn passes `--session-id <id> -s --no-ask-user --output-format json`,
+  with no allow flag (`src/agents/copilot.mjs`, line 108, read from source, not from a runtime
+  log). The README records `Permission denied` for a shell call under `--no-ask-user` alone
+  (`README.md`, lines 86 and 971).
+- Conflict: the worker prompt tells a worker to run tests, checks, and verifications
+  (`src/prompts/worker.mjs`, line 12). Under these flags a Copilot worker turn was denied a shell
+  command in both runs. Issue #713 tracks the conflict and its decision.
 - Windows: not verified. No Windows host was available.
