@@ -305,7 +305,7 @@ step budget runs out.
 
     The resume command was `claude -p --model haiku --resume <id> --output-format json
     --verbose`. It exited 0. Its `init` and `result` events carried the same id. The answer named
-    `GUAVA` and said that the outcome of the timer was unknown. The `zsh` shell of the tool call and
+    `GUAVA` and said that the timer result was not recorded. The `zsh` shell of the tool call and
     its `node` child stayed alive with parent pid 1. The driver ended them by pid.
 
     The adapter uses `--output-format json`, which prints nothing before the end. The adapter
