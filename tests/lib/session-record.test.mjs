@@ -76,3 +76,26 @@ test("isInside follows a symlink and rejects a sibling directory", async (ctx) =
   expect(await isInside(root, join(sibling, "run.json"))).toBe(false);
   expect(await isInside(root, join(root, "new", "deeper", "run.json"))).toBe(true);
 });
+
+// Usefulness: verifies a path behind a junction in the directory counts as inside even when the
+// junction points outside, because Git for Windows follows the junction and lists the file as
+// untracked (issue #613). A junction that points from outside into the directory still counts.
+test("isInside counts a path behind a junction inside the directory, whatever its target", async (ctx) => {
+  const root = join(dir, "root");
+  const outside = join(dir, "outside");
+  const target = join(root, "sub");
+  await mkdir(target, { recursive: true });
+  await mkdir(outside);
+  try {
+    await symlink(outside, join(root, "jn"), "junction");
+    await symlink(target, join(dir, "jin"), "junction");
+  } catch (err) {
+    // A junction exists on Windows only.
+    if (err?.code === "EPERM" || err?.code === "ENOTSUP") ctx.skip();
+    throw err;
+  }
+  if (process.platform !== "win32") ctx.skip();
+  expect(await isInside(root, join(root, "jn", "t.json"))).toBe(true);
+  expect(await isInside(root, join(dir, "jin", "t.json"))).toBe(true);
+  expect(await isInside(root, join(outside, "t.json"))).toBe(false);
+});
