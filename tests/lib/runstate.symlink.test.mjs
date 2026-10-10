@@ -18,13 +18,30 @@ afterEach(async () => {
 });
 
 // The async and the sync writer share one symlink traversal (#694). Every link case below runs
-// against both, so a drift between them fails a test.
+// against both, so a drift between them fails a test. `run` and `fail` keep the contract of each
+// writer: the async one settles a promise, the sync one returns or throws before the call returns.
 const writers = [
-  ["writeFileAtomic", writeFileAtomic],
-  ["writeFileAtomicSync", async (path, text) => writeFileAtomicSync(path, text)],
+  [
+    "writeFileAtomic",
+    {
+      write: writeFileAtomic,
+      run: (call) => call(),
+      fail: (call) => expect(call()).rejects.toMatchObject({ code: "ELOOP" }),
+    },
+  ],
+  [
+    "writeFileAtomicSync",
+    {
+      write: writeFileAtomicSync,
+      run: (call) => expect(call()).toBeUndefined(),
+      fail: (call) => expect(call).toThrow(expect.objectContaining({ code: "ELOOP" })),
+    },
+  ],
 ];
 
-for (const [name, write] of writers) {
+for (const [name, { write: writeTarget, run, fail }] of writers) {
+  const write = (path, text) => run(() => writeTarget(path, text));
+
   // Usefulness: verifies a dangling file symlink keeps its link and the write lands at the target (#658, #669).
   test(`${name} writes through a dangling file symlink and keeps the link`, async (ctx) => {
     const path = join(dir, "repo", "t.json");
@@ -67,7 +84,7 @@ for (const [name, write] of writers) {
     const second = join(dir, "repo", "b.json");
     await symlinkOrSkip(ctx, "b.json", first);
     await symlinkOrSkip(ctx, "a.json", second);
-    await expect(write(first, "data")).rejects.toMatchObject({ code: "ELOOP" });
+    await fail(() => writeTarget(first, "data"));
     expect((await lstat(first)).isSymbolicLink()).toBe(true);
     expect(await readdir(join(dir, "repo"))).toEqual(["a.json", "b.json"]);
   });
