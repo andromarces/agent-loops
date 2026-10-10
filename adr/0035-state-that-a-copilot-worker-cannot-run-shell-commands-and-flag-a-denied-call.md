@@ -2,7 +2,7 @@
 
 ## Status
 
-proposed
+accepted
 
 ## Date
 
@@ -43,6 +43,7 @@ Andro Marces
 
 ## Links
 
+- [Pull request #724](https://github.com/andromarces/agent-loops/pull/724)
 - [Issue #713: A Copilot worker turn is denied shell commands that the worker contract requires](https://github.com/andromarces/agent-loops/issues/713)
 - [ADR 0014: Extend the step budget of a live run](0014-extend-the-step-budget-of-a-live-run.md)
 - Implementation: `runCopilot` in `src/agents/copilot.mjs`, `invoke` and `runChild` in `src/runtime.mjs`, `dispatchPayload` in `src/role.mjs`, `resultPrompt` in `src/prompts/orchestrator.mjs`, and the worker preamble in `src/prompts/worker.mjs`. The rule is also stated in `docs/orchestrator-instructions.md` and the README.
