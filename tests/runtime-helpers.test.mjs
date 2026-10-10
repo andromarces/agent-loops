@@ -1,7 +1,17 @@
+import { spawn } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { pidAlive } from "../src/lib/runstate.mjs";
-import { cleanRepoGit, deadPid, untrackedFilesGit } from "./runtime-helpers.mjs";
+import {
+  cleanRepoGit,
+  createPsShim,
+  deadPid,
+  pollUntil,
+  untrackedFilesGit,
+  within,
+} from "./runtime-helpers.mjs";
 
 const options = { cwd: tmpdir() };
 const expected = ["rev-parse", "--verify", "-q", "HEAD"];
@@ -50,3 +60,66 @@ test("deadPid is a valid pid that no OS assigns and the production liveness chec
   expect(pid % 4).not.toBe(0);
   expect(pidAlive(pid)).toBe(false);
 });
+
+// Usefulness: a probe that never settles must not hold the wait past its deadline (#647 review).
+// No other test covers the polling helper.
+test("pollUntil rejects at its deadline when a probe never settles", async () => {
+  const started = performance.now();
+  await expect(pollUntil(() => new Promise(() => {}), 100)).rejects.toThrow(
+    /not met within 100 ms/,
+  );
+  expect(performance.now() - started).toBeLessThan(2000);
+  await expect(pollUntil(async () => 7, 100)).resolves.toBe(7);
+});
+
+// Usefulness: a probe result that arrives after the deadline must be rejected, even when the timer
+// callback has not run yet (#647 review). The probe blocks the event loop past the deadline, so the
+// timer cannot fire first.
+test("pollUntil rejects a probe result that arrives after the deadline", async () => {
+  const late = () => {
+    const until = performance.now() + 150;
+    while (performance.now() < until) {
+      // Busy wait: the result is ready only after the 100 ms deadline.
+    }
+    return 7;
+  };
+  await expect(pollUntil(late, 100)).rejects.toThrow(/not met within 100 ms/);
+});
+
+// Usefulness: the shim readiness reader must never accept a partial heartbeat, and its wait must
+// end at its own deadline.
+test("createPsShim.ready accepts only a complete newline-terminated heartbeat", async () => {
+  const shim = await createPsShim("exit 0");
+  try {
+    await writeFile(join(shim.dir, "beat"), "1");
+    await expect(shim.ready(100)).rejects.toThrow(/not met within 100 ms/);
+    await writeFile(join(shim.dir, "beat"), "1\n");
+    await expect(shim.ready(100)).resolves.toBe(1);
+  } finally {
+    await shim.cleanup();
+  }
+});
+
+// Usefulness: the shim must end by itself at its wall-clock ceiling, so a failed test cannot leave
+// it running, and the helper must tell an early end from a run to the ceiling without a signal.
+// The test owns the child handle and ends it through that handle if the shim does not exit.
+test.skipIf(process.platform === "win32")(
+  "createPsShim stalls only until its ceiling and reports how it ended",
+  async () => {
+    const shim = await createPsShim("trap '' TERM\n__STALL__", { ceilingSeconds: 1 });
+    const child = spawn(join(shim.dir, "ps"), [], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));
+    try {
+      await shim.ready();
+      expect(await within(exited, 10_000, "The shim exit")).toBe(0);
+      expect(await shim.heartbeatStopped()).toBe(false);
+      expect(await readFile(join(shim.dir, "done"), "utf8")).toBe("done\n");
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await shim.cleanup();
+    }
+  },
+  30_000,
+);

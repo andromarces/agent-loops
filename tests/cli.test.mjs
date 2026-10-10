@@ -1,6 +1,7 @@
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vite-plus/test";
 
@@ -20,10 +21,24 @@ vi.mock("execa", async (importOriginal) => {
 
 import { execa } from "execa";
 import { main, parseArgs } from "../src/cli.mjs";
+import { readProcessCommands } from "../src/lib/process-ancestry.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import { cleanRepoGit, createTempRepo, removePath, untrackedFilesGit } from "./runtime-helpers.mjs";
+import {
+  cleanRepoGit,
+  createTempRepo,
+  removePath,
+  untrackedFilesGit,
+  createPsShim,
+  within,
+} from "./runtime-helpers.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
+
+// True when the process-table read of the product works on this host and lists this process.
+const processTableReadable = await readProcessCommands().then(
+  (table) => table.some((entry) => entry.pid === process.pid),
+  () => false,
+);
 
 // Usefulness: verifies missing required --orchestrator flag throws error.
 test("missing --orchestrator fails", () => {
@@ -1401,6 +1416,42 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
   });
 });
 
+// Usefulness: verifies --continue-from refuses, before any turn, a claude session that a live
+// process still holds (#647), through the real process table. No other CLI test starts a holder.
+test("--continue-from refuses a claude session that a live process holds", async (ctx) => {
+  // A sandbox can deny the process table (ADR 0019: `ps` exits 127 with `operation not permitted`).
+  // The read then fails, the check fails open, and the run exits 0. The test fails only when the
+  // read works and the refusal is missing.
+  if (!processTableReadable) {
+    ctx.skip("The host process table cannot be read, so the check fails open here.");
+  }
+  const heldId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--transcript", transcriptPath],
+      sessionAgents([work, FINISH], { codex: [], claude: [], agy: [] }),
+    );
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    transcript.roles.worker.sessionId = heldId;
+    await writeFile(transcriptPath, JSON.stringify(transcript));
+    const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", heldId], {
+      stdio: "ignore",
+    });
+    try {
+      const seen = { codex: [], claude: [], agy: [] };
+      await main(
+        [...CONTINUE_BASE, "--cwd", repo, "--continue-from", transcriptPath],
+        sessionAgents([FINISH], seen),
+      );
+      expect(process.exitCode).toBe(1);
+      expect(seen.codex).toEqual([]);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  });
+});
+
 // Usefulness: verifies the transcript carries the gate state across --continue-from through the
 // CLI (#393): a reviewer accept recorded by the first run satisfies --require-accept in the
 // continued run on the unchanged tree, so the continued run dispatches no reviewer.
@@ -1901,6 +1952,67 @@ test("--continue-from cancels a probe on SIGINT and exits 130", async () => {
     expect(process.listenerCount("SIGINT")).toBe(listenersBefore);
   });
 });
+
+// Usefulness: verifies a real SIGINT during a stalled process-table read ends the continued run
+// with exit 130 (or death by SIGINT, which a shell reports as 130) before any turn, and ends the read's shim, so the holder check cannot defeat
+// cancellation (#647). A child process is needed: an in-process emit reaches the exit handler of
+// execa, which re-raises the signal and ends the test worker.
+test.skipIf(process.platform === "win32")(
+  "--continue-from exits 130 on SIGINT during a stalled holder check",
+  async () => {
+    const shim = await createPsShim("__STALL__");
+    let repo;
+    let child;
+    try {
+      repo = await createTempRepo();
+      const role = (kind, sessionId) => ({ kind, model: null, effort: null, sessionId });
+      const transcript = join(shim.dir, "run.json");
+      await writeFile(
+        transcript,
+        JSON.stringify({
+          task: "long task",
+          cwd: repo,
+          roles: {
+            orchestrator: role("codex", null),
+            worker: role("claude", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"),
+            reviewer: role("agy", null),
+          },
+          events: [],
+        }),
+      );
+      child = spawn(
+        process.execPath,
+        [CLI, ...CONTINUE_BASE, "--cwd", repo, "--continue-from", transcript],
+        {
+          env: { ...process.env, PATH: `${shim.dir}${delimiter}${process.env.PATH}` },
+          stdio: "ignore",
+        },
+      );
+      const exited = new Promise((resolve) =>
+        child.once("exit", (code, signal) => resolve({ code, signal })),
+      );
+      // The shim beats only after the read started, so the signal cancels a running read.
+      await shim.ready();
+      child.kill("SIGINT");
+      // The run handler sets exit 130. The exit handler of execa can re-raise SIGINT first, which
+      // a shell also reports as 130.
+      const { code, signal } = await within(exited, 15_000, "The CLI exit");
+      expect(code === 130 || signal === "SIGINT").toBe(true);
+      // The cancel ends the shim before its 10 s ceiling (11.2 s at most).
+      expect(await shim.heartbeatStopped()).toBe(true);
+    } finally {
+      // Ends only the child that this test spawned, through its handle, when it still runs.
+      if (child && child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await shim.cleanup();
+      if (repo) {
+        await removePath(repo);
+      }
+    }
+  },
+  30_000,
+);
 
 // Usefulness: verifies --continue-from takes a value, in both forms.
 test("--continue-from requires a value and accepts the inline form", () => {

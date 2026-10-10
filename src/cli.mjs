@@ -30,6 +30,7 @@ import {
   carryEarlierEvents,
   gateFromTranscript,
   readContinuation,
+  refuseHeldSessions,
   restoreSessions,
   verifyResolvedModels,
 } from "./lib/continuation.mjs";
@@ -605,6 +606,7 @@ export async function main(
     try {
       const earlier = await readContinuation(options.continueFrom);
       restoreSessions(roles, earlier, options.cwd);
+      await refuseHeldSessions(roles, { signal: controller.signal });
       await verifyResolvedModels(roles, {
         probe: (state, role) =>
           runProbeTurn({
