@@ -10,6 +10,7 @@ import {
   resetGate,
   matchingGate,
   readContinuation,
+  refuseHeldIds,
   refuseHeldSessions,
   restoreSessions,
   verifyResolvedModels,
@@ -720,3 +721,32 @@ test.skipIf(process.platform === "win32")(
   },
   60_000,
 );
+
+// Usefulness: verifies only a process that holds the session counts (#673): the id must be the whole value of --resume, -r, or --session-id, so a log path or a longer token that contains the id never refuses a run.
+test("refuseHeldIds counts the id only as the value of a session flag", async () => {
+  const check = (command) =>
+    refuseHeldIds([{ role: "worker", sessionId: HELD_ID }], {
+      readProcessCommands: async () => [{ pid: 4242, command }],
+    });
+  for (const command of [
+    `claude -p --resume ${HELD_ID} --output-format json`,
+    `claude -p --session-id ${HELD_ID} --model haiku`,
+    `claude -p --resume=${HELD_ID}`,
+    `claude -p -r ${HELD_ID}`,
+    String.raw`"C:\Program Files\claude.exe" -p --resume "${HELD_ID}"`,
+  ]) {
+    await expect(check(command)).rejects.toThrow(`process 4242`);
+  }
+  for (const command of [
+    `tail -f /home/u/.claude/projects/p/${HELD_ID}.jsonl`,
+    String.raw`node app.js --log C:\logs\${HELD_ID}.log`,
+    `claude -p --resume ${HELD_ID}-copy`,
+    `claude -p --resume x${HELD_ID}`,
+    `claude -p --resume ${HELD_ID}0`,
+    `claude -p --session-id-file ${HELD_ID}`,
+    `claude -p --model ${HELD_ID}`,
+    `node test ${HELD_ID}`,
+  ]) {
+    await expect(check(command)).resolves.toBeUndefined();
+  }
+});

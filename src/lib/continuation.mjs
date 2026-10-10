@@ -85,7 +85,8 @@ async function applySessionRecord(path, bytes, transcript) {
  * command line. No other adapter is verified to leave such an orphan. A process table that cannot
  * be read logs a warning and lets the run continue. The read is bounded by `deps.timeout`
  * (seconds) and ends on `deps.signal`. A cancel rejects, so SIGINT still cancels the run.
- * known-limit: the match is by command line, so a holder that does not carry the id there is not found.
+ * known-limit: the match is by command line, so a holder that does not carry the id as the value of a
+ * session flag there is not found.
  * @param {object} roles roles keyed by role name, after `restoreSessions`
  * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number }} [deps]
  */
@@ -97,6 +98,18 @@ export async function refuseHeldSessions(roles, deps = {}) {
     })),
     { ...deps, label: "--continue-from" },
   );
+}
+
+/**
+ * True when `command` passes `id` as the whole value of `--resume`, `-r`, or `--session-id`, with an
+ * optional `=` or quotes. The CLI takes a session there, so a path, a longer token, or another flag
+ * that merely contains the id is not a holder (#673, ADR 0031). `id` is a UUID, so it needs no escape.
+ */
+function holdsSession(command, id) {
+  return new RegExp(
+    String.raw`(?:^|\s)(?:--resume|-r|--session-id)(?:=|\s+)["']?${id}["']?(?=\s|$)`,
+    "i",
+  ).test(command);
 }
 
 /**
@@ -129,7 +142,9 @@ export async function refuseHeldIds(entries, deps = {}) {
     return;
   }
   for (const [role, id] of ids) {
-    const holder = table.find((entry) => entry.pid !== process.pid && entry.command.includes(id));
+    const holder = table.find(
+      (entry) => entry.pid !== process.pid && holdsSession(entry.command, id),
+    );
     if (holder) {
       throw new Error(
         `${label}: the ${role} session ${id} is held by process ${holder.pid}, a leftover of an earlier run. End that process, or wait for it to finish, and run again.`,

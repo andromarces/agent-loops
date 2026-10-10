@@ -688,3 +688,13 @@ test("init proceeds when no live process holds an earlier session", async () => 
   expect((await unread.run()).exitCode).toBe(0);
   expect(unread.calls).toBe(0);
 });
+
+// Usefulness: verifies the init guard does not refuse for a process that only mentions an earlier session id in a log path (#673).
+test("init proceeds when a process only names an earlier session id inside a path", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await endedRunWithClaudeWorker(repo, HELD_ID);
+  const init = initWithTable(repo, [{ pid: 9, command: `tail -f /logs/${HELD_ID}.log` }]);
+  expect((await init.run()).exitCode).toBe(0);
+});

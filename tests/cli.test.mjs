@@ -1435,9 +1435,13 @@ test("--continue-from refuses a claude session that a live process holds", async
     const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
     transcript.roles.worker.sessionId = heldId;
     await writeFile(transcriptPath, JSON.stringify(transcript));
-    const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", heldId], {
-      stdio: "ignore",
-    });
+    const holder = spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 60000)", "--", "--resume", heldId],
+      {
+        stdio: "ignore",
+      },
+    );
     try {
       const seen = { codex: [], claude: [], agy: [] };
       await main(
