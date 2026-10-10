@@ -81,7 +81,32 @@ The #567 probe found these facts:
 - **Accepted gap:** a Claude turn whose output has no `init` event and several models in `modelUsage`, a Copilot turn whose messages name different models, and a turn whose evidence is malformed are unresolved. The latest turn governs: a role whose latest turn is unresolved is not checked, even when an earlier turn named a model, and the operator gets the warning of decision 11. The alternative, an older model kept as the baseline, falsely refuses an unchanged model B after an ambiguous turn and passes a B-to-A change against a stale A (alternative 9).
 - A transcript written before this change records no `resolvedModel` (not reported), so it continues unchecked, with the warning of decision 11. A turn run after this change always records a model id or `null` for a Claude, Copilot, or opencode role.
 - The probe runs before `assertGitWorkTree`. A `--cwd` that is not a Git work tree fails the probe's snapshot, so the run is refused.
-- **Unverified:** the Copilot CLI and opencode probes ran on macOS only. The Claude `init` event of a resumed turn is verified on macOS (2.1.293) and on Windows (2.1.293 and 2.1.295). Other Claude Code versions are not verified.
+- Issue #568 ran the default-model check on a live changed default on macOS on 2026-10-10 (Claude Code 2.1.296, GitHub Copilot CLI 1.0.96-2, Node 26.11.1).
+  - Setup: each probe used a Git repository in a new directory under the system temporary directory. The runs used `--mode review-only --max-steps 1` and a transcript outside the repository.
+  - Override: the second run changed the default for that process only. It set `ANTHROPIC_MODEL=haiku` for Claude and `COPILOT_MODEL=gpt-5.4` for Copilot. No user-level CLI configuration changed.
+  - Reach: the runtime passes its environment to every child. Each variable therefore reaches the child of every role that uses that CLI, not only the probed role.
+  - In the Claude run, the variable applied to all three roles. In the Copilot run, it applied to the reviewer only.
+  - Precedence: both variables rank below `--model`. The adapters pass no `--model` for an omitted model. So the variable sets the default that the probe turn reads.
+  - A direct call of each CLI named the new default. It named `claude-haiku-5-5` on the `init` event. It named `gpt-5.4` on `assistant.message`, not `mai-code-1.1-flash`.
+
+  | Role CLI           | Earlier `resolvedModel` | Default of the second run | Probe turn ran | Exit | Transcript written |
+  | ------------------ | ----------------------- | ------------------------- | -------------- | ---- | ------------------ |
+  | claude (all roles) | `claude-opus-5-5`       | `claude-haiku-5-5`        | yes            | 1    | no                 |
+  | copilot (reviewer) | `mai-code-1.1-flash`    | `gpt-5.4`                 | yes            | 1    | no                 |
+  - The Claude run refused on the orchestrator with `orchestrator resolved to "claude-opus-5-5" in the earlier run, not "claude-haiku-5-5"`.
+  - The Copilot run passed the unchanged Claude orchestrator probe. It then refused on the reviewer with `reviewer resolved to "mai-code-1.1-flash" in the earlier run, not "gpt-5.4"`.
+  - Both logs showed the probe turn (`probing the model that <role> (<kind>) resolves now`, then the CLI start and finish). Neither showed a later turn.
+  - The earlier transcript stayed byte-identical.
+  - A control continuation with no changed default passed the probe, ran, exited 0, and wrote its transcript.
+  - The worker of a `review-only` run has no session. Each run therefore warned that the check did not run for the worker.
+  - No contradiction of the decisions was found, so no bug was opened.
+
+- **Unverified:** the issue #568 run left these items open.
+  - The changed-default refusal on Windows. The run had no Windows host.
+  - The changed-default refusal for opencode.
+  - A changed alias target. The probe changed the default through an environment variable, which does not exercise a vendor change of the `opus` alias.
+  - Other CLI versions.
+- **Unverified:** the Copilot CLI and opencode probes of issue #567 ran on macOS only. The Claude `init` event of a resumed turn is verified on macOS (2.1.293) and on Windows (2.1.293 and 2.1.295). Other Claude Code versions are not verified.
 
 ## Alternatives
 
@@ -112,7 +137,9 @@ Andro Marces
 - [Issue #567: Probe whether Codex, agy, and opencode can report the resolved model](https://github.com/andromarces/agent-loops/issues/567)
 - [Issue #582: Verify the init event of a resumed Claude turn names the resumed session and model](https://github.com/andromarces/agent-loops/issues/582)
 - [Issue #589: Verify the resumed Claude init event on Windows and another Claude Code version](https://github.com/andromarces/agent-loops/issues/589)
+- [Issue #568: Verify the --continue-from default-model check on a live changed default and on Windows](https://github.com/andromarces/agent-loops/issues/568)
 - [Pull Request #562](https://github.com/andromarces/agent-loops/pull/562)
+- [Pull Request #662: Record the live changed-default check of --continue-from](https://github.com/andromarces/agent-loops/pull/662)
 - [Pull Request #586: Record the opencode resolved model from session export](https://github.com/andromarces/agent-loops/pull/586)
 - Implementation: `gateFromTranscript`, `matchingGate`, `verifyResolvedModels`, and `restoreSessions` in `src/lib/continuation.mjs`, `runProbeTurn` in `src/runtime.mjs`, `setResolvedModel` in `src/agents/shared.mjs`, the adapters `src/agents/claude.mjs`, `src/agents/copilot.mjs`, and `src/agents/opencode.mjs` (`exportedModels`), and `--continue-from` in `src/cli.mjs`; tests in `tests/lib/continuation.test.mjs`, `tests/cli.test.mjs`, `tests/runtime.mutation.test.mjs`, `tests/agents/claude.test.mjs`, and `tests/agents/copilot.test.mjs`, and `tests/agents/opencode.test.mjs`; documented in `README.md`
 - [ADR Index](README.md)
