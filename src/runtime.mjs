@@ -43,6 +43,10 @@ async function invoke({ agents, state, roleName, prompt, opts, onEvent, stepsUse
   } catch (err) {
     emit("error");
     throw err;
+  } finally {
+    // An orchestrator turn has no result to carry the flag (ADR 0035), so it keeps none. A child
+    // turn leaves it for `runChild`, which reads it and clears it.
+    if (roleName === "orchestrator") delete state.shellDenied;
   }
   emit("ok");
   return response;

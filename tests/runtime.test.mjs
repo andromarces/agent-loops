@@ -4524,3 +4524,61 @@ test("a fresh --require-accept run with no worker turn finishes after a review",
     await removePath(repo);
   }
 });
+
+const FINISH_REPLY = JSON.stringify({
+  action: "finish",
+  summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+});
+
+// Usefulness: verifies requirements "a denied shell call shows in the result of the turn" and "the flag follows read-only turns too" (issue #713, ADR 0035): a worker or reviewer denial reaches the next orchestrator prompt, a later turn without a denial drops it, and an orchestrator turn keeps no flag on its own state.
+test("headless result prompts carry shellDenied for the turn that had it and no later turn", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "inspect" }),
+      JSON.stringify({ action: "run_worker", prompt: "more work" }),
+      (state) => {
+        state.shellDenied = true;
+        return FINISH_REPLY;
+      },
+    ]);
+    const workerAdapter = scripted([
+      (state) => {
+        state.shellDenied = true;
+        return "worker did task";
+      },
+      "worker did more",
+    ]);
+    const reviewerAdapter = scripted([
+      (state) => {
+        state.shellDenied = true;
+        return "reviewer inspected";
+      },
+    ]);
+    const orchestrator = { kind: "orch", sessionId: null };
+
+    const result = await runLoop({
+      task: "Task 713",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator,
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: workerAdapter, rev: reviewerAdapter },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const [, afterWorker, afterReviewer, afterSecondWorker] = orchAdapter.recorded.map(
+      (call) => call.prompt,
+    );
+    expect(afterWorker).toContain('"shellDenied": true');
+    expect(afterReviewer).toContain('"shellDenied": true');
+    expect(afterSecondWorker).not.toContain("shellDenied");
+    expect(orchestrator).not.toHaveProperty("shellDenied");
+  } finally {
+    await removePath(repo);
+  }
+});

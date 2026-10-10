@@ -453,6 +453,9 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
     // The test command result the runtime ran before the reviewer turn (ADR
     // 0017), beside the reviewer response for the same comparison.
     ...(result.testRun ? { testRun: result.testRun } : {}),
+    // A child turn whose adapter saw a refused tool call (ADR 0035), so a headless parent
+    // holds what a `role dispatch` envelope carries. A turn with no denial carries no field.
+    ...(result.shellDenied ? { shellDenied: true } : {}),
     stepsUsed,
     stepsRemaining,
   };
