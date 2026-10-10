@@ -2,7 +2,7 @@
 
 ## Status
 
-proposed
+accepted
 
 ## Date
 
@@ -75,6 +75,7 @@ Andro Marces
 
 ## Links
 
+- [Pull request #719](https://github.com/andromarces/agent-loops/pull/719)
 - [Issue #712](https://github.com/andromarces/agent-loops/issues/712)
 - [Issue #692](https://github.com/andromarces/agent-loops/issues/692)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
