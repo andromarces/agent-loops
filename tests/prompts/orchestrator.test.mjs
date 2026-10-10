@@ -589,7 +589,8 @@ test("initialPrompt states the required-check wait at the reviewer and at finish
 
 // Usefulness: verifies a copilot orchestrator is not told that its shell has no network or runs in
 // a sandbox, because its read-only turn keeps network and only refuses `role wait-checks` (#432
-// probe, #495), and that it runs no check read itself, as the reviewer and gate rules state.
+// probe, #495). The claude reviewer cases set up the reviewer rule and the codex and null reviewer
+// cases set up the gate rule. Both rules tell it to run no check read itself.
 test.each([
   ["claude", 42],
   ["claude", null],
@@ -608,14 +609,16 @@ test.each([
       pr,
     });
     const lines = prompt.split("\n");
-    const from = lines.findIndex((line) => line.includes("You orchestrate through copilot"));
-    // The statement spans the bullet and the two bullets after it: the exception, then the rule.
-    const own = lines.slice(from, from + 3).join("\n");
-    expect(own).toBeTruthy();
+    const from = lines.findIndex((line) => line.startsWith("- You orchestrate through copilot"));
+    expect(from).toBeGreaterThanOrEqual(0);
+    // The limit claim sits in the copilot bullet itself, so another role's text cannot satisfy it.
+    const own = lines[from];
     expect(own).toContain("keeps shell network");
     expect(own).toContain("refuses agent-loop role wait-checks");
-    expect(own).toContain("Do not run gh pr checks");
     expect(own).not.toMatch(/copilot, whose read-only turn cannot reach the network/);
+    // The reviewer rule keeps the instruction in the bullet. The gate rule moves it two bullets on.
+    const instruction = reviewerKind === "claude" ? own : lines[from + 2];
+    expect(instruction).toContain("Do not run gh pr checks");
     expect(prompt).not.toMatch(/gh pr checks 42 --required|--watch/);
     expect(prompt).not.toMatch(/agent-loop role wait-checks --pr/);
   },
@@ -636,12 +639,12 @@ test.each([["codex"], [null]])(
       pr: null,
     });
     const lines = prompt.split("\n");
-    const from = lines.findIndex((line) => line.includes("You orchestrate through copilot"));
-    // The statement spans the bullet and the two bullets after it: the exception, then the rule.
-    const own = lines.slice(from, from + 3).join("\n");
-    expect(own).toContain("refuses agent-loop role wait-checks without approval");
-    expect(own).toContain("This run names PR #42");
-    expect(own).toContain("supplies it to every reviewer prompt");
+    const from = lines.findIndex((line) => line.startsWith("- You orchestrate through copilot"));
+    expect(from).toBeGreaterThanOrEqual(0);
+    expect(lines[from]).toContain("refuses agent-loop role wait-checks without approval");
+    // The supplied read follows the exception bullet, in the "Do not run gh pr checks" bullet.
+    expect(lines[from + 2]).toContain("This run names PR #42");
+    expect(lines[from + 2]).toContain("supplies it to every reviewer prompt");
     expect(prompt).toContain(
       "The advisory status read above reports to the reviewer and never enforces",
     );
