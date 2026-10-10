@@ -91,8 +91,7 @@ test("isInside counts a path behind a junction inside the directory, whatever it
   expect(await isInside(root, join(outside, "t.json"))).toBe(false);
 });
 
-// Usefulness: verifies a file symlink outside the directory whose target is inside counts as inside
-// (the write lands there), and a link inside that points outside still counts (path as written).
+// Usefulness: verifies a file symlink counts as inside when its target or its path as written is inside.
 test("isInside judges the target of a file symlink as well as the path as written", async (ctx) => {
   const root = join(dir, "root");
   const outside = join(dir, "outside");
@@ -105,8 +104,7 @@ test("isInside judges the target of a file symlink as well as the path as writte
   expect(await isInside(root, join(outside, "plain.json"))).toBe(false);
 });
 
-// Usefulness: verifies a link and its target share one session record, so the record the writer
-// keeps for the target is the one a read through the link finds.
+// Usefulness: verifies a link and its target share one session record path, so a read through the link finds the target's record.
 test("a file symlink and its target share one session record path", async (ctx) => {
   await symlinkOrSkip(ctx, join(dir, "t.json"), join(dir, "link.json"));
   expect(await sessionRecordPath(join(dir, "link.json"))).toBe(
@@ -114,20 +112,27 @@ test("a file symlink and its target share one session record path", async (ctx) 
   );
 });
 
-// Usefulness: verifies a record that an earlier version keyed by the link path is still found through the link, and that removal clears it.
-test("a record keyed by the link path as written is found and removed through the link", async (ctx) => {
-  const link = join(dir, "link.json");
-  // No link exists yet, so the writer keys the record by the path as written, as the earlier version did.
-  await writeSessionRecord(link, fields());
-  await symlinkOrSkip(ctx, join(dir, "t.json"), link);
-  expect(
-    await readSessionRecord(link, { digest: "a".repeat(64), cwd: dir, runNonce: NONCE }),
-  ).toEqual({
-    role: "reviewer",
-    sessionId: ID,
-  });
-  await removeSessionRecord(link);
-  expect(
-    await readSessionRecord(link, { digest: "a".repeat(64), cwd: dir, runNonce: NONCE }),
-  ).toBeNull();
+// Usefulness: verifies a path that was no link when its record was written does not accept that record once a link makes it name another file.
+test("a record written for a plain path is not accepted once the path becomes a link", async (ctx) => {
+  const path = join(dir, "link.json");
+  const bound = { digest: "a".repeat(64), cwd: dir, runNonce: NONCE };
+  await writeSessionRecord(path, fields());
+  expect(await readSessionRecord(path, bound)).toEqual({ role: "reviewer", sessionId: ID });
+  await symlinkOrSkip(ctx, join(dir, "other.json"), path);
+  expect(await readSessionRecord(path, bound)).toBeNull();
+  await rm(path);
+  await removeSessionRecord(path);
+});
+
+// Usefulness: verifies a link retargeted after the write does not accept the record of its old target.
+test("a record written through a link is not accepted once the link is retargeted", async (ctx) => {
+  const path = join(dir, "link.json");
+  const bound = { digest: "a".repeat(64), cwd: dir, runNonce: NONCE };
+  await symlinkOrSkip(ctx, join(dir, "first.json"), path);
+  await writeSessionRecord(path, fields());
+  expect(await readSessionRecord(path, bound)).toEqual({ role: "reviewer", sessionId: ID });
+  await rm(path);
+  await symlinkOrSkip(ctx, join(dir, "second.json"), path);
+  expect(await readSessionRecord(path, bound)).toBeNull();
+  await removeSessionRecord(join(dir, "first.json"));
 });

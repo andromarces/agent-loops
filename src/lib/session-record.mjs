@@ -59,29 +59,14 @@ export async function isInside(root, path) {
 // write target, so a case alias of the path and a file symlink to it find the same record (#658).
 async function recordKey(transcript) {
   const target = await resolveWriteTarget(transcript).catch(() => resolve(transcript));
-  return keyOf(target);
-}
-
-// The key of a path as written. A record that an earlier version left under a link path has this
-// key, so a read falls back to it when the target key finds no record.
-const asWrittenKey = (transcript) => keyOf(resolve(transcript));
-
-async function keyOf(path) {
-  const dir = await real(dirname(path));
+  const dir = await real(dirname(target));
   const where = (await identity(dir)) ?? dir;
-  return sha256(`${where}\0${basename(path).toLowerCase()}`).slice(0, 32);
+  return sha256(`${where}\0${basename(target).toLowerCase()}`).slice(0, 32);
 }
-
-// The target key first, then the as-written key when it differs, without a duplicate.
-async function recordKeys(transcript) {
-  return [...new Set([await recordKey(transcript), await asWrittenKey(transcript)])];
-}
-
-const recordFile = (key) => join(tmpdir(), "agent-loops", "session-records", `${key}.json`);
 
 /** The path of the record of one transcript file. */
 export async function sessionRecordPath(transcript) {
-  return recordFile(await recordKey(transcript));
+  return join(tmpdir(), "agent-loops", "session-records", `${await recordKey(transcript)}.json`);
 }
 
 /**
@@ -110,14 +95,9 @@ export async function writeSessionRecord(
   await writeFileAtomic(file, JSON.stringify(record));
 }
 
-/**
- * Removes the record of `transcript` under both keys. A failure is ignored: a stale record never
- * binds.
- */
+/** Removes the record of `transcript`. A failure is ignored: a stale record never binds. */
 export async function removeSessionRecord(transcript) {
-  for (const key of await recordKeys(transcript)) {
-    await rm(recordFile(key), { force: true }).catch(() => {});
-  }
+  await rm(await sessionRecordPath(transcript), { force: true }).catch(() => {});
 }
 
 /**
@@ -131,26 +111,18 @@ export async function removeSessionRecord(transcript) {
  * @param {{ digest: string, cwd: string, runNonce: unknown }} bound
  * @returns {Promise<{ role: string, sessionId: string } | null>}
  */
-export async function readSessionRecord(transcript, bound) {
-  for (const key of await recordKeys(transcript)) {
-    const found = await readRecordAt(key, bound);
-    if (found !== undefined) return found;
-  }
-  return null;
-}
-
-// The result of `readSessionRecord` for the record under `key`, or undefined when no file exists.
-async function readRecordAt(key, { digest, cwd, runNonce }) {
-  const file = recordFile(key);
+export async function readSessionRecord(transcript, { digest, cwd, runNonce }) {
+  let file;
   let text;
   try {
+    file = await sessionRecordPath(transcript);
     const info = await lstat(file);
     if (!info.isFile() || info.size > MAX_BYTES) return refuse(file, "not a small regular file");
     if (process.getuid && info.uid !== process.getuid())
       return refuse(file, "not owned by the user");
     text = await readFile(file, "utf8");
   } catch (err) {
-    return err?.code === "ENOENT" ? undefined : refuse(file, "unreadable");
+    return err?.code === "ENOENT" ? null : refuse(file, "unreadable");
   }
   let record;
   try {
@@ -169,7 +141,11 @@ async function readRecordAt(key, { digest, cwd, runNonce }) {
     isUuid(record.runNonce) &&
     record.sessionUnconfirmed === true;
   if (!shaped) return refuse(file, "has an unexpected shape");
-  if (record.transcript !== key || record.cwd !== cwd || record.runNonce !== runNonce) {
+  if (
+    record.transcript !== (await recordKey(transcript)) ||
+    record.cwd !== cwd ||
+    record.runNonce !== runNonce
+  ) {
     return refuse(file, "belongs to another transcript, work tree, or run");
   }
   return record.transcriptSha256 === digest

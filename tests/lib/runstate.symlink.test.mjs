@@ -62,8 +62,7 @@ test("writeFileAtomic rejects a symlink loop and keeps the links", async (ctx) =
   expect((await lstat(first)).isSymbolicLink()).toBe(true);
 });
 
-// Usefulness: verifies a relative link target resolves against the real directory of the link, not
-// the directory path as written, when the link is reached through a directory symlink.
+// Usefulness: verifies a relative target resolves against the real directory of the link when a directory symlink leads to it.
 test("writeFileAtomic resolves a relative target against the real directory of the link", async (ctx) => {
   const deep = join(dir, "real", "deep");
   await mkdir(deep, { recursive: true });
@@ -75,7 +74,7 @@ test("writeFileAtomic resolves a relative target against the real directory of t
   expect(await readdir(join(dir, "x"))).toEqual(["alias"]);
 });
 
-// Usefulness: verifies a directory link inside a relative link target applies before the `..` after it, as the OS applies it: `dl/../t.json` lands beside the directory that `dl` points to on POSIX.
+// Usefulness: verifies a directory link inside a relative target applies before the `..` after it, as the OS applies it.
 test("writeFileAtomic applies a directory link inside a relative target before its dot-dot", async (ctx) => {
   await mkdir(join(dir, "a"));
   await mkdir(join(dir, "b", "deep"), { recursive: true });
