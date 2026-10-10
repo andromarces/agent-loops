@@ -432,7 +432,8 @@ other reviewer is refused at init. The run is unchanged without it.
   `sandbox_mode="workspace-write"` and `sandbox_workspace_write.network_access=false`.
   Network access stays off for the shell commands that the sandbox runs. The
   runtime sets it explicitly, because the mode takes network from the user Codex
-  config otherwise. The limit covers shell commands only: it does not block
+  config otherwise. Every sandboxed Codex turn also passes `--ignore-rules`, so a
+  user execpolicy rule cannot run a shell command outside the sandbox. The limit covers shell commands only: it does not block
   model-side tools such as Codex `web_search`, or any other channel outside the
   sandbox.
 - Only reviewer turns change. Every orchestrator turn, every worker turn, and the
@@ -459,7 +460,7 @@ other reviewer is refused at init. The run is unchanged without it.
     seen on one machine only (issue #640): a user Codex rule that allows
     `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion such
     as `$$` or `$HOME` outside the sandbox, with network and with a write
-    outside the work tree. The runtime does not prevent that. The sandbox does not block a channel outside it, for example a
+    outside the work tree. The adapter now passes `--ignore-rules` to prevent that, and a probe shows shell network blocked with such a rule present. The sandbox does not block a channel outside it, for example a
     GitHub app connector or another model-side tool. The local snapshot does
     not see a remote write over any channel, so a push, a merge, a review, or a
     comment could change remote state unseen. Codex is the only adapter that

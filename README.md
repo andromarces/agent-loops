@@ -765,14 +765,14 @@ Reviewer and orchestrator turns run in read-only mode to prevent unintended repo
 | CLI        | Read-only invocation flag     | Flag effect                                                                                                                        | Role-model subagent fan-out                                              | Evidence                              |
 | ---------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
 | `claude`   | `--permission-mode plan`      | Plan mode blocks file edits.                                                                                                       | Yes; Explore and Plan subagents run on the role model. Adapter disables. | Claude docs; issue #46 smoke test     |
-| `codex`    | `-c sandbox_mode="read-only"` | Passes read-only sandbox mode on new and resumed sessions. Also blocks shell network access.                                       | Yes; `spawn_agent` subagents inherit the parent model and effort.        | Codex rollout transcript              |
+| `codex`    | `-c sandbox_mode="read-only"` | Passes read-only sandbox mode and `--ignore-rules` on new and resumed sessions. Also blocks shell network access.                  | Yes; `spawn_agent` subagents inherit the parent model and effort.        | Codex rollout transcript              |
 | `agy`      | `--mode plan`                 | Plan mode disables file edits.                                                                                                     | Yes; `invoke_subagent` subagents inherit the parent model by default.    | CLI `stream-json` step                |
 | `opencode` | `--agent plan`                | The plan agent blocks edits; a global permissions allow can cancel it. Adapter denies `edit` per turn. Shell writes stay possible. | Yes; the `subagent` tool inherits the session model. Adapter denies it.  | `run --format json` tool call; A/B    |
 | `copilot`  | `--deny-tool write`           | Denies write/edit tools. External permissions may still permit shell writes.                                                       | No; subagents run on an agent-definition default model.                  | `--output-format json` subagent event |
 
 #### Codex read-only network limit
 
-`-c sandbox_mode="read-only"` restricts network access of the shell commands that the sandbox runs, as well as writes. It does not block model-side tools: the Codex `web_search` tool ran and returned results in a read-only probe on 2026-10-04 (issue #421). A
+`-c sandbox_mode="read-only"` restricts network access of the shell commands that the sandbox runs, as well as writes. The adapter also passes `--ignore-rules`, so a user execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` cannot run a command outside the sandbox (issue #655). It does not block model-side tools: the Codex `web_search` tool ran and returned results in a read-only probe on 2026-10-04 (issue #421). A
 Codex orchestrator turn cannot run `gh` from its sandboxed shell to resolve a PR head, so a
 Codex-orchestrated PR run must abort, or record the unresolved compare under
 `notDone` and `open` with `"unresolvedCompare": true`, instead of finishing as
@@ -807,7 +807,7 @@ fails under network on as well, because pnpm writes to its store outside the wor
 `network_access=false` covers the shell commands that the sandbox runs. A model-side tool
 (for example Codex `web_search`) and any other channel outside the sandbox, such as a
 connector, are not covered, and no probe of those under `workspace-write` was run.
-A user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` also runs a shell command with an expansion outside the sandbox, as the probe of 2026-10-10 below shows for one machine.
+A user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion outside the sandbox on one machine (probe of 2026-10-10 below). The adapter passes `--ignore-rules` on every sandboxed Codex turn to prevent that (issue #655).
 
 The runtime read of the required-check status for a named PR ([ADR 0024](adr/0024-supply-the-required-check-status-for-a-named-pr.md)) still reaches
 the reviewer.
@@ -823,13 +823,13 @@ A live probe of `ps`, `pnpm exec`, and `gh` ran on 2026-10-10 (macOS 27.2 arm64,
 - `ps -p $$ -o pid=` exited 127 with `zsh:1: operation not permitted: ps`. The sandbox blocks `ps`, so the 8 `ps`-gated tests in `tests/lib/runstate.test.mjs` skip.
 - `pnpm exec vp --version` exited 0 (`vp v1.1.0`). Only `--version` was probed.
 - `gh pr checks 637 --required` exited 1 with `error connecting to api.github.com`, because shell network is off.
-- A Codex user rule that allows `bash -c`, `sh -c`, or `zsh -c` runs a command that has an expansion such as `$$` or `$HOME` outside the sandbox. The probe used a `CODEX_HOME` with no rules to avoid that. Details are in the ADR.
+- A Codex user rule that allows `bash -c`, `sh -c`, or `zsh -c` runs a command that has an expansion such as `$$` or `$HOME` outside the sandbox. The probe used a `CODEX_HOME` with no rules to avoid that. The adapter now passes `--ignore-rules`, and a probe with a matching rule present showed shell network blocked. Details are in the ADR.
 
 Accepted gaps, as the ADR states them:
 
 - Detection only. The sandbox no longer prevents an edit. An edit succeeds, and the run then halts with a `MutationError`, exit 1, with no revert.
 - Snapshot blind spots. The snapshot does not see a write to an ignored file (for example `.env` or `node_modules/`), a write outside the repository, a write that the turn restores before it ends, or Git state other than the index and `HEAD` (other refs, the stash, the config).
-- Remote GitHub writes. Shell network is off here, so the opt-in does not open the shell path for `gh` and `git`, except under the user-rule exception in this item. Exception, seen on one machine only (issue #640): a user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion such as `$$` or `$HOME` outside the sandbox, with network and with a write outside the work tree. The runtime does not prevent that. The sandbox does not block a channel outside it, for example a GitHub app connector or another model-side tool, and the local snapshot does not see a remote write over any channel, so a push, a merge, a review, or a comment could change remote state unseen. Codex is the only adapter that blocks shell network in a read-only turn today. Issue #422 holds the rule against remote writes, which is advisory and not enforced.
+- Remote GitHub writes. Shell network is off here, so the opt-in does not open the shell path for `gh` and `git`, except under the user-rule exception in this item. Exception, seen on one machine only (issue #640): a user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion such as `$$` or `$HOME` outside the sandbox, with network and with a write outside the work tree. The adapter now passes `--ignore-rules`, and a probe shows shell network blocked with such a rule present. The sandbox does not block a channel outside it, for example a GitHub app connector or another model-side tool, and the local snapshot does not see a remote write over any channel, so a push, a merge, a review, or a comment could change remote state unseen. Codex is the only adapter that blocks shell network in a read-only turn today. Issue #422 holds the rule against remote writes, which is advisory and not enforced.
 - A larger prompt-injection blast radius. Reviewed content that holds an instruction can steer a command that writes, not only one that reads.
 - Likely no gain on the unelevated Windows sandbox, which blocks a child spawn with `EPERM` under `workspace-write` (`docs/parent-guard.md`). Not verified for a test runner.
 

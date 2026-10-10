@@ -35,6 +35,7 @@ test("codex sends correct argv for initial turn with readOnly", async () => {
       "exec",
       "-c",
       'sandbox_mode="read-only"',
+      "--ignore-rules",
       "--json",
       "-m",
       "gpt-4o",
@@ -68,7 +69,7 @@ test("codex resumes session with readOnly", async () => {
   expect(response).toBe("resumed ok");
   expect(exec).toHaveBeenCalledWith(
     "codex",
-    ["exec", "resume", "th-1", "-c", 'sandbox_mode="read-only"', "--json", "-"],
+    ["exec", "resume", "th-1", "-c", 'sandbox_mode="read-only"', "--ignore-rules", "--json", "-"],
     { cwd: "/dir", input: "resume prompt", timeout: undefined, signal: undefined, role: undefined },
   );
 });
@@ -392,6 +393,8 @@ test("codex keeps a final letter-prefixed list report over an earlier accept blo
 // Usefulness: verifies the reviewer-only sandbox input gives a Codex turn the workspace-write
 // sandbox with network access set off explicitly, so a user config that turns it on cannot widen
 // the turn (issue #421). A readOnly turn with no sandbox input keeps read-only (tests above).
+// Both sandboxed forms also ignore user execpolicy rules, so a user rule that allows `zsh -c`
+// cannot run a command outside the sandbox (issue #655).
 test.each([
   ["initial", null, ["exec"]],
   ["resume", "th-1", ["exec", "resume", "th-1"]],
@@ -416,7 +419,29 @@ test.each([
     'sandbox_mode="workspace-write"',
     "-c",
     "sandbox_workspace_write.network_access=false",
+    "--ignore-rules",
     "--json",
     ...(sessionId ? ["-"] : []),
   ]);
+});
+
+// Usefulness: verifies a turn with no sandbox input (the worker) keeps the user execpolicy rules,
+// so the rule change of issue #655 reaches only the sandboxed reviewer and orchestrator turns.
+test("codex turn with no sandbox input does not ignore user rules", async () => {
+  vi.mocked(exec).mockClear();
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      { type: "thread.started", thread_id: "th-1" },
+      { type: "item.completed", item: { type: "agent_message", text: "ok" } },
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n"),
+    stderr: "",
+  });
+
+  await runCodex({ kind: "codex", sessionId: null, model: null, effort: null }, "p", {
+    cwd: "/dir",
+  });
+
+  expect(vi.mocked(exec).mock.calls[0][1]).toEqual(["exec", "--json"]);
 });
