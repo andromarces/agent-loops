@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { killLiveTrees, killTreeOnExit } from "../../src/lib/exec-tree.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
@@ -305,3 +305,25 @@ test("killLiveTrees ends a live child that ignores SIGTERM", async () => {
     await removePath(dir);
   }
 }, 40_000);
+
+// Usefulness: acceptance (#669) — a SIGKILL that execa does not deliver (it returns false) is
+// logged at warn level and does not stop the kill of the next live run, so ADR 0029 can name it.
+test("killLiveTrees warns when a SIGKILL is not delivered and still kills the next run", () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: "linux" });
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const refused = Object.assign(Promise.resolve(), { pid: 424241, kill: vi.fn(() => false) });
+  const killed = Object.assign(Promise.resolve(), { pid: 424242, kill: vi.fn(() => true) });
+  try {
+    killTreeOnExit(refused);
+    killTreeOnExit(killed);
+    killLiveTrees();
+    const logged = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(killed.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(logged).toMatch(/warn: .*424241.*not ended.*SIGKILL/);
+    expect(logged).not.toMatch(/424242/);
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    warn.mockRestore();
+  }
+});

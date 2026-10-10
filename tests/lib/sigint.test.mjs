@@ -103,3 +103,27 @@ test.each([
   },
   40_000,
 );
+
+// Usefulness: acceptance (#669) — a write in flight that never finishes holds the exit for the
+// bound only, so a stalled consumer cannot trap the user in a run that was told to stop twice.
+test("the second SIGINT waits for a pending write for at most the bound, then exits 130", async () => {
+  vi.useFakeTimers();
+  const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const remove = cancelOnSigInt(new AbortController(), {
+    onForceExit: () => new Promise(() => {}),
+  });
+  try {
+    process.emit("SIGINT");
+    process.emit("SIGINT");
+    await vi.advanceTimersByTimeAsync(1900);
+    expect(exit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(exit).toHaveBeenCalledWith(130);
+  } finally {
+    remove();
+    exit.mockRestore();
+    errorSpy.mockRestore();
+    vi.useRealTimers();
+  }
+});
