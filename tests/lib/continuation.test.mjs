@@ -1,7 +1,8 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { expect, test, vi } from "vite-plus/test";
+import { delimiter } from "node:path";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import {
   carryEarlierEvents,
   gateFromTranscript,
@@ -14,7 +15,8 @@ import {
   restoreSessions,
   verifyResolvedModels,
 } from "../../src/lib/continuation.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
+import { removePath, writePsShim } from "../runtime-helpers.mjs";
 
 // Value that the mocked `readFile` throws while `active`; otherwise it reads the real file.
 const readControl = vi.hoisted(() => ({ active: false, value: undefined }));
@@ -636,3 +638,75 @@ test("refuseHeldSessions ignores an id that is not a UUID", async () => {
   const short = roles({ worker: { kind: "claude", model: null, effort: null, sessionId: "s" } });
   await expect(refuseHeldSessions(short, { readProcessCommands })).resolves.toBeUndefined();
 });
+
+const SENTINEL = "SECRET-SENTINEL-4f9a1c";
+let shimDir;
+
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  if (shimDir) {
+    await removePath(shimDir);
+    shimDir = undefined;
+  }
+});
+
+async function useShim(body) {
+  shimDir = await writePsShim(body);
+  vi.stubEnv("PATH", `${shimDir}${delimiter}${process.env.PATH}`);
+}
+
+// Usefulness: verifies the fail-open warning tells the operator the reason class of a failed
+// read, and that no text of a reader error reaches the warning, because a process table holds the
+// command lines of every process on the host (#647).
+test("refuseHeldSessions warns with the reason class only when the read fails", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  await refuseHeldSessions(heldRoles(), {
+    readProcessCommands: async () => {
+      throw new ProcessReadError("exited with code 3");
+    },
+  });
+  expect(warn).toHaveBeenCalledWith(
+    expect.stringContaining("the process table read exited with code 3."),
+  );
+  warn.mockClear();
+  await refuseHeldSessions(heldRoles(), {
+    readProcessCommands: async () => {
+      throw new Error(`ps output: ${SENTINEL}`);
+    },
+  });
+  expect(warn.mock.calls.flat().join("\n")).toContain("the process table read failed.");
+  expect(warn.mock.calls.flat().join("\n")).not.toContain(SENTINEL);
+});
+
+// Usefulness: verifies a cancel of the read is not swallowed by the fail-open path.
+test("refuseHeldSessions rethrows a canceled read", async () => {
+  const canceled = new ProcessReadError("was canceled", { isCanceled: true });
+  await expect(
+    refuseHeldSessions(heldRoles(), {
+      readProcessCommands: async () => {
+        throw canceled;
+      },
+    }),
+  ).rejects.toBe(canceled);
+});
+
+// Usefulness: verifies through the real read that a stalled `ps` with output in both streams ends
+// on the cancel signal and on the bound, and that the warning of the bound holds no output.
+test.skipIf(process.platform === "win32")(
+  "refuseHeldSessions ends a stalled read on cancel or bound and prints no output",
+  async () => {
+    await useShim(`echo ${SENTINEL}\necho ${SENTINEL} >&2\nexec sleep 30`);
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 300);
+    await expect(
+      refuseHeldSessions(heldRoles(), { signal: controller.signal }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    await refuseHeldSessions(heldRoles(), { timeout: 1 });
+    const printed = warn.mock.calls.flat().join("\n");
+    expect(printed).toContain("the process table read timed out after 1 seconds.");
+    expect(printed).not.toContain(SENTINEL);
+  },
+);

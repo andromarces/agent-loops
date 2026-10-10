@@ -570,3 +570,17 @@ export function gitWhileDotGitExists(command, args, options) {
     stderr: "fatal: not a git repository (or any of the parent directories): .git",
   };
 }
+
+/**
+ * Writes a POSIX `ps` shell script with the given body into a new directory under the system
+ * temporary directory and returns the directory. A test puts the directory first on `PATH`, so the
+ * process-table read runs the script. `__DIR__` in the body stands for the directory. The caller
+ * removes the directory.
+ */
+export async function writePsShim(body) {
+  const dir = await mkdtemp(join(tmpdir(), "ps-shim-"));
+  await writeFile(join(dir, "ps"), `#!/bin/sh\n${body.replaceAll("__DIR__", dir)}\n`, {
+    mode: 0o755,
+  });
+  return dir;
+}

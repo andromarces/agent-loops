@@ -52,13 +52,46 @@ async function readPosixProcesses() {
     .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), name: match[3] }));
 }
 
-// Seconds that the command-line read waits before it gives up.
+// Seconds that the command-line read waits before it ends the process. The end signal is SIGTERM,
+// and `exec` force-kills after execa's 5 s default delay, so a read that ignores SIGTERM ends about
+// 35 s after the start on POSIX.
 const COMMANDS_READ_TIMEOUT_SECONDS = 30;
 
 /**
+ * Failure of the command-line read. The message and `reason` hold the reason class only: timeout,
+ * cancel, exit code, spawn failure, or unreadable output. They never hold output of the read,
+ * because the process table carries the command lines of every process on the host, and those
+ * lines can carry the secrets of other programs.
+ */
+export class ProcessReadError extends Error {
+  constructor(reason, { isCanceled = false } = {}) {
+    super(`process table read ${reason}`);
+    this.name = "ProcessReadError";
+    this.reason = reason;
+    this.isCanceled = isCanceled;
+  }
+}
+
+function readFailure(err, timeout) {
+  if (err?.isCanceled) {
+    return new ProcessReadError("was canceled", { isCanceled: true });
+  }
+  if (err?.timedOut) {
+    return new ProcessReadError(`timed out after ${timeout} seconds`);
+  }
+  if (Number.isInteger(err?.exitCode)) {
+    return new ProcessReadError(`exited with code ${err.exitCode}`);
+  }
+  if (err?.isTerminated) {
+    return new ProcessReadError("was killed by a signal");
+  }
+  return new ProcessReadError("failed to start");
+}
+
+/**
  * Lists every process with its full command line, for a check that needs the arguments. The read
- * runs through `exec`, so `signal` cancels it and `timeout` (seconds) bounds it. Both reject with
- * an `ExecError`.
+ * runs through `exec`, so `signal` cancels it and `timeout` (seconds) bounds it. Every failure
+ * rejects with a `ProcessReadError`, whose `isCanceled` is true for a cancel.
  * @param {{ signal?: AbortSignal, timeout?: number }} [options]
  * @returns {Promise<{ pid: number, command: string }[]>}
  */
@@ -67,8 +100,8 @@ export async function readProcessCommands({
   timeout = COMMANDS_READ_TIMEOUT_SECONDS,
 } = {}) {
   const windows = process.platform === "win32";
-  const { stdout } = windows
-    ? await exec(
+  const [command, args] = windows
+    ? [
         "powershell.exe",
         [
           "-NoProfile",
@@ -76,11 +109,21 @@ export async function readProcessCommands({
           "-Command",
           "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
         ],
-        { signal, timeout, maxBuffer: 32 * 1024 * 1024 },
-      )
-    : await exec("ps", ["-eo", "pid=,command="], { signal, timeout, maxBuffer: 32 * 1024 * 1024 });
+      ]
+    : ["ps", ["-eo", "pid=,command="]];
+  let stdout;
+  try {
+    ({ stdout } = await exec(command, args, { signal, timeout, maxBuffer: 32 * 1024 * 1024 }));
+  } catch (err) {
+    throw readFailure(err, timeout);
+  }
   if (windows) {
-    const parsed = JSON.parse(stdout.trim() || "[]");
+    let parsed;
+    try {
+      parsed = JSON.parse(stdout.trim() || "[]");
+    } catch {
+      throw new ProcessReadError("returned output that is not JSON");
+    }
     return (Array.isArray(parsed) ? parsed : [parsed]).map((row) => ({
       pid: row.ProcessId,
       command: row.CommandLine ?? "",

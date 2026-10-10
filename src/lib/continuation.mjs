@@ -6,7 +6,7 @@ import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isAcceptedReview } from "./report.mjs";
 import { sha256 } from "./hash.mjs";
-import { readProcessCommands } from "./process-ancestry.mjs";
+import { ProcessReadError, readProcessCommands } from "./process-ancestry.mjs";
 import { isUuid, readSessionRecord } from "./session-record.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
 
@@ -106,8 +106,10 @@ export async function refuseHeldSessions(roles, deps = {}) {
     if (readProp(err, "isCanceled")) {
       throw err;
     }
+    // Only the reason class of a `ProcessReadError` is printed: the process table holds the command
+    // lines of every process on the host.
     logWarn(
-      `--continue-from: cannot check for a live holder of a session: ${readableErrorText(err)}`,
+      `--continue-from: cannot check for a live holder of a session: the process table read ${err instanceof ProcessReadError ? err.reason : "failed"}.`,
     );
     return;
   }

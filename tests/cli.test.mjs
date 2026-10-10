@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vite-plus/test";
 
@@ -22,7 +23,13 @@ vi.mock("execa", async (importOriginal) => {
 import { execa } from "execa";
 import { main, parseArgs } from "../src/cli.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import { cleanRepoGit, createTempRepo, removePath, untrackedFilesGit } from "./runtime-helpers.mjs";
+import {
+  cleanRepoGit,
+  createTempRepo,
+  removePath,
+  untrackedFilesGit,
+  writePsShim,
+} from "./runtime-helpers.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 
@@ -1932,6 +1939,79 @@ test("--continue-from cancels a probe on SIGINT and exits 130", async () => {
     expect(process.listenerCount("SIGINT")).toBe(listenersBefore);
   });
 });
+
+// Usefulness: verifies a real SIGINT during a stalled process-table read ends the continued run
+// with exit 130 (or death by SIGINT, which a shell reports as 130) before any turn, and ends the read's process, so the holder check cannot defeat
+// cancellation (#647). A child process is needed: an in-process emit reaches the exit handler of
+// execa, which re-raises the signal and ends the test worker.
+test.skipIf(process.platform === "win32")(
+  "--continue-from exits 130 on SIGINT during a stalled holder check",
+  async () => {
+    const shim = await writePsShim("echo $$ > __DIR__/pid.txt\nexec sleep 30");
+    const repo = await createTempRepo();
+    try {
+      const role = (kind, sessionId) => ({ kind, model: null, effort: null, sessionId });
+      const transcript = join(shim, "run.json");
+      await writeFile(
+        transcript,
+        JSON.stringify({
+          task: "long task",
+          cwd: repo,
+          roles: {
+            orchestrator: role("codex", null),
+            worker: role("claude", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"),
+            reviewer: role("agy", null),
+          },
+          events: [],
+        }),
+      );
+      const child = spawn(
+        process.execPath,
+        [CLI, ...CONTINUE_BASE, "--cwd", repo, "--continue-from", transcript],
+        {
+          env: { ...process.env, PATH: `${shim}${delimiter}${process.env.PATH}` },
+          stdio: "ignore",
+        },
+      );
+      const exited = new Promise((resolve) =>
+        child.once("exit", (code, signal) => resolve({ code, signal })),
+      );
+      const pidFile = join(shim, "pid.txt");
+      let readPid;
+      try {
+        for (let waited = 0; waited < 10_000 && readPid === undefined; waited += 50) {
+          readPid = await readFile(pidFile, "utf8").then(Number, () => undefined);
+          await delay(50);
+        }
+        expect(readPid).toBeGreaterThan(0);
+        child.kill("SIGINT");
+        // The run handler sets exit 130. The exit handler of execa can re-raise SIGINT first, which
+        // a shell also reports as 130.
+        const { code, signal } = await exited;
+        expect(code === 130 || signal === "SIGINT").toBe(true);
+        for (let waited = 0; waited < 3000 && isAlive(readPid); waited += 50) {
+          await delay(50);
+        }
+        expect(isAlive(readPid)).toBe(false);
+      } finally {
+        child.kill("SIGKILL");
+      }
+    } finally {
+      await removePath(shim);
+      await removePath(repo);
+    }
+  },
+  30_000,
+);
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Usefulness: verifies --continue-from takes a value, in both forms.
 test("--continue-from requires a value and accepts the inline form", () => {
