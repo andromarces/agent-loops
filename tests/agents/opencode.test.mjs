@@ -608,6 +608,24 @@ test("opencode reports the last well-formed error event", async () => {
   expect(error.message).not.toContain("R".repeat(40));
 });
 
+// Usefulness: verifies a live 401 event with `response.body` leaks no body, which no other fixture covers.
+test("opencode omits the provider response body from an authentication failure", async () => {
+  const error = await rejectTurnWith({
+    exitCode: 1,
+    stdout: errorEvent({
+      type: "provider.auth",
+      message: "invalid x-api-key",
+      status: 401,
+      response: { body: '{"request_id":"BODYSENTINEL"}' },
+    }),
+  });
+
+  expect(error.message).toBe(
+    "opencode exited with code 1: provider.auth: invalid x-api-key (status 401)",
+  );
+  expect(error.message).not.toContain("BODYSENTINEL");
+});
+
 // Usefulness: verifies an error event whose payload is not the documented object yields the fixed
 // bounded message rather than a crash or the raw event, so an unexpected CLI shape cannot break the
 // turn (issue #326).
