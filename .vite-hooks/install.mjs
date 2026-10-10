@@ -1,6 +1,7 @@
 // vite-plus is a devDependency, so a registry or consumer install without it must
 // still succeed when npm runs the `prepare` script. Skip in CI, in production, and
-// when VP_GIT_HOOKS=0, and treat a missing vite-plus as a successful no-op.
+// when VP_GIT_HOOKS=0, and treat a missing vite-plus, or a package directory with
+// no `.git` (the temporary checkout of a Git URL install), as a successful no-op.
 // Contract: always exit 0, write nothing to stdout, and on any failure write one
 // warning line to stderr (child stderr still passes through).
 import { spawnSync } from "node:child_process";
@@ -10,6 +11,8 @@ import { fileURLToPath } from "node:url";
 
 const { CI, NODE_ENV, VP_GIT_HOOKS } = process.env;
 if (CI === "true" || NODE_ENV === "production" || VP_GIT_HOOKS === "0") process.exit(0);
+// `.git` is a directory, or a file in a linked work tree.
+if (!existsSync(".git")) process.exit(0);
 
 class StepError extends Error {}
 const fail = (step, detail) => {
