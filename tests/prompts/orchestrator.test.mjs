@@ -607,7 +607,10 @@ test.each([
       reviewerKind,
       pr,
     });
-    const own = prompt.split("\n").find((line) => line.includes("You orchestrate through copilot"));
+    const lines = prompt.split("\n");
+    const from = lines.findIndex((line) => line.includes("You orchestrate through copilot"));
+    // The statement spans the bullet and the two bullets after it: the exception, then the rule.
+    const own = lines.slice(from, from + 3).join("\n");
     expect(own).toBeTruthy();
     expect(own).toContain("keeps shell network");
     expect(own).toContain("refuses agent-loop role wait-checks");
@@ -632,7 +635,10 @@ test.each([["codex"], [null]])(
       reviewerKind,
       pr: null,
     });
-    const own = prompt.split("\n").find((line) => line.includes("You orchestrate through copilot"));
+    const lines = prompt.split("\n");
+    const from = lines.findIndex((line) => line.includes("You orchestrate through copilot"));
+    // The statement spans the bullet and the two bullets after it: the exception, then the rule.
+    const own = lines.slice(from, from + 3).join("\n");
     expect(own).toContain("refuses agent-loop role wait-checks without approval");
     expect(own).toContain("This run names PR #42");
     expect(own).toContain("supplies it to every reviewer prompt");

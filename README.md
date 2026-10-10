@@ -780,7 +780,9 @@ Reviewer and orchestrator turns run in read-only mode to prevent unintended repo
 
 `-c sandbox_mode="read-only"` restricts network access of the shell commands that the sandbox runs, as well as writes. It does not block model-side tools. The Codex `web_search` tool ran and returned results in a read-only probe on 2026-10-04 (issue #421). A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.
 
-A Codex orchestrator turn cannot run `gh` from its sandboxed shell to resolve a PR head, except under the user-rule exception above. A Codex-orchestrated PR run must then abort, or record the unresolved compare under `notDone` and `open` with `"unresolvedCompare": true`. It must not finish as verified, unless the run carries `--require-ci <pr>`. That gate runs in the runtime process, which the Codex sandbox does not cover. The gate resolves the PR head without the orchestrator needing network access (#293). A Codex reviewer turn cannot run `gh` from its sandboxed shell either, for example to check a PR's CI status. The same exception applies.
+A Codex orchestrator turn cannot run `gh` from its sandboxed shell to resolve a PR head, except under the user-rule exception above. A Codex-orchestrated PR run must then abort, or record the unresolved compare under `notDone` and `open` with `"unresolvedCompare": true`. It must not finish as verified, unless the run carries `--require-ci <pr>`. That gate runs in the runtime process, which the Codex sandbox does not cover. The gate resolves the PR head without the orchestrator needing network access (#293).
+
+A Codex reviewer turn cannot run `gh` from its sandboxed shell either, for example to check a PR's CI status. The same exception applies.
 
 Read-only file
 protection stays in place on every adapter: the Codex sandbox flag remains, and

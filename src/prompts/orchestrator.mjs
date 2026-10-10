@@ -132,7 +132,9 @@ function prGateBlock({
 const SHELL_NETWORK = "from the shell commands that its sandbox runs";
 const SHELL_READ = "through a shell command that its sandbox runs";
 const SHELL_ONLY_LIMIT =
-  "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything. A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.";
+  "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything.";
+const SHELL_EXCEPTION =
+  "A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.";
 
 // A `copilot` read-only turn keeps shell network, so the Codex sandbox wording above is false for
 // it. Its limit is a permission refusal of `role wait-checks` without approval (#432 probe, #495),
@@ -165,7 +167,8 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
       "- Wait for the required checks at two points:",
       "  - Before you dispatch the reviewer on a new PR head, wait for the required checks on that head to complete.",
       "  - When a reviewer turn reports a pending required check, wait for that check to complete before you finish. A check still pending after a wait is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check, so dispatch the reviewer again, or wait again on a later turn, or abort with the pending check named in the reason.",
-      `- Run each wait with the command for the shell that your shell tool runs, exactly as written, from any directory: ${waitCommand.map(({ shell, command }) => `${shell}: ${command} --pr ${requireCi} --timeout ${bound}`).join(" ; ")}. The command names the Node binary, the CLI script, and the work tree of this run. The runtime owns the bound, so the command returns within ${bound} seconds plus five, before this turn ends. Do not watch the checks with gh directly, because gh has no timeout for a watch. The command prints one JSON envelope with "timedOut" and the last "checks" it read. The status read changes nothing and spends no step, because a step is charged only to run_worker and run_reviewer. This turn is bounded by the turn --timeout (${typeof timeout === "number" ? `${timeout} seconds` : "3600 seconds by default"}), and a turn that outlasts it ends the run on exit 1 before it returns an action.`,
+      `- Run each wait with the command for the shell that your shell tool runs, exactly as written, from any directory: ${waitCommand.map(({ shell, command }) => `${shell}: ${command} --pr ${requireCi} --timeout ${bound}`).join(" ; ")}. The command names the Node binary, the CLI script, and the work tree of this run. The runtime owns the bound, so the command returns within ${bound} seconds plus five, before this turn ends. Do not watch the checks with gh directly, because gh has no timeout for a watch.`,
+      `- The command prints one JSON envelope with "timedOut" and the last "checks" it read. The status read changes nothing and spends no step, because a step is charged only to run_worker and run_reviewer. This turn is bounded by the turn --timeout (${typeof timeout === "number" ? `${timeout} seconds` : "3600 seconds by default"}), and a turn that outlasts it ends the run on exit 1 before it returns an action.`,
       '- Read the wait result as follows. A failing required check is settled, so act on the failure. "timedOut": true means the bound was reached with a required check still pending, or with no check state read: it is a completed read and not a pass, so the pending check is not a finish condition. Do not wait again in the same turn: dispatch the reviewer, or abort with the pending check named in the reason. An exit 1 with "status": "error" is an unresolved read, so never record its checks as passed.',
       '- "childExitUnconfirmed": true appears only when the five-second window expired with the gh child still unaccounted for. The command does not claim an exit it did not observe, so a gh process from this wait may still run. Settle that process before you start another wait, and if you cannot, do not wait again.',
     ];
@@ -176,9 +179,13 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
   if (rule === "reviewer") {
     return [
       gate,
-      copilot
-        ? `- You orchestrate through copilot, ${COPILOT_LIMIT}. Do not run gh pr checks.`
-        : `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, so you cannot read the required checks ${SHELL_READ} and the status-read exception does not apply to you. ${SHELL_ONLY_LIMIT} Do not run gh pr checks.`,
+      ...(copilot
+        ? [`- You orchestrate through copilot, ${COPILOT_LIMIT}. Do not run gh pr checks.`]
+        : [
+            `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, so you cannot read the required checks ${SHELL_READ} and the status-read exception does not apply to you. ${SHELL_ONLY_LIMIT}`,
+            `- ${SHELL_EXCEPTION}`,
+            "- Do not run gh pr checks.",
+          ]),
       `- The reviewer of this run is ${reviewerKind}, whose read-only turn keeps shell network, so every reviewer turn reads the required checks, as the reviewer scope states. The reviewer turn is where the wait happens: before you dispatch the reviewer on a new PR head, name the required checks in the reviewer prompt so that turn reads and reports them.`,
       "- When a reviewer turn reports a pending required check, wait for it through another reviewer turn: dispatch the reviewer again until it reports the check complete, or abort with the pending check named in the reason. A required check still pending after a reviewer turn is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check. Each of those reviewer dispatches costs a step, so the step budget has to cover them.",
     ];
@@ -192,14 +199,18 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
   if (copilot) {
     return [
       gate,
-      `- You orchestrate through copilot, ${COPILOT_LIMIT}, and your reviewer ${reviewerKind ?? "an unnamed CLI"} cannot reach the network ${SHELL_NETWORK}, so no reviewer turn in this run can read the checks ${SHELL_READ}. ${SHELL_ONLY_LIMIT} Do not run gh pr checks.${suppliedRead(statusPr)}`,
+      `- You orchestrate through copilot, ${COPILOT_LIMIT}, and your reviewer ${reviewerKind ?? "an unnamed CLI"} cannot reach the network ${SHELL_NETWORK}, so no reviewer turn in this run can read the checks ${SHELL_READ}. ${SHELL_ONLY_LIMIT}`,
+      `- ${SHELL_EXCEPTION}`,
+      `- Do not run gh pr checks.${suppliedRead(statusPr)}`,
       enforcesLine,
     ];
   }
 
   return [
     gate,
-    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself ${SHELL_READ} and the headless loop cannot wait. ${SHELL_ONLY_LIMIT} Do not run gh pr checks.${suppliedRead(statusPr)}`,
+    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself ${SHELL_READ} and the headless loop cannot wait. ${SHELL_ONLY_LIMIT}`,
+    `- ${SHELL_EXCEPTION}`,
+    `- Do not run gh pr checks.${suppliedRead(statusPr)}`,
     enforcesLine,
   ];
 }
