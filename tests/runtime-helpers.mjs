@@ -407,33 +407,74 @@ async function returnsWithin(call, limitMs, message) {
 // A child that survived a failed test would hold its directory open until its
 // ceiling. The `keep` file is a handle the test owns: the test deletes it, the
 // shim sees that and exits by itself, and the `exited` marker acknowledges it.
-// No pid from a file is ever signalled, because the OS may hand that pid to an
-// unrelated process once the shim exits. `gone` is true when the test already
-// proved the child ended, so no acknowledgment is awaited. Returns false when a
-// shim that was still running did not acknowledge within SHIM_EXIT_WAIT_MS.
+// The marker is written as the exit starts, so the wait then continues until the
+// recorded pid no longer exists. That check sends no signal, and no pid from a
+// file is ever signalled, because the OS may hand that pid to an unrelated
+// process once the shim exits. A reused pid can only lengthen the wait to its
+// bound, and the failure then names the shim. `gone` is true when the test already
+// proved the child ended, so no acknowledgment is awaited. Returns the errors:
+// the keep file removal, and a shim that was still running and did not exit
+// within SHIM_EXIT_WAIT_MS.
 async function stopShim(dir, gone) {
-  await rm(join(dir, KEEP_FILE), { force: true });
+  const errors = [];
+  try {
+    await rm(join(dir, KEEP_FILE), { force: true });
+  } catch (error) {
+    errors.push(error);
+  }
   if (gone) {
-    return true;
+    return errors;
   }
   const deadline = Date.now() + SHIM_EXIT_WAIT_MS;
-  while (!existsSync(join(dir, EXITED_FILE))) {
-    if (Date.now() >= deadline) {
-      return false;
+  const acknowledged = async () => existsSync(join(dir, EXITED_FILE));
+  const ended = async () => {
+    const pid = await waitForPid(join(dir, "started.txt"), 0);
+    return pid === null || !processExists(pid);
+  };
+  for (const done of [acknowledged, ended]) {
+    while (!(await done())) {
+      if (Date.now() >= deadline) {
+        errors.push(
+          new Error(`the shim in ${dir} did not exit within ${SHIM_EXIT_WAIT_MS} ms of cleanup`),
+        );
+        return errors;
+      }
+      await delay(SHIM_POLL_MS);
     }
-    await delay(SHIM_POLL_MS);
   }
-  return true;
+  return errors;
 }
 
-// Runs the cleanup of a helper. A shim that does not acknowledge its exit fails the
-// helper, unless the body already failed: that failure is the one to report.
-async function cleanupShim(dir, gone, bodyFailed) {
-  const acknowledged = await stopShim(dir, gone);
-  await removePath(dir);
-  if (!acknowledged && !bodyFailed) {
-    throw new Error(`the shim in ${dir} did not exit within ${SHIM_EXIT_WAIT_MS} ms of cleanup`);
+// Runs `body(markGone)` and then the cleanup of its shim. The directory is removed
+// whatever the shim stop does. Every failure reaches the caller: the body error, the
+// shim stop errors, and the removal error. One error is rethrown as is, several as
+// an AggregateError, so a failed body never hides a surviving shim.
+async function runWithShimCleanup(dir, body) {
+  const errors = [];
+  let gone = false;
+  let result;
+  try {
+    result = await body(() => {
+      gone = true;
+    });
+  } catch (error) {
+    errors.push(error);
   }
+  try {
+    errors.push(...(await stopShim(dir, gone)));
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    try {
+      await removePath(dir);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length === 0) {
+    return result;
+  }
+  throw errors.length === 1 ? errors[0] : new AggregateError(errors, "the shim helper failed");
 }
 
 async function withShimOnPath(dir, body) {
@@ -459,11 +500,9 @@ async function withShimOnPath(dir, body) {
  */
 export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
-  let gone = false;
-  let bodyFailed = true;
-  try {
+  return runWithShimCleanup(dir, async (markGone) => {
     const shim = await writeHangingShim(dir, command);
-    const outcome = await withShimOnPath(dir, async () => {
+    return withShimOnPath(dir, async () => {
       const result = await returnsWithin(
         run(boundMs),
         boundMs + CALL_CEILING_MS,
@@ -474,14 +513,10 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
       const pid = await waitForPid(shim.started, RECORD_VISIBLE_MS);
       assert.notEqual(pid, null, `the shim did not start within the ${boundMs} ms bound`);
       await assertGone(pid, FORCE_KILL_AFTER_DELAY_MS);
-      gone = true;
+      markGone();
       return result;
     });
-    bodyFailed = false;
-    return outcome;
-  } finally {
-    await cleanupShim(dir, gone, bodyFailed);
-  }
+  });
 }
 
 /**
@@ -494,11 +529,9 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS) {
  */
 export async function expectAbortKillsShim(command, start) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
-  let gone = false;
-  let bodyFailed = true;
-  try {
+  return runWithShimCleanup(dir, async (markGone) => {
     const shim = await writeHangingShim(dir, command);
-    const outcome = await withShimOnPath(dir, async () => {
+    return withShimOnPath(dir, async () => {
       const controller = new AbortController();
       const pending = start(controller.signal);
       const pid = await waitForPid(shim.started, START_WAIT_MS);
@@ -510,14 +543,10 @@ export async function expectAbortKillsShim(command, start) {
         "the call did not return after the abort",
       );
       await assertGone(pid, ABORT_FORCE_KILL_AFTER_DELAY_MS);
-      gone = true;
+      markGone();
       return result;
     });
-    bodyFailed = false;
-    return outcome;
-  } finally {
-    await cleanupShim(dir, gone, bodyFailed);
-  }
+  });
 }
 
 // A clean repo at `CLEAN_REPO_HEAD`, answered from memory for a test that routes

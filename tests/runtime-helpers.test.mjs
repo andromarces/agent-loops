@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { execa } from "execa";
@@ -185,6 +185,61 @@ test(
         await rm(join(shimDir, "keep"));
       }),
     ).resolves.toBeUndefined();
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Starts a shim whose `keep` file is replaced by a directory: the shim stays alive, cleanup cannot
+// remove the keep file, and the shim cannot acknowledge an exit. `after` runs in the call under test.
+async function blockedShimFailure(after) {
+  let shimDir;
+  const failure = await expectBoundKillsShim("blocked-shim", async () => {
+    shimDir = process.env.PATH.split(delimiter)[0];
+    const held = execa("blocked-shim", { reject: false });
+    held.catch(() => {});
+    await pollUntil(
+      async () => (existsSync(join(shimDir, "started.txt")) ? true : undefined),
+      10_000,
+    );
+    await rm(join(shimDir, "keep"));
+    await mkdir(join(shimDir, "keep"));
+    await after();
+  }).then(
+    () => undefined,
+    (error) => error,
+  );
+  return { failure, shimDir };
+}
+
+// Usefulness: acceptance (#670 review) — a failed test body must not hide a shim that survives
+// cleanup, so both errors reach the report.
+test(
+  "expectBoundKillsShim reports a shim that does not exit even when the test body failed",
+  async () => {
+    const { failure } = await blockedShimFailure(async () => {
+      throw new Error("body failed first");
+    });
+    expect(failure).toBeInstanceOf(AggregateError);
+    const messages = failure.errors.map((error) => error.message);
+    expect(messages).toContain("body failed first");
+    expect(messages.some((message) => /did not exit within \d+ ms of cleanup/.test(message))).toBe(
+      true,
+    );
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: acceptance (#670 review) — an error from removing the keep file must not skip the
+// directory removal, and must itself be reported.
+test(
+  "expectBoundKillsShim removes the directory and reports the error when the keep file cannot be removed",
+  async () => {
+    const { failure, shimDir } = await blockedShimFailure(async () => {});
+    expect(existsSync(shimDir)).toBe(false);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(
+      failure.errors.some((error) => error.syscall === "rm" || /EISDIR|EPERM/.test(error.code)),
+    ).toBe(true);
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
