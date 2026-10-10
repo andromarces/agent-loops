@@ -32,7 +32,11 @@ The adapter reads `events.jsonl` once, right after the child process ends. Issue
 
 The probe made 56 runs through `runCopilot`. Each run used a fresh role state, a scratch git repository under the system temporary directory, and a separate `AGENT_LOOP_RUNS_ROOT`. The probe killed no process.
 
-After each return, the probe listed the processes that had the scratch repository as working directory. It also read the event types of `events.jsonl`. The first read followed the return at once, and later reads came 2 s and 10 s after the first. The last 45 runs also polled every 100 ms for 1.5 s to 5 s after the return. Three earlier runs, made while the probe was built, are not counted.
+After each return, the probe listed the processes that had the scratch repository as working directory. It also read the event types of `events.jsonl`. The probe changed during the work, so two schemes apply. The first 11 runs (timeouts of 1 s to 20 s) took the first listing and read at once after the return. Their labels `t+2s` and `t+10s` count from that first listing.
+
+The last 45 runs polled the process list and the event types every 100 ms from the return, for 1.5 s to 5 s. Their labels `t+0`, `t+2s`, and `t+10s` count from the end of that polling. They fell at least 1.5 s, 3.5 s, and 11.5 s after the return.
+
+A separate list came from the start of each run. It was taken 0.7 s before the configured timeout or cancel time (0.5 s after the start for the 1 s timeout). No label counts from the kill. Three earlier runs, made while the probe was built, are not counted.
 
 The table lists the 53 failed first turns by the file that the CLI left. They are 48 timeouts from 1 s to 16 s and 5 cancels from 3 s to 12 s. Three timeouts and one cancel ran with `COPILOT_ALLOW_ALL=1`. Three more turns finished before the timeout fired. They kept a confirmed id and held `user.message`.
 
@@ -44,15 +48,21 @@ The table lists the 53 failed first turns by the file that the CLI left. They ar
 | `user.message` and a finished turn, with no `abort` event                  | 1        | 1       | kept               |
 | `user.message` listed after `session.shutdown` (1 file also holds `abort`) | 3        | 0       | kept by file check |
 
-The adapter kept an id in exactly the 30 runs whose final file held `user.message`, and in none of the other 23. It took 27 of the 30 ids from the result of the failed output. It took the 3 others from the file check, and it marked them `sessionUnconfirmed`. The prompt was recorded about 5 s after the spawn, so timeouts of 4.9 s to 5.15 s gave both outcomes. The final file held an `abort` event in 26 of the 53 runs.
+The adapter kept an id in exactly the 30 runs whose final file held `user.message`, and in none of the other 23. It took 27 of the 30 ids from the result of the failed output. It took the 3 others from the file check, and it marked them `sessionUnconfirmed`. A timeout of 4.9 s to 5.15 s after the spawn gave both outcomes. The final file held an `abort` event in 26 of the 53 runs.
 
-The event types of the file did not change after the first read in any of the 56 runs. The probe compared event types, not bytes. It did not read the file at the instant of the adapter read. A change between that read and the first probe read is not excluded.
+The event types of the file did not change after the first read in any of the 56 runs. In the first 11 runs, the three reads were equal. In the last 45 runs, no poll differed from the first read, and the three later reads were equal. The probe compared event types, not bytes. It did not read the file at the instant of the adapter read. A change between that read and the first probe read is not excluded.
 
-A list taken 0.7 s before the end of each of the 53 failed runs showed the `node` shim and the native `copilot` process. It also showed MCP server children in 49 runs. No process of the scratch repository was listed at 2 s or 10 s in any of the 56 runs.
+The list from the start of each of the 53 failed runs showed the `node` shim and the native `copilot` process. It also showed MCP server children in 49 runs. The first listing after the return listed a process in 5 runs. In 4 of them the process ended before `ps` read its data, so those 4 stay unidentified in the saved results. The fifth ran from the `codegraph` package, an MCP server that the live list shows under the native `copilot` process. It had parent pid 1.
 
-The first look after the return still listed a process in 5 runs. In 4 of them the process ended before `ps` read its data, so its identity is unknown. The fifth was an MCP server child of the CLI, reparented to pid 1. Each was gone at the next look, within 0.25 s in the polled runs.
+Every later listing, in all 56 runs, listed no process of the scratch repository. The last listing came 10 s after the first listing in runs 1 to 11. It came at least 11.5 s after the return in runs 12 to 56. In the 4 polled runs with a first-listing process, the first empty listing finished within 0.25 s of the return. In the unpolled run, the next listing came 2 s after the first.
 
-With `COPILOT_ALLOW_ALL=1`, the `sleep` shell was live 0.7 s before the end in 3 runs. The first look after the return listed no process. The live process of issue #398 was not reproduced through the adapter, because that probe killed the shim pid alone.
+A second probe of 48 timeouts (5 s, six runs in parallel) identified those processes. It tagged each run through an inherited environment variable. It kept only pid, parent pid, elapsed time, and executable name. For the last 24 runs it also kept whether the command line named `codegraph`.
+
+The first listing finished 26 ms to 45 ms after the return. It listed one process named `node` with parent pid 1 in 11 of the 48 runs. In the 24 classified runs, 4 such processes appeared, and all 4 named `codegraph`. The next listing finished 79 ms to 105 ms after the return and listed none in any run. No listed process had the executable name `copilot`.
+
+The probe found no Copilot process that outlived the turn, so it opens no bug under issue #679. The only process after the return was a `codegraph` MCP server that ended within 0.1 s. The unidentified processes of the first probe are not settled by the saved results. The second probe saw only that MCP server in the same load. It does not exclude a write by a process that lived only between the adapter read and the first listing.
+
+With `COPILOT_ALLOW_ALL=1`, the `sleep` shell was in the list from the start of 3 runs, taken 0.7 s before the configured time. The first listing after the return listed no process in those 3 runs. The live process of issue #398 was not reproduced through the adapter, because that probe killed the shim pid alone.
 
 Limits of the probe: the adapter passes no `--allow-tool` flag, so the shell tool is denied and no tool shell started without `COPILOT_ALLOW_ALL=1`. On a loaded host, 2 timeouts returned 3.5 s and 3.6 s late. Both listed `user.message` after `session.shutdown`. The probe tested no other host and no other CLI version.
 
