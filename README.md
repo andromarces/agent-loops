@@ -248,18 +248,20 @@ name a directory, which now reports nothing to remove instead of an error. See [
 
 `install` must run from an install whose package location survives an upgrade: a
 global install, a project install, or a linked clone. It writes the package
-location as an absolute path into every entry point and guard, and `npx`,
-`pnpm dlx`, `yarn dlx`, and `bunx` place the package in a cache or temporary
-directory that the runner or the system can delete. When it detects its own
-package root inside that directory, `install` refuses with a
-message that asks for a global install first, so it never writes a path that can
-disappear. The `yarn dlx` and `bunx` layouts were observed on macOS with bun
-1.2.20 and yarn 4.9.2. They were also observed on Windows 11 with bun 1.3.8 and
-yarn 4.9.2. Yarn 1.22.22 has no `dlx` command. Its `create` command installed a
-probe package into the stable global directory. Linux (#707) and a `%TEMP%`
-that is an 8.3 short path or a junction (#709) are not verified. `uninstall`
-reads only the manifest and the harness files, so it still
-removes them after the package is gone.
+location as an absolute path into every entry point and guard. The `npx`,
+`pnpm dlx`, `yarn dlx`, and `bunx` runners place the package in a cache or
+temporary directory. The runner or the system can delete that directory. When
+`install` detects its own package root inside that directory, it refuses. The
+message asks for a global install first, so `install` never writes a path that
+can disappear. The `bunx` layout was observed on macOS with bun 1.2.20 and on
+Windows 11 with bun 1.3.8. The `yarn dlx` layout was observed on macOS with yarn
+4.9.2. On Windows 11 with yarn 4.9.2, only the `%TEMP%\xfs-<hex>\dlx-<pid>`
+part was observed. The `<package>.zip\node_modules\<package>` suffix was not
+observed on Windows. Yarn 1.22.22 on macOS has no `dlx` command. On macOS, its
+`create` command installed a probe package into the stable global directory.
+Linux (#707) and a `%TEMP%` that is an 8.3 short path or a junction (#709) are
+not verified. `uninstall` reads only the manifest and the harness files, so it
+still removes them after the package is gone.
 
 A pnpm install resolves the package into a version-named virtual store entry, so
 the resolved path does not survive an upgrade. `install` writes the
