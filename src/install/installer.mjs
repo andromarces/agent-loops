@@ -58,7 +58,10 @@ import {
 // global install, a project `node_modules`, and a linked clone all keep a stable
 // package root. Verified on macOS with bun 1.2.20 and yarn 4.9.2 (#207).
 const EPHEMERAL_CACHE_DIRS = new Set(["_npx", "dlx"]);
-const BUNX_TEMP_DIR = /^bunx-[^-]+-./;
+const BUNX_TEMP_DIR = /^bunx-\d+-[^@]+@[^@]+$/;
+const BUNX_SCOPE_TEMP_DIR = /^bunx-\d+-@[^@]+$/;
+const BUNX_SCOPED_VERSION_DIR = /^[^@]+@[^@]+$/;
+const YARN_DLX_XFS_DIR = /^xfs-[0-9a-f]+$/;
 const YARN_DLX_TEMP_DIR = /^dlx-\d+$/;
 const EPHEMERAL_ROOT_MESSAGE =
   "Refusing to install from an npx, pnpm dlx, yarn dlx, or bunx cache: the runner " +
@@ -69,29 +72,28 @@ const EPHEMERAL_ROOT_MESSAGE =
 
 /**
  * True when the package root resolves inside an npx, pnpm dlx, yarn dlx, or bunx
- * temporary layout. Each layout is a runner directory segment with a
- * `node_modules` segment below it. npx and pnpm dlx add a longer hex hash after
- * the segment, so a path that merely names `dlx` does not match (#205, #207).
+ * temporary layout. Each layout is matched as a whole, with a `node_modules`
+ * segment below it: a hex hash after `_npx` or `dlx`, `bunx-<uid>-<name>@<version>`
+ * (or `bunx-<uid>-@<scope>` then `<name>@<version>`), or `xfs-<hex>` then
+ * `dlx-<pid>`. A path that merely names one segment does not match (#205, #207).
+ * On Windows the segments compare case-insensitively, as the file system does.
+ * @param {string} packageRoot
+ * @param {NodeJS.Platform} [platform]
  */
-export function isEphemeralPackageRoot(packageRoot) {
-  const segments = packageRoot.split(/[\\/]+/).filter(Boolean);
-  for (let i = 0; i < segments.length - 1; i++) {
-    const rest = segments.slice(i + 1);
-    if (
-      (BUNX_TEMP_DIR.test(segments[i]) || YARN_DLX_TEMP_DIR.test(segments[i])) &&
-      rest.includes("node_modules")
-    ) {
-      return true;
+export function isEphemeralPackageRoot(packageRoot, platform = process.platform) {
+  const folded = platform === "win32" ? packageRoot.toLowerCase() : packageRoot;
+  const segments = folded.split(/[\\/]+/).filter(Boolean);
+  const hasModules = (from) => segments.slice(from).includes("node_modules");
+  return segments.some((segment, i) => {
+    const next = segments[i + 1] ?? "";
+    if (EPHEMERAL_CACHE_DIRS.has(segment)) return /^[0-9a-f]{16,}$/.test(next) && hasModules(i + 2);
+    if (BUNX_TEMP_DIR.test(segment)) return next === "node_modules";
+    if (BUNX_SCOPE_TEMP_DIR.test(segment)) {
+      return BUNX_SCOPED_VERSION_DIR.test(next) && segments[i + 2] === "node_modules";
     }
-    if (
-      EPHEMERAL_CACHE_DIRS.has(segments[i]) &&
-      /^[0-9a-f]{16,}$/.test(segments[i + 1]) &&
-      rest.slice(1).includes("node_modules")
-    ) {
-      return true;
-    }
-  }
-  return false;
+    if (YARN_DLX_XFS_DIR.test(segment)) return YARN_DLX_TEMP_DIR.test(next) && hasModules(i + 2);
+    return false;
+  });
 }
 
 // pnpm resolves a global package into a version-named virtual store entry

@@ -7,7 +7,12 @@ import { afterEach, expect, test } from "vite-plus/test";
 import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
 import { buildTargets } from "../../src/install/harnesses.mjs";
 import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";
-import { detectHarnesses, install, uninstall } from "../../src/install/installer.mjs";
+import {
+  detectHarnesses,
+  install,
+  isEphemeralPackageRoot,
+  uninstall,
+} from "../../src/install/installer.mjs";
 import { manifestLockFile, manifestPath, readManifest } from "../../src/install/manifest.mjs";
 import {
   PACKAGE_ROOT,
@@ -260,10 +265,7 @@ test("install refuses an npx or dlx cache package root", async () => {
   }
 });
 
-// Usefulness: verifies acceptance #207 — install refuses the temporary roots
-// that `bunx` (`<tmp>/bunx-<uid>-<package>/node_modules`) and `yarn dlx`
-// (`<tmp>/xfs-<id>/dlx-<pid>/.yarn/cache/<package>.zip/node_modules`) place the
-// package in, because the runner or the OS can delete them.
+// Usefulness: verifies acceptance #207 — install refuses the temporary roots that bunx and yarn dlx use, which the runner or OS deletes.
 test("install refuses a bunx or yarn dlx temporary package root", async () => {
   const home = await makeHome();
   const roots = [
@@ -298,6 +300,35 @@ test("install refuses a bunx or yarn dlx temporary package root", async () => {
     expect(error.message, packageRoot).toMatch(/^Refusing to install.*(bunx|yarn dlx)/);
     expect(error.message, packageRoot).toMatch(/install globally/i);
     expect(existsSync(manifestPath(home)), packageRoot).toBe(false);
+  }
+});
+
+// Usefulness: verifies #207 does not over-match — a stable root that holds a bunx-like or dlx-like segment outside the runner layout is still accepted.
+test("a stable root with a bunx-like or yarn dlx-like segment is not refused", () => {
+  const stable = [
+    join("home", "bunx-501-tools", "node_modules", "@andromarces", "agent-loops"),
+    join("home", "bunx-demo", "node_modules", "@andromarces", "agent-loops"),
+    join("home", "bunx-501-@andromarces", "project", "node_modules", "agent-loops"),
+    join("home", "dlx-31536", "node_modules", "@andromarces", "agent-loops"),
+    join("home", "xfs-8de51b90", "project", "dlx-31536", "node_modules", "agent-loops"),
+    join("home", "projects", "dlx-31536", "agent-loops"),
+  ];
+  for (const packageRoot of stable) {
+    expect(isEphemeralPackageRoot(packageRoot, "darwin"), packageRoot).toBe(false);
+    expect(isEphemeralPackageRoot(packageRoot, "win32"), packageRoot).toBe(false);
+  }
+});
+
+// Usefulness: verifies #207 on Windows — a differently cased runner segment is still refused because the file system ignores case there.
+test("a runner temp root in another letter case is refused on Windows only", () => {
+  const roots = [
+    join("C:", "Temp", "BUNX-501-@andromarces", "agent-loops@0.5.0", "node_modules", "pkg"),
+    join("C:", "Temp", "XFS-8DE51B90", "DLX-31536", ".yarn", "node_modules", "pkg"),
+    join("C:", "Temp", "_NPX", "09F5E92D3F3F415F", "node_modules", "pkg"),
+  ];
+  for (const packageRoot of roots) {
+    expect(isEphemeralPackageRoot(packageRoot, "win32"), packageRoot).toBe(true);
+    expect(isEphemeralPackageRoot(packageRoot, "linux"), packageRoot).toBe(false);
   }
 });
 

@@ -145,12 +145,14 @@ name a directory, which now reports nothing to remove instead of an error. See [
 
 `install` must run from an install whose package location survives an upgrade: a
 global install, a project install, or a linked clone. It writes the package
-location as an absolute path into every entry point and guard, and `npx` and
+location as an absolute path into every entry point and guard, and `npx`,
 `pnpm dlx`, `yarn dlx`, and `bunx` place the package in a cache or temporary
 directory that the runner or the system can delete. When it detects its own
 package root inside that directory, `install` refuses with a
 message that asks for a global install first, so it never writes a path that can
-disappear. `uninstall` reads only the manifest and the harness files, so it still
+disappear. The `yarn dlx` and `bunx` layouts were observed on macOS only, with
+bun 1.2.20 and yarn 4.9.2. They are not verified on Windows or Linux, or with
+yarn 1.x. `uninstall` reads only the manifest and the harness files, so it still
 removes them after the package is gone.
 
 A pnpm install resolves the package into a version-named virtual store entry, so
