@@ -46,7 +46,15 @@ A working directory match was also examined. Probed on Windows 11 Pro 10.0.26220
   5. After the refusal, the state directory held only `state.json`, and `session-runs` held only the first parent session. The init archived and wrote nothing.
   6. The `ps` read ended in 20 ms with exit 0.
   7. The probe ended the orphan tree by exact pid.
-- Not verified: a real `claude` orphan of a hard-killed `role dispatch` on Windows and Linux, the npm package layout of Claude Code, a Linux process table, the Windows bound of the read, `/proc/<pid>/cwd` on Linux, and `lsof -d cwd` on macOS. The decision does not depend on the last two.
+- Not verified:
+  - A real `claude` orphan of a hard-killed `role dispatch` on Windows and Linux.
+  - The npm package layout of Claude Code.
+  - A Linux process table.
+  - The Windows bound of the read.
+  - `/proc/<pid>/cwd` on Linux.
+  - `lsof -d cwd` on macOS.
+
+  The decision does not depend on the last two.
 
 ## Alternatives
 
