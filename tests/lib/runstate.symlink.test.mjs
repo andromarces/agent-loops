@@ -80,7 +80,8 @@ test("writeFileAtomic applies a directory link inside a relative target before i
   await mkdir(join(dir, "a"));
   await mkdir(join(dir, "b", "deep"), { recursive: true });
   await symlinkOrSkip(ctx, join(dir, "b", "deep"), join(dir, "a", "dl"), "dir");
-  await symlinkOrSkip(ctx, join("dl", "..", "t.json"), join(dir, "a", "link.json"));
+  // A literal string: `path.join` would fold `dl/..` away before the link is made.
+  await symlinkOrSkip(ctx, "dl/../t.json", join(dir, "a", "link.json"));
   await writeFileAtomic(join(dir, "a", "link.json"), "data");
   expect(await readFile(join(dir, "b", "t.json"), "utf8")).toBe("data");
   expect((await readdir(join(dir, "a"))).sort()).toEqual(["dl", "link.json"]);
