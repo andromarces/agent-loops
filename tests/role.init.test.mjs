@@ -1,6 +1,7 @@
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
+import { ProcessReadError } from "../src/lib/process-ancestry.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
 import {
@@ -671,6 +672,25 @@ test("init refuses for a session held from an archived earlier run", async () =>
 
   expect(result.exitCode).toBe(1);
   expect(result.payload.error).toContain(`process 77`);
+});
+
+// Usefulness: verifies a cancel of the init process-table read exits 130 with the SIGINT envelope and writes no new state (#725, ADR 0032 decision 1), which the refusal tests do not cover.
+test("init exits 130 when the process-table read is canceled", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  await endedRunWithClaudeWorker(repo, HELD_ID);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    ...basicDeps(),
+    readProcessCommands: async () => {
+      throw new ProcessReadError("was canceled", { isCanceled: true });
+    },
+  });
+
+  expect(result.exitCode).toBe(130);
+  expect(result.payload).toEqual({ status: "error", error: "Interrupted by SIGINT" });
+  expect((await readRepoState(repo)).lifecycle).toBe("aborted");
 });
 
 // Usefulness: verifies an earlier session that no live process names does not block a fresh init, and that a work tree with no earlier claude session reads no process table.

@@ -828,6 +828,10 @@ function withLocalFiles(payload, localFiles) {
 
 /** One error envelope for a thrown value. A cancel keeps exit 130. */
 function errorResult(err) {
+  // A cancel outside the turn `try` block, such as the process-table read of a resume or an init (#725).
+  if (readProp(err, "isCanceled")) {
+    return { exitCode: 130, payload: { status: "error", error: "Interrupted by SIGINT" } };
+  }
   try {
     return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
   } catch (formatErr) {
