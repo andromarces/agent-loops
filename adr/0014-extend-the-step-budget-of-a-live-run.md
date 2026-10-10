@@ -90,3 +90,40 @@ history and provider prompt cache. `archiveState` keeps the old ids in
   raise and the safe-integer ceiling bound its length. No pruning rule exists.
 - The headless loop is unchanged. Its `--max-steps` stays fixed for the invocation,
   and the runtime prompt states that number.
+
+## Live harness check
+
+Issue #549 probes the child refusal of point 8 on live harness sessions. Windows is not
+probed yet.
+
+### macOS
+
+Date: 2026-10-10. OS: macOS 27.2, Darwin 27.2.0, arm64. Runtime: the tree at `faf11a5`.
+Each harness ran two live runs, each in its own disposable Git repository under the system
+temporary directory, with `--worker <harness>` and `--reviewer <harness>`. The worker turn ran
+one shell command. The command printed whether `AGENT_LOOP_SPAWNED_RUN` was set, printed
+whether its list held the key of the run, and ran `role abort` for that run. The runtime
+state file held lifecycle `active` after each worker turn.
+
+| Harness     | CLI version      | Marker in worker shell  | Child `role abort`        | Parent `extend`, `finish`, `abort` |
+| ----------- | ---------------- | ----------------------- | ------------------------- | ---------------------------------- |
+| Claude Code | 2.1.296          | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
+| Codex CLI   | 0.163.0-alpha.5  | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
+| OpenCode    | v0.0.0-dev-20800 | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
+| Copilot CLI | 1.0.96-2         | not verified            | not verified              | observed: all three ran, exit 0    |
+| Antigravity | 1.3.3 (`agy`)    | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
+
+- The refusal text was `abort is refused for a child role; only the parent session runs it.`
+  Each probe wrote it to a file outside the repository.
+- Parent path: the probe shell ran `extend` and `finish` on the first run, and `abort` on the
+  second run. That shell held no marker, because the probe unset it. This is not a live
+  harness parent session, so the path of a parent session that the harness started is not
+  verified.
+- OpenCode: the default model, `github-copilot/gpt-5-mini`, and `github-copilot/claude-haiku-4.5`
+  each ended the turn with a provider HTTP error (404, 400, 404). A direct `opencode run`
+  with the last model also returned HTTP 404. The probe passed with `opencode-go/claude-haiku-5-5`
+  and ran the shell command.
+- Copilot CLI: the worker shell command was denied. The error read `Permission denied because no
+  interactive user response was available.` The command did not run, so the marker and the child
+  refusal are not verified. The probe did not change the approval settings of Copilot CLI.
+- Windows: not verified. No Windows host was available.
