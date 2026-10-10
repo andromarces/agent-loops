@@ -79,19 +79,22 @@ async function applySessionRecord(path, bytes, transcript) {
 
 /**
  * Refuses a continuation when another live process names the id of a claude role session in its
- * command line (#647, ADR 0029). A `SIGKILL` of the earlier parent leaves its `claude` child
+ * command line (#647, #671, ADR 0031). A `SIGKILL` of the earlier parent leaves its `claude` child
  * running, and the CLI accepts a resume of that session, so two processes would write one session
  * file. Only a claude id in the UUID form is checked, so a short id cannot match another
  * command line. No other adapter is verified to leave such an orphan. A process table that cannot
  * be read logs a warning and lets the run continue. The read is bounded by `deps.timeout`
  * (seconds) and ends on `deps.signal`. A cancel rejects, so SIGINT still cancels the run.
+ * `deps.flag` names the flag in the messages (`--continue-from` by default). A role that is absent
+ * from `roles` is skipped, so the interactive path passes only the role it resumes.
  * known-limit: the match is by command line, so a holder that does not carry the id there is not found.
  * @param {object} roles roles keyed by role name, after `restoreSessions`
- * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number }} [deps]
+ * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number, flag?: string }} [deps]
  */
 export async function refuseHeldSessions(roles, deps = {}) {
+  const flag = deps.flag ?? "--continue-from";
   const ids = ROLE_KINDS.filter(
-    (role) => roles[role].kind === "claude" && isUuid(roles[role].sessionId),
+    (role) => roles[role]?.kind === "claude" && isUuid(roles[role].sessionId),
   ).map((role) => [role, roles[role].sessionId]);
   if (ids.length === 0) {
     return;
@@ -109,7 +112,7 @@ export async function refuseHeldSessions(roles, deps = {}) {
     // Only the reason class of a `ProcessReadError` is printed: the process table holds the command
     // lines of every process on the host.
     logWarn(
-      `--continue-from: cannot check for a live holder of a session: the process table read ${err instanceof ProcessReadError ? err.reason : "failed"}.`,
+      `${flag}: cannot check for a live holder of a session: the process table read ${err instanceof ProcessReadError ? err.reason : "failed"}.`,
     );
     return;
   }
@@ -117,7 +120,7 @@ export async function refuseHeldSessions(roles, deps = {}) {
     const holder = table.find((entry) => entry.pid !== process.pid && entry.command.includes(id));
     if (holder) {
       throw new Error(
-        `--continue-from: the ${role} session ${id} is held by process ${holder.pid}, a leftover of the earlier run. End that process, or wait for it to finish, and run again.`,
+        `${flag}: the ${role} session ${id} is held by process ${holder.pid}, a leftover of the earlier run. End that process, or wait for it to finish, and run again.`,
       );
     }
   }

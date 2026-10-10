@@ -29,6 +29,7 @@ import {
   testCmdError,
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
+import { refuseHeldSessions } from "./lib/continuation.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import {
   errorMessage,
@@ -563,7 +564,7 @@ function createEventSink(transcriptFile) {
  * Dispatch operation: initialize on the first call, then charge the step,
  * mark `dispatched`, run exactly one child turn, and record the result.
  */
-async function dispatch(args, { agents, stdin = readStdin, signal, gh }) {
+async function dispatch(args, { agents, stdin = readStdin, signal, gh, readProcessCommands }) {
   if (!args.role) {
     throw new RoleError("dispatch requires --role worker or reviewer.");
   }
@@ -589,14 +590,17 @@ async function dispatch(args, { agents, stdin = readStdin, signal, gh }) {
 
   try {
     return await withStateLock(paths.lockFile, () =>
-      dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh }),
+      dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh, readProcessCommands }),
     );
   } finally {
     await onEvent.flush();
   }
 }
 
-async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh }) {
+async function dispatchLocked(
+  args,
+  { agents, stdin, signal, paths, onEvent, gh, readProcessCommands },
+) {
   const existing = await readState(paths.stateFile);
   const init = isInitCall(args);
   let state;
@@ -644,6 +648,12 @@ async function dispatchLocked(args, { agents, stdin, signal, paths, onEvent, gh 
         "Previous turn is interrupted. Use abort, or dispatch --resume-interrupted to continue.",
       );
     }
+    // A hard kill of the dispatch leaves its claude child running, and the CLI accepts a resume of
+    // that session, so the check comes before the step is charged (#671, ADR 0031).
+    await refuseHeldSessions(
+      { [roleName]: state.roles[roleName] },
+      { signal, flag: "--resume-interrupted", readProcessCommands },
+    );
     state.resumeDecision = { at: new Date().toISOString() };
   } else if (state.lifecycle === "dispatched") {
     // A live lock owner would have thrown in withStateLock, so the previous
