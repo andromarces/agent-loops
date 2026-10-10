@@ -272,9 +272,8 @@ npm install -g --allow-git=all github:andromarces/agent-loops
 ```
 
 A Git URL install also installs the devDependencies, including `vite-plus`.
-npm 11 and earlier run `prepare` before they pack the package. npm 12 blocks the
-`prepare` script and prints a message like `1 package had install scripts
-blocked`. That message is expected. The install still exits 0, and `agent-loop`
+On npm 12, the install blocks the `prepare` script and prints a message like
+`1 package had install scripts blocked`. That message is expected. The install still exits 0, and `agent-loop`
 works without `prepare`. To run `prepare`, add
 `--allow-scripts=@andromarces/agent-loops`:
 
