@@ -23,6 +23,13 @@ vi.mock("../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
 }));
 
+// The holder check (#647) reads the process table through `exec`, which this file mocks and reads
+// by call index. The table is empty here, and tests/cli.test.mjs covers the check with a real holder.
+vi.mock("../src/lib/process-ancestry.mjs", async (importOriginal) => ({
+  ...(await importOriginal()),
+  readProcessCommands: async () => [],
+}));
+
 // Fails `git status` from its `failFrom`-th call on, so a test can break the snapshot that follows a
 // turn. The real `execa` answers every other call.
 const git = vi.hoisted(() => ({ statusCalls: 0, failFrom: Infinity }));
