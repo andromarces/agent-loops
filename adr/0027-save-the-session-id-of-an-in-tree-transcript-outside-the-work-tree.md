@@ -109,6 +109,13 @@ Two directions were weighed. The first exempts the transcript path from the chec
   - Worker inside the work tree: a worker turn runs under no mutation check. The transcript file held the worker id with the mark, and no record existed. In probe `i-wrk-K-mid` (9241, true), the continued run, with the worker task above, resumed the same worker id and cleared the mark. In probe `i-wrk-K-pre` (6794, false), the run logged `worker: session <id> is missing; rerunning the turn as a first turn` and ended with a new worker id.
   - The limit of the Windows probe `c2-in-rev-FT-mid` holds on macOS. After the in-tree reviewer kill in `i-rev-K-mid` and `i-rev-T-mid`, the transcript held no orchestrator id. The continued run therefore started a new orchestrator conversation without the earlier turns.
   - Not verified: Linux, and a file symlink.
+- Copilot probe (issue #641). Host: Windows 11 Pro 10.0.26220, Node v26.8.1. Copilot CLI 1.0.95 ran the first probe and 1.0.96-2 ran the second, because the CLI updated itself between them. Each probe ran in a disposable Git repository outside the repository under test.
+  - Command: `copilot --session-id <fresh uuid> -s --no-ask-user --output-format json --allow-all-tools`, with the prompt on stdin: remember a codeword, then run `ping -n 60 127.0.0.1 > nul & echo PROBE_TOOL_DONE`. The driver read the stdout events and ended the process tree with `taskkill /F /T` 1.5 s after the first `tool.execution_start` event.
+  - First call, both probes: exit 1, a `tool.execution_start` event, no `tool.execution_complete` event, and no `result` event.
+  - Second call with the same `--session-id` and the prompt `What codeword did I ask you to remember, and which shell command did you run? Answer in one line.`: exit 0 and a `result` event that echoed the pre-assigned id. On 1.0.96-2 the reply was `Codeword: ZEBRA933905; Command: ping -n 60 127.0.0.1 > nul & echo PROBE_TOOL_DONE`, which matches the first prompt. On 1.0.95 the reply named the same command and declined to repeat the word, which it called secret.
+  - The session file `~/.copilot/session-state/<id>/events.jsonl` of each probe held two `user.message` events and one `tool.execution_start` event.
+  - Result: a Copilot first turn that fails after a tool call and prints no result event leaves a session under the pre-assigned id, and a resume of that id holds the failed turn. Decision 2 rests on the opposite assumption, so it drops a session that holds the turn and repeats the role preamble on the next turn. Issue #642 tracks a new ADR that supersedes decision 2. Decision 2 stays in force until that ADR is accepted.
+  - Not verified: a model error mid-turn, and a bad-model failure before any model call (no session was probed for it).
 - The tests simulate a kill by restoring the files that a turn had on disk. The probes above ended a real parent process.
 - Separate processes that share one transcript path have no write coordination. Each write is atomic and the last one wins.
 
@@ -134,6 +141,8 @@ Andro Marces
 - [Pull request #585](https://github.com/andromarces/agent-loops/pull/585)
 - [Issue #580](https://github.com/andromarces/agent-loops/issues/580)
 - [Issue #613](https://github.com/andromarces/agent-loops/issues/613)
+- [Issue #641](https://github.com/andromarces/agent-loops/issues/641)
+- [Issue #642](https://github.com/andromarces/agent-loops/issues/642)
 - Supersedes [ADR 0016: Resume the session of a failed first turn, with a fallback to a new session](0016-resume-a-failed-first-turn-with-a-fallback.md)
 - Implementation: `src/lib/session-record.mjs`, `onSessionAssigned` in `src/cli.mjs`, and `readContinuation` in `src/lib/continuation.mjs`. Documented in `README.md`.
 - [ADR Index](README.md)
