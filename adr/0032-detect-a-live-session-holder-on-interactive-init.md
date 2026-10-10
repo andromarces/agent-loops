@@ -4,7 +4,7 @@
 
 accepted
 
-Partly supersedes [ADR 0031: Refuse --continue-from and --resume-interrupted while a live process holds a Claude session](0031-refuse-continue-from-and-resume-interrupted-while-a-live-process-holds-a-claude-session.md): the match rule of its decision 1, a process that names the id anywhere in its command line, is replaced by the session-flag rule of decision 2 below. That rule also applies to the `--resume-interrupted` check of ADR 0031 decision 5, because both paths call one shared function. The other decisions of ADR 0031 hold. ADR 0031 is partly superseded and stays `accepted`. ADR 0031 is already superseded as a whole by ADR 0031.
+Partly supersedes [ADR 0031: Refuse --continue-from and --resume-interrupted while a live process holds a Claude session](0031-refuse-continue-from-and-resume-interrupted-while-a-live-process-holds-a-claude-session.md): the match rule of its decision 1, a process that names the id anywhere in its command line, is replaced by the session-flag rule of decision 2 below. That rule also applies to the `--resume-interrupted` check of ADR 0031 decision 5, because both paths call one shared function. The other decisions of ADR 0031 hold. ADR 0031 is partly superseded and stays `accepted`. ADR 0029 is already superseded as a whole by ADR 0031.
 
 ## Date
 

@@ -722,7 +722,7 @@ test.skipIf(process.platform === "win32")(
   60_000,
 );
 
-// Usefulness: verifies the shared check applies the platform match to a process-table row, so a quoted flag or a bare id refuses a run and a path that contains the id does not (#673). The match rules have their own tests in command-line.test.mjs.
+// Usefulness: verifies the shared check applies the platform match to a process-table row, so a quoted flag or a session flag with the id refuses a run, and a bare id or a path that contains the id does not (#673). The match rules have their own tests in command-line.test.mjs.
 test("refuseHeldIds refuses a holder by argument and passes a path that contains the id", async () => {
   const check = (command, platform) =>
     refuseHeldIds([{ role: "worker", sessionId: HELD_ID }], {
