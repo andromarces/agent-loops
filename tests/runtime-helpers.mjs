@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -315,7 +315,8 @@ export const ABORT_KILL_TEST_TIMEOUT_MS =
  * `started`. It stays alive only while the `keep` or the `hold` file exists, so it
  * exits when both are gone by any means, when `dir` is gone, or at the wall-clock
  * ceiling `ceilingMs`. A ceiling exit writes the `ceiling` marker first, so a helper
- * can tell it from a kill. On exit it writes the `exited` marker when `dir` still
+ * can tell it from a kill. If that write fails, the shim does not exit: it stays alive
+ * and retries, so no ceiling exit goes unmarked. On exit it writes the `exited` marker when `dir` still
  * exists. The test never signals that pid.
  *
  * Each poll reads `keep` first and `hold` second. A test that swaps the keep file
@@ -349,10 +350,12 @@ const watch = setInterval(() => {
   } else if (Date.now() - begun >= ${ceilingMs}) {
     try {
       fs.writeFileSync(${JSON.stringify(join(dir, CEILING_FILE))}, "");
+      clearInterval(watch);
     } catch {
-      // The directory is already gone, so nobody checks the marker.
+      // Fail closed: a ceiling exit without its marker would pass as a kill. The shim stays
+      // alive, so the helper reports it as a survivor, and retries the write on the next
+      // poll. A removed directory or keep file ends it through the checks above.
     }
-    clearInterval(watch);
   }
 }, ${SHIM_POLL_MS});
 `,
@@ -410,7 +413,7 @@ async function assertGone(pid, forceKillAfterDelayMs, dir) {
   // The shim writes this marker before it exits on its own ceiling, so an exit the
   // runtime did not cause cannot pass as a kill.
   assert.ok(
-    !existsSync(join(dir, CEILING_FILE)),
+    !statSync(join(dir, CEILING_FILE), { throwIfNoEntry: false })?.isFile(),
     `the shim child ${pid} exited on its wall-clock ceiling, so the code under test did not kill it`,
   );
 }

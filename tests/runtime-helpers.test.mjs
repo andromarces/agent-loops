@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { pidAlive } from "../src/lib/runstate.mjs";
@@ -294,6 +295,34 @@ test(
       (error) => error,
     );
     expect(failure?.message).toMatch(/exited on its wall-clock ceiling/);
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: acceptance (#670 review) — a shim whose ceiling marker cannot be written must not exit
+// silently, or the kill check reads its ceiling exit as a kill. The marker path is a directory, so
+// the write fails; the shim must stay alive past its ceiling and the helper must report it.
+test(
+  "expectBoundKillsShim fails when the ceiling marker cannot be written",
+  async () => {
+    const failure = await expectBoundKillsShim(
+      "markerless-shim",
+      async () => {
+        const shimDir = process.env.PATH.split(delimiter)[0];
+        await mkdir(join(shimDir, "ceiling"));
+        const held = execa("markerless-shim", { reject: false });
+        held.catch(() => {});
+        const started = join(shimDir, "started.txt");
+        await pollUntil(async () => (existsSync(started) ? true : undefined), 10_000);
+        await delay(1500);
+      },
+      undefined,
+      { ceilingMs: 500 },
+    ).then(
+      () => undefined,
+      (error) => error,
+    );
+    expect(failure?.message).toMatch(/outlived the 1000 ms force-kill boundary/);
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
