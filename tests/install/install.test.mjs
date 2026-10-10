@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +7,12 @@ import { afterEach, expect, test } from "vite-plus/test";
 import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
 import { buildTargets } from "../../src/install/harnesses.mjs";
 import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";
-import { detectHarnesses, install, uninstall } from "../../src/install/installer.mjs";
+import {
+  detectHarnesses,
+  install,
+  isEphemeralPackageRoot,
+  uninstall,
+} from "../../src/install/installer.mjs";
 import { manifestLockFile, manifestPath, readManifest } from "../../src/install/manifest.mjs";
 import {
   PACKAGE_ROOT,
@@ -258,6 +263,89 @@ test("install refuses an npx or dlx cache package root", async () => {
     );
     expect(existsSync(manifestPath(home)), packageRoot).toBe(false);
   }
+});
+
+// Usefulness: verifies acceptance #207 — install refuses the temporary roots that bunx and yarn dlx use, which the runner or OS deletes.
+test("install refuses a bunx or yarn dlx temporary package root", async () => {
+  const home = await makeHome();
+  const roots = [
+    join(tmpdir(), "bunx-501-@andromarces", "agent-loops@0.5.0", "node_modules", "pkg"),
+    join(tmpdir(), "xfs-8de51b90", "dlx-31536", ".yarn", "cache", "x.zip", "node_modules", "pkg"),
+  ];
+  for (const packageRoot of roots) {
+    const error = await install({ harnesses: ["claude"], home, packageRoot }).then(
+      () => null,
+      (err) => err,
+    );
+    expect(error, packageRoot).toBeInstanceOf(Error);
+    expect(error.message, packageRoot).toMatch(/^Refusing to install.*(bunx|yarn dlx)/);
+    expect(error.message, packageRoot).toMatch(/install globally/i);
+    expect(existsSync(manifestPath(home)), packageRoot).toBe(false);
+  }
+});
+
+const BUNX_LAYOUT = ["bunx-501-@andromarces", "agent-loops@0.5.0", "node_modules", "pkg"];
+const BUNX_UNSCOPED_LAYOUT = ["bunx-501-ccstatusline@latest", "node_modules", "pkg"];
+const YARN_LAYOUT = ["xfs-8de51b90", "dlx-31536", ".yarn", "cache", "x.zip", "node_modules", "pkg"];
+
+// Usefulness: verifies #207 — a complete bunx or yarn dlx layout is refused directly under each resolved temporary root.
+test("a bunx or yarn dlx layout directly under a temporary root is refused", () => {
+  const tempRoots = new Set([tmpdir(), realpathSync(tmpdir())]);
+  for (const root of tempRoots) {
+    for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
+      expect(isEphemeralPackageRoot(join(root, ...layout)), join(root, ...layout)).toBe(true);
+    }
+  }
+  const bunxRoots = ["/tmp", "/private/tmp"].filter((root) => existsSync(root));
+  for (const root of bunxRoots) {
+    for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT]) {
+      expect(isEphemeralPackageRoot(join(root, ...layout)), join(root, ...layout)).toBe(true);
+    }
+  }
+});
+
+// Usefulness: verifies #207 does not over-match — a complete bunx or yarn dlx layout under a stable parent is still accepted.
+test("a bunx or yarn dlx layout under a stable parent is not refused", () => {
+  const stableParents = [join("home", "user", "projects"), join("home", "user", "tmp")];
+  for (const parent of stableParents) {
+    for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
+      expect(isEphemeralPackageRoot(join(parent, ...layout)), join(parent, ...layout)).toBe(false);
+    }
+  }
+  const split = { bunx: ["/var/T", "/tmp"], yarn: ["/var/T"] };
+  expect(isEphemeralPackageRoot(join("/tmp", ...BUNX_LAYOUT), "linux", split)).toBe(true);
+  expect(isEphemeralPackageRoot(join("/tmp", ...YARN_LAYOUT), "linux", split)).toBe(false);
+  const lookalikes = [
+    join(tmpdir(), "bunx-501-tools", "node_modules", "pkg"),
+    join(tmpdir(), "bunx-demo", "node_modules", "pkg"),
+    join(tmpdir(), "dlx-31536", "node_modules", "pkg"),
+    join(tmpdir(), "xfs-8de51b90", "project", "dlx-31536", "node_modules", "pkg"),
+  ];
+  for (const packageRoot of lookalikes) {
+    expect(isEphemeralPackageRoot(packageRoot), packageRoot).toBe(false);
+  }
+});
+
+// Usefulness: verifies #207 on Windows — the temp-parent bunx and yarn dlx layouts compare case-insensitively, and the npx and pnpm dlx matching stays as on main.
+test("windows folds case for the bunx and yarn dlx layouts only", () => {
+  const winTemp = "C:\\Users\\Dev\\AppData\\Local\\Temp";
+  const temp = { bunx: [winTemp], yarn: [winTemp] };
+  const upperTemp = "C:\\USERS\\DEV\\APPDATA\\LOCAL\\TEMP";
+  for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+    const upper = [upperTemp, ...layout.map((segment) => segment.toUpperCase())].join("\\");
+    expect(isEphemeralPackageRoot(upper, "win32", temp), upper).toBe(true);
+    expect(isEphemeralPackageRoot(upper, "linux", temp), upper).toBe(false);
+  }
+  const stable = ["C:\\Projects", ...BUNX_LAYOUT].join("\\");
+  expect(isEphemeralPackageRoot(stable, "win32", temp), stable).toBe(false);
+  const lowerNpx = ["C:", "cache", "_npx", "09f5e92d3f3f415f", "node_modules", "pkg"].join("\\");
+  const upperNpx = ["C:", "cache", "_NPX", "09F5E92D3F3F415F", "node_modules", "pkg"].join("\\");
+  const upperDlx = ["C:", "pnpm", "DLX", "0DD49D4F3230C83239C085437BFEA068", "node_modules"].join(
+    "\\",
+  );
+  expect(isEphemeralPackageRoot(lowerNpx, "win32", temp)).toBe(true);
+  expect(isEphemeralPackageRoot(upperNpx, "win32", temp)).toBe(false);
+  expect(isEphemeralPackageRoot(upperDlx, "win32", temp)).toBe(false);
 });
 
 // Usefulness: verifies the negative of acceptance #205 — a path that merely
