@@ -58,15 +58,30 @@ Every later listing, in all 56 runs, listed no process of the scratch repository
 
 In the saved first-probe lists from the start of runs p11, p15, p16, and p26, a `codegraph` process ran under another process. That process ran under the native `copilot` process. The saved results hold no other source for the identity of a first-listing process.
 
-Three more probes used the same load (six runs in parallel, 5 s timeouts). Each tagged its runs through an inherited environment variable and listed the tagged processes right after the return. A listing kept pid, parent pid, and elapsed time, and the fields named below. The command line and the environment were dropped.
+Four more probes followed. Probes 2 to 4 ran six runs in parallel with 5 s timeouts. Each probe tagged its runs through an inherited environment variable and listed the tagged processes right after the return. A listing kept pid, parent pid, elapsed time, and the fields named below. The command line and the environment were dropped.
 
 Probe 2 (48 runs) kept the name of argv[0]. Its first listing finished 26 ms to 45 ms after the return. In 11 runs it listed one process named `node` with parent pid 1. The next listing finished 79 ms to 105 ms after the return and listed no process. A `kind` field in the last 24 runs came from `ps` text that can hold environment variables, so this ADR does not use it. The identity of the 11 processes is unknown.
 
 Probe 3 (48 runs) kept a truncated executable field (`/Users/andromarc`). Its first listing listed one process with parent pid 1 in 3 runs, and the field identified none.
 
-Probe 4 (72 runs) kept the argv[0] path. Its first listing finished 26 ms to 31 ms after the return and listed one process with parent pid 1 in 12 runs. In all 12, the argv[0] path ended in `@colbymchenry/codegraph-darwin-arm64/node`. The next listing finished 82 ms to 92 ms after the return and listed no process. No argv[0] path in probe 4 named `copilot`.
+Probe 4 (72 runs) kept the argv[0] path, and the path of argv[1] when it ended in `.js`. Its first listing finished 25 ms to 48 ms after the return in all 72 runs. It listed one process with parent pid 1 in 12 runs.
 
-Result for issue #679: no mismatch appeared, and no first-listing process has a saved path that names `copilot`. The first-listing processes that have a saved path ran the CodeGraph executable. The 18 first-listing processes of probes 1 to 3 have no saved path, so they stay unidentified. Probe 4 recorded the path under the same load and found only the CodeGraph executable, so this ADR opens no bug and no follow-up issue. The saved files do not exclude a write by a process that lived only between the adapter read and the first listing.
+The first listing of those 12 finished 26 ms to 31 ms after the return. In all 12, the argv[0] path ended in `@colbymchenry/codegraph-darwin-arm64/node`. The next listing finished 82 ms to 92 ms after the return and listed no process. No path in probe 4 named `copilot`.
+
+Probe 5 (117 runs) used the probe 4 script. It ran 45 sequential timeouts of 5 s. It ran 72 more runs in groups of six, with three runs per cell unless noted:
+
+- Cancels at 3 s, 6 s, 9 s, and 12 s, and at 5 s (6 runs).
+- Timeouts at 3 s, 4 s, 6 s, 7 s, 9 s, and 12 s.
+- Timeouts at 4.8 s, 4.9 s, 5.1 s, 5.2 s, 5.5 s, and 5.8 s.
+- `COPILOT_ALLOW_ALL=1` timeouts at 5 s, 9 s, 12 s, and 16 s, and cancels at 5 s and 12 s.
+
+The prompt asked for `sleep 25`. The first listing finished 23 ms to 47 ms after the return in all 117 runs. It listed a process with parent pid 1 in 7 runs. They were 2 of the 45 sequential runs, 3 runs at 4.8 s, and 2 runs at 4.9 s. It listed none in the other 67 grouped runs.
+
+Of the 7 processes, 6 had an argv[0] path that ended in `@colbymchenry/codegraph-darwin-arm64/node`. One had argv[0] `node` and an argv[1] path that ended in `@colbymchenry/codegraph/npm-shim.js`. The next listing finished 83 ms to 103 ms after the return and listed no process. No path in probe 5 named `copilot`.
+
+The 18 first-listing processes of probes 1 to 3 stay unidentified, because no saved field holds their path. All 18 came from 5 s timeouts with the default flags and the same prompt. Probe 1 had one sequential run and three parallel runs, and probes 2 and 3 had parallel runs. Probes 4 and 5 reran that condition with the path capture, in 72 parallel runs and 45 sequential runs. All 19 processes that probes 4 and 5 listed ran CodeGraph files. Probe 5 also reran the cancels, the timeouts around the prompt record, and the `COPILOT_ALLOW_ALL=1` runs of probe 1.
+
+Result for issue #679: no mismatch appeared, and no saved path names `copilot`. No bug or follow-up issue is opened. The cells of probe 5 hold three runs each, so a rare process in them is not excluded. The saved files do not exclude a write by a process that lived only between the adapter read and the first listing.
 
 With `COPILOT_ALLOW_ALL=1`, the `sleep` shell was in the list from the start of 3 runs, taken 0.7 s before the configured time. The first listing after the return listed no process in those 3 runs. The live process of issue #398 was not reproduced through the adapter, because that probe killed the shim pid alone.
 
