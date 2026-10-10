@@ -93,17 +93,18 @@ history and provider prompt cache. `archiveState` keeps the old ids in
 
 ## Live harness check
 
-Issue #549 probes the child refusal of point 8 on live harness sessions. Windows is not
-probed yet.
+Issue #549 probes the child refusal of point 8 on live harness sessions. The worker shell
+command ran on four of the five harnesses. Copilot CLI denied it. Windows is not probed yet.
 
 ### macOS
 
 Date: 2026-10-10. OS: macOS 27.2, Darwin 27.2.0, arm64. Runtime: the tree at `faf11a5`.
 Each harness ran two live runs, each in its own disposable Git repository under the system
-temporary directory, with `--worker <harness>` and `--reviewer <harness>`. The worker turn ran
-one shell command. The command printed whether `AGENT_LOOP_SPAWNED_RUN` was set, printed
-whether its list held the key of the run, and ran `role abort` for that run. The runtime
-state file held lifecycle `active` after each worker turn.
+temporary directory, with `--worker <harness>` and `--reviewer <harness>`.
+
+The worker turn was asked to run one shell command. The command printed whether
+`AGENT_LOOP_SPAWNED_RUN` was set, printed whether its list held the key of the run, and ran
+`role abort` for that run. The runtime state file held lifecycle `active` after each worker turn.
 
 | Harness     | CLI version      | Marker in worker shell  | Child `role abort`        | Parent `extend`, `finish`, `abort` |
 | ----------- | ---------------- | ----------------------- | ------------------------- | ---------------------------------- |
@@ -123,7 +124,12 @@ state file held lifecycle `active` after each worker turn.
   each ended the turn with a provider HTTP error (404, 400, 404). A direct `opencode run`
   with the last model also returned HTTP 404. The probe passed with `opencode-go/claude-haiku-5-5`
   and ran the shell command.
-- Copilot CLI: the worker shell command was denied. The error read `Permission denied because no
-  interactive user response was available.` The command did not run, so the marker and the child
-  refusal are not verified. The probe did not change the approval settings of Copilot CLI.
+- Copilot CLI: the worker shell command was denied in both runs. The error read `Permission denied
+  because no interactive user response was available.` The command did not run, so the marker and
+  the child refusal are not verified. The probe did not change the approval settings of Copilot CLI.
+- The Copilot denial is expected for the adapter flags, and it is not a defect. A worker turn
+  passes `--session-id <id> -s --no-ask-user --output-format json`, with no allow flag
+  (`src/agents/copilot.mjs`, line 108, read from source, not from a runtime log). The README
+  records that `--no-ask-user` alone returns `Permission denied` for a shell call. It also calls
+  the denial a Copilot default, not a runtime setting (`README.md`, lines 86 and 971).
 - Windows: not verified. No Windows host was available.
