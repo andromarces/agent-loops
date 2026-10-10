@@ -106,13 +106,13 @@ export async function refuseHeldSessions(roles, deps = {}) {
 /**
  * The check of `refuseHeldSessions` for a list of `{ role, sessionId }` entries of claude roles.
  * `deps.label` prefixes the warning and the refusal. `deps.platform` (default `process.platform`)
- * selects the command-line rules. `deps.heldSessionIds` (default `heldSessionIds`) reads the ids of one command line. Entries whose id is not a UUID are ignored, and an id that repeats (without case) is checked once.
+ * selects the command-line rules. `deps.heldSessionIds` (default `heldSessionIds`) reads the ids of one command line. Entries whose id is not a UUID are ignored, and an id that repeats is checked once. `isUuid` accepts lowercase ids only, so an exact match is enough.
  */
 export async function refuseHeldIds(entries, deps = {}) {
   const roleById = new Map();
   for (const { role, sessionId } of entries) {
-    if (isUuid(sessionId) && !roleById.has(sessionId.toLowerCase())) {
-      roleById.set(sessionId.toLowerCase(), role);
+    if (isUuid(sessionId) && !roleById.has(sessionId)) {
+      roleById.set(sessionId, role);
     }
   }
   if (roleById.size === 0) {

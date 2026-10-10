@@ -934,6 +934,42 @@ test("a failed first copilot turn keeps the id of a session under a relative COP
   }
 });
 
+// Usefulness: Copilot CLI 1.0.96-2 expands neither `~` nor an environment variable reference in COPILOT_HOME (ADR 0030), so a literal form reads the session store under the role cwd. An adapter that expands either form reads the wrong store and loses the saved turn.
+test.each([
+  ["a tilde", "~/cphome"],
+  ["a $HOME reference", "$HOME/cphome"],
+])(
+  "a failed first copilot turn keeps the id of a session under a literal COPILOT_HOME with %s",
+  async (_name, value) => {
+    const roleCwd = await mkdtemp(join(tmpdir(), "copilot-role-cwd-"));
+    const userHome = await mkdtemp(join(tmpdir(), "copilot-user-home-"));
+    // A defined home that differs from the role cwd, so any expansion reads another store.
+    vi.stubEnv("HOME", userHome);
+    vi.stubEnv("USERPROFILE", userHome);
+    vi.stubEnv("COPILOT_HOME", value);
+    try {
+      vi.mocked(exec).mockReset();
+      vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
+        const dir = join(roleCwd, ...value.split("/"), "session-state", args[1]);
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          join(dir, "events.jsonl"),
+          JSON.stringify({ type: "user.message", data: {} }),
+        );
+        throw copilotFailure({ stdout: '{"type":"tool.execution_start","data":{}}' });
+      });
+      const state = freshState();
+      await expect(runCopilot(state, "p", { cwd: roleCwd })).rejects.toThrow();
+      expect(state.sessionId).toBe(vi.mocked(exec).mock.calls[0][1][1]);
+      expect(state.sessionUnconfirmed).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(roleCwd, { recursive: true, force: true });
+      await rm(userHome, { recursive: true, force: true });
+    }
+  },
+);
+
 // Usefulness: a process that never started saved nothing, so a session file under the id (a stale one from another run) cannot make the adapter keep it.
 test("a first copilot turn whose process never started keeps no id", async () => {
   await withCopilotHome(async (writeSession) => {
