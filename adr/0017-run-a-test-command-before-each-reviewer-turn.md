@@ -35,7 +35,7 @@ Issue #420 asks for an optional `--test-cmd` that the runtime runs before each r
    - **Overlapping values (issue #521).** Each round finds every occurrence of every value, raw and escaped, on the current text, merges the overlapping ones, and replaces each merged run in one pass. A round is a linear scan for each value. The first two rounds use `[redacted:NAME]`, one marker for each distinct marker text of the variables in the run, with the name as the environment reports it. A variable whose marker would hold a value gets `[*]`. The second round exists because a marker next to text can form a value, and it names the variable as the earlier per-value replacement did. Later rounds use `[*]`, which is shorter than the match. After at most 5 rounds, text that still holds a value becomes `[*]`, so the cost is bound for any input at the price of the text in an adversarial case. An escaped form that holds the raw form, as for a value that starts with a quote or a backslash or ends with a backslash, adds no match, and the raw match leaves the escape backslash, as the earlier replacement did. Guarantees: the result holds no complete value, raw or escaped, and a second redaction of the result returns it unchanged. Two variables with one value share one match, named for the first variable in the environment, as before. Guarantee: no complete value survives in the result, raw or escaped. Every occurrence of a value that the input holds, and every occurrence that a round forms from a marker and the text next to it, is replaced in full, so no part of an occurrence stays. Two exceptions: the escape backslash that the raw match leaves for an escaped form that holds the raw form, and text that holds only a piece of a value, which stays as it is. Parity with the earlier per-value replacement, tested for one secret-named variable: the result is byte-identical when the occurrences of its value, raw and escaped, do not overlap, and the earlier result holds no complete value, in a marker or across a marker and the text next to it. With several values, a value that occurs in marker text, or an occurrence that overlaps another, the result can differ from the earlier result. The differences are not a closed list, and the tests pin examples: a merged run gives one marker where the earlier result gave one for each match, and a value in the marker of another variable gives `[*]` where the earlier result nested a marker in the marker. A marker holds the variable name, which can hold control or non-ASCII characters, so the control-character cleanup of the command text and of the tail can change a marker, and both paths redact again after that cleanup. The cut of a log line to 300 characters is also followed by a redaction in which every marker is `[*]`, so the line never exceeds 303 characters. Limits: the guarantee covers the text that the redaction returns and the paths above. A later serialization of the result, for example into JSON, is not covered.
    - **No execa command line in a message.** An execa `message`, `shortMessage`, `command`, and `escapedCommand` hold the arguments in the quoting of the platform shell, for example `'\''` on POSIX, which no fixed list of escaped forms covers. A runtime-authored message never embeds them. The Copilot launcher failure report is built from the exit code, the signal, and the error code, plus a fixed description, and then goes through the same redaction. The fallback detail of a failed `git` call in `src/lib/local-files.mjs` is the stderr of git or the error code. The other execa callers build their messages from their own fields.
    - **Inherited stdio (approved limit: child-authored output).** The only child that the runtime spawns with inherited stdio is `copilot`, started by the Copilot launcher (`stdio: "inherit"`). Every other child, the agent CLIs and the test command, writes to a pipe that the runtime reads, so its text reaches an output only through the paths above. The runtime writes nothing of its own to the inherited streams: it passes the task as arguments and the child writes the output. The runtime cannot redact text that another process writes straight to the terminal without a filter on that stream, and a stream filter is out of scope: it would own a terminal that `copilot` drives interactively. A secret that `copilot` prints is therefore outside this rule.
-   - **Over-redaction trade-off.** The match is on the value, so a secret-named variable with a common value of 8 or more characters, for example `APP_AUTH_MODE=production`, also masks that word where it appears in an error. The marker `[redacted:APP_AUTH_MODE]` names the variable, so the reader sees what was masked and can read the value from the environment. The runtime keeps the redaction: a narrower rule, such as one that skips words or lowercase values, would also skip a real passphrase or hex secret of that shape, and the runtime cannot tell the two apart. The name test is case-insensitive, so `Github_Token` matches like `GITHUB_TOKEN`, and the marker shows the name that the operating system reports. Windows probe (issue #497, 2026-10-10, Windows 11, Node 26.8.1, synthetic values): `process.env` holds one slot for all casings of a name. The slot keeps the first casing that created it, and a later write under another casing changes the value and not the name. `Object.entries(process.env)` therefore lists one name, and the marker shows it, for example `[redacted:Probe497_Token]` for a slot created as `Probe497_Token` and then written as `probe497_token`. The value of that slot is redacted in the command text, in an error text, and in a log line, and no second casing holds an unredacted value. A child `env` object with two casings of one name reaches the child with one casing. That casing sorts first by code unit order, and the child gets its own value. Insertion order does not decide it. The Windows probe of issue #601 (2026-10-10, Windows 11, Node 26.8.1) passed a plain `env` object to `spawnSync`. The next bullet holds the script and its output. A plain `env` object, which the tests pass to `redactEnvSecrets`, is case-sensitive: two casings are two variables, and both values are redacted, as on POSIX. The behavior differs from POSIX only in the single slot, so one Windows-only test pins it in `tests/lib/test-cmd.test.mjs`. No defect was found. Not verified: a live POSIX run of the same probe, because this host is Windows. Issue #601 keeps that run open. POSIX `process.env` is case-sensitive, so two casings are two variables, the case that the plain-object tests cover. A literal secret that matches no environment value, for example a token typed as an argument, is not detected and reaches those outputs unchanged. The operator keeps such a value out of the command and passes it by environment, where the value is redacted. The same limit applies to the SHA-256 digest in the state file: it is not a redaction of a low-entropy secret, so the digest holds no secret only for a command that carries none.
+   - **Over-redaction trade-off.** The match is on the value, so a secret-named variable with a common value of 8 or more characters, for example `APP_AUTH_MODE=production`, also masks that word where it appears in an error. The marker `[redacted:APP_AUTH_MODE]` names the variable, so the reader sees what was masked and can read the value from the environment. The runtime keeps the redaction: a narrower rule, such as one that skips words or lowercase values, would also skip a real passphrase or hex secret of that shape, and the runtime cannot tell the two apart. The name test is case-insensitive, so `Github_Token` matches like `GITHUB_TOKEN`, and the marker shows the name that the operating system reports. Windows probe (issue #497, 2026-10-10, Windows 11, Node 26.8.1, synthetic values): `process.env` holds one slot for all casings of a name. The slot keeps the first casing that created it, and a later write under another casing changes the value and not the name. `Object.entries(process.env)` therefore lists one name, and the marker shows it, for example `[redacted:Probe497_Token]` for a slot created as `Probe497_Token` and then written as `probe497_token`. The value of that slot is redacted in the command text, in an error text, and in a log line, and no second casing holds an unredacted value. A child `env` object with two casings of one name reaches the child with one casing. That casing sorts first by code unit order, and the child gets its own value. Insertion order does not decide it. The Windows probe of issue #601 (2026-10-10, Windows 11, Node 26.8.1) passed a plain `env` object to `spawnSync`. The next bullet holds the script and its output. A plain `env` object, which the tests pass to `redactEnvSecrets`, is case-sensitive: two casings are two variables, and both values are redacted, as on POSIX. The behavior differs from POSIX only in the single slot, so one Windows-only test pins it in `tests/lib/test-cmd.test.mjs`. No defect was found. POSIX `process.env` is case-sensitive, so two casings are two variables, the case that the plain-object tests cover. The live POSIX run of issue #601 (2026-10-10, macOS, Darwin 27.2.0 arm64, Node 26.11.1, synthetic values) confirms it: a child that gets `Probe601_Token` and `probe601_token` holds both, and the real redaction paths replace both values, each under its own marker. The last bullet holds the script and its output. Linux is not verified: this host is macOS. A literal secret that matches no environment value, for example a token typed as an argument, is not detected and reaches those outputs unchanged. The operator keeps such a value out of the command and passes it by environment, where the value is redacted. The same limit applies to the SHA-256 digest in the state file: it is not a redaction of a low-entropy secret, so the digest holds no secret only for a command that carries none.
    - **Casing probe script (issue #601).** Save the script as `probe.mjs` and run `node probe.mjs` on Windows. Each line shows the insertion order of the keys, then the variable that the child holds.
 
      ```js
@@ -65,6 +65,70 @@ Issue #420 asks for an optional `--test-cmd` that the runtime runs before each r
      Probe601_aB,Probe601_Ab -> Probe601_Ab=B
      Probe601_Ab,Probe601_aB -> Probe601_Ab=B
      ```
+
+   - **POSIX casing probe (issue #601).** Save the script as `probe-posix.mjs` and run `node probe-posix.mjs <repo-root> <git-work-dir>`. The script spawns a child with two casings of one secret name and two different values. The child imports `redactCommandText`, `readableErrorText`, `logInfo`, and `runTestCmd` from `src/lib` and prints each output. `<git-work-dir>` is an empty Git repository for the snapshot of `runTestCmd`.
+
+     ```js
+     import { spawnSync } from "node:child_process";
+     import { pathToFileURL } from "node:url";
+     const [root, work] = process.argv.slice(2);
+     if (process.argv[2] === "--inner") {
+       const [, , , r, w] = process.argv;
+       const m = (f) => import(pathToFileURL(`${r}/src/lib/${f}`).href);
+       const { redactCommandText, runTestCmd } = await m("test-cmd.mjs");
+       const { readableErrorText } = await m("error-message.mjs");
+       const { logInfo } = await m("log.mjs");
+       const upper = process.env.Probe601_Token;
+       const lower = process.env.probe601_token;
+       const names = Object.keys(process.env).filter((k) => k.toLowerCase() === "probe601_token");
+       console.log("names in process.env:", names.join(","));
+       const text = `cmd ${upper} and ${lower}`;
+       console.log("command text:", redactCommandText(text));
+       console.log("error text:", readableErrorText(new Error(text)));
+       const logs = [];
+       const orig = console.log;
+       console.log = (...a) => logs.push(a.join(" "));
+       logInfo(text);
+       console.log = orig;
+       console.log("log line:", logs.join("|"));
+       const run = await runTestCmd({ command: `echo ${upper} ${lower}`, cwd: w });
+       console.log("runTestCmd command:", run.command);
+       console.log("runTestCmd tail:", run.tail.trim());
+       const outputs = [redactCommandText(text), run.command, run.tail];
+       console.log(
+         "raw value left anywhere:",
+         [upper, lower].some((v) => outputs.some((s) => s.includes(v))),
+       );
+     } else {
+       const env = {
+         PATH: process.env.PATH,
+         Probe601_Token: "synthetic-upper-value-0001",
+         probe601_token: "synthetic-lower-value-0002",
+       };
+       console.log("node", process.version, process.platform, process.arch);
+       const r = spawnSync(process.execPath, [process.argv[1], "--inner", root, work], {
+         env,
+         encoding: "utf8",
+       });
+       process.stdout.write(r.stdout);
+       if (r.stderr) process.stderr.write(r.stderr);
+     }
+     ```
+
+     Output on macOS (Darwin 27.2.0 arm64), Node 26.11.1. The `[agent-loop] info` lines of `runTestCmd` are omitted:
+
+     ```text
+     node v26.11.1 darwin arm64
+     names in process.env: Probe601_Token,probe601_token
+     command text: cmd [redacted:Probe601_Token] and [redacted:probe601_token]
+     error text: cmd [redacted:Probe601_Token] and [redacted:probe601_token]
+     log line: [agent-loop] info: cmd [redacted:Probe601_Token] and [redacted:probe601_token]
+     runTestCmd command: echo [redacted:Probe601_Token] [redacted:probe601_token]
+     runTestCmd tail: [redacted:Probe601_Token] [redacted:probe601_token]
+     raw value left anywhere: false
+     ```
+
+     The plain child `env` probe, which is the first script with `SystemRoot` removed, prints `Probe601_Name,probe601_name -> Probe601_Name=A,probe601_name=B` and `probe601_name,Probe601_Name -> probe601_name=B,Probe601_Name=A`. The child holds both casings, each with its own value, in insertion order.
 7. **Writes to the work tree.** The runtime takes a snapshot before the command and another after it, and reports the diff: `workTreeChanged`, `changedPaths` (at most 20), and `changedCount`. The paths include the `<index>` and `<HEAD>` entries of `diffSnapshots`. The reviewer mutation check takes its baseline after the command, so the command's writes become that baseline and are not a reviewer mutation. The reviewed state therefore describes the tree after the command, and the report is the only record of the change. The prompt tells the reviewer to report the change in `Checks`, and the result carries it to the parent. A change never fails the turn. Ignored files are out of scope, as for every snapshot, so a cache under an ignored directory is not reported.
 8. The result is advisory evidence, like the ADR 0011 status. It carries `advisory: true`, and the reviewer treats it as a report, not a verdict. The reviewer can still misreport it in `Checks`, so the runtime reports the result beside the response and a parent compares the two.
 9. The command never fails a turn. A failing, timed-out, or unstartable command is a result. A snapshot failure and a cancel still end the turn, as they do for the mutation check.
