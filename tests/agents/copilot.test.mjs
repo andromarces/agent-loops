@@ -942,6 +942,10 @@ test.each([
   "a failed first copilot turn keeps the id of a session under a literal COPILOT_HOME with %s",
   async (_name, value) => {
     const roleCwd = await mkdtemp(join(tmpdir(), "copilot-role-cwd-"));
+    const userHome = await mkdtemp(join(tmpdir(), "copilot-user-home-"));
+    // A defined home that differs from the role cwd, so any expansion reads another store.
+    vi.stubEnv("HOME", userHome);
+    vi.stubEnv("USERPROFILE", userHome);
     vi.stubEnv("COPILOT_HOME", value);
     try {
       vi.mocked(exec).mockReset();
@@ -961,6 +965,7 @@ test.each([
     } finally {
       vi.unstubAllEnvs();
       await rm(roleCwd, { recursive: true, force: true });
+      await rm(userHome, { recursive: true, force: true });
     }
   },
 );
