@@ -688,6 +688,10 @@ test("skips a listed directory past the entry bound as one name, per directory",
 // the bound means more than 2000.
 // Not redundant: it is the test at the boundary, so a limit that is off by one fails
 // it.
+// The copy checks and copies each of the 2000 files in turn, with about 15 file system
+// calls per file. That takes about 5 s on an idle Windows host and over 15 s while the
+// full suite runs, so this test has its own timeout. The fixture cannot shrink: the
+// bound is the file count.
 test("copies a listed directory that holds exactly the entry bound", async () => {
   const { main, linked } = await createLinked({ ignore: [".codex/"] });
   await mkdir(join(main, ".codex"));
@@ -701,7 +705,7 @@ test("copies a listed directory that holds exactly the entry bound", async () =>
 
   expect(report.copied.length).toBe(MAX_WALKED_ENTRIES);
   expect(report.skipped).toEqual([]);
-});
+}, 60_000);
 
 // Usefulness: verifies a work tree that Git still lists but whose `.git` entry is gone
 // is never read from.
