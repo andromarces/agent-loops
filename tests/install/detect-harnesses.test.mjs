@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vite-plus/test";
 
-const fsCalls = vi.hoisted(() => ({ count: 0 }));
+const fsCalls = vi.hoisted(() => ({ count: 0, unlistable: new Set(), unresolvable: new Set() }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal();
@@ -14,7 +14,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return fn(...args);
     };
   // Counts the file system calls made through the promises API, to bound the scan cost (#376).
-  return { ...real, access: counted(real.access), readdir: counted(real.readdir) };
+  // A directory in `unlistable` fails to list, like a POSIX directory with execute but no read permission.
+  const readdir = counted((dir, ...rest) =>
+    fsCalls.unlistable.has(dir)
+      ? Promise.reject(Object.assign(new Error("EACCES"), { code: "EACCES" }))
+      : real.readdir(dir, ...rest),
+  );
+  // A path in `unresolvable` is listed but fails to resolve, like a dangling symlink.
+  const accessPath = counted((path, ...rest) =>
+    fsCalls.unresolvable.has(path)
+      ? Promise.reject(Object.assign(new Error("ENOENT"), { code: "ENOENT" }))
+      : real.access(path, ...rest),
+  );
+  return { ...real, access: accessPath, readdir };
 });
 
 const { detectHarnesses } = await import("../../src/install/installer.mjs");
@@ -37,6 +49,14 @@ afterAll(() => rm(root, { recursive: true, force: true }));
 
 beforeEach(() => {
   fsCalls.count = 0;
+  // The Windows tests name fake CLIs with .cmd, so they set PATHEXT instead of reading the host value.
+  vi.stubEnv("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+});
+
+afterEach(() => {
+  fsCalls.unlistable.clear();
+  fsCalls.unresolvable.clear();
+  vi.unstubAllEnvs();
 });
 
 const touch = (dir, name) => writeFile(join(dir, name), "");
@@ -89,3 +109,49 @@ test.skipIf(process.platform !== "win32")(
     expect(await detectHarnesses({ path: dirs[5] })).toEqual(["codex"]);
   },
 );
+
+// Usefulness: a name that lists but cannot be resolved (dangling link) is not a detected CLI, as with the old lookup.
+test("detectHarnesses ignores a listed name that does not resolve", async () => {
+  await touch(dirs[6], exe("claude"));
+  fsCalls.unresolvable.add(join(dirs[6], exe("claude")));
+
+  expect(await detectHarnesses({ path: dirs[6] })).toEqual([]);
+});
+
+// Usefulness: a directory that cannot be listed (execute without read) still yields its CLIs.
+test("detectHarnesses finds a CLI in a directory that cannot be listed", async () => {
+  await touch(dirs[7], exe("codex"));
+  fsCalls.unlistable.add(dirs[7]);
+
+  expect(await detectHarnesses({ path: dirs[7] })).toEqual(["codex"]);
+});
+
+// Usefulness: file name case follows the file system, not the code (macOS is case-insensitive by default).
+test("detectHarnesses matches a differently cased name exactly when the file system does", async () => {
+  await touch(dirs[8], process.platform === "win32" ? "CODEX.CMD" : "Codex");
+  const insensitive = await access(join(dirs[8], exe("codex"))).then(
+    () => true,
+    () => false,
+  );
+
+  expect(await detectHarnesses({ path: dirs[8] })).toEqual(insensitive ? ["codex"] : []);
+});
+
+// Usefulness: a case-insensitive file system matches a differently cased name under POSIX name rules too.
+test("detectHarnesses matches a differently cased name on a case-insensitive file system", async () => {
+  await touch(dirs[9], "Opencode");
+  const insensitive = await access(join(dirs[9], "opencode")).then(
+    () => true,
+    () => false,
+  );
+  if (!insensitive) {
+    return; // case-sensitive file system: nothing to match
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { ...descriptor, value: "darwin" });
+  try {
+    expect(await detectHarnesses({ path: dirs[9] })).toEqual(["opencode"]);
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});

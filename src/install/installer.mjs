@@ -11,7 +11,7 @@
 // read-modify-write of the manifest cannot drop a record, whatever the temp
 // root of each process (#193, #198).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
@@ -949,8 +949,18 @@ function executableCandidates(command) {
   return [command, ...extensions.map((extension) => `${command}${extension.toLowerCase()}`)];
 }
 
-// Lists a directory once per detectHarnesses call. A missing or unreadable directory is empty.
-// Windows file names compare case-insensitively.
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Lists a directory once per detectHarnesses call, as a set of lowercase names. A directory that does not
+// exist lists as empty. A directory that fails to list for another reason (execute without read) lists
+// as null, and the caller probes it name by name.
 function directoryLister() {
   const listings = new Map();
   return (dir) => {
@@ -958,9 +968,8 @@ function directoryLister() {
       listings.set(
         dir,
         readdir(dir).then(
-          (names) =>
-            new Set(process.platform === "win32" ? names.map((n) => n.toLowerCase()) : names),
-          () => new Set(),
+          (names) => new Set(names.map((name) => name.toLowerCase())),
+          (error) => (error?.code === "ENOENT" || error?.code === "ENOTDIR" ? new Set() : null),
         ),
       );
     }
@@ -968,13 +977,18 @@ function directoryLister() {
   };
 }
 
-// Walks PATH in order and stops at the first match. One listing per PATH entry replaces one probe per
+// Walks PATH in order and stops at the first match. The listing only skips names that cannot exist: it
+// folds case, so a case-insensitive file system loses no match, and each listed name is still confirmed
+// with a lookup, so a dangling link does not count. One listing per PATH entry replaces one probe per
 // PATH entry x PATHEXT x command, which took seconds on a loaded Windows host (#376).
 async function onPath(command, path, list) {
   for (const dir of path.split(delimiter).filter(Boolean)) {
     const names = await list(dir);
     for (const candidate of executableCandidates(command)) {
-      if (names.has(process.platform === "win32" ? candidate.toLowerCase() : candidate)) {
+      if (names && !names.has(candidate.toLowerCase())) {
+        continue;
+      }
+      if (await exists(join(dir, candidate))) {
         return true;
       }
     }
