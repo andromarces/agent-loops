@@ -123,7 +123,7 @@ step budget runs out.
    `--transcript` outside the work tree. The driver ran `process.kill(<parent pid>, "SIGKILL")` at 0.4, 1.5,
    and 3.5 s after the spawn. It then ran `--continue-from` on the same transcript.
    At 0.4 s, no session file existed at the kill or 1.5 s later. The continued run ended with exit 1 and
-   `Claude Code session <id> is not verified as owned by this work tree`
+   `Claude Code session <id> is not verified as owned by this work tree`.
    At 1.5 s, no file existed at the kill, and a file existed 1.5 s after the parent exit.
    At 3.5 s, a file existed at the kill. Both continued runs resumed the id, ended with exit 0, and cleared the mark.
    A `claude` child with parent pid 1 remained after each kill, as ADR 0027 records.
