@@ -101,6 +101,42 @@ step budget runs out.
    Windows (2.1.284 and 2.1.292 were probed on macOS for issue #395), a file symlink, and a
    drive letter difference on a work tree that no longer exists, where `realpath` fails and the
    case is kept as given.
+   macOS 27.2 (arm64), Node v26.11.1, Git 2.56.0, Claude Code 2.1.296, repository head `76bb63c`
+   (issue #565). Each probe ran in a disposable Git repository under the temporary directory,
+   with `haiku` for every role and the unchanged adapter. Every result agrees with the adapter, so
+   no bug was opened.
+   Layout and id casing. Command: `claude -p --session-id <id> --model haiku --permission-mode bypassPermissions --output-format json --verbose`, with the prompt `Reply OK. Change no file.` and the marker line. The output carried one `session_id` equal to `<id>`, and the session file
+   was `projects/<cwd with each non-alphanumeric character replaced by "-">/<id>.jsonl`. The first
+   `user` record had `sessionId` equal to `<id>`, `cwd` equal to the launch directory, and
+   `message.content` as a string that ends with the marker. An uppercase `--session-id` kept its
+   case in the output and in the file name. This matches the Windows result.
+   SIGKILL of the CLI. The prompt asked for a `sleep 87` tool call, and the driver sent
+   `SIGKILL` to the `claude` pid at 0.4, 1, 2, 2.5, 3, 4, 8, 15, and 30 s after the spawn. The
+   driver read whether the session file existed just before the signal. Stdout was empty and the
+   exit signal was `SIGKILL` in every probe. A kill at 0.4, 1, and 2 s left no session file. The
+   adapter check then refused the id with `sessionMissing`, and `claude -p --resume <id>` exited 1
+   with `No conversation found with session ID: <id>` and empty stdout. A kill at 2.5, 3, 4, 8,
+   15, and 30 s left a file whose first `user` record carried the marker. The check passed, and
+   `runClaude` resumed the id. In the probes at 2.5 to 8 s, the answer to a question about the
+   earlier command named `sleep`. In the probes at 15 and 30 s, it did not. The file appears
+   between 2 and 2.5 s on this host, and that boundary is not a contract.
+   SIGKILL of the headless parent. Command: the orchestrator command of issue #580 in ADR 0027,
+   with `--transcript` outside the work tree and `process.kill(<parent pid>, "SIGKILL")` at 0.4,
+   1.5, and 3.5 s after the spawn, then `--continue-from` on the same transcript. At 0.4 s, no
+   session file existed at the kill or 1.5 s later, and the continued run ended with exit 1 and
+   `Claude Code session <id> is not verified as owned by this work tree.` At 1.5 s, no file
+   existed at the kill, and a file existed 1.5 s after the parent exit.
+   At 3.5 s, a file existed at the kill. Both continued runs resumed the id, ended with exit 0,
+   and cleared the mark. A `claude` child with parent pid 1 remained after each kill, as ADR 0027
+   records.
+   Symlink guard. A throwaway `CLAUDE_CONFIG_DIR` held a synthetic session file with a valid
+   first `user` record, and a `claude` stub on `PATH` stood for the CLI. A regular file in a real
+   directory passed the check, and the stub ran. A file symlink, a directory symlink as the
+   project directory, a marker with another role, and a `cwd` that differs by one character were
+   each refused with `sessionMissing`, and no CLI turn started.
+   Not verified: Linux, a drive letter difference on Windows for a work tree that no longer
+   exists, a file symlink and a directory symlink on Windows, and a Claude Code version other
+   than 2.1.284, 2.1.292, 2.1.295, and 2.1.296.
    On the interactive dispatch path, the adapter reports the pre-assigned id to the dispatcher
    before it starts the CLI, and the dispatcher writes it to the state file at once. A crash
    during the turn then leaves the id, and the turn after `--resume-interrupted` resumes it. A
