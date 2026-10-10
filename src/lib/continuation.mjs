@@ -85,8 +85,7 @@ async function applySessionRecord(path, bytes, transcript) {
  * command line. No other adapter is verified to leave such an orphan. A process table that cannot
  * be read logs a warning and lets the run continue. The read is bounded by `deps.timeout`
  * (seconds) and ends on `deps.signal`. A cancel rejects, so SIGINT still cancels the run.
- * known-limit: the match is by command line, so a holder that does not carry the id as the value of a
- * session flag there is not found.
+ * known-limit: the match is by command line, so a holder that does not carry the id as an argument is not found.
  * @param {object} roles roles keyed by role name, after `restoreSessions`
  * @param {{ readProcessCommands?: (options: { signal?: AbortSignal, timeout?: number }) => Promise<{ pid: number, command: string }[]>, signal?: AbortSignal, timeout?: number }} [deps]
  */
@@ -101,20 +100,78 @@ export async function refuseHeldSessions(roles, deps = {}) {
 }
 
 /**
- * True when `command` passes `id` as the whole value of `--resume`, `-r`, or `--session-id`, with an
- * optional `=` or quotes. The CLI takes a session there, so a path, a longer token, or another flag
- * that merely contains the id is not a holder (#673, ADR 0031). `id` is a UUID, so it needs no escape.
+ * Splits a command line into arguments with the rules of its platform. Windows follows
+ * `CommandLineToArgvW`: quotes toggle a quoted section and are dropped, `2n` backslashes before a
+ * quote give `n` backslashes and the quote toggles, `2n+1` give `n` backslashes and a literal quote,
+ * and other backslashes stay. POSIX follows a shell: single and double quotes group, a backslash
+ * escapes the next character outside single quotes. An unterminated quote runs to the end.
  */
-function holdsSession(command, id) {
-  return new RegExp(
-    String.raw`(?:^|\s)(?:--resume|-r|--session-id)(?:=|\s+)["']?${id}["']?(?=\s|$)`,
-    "i",
-  ).test(command);
+function splitArguments(command, windows) {
+  const args = [];
+  let current = "";
+  let started = false;
+  let quote = null;
+  const end = () => {
+    if (started) args.push(current);
+    current = "";
+    started = false;
+  };
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (windows && c === "\\") {
+      let n = 0;
+      while (command[i + n] === "\\") n++;
+      started = true;
+      if (command[i + n] === '"') {
+        current += "\\".repeat(n >> 1);
+        if (n & 1) current += '"';
+        else quote = quote ? null : '"';
+      } else {
+        current += "\\".repeat(n);
+        i += n - 1;
+        continue;
+      }
+      i += n;
+    } else if (!windows && c === "\\" && quote !== "'" && i + 1 < command.length) {
+      current += command[++i];
+      started = true;
+    } else if (quote === null && (c === '"' || (!windows && c === "'"))) {
+      quote = c;
+      started = true;
+    } else if (c === quote) {
+      quote = null;
+    } else if (quote === null && /\s/.test(c)) {
+      end();
+    } else {
+      current += c;
+      started = true;
+    }
+  }
+  end();
+  return args;
+}
+
+/**
+ * True when an argument of `command` is exactly `id`, or is `--resume=<id>`, `--session-id=<id>`, or
+ * `-r=<id>`. The arguments come from the rules of `platform`, so a quoted flag counts, a bare id
+ * counts, and a path, a longer token, or another flag that merely contains the id does not (#673,
+ * ADR 0031). `id` is a UUID, so the compare is case-insensitive.
+ */
+function holdsSession(command, id, platform) {
+  const wanted = id.toLowerCase();
+  return splitArguments(command, platform === "win32").some((arg) => {
+    const lower = arg.toLowerCase();
+    return (
+      lower === wanted ||
+      [`--resume=${wanted}`, `--session-id=${wanted}`, `-r=${wanted}`].includes(lower)
+    );
+  });
 }
 
 /**
  * The check of `refuseHeldSessions` for a list of `{ role, sessionId }` entries of claude roles.
- * `deps.label` prefixes the warning and the refusal. Entries whose id is not a UUID are ignored.
+ * `deps.label` prefixes the warning and the refusal. `deps.platform` (default `process.platform`)
+ * selects the command-line rules. Entries whose id is not a UUID are ignored.
  */
 export async function refuseHeldIds(entries, deps = {}) {
   const ids = entries
@@ -143,7 +200,9 @@ export async function refuseHeldIds(entries, deps = {}) {
   }
   for (const [role, id] of ids) {
     const holder = table.find(
-      (entry) => entry.pid !== process.pid && holdsSession(entry.command, id),
+      (entry) =>
+        entry.pid !== process.pid &&
+        holdsSession(entry.command, id, deps.platform ?? process.platform),
     );
     if (holder) {
       throw new Error(

@@ -722,31 +722,63 @@ test.skipIf(process.platform === "win32")(
   60_000,
 );
 
-// Usefulness: verifies only a process that holds the session counts (#673): the id must be the whole value of --resume, -r, or --session-id, so a log path or a longer token that contains the id never refuses a run.
-test("refuseHeldIds counts the id only as the value of a session flag", async () => {
-  const check = (command) =>
-    refuseHeldIds([{ role: "worker", sessionId: HELD_ID }], {
-      readProcessCommands: async () => [{ pid: 4242, command }],
-    });
+// Usefulness: verifies the holder match tokenizes the command line with the platform rules (#673), so a quoted flag or a bare id counts and a path or a longer token that contains the id never refuses a run.
+const holds = (command, platform) =>
+  refuseHeldIds([{ role: "worker", sessionId: HELD_ID }], {
+    platform,
+    readProcessCommands: async () => [{ pid: 4242, command }],
+  }).then(
+    () => false,
+    (err) => err.message.includes("process 4242"),
+  );
+
+const HELD_NEGATIVES = [
+  `tail -f /home/u/.claude/projects/p/${HELD_ID}.jsonl`,
+  `claude -p --resume ${HELD_ID}-copy`,
+  `claude -p --resume x${HELD_ID}`,
+  `claude -p --resume ${HELD_ID}0`,
+  `claude -p --session-id-file=${HELD_ID}`,
+  `claude -p --model=${HELD_ID}`,
+  String.raw`claude -p --resume\"${HELD_ID}\"`,
+];
+
+test("a Windows command line holds the session for a flag value, a quoted flag, or a bare id", async () => {
   for (const command of [
     `claude -p --resume ${HELD_ID} --output-format json`,
     `claude -p --session-id ${HELD_ID} --model haiku`,
     `claude -p --resume=${HELD_ID}`,
-    `claude -p -r ${HELD_ID}`,
+    `claude -p -r=${HELD_ID}`,
+    `claude -p "--resume" ${HELD_ID}`,
+    `claude -p "--session-id=${HELD_ID}"`,
+    `claude -p --resume="${HELD_ID}"`,
     String.raw`"C:\Program Files\claude.exe" -p --resume "${HELD_ID}"`,
+    `claude ${HELD_ID}`,
+    `claude -p --resume ${HELD_ID.toUpperCase()}`,
   ]) {
-    await expect(check(command)).rejects.toThrow(`process 4242`);
+    expect(await holds(command, "win32"), command).toBe(true);
   }
   for (const command of [
-    `tail -f /home/u/.claude/projects/p/${HELD_ID}.jsonl`,
+    ...HELD_NEGATIVES,
+    String.raw`node app.js --log "C:\logs\${HELD_ID}.log"`,
     String.raw`node app.js --log C:\logs\${HELD_ID}.log`,
-    `claude -p --resume ${HELD_ID}-copy`,
-    `claude -p --resume x${HELD_ID}`,
-    `claude -p --resume ${HELD_ID}0`,
-    `claude -p --session-id-file ${HELD_ID}`,
-    `claude -p --model ${HELD_ID}`,
+  ]) {
+    expect(await holds(command, "win32"), command).toBe(false);
+  }
+});
+
+test("a POSIX command line holds the session for a flag value, a quoted flag, or a bare id", async () => {
+  for (const command of [
+    `claude -p --resume ${HELD_ID} --output-format json`,
+    `claude -p --session-id=${HELD_ID}`,
+    `claude -p '--resume' ${HELD_ID}`,
+    `claude -p "--session-id=${HELD_ID}"`,
+    `claude -p -r=${HELD_ID}`,
+    `claude ${HELD_ID}`,
     `node test ${HELD_ID}`,
   ]) {
-    await expect(check(command)).resolves.toBeUndefined();
+    expect(await holds(command, "linux"), command).toBe(true);
+  }
+  for (const command of [...HELD_NEGATIVES, `node app.js --log /logs/${HELD_ID}.log`]) {
+    expect(await holds(command, "linux"), command).toBe(false);
   }
 });
