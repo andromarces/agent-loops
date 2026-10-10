@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1435,7 +1435,13 @@ test("--continue-from refuses a claude session that a live process holds", async
     const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
     transcript.roles.worker.sessionId = heldId;
     await writeFile(transcriptPath, JSON.stringify(transcript));
-    const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", heldId], {
+    // The holder must look like a Claude CLI process: a copy of node (a symlink on POSIX) named
+    // `claude`, so its executable stem is `claude`. The id is a bare argument.
+    const binDir = await mkdtemp(join(tmpdir(), "held-claude-"));
+    const claudeBin = join(binDir, process.platform === "win32" ? "claude.exe" : "claude");
+    if (process.platform === "win32") await copyFile(process.execPath, claudeBin);
+    else await symlink(process.execPath, claudeBin);
+    const holder = spawn(claudeBin, ["-e", "setTimeout(() => {}, 60000)", "--", heldId], {
       stdio: "ignore",
     });
     try {
@@ -1448,6 +1454,7 @@ test("--continue-from refuses a claude session that a live process holds", async
       expect(seen.codex).toEqual([]);
     } finally {
       holder.kill("SIGKILL");
+      await removePath(binDir);
     }
   });
 });

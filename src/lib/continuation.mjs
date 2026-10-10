@@ -79,8 +79,8 @@ async function applySessionRecord(path, bytes, transcript) {
 }
 
 /**
- * Refuses a continuation when another live process names the id of a claude role session in its
- * command line (#647, ADR 0029). A `SIGKILL` of the earlier parent leaves its `claude` child
+ * Refuses a continuation when a live Claude CLI process holds the id of a claude role session in its
+ * command line (#647, ADR 0029, `holdsSession`). A `SIGKILL` of the earlier parent leaves its `claude` child
  * running, and the CLI accepts a resume of that session, so two processes would write one session
  * file. Only a claude id in the UUID form is checked, so a short id cannot match another
  * command line. No other adapter is verified to leave such an orphan. A process table that cannot
