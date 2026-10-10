@@ -588,9 +588,9 @@ test("initialPrompt states the required-check wait at the reviewer and at finish
 });
 
 // Usefulness: verifies a copilot orchestrator is not told that its shell has no network or runs in
-// a sandbox, because its read-only turn keeps network and only refuses `role wait-checks` (#432
-// probe, #495). The claude reviewer cases set up the reviewer rule and the codex and null reviewer
-// cases set up the gate rule. Both rules tell it to run no check read itself.
+// a sandbox. Its read-only turn keeps network and only refuses `role wait-checks` (#432 probe,
+// #495). The claude reviewer cases set up the reviewer rule. The codex and null reviewer cases set
+// up the gate rule. Both rules tell it to run no check read itself.
 test.each([
   ["claude", 42],
   ["claude", null],
@@ -1750,9 +1750,9 @@ function denialsWithoutUserRuleException(text) {
   );
 }
 
-// Usefulness: verifies that each rendered orchestrator prompt and the opted-in reviewer prompt
-// carry the user-rule exception after a shell network denial (issue #655). No role then treats a
-// shell network result as impossible. The qualification scan above does not check the exception.
+// Usefulness: verifies that the rendered orchestrator prompts and the opted-in reviewer prompt
+// carry the user-rule exception after a shell network denial. No role then treats a shell network
+// result as impossible (issue #655). The qualification scan above does not check the exception.
 describe.each([
   ["default", false],
   ["opted-in", true],
@@ -1785,7 +1785,7 @@ test("the opted-in reviewer prompt states the user-rule exception", () => {
   expect(reviewerPrompt("x", null, null, true).replace(/\s+/g, " ")).toContain(USER_RULE_EXCEPTION);
 });
 
-// Usefulness: verifies that the exception scan flags a denial with no exception or a contradicting
+// Usefulness: verifies that the exception scan flags a denial with no exception or with a contrary
 // one. A pass then means the prompts are clean, not that the detector is blind.
 test("the exception scan flags a denial without the user-rule exception", () => {
   expect(
