@@ -588,8 +588,9 @@ test("initialPrompt states the required-check wait at the reviewer and at finish
 });
 
 // Usefulness: verifies a copilot orchestrator is not told that its shell has no network or runs in
-// a sandbox, because its read-only turn keeps network and only refuses `role wait-checks` (#432
-// probe, #495), and that it runs no check read itself, as the reviewer and gate rules state.
+// a sandbox. Its read-only turn keeps network and only refuses `role wait-checks` (#432 probe,
+// #495). The claude reviewer cases set up the reviewer rule. The codex and null reviewer cases set
+// up the gate rule. Both rules tell it to run no check read itself.
 test.each([
   ["claude", 42],
   ["claude", null],
@@ -607,12 +608,17 @@ test.each([
       reviewerKind,
       pr,
     });
-    const own = prompt.split("\n").find((line) => line.includes("You orchestrate through copilot"));
-    expect(own).toBeTruthy();
+    const lines = prompt.split("\n");
+    const from = lines.findIndex((line) => line.startsWith("- You orchestrate through copilot"));
+    expect(from).toBeGreaterThanOrEqual(0);
+    // The limit claim sits in the copilot bullet itself, so another role's text cannot satisfy it.
+    const own = lines[from];
     expect(own).toContain("keeps shell network");
     expect(own).toContain("refuses agent-loop role wait-checks");
-    expect(own).toContain("Do not run gh pr checks");
     expect(own).not.toMatch(/copilot, whose read-only turn cannot reach the network/);
+    // The reviewer rule keeps the instruction in the bullet. The gate rule moves it two bullets on.
+    const instruction = reviewerKind === "claude" ? own : lines[from + 2];
+    expect(instruction).toContain("Do not run gh pr checks");
     expect(prompt).not.toMatch(/gh pr checks 42 --required|--watch/);
     expect(prompt).not.toMatch(/agent-loop role wait-checks --pr/);
   },
@@ -632,10 +638,13 @@ test.each([["codex"], [null]])(
       reviewerKind,
       pr: null,
     });
-    const own = prompt.split("\n").find((line) => line.includes("You orchestrate through copilot"));
-    expect(own).toContain("refuses agent-loop role wait-checks without approval");
-    expect(own).toContain("This run names PR #42");
-    expect(own).toContain("supplies it to every reviewer prompt");
+    const lines = prompt.split("\n");
+    const from = lines.findIndex((line) => line.startsWith("- You orchestrate through copilot"));
+    expect(from).toBeGreaterThanOrEqual(0);
+    expect(lines[from]).toContain("refuses agent-loop role wait-checks without approval");
+    // The supplied read follows the exception bullet, in the "Do not run gh pr checks" bullet.
+    expect(lines[from + 2]).toContain("This run names PR #42");
+    expect(lines[from + 2]).toContain("supplies it to every reviewer prompt");
     expect(prompt).toContain(
       "The advisory status read above reports to the reviewer and never enforces",
     );
@@ -1721,6 +1730,77 @@ test("the network denial scan flags an unqualified denial and accepts a qualifie
       "Its shell commands cannot reach the network. That limit covers shell commands only.",
     ),
   ).toEqual([]);
+});
+
+// A user execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception to the Codex
+// shell network limit. Such a rule ran a shell command outside the sandbox, with network (issue
+// #640). The runtime does not prevent that (issue #655). Every runtime prompt sentence that denies
+// shell network must carry this exact exception text, within six sentences after the denial.
+const USER_RULE_EXCEPTION =
+  "A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.";
+function denialsWithoutUserRuleException(text) {
+  const sentences = sentencesOf(text);
+  return sentences.filter(
+    (sentence, i) =>
+      NETWORK_DENIAL.test(sentence) &&
+      !sentences
+        .slice(i, i + 6)
+        .join(" ")
+        .includes(USER_RULE_EXCEPTION),
+  );
+}
+
+// Usefulness: verifies that the rendered orchestrator prompts and the opted-in reviewer prompt
+// carry the user-rule exception after a shell network denial. No role then treats a shell network
+// result as impossible (issue #655). The qualification scan above does not check the exception.
+describe.each([
+  ["default", false],
+  ["opted-in", true],
+])("the %s runtime prompts state the user-rule exception", (_name, reviewerWorkspaceWrite) => {
+  test.each([
+    ["codex", "codex", null],
+    ["codex", "codex", 42],
+    ["codex", "claude", 42],
+    ["copilot", "codex", 42],
+    ["claude", "codex", null],
+    [null, null, null],
+  ])("%s orchestrator, %s reviewer, pr %s", (orchestratorKind, reviewerKind, pr) => {
+    const prompt = gated({ orchestratorKind, reviewerKind, pr, reviewerWorkspaceWrite });
+    expect(denialsWithoutUserRuleException(prompt)).toEqual([]);
+  });
+
+  test("the ungated prompt", () => {
+    expect(
+      denialsWithoutUserRuleException(
+        initialPrompt({ task: "t", maxSteps: 5, reviewerWorkspaceWrite }),
+      ),
+    ).toEqual([]);
+  });
+});
+
+// Usefulness: verifies that the opted-in reviewer prompt carries the exact user-rule exception
+// text (issue #655).
+test("the opted-in reviewer prompt states the user-rule exception", () => {
+  expect(denialsWithoutUserRuleException(reviewerPrompt("x", null, null, true))).toEqual([]);
+  expect(reviewerPrompt("x", null, null, true).replace(/\s+/g, " ")).toContain(USER_RULE_EXCEPTION);
+});
+
+// Usefulness: verifies that the exception scan flags a denial with no exception or with a contrary
+// one. A pass then means the prompts are clean, not that the detector is blind.
+test("the exception scan flags a denial without the user-rule exception", () => {
+  expect(
+    denialsWithoutUserRuleException("The shell commands that you run have no network access."),
+  ).toHaveLength(1);
+  expect(
+    denialsWithoutUserRuleException(
+      `The shell commands have no network access. ${USER_RULE_EXCEPTION}`,
+    ),
+  ).toEqual([]);
+  expect(
+    denialsWithoutUserRuleException(
+      "The shell commands have no network access. A user Codex execpolicy rule is never an exception.",
+    ),
+  ).toHaveLength(1);
 });
 
 // Usefulness: verifies the reviewer prompt, the README, the orchestrator instructions, the other
