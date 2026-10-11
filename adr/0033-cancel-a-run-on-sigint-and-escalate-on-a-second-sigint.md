@@ -4,6 +4,8 @@
 
 accepted
 
+Partly superseded by [ADR 0036: Bound every snapshot-path read and end the evidence snapshot on a second cancel](0036-bound-every-snapshot-path-read-and-end-the-evidence-snapshot-on-a-second-cancel.md): decision 8 no longer holds for the after-turn and after-command snapshots. A second SIGINT that arrives while one of them runs ends it, defers the exit until the run writes its result, and reports the evidence as not captured. The other decisions hold, so this ADR stays `accepted`.
+
 ## Date
 
 2026-10-10
@@ -27,7 +29,6 @@ PR #689 recorded this decision in ADR 0029 (decision 8 and a SIGINT sentence in 
 7. Transcript write failures. A write that fails (a full disk, a symlink loop that fails with `ELOOP`, or a Windows rename that a reader blocks, with no retry) logs an error, writes no transcript, and still exits 130. A write that stalls in the OS blocks the exit, because a synchronous call has no bound.
 8. The second SIGINT drops: the mutation check and snapshot of the turn, the `gate` event, the summary, and the state-file writes of `role`. The async removal of the session record is skipped, so a stale record stays, and it no longer matches the digest of the new transcript.
 9. Windows has no SIGINT delivery through `kill`, so the real-signal tests run on POSIX CI only. The Windows path of `killLiveTrees` has a test that runs here. A Ctrl-C from a real Windows console is not verified.
-10. Evidence snapshot (issue #729). A second SIGINT that arrives while the after-turn or after-command snapshot runs ends that snapshot first, through `forceCancelSignal`. The exit then waits for the run to write its canceled result, which says the changed paths were not captured. The exit follows when the run removes the listener, or after 5 s through the steps of decision 3. A third SIGINT runs those steps at once. This decision narrows decision 8 for that snapshot.
 
 ## Consequences
 
@@ -53,6 +54,7 @@ Andro Marces
 
 ## Links
 
+- Partly superseded by [ADR 0036](0036-bound-every-snapshot-path-read-and-end-the-evidence-snapshot-on-a-second-cancel.md) (decision 8)
 - [Issue #669: SIGINT can end the runtime by signal before the cancel handler finishes](https://github.com/andromarces/agent-loops/issues/669)
 - [Pull request #689](https://github.com/andromarces/agent-loops/pull/689)
 - [Issue #693: Record the SIGINT cancel decision in an active ADR instead of superseded ADR 0029](https://github.com/andromarces/agent-loops/issues/693)

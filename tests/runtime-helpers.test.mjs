@@ -411,3 +411,24 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+// Usefulness: verifies the cleanup helper reads the process table under a short bound, so a hung
+// `ps` ends the cleanup at the bound and signals nothing (#729).
+test.skipIf(process.platform === "win32")(
+  "endOwnedProcess ends a hung process-table read at its bound and signals nothing",
+  async () => {
+    const foreign = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)", "never-marked"], {
+      stdio: "ignore",
+    });
+    try {
+      const sent = await expectBoundKillsShim("ps", (timeoutMs) =>
+        endOwnedProcess(foreign.pid, "never-marked", { timeoutMs }),
+      );
+      expect(sent).toBe(false);
+      expect(foreign.signalCode).toBeNull();
+    } finally {
+      foreign.kill("SIGKILL");
+    }
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);

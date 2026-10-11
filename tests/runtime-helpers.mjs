@@ -848,11 +848,14 @@ export async function createPsShim(body, { ceilingSeconds = 10 } = {}) {
 /**
  * POSIX only. Ends `pid` with SIGKILL only when its command line holds `marker`, a value that no
  * other process carries, so a stale or reused pid is never signaled. Returns true when it sent the
- * signal.
+ * signal. The `ps` read ends after `timeoutMs` (default 3 s), and a read that ends that way signals
+ * nothing.
  */
-export async function endOwnedProcess(pid, marker) {
-  const { stdout } = await execa("ps", ["-o", "command=", "-p", String(pid)], { reject: false });
-  if (!stdout.includes(marker)) {
+export async function endOwnedProcess(pid, marker, { timeoutMs = 3000 } = {}) {
+  // Loaded on use, so a test file that mocks `execa` or `exec.mjs` sees its mock first.
+  const { execBounded } = await import("../src/lib/exec.mjs");
+  const read = await execBounded("ps", ["-o", "command=", "-p", String(pid)], { timeoutMs });
+  if (read.timedOut || !(read.stdout ?? "").includes(marker)) {
     return false;
   }
   try {

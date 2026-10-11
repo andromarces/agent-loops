@@ -883,7 +883,14 @@ ${redactedText(readProp(err, "message") ?? err)}`);
       }
     } catch (err) {
       if (readProp(err, "isCanceled")) {
-        await finish({ exitCode: 130, error: new Error("Interrupted by SIGINT"), failed: true });
+        // A canceled snapshot says what it could not read, such as the changed-path evidence, so the
+        // reason stays in the transcript and the error report.
+        const reason = readProp(err, "name") === "SnapshotError" ? readProp(err, "message") : null;
+        await finish({
+          exitCode: 130,
+          error: new Error(reason ? `Interrupted by SIGINT: ${reason}` : "Interrupted by SIGINT"),
+          failed: true,
+        });
       } else {
         await finish({ exitCode: 1, error: err, failed: true });
       }

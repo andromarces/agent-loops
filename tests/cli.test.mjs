@@ -1084,6 +1084,72 @@ test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () 
   }
 });
 
+// Usefulness: verifies a headless reviewer turn whose evidence snapshot a second SIGINT ended keeps
+// the "not captured" reason in the error report and the transcript, so the cancel never reads as a
+// plain interrupt (#729).
+test("a headless reviewer cancel in the evidence snapshot reports the evidence as not captured", async () => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+    let armed = false;
+    let fired = false;
+    gitDouble.answer = (command, args, options) => {
+      if (armed && !fired && args[1] === "--show-toplevel") {
+        fired = true;
+        process.emit("SIGINT");
+        process.emit("SIGINT");
+      }
+      return options?.cancelSignal?.aborted
+        ? { exitCode: undefined, isCanceled: true, stdout: "", stderr: "" }
+        : cleanRepoGit(command, args, options);
+    };
+    const agents = {
+      codex: {
+        async run() {
+          return JSON.stringify({ action: "run_reviewer", prompt: "check" });
+        },
+      },
+      claude: {
+        async run() {
+          return "worker ok";
+        },
+      },
+      agy: {
+        async run() {
+          armed = true;
+          return "reviewer ok";
+        },
+      },
+    };
+    try {
+      await main(
+        [
+          "--orchestrator",
+          "codex",
+          "--worker",
+          "claude",
+          "--reviewer",
+          "agy",
+          "--task",
+          "task",
+          "--cwd",
+          repo,
+          "--transcript",
+          transcriptPath,
+        ],
+        agents,
+      );
+      expect(fired).toBe(true);
+      expect(process.exitCode).toBe(130);
+      const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+      expect(transcript.exitCode).toBe(130);
+      expect(transcript.error).toMatch(/Interrupted by SIGINT.*not captured/);
+      expect(errorSpy.mock.calls.flat().join("\n")).toMatch(/not captured/);
+    } finally {
+      exit.mockRestore();
+    }
+  });
+});
+
 // Usefulness: acceptance (#669) — a real SIGINT while an execa child runs ends the run through its
 // handler (exit 130, transcript written), not by re-raised signal. A child process is needed: the
 // execa exit handler re-raises the signal only when no other SIGINT listener remains. Windows has
