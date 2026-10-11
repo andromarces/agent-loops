@@ -91,12 +91,12 @@ history and provider prompt cache. `archiveState` keeps the old ids in
 - The headless loop is unchanged. Its `--max-steps` stays fixed for the invocation,
   and the runtime prompt states that number.
 
-## Live harness check
+### Live harness check
 
 Issue #549 probes the child refusal of point 8 on live harness sessions. The worker shell
 command ran on four of the five harnesses. Copilot CLI denied it. Windows is not probed yet.
 
-### macOS
+#### macOS
 
 Date: 2026-10-10. OS: macOS 27.2, Darwin 27.2.0, arm64. Runtime: the tree at `faf11a5`.
 Each harness ran two live runs, each in its own disposable Git repository under the system
@@ -124,14 +124,27 @@ The worker turn was asked to run one shell command. The command printed whether
   each ended the turn with a provider HTTP error (404, 400, 404). A direct `opencode run`
   with the last model also returned HTTP 404. The probe passed with `opencode-go/claude-haiku-5-5`
   and ran the shell command.
-- Copilot CLI: the worker shell command was denied in both runs. The error read `Permission denied
-  because no interactive user response was available.` The command did not run, so the marker and
-  the child refusal are not verified. The probe did not change the approval settings of Copilot CLI.
-- Copilot flags: a worker turn passes `--session-id <id> -s --no-ask-user --output-format json`,
-  with no allow flag (`src/agents/copilot.mjs`, line 108, read from source, not from a runtime
-  log). The README records `Permission denied` for a shell call under `--no-ask-user` alone
-  (`README.md`, lines 86 and 971).
-- Conflict: the worker prompt tells a worker to run tests, checks, and verifications
-  (`src/prompts/worker.mjs`, line 12). Under these flags a Copilot worker turn was denied a shell
-  command in both runs. Issue #713 tracks the conflict and its decision.
+- Copilot CLI: the worker shell command was denied in both runs, so the marker and the child
+  refusal are not verified. [ADR 0035](0035-state-that-a-copilot-worker-cannot-run-shell-commands-and-flag-a-denied-call.md)
+  and [issue #713](https://github.com/andromarces/agent-loops/issues/713) record the denial and its decision.
 - Windows: not verified. No Windows host was available.
+
+## Alternatives
+
+1. **Abort and start a new run**: this is the only route without `extend`. It sets every role to `sessionId: null`, so each role loses its history and prompt cache. Rejected.
+
+## Authors
+
+Andro Marces
+
+## Links
+
+- [Issue #361: Raise the step budget of a live interactive run and keep its role sessions](https://github.com/andromarces/agent-loops/issues/361)
+- [Issue #392](https://github.com/andromarces/agent-loops/issues/392)
+- [Issue #548](https://github.com/andromarces/agent-loops/issues/548)
+- [Issue #549](https://github.com/andromarces/agent-loops/issues/549)
+- [Issue #713: A Copilot worker turn is denied shell commands that the worker contract requires](https://github.com/andromarces/agent-loops/issues/713)
+- [ADR 0035: State that a Copilot worker cannot run shell commands and flag a denied call](0035-state-that-a-copilot-worker-cannot-run-shell-commands-and-flag-a-denied-call.md)
+- [ADR 0006: Require a parent session id for interactive runs](0006-require-parent-session-for-interactive-runs.md)
+- [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
+- [ADR Index](README.md)
