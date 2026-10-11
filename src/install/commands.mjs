@@ -9,7 +9,9 @@ import { readableErrorText, readProp } from "../lib/error-message.mjs";
 import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.mjs";
 import { nearestHarness } from "../lib/process-ancestry.mjs";
 import { HARNESS_META, HARNESS_ORDER, harnessForCommand, isHarness } from "../lib/harnesses.mjs";
-import { detectHarnesses, install, stablePackageRoot, uninstall } from "./installer.mjs";
+import { detectHarnesses } from "./detect-harnesses.mjs";
+import { install, uninstall } from "./installer.mjs";
+import { stablePackageRoot } from "./package-root.mjs";
 import { readManifest, resolveHome } from "./manifest.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));

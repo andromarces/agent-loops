@@ -5,7 +5,8 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { afterEach, expect, test } from "vite-plus/test";
-import { install, stablePackageRoot } from "../../src/install/installer.mjs";
+import { install } from "../../src/install/installer.mjs";
+import { stablePackageRoot } from "../../src/install/package-root.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));

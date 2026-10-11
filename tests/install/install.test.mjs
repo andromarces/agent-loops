@@ -7,12 +7,9 @@ import { afterEach, expect, test } from "vite-plus/test";
 import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
 import { buildTargets } from "../../src/install/harnesses.mjs";
 import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";
-import {
-  detectHarnesses,
-  install,
-  isEphemeralPackageRoot,
-  uninstall,
-} from "../../src/install/installer.mjs";
+import { detectHarnesses } from "../../src/install/detect-harnesses.mjs";
+import { install, uninstall } from "../../src/install/installer.mjs";
+import { isEphemeralPackageRoot } from "../../src/install/package-root.mjs";
 import { manifestLockFile, manifestPath, readManifest } from "../../src/install/manifest.mjs";
 import {
   PACKAGE_ROOT,
