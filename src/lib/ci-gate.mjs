@@ -739,17 +739,18 @@ async function evaluatedState(gh, slug, info, cwd, strict = false) {
 }
 
 // A timestamp as the instant to the millisecond plus the fractional digits below
-// it, so distinct sub-millisecond times and offsets order exactly. Null when the
-// value is not a string that parses.
+// it, so distinct sub-millisecond times and offsets order exactly. Only the RFC
+// 3339 shape that GitHub returns is accepted: uppercase `T`, `Z` or a numeric
+// offset, optional fractional digits. Null for any other value.
 function parseTime(raw) {
-  if (typeof raw !== "string") {
+  const match =
+    typeof raw === "string" &&
+    /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)$/.exec(raw);
+  if (!match) {
     return null;
   }
-  const match = /^(.*T\d\d:\d\d:\d\d)\.(\d+)(.*)$/.exec(raw);
-  const digits = match?.[2] ?? "";
-  const ms = Date.parse(
-    match ? `${match[1]}.${digits.slice(0, 3).padEnd(3, "0")}${match[3]}` : raw,
-  );
+  const digits = match[2] ?? "";
+  const ms = Date.parse(`${match[1]}.${digits.slice(0, 3).padEnd(3, "0")}${match[3]}`);
   return Number.isNaN(ms) ? null : { ms, below: digits.slice(3) };
 }
 
@@ -812,16 +813,19 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
   // latest entry does not hide a failing entry beside it, whether that entry is
   // another run, an earlier run, or a commit status (issue #349).
   let problem = null;
-  // A group whose order is unknown never passes. It stays pending when an entry
-  // is pending, as on origin/main, and fails otherwise.
-  const unordered = (pending) => ({
-    kind: pending ? "pending" : "failing",
-    reason: `required check ${label} is ${pending ? "pending" : "failing"} (its entries cannot be ordered)`,
+  const runFailed = (run) =>
+    run.status === "completed" && !PASS_CHECK_CONCLUSIONS.has(run.conclusion);
+  const statusFailed = (status) => status.state === "error" || status.state === "failure";
+  // A group whose order is unknown never passes. It fails when an entry failed
+  // and is pending otherwise.
+  const unordered = (failed) => ({
+    kind: failed ? "failing" : "pending",
+    reason: `required check ${label} is ${failed ? "failing" : "pending"} (its entries cannot be ordered)`,
   });
   if (matchingRuns.length > 0) {
     const run = latestBy(matchingRuns, ["started_at", "completed_at"]);
     if (run === null) {
-      problem = unordered(matchingRuns.some((entry) => entry.status !== "completed"));
+      problem = unordered(matchingRuns.some(runFailed));
     } else if (run.status !== "completed") {
       problem = {
         kind: "pending",
@@ -838,7 +842,7 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
   if (matchingStatuses.length > 0) {
     const status = latestBy(matchingStatuses, ["updated_at", "created_at"]);
     if (status === null) {
-      problem ??= unordered(matchingStatuses.some((entry) => entry.state === "pending"));
+      problem ??= unordered(matchingStatuses.some(statusFailed));
     } else if (status.state !== "success" && problem === null) {
       problem = {
         // A pending commit status has not failed: the reason text stays the gate's.
@@ -851,10 +855,7 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
   if (problem === null) {
     return null;
   }
-  const anyFailure =
-    matchingRuns.some(
-      (run) => run.status === "completed" && !PASS_CHECK_CONCLUSIONS.has(run.conclusion),
-    ) || matchingStatuses.some((status) => status.state === "error" || status.state === "failure");
+  const anyFailure = matchingRuns.some(runFailed) || matchingStatuses.some(statusFailed);
   return anyFailure ? { ...problem, kind: "failing" } : problem;
 }
 

@@ -2511,6 +2511,43 @@ test.each(
   },
 );
 
+// Usefulness: verifies only the RFC 3339 shape GitHub returns orders at full
+// precision, so a lowercase or space-separated timestamp fails closed instead of
+// losing its sub-millisecond digits and hiding a newer failure (issue #737 review).
+test.each(
+  ["check runs", "commit statuses"].flatMap((kind) => [
+    [kind, "a lowercase", "2026-01-01t00:00:00.1235z"],
+    [kind, "a space-separated", "2026-01-01 00:00:00.1235Z"],
+  ]),
+)("does not pass %s with %s timestamp", async (kind, _name, failAt) => {
+  const field = kind === "check runs" ? "started_at" : "updated_at";
+  const result = await gateOver(
+    pairOptions(
+      kind,
+      { id: 10, [field]: failAt },
+      { id: 11, [field]: "2026-01-01T00:00:00.1234Z" },
+    ),
+  );
+  expect(result.ok).toBe(false);
+});
+
+// Usefulness: verifies an unordered group of successful runs reports pending
+// beside a pending commit status of the same name, so the gate waits as on
+// origin/main instead of reporting a failure (issue #737 review).
+test("reports pending for unordered successful runs beside a pending commit status", async () => {
+  const result = await gateOver({
+    headRuns: [
+      run("ci (ubuntu-latest)", "success"),
+      { ...run("ci (windows-latest)", "success"), id: 10 },
+      { ...run("ci (windows-latest)", "success"), id: 11, started_at: undefined },
+    ],
+    headStatuses: [commitStatus("ci (windows-latest)", "pending")],
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("pending");
+  expect(result.reason).not.toContain("failing");
+});
+
 // Usefulness: verifies every supplied status stays advisory after the commit
 // binding, because the read is a pre-turn snapshot and the `--require-ci` gate
 // re-reads GitHub and enforces the condition (issue #349).
