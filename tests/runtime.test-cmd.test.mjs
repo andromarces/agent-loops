@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -157,23 +157,27 @@ test("a command that changes the work tree is reported and is not a mutation", a
   }
 });
 
-// Usefulness: verifies a write by a process that the command left behind, made after the command
-// snapshot and before the reviewer baseline, is reported in `lateChangedPaths` and does not halt
-// the run, so the gap the baseline absorbed is visible without a false MutationError (issue #738).
-test("a write by a leftover command process is reported as late and does not halt the run", async () => {
-  const repo = await createTempRepo();
-  const signalDir = await mkdtemp(join(tmpdir(), "late-write-"));
-  const go = join(signalDir, "go");
-  // Files stay outside the work tree so only the late write dirties it.
-  const childFile = join(signalDir, "child.cjs");
-  const spawnerFile = join(signalDir, "spawner.cjs");
+// Starts a detached child through the test command. The child writes `lateFile` in the work tree
+// once the test controls the signal file, and ends itself after the write or after 20 seconds.
+// The returned `armed` log spy raises the signal when the command snapshot is done and blocks until
+// the file exists, so the write lands after that snapshot and before the reviewer baseline on
+// every run. `end` stops the child by its own pid, which it wrote to a file.
+async function leftoverWriter(lateFile) {
+  const dir = await mkdtemp(join(tmpdir(), "late-write-"));
+  const go = join(dir, "go");
+  const pidFile = join(dir, "child.pid");
+  const childFile = join(dir, "child.cjs");
+  const spawnerFile = join(dir, "spawner.cjs");
+  // The files stay outside the work tree, so only the late write dirties it.
   writeFileSync(
     childFile,
     `const fs = require("fs");
-const t = setInterval(() => {
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+setTimeout(() => process.exit(0), 20000);
+setInterval(() => {
   if (fs.existsSync(${JSON.stringify(go)})) {
-    fs.writeFileSync("late.txt", "x");
-    clearInterval(t);
+    fs.writeFileSync(${JSON.stringify(lateFile)}, "x");
+    process.exit(0);
   }
 }, 5);`,
   );
@@ -183,29 +187,79 @@ const t = setInterval(() => {
   .spawn(process.execPath, [${JSON.stringify(childFile)}], { detached: true, stdio: "ignore" })
   .unref();`,
   );
-  // The "finished" log line follows the command snapshot, so the signal lands between the snapshots.
+  let workTree = null;
+  const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   const realLog = console.log;
-  const log = vi.spyOn(console, "log").mockImplementation((...args) => {
-    if (String(args[0]).includes("test command finished")) writeFileSync(go, "");
+  const spy = vi.spyOn(console, "log").mockImplementation((...args) => {
     realLog(...args);
+    if (!String(args[0]).includes("test command finished")) return;
+    writeFileSync(go, "");
+    for (let i = 0; i < 1000 && !existsSync(join(workTree, lateFile)); i++) sleep(10);
   });
-  try {
-    const { result, reviewed } = await reviewOnce(
-      repo,
-      { testCmd: `node "${spawnerFile}"` },
-      async () => {
-        for (let i = 0; i < 120; i++) {
-          if (await readFile(join(repo, "late.txt"), "utf8").catch(() => null)) break;
+  return {
+    testCmd: `node "${spawnerFile}"`,
+    arm(repo) {
+      workTree = repo;
+    },
+    async end() {
+      spy.mockRestore();
+      const pid = Number(await readFile(pidFile, "utf8").catch(() => ""));
+      if (Number.isInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid);
+        } catch {}
+        for (let i = 0; i < 200; i++) {
+          try {
+            process.kill(pid, 0);
+          } catch {
+            break;
+          }
           await new Promise((r) => setTimeout(r, 25));
         }
-        return REVIEW;
-      },
-    );
+      }
+      await removePath(dir);
+    },
+  };
+}
+
+// Usefulness: verifies a write by a process that the command left behind, made after the command
+// snapshot and before the reviewer baseline, is reported in `lateChangedPaths` and in the reviewer
+// prompt and does not halt the run, so the gap the baseline absorbed is visible without a false
+// MutationError (issue #738).
+test("a write by a leftover command process is reported as late and does not halt the run", async () => {
+  const repo = await createTempRepo();
+  const writer = await leftoverWriter("late.txt");
+  writer.arm(repo);
+  try {
+    const { result, rev, reviewed } = await reviewOnce(repo, { testCmd: writer.testCmd });
     expect(result.exitCode).toBe(0);
     expect(reviewed.testRun).toMatchObject({ changedPaths: [], lateChangedPaths: ["late.txt"] });
+    expect(rev.recorded[0].prompt).toContain(
+      "The work tree changed after the command finished and before this turn started: late.txt.",
+    );
   } finally {
-    log.mockRestore();
-    await removePath(signalDir);
+    await writer.end();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a late path that holds the value of a secret-named environment variable
+// is redacted in the result and the reviewer prompt, as `changedPaths` is, so the new field is not
+// a way around the redaction (issue #738).
+test("a secret value in a late path is redacted", async () => {
+  const repo = await createTempRepo();
+  process.env.SYNTH_PROBE_TOKEN = SYNTHETIC_SECRET;
+  const writer = await leftoverWriter(`late-${SYNTHETIC_SECRET}.txt`);
+  writer.arm(repo);
+  try {
+    const { rev, reviewed } = await reviewOnce(repo, { testCmd: writer.testCmd });
+    expect(reviewed.testRun.lateChangedPaths).toEqual(["late-[redacted:SYNTH_PROBE_TOKEN].txt"]);
+    expect(rev.recorded[0].prompt).toContain("late-[redacted:SYNTH_PROBE_TOKEN].txt");
+    expect(JSON.stringify(reviewed)).not.toContain(SYNTHETIC_SECRET);
+    expect(rev.recorded[0].prompt).not.toContain(SYNTHETIC_SECRET);
+  } finally {
+    delete process.env.SYNTH_PROBE_TOKEN;
+    await writer.end();
     await removePath(repo);
   }
 });

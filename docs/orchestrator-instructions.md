@@ -405,7 +405,9 @@ the flag is unchanged.
   mutation. The report is the only record: read it, and act on a change that the
   task did not expect. `lateChangedPaths` lists the paths that differ between the
   after-command snapshot and that baseline, for example a write by a process that the
-  command left behind. It is advisory and never halts the run.
+  command left behind. It is advisory and never halts the run. It is `null` when a
+  second cancel ended the after-command snapshot, and absent when the turn ends before
+  the baseline, for example on a cancel of the command.
 - The result is advisory evidence with `advisory: true`. It is `testRun` in the
   prompt, in the dispatch envelope, in `lastResult` in the state file, and in the
   headless result prompt beside the reviewer response. A reviewer turn that ends

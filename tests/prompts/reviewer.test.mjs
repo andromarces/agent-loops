@@ -388,3 +388,17 @@ test("reviewer prompt carries the workspace-write line only when the opt-in is o
   expect(on).toContain("Do not implement, fix, edit, or change any file.");
   expect(on).not.toMatch(/pnpm|npm|yarn|vitest|jest|node_modules|agent-loop/i);
 });
+
+// Usefulness: verifies the late-write line appears only for a non-empty `lateChangedPaths`, with
+// the advisory framing, so a clean tree and an uncaptured read add no noise (issue #738).
+test("the test group reports a late work tree change only when there is one", () => {
+  const shown = reviewerPrompt("check", null, { ...TEST_RUN, lateChangedPaths: ["late.txt"] });
+  expect(shown).toContain("after the command finished and before this turn started: late.txt.");
+  expect(shown).toContain("not your mutation");
+  expect(shown).toContain("This is advisory.");
+  for (const lateChangedPaths of [[], null, undefined]) {
+    expect(reviewerPrompt("check", null, { ...TEST_RUN, lateChangedPaths })).not.toContain(
+      "before this turn started",
+    );
+  }
+});
