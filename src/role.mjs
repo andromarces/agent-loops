@@ -955,6 +955,7 @@ function withOpenRun(args, requireOptions, fn) {
  */
 async function finish(args, { stdin = readStdin, gh } = {}) {
   rejectMisplacedFlags(args, "finish");
+
   return withOpenRun(args, { needsBudget: true }, async (state, paths) => {
     if (state.lifecycle !== "active") {
       throw new RoleError(`finish is accepted only from active; run is ${state.lifecycle}.`);
@@ -1067,6 +1068,8 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
 /**
  * Rejects each flag that belongs to another operation: `--role` is for dispatch,
  * `--reason` for abort, and `--require-accept` and `--require-ci` for finish.
+ * The checks run in a fixed order, and abort's missing `--reason` is reported
+ * before a finish gate, so each refusal keeps its error text.
  */
 function rejectMisplacedFlags(args, operation) {
   if (operation !== "dispatch" && args.role !== null) {
@@ -1074,6 +1077,9 @@ function rejectMisplacedFlags(args, operation) {
   }
   if (operation !== "abort" && args.reason !== null) {
     throw new RoleError("--reason is only valid for abort.");
+  }
+  if (operation === "abort" && args.reason === null) {
+    throw new RoleError("abort requires --reason.");
   }
   if (operation !== "finish" && (args.requireAccept || args.requireCi !== null)) {
     throw new RoleError(
@@ -1122,9 +1128,6 @@ async function acceptGateReason(state, cwd) {
 /** `abort`: records the reason and ends the run; accepted from any non-terminal lifecycle. */
 async function abort(args) {
   rejectMisplacedFlags(args, "abort");
-  if (args.reason === null) {
-    throw new RoleError("abort requires --reason.");
-  }
 
   return withOpenRun(args, {}, async (state, paths) => {
     state.lifecycle = "aborted";

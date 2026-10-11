@@ -460,6 +460,20 @@ test("the finish gates are rejected outside finish", async () => {
   expect(abortResult.payload.error).toContain("only valid for finish");
 });
 
+// Usefulness: pins that abort reports the missing --reason before a misplaced
+// finish gate, so the refusal text stays the one callers saw before the shared guard (issue #728).
+test("abort without --reason reports the missing reason before a finish gate", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+  await initWorkerRun(repo);
+
+  for (const gate of [["--require-accept"], ["--require-ci", "42"]]) {
+    const result = await executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", ...gate], repo));
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toBe("abort requires --reason.");
+  }
+});
+
 // Usefulness: verifies finish rejects --reason like the other operations and
 // leaves the run untouched; the flag was silently dropped before (issue #728).
 test("finish rejects --reason and leaves the run state unchanged", async () => {
