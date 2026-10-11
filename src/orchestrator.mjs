@@ -10,6 +10,12 @@ export class OrchestratorError extends Error {
   }
 }
 
+/**
+ * Runs one read-only orchestrator turn and returns the validated action. An invalid
+ * reply gets one repair turn, and a second invalid reply throws `OrchestratorError`.
+ * The orchestrator never edits: every turn passes `readOnly: true` to the agent.
+ * @param {{ agent: { run: Function }, state: object, prompt: string, options?: { cwd?: string, timeout?: number | null, signal?: AbortSignal } }} params
+ */
 export async function decide({ agent, state, prompt, options = {} }) {
   const { cwd, timeout, signal } = options;
 

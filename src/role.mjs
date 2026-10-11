@@ -86,7 +86,7 @@ const INIT_FIELDS = [
 ];
 
 /**
- * Parses `agent-loop role [dispatch|finish|abort] [flags]`. Reuses the flag
+ * Parses `agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]`. Reuses the flag
  * reading rules and OpenCode validation of the headless CLI. Semantics that
  * depend on the state file (init detection, change rejection) are checked at
  * execution time, not parse time.

@@ -21,6 +21,12 @@ export function actionFormats({ worker, reviewer, summary, reason }) {
   };
 }
 
+/**
+ * Validates one parsed orchestrator reply. Returns `{ ok: true, value }` with a new
+ * action object, or `{ ok: false, error }`. String fields are trimmed, and a key
+ * outside the action's field set is dropped.
+ * @param {unknown} value
+ */
 export function validateAction(value) {
   if (!isJsonObject(value)) {
     return { ok: false, error: "Action must be an object." };

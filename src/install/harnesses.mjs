@@ -1,7 +1,7 @@
 // Harness registry for the installer (#139). Each harness declares the files it
 // creates and the one settings entry it owns, resolved against the installed
-// package, so `src/install/templates/` stays the only source of every entry
-// point and guard.
+// package. `src/install/templates/` holds the entry point and guard files, and
+// `claudeEntry` and `codexEntry` build the settings entries.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";

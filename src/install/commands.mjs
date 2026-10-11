@@ -155,7 +155,7 @@ function parseCommand(argv, usage) {
 
 export async function runInstallCommand(argv) {
   const options = parseCommand(argv, [
-    "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run]",
+    "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run] [--verbose]",
     "",
     "A value flag also accepts --flag=value, for example --harness=claude,codex.",
     `Harnesses: ${HARNESS_ORDER.join(", ")}`,
@@ -206,7 +206,7 @@ export async function runInstallCommand(argv) {
 
 export async function runUninstallCommand(argv) {
   const options = parseCommand(argv, [
-    "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run]",
+    "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run] [--verbose]",
     "",
     "A value flag also accepts --flag=value, for example --harness=claude,codex.",
     "Without --harness, the harnesses recorded in the install manifest are removed.",

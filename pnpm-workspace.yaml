@@ -4,5 +4,5 @@ virtualStoreType: global
 # Route the Vite and Vitest copies that Vite+ uses to one version each. The
 # vitest pin must match the Vitest that vite-plus bundles (`vp --version`).
 overrides:
-  vite: npm:@voidzero-dev/vite-plus-core@1.0.0
-  vitest: 5.0.1
+  vite: npm:@voidzero-dev/vite-plus-core@1.1.0
+  vitest: 5.0.3

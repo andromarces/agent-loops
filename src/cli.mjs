@@ -51,6 +51,12 @@ import { main as runRoleMain } from "./role.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
 
+/**
+ * Parses the headless `agent-loop` argv into an options object and throws on an
+ * invalid flag. Side effect: `--help` or `-h` prints the help text and calls
+ * `process.exit(0)` inside the parser, so it never returns for that flag.
+ * @param {string[]} argv
+ */
 export function parseArgs(argv) {
   const options = {
     cwd: process.cwd(),
@@ -170,6 +176,30 @@ function assertTask(task) {
   }
 }
 
+// Wraps option description text to the column that follows the flag name.
+function wrapHelp(text, width = 66) {
+  const lines = [];
+  let line = "";
+  for (const word of text.split(" ")) {
+    if (line && line.length + 1 + word.length > width) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = line ? `${line} ${word}` : word;
+    }
+  }
+  lines.push(line);
+  return lines.join(`\n${" ".repeat(32)}`);
+}
+
+// Option text shared by both option lists in `printHelp`.
+const TEST_CMD_TEXT =
+  "Run this command through the platform shell (/bin/sh -c, or cmd.exe on Windows) in --cwd before each reviewer turn, outside the reviewer sandbox. The exit code and an output tail go to the reviewer prompt as advisory evidence. This flag is the only source of the command. It runs with the environment of the runtime, so keep secrets out of the command text.";
+const TEST_CMD_TIMEOUT_TEXT =
+  "Bound on one --test-cmd run. Defaults to 600. The command's own process group (POSIX) or process tree (Windows) is killed at the bound, and the run reports timed out. An orphan that left the group, or whose parent exited on Windows, can survive (ADR 0017). Requires --test-cmd.";
+const WORKSPACE_WRITE_TEXT =
+  "Run each Codex reviewer turn in the workspace-write sandbox instead of read-only. Network access stays off for the shell commands that the sandbox runs. That limit covers shell commands only: model-side tools such as web_search and other channels outside the sandbox are not blocked. A user Codex execpolicy rule that allows bash -c, sh -c, or zsh -c is an exception (ADR 0019). Needs --reviewer codex, and is off by default. The orchestrator turns stay read-only, and the mutation check still halts the run on a change (ADR 0019).";
+
 function printHelp() {
   console.log(
     `
@@ -276,29 +306,9 @@ Role flags:
                                 reviewed tree, and the merge state, and the run
                                 records the absence. Refuses a
                                 finish that also sets unresolvedCompare.
-  --test-cmd <command>          init only. Run this command through the platform shell
-                                (/bin/sh -c, or cmd.exe on Windows) in --cwd before each
-                                reviewer turn, outside the reviewer sandbox, and supply the
-                                exit code and an output tail to the reviewer prompt as
-                                advisory evidence. This flag is the only source of the
-                                command. It runs with the environment of the runtime, so keep
-                                secrets out of the command text. The state file holds only a
-                                digest, so pass the same --test-cmd on every reviewer dispatch;
-                                a changed or missing value is refused.
-  --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. The command and its
-                                command's own process group (POSIX) or process tree (Windows)
-                                is killed at the bound, and the run reports timed out. An
-                                orphan that left the group, or whose parent exited on Windows,
-                                can survive (ADR 0017). Requires --test-cmd.
-  --reviewer-workspace-write    init only. Run each Codex reviewer turn in the workspace-write
-                                sandbox instead of read-only. Network access stays off for the
-                                shell commands that the sandbox runs. That limit covers shell
-                                commands only: model-side tools such as web_search and other
-                                channels outside the sandbox are not blocked. A user Codex
-                                execpolicy rule that allows bash -c, sh -c, or zsh -c is an
-                                exception (ADR 0019). Needs --reviewer codex, and is off by
-                                default. The orchestrator turns stay read-only, and the mutation
-                                check still halts the run on a change (ADR 0019).
+  --test-cmd <command>          ${wrapHelp(`init only. ${TEST_CMD_TEXT} The state file holds only a digest, so pass the same --test-cmd on every reviewer dispatch; a changed or missing value is refused.`)}
+  --test-cmd-timeout <seconds>  ${wrapHelp(TEST_CMD_TIMEOUT_TEXT)}
+  --reviewer-workspace-write    ${wrapHelp(`init only. ${WORKSPACE_WRITE_TEXT}`)}
 
 Options:
 
@@ -394,27 +404,9 @@ Options:
   -h, --help                    Show help. Also valid after role.
   -V, --version                 Print the package version and exit. Must be the first
                                 argument.
-  --test-cmd <command>          Run this command through the platform shell (/bin/sh -c, or
-                                cmd.exe on Windows) in --cwd before each reviewer turn, outside
-                                the reviewer sandbox, and supply the exit code and an output
-                                tail to the reviewer prompt as advisory evidence. This flag is
-                                the only source of the command. It runs with the environment
-                                of the runtime, so keep secrets out of the command text.
-                                Optional.
-  --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. The command and its
-                                command's own process group (POSIX) or process tree (Windows)
-                                is killed at the bound, and the run reports timed out. An
-                                orphan that left the group, or whose parent exited on Windows,
-                                can survive (ADR 0017). Requires --test-cmd.
-  --reviewer-workspace-write    Run each Codex reviewer turn in the workspace-write sandbox
-                                instead of read-only. Network access stays off for the shell
-                                commands that the sandbox runs. That limit covers shell commands
-                                only: model-side tools such as web_search and other channels
-                                outside the sandbox are not blocked. A user Codex execpolicy rule
-                                that allows bash -c, sh -c, or zsh -c is an exception (ADR 0019).
-                                Needs --reviewer codex, and is off by default. The orchestrator
-                                turns stay read-only, and the mutation check still halts the run
-                                on a change (ADR 0019).
+  --test-cmd <command>          ${wrapHelp(`${TEST_CMD_TEXT} Optional.`)}
+  --test-cmd-timeout <seconds>  ${wrapHelp(TEST_CMD_TIMEOUT_TEXT)}
+  --reviewer-workspace-write    ${wrapHelp(WORKSPACE_WRITE_TEXT)}
 
   A value flag also accepts the inline form --flag=value, for example
   --task=-x, which allows a value that starts with a dash. A boolean flag,

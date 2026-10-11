@@ -44,26 +44,13 @@ Collect these before the first dispatch:
 
 ## Resolving the CLI
 
-The command blocks below call `agent-loop` directly. Install the CLI globally:
+The command blocks below call `agent-loop` directly. Install and link steps are in
+the README sections [Install](../README.md#install) and
+[From a clone (development)](../README.md#from-a-clone-development).
 
-```bash
-npm install -g @andromarces/agent-loops
-```
-
-Then run `agent-loop install` once to write the harness entry points and guards
-at user scope.
-
-From a clone, run `npm link` in the clone, then `agent-loop install`. `npm link`
-writes the bin shim to the global prefix bin directory and points the rendered
-entries at the clone. That directory must be on PATH for `agent-loop` to
-resolve: it is the `npm prefix -g` directory on Windows and
-`$(npm prefix -g)/bin` on macOS and Linux. After the clone moves, run
-`npm link --force` from the new location, then `agent-loop install` again; a
-plain `npm link` fails with `EEXIST` on Windows when a shim already exists.
-`pnpm link` is not a supported path: pnpm 12 `link` has no global mode. Without a
-link, replace `agent-loop` with `node "<repo>/src/cli.mjs"` and quote the
-repository path so a path with spaces works, or run `pnpm agent-loop` from the
-repository root.
+If `agent-loop` does not resolve on PATH, replace it with
+`node "<repo>/src/cli.mjs"` and quote the repository path, so a path with spaces
+works. Or run `pnpm agent-loop` from the repository root.
 
 ## Starting a run
 
@@ -91,7 +78,7 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `--<role>-effort` also requires an explicit `--<role>-model`.
 - Always pass `--cwd`. It defaults to the current directory, which for an
   interactive parent is normally not the target work tree.
-- Pass the child prompt on stdin. No prompt files.
+- Pass the child prompt on stdin. The exception is an init with `--task-file -`, which takes `--prompt-file`.
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot
   be combined. `--task-file -` reads the task from stdin, which also carries the
   prompt here. Stdin carries only one input, so pass `--prompt-file` for the
@@ -483,23 +470,10 @@ other reviewer is refused at init. The run is unchanged without it.
 
 ## Test evidence when the reviewer cannot run tests
 
-Direct probe: on 2026-09-29, a `codex exec` run on Windows 11 with codex-cli
-0.159.0-alpha.12 and `sandbox_mode="read-only"` observed two results. A child
-`node` spawn from a Node.js process returned an error. `pnpm test --version`
-exited 1 with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` (`Access is denied`).
-That probe did not start Vitest.
-
-Reports recorded in issue #342, not re-observed: the reviewer turns of the
-#301, #302, #311, and #326 runs, on the same CLI version, mode, and OS, each
-reported `Vitest failed at startup (spawn EPERM)`. Their `Checks` lines
-therefore excluded the test suite. Other platforms, other Codex versions, and
-the elevated Windows sandbox are not verified, except the macOS result below.
-
-Direct probe: on 2026-10-10, a `codex exec` run on macOS with codex-cli
-0.163.0-alpha.4 and `sandbox_mode="read-only"` ran `pnpm test`. It exited 1
-before any test started: `vp` failed to load `vite.config.mjs` with `EPERM` on
-`mkdir '<repo>/node_modules/.vite-temp'`. The reviewer cannot run the suite on
-macOS either. Linux and the elevated Windows sandbox stay not verified.
+A read-only Codex reviewer cannot run the test suite on Windows or on macOS. A child
+spawn fails, or `vp` cannot write its temporary directory. The README section
+[Codex read-only child-spawn limit](../README.md#codex-read-only-child-spawn-limit)
+holds the probes. Linux and the elevated Windows sandbox are not verified.
 
 When a reviewer `Checks` line shows that tests did not run, for any reason, the
 reviewer accept is not test evidence. Use the required CI checks for test
@@ -579,109 +553,13 @@ while a required check is pending, so a finish summary cannot carry it. Wait
 again, dispatch the reviewer again, or `abort` with the pending check named in
 the reason.
 
-## Waiting in the headless loop
+## Headless loop waits
 
-The orchestrator CLI and the reviewer CLI are chosen independently, so each
-statement below names the role whose CLI performs the read. A read-only
-invocation keeps shell network access for `claude`, `agy`, and `opencode`. The
-`codex` read-only sandbox blocks the network of shell
-commands (not model-side tools). A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.
+The headless `agent-loop` command runs its own orchestrator and renders its own wait
+prompt (ADR 0013). A `role` parent does not follow that prompt. It follows the wait
+rules above, and it runs the wait itself.
 
-A `copilot` read-only turn refuses most
-shell commands without approval: the issue #432 probe found `gh pr checks`
-allowed and `role wait-checks` refused. A `copilot` orchestrator therefore does not
-wait (#495), and a `copilot` reviewer still reads the checks with `gh pr checks`.
-A `copilot` turn keeps shell network, so the prompt for a `copilot` orchestrator
-does not say that its shell has no network. Its limit is the refusal of
-`agent-loop role wait-checks` without approval. The only status read that the
-role rule excepts is that command, so a `copilot` orchestrator runs no check
-read itself.
-See "Codex read-only network limit" and "Remote writes" in the README
-for the probes.
-
-- Orchestrator CLI keeps shell network and runs `role wait-checks` (`claude`,
-  `agy`, `opencode`): the orchestrator waits, at both points below.
-- Orchestrator CLI cannot wait (`codex`, `copilot`), reviewer CLI keeps shell
-  network: the orchestrator cannot wait and runs no check read itself. Every
-  reviewer turn reads the required checks, as the reviewer scope states, so name the required checks in the reviewer prompt and let the reviewer
-  turn read them. Each further reviewer dispatch costs a step, so the step budget
-  has to cover those dispatches.
-- Neither role can read the checks (the orchestrator CLI cannot wait, and the
-  reviewer CLI is `codex` or unnamed): no turn in the run reads the required
-  checks through a shell command that its sandbox runs, so the headless loop
-  cannot wait. A `copilot` orchestrator is not sandboxed and keeps shell
-  network, but it runs no check read itself, because it cannot run
-  `role wait-checks`, so the `--require-ci` gate is its only enforced read. The
-  sandbox limit covers shell commands only: a model-side tool or another channel
-  outside the sandbox is not blocked, and the run counts on none of them for the
-  read. A run that names its PR with `--pr <pr>`, or with
-  `--require-ci <pr>` on the headless command, still supplies the status to each
-  reviewer turn, because the runtime reads it outside every read-only turn, so the
-  reviewer does not have to. A run that names no PR gets no supplied status. That
-  supplied status is advisory: it reports to the reviewer and never enforces.
-- The `--require-ci` finish gate is the only check read here that enforces; the advisory status read of a named PR does not. The gate refuses a
-  finish while a required check is pending. A refusal itself charges no step, and
-  the reviewer dispatch that corrects it charges one, so the step budget has to
-  cover those dispatches. Dispatch the reviewer when the gate refuses, or `abort`
-  with the pending check named in the reason.
-
-A headless status read spends no step, because a step is charged only to
-`run_worker` and `run_reviewer`. It is not free of other cost. The turn is
-bounded by the per-invocation `--timeout`, which defaults to 3600 seconds and is
-unbounded at 0, and a turn that outlasts that bound ends the run on exit 1
-before it returns an action.
-
-The headless orchestrator runs each wait as `role wait-checks --cwd <work tree>
---pr <pr> --timeout <seconds>`, the same operation the interactive parent uses,
-and never as a `gh pr checks --watch`, which has no timeout. The prompt renders
-the whole command with the Node binary, the CLI script, and the work tree of the
-run itself. That form resolves for a global install, an `npm link`, and a clone
-run through `node <repo>/src/cli.mjs` or `pnpm agent-loop`, none of which promise
-`agent-loop` on `PATH`, and `--cwd` makes the wait read the run's repository
-whatever directory the shell starts in. The orchestrator runs it as written.
-
-A quoted executable path is a string expression in PowerShell, so it needs the
-call operator, while bash and cmd reject that operator. On Windows the prompt
-therefore gives two forms and the orchestrator uses the one for the shell that its
-shell tool runs: `& "<node>" "<cli>" role wait-checks ...` for PowerShell, and
-`"<node>" "<cli>" role wait-checks ...` for bash or cmd. Other platforms get the
-plain form. On Windows, paths use forward slashes, which Node accepts. On POSIX a
-path is never rewritten.
-
-The runtime renders no command, and the prompt names no wait, when the Node path,
-the CLI path, or the work tree path holds a character that bash, PowerShell, or
-cmd expands or reinterprets inside double quotes: `"`, `$`, a backtick, `%`,
-`!`, the typographic double quotes U+201C, U+201D, and U+201E, or a control
-character such as a line break. A POSIX path that holds a backslash is refused
-too, because a backslash is a name character there and cannot be rewritten.
-
-The runtime states the `--timeout` in the prompt, below the turn `--timeout`:
-300 seconds, or half the turn `--timeout` less the five-second child-exit
-ceiling when that is smaller. The command returns inside that bound plus the
-ceiling, so a wait cannot outlast the turn. A turn `--timeout` under 12 seconds
-fits no positive bound, so the prompt names no wait: the orchestrator does not
-run `gh pr checks` or `role wait-checks`, and the `--require-ci` gate is the only
-check read that enforces, beside the advisory status that the runtime reads for a
-named PR. A finish refused for a pending check is corrected by a reviewer
-dispatch, or by an `abort` with the pending check named.
-
-`childExitUnconfirmed: true` in the envelope means the five-second window expired
-with the `gh` child still unaccounted for. The orchestrator settles that process
-before it starts another wait, and does not wait again when it cannot.
-
-A wait that ends on the bound reports `"timedOut": true`. The orchestrator
-treats it as a completed read that left the check pending: it is not a pass and
-not a finish condition. The orchestrator does not wait again in the same turn.
-It dispatches the reviewer, or `abort`s with the pending check named in the
-reason, and it can wait again on a later turn. An unresolved read exits 1 with
-`status: "error"` and never reads as a pass.
-
-On an orchestrator CLI that can run the status read, both wait points hold in the
-headless loop: the wait before the reviewer dispatch, and the wait before
-`finish` when a reviewer turn reported a pending check. A check still pending
-after a wait is not a finish condition there either, because the gate refuses
-the finish. Wait again, dispatch the reviewer again, or `abort` with the pending
-check named in the reason.
+The `--require-ci` finish gate is the only check read that enforces; the advisory status read of a named PR does not. The gate refuses a finish while a required check is pending. A reviewer dispatch corrects that refusal.
 
 ## Several runs at once
 
@@ -707,22 +585,12 @@ Every command for a run passes that run's `--cwd`. Each run ends with its own
 - `review-only`: reviewer, then report. Findings alone never authorize edits;
   the subcommand rejects worker dispatch in this mode.
 
-Both paths name the mode with the same flag and the same three values:
-`agent-loop --mode <mode>` on the headless command and `--mode <mode>` on the
-`role` init call. The headless loop chooses its own action order, and its
-`--mode` is off by default, so a run without the flag keeps the current
-behavior. `--mode review-only` changes what a run accepts on either path: it
-dispatches no worker, so it takes neither `--pr`, nor `--require-accept`, nor
-`--require-ci`, and the headless command refuses each of them at parse time with
-the same wording the interactive path uses. It also refuses a `run_worker`
-action at runtime, which ends the run on exit 1 with the reason
-`mode review-only rejects a run_worker action`, the same hard guard this mode
-applies to `--role worker` on the interactive path. It also refuses a `finish`
-until a reviewer turn has run, whatever that turn returned, which the
-interactive path reaches without a rule because its init dispatch is itself that
-turn. Its prompt states the completion rule and the `review-only` mapping
-instead, and `agent-loop --require-accept` enforces that rule on every other
-mode, because a review-only run refuses that flag.
+Both paths name the mode with `--mode <mode>`, with the same three values: on the
+`role` init call and on the headless `agent-loop` command. The headless `--mode`
+is off by default, so a run without the flag keeps the current behavior. A
+`review-only` run dispatches no worker, so it takes none of `--pr`,
+`--require-accept`, and `--require-ci`. The Completion section states the finish
+rule.
 
 The headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
@@ -755,30 +623,25 @@ Completion is completion of the requested work, not code acceptance.
   summary keys are non-empty strings, and it never compares their content with
   what the reviewer returned.
 
-The two paths reach that reviewer turn differently, and the difference is the
-rule, not the wording. `agent-loop role finish` in `review-only` applies no
-reviewer-turn rule of its own: it accepts a finish from `active` once any
-reviewer turn has run, whatever that turn returned, including a turn that ended
-in a handled error. Every reachable interactive run already has a reviewer turn,
-because the init dispatch is itself that turn. A headless `--mode review-only`
-run owns its own action order and can reach a finish before any reviewer turn, so
-the runtime refuses that finish until a reviewer turn has run. That gate
-requires that a reviewer turn was dispatched, and that turn can end in an error.
-The runtime does not compare the summary with the reviewer result; record the
+A `review-only` finish needs a reviewer turn that ran, whatever it returned. The
+runtime does not compare the summary with the reviewer result. Record the
 reviewer status and verdict in `verified`, including an error or a missing
 report.
 
-Neither path takes `--require-accept` in this mode, and both say so differently.
-`agent-loop role finish` refuses the flag at `finish`, with
-`--require-accept and --require-ci apply only to work-first and review-first;
-review-only accepts any verdict.` `agent-loop --mode review-only` refuses the
-flag before the run starts, with the same sentence, because the headless command
-takes every flag on one command line. A review-only headless run therefore
-applies the reviewer turn with no flag of its own.
+- `agent-loop role finish` applies no reviewer-turn rule of its own. Every
+  reachable interactive run already has a reviewer turn, because the init
+  dispatch is itself that turn.
+- A headless `--mode review-only` run can reach a finish before any reviewer
+  turn. The runtime refuses that finish until a reviewer turn was dispatched. A
+  `run_worker` action ends the headless run on exit 1 with the reason
+  `mode review-only rejects a run_worker action`.
+- Neither path takes `--require-accept` in this mode. `role finish` refuses the
+  flag at `finish`, and the headless command refuses it before the run starts.
+  Both give this error:
+  `--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.`
 
-The turn is what the mode records either way, so call
-`finish` after it, whatever it returned, and record what the run did not cover in
-`notDone` and `open`.
+Call `finish` after the reviewer turn, whatever it returned. Record what the run
+did not cover in `notDone` and `open`.
 
 Map the child report fields into the finish summary:
 
