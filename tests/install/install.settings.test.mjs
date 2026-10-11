@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
@@ -169,6 +169,84 @@ test("a guard settings write failure leaves no unguarded entry point", async () 
   expect(await readText(settingsPath)).toBe(before);
   expect(existsSync(skillPath)).toBe(false);
   expect(existsSync(manifestPath(home))).toBe(false);
+});
+
+// Usefulness: verifies that a failed backup cleanup does not replace the write
+// error, whether the write error is ordinary or frozen, and that the cleanup
+// failure reaches the user as a warning that names the backup path.
+test.each([
+  ["an ordinary error", (message) => new Error(message)],
+  ["a frozen error", (message) => Object.freeze(new Error(message))],
+])("a backup cleanup failure does not hide %s from the settings write", async (_name, make) => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+  const backupPath = `${settingsPath}.agent-loops-backup`;
+  const writeError = make("simulated guard settings write failure");
+
+  const write = async (path, ...rest) => {
+    if (path === settingsPath) {
+      throw writeError;
+    }
+    await writeTextAtomic(path, ...rest);
+    if (path === backupPath) {
+      // A non-empty directory in place of the backup makes its removal fail.
+      await rm(path, { force: true });
+      await mkdir(join(path, "child"), { recursive: true });
+    }
+  };
+
+  const warnings = [];
+  const originalError = console.error;
+  console.error = (message) => warnings.push(String(message));
+  let error;
+  try {
+    error = await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT, write }).catch(
+      (err) => err,
+    );
+  } finally {
+    console.error = originalError;
+  }
+
+  expect(error).toBe(writeError);
+  expect(warnings.join("\n")).toContain(backupPath);
+});
+
+// Usefulness: verifies that the cleanup warning keeps a backup path longer than
+// the 300-character log cap whole, with the instruction to remove it, so the
+// path suffix that identifies the file is never cut.
+test("a backup cleanup warning prints a long backup path in full with the removal instruction", async () => {
+  const home = join(await makeHome(), "a".repeat(120), "b".repeat(120));
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+  const backupPath = `${settingsPath}.agent-loops-backup`;
+  expect(backupPath.length).toBeGreaterThan(300);
+
+  const write = async (path, ...rest) => {
+    if (path === settingsPath) {
+      throw new Error("simulated guard settings write failure");
+    }
+    await writeTextAtomic(path, ...rest);
+    if (path === backupPath) {
+      await rm(path, { force: true });
+      await mkdir(join(path, "child"), { recursive: true });
+    }
+  };
+
+  const warnings = [];
+  const originalError = console.error;
+  console.error = (message) => warnings.push(String(message));
+  try {
+    await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT, write }).catch(
+      () => {},
+    );
+  } finally {
+    console.error = originalError;
+  }
+
+  const warning = warnings.find((line) => line.includes("warn:"));
+  expect(warning).toContain(backupPath);
+  expect(warning).toMatch(/Remove the backup file by hand/);
 });
 
 // Usefulness: verifies the regression fix — an identical guard entry that the

@@ -2,7 +2,7 @@
 // Every line is tagged with its level: "[agent-loop] <level>: <message>".
 // info and debug go to stdout, warn and error to stderr; debug is shown only when
 // the --verbose gate is on. Info, warn, and debug lines are length-bounded so untrusted content
-// (for example a model echo in a validation error) cannot flood a line. logInfoFull prints a
+// (for example a model echo in a validation error) cannot flood a line. logInfoFull and logWarnFull print a
 // trusted, user-facing note in full, and logError prints an error in full, so a long path
 // never hides the action the message asks for (#515). Every line has secret-named environment
 // values redacted first (ADR 0017), so a log line never echoes a secret that an error text held.
@@ -61,6 +61,14 @@ export function logInfoFull(message) {
 
 export function logWarn(message) {
   console.error(`[agent-loop] warn: ${truncate(message)}`);
+}
+
+/**
+ * Prints a warn line in full, without the 300-character bound. A trusted message
+ * that names a path the user must act on keeps the whole path; redaction still applies.
+ */
+export function logWarnFull(message) {
+  console.error(`[agent-loop] warn: ${redactEnvSecrets(message)}`);
 }
 
 /** Prints an error line in full, without the 300-character bound; redaction still applies. */

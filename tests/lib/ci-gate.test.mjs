@@ -2343,6 +2343,211 @@ test.each([
   expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
 });
 
+// Usefulness: verifies the latest entry at equal timestamps is the one with the
+// larger numeric id, so run `10` outranks run `9` and a failing latest entry is
+// not read as a pass (issue #737).
+test.each([
+  [
+    "check runs",
+    {
+      headRuns: [
+        run("ci (ubuntu-latest)", "success"),
+        { ...run("ci (windows-latest)", "success"), id: 9 },
+        { ...run("ci (windows-latest)", "failure"), id: 10 },
+      ],
+    },
+  ],
+  [
+    "commit statuses",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      headStatuses: [
+        { ...commitStatus("ci (windows-latest)", "success"), id: 9 },
+        { ...commitStatus("ci (windows-latest)", "failure"), id: 10 },
+      ],
+    },
+  ],
+])(
+  "reads the entry with the larger numeric id at equal timestamps for %s",
+  async (_name, options) => {
+    const read = await readOn(HEAD, statusReadGh(options));
+    expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+  },
+);
+
+// Two entries for "ci (windows-latest)", the earlier-listed one failing and the
+// later-listed one passing, as check runs and as commit statuses.
+const pairOptions = (kind, failing, passing) =>
+  kind === "check runs"
+    ? {
+        headRuns: [
+          run("ci (ubuntu-latest)", "success"),
+          { ...run("ci (windows-latest)", "failure"), ...failing },
+          { ...run("ci (windows-latest)", "success"), ...passing },
+        ],
+      }
+    : {
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+        headStatuses: [
+          { ...commitStatus("ci (windows-latest)", "failure"), ...failing },
+          { ...commitStatus("ci (windows-latest)", "success"), ...passing },
+        ],
+      };
+
+const gateOver = (options) =>
+  checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh: fakeGh(routes(options)) });
+
+// Usefulness: verifies entries whose order is unknown fail the gate instead of
+// passing, so each kind of invalid id at equal timestamps cannot let a passing
+// entry hide a failing one (issue #737 review).
+test.each(
+  ["check runs", "commit statuses"].flatMap((kind) => [
+    [kind, "a missing id", { id: undefined }],
+    [kind, "a null id", { id: null }],
+    [kind, "a non-numeric string id", { id: "abc" }],
+  ]),
+)("does not pass %s with equal timestamps and %s", async (kind, _name, passing) => {
+  const result = await gateOver(pairOptions(kind, { id: 10 }, passing));
+  expect(result.ok).toBe(false);
+});
+
+// Usefulness: verifies an unparseable timestamp fails the gate instead of passing,
+// so an entry that cannot be ordered cannot hide a failing one (issue #737 review).
+test.each(["check runs", "commit statuses"])(
+  "does not pass %s with an unparseable timestamp",
+  async (kind) => {
+    const field = kind === "check runs" ? "started_at" : "updated_at";
+    const result = await gateOver(pairOptions(kind, { id: 10 }, { id: 11, [field]: "later" }));
+    expect(result.ok).toBe(false);
+  },
+);
+
+// Usefulness: verifies entries order by parsed time, so a newer failure with
+// fractional seconds or a non-UTC offset is not hidden behind an older pass whose
+// text sorts higher (issue #737 review).
+test.each(
+  ["check runs", "commit statuses"].flatMap((kind) => [
+    [kind, "fractional seconds", "2026-01-01T00:00:00.500Z", "2026-01-01T00:00:00Z"],
+    [kind, "a non-UTC offset", "2026-01-01T01:00:00Z", "2026-01-01T05:00:00+05:00"],
+  ]),
+)("reads the newer failing entry for %s with %s", async (kind, _name, failAt, passAt) => {
+  const field = kind === "check runs" ? "started_at" : "updated_at";
+  const read = await readOn(
+    HEAD,
+    statusReadGh(pairOptions(kind, { id: 10, [field]: failAt }, { id: 11, [field]: passAt })),
+  );
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+});
+
+// Usefulness: verifies a group with a missing timestamp never passes, so an entry
+// that cannot be ordered cannot hide a failing one (issue #737 review).
+test.each(["check runs", "commit statuses"])(
+  "does not pass %s when an entry has no timestamp",
+  async (kind) => {
+    const field = kind === "check runs" ? "started_at" : "updated_at";
+    for (const [failing, passing] of [
+      [{ id: 10, [field]: undefined }, { id: 11 }],
+      [{ id: 10 }, { id: 11, [field]: undefined }],
+    ]) {
+      const result = await gateOver(pairOptions(kind, failing, passing));
+      expect(result.ok).toBe(false);
+    }
+    const passes = pairOptions(kind, { id: 10 }, { id: 11, [field]: undefined });
+    for (const entry of passes.headRuns.concat(passes.headStatuses ?? [])) {
+      if (entry.conclusion === "failure") entry.conclusion = "success";
+      if (entry.state === "failure") entry.state = "success";
+    }
+    expect((await gateOver(passes)).ok).toBe(false);
+  },
+);
+
+// Usefulness: verifies a queued entry with a malformed timestamp keeps the
+// pending classification of origin/main, so the gate waits instead of failing
+// (issue #737 review).
+test.each([
+  [
+    "check run",
+    {
+      headRuns: [
+        run("ci (ubuntu-latest)", "success"),
+        run("ci (windows-latest)", "success"),
+        { ...openRun("ci (windows-latest)", "queued"), started_at: "later" },
+      ],
+    },
+  ],
+  [
+    "commit status",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      headStatuses: [
+        commitStatus("ci (windows-latest)", "success"),
+        { ...commitStatus("ci (windows-latest)", "pending"), updated_at: "later" },
+      ],
+    },
+  ],
+])("keeps a queued %s with a malformed timestamp pending", async (_name, options) => {
+  const result = await gateOver(options);
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("pending");
+});
+
+// Usefulness: verifies timestamps order below the millisecond and across offsets,
+// so a newer failure that differs from an older pass only in the last fractional
+// digits is not hidden (issue #737 review).
+test.each(
+  ["check runs", "commit statuses"].flatMap((kind) => [
+    [kind, "UTC", "2026-01-01T00:00:00.1235Z", "2026-01-01T00:00:00.1234Z"],
+    [kind, "an offset", "2026-01-01T05:00:00.0000002+05:00", "2026-01-01T00:00:00.0000001Z"],
+  ]),
+)(
+  "reads the newer failing %s that differs below the millisecond in %s",
+  async (kind, _name, failAt, passAt) => {
+    const field = kind === "check runs" ? "started_at" : "updated_at";
+    const read = await readOn(
+      HEAD,
+      statusReadGh(pairOptions(kind, { id: 10, [field]: failAt }, { id: 11, [field]: passAt })),
+    );
+    expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+  },
+);
+
+// Usefulness: verifies only the RFC 3339 shape GitHub returns orders at full
+// precision, so a lowercase or space-separated timestamp fails closed instead of
+// losing its sub-millisecond digits and hiding a newer failure (issue #737 review).
+test.each(
+  ["check runs", "commit statuses"].flatMap((kind) => [
+    [kind, "a lowercase", "2026-01-01t00:00:00.1235z"],
+    [kind, "a space-separated", "2026-01-01 00:00:00.1235Z"],
+  ]),
+)("does not pass %s with %s timestamp", async (kind, _name, failAt) => {
+  const field = kind === "check runs" ? "started_at" : "updated_at";
+  const result = await gateOver(
+    pairOptions(
+      kind,
+      { id: 10, [field]: failAt },
+      { id: 11, [field]: "2026-01-01T00:00:00.1234Z" },
+    ),
+  );
+  expect(result.ok).toBe(false);
+});
+
+// Usefulness: verifies an unordered group of successful runs reports pending
+// beside a pending commit status of the same name, so the gate waits as on
+// origin/main instead of reporting a failure (issue #737 review).
+test("reports pending for unordered successful runs beside a pending commit status", async () => {
+  const result = await gateOver({
+    headRuns: [
+      run("ci (ubuntu-latest)", "success"),
+      { ...run("ci (windows-latest)", "success"), id: 10 },
+      { ...run("ci (windows-latest)", "success"), id: 11, started_at: undefined },
+    ],
+    headStatuses: [commitStatus("ci (windows-latest)", "pending")],
+  });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("pending");
+  expect(result.reason).not.toContain("failing");
+});
+
 // Usefulness: verifies every supplied status stays advisory after the commit
 // binding, because the read is a pre-turn snapshot and the `--require-ci` gate
 // re-reads GitHub and enforces the condition (issue #349).

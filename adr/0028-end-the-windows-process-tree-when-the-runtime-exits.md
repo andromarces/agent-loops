@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted. The repository owner approved the hard-kill limit of decision 4 (issue #635).
+accepted
 
 ## Date
 
@@ -37,6 +37,7 @@ A parent that the Vitest runner spawned lost its nested run at once with or with
 - A hard kill of the runtime, and a signal that ends it with no `exit` event, can still leave a tree. The operator ends it by hand.
 - The exit handler blocks the exit for the length of one `taskkill` per live child, up to 5 s each. No total deadline spans the live runs, so n live runs can delay the exit by up to 5 s times n. The runtime has few concurrent children, so the limit stays unmitigated, and a total deadline is the upgrade if that changes. A run that `taskkill` fails to end, or whose bound expires, can leave its tree, and the `warn` line names it.
 - A run that no wrapped call started has no handler. The `git` calls of `src/lib/local-files.mjs` and the `copilot` launcher set no `killDescendants` and stay out of scope.
+- The repository owner approved the hard-kill limit of decision 4 (issue #635).
 
 ## Alternatives
 

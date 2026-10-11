@@ -15,7 +15,7 @@ import { access, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
-import { logWarn } from "../lib/log.mjs";
+import { logWarn, logWarnFull } from "../lib/log.mjs";
 import { withStateLock } from "../lib/runstate.mjs";
 import {
   backupPathFor,
@@ -551,9 +551,15 @@ async function applyWrite(plan, { dryRun, dirs, write }) {
     await write(plan.path, plan.content, { mode });
   } catch (err) {
     // The target kept its original bytes, so the backup just written is
-    // unneeded. Remove it before the error propagates.
+    // unneeded. Remove it before the error propagates. A cleanup failure
+    // becomes a warning and never replaces the write error.
     if (plan.backup) {
-      await removeFileQuiet(plan.backup.path);
+      await removeFileQuiet(plan.backup.path).catch((cleanupErr) => {
+        logWarnFull(
+          `could not remove the backup after a failed write (${readableErrorText(cleanupErr)}). ` +
+            `Remove the backup file by hand: ${plan.backup.path}`,
+        );
+      });
     }
     throw err;
   }

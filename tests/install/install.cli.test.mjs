@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main as cliMain } from "../../src/cli.mjs";
@@ -324,6 +324,49 @@ test("CLI prints the manual snippet when a settings file does not parse", async 
     expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(false);
   } finally {
     console.log = originalLog;
+    console.error = originalError;
+    restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: verifies that the CLI output names a failed backup cleanup after a
+// failed install write, and still reports the write error with exit code 1.
+test("CLI install output names the backup cleanup failure and the write error", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const settingsPath = join(home, ".claude", "settings.json");
+  await mkdir(dirname(settingsPath), { recursive: true });
+  await writeFile(settingsPath, '{"hooks":{"PreToolUse":[]}}\n', "utf8");
+  const backupPath = `${settingsPath}.agent-loops-backup`;
+
+  // Fail the settings write itself, and make the backup removal fail with a
+  // non-empty directory in its place.
+  const fsutil = await import("../../src/install/fsutil.mjs");
+  const real = fsutil.writeTextAtomic;
+  const spy = vi.spyOn(fsutil, "writeTextAtomic").mockImplementation(async (path, ...rest) => {
+    if (path === settingsPath) {
+      throw new Error("simulated settings write failure");
+    }
+    await real(path, ...rest);
+    if (path === backupPath) {
+      await rm(path, { force: true });
+      await mkdir(join(path, "child"), { recursive: true });
+    }
+  });
+
+  const lines = [];
+  const originalError = console.error;
+  console.error = (message) => lines.push(String(message));
+  try {
+    process.exitCode = 0;
+    await cliMain(["install", "--harness", "claude", "--yes"]);
+    const output = lines.join("\n");
+    expect(process.exitCode).toBe(1);
+    expect(output).toContain("simulated settings write failure");
+    expect(output).toContain(backupPath);
+  } finally {
+    spy.mockRestore();
     console.error = originalError;
     restoreAgentLoopHome();
     process.exitCode = 0;
