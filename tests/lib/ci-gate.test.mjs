@@ -2375,6 +2375,68 @@ test.each([
   },
 );
 
+// Two entries for "ci (windows-latest)", the earlier-listed one failing and the
+// later-listed one passing, as check runs and as commit statuses.
+const pairOptions = (kind, failing, passing) =>
+  kind === "check runs"
+    ? {
+        headRuns: [
+          run("ci (ubuntu-latest)", "success"),
+          { ...run("ci (windows-latest)", "failure"), ...failing },
+          { ...run("ci (windows-latest)", "success"), ...passing },
+        ],
+      }
+    : {
+        headRuns: [run("ci (ubuntu-latest)", "success")],
+        headStatuses: [
+          { ...commitStatus("ci (windows-latest)", "failure"), ...failing },
+          { ...commitStatus("ci (windows-latest)", "success"), ...passing },
+        ],
+      };
+
+const gateOver = (options) =>
+  checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh: fakeGh(routes(options)) });
+
+// Usefulness: verifies entries whose order is unknown fail the gate instead of
+// passing, so a missing, null, or non-numeric id at equal timestamps cannot let a
+// passing entry hide a failing one (issue #737 review).
+test.each(
+  ["check runs", "commit statuses"].flatMap((kind) =>
+    [undefined, null, "abc"].map((id) => [kind, id]),
+  ),
+)("does not pass %s with equal timestamps and id %s", async (kind, id) => {
+  const result = await gateOver(pairOptions(kind, { id: undefined }, { id }));
+  expect(result.ok).toBe(false);
+});
+
+// Usefulness: verifies an unparseable timestamp fails the gate instead of passing,
+// so an entry that cannot be ordered cannot hide a failing one (issue #737 review).
+test.each(["check runs", "commit statuses"])(
+  "does not pass %s with an unparseable timestamp",
+  async (kind) => {
+    const field = kind === "check runs" ? "started_at" : "updated_at";
+    const result = await gateOver(pairOptions(kind, { id: 10 }, { id: 11, [field]: "later" }));
+    expect(result.ok).toBe(false);
+  },
+);
+
+// Usefulness: verifies entries order by parsed time, so a newer failure with
+// fractional seconds or a non-UTC offset is not hidden behind an older pass whose
+// text sorts higher (issue #737 review).
+test.each(
+  ["check runs", "commit statuses"].flatMap((kind) => [
+    [kind, "fractional seconds", "2026-01-01T00:00:00.500Z", "2026-01-01T00:00:00Z"],
+    [kind, "a non-UTC offset", "2026-01-01T01:00:00Z", "2026-01-01T05:00:00+05:00"],
+  ]),
+)("reads the newer failing entry for %s with %s", async (kind, _name, failAt, passAt) => {
+  const field = kind === "check runs" ? "started_at" : "updated_at";
+  const read = await readOn(
+    HEAD,
+    statusReadGh(pairOptions(kind, { id: 10, [field]: failAt }, { id: 11, [field]: passAt })),
+  );
+  expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+});
+
 // Usefulness: verifies every supplied status stays advisory after the commit
 // binding, because the read is a pre-turn snapshot and the `--require-ci` gate
 // re-reads GitHub and enforces the condition (issue #349).

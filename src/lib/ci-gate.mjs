@@ -738,20 +738,28 @@ async function evaluatedState(gh, slug, info, cwd, strict = false) {
   return { commit: head, runs, statuses };
 }
 
-// The most recent entry: the later of the first present timestamp in `fields`,
-// then the larger numeric id when timestamps tie. GitHub evaluates the latest
-// run for a name; an earlier failing run that a later run replaces does not
-// fail the gate.
+// The most recent entry: the later parsed time of the first present timestamp in
+// `fields`, then the larger numeric id when times tie. An entry with no timestamp
+// ranks oldest. Null when any entry has a non-numeric id or a timestamp that does
+// not parse, because the order is then unknown and the caller must fail closed. A
+// single entry needs no order and is returned as is.
+// GitHub evaluates the latest run for a name; an earlier failing run that a later
+// run replaces does not fail the gate.
 function latestBy(entries, fields) {
-  const stamp = (entry) => fields.map((field) => entry[field]).find((value) => value != null) ?? "";
+  if (entries.length === 1) {
+    return entries[0];
+  }
   let latest = null;
+  let latestTime = -Infinity;
   for (const entry of entries) {
-    if (
-      !latest ||
-      stamp(entry) > stamp(latest) ||
-      (stamp(entry) === stamp(latest) && (entry.id ?? 0) >= (latest.id ?? 0))
-    ) {
+    const raw = fields.map((field) => entry[field]).find((value) => value != null);
+    const time = raw === undefined ? -Infinity : typeof raw === "string" ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(entry.id) || Number.isNaN(time)) {
+      return null;
+    }
+    if (!latest || time > latestTime || (time === latestTime && entry.id >= latest.id)) {
       latest = entry;
+      latestTime = time;
     }
   }
   return latest;
@@ -780,9 +788,15 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
   // latest entry does not hide a failing entry beside it, whether that entry is
   // another run, an earlier run, or a commit status (issue #349).
   let problem = null;
+  const unordered = {
+    kind: "failing",
+    reason: `required check ${label} cannot be ordered (an entry has a non-numeric id or an unparseable time)`,
+  };
   if (matchingRuns.length > 0) {
     const run = latestBy(matchingRuns, ["started_at", "completed_at"]);
-    if (run.status !== "completed") {
+    if (run === null) {
+      problem = unordered;
+    } else if (run.status !== "completed") {
       problem = {
         kind: "pending",
         reason: `required check ${label} is pending (check run status ${run.status})`,
@@ -797,7 +811,9 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
 
   if (matchingStatuses.length > 0) {
     const status = latestBy(matchingStatuses, ["updated_at", "created_at"]);
-    if (status.state !== "success" && problem === null) {
+    if (status === null) {
+      problem ??= unordered;
+    } else if (status.state !== "success" && problem === null) {
       problem = {
         // A pending commit status has not failed: the reason text stays the gate's.
         kind: status.state === "pending" ? "pending" : "failing",
