@@ -104,14 +104,26 @@ test("CLI install rejects --verbose=1", async () => {
 });
 
 // Usefulness: verifies acceptance (#186) — install and uninstall print their own
-// usage for --help and -h and exit 0. Verifies acceptance (#419) — usage goes to
+// usage for --help and -h, with the --verbose flag the parser accepts, and exit 0. Verifies acceptance (#419) — usage goes to
 // stdout only; the stderr-empty check is not redundant because the stdout
 // assertion alone passes when usage is also written to stderr.
 test.each([
-  ["install", "--help", "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run]"],
-  ["install", "-h", "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run]"],
-  ["uninstall", "--help", "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run]"],
-  ["uninstall", "-h", "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run]"],
+  [
+    "install",
+    "--help",
+    "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run] [--verbose]",
+  ],
+  ["install", "-h", "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run] [--verbose]"],
+  [
+    "uninstall",
+    "--help",
+    "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run] [--verbose]",
+  ],
+  [
+    "uninstall",
+    "-h",
+    "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run] [--verbose]",
+  ],
 ])("CLI %s %s prints usage to stdout only and exits 0", async (command, flag, usage) => {
   const originalLog = console.log;
   const originalError = console.error;

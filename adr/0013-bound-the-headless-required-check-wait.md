@@ -76,7 +76,7 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
 9. The prompt keeps the ADR 0010 child-exit rule. `"childExitUnconfirmed": true`
    means the `gh` child was not observed to exit, so the orchestrator settles that
    process before another wait and does not wait again when it cannot.
-10. `docs/orchestrator-instructions.md` ("Waiting in the headless loop") and the
+10. `docs/orchestrator-instructions.md` ("Headless loop waits") and the
     README state the same rule, and a test pins the identical exception sentence in the instructions, the prompt, and the README.
 
 ## Consequences

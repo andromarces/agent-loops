@@ -851,6 +851,17 @@ test("the headless wait states the childExitUnconfirmed rule", () => {
   expect(prompt).toMatch(/settle that process before you start another wait/i);
 });
 
+// Usefulness: verifies the wait prompt states the child-exit ceiling and the default turn
+// timeout from the runtime constants, so a constant change cannot leave a stale number in
+// the text the orchestrator reads (issue #736).
+test("the headless wait prompt states the child-exit ceiling and the default turn timeout", () => {
+  const prompt = waitPrompt(undefined).replace(/\s+/g, " ");
+  expect(prompt).toContain("plus five, before this turn ends");
+  expect(prompt).toContain("five-second window expired");
+  expect(prompt).toContain("(3600 seconds by default)");
+  expect(waitPrompt(7).replace(/\s+/g, " ")).toContain("with its five-second child-exit window");
+});
+
 // Usefulness: verifies the platform decides the shell forms: a Windows run gets
 // a PowerShell form with the call operator and a bash-or-cmd form without it,
 // and any other platform gets one plain form (issue #348).

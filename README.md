@@ -42,7 +42,7 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
   - Runs a Codex reviewer turn in the `workspace-write` sandbox when the operator passes `--reviewer-workspace-write`. The shell commands that the sandbox runs have network off, so the reviewer can run a targeted test or a probe. A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception, as ADR 0019 states. The orchestrator stays read-only. The mutation check detects a change instead of the sandbox preventing it. See [ADR 0019](adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md).
   - Records validated orchestrator actions, a `refusal` event for each finish a `--require-accept` or `--require-ci` gate refused and for each `run_worker` action a `--mode review-only` run refused, an `unresolved-compare` event for each finish that reports an unresolved PR-head compare, a `no-required-checks` event for each finish the `--require-ci` gate passed on a base branch with no required check, child results, one `invocation` event per CLI call with usage when the adapter exposes it, timestamps, exit code, and error when `--transcript` is provided. Raw orchestrator responses are not recorded.
 
-See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md), [ADR 0002](adr/0002-harness-neutral-orchestrator-instructions.md)).
+See [Architecture Decision Records](adr/README.md) for background and architectural decisions ([ADR 0001](adr/0001-hybrid-orchestrator-runtime.md), which [ADR 0019](adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md) supersedes, and [ADR 0002](adr/0002-harness-neutral-orchestrator-instructions.md)).
 
 ## Supported agents
 
@@ -233,7 +233,8 @@ agent-loop install
 `install` detects the harness CLIs on `PATH`, preselects them, and writes the
 entry point and guard for each selected harness. It is interactive; pass
 `--harness <list> --yes` for scripts, and `--dry-run` to print the planned
-writes without changing anything. A second run with the same package makes no
+writes without changing anything. `--verbose` on `install` and `uninstall` turns on
+debug-level logging. A second run with the same package makes no
 change. `agent-loop uninstall` removes only the files and settings entries the
 install recorded, and restores a file that install changed when the file is
 otherwise unchanged. Install applies a harness guard before its entry point, and
@@ -580,7 +581,7 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
                               reviewer dispatch passes the same value again; a changed or
                               missing value is refused.
 --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. At the bound the
-                              the command's own process group (POSIX) or process tree
+                              command's own process group (POSIX) or process tree
                               (Windows) is killed, and the run reports timed-out, which is
                               neither a pass nor a failure. An orphan that left the group,
                               or whose parent exited on Windows, can survive (ADR 0017).
@@ -892,42 +893,12 @@ prompt gains one line with these statements:
 The orchestrator turns, the worker turns, and the other
 four adapters keep their invocations, and the mutation check still wraps every reviewer turn.
 
-Shell network is off on purpose. The option is set explicitly, because a probe on 2026-10-05
-(macOS, codex-cli 0.162.0-alpha.14) showed that `workspace-write` takes network from the
-user Codex config when the command line does not set it. With shell network off, the same probe
-ran `./node_modules/.bin/vitest run` to exit 0 (66 files passed, 1 skipped), failed
-`curl https://api.github.com` with `Could not resolve host`, and failed `gh pr checks` with
-`error connecting to api.github.com`, and the work tree stayed clean. `pnpm exec vitest run`
-fails under network on as well, because pnpm writes to its store outside the work tree.
-`network_access=false` covers the shell commands that the sandbox runs. A model-side tool
-(for example Codex `web_search`) and any other channel outside the sandbox, such as a
-connector, are not covered, and no probe of those under `workspace-write` was run.
-A user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` also runs a shell command with an expansion outside the sandbox, as the probe of 2026-10-10 below shows for one machine.
+Shell network is off on purpose. The option is set explicitly, because `workspace-write` takes network from the user Codex config when the command line does not set it. `network_access=false` covers the shell commands that the sandbox runs. A model-side tool (for example Codex `web_search`) and any other channel outside the sandbox, such as a connector, are not covered. A user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` also runs a shell command with an expansion outside the sandbox.
 
 The runtime read of the required-check status for a named PR ([ADR 0024](adr/0024-supply-the-required-check-status-for-a-named-pr.md)) still reaches
 the reviewer.
 
-A live probe of the merged adapter ran on 2026-10-10 (macOS 27.2 arm64, codex-cli 0.163.0-alpha.5, Node v26.11.1) and matched this.
-The reviewer ran `./node_modules/.bin/vp test run` to exit 0 (82 files passed, 1 skipped).
-A shell `curl https://api.github.com` failed with `Could not resolve host`.
-A reviewer edit of `README.md` halted the run with `Mutation detected during reviewer turn` (`MutationError`), exit 1.
-Linux and the elevated Windows sandbox are not verified. The unelevated Windows sandbox is covered by the probe below.
-
-A live probe of `ps`, `pnpm exec`, and `gh` ran on 2026-10-10 (macOS 27.2 arm64, codex-cli 0.163.0-alpha.5, Node v26.11.1), in two reviewer turns with the same results:
-
-- `ps -p $$ -o pid=` exited 127 with `zsh:1: operation not permitted: ps`. The sandbox blocks `ps`, so the 8 `ps`-gated tests in `tests/lib/runstate.test.mjs` skip.
-- `pnpm exec vp --version` exited 0 (`vp v1.1.0`). Only `--version` was probed.
-- `gh pr checks 637 --required` exited 1 with `error connecting to api.github.com`, because shell network is off.
-- A Codex user rule that allows `bash -c`, `sh -c`, or `zsh -c` runs a command that has an expansion such as `$$` or `$HOME` outside the sandbox. The probe used a `CODEX_HOME` with no rules to avoid that. Details are in the ADR.
-
-A live probe on the unelevated Windows sandbox ran on 2026-10-10 (Windows 11 Pro 10.0.26220, codex-cli 0.163.0-alpha.4, Node v26.8.1), with a `CODEX_HOME` that held no rules, in two reviewer turns. The reviewer shell is PowerShell:
-
-- `ps -p $PID -o pid=` exited 1 with an ambiguous-parameter error, because `ps` is the PowerShell alias of `Get-Process`. `(Get-Process -Id $PID).Id` exited 0 and printed `44772`.
-- `pnpm exec vp --version` exited 1 with `Error: ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK`. This differs from macOS, where it exited 0.
-- `gh pr checks 649 --required` exited 1 with `Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connectex: ...`, because shell network is off.
-- A child `node` spawn from Node returned an error (`spawn error`, exit 0 for the wrapper). The error code and Vitest were not captured.
-- Elevated Windows sandbox: attempted and not recorded. A `codex exec` run with `[windows] sandbox = "elevated"` ran the machine setup of that mode (sandbox users, firewall rules, WFP filters) without an interactive prompt, and the first shell command then did not finish within 150 s. No reviewer turn ran under it.
-- Linux: no Linux host was available.
+The probe evidence is in [ADR 0019](adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md). On macOS, a reviewer ran the local test binary to exit 0, and shell network calls failed. The sandbox blocks `ps`, so the `ps`-gated tests skip. On the unelevated Windows sandbox, `pnpm exec` failed with a store lock error. Linux and the elevated Windows sandbox are not verified.
 
 Accepted gaps, as the ADR states them:
 
@@ -1221,6 +1192,4 @@ Features considered for future development once the hybrid loop stabilizes:
 
 - Orchestrator-addressable roles (allowing dynamic registration of additional named specialist roles)
 - Per-role extra CLI arguments and flags
-- GitHub pull request mode
-- Configurable validation commands and automated gates
 - A streamed headless transcript
