@@ -2595,3 +2595,124 @@ test(
   },
   ABORT_KILL_TEST_TIMEOUT_MS,
 );
+
+// Holds each call of a group until every call of that group has started, and
+// fails the held call when the rest of the group does not start within `waitMs`.
+// A gate that starts its independent reads one after another never reaches the
+// last call of a group while the first is held.
+function barrierGh(inner, groups, waitMs = 1000) {
+  const pending = groups.map((members) => ({ members, started: new Set(), waiters: [] }));
+  return async (args, cwd) => {
+    const key = args.join(" ");
+    const group = pending.find(({ members }) => members.includes(key));
+    if (group) {
+      group.started.add(key);
+      if (group.started.size === group.members.length) {
+        for (const release of group.waiters) {
+          release();
+        }
+      } else {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`independent calls ran in sequence at: ${key}`)),
+            waitMs,
+          );
+          group.waiters.push(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+      }
+    }
+    return inner(args, cwd);
+  };
+}
+
+const INDEPENDENT_GROUPS = [
+  [PR_VIEW, REPO_VIEW],
+  [
+    `api repos/${SLUG}/rules/branches/main --paginate --slurp`,
+    `api repos/${SLUG}/branches/main/protection`,
+    PR_CHECKS,
+  ],
+  [
+    `api repos/${SLUG}/commits/${MERGE}/check-runs --paginate --slurp`,
+    `api repos/${SLUG}/commits/${MERGE}/status --paginate --slurp`,
+  ],
+];
+
+// Usefulness: verifies the gate starts its independent gh reads together (issue
+// #731). A gate that runs them in sequence never starts the second call of a
+// group while the first is held, so the double fails the held call.
+test("starts the independent gh reads of the gate together", async () => {
+  const gh = barrierGh(
+    fakeGh(
+      routes({
+        mergeRuns: [run("ci (ubuntu-latest)", "success"), run("ci (windows-latest)", "success")],
+      }),
+    ),
+    INDEPENDENT_GROUPS,
+  );
+  const result = await checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh });
+  expect(result).toEqual({ ok: true, commit: MERGE });
+});
+
+// Usefulness: verifies the status read also starts its independent reads together
+// (issue #731), a second entry point that shares the same read functions.
+test("starts the independent gh reads of the status read together", async () => {
+  const gh = barrierGh(
+    fakeGh(
+      routes({
+        mergeRuns: [run("ci (ubuntu-latest)", "success"), run("ci (windows-latest)", "success")],
+      }),
+    ),
+    INDEPENDENT_GROUPS,
+  );
+  const read = await readRequiredChecks({ pr: 42, cwd: ".", head: HEAD, clean: true, gh });
+  expect(read.status).toBe("pass");
+});
+
+// Usefulness: verifies that when two parallel reads fail, the error that the
+// sequential order surfaced still wins (issue #731): the check-run read, not the
+// commit-status read.
+test("surfaces the check-run failure when the commit-status read also fails", async () => {
+  const failing = routes().map(([match, value]) =>
+    match.endsWith("/check-runs --paginate --slurp") || match.endsWith("/status --paginate --slurp")
+      ? [
+          match,
+          `stderr: ${match.endsWith("/status --paginate --slurp") ? "status down" : "runs down"}`,
+        ]
+      : [match, value],
+  );
+  await expect(
+    checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh: fakeGh(failing) }),
+  ).rejects.toThrow(/check-runs failed: runs down/);
+});
+
+// Usefulness: verifies the PR read error wins over a repository read error and
+// that a PR refusal still returns when the repository read fails (issue #731),
+// as the sequential order did.
+test("keeps the PR read ahead of the repository read", async () => {
+  const gh = (overrides) => fakeGh([...overrides, ...routes()]);
+  await expect(
+    checkCi({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: gh([
+        [PR_VIEW, "stderr: pr down"],
+        [REPO_VIEW, "stderr: repo down"],
+      ]),
+    }),
+  ).rejects.toThrow(/gh pr view 42 failed: pr down/);
+  const refused = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: gh([
+      [PR_VIEW, prInfo({ mergeStateStatus: "BEHIND" })],
+      [REPO_VIEW, "stderr: repo down"],
+    ]),
+  });
+  expect(refused.ok).toBe(false);
+});

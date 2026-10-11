@@ -445,6 +445,27 @@ function earlyMergeRefusal(mergeState) {
   return null;
 }
 
+// Runs independent reads together and waits for all of them, so no read is left
+// running when one fails. The error of the earliest failed read in list order
+// throws, which is the error the same reads run in sequence surfaced.
+async function inOrder(reads) {
+  const settled = await Promise.allSettled(reads);
+  const failed = settled.find(({ status }) => status === "rejected");
+  if (failed) {
+    throw failed.reason;
+  }
+  return settled.map(({ value }) => value);
+}
+
+// Starts the repository read beside the PR read. Its failure surfaces only when
+// the caller awaits it, after the PR checks that came first in sequence, and an
+// early return never leaves the rejection unhandled.
+function startRepoSlug(gh, cwd) {
+  const slug = repoSlug(gh, cwd);
+  slug.catch(() => {});
+  return slug;
+}
+
 async function prInfo(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(
     [
@@ -546,16 +567,24 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   const unknown = [];
   const unparsed = [];
 
-  const rules = await readRequiredSource(
-    gh,
-    // The endpoint paginates at 30 rules per page by default, so a single read can
-    // stop before a required-status-check rule and report an absence for a branch
-    // that requires one. Every page is fetched, and a body the gate cannot account
-    // for every page of is unknown (issue #336 review).
-    [`repos/${slug}/rules/branches/${base}`, "--paginate", "--slurp"],
-    cwd,
-    { absentOnError: () => false, classify: classifyRulesets },
-  );
+  const [rules, protection, listed] = await inOrder([
+    readRequiredSource(
+      gh,
+      // The endpoint paginates at 30 rules per page by default, so a single read can
+      // stop before a required-status-check rule and report an absence for a branch
+      // that requires one. Every page is fetched, and a body the gate cannot account
+      // for every page of is unknown (issue #336 review).
+      [`repos/${slug}/rules/branches/${base}`, "--paginate", "--slurp"],
+      cwd,
+      { absentOnError: () => false, classify: classifyRulesets },
+    ),
+    readRequiredSource(gh, [`repos/${slug}/branches/${base}/protection`], cwd, {
+      absentOnError: isNotProtected404,
+      classify: classifyProtection,
+      malformed: isProtectionMalformed,
+    }),
+    ghRequiredNames(gh, pr, cwd),
+  ]);
   if (rules.state === UNKNOWN) {
     unknown.push(RULESETS);
   }
@@ -565,16 +594,6 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   for (const context of rules.contexts) {
     addContext(contexts, context.name, context.appId);
   }
-  const protection = await readRequiredSource(
-    gh,
-    [`repos/${slug}/branches/${base}/protection`],
-    cwd,
-    {
-      absentOnError: isNotProtected404,
-      classify: classifyProtection,
-      malformed: isProtectionMalformed,
-    },
-  );
   if (protection.state === UNKNOWN) {
     unknown.push(PROTECTION);
   }
@@ -585,7 +604,6 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
     addContext(contexts, context.name, context.appId);
   }
 
-  const listed = await ghRequiredNames(gh, pr, cwd);
   for (const name of listed.names) {
     addContext(contexts, name);
   }
@@ -718,14 +736,18 @@ async function evaluatedState(gh, slug, info, cwd, strict = false) {
   const head = info.headRefOid;
   const merge = info.potentialMergeCommit?.oid ?? null;
   if (merge && merge !== head) {
-    const runs = await checkRuns(gh, slug, merge, cwd, strict);
-    const statuses = await commitStatuses(gh, slug, merge, cwd, strict);
+    const [runs, statuses] = await inOrder([
+      checkRuns(gh, slug, merge, cwd, strict),
+      commitStatuses(gh, slug, merge, cwd, strict),
+    ]);
     if (runs.length > 0 || statuses.length > 0) {
       return { commit: merge, runs, statuses };
     }
   }
-  const runs = await checkRuns(gh, slug, head, cwd, strict);
-  const statuses = await commitStatuses(gh, slug, head, cwd, strict);
+  const [runs, statuses] = await inOrder([
+    checkRuns(gh, slug, head, cwd, strict),
+    commitStatuses(gh, slug, head, cwd, strict),
+  ]);
   return { commit: head, runs, statuses };
 }
 
@@ -883,6 +905,7 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
     return fail("the reviewed work tree is not clean");
   }
 
+  const slugRead = startRepoSlug(gh, cwd);
   const info = await prInfo(gh, pr, cwd);
   const early = earlyMergeRefusal(info.mergeStateStatus);
   if (early) {
@@ -892,7 +915,7 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
     return fail("the PR head differs from the reviewed commit");
   }
 
-  const slug = await repoSlug(gh, cwd);
+  const slug = await slugRead;
   const {
     unknown,
     rulesetState,
@@ -1050,6 +1073,7 @@ export async function readRequiredChecks({
   const call = (args, callCwd) => gh(args, callCwd, { signal: controller.signal, timeoutMs });
   let prHead = null;
   try {
+    const slugRead = startRepoSlug(call, cwd);
     const info = await prInfo(call, pr, cwd);
     prHead = typeof info.headRefOid === "string" && info.headRefOid !== "" ? info.headRefOid : null;
     if (prHead === null) {
@@ -1067,7 +1091,7 @@ export async function readRequiredChecks({
         prHead,
       );
     }
-    const slug = await repoSlug(call, cwd);
+    const slug = await slugRead;
     const { unknown, unparsed, namesRead, rulesetState, contexts } = await requiredContexts(
       call,
       slug,
