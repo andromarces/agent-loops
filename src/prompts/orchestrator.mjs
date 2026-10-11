@@ -1,5 +1,6 @@
 import { posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+import { escapeLineSeparators } from "./escape.mjs";
 import { actionFormats, SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
 import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
@@ -390,7 +391,8 @@ export function initialPrompt({
   cwd = process.cwd(),
   waitCommand = waitChecksCommand({ cwd }),
 }) {
-  return `
+  return escapeLineSeparators(
+    `
 You are the orchestrator in an automated multi-agent coding loop.
 Your role is to direct the workflow to complete the user task.
 You must NOT edit files, and you must NOT run agent CLIs or background processes directly. The one exception is a pull request check status read, which a gated run allows; the PR gate block below states it.
@@ -455,7 +457,8 @@ A headless run cannot act on a refused \`--cwd\`: the runtime snapshots its \`--
 
 User Task:
 ${task}
-`.trim();
+`.trim(),
+  );
 }
 
 export function resultPrompt({ result, stepsUsed, maxSteps }) {
@@ -480,7 +483,8 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
     stepsRemaining,
   };
 
-  return `
+  return escapeLineSeparators(
+    `
 Role execution result:
 ${JSON.stringify(payload, null, 2)}
 
@@ -489,7 +493,8 @@ ${REMOTE_WRITE_RULE}
 Choose the next action.
 Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported actions: run_worker, run_reviewer, finish, abort.
-`.trim();
+`.trim(),
+  );
 }
 
 /**
@@ -498,7 +503,8 @@ Supported actions: run_worker, run_reviewer, finish, abort.
  * the action list that lets the orchestrator recover with a reviewer turn.
  */
 export function refusalPrompt(reason) {
-  return `
+  return escapeLineSeparators(
+    `
 ${reason}
 
 ${REMOTE_WRITE_RULE}
@@ -506,11 +512,13 @@ ${REMOTE_WRITE_RULE}
 Choose the next action.
 Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
 Supported actions: run_worker, run_reviewer, finish, abort.
-`.trim();
+`.trim(),
+  );
 }
 
 export function repairPrompt(error) {
-  return `
+  return escapeLineSeparators(
+    `
 Your previous response could not be accepted due to the following validation error:
 ${error}
 
@@ -525,5 +533,6 @@ Supported action formats:
 For an unresolved PR-head compare, add the marker inside the same object:
 ${REPAIR_FORMATS.finishUnresolved}
 4. ${REPAIR_FORMATS.abort}
-`.trim();
+`.trim(),
+  );
 }

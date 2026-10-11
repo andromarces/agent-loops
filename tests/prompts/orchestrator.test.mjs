@@ -1908,3 +1908,36 @@ test("the result prompt carries shellDenied only when the result has it", () => 
   expect(denied).toContain('"shellDenied": true');
   expect(clean).not.toContain("shellDenied");
 });
+
+// Usefulness: verifies the headless result prompt carries no raw line-separator character from a
+// child response, an error, a test run, or a PR check read, and that the payload stays valid JSON
+// that decodes to the original text (issue #761).
+test("resultPrompt renders no raw line separator from untrusted result fields", () => {
+  const hostile = "a\u{2028}b\u{2029}c\u0085d";
+  const prompt = resultPrompt({
+    result: {
+      role: "reviewer",
+      status: "ok",
+      response: `Verdict${hostile}`,
+      testRun: { command: `cmd${hostile}`, tail: `out${hostile}`, changedPaths: [hostile] },
+      prChecks: { pr: 1, summary: `s${hostile}` },
+    },
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  for (const raw of ["\u{2028}", "\u{2029}", "\u0085"]) {
+    expect(prompt).not.toContain(raw);
+  }
+  const json = prompt.slice(prompt.indexOf("{"), prompt.lastIndexOf("}\n\n") + 1);
+  expect(JSON.parse(json).response).toBe(`Verdict${hostile}`);
+});
+
+// Usefulness: verifies the refusal and repair prompts, which carry text from a child or a parent
+// reply, render no raw line separator (issue #761).
+test("refusalPrompt and repairPrompt render no raw line separator", () => {
+  for (const prompt of [refusalPrompt("no\u{2028}accept\u0085"), repairPrompt("bad\u{2029}json")]) {
+    for (const raw of ["\u{2028}", "\u{2029}", "\u0085"]) {
+      expect(prompt).not.toContain(raw);
+    }
+  }
+});

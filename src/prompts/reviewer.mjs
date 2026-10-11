@@ -1,3 +1,4 @@
+import { escapeLineSeparators } from "./escape.mjs";
 import { SHELL_EXCEPTION } from "./orchestrator.mjs";
 import { reportBlock } from "./report.mjs";
 
@@ -43,18 +44,9 @@ function fenceFor(text) {
 }
 
 // A path comes from the work tree, so it is untrusted text. JSON encoding keeps each path on one
-// line, with a newline and a quote escaped, so a path cannot start a line of its own.
-// JSON leaves U+0085, U+2028, and U+2029 raw, and a renderer can read them as a line break, so
-// they are escaped too.
-const pathList = (paths) =>
-  paths
-    .map((path) =>
-      JSON.stringify(path).replace(
-        /[\u0085\u2028\u2029]/g,
-        (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
-      ),
-    )
-    .join(", ");
+// line, with a newline and a quote escaped, so a path cannot start a line of its own. The line
+// separators that JSON leaves raw are escaped for the whole prompt in reviewerPrompt.
+const pathList = (paths) => paths.map((path) => JSON.stringify(path)).join(", ");
 
 // The result of the operator's `--test-cmd`, in its own group after the review
 // scope. The group sits beside the required-check group and narrows no rule
@@ -110,7 +102,8 @@ export function reviewerPrompt(prompt, prChecks = null, testRun = null, workspac
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
   const sandbox = workspaceWrite ? `\n\n${workspaceWriteLine}` : "";
-  return `
+  return escapeLineSeparators(
+    `
 Do not implement, fix, edit, or change any file. Review, assess, and verify only. Live probes and read-only queries are authorized.
 ${remoteWriteRule}
 
@@ -120,5 +113,6 @@ ${reviewerReportBlock}
 
 Instructions:
 ${prompt}
-`.trim();
+`.trim(),
+  );
 }
