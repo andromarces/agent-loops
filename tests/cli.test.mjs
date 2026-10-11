@@ -1894,87 +1894,112 @@ async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
   }
 }
 
+// Each continueAfterEdit test runs main() twice (about 0.4 s each on macOS, 1 s per test with the
+// repo setup; Windows not measured locally). One test timed out at 15028 ms on Windows (#744).
+// The explicit timeout leaves room for that slowdown without raising the suite default.
+const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 45_000;
+
 const ACCEPTED_RUN = [RUN_WORKER, RUN_REVIEWER, FINISH];
 
 // Usefulness: verifies an incomplete later turn cancels the restore (#393 review): a worker turn
 // that started after the accept and never returned a result (a canceled or failed turn) can have
 // changed the tree, so the continuation needs a new reviewer turn.
-test("--continue-from resets when a worker invocation follows the accepted review", async () => {
-  const { exitCode, reviewerCalls } = await continueAfterEdit({
-    firstOrch: ACCEPTED_RUN,
-    reviewerReplies: [GATE_ACCEPT],
-    tamper: (transcript) => {
-      const gate = transcript.events.pop();
-      transcript.events.push({ type: "invocation", role: "worker", status: "error" }, gate);
-    },
-  });
-  expect(exitCode).toBe(0);
-  expect(reviewerCalls).toBe(1);
-});
+test(
+  "--continue-from resets when a worker invocation follows the accepted review",
+  async () => {
+    const { exitCode, reviewerCalls } = await continueAfterEdit({
+      firstOrch: ACCEPTED_RUN,
+      reviewerReplies: [GATE_ACCEPT],
+      tamper: (transcript) => {
+        const gate = transcript.events.pop();
+        transcript.events.push({ type: "invocation", role: "worker", status: "error" }, gate);
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(reviewerCalls).toBe(1);
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: verifies a transcript whose later reviewer result was deleted does not restore the
 // earlier accept (#393 review): the recorded result count no longer matches the events.
-test("--continue-from resets when a result event was deleted", async () => {
-  const { exitCode, reviewerCalls } = await continueAfterEdit({
-    firstOrch: [RUN_WORKER, RUN_REVIEWER, RUN_REVIEWER, FINISH, FINISH],
-    reviewerReplies: [GATE_ACCEPT, GATE_REJECT],
-    tamper: (transcript) => {
-      const last = transcript.events.findLastIndex((event) => event.type === "result");
-      transcript.events.splice(last, 1);
-    },
-  });
-  expect(exitCode).toBe(0);
-  expect(reviewerCalls).toBe(1);
-});
+test(
+  "--continue-from resets when a result event was deleted",
+  async () => {
+    const { exitCode, reviewerCalls } = await continueAfterEdit({
+      firstOrch: [RUN_WORKER, RUN_REVIEWER, RUN_REVIEWER, FINISH, FINISH],
+      reviewerReplies: [GATE_ACCEPT, GATE_REJECT],
+      tamper: (transcript) => {
+        const last = transcript.events.findLastIndex((event) => event.type === "result");
+        transcript.events.splice(last, 1);
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(reviewerCalls).toBe(1);
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: verifies an earlier result event with an unknown role resets (#393 review). The
 // replay accepts only `worker` and `reviewer` result events, so the edit cannot hide the worker
 // turn that makes a reviewer reject count as a review of work.
-test("--continue-from resets when an earlier result event has a malformed role", async () => {
-  const { exitCode, reviewerCalls } = await continueAfterEdit({
-    firstOrch: [RUN_WORKER, RUN_REVIEWER, FINISH, FINISH],
-    reviewerReplies: [GATE_REJECT],
-    tamper: (transcript) => {
-      transcript.events.find((event) => event.type === "result" && event.role === "worker").role =
-        "wrk";
-    },
-  });
-  expect(exitCode).toBe(0);
-  expect(reviewerCalls).toBe(1);
-});
+test(
+  "--continue-from resets when an earlier result event has a malformed role",
+  async () => {
+    const { exitCode, reviewerCalls } = await continueAfterEdit({
+      firstOrch: [RUN_WORKER, RUN_REVIEWER, FINISH, FINISH],
+      reviewerReplies: [GATE_REJECT],
+      tamper: (transcript) => {
+        transcript.events.find((event) => event.type === "result" && event.role === "worker").role =
+          "wrk";
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(reviewerCalls).toBe(1);
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: verifies reordered reviewer results cannot let an obsolete accept replace the
 // latest rejection (#393 review): the replay in file order ends on the rewritten accept, which
 // differs from the state the run recorded, so the gate resets.
-test("--continue-from resets when reviewer results were reordered", async () => {
-  const { exitCode, reviewerCalls } = await continueAfterEdit({
-    firstOrch: [RUN_WORKER, RUN_REVIEWER, RUN_REVIEWER, FINISH, FINISH],
-    reviewerReplies: [GATE_ACCEPT, GATE_REJECT],
-    tamper: (transcript) => {
-      const at = transcript.events.flatMap((event, i) =>
-        event.type === "result" && event.role === "reviewer" ? [i] : [],
-      );
-      const [a, b] = at;
-      [transcript.events[a], transcript.events[b]] = [transcript.events[b], transcript.events[a]];
-    },
-  });
-  expect(exitCode).toBe(0);
-  expect(reviewerCalls).toBe(1);
-});
+test(
+  "--continue-from resets when reviewer results were reordered",
+  async () => {
+    const { exitCode, reviewerCalls } = await continueAfterEdit({
+      firstOrch: [RUN_WORKER, RUN_REVIEWER, RUN_REVIEWER, FINISH, FINISH],
+      reviewerReplies: [GATE_ACCEPT, GATE_REJECT],
+      tamper: (transcript) => {
+        const at = transcript.events.flatMap((event, i) =>
+          event.type === "result" && event.role === "reviewer" ? [i] : [],
+        );
+        const [a, b] = at;
+        [transcript.events[a], transcript.events[b]] = [transcript.events[b], transcript.events[a]];
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(reviewerCalls).toBe(1);
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: verifies a transcript with no gate record resets, as every transcript did before
 // the restore existed (#393 review), even when its events end on a reviewer accept.
-test("--continue-from resets when the transcript has no gate record", async () => {
-  const { exitCode, reviewerCalls } = await continueAfterEdit({
-    firstOrch: ACCEPTED_RUN,
-    reviewerReplies: [GATE_ACCEPT],
-    tamper: (transcript) => {
-      transcript.events = transcript.events.filter((event) => event.type !== "gate");
-    },
-  });
-  expect(exitCode).toBe(0);
-  expect(reviewerCalls).toBe(1);
-});
+test(
+  "--continue-from resets when the transcript has no gate record",
+  async () => {
+    const { exitCode, reviewerCalls } = await continueAfterEdit({
+      firstOrch: ACCEPTED_RUN,
+      reviewerReplies: [GATE_ACCEPT],
+      tamper: (transcript) => {
+        transcript.events = transcript.events.filter((event) => event.type !== "gate");
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(reviewerCalls).toBe(1);
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Runs continueAfterEdit with `edit` applied to the last reviewer result event.
 async function continueAfterResultEdit(edit) {
@@ -1989,23 +2014,31 @@ async function continueAfterResultEdit(edit) {
 
 // Usefulness: verifies a null reviewer response in the events the restore reads resets instead
 // of aborting the run (#393 review). One edit per test keeps each inside the test timeout (#556).
-test("--continue-from resets, and does not abort, on a null reviewer response", async () => {
-  const { exitCode, reviewerCalls } = await continueAfterResultEdit((result) => {
-    result.response = null;
-  });
-  expect(exitCode).toBe(0);
-  expect(reviewerCalls).toBe(1);
-});
+test(
+  "--continue-from resets, and does not abort, on a null reviewer response",
+  async () => {
+    const { exitCode, reviewerCalls } = await continueAfterResultEdit((result) => {
+      result.response = null;
+    });
+    expect(exitCode).toBe(0);
+    expect(reviewerCalls).toBe(1);
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: verifies a reviewed head that is not a string resets instead of aborting the run
 // (#393 review). Separate from the null-response case so each fits the test timeout (#556).
-test("--continue-from resets, and does not abort, on a non-string reviewed head", async () => {
-  const { exitCode, reviewerCalls } = await continueAfterResultEdit((result) => {
-    result.reviewed.head = { not: "a head" };
-  });
-  expect(exitCode).toBe(0);
-  expect(reviewerCalls).toBe(1);
-});
+test(
+  "--continue-from resets, and does not abort, on a non-string reviewed head",
+  async () => {
+    const { exitCode, reviewerCalls } = await continueAfterResultEdit((result) => {
+      result.reviewed.head = { not: "a head" };
+    });
+    expect(exitCode).toBe(0);
+    expect(reviewerCalls).toBe(1);
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: verifies a changed role kind or model is refused before any turn
 // runs, and that the refusal leaves the earlier transcript unchanged even when
