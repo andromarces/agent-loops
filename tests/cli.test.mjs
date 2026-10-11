@@ -1672,13 +1672,14 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
   });
 });
 
-// Timeout for a --continue-from test that calls main() twice. Windows (local, 5 runs of the
-// seven continueAfterEdit tests, idle and loaded): repo setup 0.4-1.2 s (one run
-// 2.4 s), first main() 2.0-6.2 s (one run 10 s), transcript edit about 10 ms, second main()
-// 2.0-7.0 s. Each test takes 4-6 s in a full-file run; the 15028 ms timeout of #744 was a loaded
-// run. The cost is real git subprocess spawns (git status alone takes about 130 ms on Windows),
-// not the transcript work, so no step is faster to fix. macOS takes about 1 s per test. The
-// explicit timeout leaves room for load without raising the suite default.
+// Timeout for a --continue-from test that calls main() twice with a real Git repo. Measured per
+// continueAfterEdit test (seven tests), as setup / first main() / transcript edit / second main():
+// - windows-latest, run 38161410038: 0.51-0.61 s / 3.0-5.2 s / 1-3 ms / 2.9-3.2 s.
+// - Local Windows 11, five runs: 0.34-2.4 s / 1.8-10.0 s / 6-30 ms / 1.8-7.0 s.
+// - ubuntu-latest, same run: 22-40 ms / 134-283 ms / 0-8 ms / 148-171 ms.
+// - macos-latest, same run: 67-110 ms / 348-738 ms / 1 ms / 367-458 ms.
+// Both main() calls dominate on Windows. The cause of that cost is not measured. The #744 timeout
+// at 15028 ms (run 38115126864) was not reproduced in these runs.
 const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 45_000;
 
 // Usefulness: verifies --continue-from refuses, before any turn, a claude session that a live
