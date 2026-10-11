@@ -44,7 +44,17 @@ function fenceFor(text) {
 
 // A path comes from the work tree, so it is untrusted text. JSON encoding keeps each path on one
 // line, with a newline and a quote escaped, so a path cannot start a line of its own.
-const pathList = (paths) => paths.map((path) => JSON.stringify(path)).join(", ");
+// JSON leaves U+0085, U+2028, and U+2029 raw, and a renderer can read them as a line break, so
+// they are escaped too.
+const pathList = (paths) =>
+  paths
+    .map((path) =>
+      JSON.stringify(path).replace(
+        /[\u0085\u2028\u2029]/g,
+        (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+      ),
+    )
+    .join(", ");
 
 // The result of the operator's `--test-cmd`, in its own group after the review
 // scope. The group sits beside the required-check group and narrows no rule

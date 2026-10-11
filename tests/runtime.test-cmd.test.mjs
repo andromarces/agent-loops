@@ -166,13 +166,13 @@ async function leftoverWriter(lateFile) {
   const dir = await mkdtemp(join(tmpdir(), "late-write-"));
   const go = join(dir, "go");
   const pidFile = join(dir, "child.pid");
+  const spawnedFile = join(dir, "spawned");
   const childFile = join(dir, "child.cjs");
   const spawnerFile = join(dir, "spawner.cjs");
   // The files stay outside the work tree, so only the late write dirties it.
   writeFileSync(
     childFile,
     `const fs = require("fs");
-fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
 setTimeout(() => process.exit(0), 20000);
 setInterval(() => {
   if (fs.existsSync(${JSON.stringify(go)})) {
@@ -183,9 +183,14 @@ setInterval(() => {
   );
   writeFileSync(
     spawnerFile,
-    `require("child_process")
-  .spawn(process.execPath, [${JSON.stringify(childFile)}], { detached: true, stdio: "ignore" })
-  .unref();`,
+    `const fs = require("fs");
+fs.writeFileSync(${JSON.stringify(spawnedFile)}, "");
+const child = require("child_process").spawn(process.execPath, [${JSON.stringify(childFile)}], {
+  detached: true,
+  stdio: "ignore",
+});
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+child.unref();`,
   );
   let workTree = null;
   const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -203,9 +208,12 @@ setInterval(() => {
     },
     async end() {
       spy.mockRestore();
+      // The spawner writes `spawned` before it starts the child, and the pid of the child after.
+      const spawned = existsSync(spawnedFile);
       const pid = Number(await readFile(pidFile, "utf8").catch(() => ""));
+      const known = Number.isInteger(pid) && pid > 0;
       let alive = false;
-      if (Number.isInteger(pid) && pid > 0) {
+      if (known) {
         const exists = () => {
           try {
             process.kill(pid, 0);
@@ -222,7 +230,9 @@ setInterval(() => {
         }
       }
       await removePath(dir);
-      // A child that outlives the bound fails the test visibly, never silently.
+      // A child that outlives the bound, or whose pid is unknown, fails the test visibly.
+      if (spawned && !known)
+        throw new Error("the leftover child started but its pid file is unreadable");
       if (alive) throw new Error(`leftover child ${pid} still runs after the kill`);
     },
   };
