@@ -3,7 +3,7 @@ import { killTreeOnExit } from "./exec-tree.mjs";
 import { readProp } from "./error-message.mjs";
 import { logInfo } from "./log.mjs";
 import { redactEnvSecrets } from "./redact.mjs";
-import { forceCancelSignal } from "./sigint.mjs";
+import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
 import { diffSnapshots, snapshot } from "./snapshot.mjs";
 
 // ADR 0017. The command is the operator's `--test-cmd`, run by the runtime in
@@ -86,7 +86,8 @@ function killTree(subprocess) {
  * result, `status: "canceled"`, as `testRun`, so a write made before the cancel is
  * reported. Every other failure of the command is a result.
  * `forceSignal` (default: the second-SIGINT signal of `signal`) ends the after-command snapshot. The
- * canceled result then has `workTreeChanged` and `changedCount` set to `null`, which means not captured.
+ * result then keeps the status of the command as it completed, and `workTreeChanged` and
+ * `changedCount` are `null`, which means not captured.
  * @param {{ command: string, timeoutSeconds?: number, cwd: string, signal?: AbortSignal, forceSignal?: AbortSignal }} options
  * @returns {Promise<object>} the advisory result: `status` is `pass`, `fail`, `timed-out`, `error`, or `canceled` (thrown)
  */
@@ -153,13 +154,15 @@ export async function runTestCmd({
   // so this read ignores it. Only `forceSignal`, the second cancel, ends it. The change is then
   // unknown (`null`), never "none".
   let changed = null;
+  const endEvidenceRead = beginEvidenceRead(forceSignal);
   try {
     changed = diffSnapshots(before, await snapshot(cwd, { signal: forceSignal }));
   } catch (err) {
     if (!err?.isCanceled) {
       throw err;
     }
-    canceled = true;
+  } finally {
+    endEvidenceRead();
   }
 
   const text = redactAndClean(window.subarray(-CAPTURE_WINDOW_BYTES).toString("utf8"));
@@ -172,7 +175,8 @@ export async function runTestCmd({
   let summary;
   if (canceled) {
     status = "canceled";
-    summary = `canceled before the command finished; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive${changed === null ? "; the work tree change was not captured, because a second cancel ended the read" : ""}`;
+    summary =
+      "canceled before the command finished; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive";
   } else if (timedOut) {
     status = "timed-out";
     summary = `timed out after ${timeoutSeconds} seconds; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive; this is neither a pass nor a failure`;
@@ -182,6 +186,10 @@ export async function runTestCmd({
   } else {
     status = exitCode === 0 ? "pass" : "fail";
     summary = `exit ${exitCode}`;
+  }
+  // Only the evidence is lost. The status above is the result of the command as it completed.
+  if (changed === null) {
+    summary += "; the work tree change was not captured, because a second cancel ended the read";
   }
   logInfo(`test command finished in ${durationMs}ms: ${status}`);
 

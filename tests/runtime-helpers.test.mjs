@@ -12,6 +12,7 @@ import {
   cleanRepoGit,
   createPsShim,
   deadPid,
+  endOwnedProcess,
   expectBoundKillsShim,
   pollUntil,
   untrackedFilesGit,
@@ -387,4 +388,26 @@ test(
     expect(failure?.message).toMatch(/cannot prove a runtime kill/);
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies the cleanup helper signals only the process that carries its marker, so a
+// stale or reused pid of another process is never killed by a test cleanup (#729).
+test.skipIf(process.platform === "win32")(
+  "endOwnedProcess ends a process with the marker and leaves another process alone",
+  async () => {
+    const idle = "setTimeout(() => {}, 30000)";
+    const owned = spawn(process.execPath, ["-e", idle, "owned-marker-7d2c"], { stdio: "ignore" });
+    const foreign = spawn(process.execPath, ["-e", idle], { stdio: "ignore" });
+    try {
+      await vi.waitFor(() => expect(Boolean(owned.pid && foreign.pid)).toBe(true));
+      expect(await endOwnedProcess(foreign.pid, "owned-marker-7d2c")).toBe(false);
+      expect(foreign.signalCode).toBeNull();
+      expect(await endOwnedProcess(owned.pid, "owned-marker-7d2c")).toBe(true);
+      await vi.waitFor(() => expect(owned.signalCode).toBe("SIGKILL"), { timeout: 5000 });
+      expect(foreign.signalCode).toBeNull();
+    } finally {
+      owned.kill("SIGKILL");
+      foreign.kill("SIGKILL");
+    }
+  },
 );

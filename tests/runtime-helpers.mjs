@@ -846,10 +846,29 @@ export async function createPsShim(body, { ceilingSeconds = 10 } = {}) {
 }
 
 /**
+ * POSIX only. Ends `pid` with SIGKILL only when its command line holds `marker`, a value that no
+ * other process carries, so a stale or reused pid is never signaled. Returns true when it sent the
+ * signal.
+ */
+export async function endOwnedProcess(pid, marker) {
+  const { stdout } = await execa("ps", ["-o", "command=", "-p", String(pid)], { reject: false });
+  if (!stdout.includes(marker)) {
+    return false;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * POSIX only. Puts a `git` on PATH that runs the real `git` for its first `passes` calls and then
  * hangs, so a test can let the before snapshot finish and stall the read that follows. `run` gets
- * `hungPid()`, which resolves with the pid of the hung `git` once it started. The helper ends that
- * pid, which it owns, if the test left it alive, and removes the shim directory.
+ * `hungPid()`, which resolves with the pid of the hung `git` once it started. The hung process
+ * carries the unique shim directory in its command line. The helper ends it through
+ * `endOwnedProcess` if the test left it alive, and removes the shim directory.
  */
 export async function withGitHangingAfter(passes, run) {
   const realGit = (await execa("sh", ["-c", "command -v git"])).stdout.trim();
@@ -864,7 +883,7 @@ export async function withGitHangingAfter(passes, run) {
       `echo $((n + 1)) > '${count}'`,
       `if [ "$n" -lt ${passes} ]; then exec '${realGit}' "$@"; fi`,
       `echo $$ > '${pidFile}'`,
-      "exec sleep 30",
+      `exec '${process.execPath}' -e 'setTimeout(() => {}, 30000)' '${dir}'`,
     ].join("\n"),
     { mode: 0o755 },
   );
@@ -878,11 +897,7 @@ export async function withGitHangingAfter(passes, run) {
   } finally {
     const text = await readFile(pidFile, "utf8").catch(() => "");
     if (/^\d+\n$/.test(text)) {
-      try {
-        process.kill(Number(text), "SIGKILL");
-      } catch {
-        // The child already ended.
-      }
+      await endOwnedProcess(Number(text), dir);
     }
     await removePath(dir);
   }

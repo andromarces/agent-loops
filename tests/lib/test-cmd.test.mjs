@@ -217,28 +217,28 @@ test(
   ABORT_KILL_TEST_TIMEOUT_MS,
 );
 
-// Usefulness: verifies a second cancel ends a hung after-command snapshot with a cancel whose
-// result says the work tree change was not captured, so it never reads as "no change" (#729).
+// Usefulness: verifies a second cancel that ends a hung after-command snapshot loses only the
+// evidence: a command that finished before the cancel keeps its own result, and the change reads as
+// not captured, never as "no change" and never as a killed command (#729).
 test.skipIf(process.platform === "win32")(
-  "a second cancel ends a hung after-command snapshot and reports the change as not captured",
+  "a second cancel after a finished command reports its result and the change as not captured",
   async () => {
     const cwd = await repo();
     await withGitHangingAfter(4, async ({ hungPid }) => {
       const second = new AbortController();
-      const pending = runTestCmd({ command: node(""), cwd, forceSignal: second.signal }).catch(
-        (err) => err,
-      );
+      const pending = runTestCmd({ command: node(""), cwd, forceSignal: second.signal });
       const pid = await hungPid();
       second.abort();
-      const error = await pending;
-      expect(error.isCanceled).toBe(true);
-      expect(error.testRun).toMatchObject({
-        status: "canceled",
+      const testRun = await pending;
+      expect(testRun).toMatchObject({
+        status: "pass",
+        exitCode: 0,
         workTreeChanged: null,
         changedPaths: [],
         changedCount: null,
       });
-      expect(error.testRun.summary).toMatch(/not captured/);
+      expect(testRun.summary).toMatch(/^exit 0; .*not captured/);
+      expect(testRun.summary).not.toMatch(/canceled|killed/);
       expect(() => process.kill(pid, 0)).toThrow();
     });
   },

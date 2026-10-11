@@ -4,7 +4,7 @@ import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
-import { forceCancelSignal } from "./sigint.mjs";
+import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
 
 // Milliseconds that one snapshot `git` read waits before it ends the child.
 const GIT_READ_TIMEOUT_MS = 120_000;
@@ -286,6 +286,7 @@ export async function withMutationCheck(
   }
 
   let after;
+  const endEvidenceRead = beginEvidenceRead(forceSignal);
   try {
     after = await snapshot(cwd, { signal: forceSignal });
   } catch (snapErr) {
@@ -302,6 +303,8 @@ export async function withMutationCheck(
       });
     }
     throw snapErr;
+  } finally {
+    endEvidenceRead();
   }
   logDebug(`snapshot after ${role} turn taken (${after.workTree.length} work tree entries)`);
 

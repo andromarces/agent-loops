@@ -1,8 +1,9 @@
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
+import { cancelOnSigInt } from "../../src/lib/sigint.mjs";
 import {
   MutationError,
   SnapshotError,
@@ -163,6 +164,50 @@ test.skipIf(process.platform === "win32")(
         expect(() => process.kill(pid, 0)).toThrow();
       });
     } finally {
+      await removePath(repo);
+    }
+  },
+  60_000,
+);
+
+// Usefulness: verifies the second SIGINT ends the evidence snapshot without exiting the process, so
+// the canceled "not captured" result reaches the caller to write, and the exit with code 130 follows
+// when the run releases its SIGINT handler (#729).
+test.skipIf(process.platform === "win32")(
+  "the second SIGINT ends the evidence snapshot and delays the exit until the run is done",
+  async () => {
+    const repo = await createTempRepo();
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+    const controller = new AbortController();
+    const remove = cancelOnSigInt(controller);
+    try {
+      await withGitHangingAfter(4, async ({ hungPid }) => {
+        const pending = withMutationCheck(
+          repo,
+          "worker",
+          async () => {
+            process.emit("SIGINT");
+          },
+          { signal: controller.signal },
+        ).catch((err) => err);
+        await hungPid();
+        process.emit("SIGINT");
+        const error = await Promise.race([
+          pending,
+          new Promise((_, reject) =>
+            setTimeout(reject, 10_000, new Error("the evidence snapshot did not end")),
+          ),
+        ]);
+        expect(error).toBeInstanceOf(SnapshotError);
+        expect(error.isCanceled).toBe(true);
+        expect(error.message).toMatch(/not captured/);
+        expect(exit).not.toHaveBeenCalled();
+        remove();
+        expect(exit).toHaveBeenCalledWith(130);
+      });
+    } finally {
+      remove();
+      exit.mockRestore();
       await removePath(repo);
     }
   },
