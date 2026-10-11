@@ -854,7 +854,7 @@ async function planFileRestore(record, dryRun) {
  * home reports ENOENT, for any reason, the call takes no lock, reads and writes
  * nothing, reports nothing to remove, and never creates the home. That includes
  * a Windows path that cannot name a directory: no install can exist there, so no
- * data is lost, and it no longer raises the origin/main error (maintainer
+ * data is lost, and it no longer raises an error (maintainer
  * decision, issue #570). An install that creates the home after that check runs
  * after this uninstall returned, as if the uninstall had come first. Any other
  * lstat error takes the locked path, so no branch mutates without the lock.

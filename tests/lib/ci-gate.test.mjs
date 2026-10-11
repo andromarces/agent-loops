@@ -681,7 +681,7 @@ test("refuses the empty union when a ruleset page is empty beside a page with ru
 // An unknown ruleset read must refuse whatever the rest of the union holds, because
 // that reply may carry a required-status rule this caller never saw, and a
 // non-empty union from another source would otherwise let the per-check pass judge
-// only the names it saw (issue #336 review). origin/main treated a failed ruleset
+// only the names it saw (issue #336 review). the gate before issue #336 treated a failed ruleset
 // read as an empty source, so both of these passed there.
 const UNKNOWN_RULESET_WITH_OTHER_NAMES = {
   "a failed ruleset page": { requiredPages: [{ message: "unexpected" }, SECOND_PAGE_RULE] },
@@ -833,7 +833,7 @@ test("accepts every documented rule type that requires no check", async () => {
 });
 
 // A successful empty ruleset read contributes no contexts and leaves the per-check
-// path to the other sources, which is what origin/main did for every unreadable
+// path to the other sources, which is how the gate before issue #336 treated every unreadable
 // ruleset reply. A classic-only repository must keep finishing (issue #336 review).
 const CLASSIC_ONLY_REPOSITORIES = {
   "classic required contexts that passed": {
@@ -2462,7 +2462,7 @@ test.each(["check runs", "commit statuses"])(
 );
 
 // Usefulness: verifies a queued entry with a malformed timestamp keeps the
-// pending classification of origin/main, so the gate waits instead of failing
+// pending classification it had before issue #737, so the gate waits instead of failing
 // (issue #737 review).
 test.each([
   [
@@ -2532,8 +2532,7 @@ test.each(
 });
 
 // Usefulness: verifies an unordered group of successful runs reports pending
-// beside a pending commit status of the same name, so the gate waits as on
-// origin/main instead of reporting a failure (issue #737 review).
+// beside a pending commit status of the same name, so the gate waits, as it did before issue #737, instead of reporting a failure (issue #737 review).
 test("reports pending for unordered successful runs beside a pending commit status", async () => {
   const result = await gateOver({
     headRuns: [

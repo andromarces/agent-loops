@@ -544,7 +544,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
       }
     }
     // The mode is recorded only when the run named one, so a mode-free run writes
-    // the transcript shape origin/main wrote and a consumer of that file sees no
+    // the transcript shape it wrote before the flag existed, and a consumer of that file sees no
     // field this flag introduced (#337).
     const transcriptData = {
       task: options.task,
