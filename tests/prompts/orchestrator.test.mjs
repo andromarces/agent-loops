@@ -851,9 +851,9 @@ test("the headless wait states the childExitUnconfirmed rule", () => {
   expect(prompt).toMatch(/settle that process before you start another wait/i);
 });
 
-// Usefulness: verifies the wait prompt and its bound follow `CHILD_EXIT_CEILING_MS` and
-// `DEFAULT_TIMEOUT`, so a constant change cannot leave a stale number in the text the
-// orchestrator reads, or render a fractional `--timeout` the CLI rejects (issue #736).
+// Usefulness: verifies the wait prompt and its bound follow `CHILD_EXIT_CEILING_MS`.
+// A constant change then leaves no stale number in the prompt text.
+// It also renders no fractional `--timeout`, which the CLI rejects (issue #736).
 test.each([
   [5000, 7, "five"],
   [2500, 7, "three"],
@@ -889,8 +889,8 @@ test.each([
   },
 );
 
-// Usefulness: verifies the turn bound in the wait prompt names the `DEFAULT_TIMEOUT` value
-// when the run sets no turn timeout, so the stated default cannot drift from the CLI default.
+// Usefulness: verifies the wait prompt names the `DEFAULT_TIMEOUT` value when the run sets
+// no turn timeout. The stated default then cannot drift from the CLI default.
 test("the headless wait prompt states the DEFAULT_TIMEOUT value", async () => {
   vi.resetModules();
   vi.doMock("../../src/lib/args.mjs", async (importOriginal) => ({

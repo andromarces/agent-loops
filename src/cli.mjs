@@ -284,7 +284,7 @@ function wrapHelp(text, width = 66) {
 
 // Option text shared by both option lists in `printHelp`.
 const TEST_CMD_TEXT =
-  "Run this command through the platform shell (/bin/sh -c, or cmd.exe on Windows) in --cwd before each reviewer turn, outside the reviewer sandbox, and supply the exit code and an output tail to the reviewer prompt as advisory evidence. This flag is the only source of the command. It runs with the environment of the runtime, so keep secrets out of the command text.";
+  "Run this command through the platform shell (/bin/sh -c, or cmd.exe on Windows) in --cwd before each reviewer turn, outside the reviewer sandbox. The exit code and an output tail go to the reviewer prompt as advisory evidence. This flag is the only source of the command. It runs with the environment of the runtime, so keep secrets out of the command text.";
 const TEST_CMD_TIMEOUT_TEXT =
   "Bound on one --test-cmd run. Defaults to 600. The command's own process group (POSIX) or process tree (Windows) is killed at the bound, and the run reports timed out. An orphan that left the group, or whose parent exited on Windows, can survive (ADR 0017). Requires --test-cmd.";
 const WORKSPACE_WRITE_TEXT =
