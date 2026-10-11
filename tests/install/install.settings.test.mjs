@@ -212,6 +212,43 @@ test.each([
   expect(warnings.join("\n")).toContain(backupPath);
 });
 
+// Usefulness: verifies that the cleanup warning keeps a backup path longer than
+// the 300-character log cap whole, with the instruction to remove it, so the
+// path suffix that identifies the file is never cut.
+test("a backup cleanup warning prints a long backup path in full with the removal instruction", async () => {
+  const home = join(await makeHome(), "a".repeat(120), "b".repeat(120));
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+  const backupPath = `${settingsPath}.agent-loops-backup`;
+  expect(backupPath.length).toBeGreaterThan(300);
+
+  const write = async (path, ...rest) => {
+    if (path === settingsPath) {
+      throw new Error("simulated guard settings write failure");
+    }
+    await writeTextAtomic(path, ...rest);
+    if (path === backupPath) {
+      await rm(path, { force: true });
+      await mkdir(join(path, "child"), { recursive: true });
+    }
+  };
+
+  const warnings = [];
+  const originalError = console.error;
+  console.error = (message) => warnings.push(String(message));
+  try {
+    await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT, write }).catch(
+      () => {},
+    );
+  } finally {
+    console.error = originalError;
+  }
+
+  const warning = warnings.find((line) => line.includes("warn:"));
+  expect(warning).toContain(backupPath);
+  expect(warning).toMatch(/Remove the backup file by hand/);
+});
+
 // Usefulness: verifies the regression fix — an identical guard entry that the
 // user added by hand has no manifest record. The guard is present, so install
 // writes the entry point and leaves the entry unowned; uninstall removes the
