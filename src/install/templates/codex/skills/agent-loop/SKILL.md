@@ -23,6 +23,7 @@ harness inherits it.
 
 Use the invocation text as the task and role settings. Before the init dispatch
 call, verify that the active shell has `CODEX_THREAD_ID`. Do not print its value.
+
 In PowerShell, pass `$env:CODEX_THREAD_ID` as `--parent-session`. Set
 `$worktree = (Get-Location).Path` and pass `--cwd $worktree`. Do not embed
 `$PWD` in POSIX-style quotes. In POSIX shells, pass `--cwd "$PWD"` and

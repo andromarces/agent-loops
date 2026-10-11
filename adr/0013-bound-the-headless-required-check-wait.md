@@ -77,7 +77,7 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
    means the `gh` child was not observed to exit, so the orchestrator settles that
    process before another wait and does not wait again when it cannot.
 10. `docs/orchestrator-instructions.md` ("Headless loop waits") and the
-    README state the same rule, and a test pins the identical exception sentence in the instructions, the prompt, and the README.
+    README state the same rule. A test pins the identical exception sentence in the instructions, the prompt, and the README.
 
 ## Consequences
 

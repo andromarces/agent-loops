@@ -104,7 +104,7 @@ test("CLI install rejects --verbose=1", async () => {
 });
 
 // Usefulness: verifies acceptance (#186) — install and uninstall print their own
-// usage for --help and -h, with the --verbose flag the parser accepts, and exit 0. Verifies acceptance (#419) — usage goes to
+// usage that lists --verbose for --help and -h, and exit 0. Verifies acceptance (#419) — usage goes to
 // stdout only; the stderr-empty check is not redundant because the stdout
 // assertion alone passes when usage is also written to stderr.
 test.each([

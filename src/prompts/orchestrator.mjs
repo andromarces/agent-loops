@@ -57,9 +57,10 @@ const CEILING_WORD = SMALL_NUMBER_WORDS[CEILING_SECONDS] ?? String(CEILING_SECON
  * plus `CHILD_EXIT_CEILING_MS`, rounded up to whole seconds. The bound leaves
  * that ceiling and half the turn free for the orchestrator's own work. The wait
  * and its child-exit window always end before the turn `timeout` (seconds, null
- * when unbounded) does. A turn under twice the ceiling plus two seconds fits no
- * positive bound. That is 12 seconds at the five-second ceiling. The prompt then
- * names no wait (#348).
+ * when unbounded) does.
+ *
+ * A turn under twice the ceiling plus two seconds fits no positive bound. That is
+ * 12 seconds at the five-second ceiling. The prompt then names no wait (#348).
  */
 export function headlessWaitSeconds(timeout) {
   if (typeof timeout !== "number" || timeout <= 0) return DEFAULT_WAIT_SECONDS;
