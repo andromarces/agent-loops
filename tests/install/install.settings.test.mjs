@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
@@ -169,6 +169,38 @@ test("a guard settings write failure leaves no unguarded entry point", async () 
   expect(await readText(settingsPath)).toBe(before);
   expect(existsSync(skillPath)).toBe(false);
   expect(existsSync(manifestPath(home))).toBe(false);
+});
+
+// Usefulness: verifies that a failed backup cleanup does not replace the write
+// error, so the maintainer sees the real cause and the cleanup failure stays
+// reachable on the error.
+test("a backup cleanup failure does not hide the settings write error", async () => {
+  const home = await makeHome();
+  const settingsPath = join(home, ".claude", "settings.json");
+  await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
+  const backupPath = `${settingsPath}.agent-loops-backup`;
+
+  const write = async (path, ...rest) => {
+    if (path === settingsPath) {
+      throw new Error("simulated guard settings write failure");
+    }
+    await writeTextAtomic(path, ...rest);
+    if (path === backupPath) {
+      // A non-empty directory in place of the backup makes its removal fail.
+      await rm(path, { force: true });
+      await mkdir(join(path, "child"), { recursive: true });
+    }
+  };
+
+  const error = await install({
+    harnesses: ["claude"],
+    home,
+    packageRoot: PACKAGE_ROOT,
+    write,
+  }).catch((err) => err);
+
+  expect(error.message).toBe("simulated guard settings write failure");
+  expect(error.backupCleanupError).toBeInstanceOf(Error);
 });
 
 // Usefulness: verifies the regression fix — an identical guard entry that the

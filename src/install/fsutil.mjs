@@ -1,6 +1,7 @@
 // Filesystem and comparison helpers for the user-scope installer (#139).
 // Every write is atomic (temp file plus rename) and every hash is SHA-256 over
 // the UTF-8 bytes, so the manifest can prove equality with what it last wrote.
+import { randomUUID } from "node:crypto";
 import {
   access,
   chmod,
@@ -60,16 +61,24 @@ export async function fileMode(path) {
  * Writes through a temp file in the same directory, then renames. Preserves the
  * destination's permission bits unless `mode` is given, so a private settings
  * file stays private after install, backup, and restore. The temp file is
- * created with that mode, so it is never briefly world-readable.
+ * created exclusively with a name unique to this call and with that mode, so it
+ * is never briefly world-readable. A failed write removes the temp file and
+ * rethrows the original error.
  */
 export async function writeTextAtomic(path, text, { mode } = {}) {
-  const temp = `${path}.${process.pid}.tmp`;
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const targetMode = mode ?? (await fileMode(path));
-  await writeFile(temp, text, { encoding: "utf8", mode: targetMode ?? 0o666 });
-  if (targetMode !== null && process.platform !== "win32") {
-    await chmod(temp, targetMode);
+  try {
+    await writeFile(temp, text, { encoding: "utf8", mode: targetMode ?? 0o666, flag: "wx" });
+    if (targetMode !== null && process.platform !== "win32") {
+      await chmod(temp, targetMode);
+    }
+    await rename(temp, path);
+  } catch (err) {
+    // A cleanup failure must not replace the original error.
+    await rm(temp, { force: true }).catch(() => {});
+    throw err;
   }
-  await rename(temp, path);
 }
 
 export async function removeFileQuiet(path) {
