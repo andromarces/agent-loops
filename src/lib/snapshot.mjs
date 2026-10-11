@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { execBounded } from "./exec.mjs";
@@ -115,13 +116,35 @@ async function gitIn(cwd, args, bound) {
   return result;
 }
 
+// The work tree roots that one run resolved, by directory. Unset outside `withWorkTreeRootCache`.
+const rootCache = new AsyncLocalStorage();
+
+/**
+ * Runs `fn` with a root cache: `workTreeRoot`, and so `snapshot`, asks `git` for the root of a
+ * directory once, and later reads of that directory in `fn` reuse the answer. The cache lives for
+ * one run, because the root of a directory does not change during a run. A failed or canceled
+ * lookup is not cached. Outside this scope every read asks `git` again (#760).
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export function withWorkTreeRootCache(fn) {
+  return rootCache.run(new Map(), fn);
+}
+
 /** The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`. */
 export async function workTreeRoot(cwd, bound) {
+  const cache = rootCache.getStore();
+  if (cache?.has(cwd)) {
+    return cache.get(cwd);
+  }
   const rootResult = await gitRead(cwd, ["rev-parse", "--show-toplevel"], bound);
   if (rootResult.exitCode !== 0) {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
   }
-  return rootResult.stdout.trim();
+  const root = rootResult.stdout.trim();
+  cache?.set(cwd, root);
+  return root;
 }
 
 /**
