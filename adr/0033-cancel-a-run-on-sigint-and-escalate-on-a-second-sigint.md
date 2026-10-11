@@ -4,7 +4,7 @@
 
 accepted
 
-Partly superseded by [ADR 0036: Bound every snapshot-path read and end the evidence snapshot on a second cancel](0036-bound-every-snapshot-path-read-and-end-the-evidence-snapshot-on-a-second-cancel.md): decision 8 no longer holds for the after-turn and after-command snapshots. A second SIGINT that arrives while one of them runs ends it, defers the exit until the run writes its result, and reports the evidence as not captured. The other decisions hold, so this ADR stays `accepted`.
+Partly superseded by [ADR 0036: Bound every snapshot-path read and end the evidence snapshot on a second cancel](0036-bound-every-snapshot-path-read-and-end-the-evidence-snapshot-on-a-second-cancel.md): decision 8 no longer holds for the after-turn and after-command snapshots. A second SIGINT that arrives while one of them runs ends it and reports the evidence as not captured. The exit waits until the run writes its result. The other decisions hold, so this ADR stays `accepted`.
 
 ## Date
 

@@ -1150,6 +1150,74 @@ test("a headless reviewer cancel in the evidence snapshot reports the evidence a
   });
 });
 
+// Usefulness: verifies a canceled snapshot error whose message cannot convert to text still ends the
+// run with exit 130 and a written transcript, so a hostile reason never escapes the cancel path (#729).
+test("a cancel whose snapshot reason cannot convert to text still exits 130", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const hostile = new Error("placeholder");
+  hostile.name = "SnapshotError";
+  hostile.isCanceled = true;
+  Object.defineProperty(hostile, "message", {
+    get() {
+      return {
+        toJSON() {
+          throw new Error("no JSON");
+        },
+        toString() {
+          throw new Error("no text");
+        },
+      };
+    },
+  });
+  const agents = {
+    codex: {
+      async run() {
+        throw hostile;
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "task",
+        "--cwd",
+        repo,
+        "--transcript",
+        transcriptPath,
+      ],
+      agents,
+    );
+    expect(process.exitCode).toBe(130);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(transcript.exitCode).toBe(130);
+    expect(transcript.error).toContain("Interrupted by SIGINT");
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await removePath(repo);
+  }
+});
+
 // Usefulness: acceptance (#669) — a real SIGINT while an execa child runs ends the run through its
 // handler (exit 130, transcript written), not by re-raised signal. A child process is needed: the
 // execa exit handler re-raises the signal only when no other SIGINT listener remains. Windows has

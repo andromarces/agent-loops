@@ -885,7 +885,9 @@ ${redactedText(readProp(err, "message") ?? err)}`);
       if (readProp(err, "isCanceled")) {
         // A canceled snapshot says what it could not read, such as the changed-path evidence, so the
         // reason stays in the transcript and the error report.
-        const reason = readProp(err, "name") === "SnapshotError" ? readProp(err, "message") : null;
+        // `redactedText` converts any message safely, so a hostile one cannot lose exit 130.
+        const message = readProp(err, "name") === "SnapshotError" ? readProp(err, "message") : null;
+        const reason = message == null ? "" : redactedText(message);
         await finish({
           exitCode: 130,
           error: new Error(reason ? `Interrupted by SIGINT: ${reason}` : "Interrupted by SIGINT"),
