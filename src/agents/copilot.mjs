@@ -31,8 +31,12 @@ const SHELL_DENIAL_TEXT = "Permission denied because no interactive user respons
  * the next turn then starts a fresh session.
  */
 async function holdsTurn(id, cwd) {
-  if (!isUuid(id)) {
+  if (!isUuid(String(id))) {
     return false;
+  }
+  // A stored non-string that reads as a UUID, such as `[uuid]`, is a malformed state, not a missing session.
+  if (typeof id !== "string") {
+    throw new TypeError("Copilot session id must be a string.");
   }
   const home = resolve(
     cwd ?? process.cwd(),

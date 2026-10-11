@@ -1292,3 +1292,25 @@ test("a sessionless init model does not drive the continuation check", async () 
     info.mockRestore();
   }
 });
+
+// Usefulness: a stored non-string id that reads as a UUID is not owned, so the turn is flagged missing and starts no CLI, as before the shared `isUuid` check (#732); this passes on both sides of that change and pins it.
+test("runClaude flags a non-string unconfirmed session id as missing", async () => {
+  await withSessionStore(
+    () => [],
+    async (work) => {
+      vi.mocked(exec).mockReset();
+      const state = {
+        kind: "claude",
+        sessionId: ["44444444-4444-4444-8444-444444444444"],
+        sessionUnconfirmed: true,
+        model: null,
+        effort: null,
+      };
+
+      const caught = await runClaude(state, "p", { cwd: work, role: "worker" }).catch((e) => e);
+
+      expect(caught.sessionMissing).toBe(true);
+      expect(vi.mocked(exec)).not.toHaveBeenCalled();
+    },
+  );
+});
