@@ -445,6 +445,73 @@ function earlyMergeRefusal(mergeState) {
   return null;
 }
 
+// A runner whose calls also end when `signal` aborts, beside any signal the
+// caller's runner already carries.
+const withSignal =
+  (gh, signal) =>
+  (args, cwd, options = {}) =>
+    gh(args, cwd, {
+      ...options,
+      signal: options.signal ? AbortSignal.any([options.signal, signal]) : signal,
+    });
+
+// The first failure of a group, in sequential order, carried past the wait for
+// the cancelled siblings. `expired` is whether the caller's deadline (`gh.deadline`)
+// had already fired when the failure was captured. A failure captured before the
+// deadline stays the outcome, so a deadline that expires during the wait cannot
+// replace it. The entry points unwrap it with `failureOf`.
+class ReadFailure {
+  constructor(cause, expired) {
+    this.cause = cause;
+    this.expired = expired;
+  }
+}
+
+const failureOf = (err) => (err instanceof ReadFailure ? err.cause : err);
+
+// Runs independent reads together. Each maker receives a runner that the group
+// can cancel. The reads are awaited in list order, so the first failure in that
+// order throws as soon as it is reached, the error the same reads run in sequence
+// surfaced. A later sibling that is slow or stalled never delays that error. On a
+// failure the remaining reads are cancelled and settled before the throw, so no
+// `gh` child outlives the caller.
+async function inOrder(gh, makers) {
+  const group = new AbortController();
+  const scoped = withSignal(gh, group.signal);
+  const reads = makers.map((make) => make(scoped));
+  for (const read of reads) {
+    read.catch(() => {});
+  }
+  try {
+    const values = [];
+    for (const read of reads) {
+      values.push(await read);
+    }
+    return values;
+  } catch (err) {
+    const expired = gh.deadline?.aborted ?? false;
+    group.abort();
+    await Promise.allSettled(reads);
+    throw new ReadFailure(err, expired);
+  }
+}
+
+// Starts the repository read beside the PR read. A failure surfaces only when the
+// caller awaits `read`, after the PR checks that came first in sequence. `cancel`
+// ends and settles the read, so an early return leaves no `gh` child running.
+function startRepoSlug(gh, cwd) {
+  const controller = new AbortController();
+  const read = repoSlug(withSignal(gh, controller.signal), cwd);
+  read.catch(() => {});
+  return {
+    read,
+    cancel: async () => {
+      controller.abort();
+      await Promise.allSettled([read]);
+    },
+  };
+}
+
 async function prInfo(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(
     [
@@ -546,16 +613,26 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   const unknown = [];
   const unparsed = [];
 
-  const rules = await readRequiredSource(
-    gh,
-    // The endpoint paginates at 30 rules per page by default, so a single read can
-    // stop before a required-status-check rule and report an absence for a branch
-    // that requires one. Every page is fetched, and a body the gate cannot account
-    // for every page of is unknown (issue #336 review).
-    [`repos/${slug}/rules/branches/${base}`, "--paginate", "--slurp"],
-    cwd,
-    { absentOnError: () => false, classify: classifyRulesets },
-  );
+  const [rules, protection, listed] = await inOrder(gh, [
+    (read) =>
+      readRequiredSource(
+        read,
+        // The endpoint paginates at 30 rules per page by default, so a single read can
+        // stop before a required-status-check rule and report an absence for a branch
+        // that requires one. Every page is fetched, and a body the gate cannot account
+        // for every page of is unknown (issue #336 review).
+        [`repos/${slug}/rules/branches/${base}`, "--paginate", "--slurp"],
+        cwd,
+        { absentOnError: () => false, classify: classifyRulesets },
+      ),
+    (read) =>
+      readRequiredSource(read, [`repos/${slug}/branches/${base}/protection`], cwd, {
+        absentOnError: isNotProtected404,
+        classify: classifyProtection,
+        malformed: isProtectionMalformed,
+      }),
+    (read) => ghRequiredNames(read, pr, cwd),
+  ]);
   if (rules.state === UNKNOWN) {
     unknown.push(RULESETS);
   }
@@ -565,16 +642,6 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
   for (const context of rules.contexts) {
     addContext(contexts, context.name, context.appId);
   }
-  const protection = await readRequiredSource(
-    gh,
-    [`repos/${slug}/branches/${base}/protection`],
-    cwd,
-    {
-      absentOnError: isNotProtected404,
-      classify: classifyProtection,
-      malformed: isProtectionMalformed,
-    },
-  );
   if (protection.state === UNKNOWN) {
     unknown.push(PROTECTION);
   }
@@ -585,7 +652,6 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
     addContext(contexts, context.name, context.appId);
   }
 
-  const listed = await ghRequiredNames(gh, pr, cwd);
   for (const name of listed.names) {
     addContext(contexts, name);
   }
@@ -718,14 +784,18 @@ async function evaluatedState(gh, slug, info, cwd, strict = false) {
   const head = info.headRefOid;
   const merge = info.potentialMergeCommit?.oid ?? null;
   if (merge && merge !== head) {
-    const runs = await checkRuns(gh, slug, merge, cwd, strict);
-    const statuses = await commitStatuses(gh, slug, merge, cwd, strict);
+    const [runs, statuses] = await inOrder(gh, [
+      (read) => checkRuns(read, slug, merge, cwd, strict),
+      (read) => commitStatuses(read, slug, merge, cwd, strict),
+    ]);
     if (runs.length > 0 || statuses.length > 0) {
       return { commit: merge, runs, statuses };
     }
   }
-  const runs = await checkRuns(gh, slug, head, cwd, strict);
-  const statuses = await commitStatuses(gh, slug, head, cwd, strict);
+  const [runs, statuses] = await inOrder(gh, [
+    (read) => checkRuns(read, slug, head, cwd, strict),
+    (read) => commitStatuses(read, slug, head, cwd, strict),
+  ]);
   return { commit: head, runs, statuses };
 }
 
@@ -883,6 +953,19 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
     return fail("the reviewed work tree is not clean");
   }
 
+  const slugRead = startRepoSlug(gh, cwd);
+  try {
+    return await judgeCi({ pr, reviewed, cwd, gh, slug: slugRead.read });
+  } catch (err) {
+    throw failureOf(err);
+  } finally {
+    await slugRead.cancel();
+  }
+}
+
+// The judgment of `checkCi` after its early guards. `slug` is the repository read
+// that started beside the PR read; it is awaited only after the PR refusals.
+async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
   const info = await prInfo(gh, pr, cwd);
   const early = earlyMergeRefusal(info.mergeStateStatus);
   if (early) {
@@ -892,7 +975,7 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
     return fail("the PR head differs from the reviewed commit");
   }
 
-  const slug = await repoSlug(gh, cwd);
+  const slug = await slugRead;
   const {
     unknown,
     rulesetState,
@@ -1047,9 +1130,19 @@ export async function readRequiredChecks({
   // timeout here, because from the read's side the call simply stopped.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const call = (args, callCwd) => gh(args, callCwd, { signal: controller.signal, timeoutMs });
+  // A group of reads adds its own signal, so a failed read cancels its siblings
+  // without reading as a timeout of the whole bound.
+  const call = (args, callCwd, { signal = null } = {}) =>
+    gh(args, callCwd, {
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
+      timeoutMs,
+    });
+  call.deadline = controller.signal;
   let prHead = null;
+  let slugStart = null;
   try {
+    slugStart = startRepoSlug(call, cwd);
+    const slugRead = slugStart.read;
     const info = await prInfo(call, pr, cwd);
     prHead = typeof info.headRefOid === "string" && info.headRefOid !== "" ? info.headRefOid : null;
     if (prHead === null) {
@@ -1067,7 +1160,7 @@ export async function readRequiredChecks({
         prHead,
       );
     }
-    const slug = await repoSlug(call, cwd);
+    const slug = await slugRead;
     const { unknown, unparsed, namesRead, rulesetState, contexts } = await requiredContexts(
       call,
       slug,
@@ -1153,11 +1246,15 @@ export async function readRequiredChecks({
       head,
     );
   } catch (err) {
-    const detail = controller.signal.aborted
-      ? `the read timed out after ${timeoutMs}ms`
-      : oneLine(readableErrorText(err));
+    // A failure decided before the deadline stays the outcome, whatever the
+    // deadline does while the cancelled siblings settle.
+    const detail =
+      controller.signal.aborted && !(err instanceof ReadFailure && !err.expired)
+        ? `the read timed out after ${timeoutMs}ms`
+        : oneLine(readableErrorText(failureOf(err)));
     return unresolved(`unread: ${detail}`, prHead);
   } finally {
     clearTimeout(timer);
+    await slugStart?.cancel();
   }
 }
