@@ -45,7 +45,7 @@ The transcript already records every child result, with the reviewed head and di
 - A transcript file inside the work tree is an untracked file, so it changes the digest and keeps the reset. Keep it outside the work tree.
 - A continuation whose `--transcript` path differs from `--continue-from` holds only its own events, so one that ran no turn has no result to restore from, and the next continuation resets.
 
-## Alternatives considered
+## Alternatives
 
 1. **Stored gate flags in the transcript**: rejected after review. An edited flag bypasses a gate. The `gate` event is a record that the replay of the events must reproduce.
 2. **Restore with no tree check**: rejected. A saved accept cannot cover an edit made between the runs.

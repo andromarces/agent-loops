@@ -57,7 +57,7 @@ memory in `runLoop`.
 - A transcript from an earlier version, written before this change, continues
   without change, because it already holds `roles` and `cwd`.
 
-## Alternatives considered
+## Alternatives
 
 1. **Persist and restore the gate state**: rejected. It needs a new file format
    and a tree identity check, and the saved accept still cannot cover an edit made
