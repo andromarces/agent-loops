@@ -274,7 +274,7 @@ function suppliedRead(pr) {
  * @returns {string}
  */
 function noRequiredCheckClause() {
-  return " A base branch whose required-check sources each state that it holds no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records the absence. Only one exact reply per source states that outcome, so a source this credential cannot read, a reply the gate cannot read, and a merge state the gate cannot read all leave it refusing instead, with the refusal naming the source. A ruleset read of exactly one empty page is the class empty: a successful read that found no rule, which contributes no contexts, so the per-check pass runs on the other sources, exactly as origin/main did, and a classic-only repository still finishes, while a ruleset read of no page, several empty pages, or an empty page beside a page that holds rules is the class unknown and refuses.";
+  return " A base branch whose required-check sources each state that it holds no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records the absence. Only one exact reply per source states that outcome, so a source this credential cannot read, a reply the gate cannot read, and a merge state the gate cannot read all leave it refusing instead, with the refusal naming the source. A ruleset read of exactly one empty page is the class empty: a successful read that found no rule, which contributes no contexts, so the per-check pass runs on the other sources, and a classic-only repository still finishes, while a ruleset read of no page, several empty pages, or an empty page beside a page that holds rules is the class unknown and refuses.";
 }
 
 /**
@@ -334,8 +334,8 @@ function continuedBlock(continued, gateRestored) {
  * same values as the interactive path, and review-only takes no PR flag and
  * refuses a worker dispatch, so the prompt states the mode the run was started
  * with. One line per mode, naming the mode and the dispatch rule it carries.
- * Empty without `--mode`, so a run that named no mode keeps the origin/main
- * prompt byte for byte (#337).
+ * Empty without `--mode`, so a run that named no mode keeps the prompt it had
+ * before the flag existed, byte for byte (#337).
  */
 function modeBlock(mode) {
   if (mode === null) return "";
