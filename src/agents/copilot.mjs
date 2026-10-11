@@ -34,14 +34,11 @@ async function holdsTurn(id, cwd) {
   if (!isUuid(String(id))) {
     return false;
   }
-  // A stored non-string that reads as a UUID, such as `[uuid]`, is a malformed state, not a missing session.
-  if (typeof id !== "string") {
-    throw new TypeError("Copilot session id must be a string.");
-  }
   const home = resolve(
     cwd ?? process.cwd(),
     process.env.COPILOT_HOME || join(homedir(), ".copilot"),
   );
+  // A stored non-string that reads as a UUID, such as `[uuid]`, is refused by the native `TypeError` of `join`.
   const head = await readSessionHead(join(home, "session-state", id), "events.jsonl");
   return (head?.split("\n") ?? []).some((line) => {
     try {

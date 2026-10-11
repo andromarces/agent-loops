@@ -1203,19 +1203,25 @@ test("copilot worker result carries no denial flag after a turn with no denial",
   expect(second).not.toHaveProperty("shellDenied");
 });
 
-// Usefulness: a stored session id that is not a string refuses the turn with a TypeError and starts no CLI, so a malformed state is never read as a missing session that reruns as a first turn (#732).
-test("runCopilot refuses a non-string unconfirmed session id", async () => {
+// Usefulness: a stored non-string id that reads as a UUID (an array of one) refuses the turn with the native `join` TypeError (code and message) and starts no CLI, so a malformed state is never read as a missing session that reruns as a first turn (#732). Other non-string values are not covered.
+test("runCopilot refuses a UUID-shaped non-string unconfirmed session id with the native TypeError", async () => {
   await withCopilotHome(async () => {
     vi.mocked(exec).mockReset();
-    const state = {
-      ...freshState(),
-      sessionId: ["44444444-4444-4444-8444-444444444444"],
-      sessionUnconfirmed: true,
-    };
+    const id = ["44444444-4444-4444-8444-444444444444"];
+    const native = (() => {
+      try {
+        join("home", "session-state", id);
+      } catch (err) {
+        return err;
+      }
+    })();
+    const state = { ...freshState(), sessionId: id, sessionUnconfirmed: true };
 
     const caught = await runCopilot(state, "p", { cwd: "/dir" }).catch((e) => e);
 
     expect(caught).toBeInstanceOf(TypeError);
+    expect(caught.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(caught.message).toBe(native.message);
     expect(caught.sessionMissing).toBeUndefined();
     expect(vi.mocked(exec)).not.toHaveBeenCalled();
   });
