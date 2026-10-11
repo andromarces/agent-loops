@@ -38,10 +38,10 @@ Node `^22.18.0 || ^24.11.0 || >=26.0.0`.
    `staged` block. Test files import from `vite-plus/test`.
 3. Scripts call the project-local `vp`: `vp fmt`, `vp fmt --check`, `vp lint`,
    `vp test run`, `vp test watch`. No global `vp` install is required.
-4. `pnpm-workspace.yaml` overrides `vite` to `npm:@voidzero-dev/vite-plus-core` and
-   `vitest`, so test files and the `vp test` runner share one Vitest copy. Each
-   `vite-plus` upgrade must re-pin both overrides to the versions that
-   `vp --version` lists. The original adoption pinned `vite-plus-core@1.0.0` and
+4. `pnpm-workspace.yaml` overrides `vite` to the `npm:@voidzero-dev/vite-plus-core`
+   alias and `vitest` to a fixed version, so test files and the `vp test` runner
+   share one Vitest copy. Each `vite-plus` upgrade re-pins `vitest` to the version
+   that `vp --version` lists. The original adoption pinned `vite-plus-core@1.0.0` and
    `vitest` `5.0.1`. `pnpm-workspace.yaml` holds the current pins.
 5. Keep separate steps. `vp check` is not adopted, because it also lints. The
    `pre-commit` hook runs `vp staged`, whose rule formats staged JS/TS files only.
@@ -102,7 +102,7 @@ Node `^22.18.0 || ^24.11.0 || >=26.0.0`.
   96 rules. A warning still does not fail the run. The Vitest 5.0.2 and 5.0.3 fixes
   cover features this suite does not use (browser mode, jsdom, UI, `repeats`,
   `test.fails`, `expect.extend`).
-- A `vite-plus` upgrade must re-pin the `vite` and `vitest` overrides by hand. Dependabot does
+- A `vite-plus` upgrade must re-pin the `vitest` override by hand. Dependabot does
   not do it: dependabot-core (`main` at `47c1f006b3db`, 2026-10-05) reads only
   `catalog` and `catalogs` from `pnpm-workspace.yaml`, not `overrides`.
 - `pnpm install` reports an unmet `vite` peer of `vitest`, because the alias
