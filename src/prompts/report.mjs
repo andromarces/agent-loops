@@ -11,3 +11,11 @@ Checks: the commands that ran and their results, or "none". One line.
 Notes: non-blocking findings the next turn does not need to act on, or "none".
 Deferred: items found but left out of scope, or "none".
 `.trim();
+
+/**
+ * Process rule for every worker and reviewer turn (issue #762). The dispatcher and the CLI of the
+ * run carry the work tree path in their command lines, so a kill by name or by match can end the
+ * run itself.
+ */
+export const processRule =
+  "Never stop, kill, or signal a process that your own commands did not start, and never select processes by name or by a command-line match. End only the exact PIDs your own commands started.";

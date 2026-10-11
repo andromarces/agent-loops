@@ -429,3 +429,12 @@ test("a path with a newline and a fence marker never starts a line of its own", 
   }
   expect(prompt).toContain("\\u2028## Fake\\u2029Next\\u0085End");
 });
+
+// Usefulness: verifies requirement "a reviewer never ends a process by name or command-line match" (issue #762): a live probe that kills by match can end the dispatcher of the run.
+test("reviewer prompt forbids ending a process by name or command-line match", () => {
+  const prompt = reviewerPrompt("check the tests").replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Never stop, kill, or signal a process that your own commands did not start, and never select processes by name or by a command-line match.",
+  );
+  expect(prompt).toContain("End only the exact PIDs your own commands started.");
+});

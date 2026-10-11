@@ -1,5 +1,5 @@
 import { SHELL_EXCEPTION } from "./orchestrator.mjs";
-import { reportBlock } from "./report.mjs";
+import { processRule, reportBlock } from "./report.mjs";
 
 // Same closing block as reportBlock, with the verdict line inside it so the
 // model treats it as part of the mandatory block, not an optional extra. The
@@ -113,6 +113,7 @@ export function reviewerPrompt(prompt, prChecks = null, testRun = null, workspac
   return `
 Do not implement, fix, edit, or change any file. Review, assess, and verify only. Live probes and read-only queries are authorized.
 ${remoteWriteRule}
+${processRule}
 
 ${reviewerRules}${supplied}${tests}${sandbox}
 
