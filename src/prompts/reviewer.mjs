@@ -42,6 +42,20 @@ function fenceFor(text) {
   return "`".repeat(Math.max(3, longest + 1));
 }
 
+// A path comes from the work tree, so it is untrusted text. JSON encoding keeps each path on one
+// line, with a newline and a quote escaped, so a path cannot start a line of its own.
+// JSON leaves U+0085, U+2028, and U+2029 raw, and a renderer can read them as a line break, so
+// they are escaped too.
+const pathList = (paths) =>
+  paths
+    .map((path) =>
+      JSON.stringify(path).replace(
+        /[\u0085\u2028\u2029]/g,
+        (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+      ),
+    )
+    .join(", ");
+
 // The result of the operator's `--test-cmd`, in its own group after the review
 // scope. The group sits beside the required-check group and narrows no rule
 // above it. The output tail is data from a process the model does not control,
@@ -53,13 +67,18 @@ function testRunLines(testRun) {
     "- A timed-out result is neither a pass nor a failure. Report it as unresolved in Checks. A failed command is evidence of a failure, so report the failing tests as a blocker only when the output names them.",
   ];
   if (testRun.workTreeChanged) {
-    const shown = testRun.changedPaths.join(", ");
+    const shown = pathList(testRun.changedPaths);
     const more =
       testRun.changedCount > testRun.changedPaths.length
         ? ` and ${testRun.changedCount - testRun.changedPaths.length} more`
         : "";
     lines.push(
       `- The command changed the work tree: ${shown}${more}. The tree you review includes those changes, and they are not your mutation. Report the change in Checks, and report an edit to a tracked file as a blocker unless the task expects it.`,
+    );
+  }
+  if (testRun.lateChangedPaths?.length > 0) {
+    lines.push(
+      `- The work tree changed after the command finished and before this turn started: ${pathList(testRun.lateChangedPaths)}. A process that the command left behind can cause this. The tree you review includes those changes, and they are not your mutation. This is advisory. Report the change in Checks, and report an edit to a tracked file as a blocker unless the task expects it.`,
     );
   }
   const fence = fenceFor(testRun.tail);
