@@ -738,29 +738,23 @@ async function evaluatedState(gh, slug, info, cwd, strict = false) {
   return { commit: head, runs, statuses };
 }
 
-// The most recent matching check run, by start time. GitHub evaluates the
-// latest run for a name; an earlier failing run that a later run replaces does
-// not fail the gate.
-function latestRun(runs) {
+// The most recent entry: the later of the first present timestamp in `fields`,
+// then the larger numeric id when timestamps tie. GitHub evaluates the latest
+// run for a name; an earlier failing run that a later run replaces does not
+// fail the gate.
+function latestBy(entries, fields) {
+  const stamp = (entry) => fields.map((field) => entry[field]).find((value) => value != null) ?? "";
   let latest = null;
-  for (const run of runs) {
-    const key = `${run.started_at ?? run.completed_at ?? ""}\0${run.id ?? 0}`;
-    if (!latest || key >= latest.key) {
-      latest = { key, run };
+  for (const entry of entries) {
+    if (
+      !latest ||
+      stamp(entry) > stamp(latest) ||
+      (stamp(entry) === stamp(latest) && (entry.id ?? 0) >= (latest.id ?? 0))
+    ) {
+      latest = entry;
     }
   }
-  return latest?.run ?? null;
-}
-
-function latestStatus(statuses) {
-  let latest = null;
-  for (const status of statuses) {
-    const key = `${status.updated_at ?? status.created_at ?? ""}\0${status.id ?? 0}`;
-    if (!latest || key >= latest.key) {
-      latest = { key, status };
-    }
-  }
-  return latest?.status ?? null;
+  return latest;
 }
 
 // Null when the required context passes, or `{ kind, reason }` where `kind` is
@@ -787,7 +781,7 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
   // another run, an earlier run, or a commit status (issue #349).
   let problem = null;
   if (matchingRuns.length > 0) {
-    const run = latestRun(matchingRuns);
+    const run = latestBy(matchingRuns, ["started_at", "completed_at"]);
     if (run.status !== "completed") {
       problem = {
         kind: "pending",
@@ -802,7 +796,7 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
   }
 
   if (matchingStatuses.length > 0) {
-    const status = latestStatus(matchingStatuses);
+    const status = latestBy(matchingStatuses, ["updated_at", "created_at"]);
     if (status.state !== "success" && problem === null) {
       problem = {
         // A pending commit status has not failed: the reason text stays the gate's.

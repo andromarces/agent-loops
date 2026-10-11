@@ -2343,6 +2343,38 @@ test.each([
   expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
 });
 
+// Usefulness: verifies the latest entry at equal timestamps is the one with the
+// larger numeric id, so run `10` outranks run `9` and a failing latest entry is
+// not read as a pass (issue #737).
+test.each([
+  [
+    "check runs",
+    {
+      headRuns: [
+        run("ci (ubuntu-latest)", "success"),
+        { ...run("ci (windows-latest)", "success"), id: 9 },
+        { ...run("ci (windows-latest)", "failure"), id: 10 },
+      ],
+    },
+  ],
+  [
+    "commit statuses",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      headStatuses: [
+        { ...commitStatus("ci (windows-latest)", "success"), id: 9 },
+        { ...commitStatus("ci (windows-latest)", "failure"), id: 10 },
+      ],
+    },
+  ],
+])(
+  "reads the entry with the larger numeric id at equal timestamps for %s",
+  async (_name, options) => {
+    const read = await readOn(HEAD, statusReadGh(options));
+    expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+  },
+);
+
 // Usefulness: verifies every supplied status stays advisory after the commit
 // binding, because the read is a pre-turn snapshot and the `--require-ci` gate
 // re-reads GitHub and enforces the condition (issue #349).
