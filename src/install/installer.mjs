@@ -11,7 +11,7 @@
 // read-modify-write of the manifest cannot drop a record, whatever the temp
 // root of each process (#193, #198).
 import { lstatSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
 import { logWarn, logWarnFull } from "../lib/log.mjs";
 import { withStateLock } from "../lib/state-lock.mjs";
@@ -25,7 +25,7 @@ import {
   sha256,
   writeTextAtomic,
 } from "./fsutil.mjs";
-import { HARNESS_META, HARNESS_ORDER } from "../lib/harnesses.mjs";
+import { HARNESS_ORDER } from "../lib/harnesses.mjs";
 import { buildTargets } from "./harnesses.mjs";
 import { EPHEMERAL_ROOT_MESSAGE, isEphemeralPackageRoot } from "./package-root.mjs";
 import {
@@ -317,6 +317,7 @@ async function runInstall({
       dirs: new Set(previous?.dirs ?? []),
       files: [],
       settings: [],
+      notes: targets.notes,
     };
     for (const file of targets.files) {
       const prior = previous?.files?.find((record) => record.path === file.path) ?? null;
@@ -420,10 +421,8 @@ async function runInstall({
 
   // Codex notes precede Claude notes whatever order the harnesses were selected in.
   for (const harness of [...HARNESS_ORDER].reverse()) {
-    if (!harnesses.includes(harness)) {
-      continue;
-    }
-    for (const note of HARNESS_META[harness].notes ?? []) {
+    const planned = plans.find((entry) => entry.harness === harness);
+    for (const note of planned?.notes ?? []) {
       if (dryRun && !note.dryRun) {
         continue;
       }
@@ -431,7 +430,7 @@ async function runInstall({
         harness,
         kind: "settings",
         action: "note",
-        path: join(home, ...note.path),
+        path: note.path,
         detail: note.detail,
       });
     }

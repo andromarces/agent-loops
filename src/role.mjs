@@ -3,36 +3,24 @@
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
 // envelope per invocation, except `--help`, which prints plain usage; all logs go
 // to stderr.
-import { writeSync } from "node:fs";
 import { readFile, appendFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
+import { defaultAgents, normalizeAgent } from "./agents/index.mjs";
 import {
   CHILD_ROLE_KINDS,
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
   REVIEW_ONLY_GATE_REFUSAL,
-  REVIEW_ONLY_PR_REFUSAL,
-  ROLE_FLAG_BY_OPTION,
-  assertOpenCodeOptions,
   parseFlags,
   readTaskFile,
   readStdinText,
   roleFlags,
   TASK_SOURCE_CONFLICT,
-  reviewerWorkspaceWriteError,
-  testCmdError,
 } from "./lib/args.mjs";
 import { checkCi } from "./lib/ci-gate.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "./lib/continuation.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
-import {
-  errorMessage,
-  readableErrorMessage,
-  redactedText,
-  readProp,
-  UNREADABLE_MESSAGE,
-} from "./lib/error-message.mjs";
+import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
 import { isSpawnedByRun } from "./lib/exec.mjs";
 import { copyLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
@@ -51,6 +39,9 @@ import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, failedTestRun, testCmdInput } from "./lib/test-cmd.mjs";
+import { RoleError } from "./role-error.mjs";
+import { printEnvelope, errorResult, writeAllSync } from "./role-envelope.mjs";
+import { rejectInitFlagChanges, validateInitFlags } from "./role-init-flags.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
@@ -60,8 +51,6 @@ const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
 // Operations that end or extend a run. A child process of that run never runs them.
 const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend"]);
-
-class RoleError extends Error {}
 
 const ROLE_USAGE = [
   "Usage: agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]",
@@ -74,16 +63,6 @@ const ROLE_USAGE = [
   "",
   "-h, --help  Show this help. Run agent-loop --help for every role flag.",
 ].join("\n");
-
-const INIT_FIELDS = [
-  "task",
-  "mode",
-  "parentSession",
-  "maxSteps",
-  "timeout",
-  "pr",
-  "testCmdTimeout",
-];
 
 /**
  * Parses `agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]`. Reuses the flag
@@ -227,62 +206,6 @@ function assertStateMaxSteps(state) {
   }
 }
 
-function validateInitFlags(args, agents = {}) {
-  if (args.task === null || String(args.task).trim() === "") {
-    throw new RoleError('Init requires --task, for example --task "Implement the change."');
-  }
-  // The parent guard is the hard backstop for the prompt-only parent rule, so an
-  // interactive run is never left unguarded by default. The headless `agent-loop`
-  // command (no subcommand) is the explicit unguarded path.
-  if (args.parentSession === null) {
-    throw new RoleError(
-      "Init requires --parent-session (the harness session id the parent-edit guard matches).",
-    );
-  }
-  const testCmdRefusal = testCmdError(args.testCmd, args.testCmdTimeout);
-  if (testCmdRefusal) {
-    throw new RoleError(testCmdRefusal);
-  }
-  const sandboxRefusal = reviewerWorkspaceWriteError(
-    args.reviewerWorkspaceWrite,
-    args.reviewer === null ? null : normalizeAgent(args.reviewer),
-  );
-  if (sandboxRefusal) {
-    throw new RoleError(sandboxRefusal);
-  }
-  // review-only dispatches no worker and rejects --require-ci at finish, so a
-  // declared PR there could never be gated. The run would refuse every finish, so
-  // the declaration is refused at init instead (#302).
-  if (args.pr !== null && (args.mode ?? "work-first") === "review-only") {
-    throw new RoleError(REVIEW_ONLY_PR_REFUSAL);
-  }
-  // review-only never dispatches the worker, so --worker is optional there.
-  const requiredRoles =
-    (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : CHILD_ROLE_KINDS;
-  for (const roleName of requiredRoles) {
-    if (args[roleName] === null) {
-      throw new RoleError(`Missing required --${roleName}.`);
-    }
-  }
-  // Every supplied role is still validated; review-only may omit the worker.
-  // A model or effort without its role kind is an orphan option, not a silent drop.
-  for (const roleName of CHILD_ROLE_KINDS) {
-    const kind = args[roleName];
-    if (kind === null) {
-      for (const flag of [`${roleName}Model`, `${roleName}Effort`]) {
-        if (args[flag] !== null) {
-          throw new RoleError(`${ROLE_FLAG_BY_OPTION[flag]} requires --${roleName}.`);
-        }
-      }
-      continue;
-    }
-    if (!supportedAgents.has(kind) && !agents[normalizeAgent(kind)]) {
-      throw new RoleError(`Unsupported ${roleName}: ${kind}`);
-    }
-    assertOpenCodeOptions(roleName, kind, args[`${roleName}Model`], args[`${roleName}Effort`]);
-  }
-}
-
 function initialState(args) {
   return {
     task: args.task,
@@ -344,79 +267,6 @@ async function archiveState(paths, existing) {
   const archived = join(dirname(paths.stateFile), `state.${stamp}.json`);
   await rename(paths.stateFile, archived);
   logInfo(`archived terminal state file to ${archived}`);
-}
-
-/**
- * Later calls read configuration from the state file and reject any change.
- * `extend` passes `maxSteps` in `allowed`, because raising it is that operation's
- * purpose; every other init field stays fixed.
- */
-function rejectInitFlagChanges(args, state, allowed = []) {
-  // The command is compared by digest, so the refusal never prints a stored value.
-  if (args.testCmd !== null && sha256(args.testCmd) !== (state.testCmdSha256 ?? null)) {
-    throw new RoleError(
-      `--test-cmd cannot be changed after init (state holds: ${state.testCmdSha256 ? "a different command" : "null"}).`,
-    );
-  }
-  // The opt-in is fixed at init, so a later call cannot widen the sandbox of a read-only run.
-  // Omitting the flag is not a change: the stored value governs.
-  if (args.reviewerWorkspaceWrite && state.reviewerWorkspaceWrite !== true) {
-    throw new RoleError(
-      "--reviewer-workspace-write cannot be changed after init (state holds: null).",
-    );
-  }
-  // A task file is read only at init, so a later call never holds it as `task`.
-  if (args.taskFile !== null) {
-    throw new RoleError(
-      `--task-file cannot be changed after init (state holds: ${JSON.stringify(state.task ?? null)}).`,
-    );
-  }
-  const provided = [];
-  for (const flag of INIT_FIELDS) {
-    if (allowed.includes(flag)) {
-      continue;
-    }
-    const isGiven = flag === "timeout" ? args.timeoutProvided : args[flag] !== null;
-    if (isGiven) {
-      provided.push([flag, args[flag], state[flag]]);
-    }
-  }
-  // The copy runs once at init, so a later call cannot turn it off. A state file
-  // written before the field copied nothing, so its absent value counts as on
-  // only for this comparison.
-  if (args.noCopyLocalFiles && (state.copyLocalFiles ?? true) !== false) {
-    throw new RoleError(
-      `--no-copy-local-files cannot be changed after init (state holds: ${JSON.stringify(state.copyLocalFiles ?? null)}).`,
-    );
-  }
-  for (const roleName of CHILD_ROLE_KINDS) {
-    for (const [flag, path] of [
-      [roleName, "kind"],
-      [`${roleName}Model`, "model"],
-      [`${roleName}Effort`, "effort"],
-    ]) {
-      const value = args[flag];
-      if (value !== null) {
-        // Only the role kind is normalized (`antigravity` -> `agy`); model and
-        // effort are opaque pass-through strings compared verbatim. A role the
-        // init left unset (null) compares as null, so any supplied value is a
-        // change.
-        const comparable = flag === roleName ? normalizeAgent(value) : value;
-        provided.push([flag, comparable, state.roles[roleName]?.[path] ?? null]);
-      }
-    }
-  }
-  for (const [flag, value, existing] of provided) {
-    if (value !== existing) {
-      throw new RoleError(
-        `${ROLE_FLAG_BY_OPTION[flag] ?? `--${kebab(flag)}`} cannot be changed after init (state holds: ${JSON.stringify(existing ?? null)}).`,
-      );
-    }
-  }
-}
-
-function kebab(name) {
-  return name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 }
 
 async function readPrompt(args, stdin) {
@@ -716,27 +566,6 @@ function recordRoleSession(target, source) {
 /** Adds the copied and skipped path names of the init copy to the envelope. */
 function withLocalFiles(payload, localFiles) {
   return localFiles ? { ...payload, localFiles } : payload;
-}
-
-/** One error envelope for a thrown value. A cancel keeps exit 130. */
-function errorResult(err) {
-  // A cancel outside the turn `try` block, such as the process-table read of a resume or an init (#725).
-  if (readProp(err, "isCanceled")) {
-    return { exitCode: 130, payload: { status: "error", error: "Interrupted by SIGINT" } };
-  }
-  try {
-    return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
-  } catch (formatErr) {
-    // Reading the message threw. Keep one envelope, and keep a cancel as exit 130.
-    const canceled = Boolean(readProp(formatErr, "isCanceled"));
-    return {
-      exitCode: canceled ? 130 : 1,
-      payload: {
-        status: "error",
-        error: canceled ? "Interrupted by SIGINT" : UNREADABLE_MESSAGE,
-      },
-    };
-  }
 }
 
 /**
@@ -1210,63 +1039,6 @@ export async function executeRoleCommand(args, deps = {}) {
     }
   } catch (err) {
     return errorResult(err);
-  }
-}
-
-/**
- * Writes the envelope as one stdout line and sets the exit code. A failed write
- * cannot be retried on the same stream, so it is reported on stderr and turns a
- * zero exit code into 1; any other exit code, such as 130, is kept. `console.log` swallows a write error, so the write
- * callback is the only place the failure shows.
- */
-async function printEnvelope(payload, exitCode) {
-  let line;
-  try {
-    line = JSON.stringify(payload);
-  } catch {
-    line = JSON.stringify({ status: "error", error: "Unserializable envelope" });
-    exitCode ||= 1;
-  }
-  // Node also emits a failed write as a stream 'error' event after the callback. With no
-  // listener that event crashes the process, so one stays until the event queue drains.
-  const consume = () => {};
-  process.stdout.on("error", consume);
-  const failure = await new Promise((resolve) => {
-    try {
-      process.stdout.write(`${line}\n`, resolve);
-    } catch (err) {
-      resolve(err);
-    }
-  });
-  setImmediate(() => process.stdout.off("error", consume));
-  process.exitCode = exitCode;
-  if (failure) {
-    console.error(
-      redactedText(
-        `Failed to write the envelope to stdout: ${redactedText(readProp(failure, "code") ?? readProp(failure, "message"))}`,
-      ),
-    );
-    process.exitCode ||= 1;
-  }
-}
-
-/**
- * Writes all of `text` to `fd` with `writeSync`. It continues after a partial write and retries
- * `EAGAIN` (a non-blocking pipe that is full) for at most 2 s, then throws. A text shorter than
- * `PIPE_BUF` (4096 bytes) reaches a pipe whole or not at all, so the cancel envelope never lands
- * cut there. Any other failure throws.
- */
-function writeAllSync(fd, text) {
-  const buffer = Buffer.from(text);
-  const deadline = Date.now() + 2000;
-  let offset = 0;
-  while (offset < buffer.length) {
-    try {
-      offset += writeSync(fd, buffer, offset, buffer.length - offset);
-    } catch (err) {
-      if (err?.code !== "EAGAIN" || Date.now() > deadline) throw err;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
-    }
   }
 }
 

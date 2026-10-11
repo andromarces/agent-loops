@@ -53,7 +53,7 @@ function codexEntry(guardPath) {
  * Builds the full target list for one harness.
  * @param {string} harness
  * @param {{ home: string, packageRoot: string, copilotHome?: string }} options
- * @returns {Promise<{ files: Array<{path: string, content: string}>, settings: Array<{path: string, locator: object, entry: object}> }>}
+ * @returns {Promise<{ files: Array<{path: string, content: string}>, settings: Array<{path: string, locator: object, entry: object}>, notes: Array<{path: string, dryRun: boolean, detail: string}> }>}
  */
 export async function buildTargets(harness, { home, packageRoot, copilotHome }) {
   const templateDir = join(packageRoot, "src/install/templates");
@@ -66,6 +66,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
   const cli = `node "${forwardSlashes(join(packageRoot, "src/cli.mjs"))}"`;
   const files = [];
   const settings = [];
+  const notes = [];
   const harnessCheck = await template(templateDir, "harness-check.md");
 
   // `harness` names the skill harness. Its shared harness-check paragraph renders into
@@ -88,8 +89,9 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
 
   if (harness === "claude") {
     const skill = await template(templateDir, "claude", "skills", "agent-loop", "SKILL.md");
+    const skillsDir = join(home, ".claude", "skills");
     files.push({
-      path: join(home, ".claude", "skills", "agent-loop", "SKILL.md"),
+      path: join(skillsDir, "agent-loop", "SKILL.md"),
       content: renderSkill(skill, harness),
     });
     const entry = claudeEntry(guardPath);
@@ -101,14 +103,28 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       },
       entry,
     });
+    notes.push({
+      path: skillsDir,
+      dryRun: false,
+      detail:
+        "OpenCode also discovers ~/.claude/skills, so it lists the Claude skill " +
+        "to the model. The skill sets `metadata.opencode/autoinvoke: false`, so " +
+        "OpenCode drops it from the model's skill list and the OpenCode plugin " +
+        "command owns /agent-loop. The skill also runs the installed CLI by absolute " +
+        "path with `harness-check claude`. It starts only when the nearest harness " +
+        "above the shell is Claude Code. It stops for any other harness, and when " +
+        "the check cannot run or finds no harness ancestor.",
+    });
   } else if (harness === "codex") {
     const skill = await template(templateDir, "codex", "skills", "agent-loop", "SKILL.md");
+    const skillsDir = join(home, ".agents", "skills");
+    const hooksFile = join(home, ".codex", "hooks.json");
     files.push({
-      path: join(home, ".agents", "skills", "agent-loop", "SKILL.md"),
+      path: join(skillsDir, "agent-loop", "SKILL.md"),
       content: renderSkill(skill, harness),
     });
     files.push({
-      path: join(home, ".agents", "skills", "agent-loop", "agents", "openai.yaml"),
+      path: join(skillsDir, "agent-loop", "agents", "openai.yaml"),
       content: await template(
         templateDir,
         "codex",
@@ -120,13 +136,39 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     });
     const entry = codexEntry(guardPath);
     settings.push({
-      path: join(home, ".codex", "hooks.json"),
+      path: hooksFile,
       locator: {
         kind: "array",
         path: ["hooks", "PreToolUse"],
       },
       entry,
     });
+    notes.push(
+      {
+        path: hooksFile,
+        dryRun: true,
+        detail:
+          "The agent-loop parent guard stays inactive in Codex until the hook is trusted. " +
+          "The hook is the PreToolUse entry in ~/.codex/hooks.json with the status message " +
+          '"Checking parent orchestration guard". Its command runs parent-guard.mjs. ' +
+          "Run /hooks in Codex. " +
+          "Trust that entry. " +
+          "A changed hook command needs a new trust step.",
+      },
+      {
+        path: skillsDir,
+        dryRun: false,
+        detail:
+          "The Codex skill lives in the shared ~/.agents/skills directory, which " +
+          "GitHub Copilot CLI and OpenCode also discover. The skill sets " +
+          "`metadata.opencode/autoinvoke: false`, so OpenCode drops it from the " +
+          "model's skill list and the OpenCode plugin command owns /agent-loop. " +
+          "The skill also runs the installed CLI by absolute path with " +
+          "`harness-check codex`. It starts only when the nearest harness above the " +
+          "shell is Codex CLI. It stops for any other harness, and when the check " +
+          "cannot run or finds no harness ancestor.",
+      },
+    );
   } else if (harness === "opencode") {
     const plugin = await template(templateDir, "opencode", "plugins", "parent-guard.ts");
     files.push({
@@ -178,5 +220,5 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     throw new Error(`Unsupported harness: ${harness}`);
   }
 
-  return { files, settings };
+  return { files, settings, notes };
 }
