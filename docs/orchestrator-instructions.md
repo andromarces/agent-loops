@@ -636,9 +636,9 @@ report.
   `run_worker` action ends the headless run on exit 1 with the reason
   `mode review-only rejects a run_worker action`.
 - Neither path takes `--require-accept` in this mode. `role finish` refuses the
-  flag at `finish`, and the headless command refuses it before the run starts. Both
-  use the sentence `--require-accept and --require-ci apply only to work-first and
-  review-first; review-only accepts any verdict.`
+  flag at `finish`, and the headless command refuses it before the run starts.
+  Both give this error:
+  `--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.`
 
 Call `finish` after the reviewer turn, whatever it returned. Record what the run
 did not cover in `notDone` and `open`.

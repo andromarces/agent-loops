@@ -17,9 +17,9 @@ const PASS_CHECK_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
  * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr, timedOut }`;
  * a non-zero exit is data, not a throw. `timeoutMs` bounds the call and
  * terminates the `gh` child when it expires, so a hung `gh` cannot outlast a
- * caller bound. The kill is `SIGTERM` then `SIGKILL` after
- * `forceKillAfterDelay` on POSIX systems, and `taskkill /T /F` over the process tree on
- * Windows, so no platform keeps a child the bound has given up on (#329).
+ * caller bound. On POSIX systems the kill is `SIGTERM`, then `SIGKILL` after
+ * `forceKillAfterDelay`. On Windows it is `taskkill /T /F` over the process tree.
+ * No platform keeps a child the bound has given up on (#329).
  */
 export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
   const result = await execBounded("gh", args, { cwd, timeoutMs, signal });
@@ -214,9 +214,9 @@ async function readRequiredSource(
 // `ABSENT` is a reply that states the source holds no required check, `HAS_CONTEXTS`
 // a reply that names at least one, and `UNKNOWN` a reply that settles nothing.
 // `EMPTY` is the one outcome the ruleset source alone carries: a successful read
-// that found no rule. It is not a positive absence, and it does not refuse the
-// per-check path, so a classic-only repository keeps the behavior it had before
-// the ruleset read was classified (issue #336 review).
+// that found no rule. It is not a positive absence. It does not refuse the
+// per-check path. A classic-only repository therefore keeps the behavior it had
+// before the ruleset read was classified (issue #336 review).
 const ABSENT = "absent";
 const HAS_CONTEXTS = "contexts";
 const UNKNOWN = "unknown";
@@ -603,9 +603,9 @@ async function requiredContexts(gh, slug, base, pr, cwd) {
     unparsed,
     namesRead: listed.ok,
     // The ruleset state is carried separately from `unknown`, because an empty read
-    // is neither an absence nor a refusal: it contributes no contexts and leaves the
-    // per-check path to the other sources, as it did before the ruleset read was
-    // classified (issue #336 review).
+    // is neither an absence nor a refusal. It contributes no contexts. It leaves
+    // the per-check path to the other sources, as it did before the ruleset read
+    // was classified (issue #336 review).
     rulesetState: rules.state,
     protectionState: protection.state,
     contexts: values
@@ -863,8 +863,8 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
  * union holds, because that reply may carry a required-status rule this caller
  * never saw, so a non-empty union from another source must not let the per-check
  * pass judge only the names it saw. The gate once treated a failed ruleset read as an
- * empty source and refused only on an unrecognized message, so this is stricter than
- * that (issue #336 review).
+ * empty source and refused only on an unrecognized message. This rule is stricter
+ * (issue #336 review).
  *
  * An empty union of required checks refuses when the classic-protection source
  * settled nothing, so a source this caller cannot read fails closed and the reason
@@ -906,10 +906,11 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   // (issue #336 review).
   //
   // A successful read that found no rule is not in this branch. It contributes no
-  // contexts and the per-check pass runs on the other sources, which is what
-  // the gate did for every unreadable ruleset reply before it classified the read, so a classic-only
-  // repository whose required checks passed still finishes. It is still not a
-  // positive absence, so the empty-union refusal below names it.
+  // contexts, and the per-check pass runs on the other sources. Before the gate
+  // classified the read, it did the same for every unreadable ruleset reply. A
+  // classic-only repository whose required checks passed therefore still
+  // finishes. The read is still not a positive absence, so the empty-union
+  // refusal below names it.
   if (rulesetState === UNKNOWN) {
     return fail(
       "the repository rulesets could not be read, so the gate cannot tell which required checks the base branch requires",

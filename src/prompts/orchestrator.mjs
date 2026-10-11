@@ -33,16 +33,8 @@ export function requiredCheckWait({ requireCi, orchestratorKind, reviewerKind })
   return NETWORKED_READ_ONLY_CLIS.has(reviewerKind) ? "reviewer" : "gate";
 }
 
-/**
- * The `--timeout` the headless orchestrator passes to `role wait-checks`, in
- * seconds, or null when no bound fits the turn. The command runs for its bound
- * plus `CHILD_EXIT_CEILING_MS`, so the bound leaves that ceiling and half the
- * turn free for the orchestrator's own work: the wait and its child-exit window
- * always end before the turn `timeout` (seconds, null when unbounded) does. A
- * turn under 12 seconds fits no positive bound, and the prompt then names no
- * wait (#348).
- */
-const CEILING_SECONDS = CHILD_EXIT_CEILING_MS / 1000;
+// Whole seconds, rounded up, so the wait bound stays an integer and never overstates the time left.
+const CEILING_SECONDS = Math.ceil(CHILD_EXIT_CEILING_MS / 1000);
 const SMALL_NUMBER_WORDS = [
   "zero",
   "one",
@@ -59,6 +51,15 @@ const SMALL_NUMBER_WORDS = [
 // The child-exit ceiling as the prompt words it: "five" for 5, digits past ten.
 const CEILING_WORD = SMALL_NUMBER_WORDS[CEILING_SECONDS] ?? String(CEILING_SECONDS);
 
+/**
+ * The `--timeout` the headless orchestrator passes to `role wait-checks`, in
+ * seconds, or null when no bound fits the turn. The command runs for its bound
+ * plus `CHILD_EXIT_CEILING_MS`, so the bound leaves that ceiling, rounded up
+ * to whole seconds, and half the turn free for the orchestrator's own work. The
+ * wait and its child-exit window always end before the turn `timeout` (seconds,
+ * null when unbounded) does. A turn under 12 seconds fits no positive bound, and
+ * the prompt then names no wait (#348).
+ */
 export function headlessWaitSeconds(timeout) {
   if (typeof timeout !== "number" || timeout <= 0) return DEFAULT_WAIT_SECONDS;
   const bound = Math.min(DEFAULT_WAIT_SECONDS, Math.floor(timeout / 2) - CEILING_SECONDS);
