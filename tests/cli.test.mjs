@@ -68,8 +68,11 @@ vi.mock("execa", async (importOriginal) => {
           ? gitDouble.answer(command, args, options)
           : real.execa(command, args, options);
       const done = () =>
-        P750.add(`execa ${command} ${(args ?? []).slice(0, 2).join(" ")}`, performance.now() - t0);
-      run.then(done, done);
+        P750.add(
+          `execa ${command} ${(Array.isArray(args) ? args : []).slice(0, 2).join(" ")}`,
+          performance.now() - t0,
+        );
+      Promise.resolve(run).then(done, done);
       return run;
     },
   };
