@@ -5,7 +5,7 @@ import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { killTreeOnExit } from "../../src/lib/exec-tree.mjs";
 import { removePath } from "../runtime-helpers.mjs";
-import { cancelOnSigInt } from "../../src/lib/sigint.mjs";
+import { cancelOnSigInt, forceCancelSignal } from "../../src/lib/sigint.mjs";
 
 // Usefulness: acceptance (#669) — the first SIGINT cancels the run and the process stays alive, so
 // the run handler can set exit 130 and write its transcript; the listener stays registered.
@@ -24,6 +24,25 @@ test("the first SIGINT aborts the controller and keeps the listener", () => {
     exit.mockRestore();
   }
   expect(process.listenerCount("SIGINT")).toBe(before);
+});
+
+// Usefulness: verifies the force-cancel signal of a run fires on the second SIGINT only, so the
+// evidence snapshot of a canceled turn survives the first cancel and ends on the second (#729).
+test("the force-cancel signal aborts on the second SIGINT and not on the first", () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+  const controller = new AbortController();
+  const remove = cancelOnSigInt(controller);
+  try {
+    const force = forceCancelSignal(controller.signal);
+    process.emit("SIGINT");
+    expect(controller.signal.aborted).toBe(true);
+    expect(force.aborted).toBe(false);
+    process.emit("SIGINT");
+    expect(force.aborted).toBe(true);
+  } finally {
+    remove();
+    exit.mockRestore();
+  }
 });
 
 // Usefulness: acceptance (#669) — a second SIGINT ends a stalled cleanup at once with exit 130, so

@@ -844,3 +844,46 @@ export async function createPsShim(body, { ceilingSeconds = 10 } = {}) {
     cleanup: () => removePath(dir),
   };
 }
+
+/**
+ * POSIX only. Puts a `git` on PATH that runs the real `git` for its first `passes` calls and then
+ * hangs, so a test can let the before snapshot finish and stall the read that follows. `run` gets
+ * `hungPid()`, which resolves with the pid of the hung `git` once it started. The helper ends that
+ * pid, which it owns, if the test left it alive, and removes the shim directory.
+ */
+export async function withGitHangingAfter(passes, run) {
+  const realGit = (await execa("sh", ["-c", "command -v git"])).stdout.trim();
+  const dir = await mkdtemp(join(tmpdir(), "git-hang-after-"));
+  const pidFile = join(dir, "hung.pid");
+  const count = join(dir, "count");
+  await writeFile(
+    join(dir, "git"),
+    [
+      "#!/bin/sh",
+      `n=$(cat '${count}' 2>/dev/null || echo 0)`,
+      `echo $((n + 1)) > '${count}'`,
+      `if [ "$n" -lt ${passes} ]; then exec '${realGit}' "$@"; fi`,
+      `echo $$ > '${pidFile}'`,
+      "exec sleep 30",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const hungPid = () =>
+    pollUntil(async () => {
+      const text = await readFile(pidFile, "utf8").catch(() => "");
+      return /^\d+\n$/.test(text) ? Number(text) : undefined;
+    }, 20_000);
+  try {
+    return await withShimOnPath(dir, () => run({ hungPid }));
+  } finally {
+    const text = await readFile(pidFile, "utf8").catch(() => "");
+    if (/^\d+\n$/.test(text)) {
+      try {
+        process.kill(Number(text), "SIGKILL");
+      } catch {
+        // The child already ended.
+      }
+    }
+    await removePath(dir);
+  }
+}

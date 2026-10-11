@@ -4,6 +4,7 @@ import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
+import { forceCancelSignal } from "./sigint.mjs";
 
 // Milliseconds that one snapshot `git` read waits before it ends the child.
 const GIT_READ_TIMEOUT_MS = 120_000;
@@ -255,15 +256,22 @@ export function diffSnapshots(before, after) {
  * Any thrown value is rethrown unchanged, a falsy one (`null`, `undefined`) included.
  * `fn` receives the before snapshot, so a caller can derive the reviewed state
  * without taking a second snapshot. `signal` cancels the before snapshot only. The after snapshot
- * ignores it, so a canceled turn still reports the paths it changed.
+ * ignores it, so a canceled turn still reports the paths it changed. The after snapshot ends on
+ * `forceSignal` instead (default: the second-SIGINT signal of `signal`). It then throws a canceled
+ * `SnapshotError` that says the evidence was not captured, and never reports the tree as unchanged.
  * @template T
  * @param {string} cwd
  * @param {string} role
  * @param {(before: Awaited<ReturnType<typeof snapshot>>) => Promise<T>} fn
- * @param {{ signal?: AbortSignal }} [options]
+ * @param {{ signal?: AbortSignal, forceSignal?: AbortSignal }} [options]
  * @returns {Promise<T>}
  */
-export async function withMutationCheck(cwd, role, fn, { signal } = {}) {
+export async function withMutationCheck(
+  cwd,
+  role,
+  fn,
+  { signal, forceSignal = forceCancelSignal(signal) } = {},
+) {
   const before = await snapshot(cwd, { signal });
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
   let threw = false;
@@ -279,8 +287,14 @@ export async function withMutationCheck(cwd, role, fn, { signal } = {}) {
 
   let after;
   try {
-    after = await snapshot(cwd);
+    after = await snapshot(cwd, { signal: forceSignal });
   } catch (snapErr) {
+    if (snapErr?.isCanceled) {
+      throw new SnapshotError(
+        `${role} turn changed-path evidence not captured: the snapshot was canceled`,
+        { cause: threw ? actionError : snapErr, isCanceled: true },
+      );
+    }
     // A failed post-turn snapshot wins over the agent error; the agent error rides as cause.
     if (threw) {
       throw new SnapshotError(`post-turn snapshot failed during ${role} turn: ${snapErr.message}`, {

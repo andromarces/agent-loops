@@ -3,6 +3,7 @@ import { killTreeOnExit } from "./exec-tree.mjs";
 import { readProp } from "./error-message.mjs";
 import { logInfo } from "./log.mjs";
 import { redactEnvSecrets } from "./redact.mjs";
+import { forceCancelSignal } from "./sigint.mjs";
 import { diffSnapshots, snapshot } from "./snapshot.mjs";
 
 // ADR 0017. The command is the operator's `--test-cmd`, run by the runtime in
@@ -84,7 +85,9 @@ function killTree(subprocess) {
  * tree, takes the same after snapshot, and throws an error with `isCanceled` and the
  * result, `status: "canceled"`, as `testRun`, so a write made before the cancel is
  * reported. Every other failure of the command is a result.
- * @param {{ command: string, timeoutSeconds?: number, cwd: string, signal?: AbortSignal }} options
+ * `forceSignal` (default: the second-SIGINT signal of `signal`) ends the after-command snapshot. The
+ * canceled result then has `workTreeChanged` and `changedCount` set to `null`, which means not captured.
+ * @param {{ command: string, timeoutSeconds?: number, cwd: string, signal?: AbortSignal, forceSignal?: AbortSignal }} options
  * @returns {Promise<object>} the advisory result: `status` is `pass`, `fail`, `timed-out`, `error`, or `canceled` (thrown)
  */
 export async function runTestCmd({
@@ -92,6 +95,7 @@ export async function runTestCmd({
   timeoutSeconds = DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
   cwd,
   signal,
+  forceSignal = forceCancelSignal(signal),
 }) {
   const before = await snapshot(cwd, { signal });
   const startedAt = Date.now();
@@ -146,9 +150,17 @@ export async function runTestCmd({
   const durationMs = Date.now() - startedAt;
 
   // The cancel is already set when it ended the command, and the changed paths are its evidence,
-  // so this read has the time bound only.
-  const after = await snapshot(cwd);
-  const changed = diffSnapshots(before, after);
+  // so this read ignores it. Only `forceSignal`, the second cancel, ends it. The change is then
+  // unknown (`null`), never "none".
+  let changed = null;
+  try {
+    changed = diffSnapshots(before, await snapshot(cwd, { signal: forceSignal }));
+  } catch (err) {
+    if (!err?.isCanceled) {
+      throw err;
+    }
+    canceled = true;
+  }
 
   const text = redactAndClean(window.subarray(-CAPTURE_WINDOW_BYTES).toString("utf8"));
   const truncated = total > CAPTURE_WINDOW_BYTES || text.length > TAIL_CHARS;
@@ -160,8 +172,7 @@ export async function runTestCmd({
   let summary;
   if (canceled) {
     status = "canceled";
-    summary =
-      "canceled before the command finished; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive";
+    summary = `canceled before the command finished; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive${changed === null ? "; the work tree change was not captured, because a second cancel ended the read" : ""}`;
   } else if (timedOut) {
     status = "timed-out";
     summary = `timed out after ${timeoutSeconds} seconds; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive; this is neither a pass nor a failure`;
@@ -184,9 +195,9 @@ export async function runTestCmd({
     outputBytes: total,
     truncated,
     tail,
-    workTreeChanged: changed.length > 0,
-    changedPaths: changed.slice(0, MAX_CHANGED_PATHS),
-    changedCount: changed.length,
+    workTreeChanged: changed === null ? null : changed.length > 0,
+    changedPaths: changed?.slice(0, MAX_CHANGED_PATHS) ?? [],
+    changedCount: changed?.length ?? null,
     advisory: true,
   };
   if (canceled) {

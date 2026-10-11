@@ -12,6 +12,7 @@ import {
   createTempRepo,
   expectAbortKillsShim,
   removePath,
+  withGitHangingAfter,
 } from "../runtime-helpers.mjs";
 
 const dirs = [];
@@ -214,6 +215,34 @@ test(
     expect(error.isCanceled).toBe(true);
   },
   ABORT_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies a second cancel ends a hung after-command snapshot with a cancel whose
+// result says the work tree change was not captured, so it never reads as "no change" (#729).
+test.skipIf(process.platform === "win32")(
+  "a second cancel ends a hung after-command snapshot and reports the change as not captured",
+  async () => {
+    const cwd = await repo();
+    await withGitHangingAfter(4, async ({ hungPid }) => {
+      const second = new AbortController();
+      const pending = runTestCmd({ command: node(""), cwd, forceSignal: second.signal }).catch(
+        (err) => err,
+      );
+      const pid = await hungPid();
+      second.abort();
+      const error = await pending;
+      expect(error.isCanceled).toBe(true);
+      expect(error.testRun).toMatchObject({
+        status: "canceled",
+        workTreeChanged: null,
+        changedPaths: [],
+        changedCount: null,
+      });
+      expect(error.testRun.summary).toMatch(/not captured/);
+      expect(() => process.kill(pid, 0)).toThrow();
+    });
+  },
+  60_000,
 );
 
 // Usefulness: verifies a cancel still compares the work tree and carries the result on

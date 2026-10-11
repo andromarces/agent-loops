@@ -19,6 +19,7 @@ import {
   expectAbortKillsShim,
   expectBoundKillsShim,
   removePath,
+  withGitHangingAfter,
 } from "../runtime-helpers.mjs";
 
 async function createTempRepo() {
@@ -126,6 +127,47 @@ test("withMutationCheck keeps the changed-path evidence after a cancel", async (
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a second cancel ends a hung evidence snapshot at once and reports the
+// evidence as not captured, never as unchanged, while the first cancel alone leaves it running (#729).
+test.skipIf(process.platform === "win32")(
+  "a second cancel ends a hung evidence snapshot and reports it as not captured",
+  async () => {
+    const repo = await createTempRepo();
+    try {
+      await withGitHangingAfter(4, async ({ hungPid }) => {
+        const first = new AbortController();
+        const second = new AbortController();
+        const pending = withMutationCheck(
+          repo,
+          "worker",
+          async () => {
+            first.abort();
+          },
+          { signal: first.signal, forceSignal: second.signal },
+        ).catch((err) => err);
+        const pid = await hungPid();
+        // The first cancel alone does not end the evidence snapshot.
+        const early = await Promise.race([pending, new Promise((r) => setTimeout(r, 700, "open"))]);
+        expect(early).toBe("open");
+        second.abort();
+        const error = await Promise.race([
+          pending,
+          new Promise((_, reject) =>
+            setTimeout(reject, 10_000, new Error("the evidence snapshot did not end")),
+          ),
+        ]);
+        expect(error).toBeInstanceOf(SnapshotError);
+        expect(error.isCanceled).toBe(true);
+        expect(error.message).toMatch(/not captured/);
+        expect(() => process.kill(pid, 0)).toThrow();
+      });
+    } finally {
+      await removePath(repo);
+    }
+  },
+  60_000,
+);
 
 // Usefulness: verifies diffSnapshots detects when nothing changes.
 test("diffSnapshots returns empty list when no change occurred", async () => {
