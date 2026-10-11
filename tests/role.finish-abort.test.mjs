@@ -713,7 +713,7 @@ test("finish refuses unresolvedCompare together with --require-ci", async () => 
 // report rule added a `Finish refused:` prefix to every collected reason, which
 // changed the error an undeclared run returns for the one refusal it had before.
 // Collect-then-report was for the declared-PR rule, so an undeclared run keeps the
-// text origin/main returned (#302).
+// text it returned before #302.
 test("an undeclared run keeps the marker refusal text it had before", async () => {
   await setup();
   const repo = await useCleanRepo();

@@ -469,7 +469,7 @@ test("a long repetitive text with a long secret value redacts in bounded time", 
   expect(out).toBe("[redacted:BIG_TOKEN]");
 });
 
-// Verbatim copy of `redactEnvSecrets` from origin/main before issue #521 (`git show origin/main:src/lib/redact.mjs`),
+// Verbatim copy of `redactEnvSecrets` as it stood before issue #521,
 // renamed only. Reference for the parity tests.
 const MAIN_MIN_SECRET_LENGTH = 8;
 const MAIN_SECRET_NAME = /token|secret|passw|key|credential|auth/i;

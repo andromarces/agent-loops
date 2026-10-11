@@ -348,7 +348,7 @@ test("a review-only run states the review-only mapping", () => {
   }
 });
 
-// Usefulness: verifies a run with no --mode keeps the origin/main prompt text
+// Usefulness: verifies a run with no --mode keeps the prompt text it had before the flag existed
 // byte for byte, so a run that never asked for a mode gets no changed prompt
 // from this flag. The line is pinned verbatim because the PR promises it is
 // unchanged (issue #337).
@@ -418,7 +418,7 @@ test("the headless prompt adds the declaration rule and nothing else", () => {
   expect(gated.split("\n").some((line) => line.startsWith(reworded))).toBe(true);
   expect(gated).toContain(supplied.trim());
   expect(gated).toContain(advisory);
-  // The origin/main gate line is still what follows, naming the declared PR.
+  // The existing gate line is still what follows, naming the declared PR.
   expect(withPrAndGate).toContain(
     `${block}\n- This run enforces the PR gate (--require-ci 42): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit`,
   );
@@ -491,7 +491,12 @@ for (const [name, path] of RULE_SURFACES) {
     expectRule(text, /ruleset read the gate cannot interpret/i, /refuses the finish/i, /union/i);
     // Exactly one empty page is neither, so a classic-only repository still
     // finishes, and the anomalous page sequences are named as refusals.
-    expectRule(text, /exactly one empty page/i, /contributes no contexts/i, /origin.main/i);
+    expectRule(
+      text,
+      /exactly one empty page/i,
+      /contributes no contexts/i,
+      /per-check pass runs on the other sources/i,
+    );
     expectRule(text, /no page at all/i, /two or more empty pages/i);
   });
 
@@ -519,14 +524,14 @@ for (const [name, path] of RULE_SURFACES) {
   });
 }
 
-// Usefulness: verifies a run that declares no PR keeps the prompt origin/main
-// sends, because the declaration block is the only addition and it is empty
+// Usefulness: verifies a run that declares no PR keeps the prompt it sent
+// before the PR declaration existed, because the declaration block is the only addition and it is empty
 // without `--pr` (#302).
 test("initialPrompt adds nothing to a run that declares no PR", () => {
   const prompt = initialPrompt({ task: "T", maxSteps: 10, requireCi: 42 });
   expect(prompt).not.toContain("declares PR");
   expect(prompt).not.toContain("This run declares");
-  // The origin/main gate block for the same inputs is still present and unchanged.
+  // The gate block for the same inputs is still present and unchanged.
   expect(prompt).toContain(
     "This run enforces the PR gate (--require-ci 42): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit",
   );

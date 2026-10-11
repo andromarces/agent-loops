@@ -768,7 +768,7 @@ missing gate of a declared PR run is the one condition no child turn can supply.
 Two things decide whether a refused `finish` reads GitHub, and they are separate.
 The interactive `role finish` command throws as soon as any condition above the
 gate refused, so on that path a refused `finish` never reaches the gate and never
-reads GitHub. The headless loop evaluates every gate it owns, as origin/main did,
+reads GitHub. The headless loop evaluates every gate it owns,
 so the `--require-ci` gate runs whenever the run carries it and the declared-PR
 condition did not refuse, and a finish the marker, the `review-only` condition, or
 `--require-accept` already refused still runs the gate. Only the declared-PR gate
@@ -816,7 +816,7 @@ and each flag fails with a clear error.
   or an empty page beside a page that holds rules, and an unlisted or malformed rule type.
   A ruleset read of exactly one empty page is neither of those: its class is empty, a
   successful read that found no rule, so it contributes no contexts
-  and the per-check pass runs on the other sources, exactly as origin/main did, so a
+  and the per-check pass runs on the other sources, so a
   classic-only repository whose required checks passed still finishes.
   Otherwise a finish passes on the absence only when no source named a required
   check and no source is unknown, so both sources must have stated the outcome, and

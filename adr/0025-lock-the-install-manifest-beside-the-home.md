@@ -37,7 +37,7 @@ directory, so the case is reachable (issue #198).
    without the lock.
 6. Maintainer decision: this rule covers a Windows path that cannot name a
    directory, because Windows reports ENOENT for it. Such a home now reports
-   nothing to remove instead of raising the origin/main error. This replaces the
+   nothing to remove instead of raising an error. This replaces the
    earlier rule that kept that error through hand-written Windows name checks.
 
 ## Consequences
