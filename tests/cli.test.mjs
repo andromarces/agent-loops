@@ -1672,174 +1672,195 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
   });
 });
 
+// Timeout for a --continue-from test that calls main() twice. Windows (local, 5 runs of the
+// seven continueAfterEdit tests, idle and loaded): repo setup 0.4-1.2 s (one run
+// 2.4 s), first main() 2.0-6.2 s (one run 10 s), transcript edit about 10 ms, second main()
+// 2.0-7.0 s. Each test takes 4-6 s in a full-file run; the 15028 ms timeout of #744 was a loaded
+// run. The cost is real git subprocess spawns (git status alone takes about 130 ms on Windows),
+// not the transcript work, so no step is faster to fix. macOS takes about 1 s per test. The
+// explicit timeout leaves room for load without raising the suite default.
+const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 45_000;
+
 // Usefulness: verifies --continue-from refuses, before any turn, a claude session that a live
 // process still holds (#647), through the real process table. No other CLI test starts a holder.
-test("--continue-from refuses a claude session that a live process holds", async (ctx) => {
-  // A sandbox can deny the process table (ADR 0019: `ps` exits 127 with `operation not permitted`).
-  // The read then fails, the check fails open, and the run exits 0. The test fails only when the
-  // read works and the refusal is missing.
-  if (!processTableReadable) {
-    ctx.skip("The host process table cannot be read, so the check fails open here.");
-  }
-  const heldId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-  await withContinueRepo(async (repo, transcriptPath) => {
-    const work = JSON.stringify({ action: "run_worker", prompt: "w" });
-    await main(
-      [...CONTINUE_BASE, "--cwd", repo, "--transcript", transcriptPath],
-      sessionAgents([work, FINISH], { codex: [], claude: [], agy: [] }),
-    );
-    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
-    transcript.roles.worker.sessionId = heldId;
-    await writeFile(transcriptPath, JSON.stringify(transcript));
-    // The holder passes the id through a session flag, as the adapter does.
-    const holder = spawn(
-      process.execPath,
-      ["-e", "setTimeout(() => {}, 60000)", "--", "--resume", heldId],
-      {
-        stdio: "ignore",
-      },
-    );
-    try {
-      const seen = { codex: [], claude: [], agy: [] };
-      await main(
-        [...CONTINUE_BASE, "--cwd", repo, "--continue-from", transcriptPath],
-        sessionAgents([FINISH], seen),
-      );
-      expect(process.exitCode).toBe(1);
-      expect(seen.codex).toEqual([]);
-    } finally {
-      holder.kill("SIGKILL");
+test(
+  "--continue-from refuses a claude session that a live process holds",
+  async (ctx) => {
+    // A sandbox can deny the process table (ADR 0019: `ps` exits 127 with `operation not permitted`).
+    // The read then fails, the check fails open, and the run exits 0. The test fails only when the
+    // read works and the refusal is missing.
+    if (!processTableReadable) {
+      ctx.skip("The host process table cannot be read, so the check fails open here.");
     }
-  });
-});
+    const heldId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    await withContinueRepo(async (repo, transcriptPath) => {
+      const work = JSON.stringify({ action: "run_worker", prompt: "w" });
+      await main(
+        [...CONTINUE_BASE, "--cwd", repo, "--transcript", transcriptPath],
+        sessionAgents([work, FINISH], { codex: [], claude: [], agy: [] }),
+      );
+      const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+      transcript.roles.worker.sessionId = heldId;
+      await writeFile(transcriptPath, JSON.stringify(transcript));
+      // The holder passes the id through a session flag, as the adapter does.
+      const holder = spawn(
+        process.execPath,
+        ["-e", "setTimeout(() => {}, 60000)", "--", "--resume", heldId],
+        {
+          stdio: "ignore",
+        },
+      );
+      try {
+        const seen = { codex: [], claude: [], agy: [] };
+        await main(
+          [...CONTINUE_BASE, "--cwd", repo, "--continue-from", transcriptPath],
+          sessionAgents([FINISH], seen),
+        );
+        expect(process.exitCode).toBe(1);
+        expect(seen.codex).toEqual([]);
+      } finally {
+        holder.kill("SIGKILL");
+      }
+    });
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: verifies the transcript carries the gate state across --continue-from through the
 // CLI (#393): a reviewer accept recorded by the first run satisfies --require-accept in the
 // continued run on the unchanged tree, so the continued run dispatches no reviewer.
-test("--continue-from restores the recorded reviewer accept on an unchanged tree", async () => {
-  const repo = await createTempRepo();
-  // Outside the work tree: a transcript inside it is an untracked file that changes the tree.
-  const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
-  const transcriptPath = join(transcriptDir, "run.json");
-  const origExitCode = process.exitCode;
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-  try {
-    const accept = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
-    const reviewerCalls = [];
-    const agents = (orchReplies, reviewerReply) => {
-      let call = 0;
-      return {
-        codex: { run: async () => orchReplies[call++] },
-        claude: { run: async () => "worker ok" },
-        agy: {
-          run: async () => {
-            reviewerCalls.push(reviewerReply);
-            return reviewerReply;
+test(
+  "--continue-from restores the recorded reviewer accept on an unchanged tree",
+  async () => {
+    const repo = await createTempRepo();
+    // Outside the work tree: a transcript inside it is an untracked file that changes the tree.
+    const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
+    const transcriptPath = join(transcriptDir, "run.json");
+    const origExitCode = process.exitCode;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const accept = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
+      const reviewerCalls = [];
+      const agents = (orchReplies, reviewerReply) => {
+        let call = 0;
+        return {
+          codex: { run: async () => orchReplies[call++] },
+          claude: { run: async () => "worker ok" },
+          agy: {
+            run: async () => {
+              reviewerCalls.push(reviewerReply);
+              return reviewerReply;
+            },
           },
-        },
+        };
       };
-    };
-    const args = [
-      ...CONTINUE_BASE,
-      "--cwd",
-      repo,
-      "--require-accept",
-      "--transcript",
-      transcriptPath,
-    ];
-    await main(
-      args,
-      agents(
-        [
-          JSON.stringify({ action: "run_worker", prompt: "w" }),
-          JSON.stringify({ action: "run_reviewer", prompt: "r" }),
-          FINISH,
-        ],
-        accept,
-      ),
-    );
-    expect(process.exitCode).toBe(0);
-    expect(reviewerCalls.length).toBe(1);
+      const args = [
+        ...CONTINUE_BASE,
+        "--cwd",
+        repo,
+        "--require-accept",
+        "--transcript",
+        transcriptPath,
+      ];
+      await main(
+        args,
+        agents(
+          [
+            JSON.stringify({ action: "run_worker", prompt: "w" }),
+            JSON.stringify({ action: "run_reviewer", prompt: "r" }),
+            FINISH,
+          ],
+          accept,
+        ),
+      );
+      expect(process.exitCode).toBe(0);
+      expect(reviewerCalls.length).toBe(1);
 
-    await main([...args, "--continue-from", transcriptPath], agents([FINISH], accept));
-    expect(process.exitCode).toBe(0);
-    expect(reviewerCalls.length).toBe(1);
-  } finally {
-    process.exitCode = origExitCode;
-    logSpy.mockRestore();
-    await removePath(repo);
-    await removePath(transcriptDir);
-  }
-});
+      await main([...args, "--continue-from", transcriptPath], agents([FINISH], accept));
+      expect(process.exitCode).toBe(0);
+      expect(reviewerCalls.length).toBe(1);
+    } finally {
+      process.exitCode = origExitCode;
+      logSpy.mockRestore();
+      await removePath(repo);
+      await removePath(transcriptDir);
+    }
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: verifies an edited transcript cannot bypass --require-accept (#393 review): a
 // forged `gate` record that claims an accept is ignored, because the restore reads only the
 // reviewer and worker result events, and the last reviewer turn here rejected.
-test("--continue-from ignores a forged gate record that claims an accept", async () => {
-  const repo = await createTempRepo();
-  const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
-  const transcriptPath = join(transcriptDir, "run.json");
-  const origExitCode = process.exitCode;
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-  const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  try {
-    const reject = "Conclusion: no.\nWhy: no.\nBlockers: none.\nChecks: t\nVerdict: reject";
-    const accept = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
-    const reviewerReplies = [reject, accept];
-    let reviewerCalls = 0;
-    const agents = (orchReplies) => {
-      let call = 0;
-      return {
-        codex: { run: async () => orchReplies[call++] },
-        claude: { run: async () => "worker ok" },
-        agy: { run: async () => reviewerReplies[reviewerCalls++] },
+test(
+  "--continue-from ignores a forged gate record that claims an accept",
+  async () => {
+    const repo = await createTempRepo();
+    const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
+    const transcriptPath = join(transcriptDir, "run.json");
+    const origExitCode = process.exitCode;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const reject = "Conclusion: no.\nWhy: no.\nBlockers: none.\nChecks: t\nVerdict: reject";
+      const accept = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
+      const reviewerReplies = [reject, accept];
+      let reviewerCalls = 0;
+      const agents = (orchReplies) => {
+        let call = 0;
+        return {
+          codex: { run: async () => orchReplies[call++] },
+          claude: { run: async () => "worker ok" },
+          agy: { run: async () => reviewerReplies[reviewerCalls++] },
+        };
       };
-    };
-    const args = [
-      ...CONTINUE_BASE,
-      "--cwd",
-      repo,
-      "--require-accept",
-      "--transcript",
-      transcriptPath,
-    ];
-    await main(
-      args,
-      agents([
-        JSON.stringify({ action: "run_worker", prompt: "w" }),
-        JSON.stringify({ action: "run_reviewer", prompt: "r" }),
-        FINISH,
-      ]),
-    );
-    expect(process.exitCode).toBe(1);
+      const args = [
+        ...CONTINUE_BASE,
+        "--cwd",
+        repo,
+        "--require-accept",
+        "--transcript",
+        transcriptPath,
+      ];
+      await main(
+        args,
+        agents([
+          JSON.stringify({ action: "run_worker", prompt: "w" }),
+          JSON.stringify({ action: "run_reviewer", prompt: "r" }),
+          FINISH,
+        ]),
+      );
+      expect(process.exitCode).toBe(1);
 
-    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
-    const reviewed = transcript.events.findLast(
-      (event) => event.type === "result" && event.role === "reviewer",
-    ).result.reviewed;
-    transcript.gate = {
-      workerRan: true,
-      reviewerRan: true,
-      reviewerTurnDispatched: true,
-      acceptedSinceWorker: true,
-      lastReviewed: reviewed,
-    };
-    await writeFile(transcriptPath, JSON.stringify(transcript));
+      const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+      const reviewed = transcript.events.findLast(
+        (event) => event.type === "result" && event.role === "reviewer",
+      ).result.reviewed;
+      transcript.gate = {
+        workerRan: true,
+        reviewerRan: true,
+        reviewerTurnDispatched: true,
+        acceptedSinceWorker: true,
+        lastReviewed: reviewed,
+      };
+      await writeFile(transcriptPath, JSON.stringify(transcript));
 
-    await main(
-      [...args, "--continue-from", transcriptPath],
-      agents([FINISH, JSON.stringify({ action: "run_reviewer", prompt: "r" }), FINISH]),
-    );
-    expect(process.exitCode).toBe(0);
-    expect(reviewerCalls).toBe(2);
-  } finally {
-    process.exitCode = origExitCode;
-    logSpy.mockRestore();
-    errSpy.mockRestore();
-    await removePath(repo);
-    await removePath(transcriptDir);
-  }
-});
+      await main(
+        [...args, "--continue-from", transcriptPath],
+        agents([FINISH, JSON.stringify({ action: "run_reviewer", prompt: "r" }), FINISH]),
+      );
+      expect(process.exitCode).toBe(0);
+      expect(reviewerCalls).toBe(2);
+    } finally {
+      process.exitCode = origExitCode;
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      await removePath(repo);
+      await removePath(transcriptDir);
+    }
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 const GATE_ACCEPT = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: t\nVerdict: accept";
 const GATE_REJECT = "Conclusion: no.\nWhy: no.\nBlockers: none.\nChecks: t\nVerdict: reject";
@@ -1893,11 +1914,6 @@ async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
     await removePath(transcriptDir);
   }
 }
-
-// Each continueAfterEdit test runs main() twice (about 0.4 s each on macOS, 1 s per test with the
-// repo setup; Windows not measured locally). One test timed out at 15028 ms on Windows (#744).
-// The explicit timeout leaves room for that slowdown without raising the suite default.
-const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 45_000;
 
 const ACCEPTED_RUN = [RUN_WORKER, RUN_REVIEWER, FINISH];
 
