@@ -146,7 +146,7 @@ test("a command that changes the work tree is reported and is not a mutation", a
       testCmd: node("require('fs').writeFileSync('snapshot.out', 'x')"),
     });
     expect(result.exitCode).toBe(0);
-    expect(rev.recorded[0].prompt).toContain("The command changed the work tree: snapshot.out");
+    expect(rev.recorded[0].prompt).toContain('The command changed the work tree: "snapshot.out"');
     expect(reviewed.testRun).toMatchObject({
       workTreeChanged: true,
       changedPaths: ["snapshot.out"],
@@ -204,20 +204,26 @@ setInterval(() => {
     async end() {
       spy.mockRestore();
       const pid = Number(await readFile(pidFile, "utf8").catch(() => ""));
+      let alive = false;
       if (Number.isInteger(pid) && pid > 0) {
+        const exists = () => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch (error) {
+            return error.code === "EPERM";
+          }
+        };
         try {
           process.kill(pid);
         } catch {}
-        for (let i = 0; i < 200; i++) {
-          try {
-            process.kill(pid, 0);
-          } catch {
-            break;
-          }
+        for (let i = 0; i < 200 && (alive = exists()); i++) {
           await new Promise((r) => setTimeout(r, 25));
         }
       }
       await removePath(dir);
+      // A child that outlives the bound fails the test visibly, never silently.
+      if (alive) throw new Error(`leftover child ${pid} still runs after the kill`);
     },
   };
 }
@@ -235,7 +241,7 @@ test("a write by a leftover command process is reported as late and does not hal
     expect(result.exitCode).toBe(0);
     expect(reviewed.testRun).toMatchObject({ changedPaths: [], lateChangedPaths: ["late.txt"] });
     expect(rev.recorded[0].prompt).toContain(
-      "The work tree changed after the command finished and before this turn started: late.txt.",
+      'The work tree changed after the command finished and before this turn started: "late.txt".',
     );
   } finally {
     await writer.end();
