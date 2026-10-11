@@ -62,7 +62,7 @@ const CEILING_WORD = SMALL_NUMBER_WORDS[CEILING_SECONDS] ?? String(CEILING_SECON
  * A turn under twice the ceiling plus two seconds fits no positive bound. That is
  * 12 seconds at the five-second ceiling. The prompt then names no wait (#348).
  */
-function headlessWaitSeconds(timeout) {
+export function headlessWaitSeconds(timeout) {
   if (typeof timeout !== "number" || timeout <= 0) return DEFAULT_WAIT_SECONDS;
   const bound = Math.min(DEFAULT_WAIT_SECONDS, Math.floor(timeout / 2) - CEILING_SECONDS);
   return bound >= 1 ? bound : null;
