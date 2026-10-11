@@ -571,10 +571,7 @@ async function dispatch(args, { agents, stdin = readStdin, signal, gh, readProce
   if (!args.role) {
     throw new RoleError("dispatch requires --role worker or reviewer.");
   }
-  if (args.reason !== null) {
-    throw new RoleError("--reason is only valid for abort.");
-  }
-  rejectFinishOnlyFlags(args, "dispatch");
+  rejectMisplacedFlags(args, "dispatch");
 
   // The task file becomes `--task`, so init detection and the init checks see one source.
   if (args.taskFile !== null) {
@@ -957,10 +954,7 @@ function withOpenRun(args, requireOptions, fn) {
  * state file (#336).
  */
 async function finish(args, { stdin = readStdin, gh } = {}) {
-  if (args.role !== null) {
-    throw new RoleError("--role is only valid for dispatch.");
-  }
-
+  rejectMisplacedFlags(args, "finish");
   return withOpenRun(args, { needsBudget: true }, async (state, paths) => {
     if (state.lifecycle !== "active") {
       throw new RoleError(`finish is accepted only from active; run is ${state.lifecycle}.`);
@@ -1070,9 +1064,18 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
   });
 }
 
-/** `--require-accept` and `--require-ci` gate `finish`; every other operation rejects them. */
-function rejectFinishOnlyFlags(args, operation) {
-  if (args.requireAccept || args.requireCi !== null) {
+/**
+ * Rejects each flag that belongs to another operation: `--role` is for dispatch,
+ * `--reason` for abort, and `--require-accept` and `--require-ci` for finish.
+ */
+function rejectMisplacedFlags(args, operation) {
+  if (operation !== "dispatch" && args.role !== null) {
+    throw new RoleError("--role is only valid for dispatch.");
+  }
+  if (operation !== "abort" && args.reason !== null) {
+    throw new RoleError("--reason is only valid for abort.");
+  }
+  if (operation !== "finish" && (args.requireAccept || args.requireCi !== null)) {
     throw new RoleError(
       `--require-accept and --require-ci are only valid for finish, not ${operation}.`,
     );
@@ -1118,13 +1121,10 @@ async function acceptGateReason(state, cwd) {
 
 /** `abort`: records the reason and ends the run; accepted from any non-terminal lifecycle. */
 async function abort(args) {
-  if (args.role !== null) {
-    throw new RoleError("--role is only valid for dispatch.");
-  }
+  rejectMisplacedFlags(args, "abort");
   if (args.reason === null) {
     throw new RoleError("abort requires --reason.");
   }
-  rejectFinishOnlyFlags(args, "abort");
 
   return withOpenRun(args, {}, async (state, paths) => {
     state.lifecycle = "aborted";
@@ -1145,13 +1145,7 @@ async function abort(args) {
  * lifecycle is left as it is: an `interrupted` run stays interrupted.
  */
 async function extend(args) {
-  if (args.role !== null) {
-    throw new RoleError("--role is only valid for dispatch.");
-  }
-  if (args.reason !== null) {
-    throw new RoleError("--reason is only valid for abort.");
-  }
-  rejectFinishOnlyFlags(args, "extend");
+  rejectMisplacedFlags(args, "extend");
   if (args.maxSteps === null) {
     throw new RoleError("extend requires --max-steps <count>.");
   }
@@ -1228,13 +1222,7 @@ async function waitChecksOperation(
   args,
   { gh, signal, now = Date.now, sleep, assertWorkTree = assertGitWorkTree } = {},
 ) {
-  if (args.role !== null) {
-    throw new RoleError("--role is only valid for dispatch.");
-  }
-  if (args.reason !== null) {
-    throw new RoleError("--reason is only valid for abort.");
-  }
-  rejectFinishOnlyFlags(args, "wait-checks");
+  rejectMisplacedFlags(args, "wait-checks");
   if (args.pr === null) {
     throw new RoleError("wait-checks requires --pr <pr>.");
   }

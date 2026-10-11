@@ -460,6 +460,20 @@ test("the finish gates are rejected outside finish", async () => {
   expect(abortResult.payload.error).toContain("only valid for finish");
 });
 
+// Usefulness: verifies finish rejects --reason like the other operations and
+// leaves the run untouched; the flag was silently dropped before (issue #728).
+test("finish rejects --reason and leaves the run state unchanged", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+  await initWorkerRun(repo);
+  const before = await readRepoState(repo);
+
+  const result = await finishCall(repo, ["--reason", "x"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toBe("--reason is only valid for abort.");
+  expect(await readRepoState(repo)).toEqual(before);
+});
+
 const ciGh = (head, mergeStateStatus) => async (args) => {
   const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
   if (equalsArgs(args, prViewArgs(42))) {
