@@ -738,26 +738,50 @@ async function evaluatedState(gh, slug, info, cwd, strict = false) {
   return { commit: head, runs, statuses };
 }
 
-// The most recent entry: the later parsed time of the first present timestamp in
-// `fields`, then the larger numeric id when times tie. An entry with no timestamp
-// ranks oldest. Null when any entry has a non-numeric id or a timestamp that does
-// not parse, because the order is then unknown and the caller must fail closed. A
-// single entry needs no order and is returned as is.
-// GitHub evaluates the latest run for a name; an earlier failing run that a later
-// run replaces does not fail the gate.
+// A timestamp as the instant to the millisecond plus the fractional digits below
+// it, so distinct sub-millisecond times and offsets order exactly. Null when the
+// value is not a string that parses.
+function parseTime(raw) {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const match = /^(.*T\d\d:\d\d:\d\d)\.(\d+)(.*)$/.exec(raw);
+  const digits = match?.[2] ?? "";
+  const ms = Date.parse(
+    match ? `${match[1]}.${digits.slice(0, 3).padEnd(3, "0")}${match[3]}` : raw,
+  );
+  return Number.isNaN(ms) ? null : { ms, below: digits.slice(3) };
+}
+
+function compareTime(a, b) {
+  if (a.ms !== b.ms) {
+    return a.ms - b.ms;
+  }
+  const width = Math.max(a.below.length, b.below.length);
+  const [x, y] = [a.below.padEnd(width, "0"), b.below.padEnd(width, "0")];
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+// The most recent entry: the later of the first present timestamp in `fields`,
+// then the larger numeric id when times tie. Null when a group of several entries
+// holds an entry with a non-numeric id or a missing or unparseable timestamp,
+// because the order is then unknown and the caller must not pass the group. A
+// single entry needs no order and is returned as is. GitHub evaluates the latest
+// run for a name; an earlier failing run that a later run replaces does not fail
+// the gate.
 function latestBy(entries, fields) {
   if (entries.length === 1) {
     return entries[0];
   }
   let latest = null;
-  let latestTime = -Infinity;
+  let latestTime = null;
   for (const entry of entries) {
-    const raw = fields.map((field) => entry[field]).find((value) => value != null);
-    const time = raw === undefined ? -Infinity : typeof raw === "string" ? Date.parse(raw) : NaN;
-    if (!Number.isFinite(entry.id) || Number.isNaN(time)) {
+    const time = parseTime(fields.map((field) => entry[field]).find((value) => value != null));
+    if (!Number.isFinite(entry.id) || time === null) {
       return null;
     }
-    if (!latest || time > latestTime || (time === latestTime && entry.id >= latest.id)) {
+    const order = latest === null ? 1 : compareTime(time, latestTime) || entry.id - latest.id;
+    if (order >= 0) {
       latest = entry;
       latestTime = time;
     }
@@ -788,14 +812,16 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
   // latest entry does not hide a failing entry beside it, whether that entry is
   // another run, an earlier run, or a commit status (issue #349).
   let problem = null;
-  const unordered = {
-    kind: "failing",
-    reason: `required check ${label} cannot be ordered (an entry has a non-numeric id or an unparseable time)`,
-  };
+  // A group whose order is unknown never passes. It stays pending when an entry
+  // is pending, as on origin/main, and fails otherwise.
+  const unordered = (pending) => ({
+    kind: pending ? "pending" : "failing",
+    reason: `required check ${label} is ${pending ? "pending" : "failing"} (its entries cannot be ordered)`,
+  });
   if (matchingRuns.length > 0) {
     const run = latestBy(matchingRuns, ["started_at", "completed_at"]);
     if (run === null) {
-      problem = unordered;
+      problem = unordered(matchingRuns.some((entry) => entry.status !== "completed"));
     } else if (run.status !== "completed") {
       problem = {
         kind: "pending",
@@ -812,7 +838,7 @@ function evaluateContext({ name, appId }, commit, runs, statuses) {
   if (matchingStatuses.length > 0) {
     const status = latestBy(matchingStatuses, ["updated_at", "created_at"]);
     if (status === null) {
-      problem ??= unordered;
+      problem ??= unordered(matchingStatuses.some((entry) => entry.state === "pending"));
     } else if (status.state !== "success" && problem === null) {
       problem = {
         // A pending commit status has not failed: the reason text stays the gate's.

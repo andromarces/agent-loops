@@ -2398,14 +2398,16 @@ const gateOver = (options) =>
   checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh: fakeGh(routes(options)) });
 
 // Usefulness: verifies entries whose order is unknown fail the gate instead of
-// passing, so a missing, null, or non-numeric id at equal timestamps cannot let a
-// passing entry hide a failing one (issue #737 review).
+// passing, so each kind of invalid id at equal timestamps cannot let a passing
+// entry hide a failing one (issue #737 review).
 test.each(
-  ["check runs", "commit statuses"].flatMap((kind) =>
-    [undefined, null, "abc"].map((id) => [kind, id]),
-  ),
-)("does not pass %s with equal timestamps and id %s", async (kind, id) => {
-  const result = await gateOver(pairOptions(kind, { id: undefined }, { id }));
+  ["check runs", "commit statuses"].flatMap((kind) => [
+    [kind, "a missing id", { id: undefined }],
+    [kind, "a null id", { id: null }],
+    [kind, "a non-numeric string id", { id: "abc" }],
+  ]),
+)("does not pass %s with equal timestamps and %s", async (kind, _name, passing) => {
+  const result = await gateOver(pairOptions(kind, { id: 10 }, passing));
   expect(result.ok).toBe(false);
 });
 
@@ -2436,6 +2438,78 @@ test.each(
   );
   expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
 });
+
+// Usefulness: verifies a group with a missing timestamp never passes, so an entry
+// that cannot be ordered cannot hide a failing one (issue #737 review).
+test.each(["check runs", "commit statuses"])(
+  "does not pass %s when an entry has no timestamp",
+  async (kind) => {
+    const field = kind === "check runs" ? "started_at" : "updated_at";
+    for (const [failing, passing] of [
+      [{ id: 10, [field]: undefined }, { id: 11 }],
+      [{ id: 10 }, { id: 11, [field]: undefined }],
+    ]) {
+      const result = await gateOver(pairOptions(kind, failing, passing));
+      expect(result.ok).toBe(false);
+    }
+    const passes = pairOptions(kind, { id: 10 }, { id: 11, [field]: undefined });
+    for (const entry of passes.headRuns.concat(passes.headStatuses ?? [])) {
+      if (entry.conclusion === "failure") entry.conclusion = "success";
+      if (entry.state === "failure") entry.state = "success";
+    }
+    expect((await gateOver(passes)).ok).toBe(false);
+  },
+);
+
+// Usefulness: verifies a queued entry with a malformed timestamp keeps the
+// pending classification of origin/main, so the gate waits instead of failing
+// (issue #737 review).
+test.each([
+  [
+    "check run",
+    {
+      headRuns: [
+        run("ci (ubuntu-latest)", "success"),
+        run("ci (windows-latest)", "success"),
+        { ...openRun("ci (windows-latest)", "queued"), started_at: "later" },
+      ],
+    },
+  ],
+  [
+    "commit status",
+    {
+      headRuns: [run("ci (ubuntu-latest)", "success")],
+      headStatuses: [
+        commitStatus("ci (windows-latest)", "success"),
+        { ...commitStatus("ci (windows-latest)", "pending"), updated_at: "later" },
+      ],
+    },
+  ],
+])("keeps a queued %s with a malformed timestamp pending", async (_name, options) => {
+  const result = await gateOver(options);
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("pending");
+});
+
+// Usefulness: verifies timestamps order below the millisecond and across offsets,
+// so a newer failure that differs from an older pass only in the last fractional
+// digits is not hidden (issue #737 review).
+test.each(
+  ["check runs", "commit statuses"].flatMap((kind) => [
+    [kind, "UTC", "2026-01-01T00:00:00.1235Z", "2026-01-01T00:00:00.1234Z"],
+    [kind, "an offset", "2026-01-01T05:00:00.0000002+05:00", "2026-01-01T00:00:00.0000001Z"],
+  ]),
+)(
+  "reads the newer failing %s that differs below the millisecond in %s",
+  async (kind, _name, failAt, passAt) => {
+    const field = kind === "check runs" ? "started_at" : "updated_at";
+    const read = await readOn(
+      HEAD,
+      statusReadGh(pairOptions(kind, { id: 10, [field]: failAt }, { id: 11, [field]: passAt })),
+    );
+    expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
+  },
+);
 
 // Usefulness: verifies every supplied status stays advisory after the commit
 // binding, because the read is a pre-turn snapshot and the `--require-ci` gate
