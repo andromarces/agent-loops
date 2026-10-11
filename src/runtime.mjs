@@ -446,7 +446,7 @@ export async function runLoop(options) {
   // Before the first child spawn and the first snapshot, so the copied files are
   // present for every turn. They are ignored, so no snapshot lists them.
   if (copyLocalFiles) {
-    const report = await copyIntoWorkTree(cwd);
+    const report = await copyIntoWorkTree(cwd, {}, { signal });
     if (report) {
       onEvent({ type: "local-files", ...report });
     }
@@ -478,7 +478,7 @@ export async function runLoop(options) {
   // unreviewed, so a reviewer accept on the current state is what
   // `--require-accept` needs, and `reviewerRan`, `lastReviewed`, and the
   // review-only turn flag start empty, so every gate reads only this run.
-  const restoredGate = continued ? await matchingGate(earlierGate, cwd) : null;
+  const restoredGate = continued ? await matchingGate(earlierGate, cwd, { signal }) : null;
   let workerRan = restoredGate?.workerRan ?? continued;
   let reviewerRan = restoredGate?.reviewerRan ?? false;
   // A reviewer turn that was dispatched, whatever it returned. `reviewerRan`

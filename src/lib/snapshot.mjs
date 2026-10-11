@@ -30,16 +30,22 @@ export class SnapshotError extends Error {
 }
 
 /**
- * Refuses unless `cwd` is inside a Git work tree. `timeoutMs` bounds the probe
+ * Refuses unless `cwd` is inside a Git work tree. `timeoutMs` (default 120 s) bounds the probe
  * and terminates the `git` child on expiry, so a caller that owns a total
  * limit keeps that limit even when the probe hangs. A probe cut short by the
  * bound refuses, because a work tree it never confirmed is not a verified one.
+ * `signal` ends the probe too, and the refusal then has `isCanceled` set.
  */
-export async function assertGitWorkTree(cwd, { timeoutMs = 0 } = {}) {
+export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, signal } = {}) {
   const result = await execBounded("git", ["rev-parse", "--is-inside-work-tree"], {
     cwd,
     timeoutMs,
+    signal,
   });
+
+  if (result.isCanceled) {
+    throw new SnapshotError(`--cwd validation was canceled: ${cwd}`, { isCanceled: true });
+  }
 
   if (result.timedOut) {
     throw new SnapshotError(

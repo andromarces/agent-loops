@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test, vi } from "vite-plus/test";
 
@@ -120,6 +120,97 @@ test.skipIf(process.platform === "win32")(
       await removePath(repo);
       await removePath(scratch);
     }
+  },
+  60_000,
+);
+
+// Starts the CLI in a child process whose `git` or `ps` is a shell script that records its start and
+// then hangs, sends one SIGINT after the record exists, and returns the exit code. A cancel that
+// reaches the hung read ends the CLI with 130 well before the script ends by itself at 30 s.
+async function exitCodeOfCanceledHangingRead({ argv, script, shimName, cwd }) {
+  const scratch = await mkdtemp(join(tmpdir(), "cli-hang-shim-"));
+  const marker = join(scratch, "started");
+  const shim = join(scratch, shimName);
+  await writeFile(shim, `#!/bin/sh\n${script.replaceAll("__MARKER__", marker)}\n`);
+  await chmod(shim, 0o755);
+  const runner = [
+    `import { main } from ${JSON.stringify(pathToFileURL(CLI).href)};`,
+    "const ok = { async run() { return 'ok'; } };",
+    `await main(${JSON.stringify(argv)}.concat(process.argv.slice(1)), { codex: ok, claude: ok, agy: ok });`,
+  ].join("\n");
+  const child = spawn(process.execPath, ["--input-type=module", "-e", runner, "--", ...cwd], {
+    stdio: "ignore",
+    env: { ...process.env, PATH: `${scratch}${delimiter}${process.env.PATH}` },
+  });
+  try {
+    const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));
+    await vi.waitFor(async () => expect(await readFile(marker, "utf8")).toBe("started\n"), {
+      timeout: 20_000,
+      interval: 100,
+    });
+    child.kill("SIGINT");
+    return await within(exited, 15_000, "The CLI exit");
+  } finally {
+    child.kill("SIGKILL");
+    await removePath(scratch);
+  }
+}
+
+// Usefulness: verifies the first SIGINT ends a run whose `--cwd` validation hangs with exit 130,
+// so the validation is bounded by the cancel and not only by its own end (#729).
+test.skipIf(process.platform === "win32")(
+  "a SIGINT during the --cwd validation ends the run with exit 130",
+  async () => {
+    const repo = await createTempRepo();
+    try {
+      const code = await exitCodeOfCanceledHangingRead({
+        argv: [...ARGS],
+        shimName: "git",
+        script: 'echo started > "__MARKER__"\nexec sleep 30',
+        cwd: ["--cwd", repo],
+      });
+      expect(code).toBe(130);
+    } finally {
+      await removePath(repo);
+    }
+  },
+  60_000,
+);
+
+// Usefulness: verifies the first SIGINT ends a run whose work-tree root read for the transcript
+// location hangs, with exit 130, so that read honors the cancel (#729).
+test.skipIf(process.platform === "win32")(
+  "a SIGINT during the transcript location read ends the run with exit 130",
+  async () => {
+    const repo = await createTempRepo();
+    try {
+      const code = await exitCodeOfCanceledHangingRead({
+        argv: [...ARGS],
+        shimName: "git",
+        script:
+          'case "$*" in *--is-inside-work-tree*) echo true;; *) echo started > "__MARKER__"; exec sleep 30;; esac',
+        cwd: ["--cwd", repo, "--transcript", join(repo, "transcript.json")],
+      });
+      expect(code).toBe(130);
+    } finally {
+      await removePath(repo);
+    }
+  },
+  60_000,
+);
+
+// Usefulness: verifies the first SIGINT ends a hung `harness-check` process-table read with
+// exit 130, so the command honors the cancel (#729).
+test.skipIf(process.platform === "win32")(
+  "a SIGINT during harness-check ends the process-table read with exit 130",
+  async () => {
+    const code = await exitCodeOfCanceledHangingRead({
+      argv: ["harness-check", "claude"],
+      shimName: "ps",
+      script: 'echo started > "__MARKER__"\nexec sleep 30',
+      cwd: [],
+    });
+    expect(code).toBe(130);
   },
   60_000,
 );

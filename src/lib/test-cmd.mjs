@@ -93,7 +93,7 @@ export async function runTestCmd({
   cwd,
   signal,
 }) {
-  const before = await snapshot(cwd);
+  const before = await snapshot(cwd, { signal });
   const startedAt = Date.now();
   logInfo(`test command started (bound ${timeoutSeconds}s)`);
 
@@ -145,6 +145,8 @@ export async function runTestCmd({
   }
   const durationMs = Date.now() - startedAt;
 
+  // The cancel is already set when it ended the command, and the changed paths are its evidence,
+  // so this read has the time bound only.
   const after = await snapshot(cwd);
   const changed = diffSnapshots(before, after);
 

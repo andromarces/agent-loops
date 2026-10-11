@@ -7,7 +7,12 @@ import { readableErrorText } from "../../src/lib/error-message.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
 import { redactEnvSecrets } from "../../src/lib/redact.mjs";
 import { TAIL_CHARS, redactCommandText, runTestCmd } from "../../src/lib/test-cmd.mjs";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import {
+  ABORT_KILL_TEST_TIMEOUT_MS,
+  createTempRepo,
+  expectAbortKillsShim,
+  removePath,
+} from "../runtime-helpers.mjs";
 
 const dirs = [];
 afterEach(async () => {
@@ -197,6 +202,19 @@ test("a cancel kills the command and its child process", async () => {
   expect(await outcome).toMatchObject({ isCanceled: true });
   await expectAllGone(pidFiles);
 }, 30_000);
+
+// Usefulness: verifies the before snapshot honors the cancel, so a cancel ends a hung `git` read
+// and the run rejects as canceled before any command starts (#729).
+test(
+  "a cancel during the before snapshot ends the run as canceled",
+  async () => {
+    const error = await expectAbortKillsShim("git", (signal) =>
+      runTestCmd({ command: node(""), cwd: tmpdir(), signal }).catch((err) => err),
+    );
+    expect(error.isCanceled).toBe(true);
+  },
+  ABORT_KILL_TEST_TIMEOUT_MS,
+);
 
 // Usefulness: verifies a cancel still compares the work tree and carries the result on
 // the error, so a write the command made before the cancel is reported and not lost

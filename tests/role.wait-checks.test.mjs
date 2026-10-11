@@ -140,6 +140,28 @@ test("wait-checks spends work-tree validation inside the bound", async () => {
   expect(bounds).toEqual([600]);
 });
 
+// Usefulness: verifies the cancel signal of the command reaches the work-tree validation, so a
+// canceled `wait-checks` does not wait for a stuck `git` (#729).
+test("wait-checks hands its cancel signal to the work-tree validation", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const controller = new AbortController();
+  let received;
+
+  await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
+    {
+      signal: controller.signal,
+      assertWorkTree: async (cwd, options) => {
+        received = options;
+      },
+      gh: async () => ({ status: 0, stdout: JSON.stringify(SETTLED.checks), stderr: "" }),
+    },
+  );
+  expect(received.signal).toBe(controller.signal);
+});
+
 // Usefulness: verifies a bound spent before the first read reports the bound
 // without reading, so a parent sees the bound it ran out of (issue #329).
 test("wait-checks reports the bound when validation left none for the wait", async () => {

@@ -587,7 +587,7 @@ async function dispatch(args, { agents, stdin = readStdin, signal, gh, readProce
     args.task = await readTaskFile(args.taskFile, () => stdin(args));
   }
 
-  await assertGitWorkTree(args.cwd);
+  await assertGitWorkTree(args.cwd, { signal });
   const paths = statePaths({ cwd: args.cwd, parentSession: args.parentSession || undefined });
   const onEvent = createEventSink(args.transcript);
 
@@ -700,7 +700,7 @@ async function dispatchLocked(
     // state file exists, so a copy that throws leaves no run to abort, and
     // before the first child turn and snapshot, so every turn sees the files.
     if (state.copyLocalFiles) {
-      localFiles = await copyLocalFiles(args.cwd);
+      localFiles = await copyLocalFiles(args.cwd, {}, { signal });
       if (localFiles) {
         onEvent({ type: "local-files", ...localFiles });
       }
@@ -956,7 +956,7 @@ function withOpenRun(args, requireOptions, fn) {
  * merge state, so the finish records `noRequiredChecks` in the envelope and the
  * state file (#336).
  */
-async function finish(args, { stdin = readStdin, gh } = {}) {
+async function finish(args, { stdin = readStdin, gh, signal } = {}) {
   if (args.role !== null) {
     throw new RoleError("--role is only valid for dispatch.");
   }
@@ -1008,7 +1008,7 @@ async function finish(args, { stdin = readStdin, gh } = {}) {
       refusals.push(markerReason);
     }
     if (args.requireAccept) {
-      const reason = await acceptGateReason(state, args.cwd);
+      const reason = await acceptGateReason(state, args.cwd, signal);
       if (reason) {
         refusals.push(reason);
       }
@@ -1086,7 +1086,7 @@ function rejectFinishOnlyFlags(args, operation) {
  * change to an uncommitted state at the same head is detected. Returns null
  * when the gate holds, or a reason that names the failing condition.
  */
-async function acceptGateReason(state, cwd) {
+async function acceptGateReason(state, cwd, signal) {
   const last = state.lastResult;
   if (!last || last.role !== "reviewer" || last.status !== "ok") {
     return "no reviewer turn after the latest worker turn";
@@ -1103,7 +1103,7 @@ async function acceptGateReason(state, cwd) {
   if (!last.reviewed.exact) {
     return "the reviewed snapshot is not exact";
   }
-  const current = reviewedState(await snapshot(cwd));
+  const current = reviewedState(await snapshot(cwd, { signal }));
   if (!current.exact) {
     return "the current snapshot is not exact";
   }
@@ -1252,7 +1252,7 @@ async function waitChecksOperation(
     // probe never confirmed is not one this command may read.
     await withinBound(
       remaining,
-      () => assertWorkTree(args.cwd, { timeoutMs: remaining }),
+      () => assertWorkTree(args.cwd, { timeoutMs: remaining, signal }),
       "--cwd validation did not complete within the wait bound, so the work tree was not confirmed.",
     );
   }

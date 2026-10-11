@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main as cliMain } from "../../src/cli.mjs";
 import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install/commands.mjs";
+import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
 import { restoreAgentLoopHome } from "../runtime-helpers.mjs";
 import { makeHome, cleanupHomes } from "./install-helpers.mjs";
 
@@ -261,6 +262,39 @@ test("harness-check separates a harness mismatch from a check that cannot run", 
       },
     });
     expect(process.exitCode).toBe(1);
+  } finally {
+    console.error = originalError;
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: verifies `harness-check` hands its cancel signal to the lookup and ends a canceled
+// read with exit 130, not the exit 1 of a failed read, so a caller can tell a cancel apart (#729).
+test("harness-check passes its cancel signal to the lookup and exits 130 on a cancel", async () => {
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const controller = new AbortController();
+    let received;
+    process.exitCode = 0;
+    await runHarnessCheckCommand(["claude"], {
+      signal: controller.signal,
+      lookup: async (options) => {
+        received = options;
+        return "claude";
+      },
+    });
+    expect(received.signal).toBe(controller.signal);
+    expect(process.exitCode).toBe(0);
+
+    process.exitCode = 0;
+    await runHarnessCheckCommand(["claude"], {
+      signal: controller.signal,
+      lookup: async () => {
+        throw new ProcessReadError("was canceled", { isCanceled: true });
+      },
+    });
+    expect(process.exitCode).toBe(130);
   } finally {
     console.error = originalError;
     process.exitCode = 0;

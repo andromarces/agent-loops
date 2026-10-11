@@ -565,7 +565,13 @@ export async function main(
   }
 
   if (argv[0] === "harness-check") {
-    await runHarnessCheckCommand(argv.slice(1));
+    const controller = new AbortController();
+    const removeSigIntListener = cancelOnSigInt(controller);
+    try {
+      await runHarnessCheckCommand(argv.slice(1), { signal: controller.signal });
+    } finally {
+      removeSigIntListener();
+    }
     return;
   }
 
@@ -722,13 +728,15 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     let saveMode = "file";
     const chooseSaveMode = async () => {
       try {
-        const root = await workTreeRoot(options.cwd);
+        const root = await workTreeRoot(options.cwd, { signal: controller.signal });
         if (!(await isInside(root, options.transcript))) return;
         saveMode = (await isInside(root, await sessionRecordPath(options.transcript)))
           ? "none"
           : "record";
         if (saveMode === "record") transcriptData.runNonce = runNonce;
-      } catch {
+      } catch (err) {
+        // A cancel ends the run as canceled, and the caller's catch keeps exit 130.
+        if (readProp(err, "isCanceled")) throw err;
         saveMode = "none";
       }
     };
@@ -789,9 +797,9 @@ ${redactedText(readProp(err, "message") ?? err)}`);
     };
 
     try {
-      await assertGitWorkTree(options.cwd);
+      await assertGitWorkTree(options.cwd, { signal: controller.signal });
     } catch (err) {
-      await finish({ exitCode: 1, error: err, failed: true });
+      await finish({ exitCode: readProp(err, "isCanceled") ? 130 : 1, error: err, failed: true });
       return;
     }
 

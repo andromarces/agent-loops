@@ -113,3 +113,26 @@ test("copyLocalFiles bounds its git reads and keeps the final newline", async ()
     expect(options.stripFinalNewline).toBe(false);
   }
 });
+
+// Usefulness: verifies the work-tree probe has a bound when the caller sets none and hands the
+// caller's abort signal to the spawn layer, so no caller can leave the probe unbounded (#729).
+test("assertGitWorkTree bounds the probe by default and hands over the abort signal", async () => {
+  execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: "true\n", stderr: "" });
+  const controller = new AbortController();
+  await assertGitWorkTree(".", { signal: controller.signal });
+  const options = spawnedWith();
+  expect(options.timeout).toBeGreaterThan(0);
+  expect(options.cancelSignal).toBe(controller.signal);
+});
+
+// Usefulness: verifies the local-files `git` reads hand the caller's abort signal to the spawn
+// layer, so an init that is canceled does not wait for a stuck `git` (#729).
+test("copyLocalFiles hands its git reads the abort signal", async () => {
+  execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: `${process.cwd()}\n`, stderr: "" });
+  const controller = new AbortController();
+  await copyLocalFiles(".", {}, { signal: controller.signal }).catch(() => {});
+  expect(execa.mock.calls.length).toBeGreaterThan(0);
+  for (const [, , options] of execa.mock.calls) {
+    expect(options.cancelSignal).toBe(controller.signal);
+  }
+});

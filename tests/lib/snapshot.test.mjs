@@ -63,6 +63,20 @@ test(
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
 
+// Usefulness: verifies a cancel ends a hung work-tree probe and marks the refusal as a cancel, so
+// `role dispatch` and the headless run keep exit 130 instead of exit 1 (#729).
+test(
+  "assertGitWorkTree ends a hung probe on cancel and reports a cancel",
+  async () => {
+    const error = await expectAbortKillsShim("git", (signal) =>
+      assertGitWorkTree(tmpdir(), { signal }).catch((err) => err),
+    );
+    expect(error).toBeInstanceOf(SnapshotError);
+    expect(error.isCanceled).toBe(true);
+  },
+  ABORT_KILL_TEST_TIMEOUT_MS,
+);
+
 // Usefulness: verifies a hung `git` read in the snapshot ends at its bound with a SnapshotError, so
 // a stuck child cannot hang the turn (#729).
 test(

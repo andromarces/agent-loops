@@ -16,7 +16,8 @@ import {
   verifyResolvedModels,
 } from "../../src/lib/continuation.mjs";
 import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
-import { createPsShim, removePath, within } from "../runtime-helpers.mjs";
+import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
+import { createPsShim, createTempRepo, removePath, within } from "../runtime-helpers.mjs";
 
 // Value that the mocked `readFile` throws while `active`; otherwise it reads the real file.
 const readControl = vi.hoisted(() => ({ active: false, value: undefined }));
@@ -450,6 +451,30 @@ test("matchingGate returns null for an absent or malformed gate", async () => {
     gate({}, { digest: undefined }),
   ]) {
     expect(await matchingGate(bad, CWD)).toBeNull();
+  }
+});
+
+// Usefulness: verifies a cancel during the gate snapshot rejects as a cancel and does not read as
+// "no gate", so a canceled continuation exits 130 instead of resetting the gate (#729).
+test("matchingGate rejects as canceled when the cancel is already set", async () => {
+  const repo = await createTempRepo();
+  try {
+    const reviewed = reviewedState(await snapshot(repo));
+    const gate = {
+      workerRan: true,
+      reviewerRan: true,
+      reviewerTurnDispatched: true,
+      acceptedSinceWorker: true,
+      lastReviewed: reviewed,
+    };
+    expect(await matchingGate(gate, repo)).not.toBeNull();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(matchingGate(gate, repo, { signal: controller.signal })).rejects.toMatchObject({
+      isCanceled: true,
+    });
+  } finally {
+    await removePath(repo);
   }
 });
 

@@ -60,6 +60,11 @@ async function git(cwd, args, options = {}) {
     stripFinalNewline: false,
     ...execaOptions,
   });
+  if (result.isCanceled) {
+    throw Object.assign(new Error(`local files: git ${args[0]} was canceled`), {
+      isCanceled: true,
+    });
+  }
   if (result.timedOut) {
     throw new Error(`local files: git ${args[0]} timed out after ${GIT_READ_TIMEOUT_MS} ms`);
   }
@@ -163,8 +168,8 @@ const hasControlCharacter = (path) =>
  * that rejects `-z` fails the command, which fails the init. An entry that Git still
  * lists counts as a work tree even when its `.git` entry is gone.
  */
-async function readWorkTrees(root) {
-  const { stdout } = await git(root, ["worktree", "list", "--porcelain", "-z"]);
+async function readWorkTrees(root, read) {
+  const { stdout } = await read(root, ["worktree", "list", "--porcelain", "-z"]);
   const entries = [];
   let current = null;
   for (const field of stdout.split("\0")) {
@@ -196,12 +201,12 @@ const isInside = (parent, child) => {
  * command that fails throws. A path with a control character is refused: the
  * result is `{ refused }` and the caller copies nothing (decision 10).
  */
-async function findMainWorkTree(root, entries) {
+async function findMainWorkTree(root, entries, read) {
   const first = entries[0];
   if (first === undefined || first.bare || !(await lstatOrNull(first.path))?.isDirectory()) {
     return { main: null };
   }
-  const common = stripLf((await git(root, ["rev-parse", "--git-common-dir"])).stdout);
+  const common = stripLf((await read(root, ["rev-parse", "--git-common-dir"])).stdout);
   const commonReal = await realpath(resolve(root, common));
   const main = await realpath(first.path);
   if (hasControlCharacter(common) || hasControlCharacter(commonReal)) {
@@ -277,11 +282,14 @@ async function collect(ctx, rel, abs) {
  *
  * `hooks` is a test seam. `beforeSourceOpen` and `beforeCopy` run with the file's
  * path name just before the source is opened and just before `copyFile`.
+ * `signal` ends a running `git` read, and the copy then rejects with `isCanceled` set.
  * @param {string} cwd
  * @param {{ beforeSourceOpen?: (rel: string) => Promise<void>, beforeCopy?: (rel: string) => Promise<void> }} [hooks]
+ * @param {{ signal?: AbortSignal }} [options]
  * @returns {Promise<{ copied: string[], skipped: string[] } | null>}
  */
-export async function copyLocalFiles(cwd, hooks = {}) {
+export async function copyLocalFiles(cwd, hooks = {}, { signal } = {}) {
+  const read = (dir, args, options) => git(dir, args, { signal, ...options });
   // A path with a control character is not trusted to survive a round trip through
   // Git's output or a path comparison, so the copy refuses it and copies nothing.
   const refuse = (what) => {
@@ -291,18 +299,18 @@ export async function copyLocalFiles(cwd, hooks = {}) {
   if (hasControlCharacter(cwd)) {
     return refuse("--cwd");
   }
-  const top = stripLf((await git(cwd, ["rev-parse", "--show-toplevel"])).stdout);
+  const top = stripLf((await read(cwd, ["rev-parse", "--show-toplevel"])).stdout);
   if (hasControlCharacter(top)) {
     return refuse("the work tree path");
   }
   // The operator's own `--cwd` names the work tree when Git names the same
   // directory, so a Git echo of the path is not what the later commands run in.
   const root = (await realpath(cwd)) === (await realpath(top)) ? cwd : top;
-  const entries = await readWorkTrees(root);
+  const entries = await readWorkTrees(root, read);
   if (entries.some((entry) => hasControlCharacter(entry.path))) {
     return refuse("a registered work tree path");
   }
-  const found = await findMainWorkTree(root, entries);
+  const found = await findMainWorkTree(root, entries, read);
   if (found.refused !== undefined) {
     return refuse(found.refused);
   }
@@ -355,7 +363,9 @@ export async function copyLocalFiles(cwd, hooks = {}) {
     }
   }
 
-  const trackedNames = (await git(mainReal, ["ls-files", "-z"])).stdout.split("\0").filter(Boolean);
+  const trackedNames = (await read(mainReal, ["ls-files", "-z"])).stdout
+    .split("\0")
+    .filter(Boolean);
   // A tracked file is tracked under any spelling that reaches it, so the tracked
   // names under the listed paths are also compared by canonical path: on a
   // case-insensitive file system `.claude/config` is the tracked `.Claude/config`.
@@ -387,7 +397,7 @@ export async function copyLocalFiles(cwd, hooks = {}) {
 
   const ignored = new Set();
   if (pending.length > 0) {
-    const result = await git(rootReal, ["check-ignore", "-z", "--stdin"], {
+    const result = await read(rootReal, ["check-ignore", "-z", "--stdin"], {
       input: `${pending.map((file) => file.rel).join("\0")}\0`,
       allowExit: [1],
     });
