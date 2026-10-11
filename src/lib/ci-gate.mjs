@@ -455,6 +455,20 @@ const withSignal =
       signal: options.signal ? AbortSignal.any([options.signal, signal]) : signal,
     });
 
+// The first failure of a group, in sequential order, carried past the wait for
+// the cancelled siblings. `expired` is whether the caller's deadline (`gh.deadline`)
+// had already fired when the failure was captured. A failure captured before the
+// deadline stays the outcome, so a deadline that expires during the wait cannot
+// replace it. The entry points unwrap it with `failureOf`.
+class ReadFailure {
+  constructor(cause, expired) {
+    this.cause = cause;
+    this.expired = expired;
+  }
+}
+
+const failureOf = (err) => (err instanceof ReadFailure ? err.cause : err);
+
 // Runs independent reads together. Each maker receives a runner that the group
 // can cancel. The reads are awaited in list order, so the first failure in that
 // order throws as soon as it is reached, the error the same reads run in sequence
@@ -475,9 +489,10 @@ async function inOrder(gh, makers) {
     }
     return values;
   } catch (err) {
+    const expired = gh.deadline?.aborted ?? false;
     group.abort();
     await Promise.allSettled(reads);
-    throw err;
+    throw new ReadFailure(err, expired);
   }
 }
 
@@ -941,6 +956,8 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   const slugRead = startRepoSlug(gh, cwd);
   try {
     return await judgeCi({ pr, reviewed, cwd, gh, slug: slugRead.read });
+  } catch (err) {
+    throw failureOf(err);
   } finally {
     await slugRead.cancel();
   }
@@ -1120,6 +1137,7 @@ export async function readRequiredChecks({
       signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
       timeoutMs,
     });
+  call.deadline = controller.signal;
   let prHead = null;
   let slugStart = null;
   try {
@@ -1228,9 +1246,12 @@ export async function readRequiredChecks({
       head,
     );
   } catch (err) {
-    const detail = controller.signal.aborted
-      ? `the read timed out after ${timeoutMs}ms`
-      : oneLine(readableErrorText(err));
+    // A failure decided before the deadline stays the outcome, whatever the
+    // deadline does while the cancelled siblings settle.
+    const detail =
+      controller.signal.aborted && !(err instanceof ReadFailure && !err.expired)
+        ? `the read timed out after ${timeoutMs}ms`
+        : oneLine(readableErrorText(failureOf(err)));
     return unresolved(`unread: ${detail}`, prHead);
   } finally {
     clearTimeout(timer);

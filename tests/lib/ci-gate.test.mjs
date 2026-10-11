@@ -2720,14 +2720,14 @@ test("keeps the PR read ahead of the repository read", async () => {
 // A gh double that counts the calls still running. A call whose key is in `stalled`
 // never replies and ends only when its abort signal fires, as a hung `gh` child
 // ends when the runner kills it.
-function stallingGh(inner, stalled) {
+function stallingGh(inner, stalled, abortDelayMs = 0) {
   const live = { active: 0 };
   const gh = async (args, cwd, options = {}) => {
     live.active += 1;
     try {
       if (stalled.includes(args.join(" "))) {
         await new Promise((_resolve, reject) => {
-          const abort = () => reject(new Error("call aborted"));
+          const abort = () => setTimeout(() => reject(new Error("call aborted")), abortDelayMs);
           if (options.signal?.aborted) {
             abort();
           }
@@ -2812,5 +2812,27 @@ test("an early unresolved status read leaves no gh call running", async () => {
 test("a thrown PR read error leaves no gh call running", async () => {
   const { gh, live } = stallingGh(fakeGh([[PR_VIEW, "stderr: pr down"], ...routes()]), [REPO_VIEW]);
   await expect(checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh })).rejects.toThrow(/pr down/);
+  expect(live.active).toBe(0);
+});
+
+// Usefulness: verifies a failure decided before the deadline stays the outcome when
+// the deadline expires while the aborted sibling is still ending (issue #731
+// review). A slow-terminating child must not turn the first failure into a timeout.
+test("the status read keeps an earlier failure when the deadline expires during sibling cleanup", async () => {
+  const failing = routes().map(([match, value]) =>
+    match === MERGE_CHECK_RUNS ? [match, "stderr: runs down"] : [match, value],
+  );
+  const { gh, live } = stallingGh(fakeGh(failing), [MERGE_STATUS], 500);
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: HEAD,
+    clean: true,
+    timeoutMs: 250,
+    gh,
+  });
+  expect(read.status).toBe("unresolved");
+  expect(read.summary).toMatch(/runs down/);
+  expect(read.summary).not.toMatch(/timed out/);
   expect(live.active).toBe(0);
 });
