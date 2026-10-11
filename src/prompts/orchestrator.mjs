@@ -153,7 +153,7 @@ const SHELL_NETWORK = "from the shell commands that its sandbox runs";
 const SHELL_READ = "through a shell command that its sandbox runs";
 const SHELL_ONLY_LIMIT =
   "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything.";
-const SHELL_EXCEPTION =
+export const SHELL_EXCEPTION =
   "A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.";
 
 // A `copilot` read-only turn keeps shell network, so the Codex sandbox wording above is false for
@@ -310,7 +310,7 @@ function reviewerSandboxBlock(reviewerWorkspaceWrite) {
   return [
     "",
     "- This run lets the Codex reviewer run targeted tests and probes in the workspace-write sandbox. The shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox.",
-    "- A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.",
+    `- ${SHELL_EXCEPTION}`,
     "- Your own turns stay read-only. The reviewer still must not change files. The runtime compares the work tree around every reviewer turn. A change halts the run with no revert.",
   ].join("\n");
 }

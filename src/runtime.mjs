@@ -5,15 +5,10 @@ import { readableErrorText, readProp } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
-import { applyResult, matchingGate } from "./lib/continuation.mjs";
+import { applyResult, freshGate, matchingGate, resetGate } from "./lib/continuation.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
-import {
-  carryTestRun,
-  DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
-  failedTestRun,
-  runTestCmd,
-} from "./lib/test-cmd.mjs";
+import { carryTestRun, failedTestRun, runTestCmd, testCmdInput } from "./lib/test-cmd.mjs";
 import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
@@ -255,15 +250,9 @@ export async function runChild(options) {
           async (before) => {
             // The reviewed state comes from the runtime snapshot, never from the
             // child response, so the child cannot misreport it.
-            if (roleName === "reviewer") {
-              reviewed = reviewedState(before);
-              prChecks = await readStatus(reviewed);
-            }
-            return runFn(
-              isWorker
-                ? workerFinalPrompt
-                : reviewerPrompt(prompt, prChecks, testRun, sandbox !== null),
-            );
+            reviewed = reviewedState(before);
+            prChecks = await readStatus(reviewed);
+            return runFn(reviewerPrompt(prompt, prChecks, testRun, sandbox !== null));
           },
           { signal },
         )
@@ -462,7 +451,7 @@ export async function runLoop(options) {
     return {
       exitCode,
       ...detail,
-      gate: { workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed },
+      gate,
     };
   }
 
@@ -481,22 +470,13 @@ export async function runLoop(options) {
   // `--require-accept` needs, and `reviewerRan`, `lastReviewed`, and the
   // review-only turn flag start empty, so every gate reads only this run.
   const restoredGate = continued ? await matchingGate(earlierGate, cwd, { signal }) : null;
-  let workerRan = restoredGate?.workerRan ?? continued;
-  let reviewerRan = restoredGate?.reviewerRan ?? false;
-  // A reviewer turn that was dispatched, whatever it returned. `reviewerRan`
-  // counts only a turn that ended `ok`, because `--require-accept` reads that
-  // one. A `review-only` run needs the turn itself, not a successful one: the
-  // interactive path accepts its finish from `active` after any reviewer turn,
-  // including one that ended in a handled error, and the summary records what
-  // the turn returned (#337).
-  let reviewerTurnDispatched = restoredGate?.reviewerTurnDispatched ?? false;
-  let acceptedSinceWorker = restoredGate?.acceptedSinceWorker ?? false;
+  // `reviewerTurnDispatched` counts any reviewer turn, whatever it returned, while `reviewerRan`
+  // counts only one that ended `ok`, because `--require-accept` reads that one (#337).
+  // `lastReviewed` is the runtime-owned identity of the last reviewer turn that the `--require-ci`
+  // gate reads. Any later turn resets it, so a change made after that review cannot be gated
+  // against the older head (#293).
+  let gate = restoredGate ?? (continued ? resetGate() : freshGate());
   let finishRefused = false;
-  // The reviewed state the `--require-ci` gate reads: the runtime-owned identity
-  // of the last reviewer turn, reset to none by any later turn, so a change made
-  // after that review cannot be gated against the older head (#293). It mirrors
-  // the interactive `lastResult.reviewed` the role gate reads.
-  let lastReviewed = restoredGate?.lastReviewed ?? null;
 
   // The caller persists a pre-assigned id before the CLI starts, so a parent crash during a first
   // turn leaves it (issue #564). The role state is not touched here: the adapter owns it.
@@ -663,7 +643,7 @@ export async function runLoop(options) {
       // that ended in a handled error, because the summary records what that turn
       // returned. It sits where `--require-accept` sits, so it takes the same
       // corrective turn and repeated-refusal rule (#337).
-      if (mode === "review-only" && !reviewerTurnDispatched) {
+      if (mode === "review-only" && !gate.reviewerTurnDispatched) {
         needsChildTurn = true;
         refusals.push({
           reason: "no reviewer turn has run, and a review-only run dispatches no worker",
@@ -671,14 +651,16 @@ export async function runLoop(options) {
             "Dispatch the reviewer, then finish once that turn has returned. What the turn returned is what the finish records: the verdict, or the error, goes in verified, and neither blocks the finish.",
         });
       }
-      if (requireAccept && (workerRan ? !acceptedSinceWorker : !reviewerRan)) {
+      if (requireAccept && (gate.workerRan ? !gate.acceptedSinceWorker : !gate.reviewerRan)) {
         needsChildTurn = true;
         refusals.push({
-          reason: workerRan
+          reason: gate.workerRan
             ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
             : "no reviewer report on the state",
           recovery: `Dispatch the reviewer, obtain ${
-            workerRan ? "Verdict: accept with a Checks line on that state" : "a reviewer report"
+            gate.workerRan
+              ? "Verdict: accept with a Checks line on that state"
+              : "a reviewer report"
           } on that state, then finish.`,
         });
       }
@@ -695,14 +677,14 @@ export async function runLoop(options) {
         // can no longer misreport. Its own failure is a refusal rather than a
         // thrown error, so a `gh` failure does not discard a run that a later
         // turn could pass (#293).
-        const gate = await ciGate({ pr: requireCi, reviewed: lastReviewed, cwd, gh });
-        if (gate.refusal) {
+        const ci = await ciGate({ pr: requireCi, reviewed: gate.lastReviewed, cwd, gh });
+        if (ci.refusal) {
           // The gate reads the reviewed state, which only a reviewer turn
           // establishes, so a gate refusal always needs a child turn (#293).
           needsChildTurn = true;
-          refusals.push(gate.refusal);
+          refusals.push(ci.refusal);
         } else {
-          noRequiredChecks = gate.noRequiredChecks;
+          noRequiredChecks = ci.noRequiredChecks;
         }
       }
       if (refusals.length === 0) {
@@ -797,13 +779,7 @@ export async function runLoop(options) {
         // read. The CLI refuses a `--pr` and a `--require-ci` that name different PRs.
         pr: pr ?? requireCi,
         // The command text comes from the `--test-cmd` run input only (ADR 0017).
-        testCmd:
-          testCmdText === null
-            ? null
-            : {
-                command: testCmdText,
-                timeoutSeconds: testCmdTimeout ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
-              },
+        testCmd: testCmdInput(testCmdText, testCmdTimeout),
         reviewerWorkspaceWrite,
         ...(assignedHook ? { onSessionAssigned: assignedHook(roleName) } : {}),
         gh,
@@ -831,12 +807,7 @@ export async function runLoop(options) {
     // Set whatever the turn returned: a reviewer turn that ended in a handled error
     // is still the report a `review-only` finish records (#337). The replay of a
     // continued run applies the same transition (#393).
-    ({ workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed } =
-      applyResult(
-        { workerRan, reviewerRan, reviewerTurnDispatched, acceptedSinceWorker, lastReviewed },
-        roleName,
-        result,
-      ));
+    gate = applyResult(gate, roleName, result);
     finishRefused = false;
 
     prompt = resultPrompt({ result, stepsUsed, maxSteps });

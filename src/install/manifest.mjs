@@ -15,7 +15,7 @@ import {
 } from "./fsutil.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 
-export const MANIFEST_VERSION = 1;
+const MANIFEST_VERSION = 1;
 
 /**
  * The install home. `AGENT_LOOP_HOME` overrides it so tests never touch the
@@ -47,7 +47,7 @@ export function manifestLockFile(home = resolveHome()) {
   return join(resolve(home), ".agent-loops.lock");
 }
 
-export function emptyManifest() {
+function emptyManifest() {
   return { version: MANIFEST_VERSION, harnesses: {} };
 }
 

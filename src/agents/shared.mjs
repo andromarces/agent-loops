@@ -1,7 +1,56 @@
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
+import { join } from "node:path";
 import { hasClosingBlockAttempt } from "../lib/report.mjs";
 
 // A model id has no whitespace or control character, so a sentence or a blank is not one.
 const MODEL_ID = /^[^\s\p{Cc}]+$/u;
+
+const SESSION_HEAD_BYTES = 256 * 1024;
+
+/**
+ * Reads the first 256 KiB of a regular file in a real directory, or returns null for anything
+ * else. Neither the directory nor the file is followed through a link, and a read error returns
+ * null.
+ */
+export async function readSessionHead(dir, name) {
+  const path = join(dir, name);
+  try {
+    if (!(await lstat(dir)).isDirectory() || !(await lstat(path)).isFile()) {
+      return null;
+    }
+    // O_NOFOLLOW is undefined on Windows, where the lstat checks above are the guard.
+    const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      if (!(await file.stat()).isFile()) {
+        return null;
+      }
+      const buffer = Buffer.alloc(SESSION_HEAD_BYTES);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      return buffer.toString("utf8", 0, bytesRead);
+    } finally {
+      await file.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Guards the resume of an unconfirmed pre-assigned id. When `state.sessionUnconfirmed` is set and
+ * `holdsId(id)` is false, clears the mark and throws a `sessionMissing` error with `message`,
+ * so the runtime reruns the turn as a first turn.
+ * @param {object} state role state; mutated
+ * @param {string | null | undefined} requestedId the id the turn resumes
+ * @param {(id: string) => Promise<boolean>} holdsId adapter check that the CLI holds the session
+ * @param {string} message text of the thrown error
+ */
+export async function requireHeldUnconfirmedSession(state, requestedId, holdsId, message) {
+  if (requestedId && state.sessionUnconfirmed && !(await holdsId(requestedId))) {
+    delete state.sessionUnconfirmed;
+    throw Object.assign(new Error(message), { sessionMissing: true });
+  }
+}
 
 /**
  * Sets `state.usage` to `usage`, or removes it when the CLI reported none (`undefined` or

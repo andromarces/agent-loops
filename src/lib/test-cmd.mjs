@@ -9,6 +9,12 @@ import { diffSnapshots, snapshot } from "./snapshot.mjs";
 // ADR 0017. The command is the operator's `--test-cmd`, run by the runtime in
 // the run's work tree before each reviewer turn, outside every CLI sandbox.
 export const DEFAULT_TEST_CMD_TIMEOUT_SECONDS = 600;
+
+/** The `runChild` test-command input, or null when the run has no `--test-cmd`. */
+export const testCmdInput = (command, timeoutSeconds) =>
+  command === null
+    ? null
+    : { command, timeoutSeconds: timeoutSeconds ?? DEFAULT_TEST_CMD_TIMEOUT_SECONDS };
 // Bytes kept while the command runs: twice the tail the reviewer sees, so a
 // secret cut at the left edge of the window never reaches the final tail.
 const CAPTURE_WINDOW_BYTES = 16 * 1024;

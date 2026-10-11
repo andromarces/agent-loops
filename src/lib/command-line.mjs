@@ -95,14 +95,3 @@ export function heldSessionIds(command, platform) {
   });
   return ids;
 }
-
-/**
- * True when `command` holds the session `id` through a session flag, compared without case. The
- * rules are those of `heldSessionIds`.
- * @param {string} command
- * @param {string} id a UUID
- * @param {string} platform a `process.platform` value
- */
-export function holdsSession(command, id, platform) {
-  return heldSessionIds(command, platform).has(id.toLowerCase());
-}

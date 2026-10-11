@@ -7,21 +7,14 @@ import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.m
 import {
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
-  MODES,
   REVIEW_ONLY_GATE_REFUSAL,
   REVIEW_ONLY_PR_REFUSAL,
   ROLE_KINDS as ROLES,
   assertOpenCodeOptions,
-  modeError,
-  readArgValue,
-  readInlineValue,
-  readMaxSteps,
-  readNonNegativeInt,
-  readPositiveInt,
+  parseFlags,
   readStdinText,
   readTaskFile,
   roleFlags,
-  splitInlineFlag,
   TASK_SOURCE_CONFLICT,
   reviewerWorkspaceWriteError,
   testCmdError,
@@ -89,115 +82,32 @@ export function parseArgs(argv) {
     options[`${role}Effort`] = null;
   }
 
-  const readValue = (flag, index, allowDash) => readArgValue(argv, flag, index, allowDash);
+  parseFlags(argv, options, {
+    roleFlagMap: ROLE_FLAGS,
+    onFlag: (arg, readInline, inline) => {
+      switch (arg) {
+        case "--no-copy-local-files":
+          options.copyLocalFiles = false;
+          return true;
 
-  for (let i = 0; i < argv.length; i++) {
-    const raw = argv[i];
-    const inline = splitInlineFlag(raw);
-    const arg = inline ? inline.flag : raw;
-    let inlineUsed = false;
-    const readInline = (flag, allowDash) => {
-      if (!inline) {
-        return readValue(flag, ++i, allowDash);
+        case "--continue-from":
+          options.continueFrom = resolve(readInline(arg));
+          return true;
+
+        case "--help":
+        case "-h":
+          if (inline) {
+            throw new Error(`${arg} does not take a value.`);
+          }
+          printHelp();
+          process.exit(0);
+          return true;
+
+        default:
+          return false;
       }
-      inlineUsed = true;
-      return readInlineValue(inline, flag);
-    };
-
-    if (Object.hasOwn(ROLE_FLAGS, arg)) {
-      options[ROLE_FLAGS[arg]] = readInline(arg);
-      continue;
-    }
-
-    switch (arg) {
-      case "--cwd":
-        options.cwd = resolve(readInline(arg));
-        break;
-
-      case "--task":
-        options.task = readInline(arg);
-        break;
-
-      case "--task-file":
-        options.taskFile = readInline(arg, true);
-        break;
-
-      case "--max-steps":
-        options.maxSteps = readMaxSteps(readInline("--max-steps"));
-        break;
-
-      case "--timeout": {
-        const seconds = readNonNegativeInt("--timeout", readInline("--timeout"));
-        options.timeout = seconds === 0 ? null : seconds;
-        break;
-      }
-
-      case "--transcript":
-        options.transcript = resolve(readInline(arg));
-        break;
-
-      case "--verbose":
-        options.verbose = true;
-        break;
-
-      case "--require-accept":
-        options.requireAccept = true;
-        break;
-
-      case "--no-copy-local-files":
-        options.copyLocalFiles = false;
-        break;
-
-      case "--pr":
-        options.pr = readPositiveInt("--pr", readInline("--pr"));
-        break;
-
-      case "--require-ci":
-        options.requireCi = readPositiveInt("--require-ci", readInline("--require-ci"));
-        break;
-
-      case "--test-cmd":
-        options.testCmd = readInline(arg);
-        break;
-
-      case "--test-cmd-timeout":
-        options.testCmdTimeout = readPositiveInt(arg, readInline(arg));
-        break;
-
-      case "--reviewer-workspace-write":
-        options.reviewerWorkspaceWrite = true;
-        break;
-
-      case "--continue-from":
-        options.continueFrom = resolve(readInline(arg));
-        break;
-
-      case "--mode":
-        options.mode = readInline("--mode");
-        if (!MODES.has(options.mode)) {
-          throw new Error(modeError(options.mode));
-        }
-        break;
-
-      case "--help":
-      case "-h":
-        if (inline) {
-          throw new Error(`${arg} does not take a value.`);
-        }
-        printHelp();
-        process.exit(0);
-        break;
-
-      default:
-        throw new Error(`Unknown argument: ${raw}`);
-    }
-
-    // A flag that read no value is boolean, so an inline value is an error
-    // rather than a silently dropped argument.
-    if (inline && !inlineUsed) {
-      throw new Error(`${arg} does not take a value.`);
-    }
-  }
+    },
+  });
 
   for (const role of ROLES) {
     if (!options[role]) {

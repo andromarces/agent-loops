@@ -53,12 +53,15 @@ export async function readTaskFile(path, readStdin) {
   }
 }
 
-/** Reads all of stdin as text. Refuses a terminal, which would wait for typed input. */
-export async function readStdinText() {
+/**
+ * Reads all of stdin as text. Refuses a terminal, which would wait for typed input, with
+ * `ttyMessage`.
+ */
+export async function readStdinText(
+  ttyMessage = "--task-file - reads the task from stdin, but stdin is a terminal. Pipe the task.",
+) {
   if (process.stdin.isTTY) {
-    throw new Error(
-      "--task-file - reads the task from stdin, but stdin is a terminal. Pipe the task.",
-    );
+    throw new Error(ttyMessage);
   }
   process.stdin.setEncoding("utf8");
   let data = "";
@@ -197,4 +200,106 @@ export function assertOpenCodeOptions(role, kind, model, effort) {
       `--${role}-model "${model}" already contains a variant and cannot be combined with --${role}-effort.`,
     );
   }
+}
+
+/**
+ * Runs the flag loop of the headless CLI and the role subcommand over `argv[start..]`, writing into
+ * `args`. The flags both commands read are handled here. `onFlag(arg, readInline, inline)` handles
+ * the rest and returns true when it consumed `arg`. A flag whose handler read no value is boolean,
+ * so an inline value on it is an error rather than a silently dropped argument. `--timeout` also
+ * sets `args.timeoutProvided` when `args` carries that key.
+ * @param {string[]} argv
+ * @param {object} args parsed options; mutated
+ * @param {object} config
+ * @param {number} [config.start] index of the first flag
+ * @param {Record<string, string>} config.roleFlagMap `--<role>[-model|-effort]` flag to option key
+ * @param {(arg: string, readInline: (flag: string, allowDash?: boolean) => string, inline: object | null) => boolean} config.onFlag
+ * @param {new (message: string) => Error} [config.ErrorType] class of the errors raised here
+ */
+export function parseFlags(argv, args, { start = 0, roleFlagMap, onFlag, ErrorType = Error }) {
+  for (let i = start; i < argv.length; i++) {
+    const raw = argv[i];
+    const inline = splitInlineFlag(raw);
+    const arg = inline ? inline.flag : raw;
+    let inlineUsed = false;
+    const readInline = (flag, allowDash) => {
+      if (!inline) {
+        return readArgValue(argv, flag, ++i, allowDash);
+      }
+      inlineUsed = true;
+      return readInlineValue(inline, flag);
+    };
+
+    if (Object.hasOwn(roleFlagMap, arg)) {
+      args[roleFlagMap[arg]] = readInline(arg);
+    } else if (
+      !applyCommonFlag(args, arg, readInline, ErrorType) &&
+      !onFlag(arg, readInline, inline)
+    ) {
+      throw new ErrorType(`Unknown argument: ${raw}`);
+    }
+
+    if (inline && !inlineUsed) {
+      throw new ErrorType(`${arg} does not take a value.`);
+    }
+  }
+}
+
+// The flags that both commands read into the same option keys. Returns false for any other flag.
+function applyCommonFlag(args, arg, readInline, ErrorType) {
+  switch (arg) {
+    case "--cwd":
+      args.cwd = resolve(readInline(arg));
+      break;
+    case "--task":
+      args.task = readInline(arg);
+      break;
+    case "--task-file":
+      args.taskFile = readInline(arg, true);
+      break;
+    case "--max-steps":
+      args.maxSteps = readMaxSteps(readInline(arg));
+      break;
+    case "--timeout": {
+      const seconds = readNonNegativeInt(arg, readInline(arg));
+      args.timeout = seconds === 0 ? null : seconds;
+      if ("timeoutProvided" in args) {
+        args.timeoutProvided = true;
+      }
+      break;
+    }
+    case "--transcript":
+      args.transcript = resolve(readInline(arg));
+      break;
+    case "--verbose":
+      args.verbose = true;
+      break;
+    case "--require-accept":
+      args.requireAccept = true;
+      break;
+    case "--pr":
+      args.pr = readPositiveInt(arg, readInline(arg));
+      break;
+    case "--require-ci":
+      args.requireCi = readPositiveInt(arg, readInline(arg));
+      break;
+    case "--test-cmd":
+      args.testCmd = readInline(arg);
+      break;
+    case "--test-cmd-timeout":
+      args.testCmdTimeout = readPositiveInt(arg, readInline(arg));
+      break;
+    case "--reviewer-workspace-write":
+      args.reviewerWorkspaceWrite = true;
+      break;
+    case "--mode":
+      args.mode = readInline(arg);
+      if (!MODES.has(args.mode)) {
+        throw new ErrorType(modeError(args.mode));
+      }
+      break;
+    default:
+      return false;
+  }
+  return true;
 }

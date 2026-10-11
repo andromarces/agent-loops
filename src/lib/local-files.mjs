@@ -11,7 +11,7 @@ import { logInfo, logWarn } from "./log.mjs";
 
 // Paths that can configure a child CLI or a build. A directory is walked, and the
 // three conditions apply to each file inside it.
-export const LOCAL_FILE_PATHS = [
+const LOCAL_FILE_PATHS = [
   ".agents",
   ".claude",
   ".codex",
@@ -33,7 +33,7 @@ const CLAUDE_WORKTREES = [".claude", "worktrees"];
 
 // A configuration file is small. A larger file is a cache, a log, or a session
 // store, so it is skipped and named instead of duplicated into every run.
-export const MAX_FILE_BYTES = 1024 * 1024;
+const MAX_FILE_BYTES = 1024 * 1024;
 
 // Bounds the walk of one listed directory, counting every entry read under it,
 // nested directories included. A listed directory that holds more than this is

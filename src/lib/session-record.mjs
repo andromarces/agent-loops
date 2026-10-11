@@ -2,6 +2,7 @@ import { lstat, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { sha256 } from "./hash.mjs";
+import { isJsonObject } from "./json.mjs";
 import { logWarn } from "./log.mjs";
 import { resolveWriteTarget, writeFileAtomic } from "./runstate.mjs";
 
@@ -131,9 +132,7 @@ export async function readSessionRecord(transcript, { digest, cwd, runNonce }) {
     return refuse(file, "not valid JSON");
   }
   const shaped =
-    record !== null &&
-    typeof record === "object" &&
-    !Array.isArray(record) &&
+    isJsonObject(record) &&
     Object.keys(record).sort().join() === FIELDS.join() &&
     record.version === 1 &&
     ROLES.includes(record.role) &&
