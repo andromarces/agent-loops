@@ -4,12 +4,11 @@
 // Returns null when the platform, the process table, or the ancestry is absent,
 // so the Claude, Codex, and Antigravity skills refuse to start instead of
 // registering the wrong parent.
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { exec } from "./exec.mjs";
 import { harnessForCommand } from "./harnesses.mjs";
 
-const execFileAsync = promisify(execFile);
+// Characters of decoded text per output stream of a process-table read.
+const PROCESS_TABLE_MAX_BUFFER = 32 * 1024 * 1024;
 
 export function harnessForProcessName(name) {
   if (typeof name !== "string" || name.trim() === "") {
@@ -24,41 +23,13 @@ export function harnessForProcessName(name) {
   return harnessForCommand(normalized) ?? null;
 }
 
-async function readWindowsProcesses() {
-  const script =
-    "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress";
-  const { stdout } = await execFileAsync(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", script],
-    { windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
-  );
-  const parsed = JSON.parse(stdout.trim() || "[]");
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
-  return rows.map((row) => ({
-    pid: row.ProcessId,
-    ppid: row.ParentProcessId,
-    name: row.Name,
-  }));
-}
-
-async function readPosixProcesses() {
-  const { stdout } = await execFileAsync("ps", ["-eo", "pid=,ppid=,comm="], {
-    maxBuffer: 32 * 1024 * 1024,
-  });
-  return stdout
-    .split("\n")
-    .map((line) => line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/))
-    .filter(Boolean)
-    .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), name: match[3] }));
-}
-
-// Seconds that the command-line read waits before it ends the process. The end signal is SIGTERM,
+// Seconds that a process-table read waits before it ends the process. The end signal is SIGTERM,
 // and `exec` force-kills after execa's 5 s default delay, so a read that ignores SIGTERM ends about
 // 35 s after the start on POSIX.
-const COMMANDS_READ_TIMEOUT_SECONDS = 30;
+const PROCESS_READ_TIMEOUT_SECONDS = 30;
 
 /**
- * Failure of the command-line read. The message and `reason` hold the reason class only: timeout,
+ * Failure of a process-table read. The message and `reason` hold the reason class only: timeout,
  * cancel, exit code, signal termination, spawn failure, or unreadable output. They never hold output of the read,
  * because the process table carries the command lines of every process on the host, and those
  * lines can carry the secrets of other programs.
@@ -88,18 +59,29 @@ function readFailure(err, timeout) {
   return new ProcessReadError("failed to start");
 }
 
+// Each column has its `ps` keyword and its `Win32_Process` property. A numeric column is a pid.
+const PROCESS_COLUMNS = {
+  pid: { ps: "pid=", win: "ProcessId", numeric: true },
+  ppid: { ps: "ppid=", win: "ParentProcessId", numeric: true },
+  name: { ps: "comm=", win: "Name" },
+  command: { ps: "command=", win: "CommandLine" },
+};
+
 /**
- * Lists every process with its full command line, for a check that needs the arguments. The read
- * runs through `exec`, so `signal` cancels it and `timeout` (seconds) bounds it. Every failure
- * rejects with a `ProcessReadError`, whose `isCanceled` is true for a cancel.
+ * Reads the process table with the named columns. The read runs through `exec`, so `signal` cancels
+ * it and `timeout` (seconds) bounds it. `columns` lists the numeric columns first and one text
+ * column last, for example `["pid", "ppid", "name"]`. Every failure rejects with a
+ * `ProcessReadError`, whose `isCanceled` is true for a cancel.
+ * @param {(keyof typeof PROCESS_COLUMNS)[]} columns
  * @param {{ signal?: AbortSignal, timeout?: number }} [options]
- * @returns {Promise<{ pid: number, command: string }[]>}
+ * @returns {Promise<Record<string, string | number>[]>}
  */
-export async function readProcessCommands({
-  signal,
-  timeout = COMMANDS_READ_TIMEOUT_SECONDS,
-} = {}) {
+async function readProcessColumns(
+  columns,
+  { signal, timeout = PROCESS_READ_TIMEOUT_SECONDS } = {},
+) {
   const windows = process.platform === "win32";
+  const specs = columns.map((column) => PROCESS_COLUMNS[column]);
   const [command, args] = windows
     ? [
         "powershell.exe",
@@ -107,13 +89,17 @@ export async function readProcessCommands({
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+          `Get-CimInstance Win32_Process | Select-Object ${specs.map((spec) => spec.win).join(",")} | ConvertTo-Json -Compress`,
         ],
       ]
-    : ["ps", ["-eo", "pid=,command="]];
+    : ["ps", ["-eo", specs.map((spec) => spec.ps).join(",")]];
   let stdout;
   try {
-    ({ stdout } = await exec(command, args, { signal, timeout, maxBuffer: 32 * 1024 * 1024 }));
+    ({ stdout } = await exec(command, args, {
+      signal,
+      timeout,
+      maxBuffer: PROCESS_TABLE_MAX_BUFFER,
+    }));
   } catch (err) {
     throw readFailure(err, timeout);
   }
@@ -124,20 +110,48 @@ export async function readProcessCommands({
     } catch {
       throw new ProcessReadError("returned output that is not JSON");
     }
-    return (Array.isArray(parsed) ? parsed : [parsed]).map((row) => ({
-      pid: row.ProcessId,
-      command: row.CommandLine ?? "",
-    }));
+    return (Array.isArray(parsed) ? parsed : [parsed]).map((row) =>
+      Object.fromEntries(
+        columns.map((column) => [
+          column,
+          row[PROCESS_COLUMNS[column].win] ?? (column === "command" ? "" : undefined),
+        ]),
+      ),
+    );
   }
+  const line = new RegExp(
+    `^\\s*${specs.map((spec) => (spec.numeric ? "(\\d+)\\s+" : "(.*)")).join("")}$`,
+  );
   return stdout
     .split("\n")
-    .map((line) => line.match(/^\s*(\d+)\s+(.*)$/))
+    .map((text) => text.match(line))
     .filter(Boolean)
-    .map((match) => ({ pid: Number(match[1]), command: match[2] }));
+    .map((match) =>
+      Object.fromEntries(
+        columns.map((column, index) => [
+          column,
+          PROCESS_COLUMNS[column].numeric ? Number(match[index + 1]) : match[index + 1],
+        ]),
+      ),
+    );
 }
 
-export async function readProcessTable() {
-  return process.platform === "win32" ? readWindowsProcesses() : readPosixProcesses();
+/**
+ * Lists every process with its full command line, for a check that needs the arguments.
+ * @param {{ signal?: AbortSignal, timeout?: number }} [options]
+ * @returns {Promise<{ pid: number, command: string }[]>}
+ */
+export function readProcessCommands(options) {
+  return readProcessColumns(["pid", "command"], options);
+}
+
+/**
+ * Lists every process with its parent and name, for the ancestry walk.
+ * @param {{ signal?: AbortSignal, timeout?: number }} [options]
+ * @returns {Promise<{ pid: number, ppid: number, name: string }[]>}
+ */
+export function readProcessTable(options) {
+  return readProcessColumns(["pid", "ppid", "name"], options);
 }
 
 /**
@@ -147,12 +161,13 @@ export async function readProcessTable() {
 export async function nearestHarness({
   startPid = process.ppid,
   readProcesses = readProcessTable,
+  signal,
 } = {}) {
   if (!Number.isInteger(Number(startPid)) || Number(startPid) <= 0) {
     return null;
   }
   const byPid = new Map();
-  for (const entry of await readProcesses()) {
+  for (const entry of await readProcesses({ signal })) {
     byPid.set(String(entry.pid), entry);
   }
 

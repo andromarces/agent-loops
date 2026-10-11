@@ -14,7 +14,9 @@ import {
   withMutationCheck,
 } from "../../src/lib/snapshot.mjs";
 import {
+  ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,
+  expectAbortKillsShim,
   expectBoundKillsShim,
   removePath,
 } from "../runtime-helpers.mjs";
@@ -60,6 +62,56 @@ test(
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
+
+// Usefulness: verifies a hung `git` read in the snapshot ends at its bound with a SnapshotError, so
+// a stuck child cannot hang the turn (#729).
+test(
+  "snapshot refuses a git read that outlasts its bound",
+  async () => {
+    const error = await expectBoundKillsShim("git", (timeoutMs) =>
+      snapshot(tmpdir(), { timeoutMs }).catch((err) => err),
+    );
+    expect(error).toBeInstanceOf(SnapshotError);
+    expect(error.message).toMatch(/timed out/);
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies a cancel ends a hung `git` read in the snapshot and marks the error as a
+// cancel, which the caller maps to exit 130 (#729).
+test(
+  "snapshot ends a hung git read on cancel and reports a cancel",
+  async () => {
+    const error = await expectAbortKillsShim("git", (signal) =>
+      snapshot(tmpdir(), { signal }).catch((err) => err),
+    );
+    expect(error).toBeInstanceOf(SnapshotError);
+    expect(error.isCanceled).toBe(true);
+  },
+  ABORT_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies the post-turn snapshot ignores a cancel, so a turn that was canceled after it
+// wrote a file still reports the changed path (#729).
+test("withMutationCheck keeps the changed-path evidence after a cancel", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  try {
+    await expect(
+      withMutationCheck(
+        repo,
+        "worker",
+        async () => {
+          await writeFile(join(repo, "written.txt"), "x\n");
+          controller.abort();
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ name: "MutationError", paths: ["written.txt"] });
+  } finally {
+    await removePath(repo);
+  }
+});
 
 // Usefulness: verifies diffSnapshots detects when nothing changes.
 test("diffSnapshots returns empty list when no change occurred", async () => {

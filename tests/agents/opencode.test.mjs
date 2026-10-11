@@ -12,7 +12,8 @@ import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
 import { runLoop } from "../../src/runtime.mjs";
 import { createTempRepo, removePath, restoreRunsRoot, scripted } from "../runtime-helpers.mjs";
 
-vi.mock("../../src/lib/exec.mjs", () => ({
+vi.mock("../../src/lib/exec.mjs", async (importOriginal) => ({
+  ...(await importOriginal()),
   exec: vi.fn(),
 }));
 

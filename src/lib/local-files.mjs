@@ -6,7 +6,7 @@
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { execa } from "execa";
+import { execBounded } from "./exec.mjs";
 import { logInfo, logWarn } from "./log.mjs";
 
 // Paths that can configure a child CLI or a build. A directory is walked, and the
@@ -46,17 +46,24 @@ export const MAX_WALKED_ENTRIES = 2000;
 // the run's reviewed state would shift (ADR 0018).
 const GIT_CONTROL_FILES = new Set([".gitignore", ".gitattributes"]);
 
+// Milliseconds that one `git` read waits before it ends the child.
+const GIT_READ_TIMEOUT_MS = 60_000;
+
 async function git(cwd, args, options = {}) {
   // `stripFinalNewline: false` (execa, `lib/io/strip-newline.js`) keeps the output
   // byte-exact. By default execa removes a final `\n` or `\r\n`, which can be part
   // of a path.
-  const result = await execa("git", args, {
+  const { allowExit, ...execaOptions } = options;
+  const result = await execBounded("git", args, {
     cwd,
-    reject: false,
+    timeoutMs: GIT_READ_TIMEOUT_MS,
     stripFinalNewline: false,
-    ...options,
+    ...execaOptions,
   });
-  if (result.exitCode !== 0 && !options.allowExit?.includes(result.exitCode)) {
+  if (result.timedOut) {
+    throw new Error(`local files: git ${args[0]} timed out after ${GIT_READ_TIMEOUT_MS} ms`);
+  }
+  if (result.exitCode !== 0 && !allowExit?.includes(result.exitCode)) {
     // `shortMessage` holds the whole command line, so the fallback is the error code.
     const detail = (result.stderr || result.code || "").trim();
     throw new Error(

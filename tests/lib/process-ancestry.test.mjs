@@ -5,8 +5,14 @@ import {
   harnessForProcessName,
   nearestHarness,
   readProcessCommands,
+  readProcessTable,
 } from "../../src/lib/process-ancestry.mjs";
-import { createPsShim, within } from "../runtime-helpers.mjs";
+import {
+  BOUND_KILL_TEST_TIMEOUT_MS,
+  createPsShim,
+  expectBoundKillsShim,
+  within,
+} from "../runtime-helpers.mjs";
 
 vi.mock("../../src/lib/exec.mjs", async (importOriginal) => {
   const real = await importOriginal();
@@ -139,3 +145,50 @@ test.skipIf(!posix)(
   },
   30_000,
 );
+
+// Usefulness: verifies the ancestry read returns pid, parent pid, and name rows through the merged
+// reader, which the harness lookup depends on (#729).
+test.skipIf(!posix)("readProcessTable lists pid, parent pid, and name", async () => {
+  await useShim("echo '  7  1 launchd'\necho '42 7 my shell'");
+  await expect(readProcessTable()).resolves.toEqual([
+    { pid: 7, ppid: 1, name: "launchd" },
+    { pid: 42, ppid: 7, name: "my shell" },
+  ]);
+});
+
+// Usefulness: verifies a hung ancestry read ends at its bound, names only the reason class, and
+// ends the child, so `harness-check` cannot hang on a stuck process table (#729).
+test.skipIf(!posix)(
+  "readProcessTable ends a hung read at its bound and names no output",
+  async () => {
+    const error = await expectBoundKillsShim("ps", (timeoutMs) =>
+      readProcessTable({ timeout: timeoutMs / 1000 }).catch((err) => err),
+    );
+    expect(error).toMatchObject({ name: "ProcessReadError", isCanceled: false });
+    expect(error.reason).toMatch(/^timed out after /);
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies the ancestry read has the same 30-second default bound as the command-line
+// read, so a caller that sets none is still bounded (#729).
+test.skipIf(!posix)("readProcessTable bounds the read at 30 seconds by default", async () => {
+  await useShim("echo '1 0 init'");
+  await readProcessTable();
+  expect(vi.mocked(exec).mock.lastCall[2]).toMatchObject({ timeout: 30 });
+});
+
+// Usefulness: verifies a cancel signal reaches the process-table reader that `nearestHarness` uses.
+test("nearestHarness passes its cancel signal to the reader", async () => {
+  const controller = new AbortController();
+  let received;
+  await nearestHarness({
+    startPid: 5,
+    signal: controller.signal,
+    readProcesses: async (options) => {
+      received = options;
+      return [];
+    },
+  });
+  expect(received.signal).toBe(controller.signal);
+});

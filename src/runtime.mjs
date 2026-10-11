@@ -69,16 +69,20 @@ export async function runProbeTurn({
   timeout,
   signal,
 }) {
-  await withMutationCheck(cwd, roleName, () =>
-    invoke({
-      agents,
-      state,
-      roleName,
-      prompt,
-      opts: { cwd, readOnly: true, timeout, signal },
-      onEvent: () => {},
-      stepsUsed: 0,
-    }),
+  await withMutationCheck(
+    cwd,
+    roleName,
+    () =>
+      invoke({
+        agents,
+        state,
+        roleName,
+        prompt,
+        opts: { cwd, readOnly: true, timeout, signal },
+        onEvent: () => {},
+        stepsUsed: 0,
+      }),
+    { signal },
   );
   // A cancel can land in the post-turn snapshot, after the adapter returned (#587).
   throwIfCanceled(signal, roleName);
@@ -245,19 +249,24 @@ export async function runChild(options) {
       testRun = await runTestCmd({ ...testCmd, cwd, signal });
     }
     const response = readOnly
-      ? await withMutationCheck(cwd, roleName, async (before) => {
-          // The reviewed state comes from the runtime snapshot, never from the
-          // child response, so the child cannot misreport it.
-          if (roleName === "reviewer") {
-            reviewed = reviewedState(before);
-            prChecks = await readStatus(reviewed);
-          }
-          return runFn(
-            isWorker
-              ? workerFinalPrompt
-              : reviewerPrompt(prompt, prChecks, testRun, sandbox !== null),
-          );
-        })
+      ? await withMutationCheck(
+          cwd,
+          roleName,
+          async (before) => {
+            // The reviewed state comes from the runtime snapshot, never from the
+            // child response, so the child cannot misreport it.
+            if (roleName === "reviewer") {
+              reviewed = reviewedState(before);
+              prChecks = await readStatus(reviewed);
+            }
+            return runFn(
+              isWorker
+                ? workerFinalPrompt
+                : reviewerPrompt(prompt, prChecks, testRun, sandbox !== null),
+            );
+          },
+          { signal },
+        )
       : await runFn(workerFinalPrompt);
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
@@ -518,31 +527,40 @@ export async function runLoop(options) {
     async run(state, p, opts) {
       const call = (text) => {
         const resumedUnconfirmed = state.sessionId !== null && state.sessionUnconfirmed === true;
-        return withMutationCheck(cwd, "orchestrator", async () => {
-          try {
-            return await invoke({
-              agents,
-              state,
-              roleName: "orchestrator",
-              prompt: text,
-              opts: assignedHook
-                ? { ...opts, onSessionAssigned: assignedHook("orchestrator") }
-                : opts,
-              onEvent,
-              stepsUsed,
-            });
-          } catch (err) {
-            // A refused ownership check clears the mark, and the orchestrator has no first-turn
-            // rerun: the missing prompt would start a session with no task. The id stays, so it
-            // keeps the mark and the next resume checks it again. The restore sits inside the
-            // mutation check, because a failed snapshot after the turn replaces this error with
-            // one that wraps it (issue #564).
-            if (resumedUnconfirmed && readProp(err, "sessionMissing") && state.sessionId !== null) {
-              state.sessionUnconfirmed = true;
+        return withMutationCheck(
+          cwd,
+          "orchestrator",
+          async () => {
+            try {
+              return await invoke({
+                agents,
+                state,
+                roleName: "orchestrator",
+                prompt: text,
+                opts: assignedHook
+                  ? { ...opts, onSessionAssigned: assignedHook("orchestrator") }
+                  : opts,
+                onEvent,
+                stepsUsed,
+              });
+            } catch (err) {
+              // A refused ownership check clears the mark, and the orchestrator has no first-turn
+              // rerun: the missing prompt would start a session with no task. The id stays, so it
+              // keeps the mark and the next resume checks it again. The restore sits inside the
+              // mutation check, because a failed snapshot after the turn replaces this error with
+              // one that wraps it (issue #564).
+              if (
+                resumedUnconfirmed &&
+                readProp(err, "sessionMissing") &&
+                state.sessionId !== null
+              ) {
+                state.sessionUnconfirmed = true;
+              }
+              throw err;
             }
-            throw err;
-          }
-        });
+          },
+          { signal: opts.signal },
+        );
       };
       // The mark of a canceled run reaches a continued run, whose first prompt is `instructions`,
       // so no turn needs a carried mark. `instructionsPending` is true while a replaced

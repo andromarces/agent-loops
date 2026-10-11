@@ -19,7 +19,8 @@ import { readContinuation } from "../src/lib/continuation.mjs";
 import { sessionRecordPath } from "../src/lib/session-record.mjs";
 import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
-vi.mock("../src/lib/exec.mjs", () => ({
+vi.mock("../src/lib/exec.mjs", async (importOriginal) => ({
+  ...(await importOriginal()),
   exec: vi.fn(),
 }));
 
