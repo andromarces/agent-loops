@@ -2195,22 +2195,26 @@ const continueArgs = (repo, transcriptPath) => [
 // Usefulness: the resolved-model probe runs under the mutation check of a child turn, so a probe
 // that changes the work tree halts the continuation with exit 1 before any turn, and the earlier
 // transcript stays whole (#394).
-test("--continue-from halts when the probe changes the work tree", async () => {
-  await withRecordedModel(async (repo, transcriptPath, errorSpy) => {
-    const before = await readFile(transcriptPath, "utf8");
-    const seen = { codex: [], claude: [], agy: [] };
-    const agents = sessionAgents([FINISH], seen);
-    agents.claude.run = async () => {
-      await writeFile(join(repo, "probe-leak.txt"), "leak\n");
-      return "OK";
-    };
-    await main(continueArgs(repo, transcriptPath), agents);
-    expect(process.exitCode).toBe(1);
-    expect(errorSpy.mock.calls.flat().join("\n")).toMatch(/mutat/i);
-    expect(seen.codex).toEqual([]);
-    expect(await readFile(transcriptPath, "utf8")).toBe(before);
-  });
-});
+test(
+  "--continue-from halts when the probe changes the work tree",
+  async () => {
+    await withRecordedModel(async (repo, transcriptPath, errorSpy) => {
+      const before = await readFile(transcriptPath, "utf8");
+      const seen = { codex: [], claude: [], agy: [] };
+      const agents = sessionAgents([FINISH], seen);
+      agents.claude.run = async () => {
+        await writeFile(join(repo, "probe-leak.txt"), "leak\n");
+        return "OK";
+      };
+      await main(continueArgs(repo, transcriptPath), agents);
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy.mock.calls.flat().join("\n")).toMatch(/mutat/i);
+      expect(seen.codex).toEqual([]);
+      expect(await readFile(transcriptPath, "utf8")).toBe(before);
+    });
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: after a turn that named no single model (recorded null), an unchanged model B must not be
 // refused, and a B-to-A change must not be compared against a stale A. The run continues, tells the
@@ -2236,32 +2240,37 @@ test.each([["model-1"], ["model-2"]])(
       expect(errorSpy.mock.calls.flat().join("\n")).not.toMatch(/resolved to/);
     }, null);
   },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
 
 // Usefulness: a SIGINT during the probe cancels it through the run's signal and refuses the
 // continuation with exit 130, before any turn, leaving the earlier transcript whole (#394).
-test("--continue-from cancels a probe on SIGINT and exits 130", async () => {
-  await withRecordedModel(async (repo, transcriptPath) => {
-    const before = await readFile(transcriptPath, "utf8");
-    const seen = { codex: [], claude: [], agy: [] };
-    const agents = sessionAgents([FINISH], seen);
-    let probeSignal;
-    agents.claude.run = async (_state, _prompt, options) => {
-      probeSignal = options.signal;
-      process.emit("SIGINT");
-      const err = new Error("canceled");
-      err.isCanceled = true;
-      throw err;
-    };
-    const listenersBefore = process.listenerCount("SIGINT");
-    await main(continueArgs(repo, transcriptPath), agents);
-    expect(process.exitCode).toBe(130);
-    expect(probeSignal?.aborted).toBe(true);
-    expect(seen.codex).toEqual([]);
-    expect(await readFile(transcriptPath, "utf8")).toBe(before);
-    expect(process.listenerCount("SIGINT")).toBe(listenersBefore);
-  });
-});
+test(
+  "--continue-from cancels a probe on SIGINT and exits 130",
+  async () => {
+    await withRecordedModel(async (repo, transcriptPath) => {
+      const before = await readFile(transcriptPath, "utf8");
+      const seen = { codex: [], claude: [], agy: [] };
+      const agents = sessionAgents([FINISH], seen);
+      let probeSignal;
+      agents.claude.run = async (_state, _prompt, options) => {
+        probeSignal = options.signal;
+        process.emit("SIGINT");
+        const err = new Error("canceled");
+        err.isCanceled = true;
+        throw err;
+      };
+      const listenersBefore = process.listenerCount("SIGINT");
+      await main(continueArgs(repo, transcriptPath), agents);
+      expect(process.exitCode).toBe(130);
+      expect(probeSignal?.aborted).toBe(true);
+      expect(seen.codex).toEqual([]);
+      expect(await readFile(transcriptPath, "utf8")).toBe(before);
+      expect(process.listenerCount("SIGINT")).toBe(listenersBefore);
+    });
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Usefulness: verifies a real SIGINT during a stalled process-table read ends the continued run
 // with exit 130 before any turn, and ends the read's shim, so the holder check cannot defeat
