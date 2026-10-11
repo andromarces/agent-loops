@@ -5,6 +5,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { HARNESS_META } from "../lib/harnesses.mjs";
 
 function forwardSlashes(path) {
   return path.replaceAll("\\", "/");
@@ -13,6 +14,19 @@ function forwardSlashes(path) {
 async function template(templateDir, ...segments) {
   return readFile(join(templateDir, ...segments), "utf8");
 }
+
+// The session variable that the shared harness-check paragraph tells a skill not to trust, and why.
+const SESSION_CHANNEL = {
+  claude: {
+    variable: "${CLAUDE_SESSION_ID}",
+    reason: "a foreign harness leaves the literal in place and a nested harness inherits the value",
+  },
+  codex: { variable: "CODEX_THREAD_ID", reason: "a nested harness inherits it" },
+  antigravity: {
+    variable: "ANTIGRAVITY_CONVERSATION_ID",
+    reason: "a nested harness inherits it",
+  },
+};
 
 function claudeEntry(guardPath) {
   return {
@@ -52,9 +66,23 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
   const cli = `node "${forwardSlashes(join(packageRoot, "src/cli.mjs"))}"`;
   const files = [];
   const settings = [];
+  const harnessCheck = await template(templateDir, "harness-check.md");
 
-  const renderSkill = (text) =>
-    text
+  // `harness` names the skill harness. Its shared harness-check paragraph renders into
+  // `{{HARNESS_CHECK}}` before the CLI placeholder resolves.
+  const renderSkill = (text, harness) =>
+    (harness
+      ? text.replaceAll(
+          "{{HARNESS_CHECK}}",
+          harnessCheck
+            .replaceAll("{{HARNESS_ID}}", harness)
+            .replaceAll("{{HARNESS_LABEL}}", HARNESS_META[harness].label)
+            .replaceAll("{{SESSION_VAR}}", SESSION_CHANNEL[harness].variable)
+            .replaceAll("{{SESSION_VAR_REASON}}", SESSION_CHANNEL[harness].reason)
+            .trimEnd(),
+        )
+      : text
+    )
       .replaceAll("{{AGENT_LOOP_INSTRUCTIONS}}", forwardSlashes(instructions))
       .replaceAll("__AGENT_LOOP_CLI__", cli);
 
@@ -62,7 +90,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     const skill = await template(templateDir, "claude", "skills", "agent-loop", "SKILL.md");
     files.push({
       path: join(home, ".claude", "skills", "agent-loop", "SKILL.md"),
-      content: renderSkill(skill),
+      content: renderSkill(skill, harness),
     });
     const entry = claudeEntry(guardPath);
     settings.push({
@@ -77,7 +105,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     const skill = await template(templateDir, "codex", "skills", "agent-loop", "SKILL.md");
     files.push({
       path: join(home, ".agents", "skills", "agent-loop", "SKILL.md"),
-      content: renderSkill(skill),
+      content: renderSkill(skill, harness),
     });
     files.push({
       path: join(home, ".agents", "skills", "agent-loop", "agents", "openai.yaml"),
@@ -126,7 +154,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     const skill = await template(templateDir, "antigravity", "skills", "agent-loop", "SKILL.md");
     files.push({
       path: join(home, ".gemini", "antigravity-cli", "skills", "agent-loop", "SKILL.md"),
-      content: renderSkill(skill),
+      content: renderSkill(skill, harness),
     });
     const shim = await template(
       templateDir,

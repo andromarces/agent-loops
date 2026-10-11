@@ -116,3 +116,36 @@ test("rendered targets carry absolute package paths and no placeholders", async 
     join(PACKAGE_ROOT, "src", "hook", "copilot-parent-guard.mjs"),
   );
 });
+
+// Usefulness: verifies the #751 acceptance — the one shared harness-check paragraph renders into
+// each skill with that harness's id, label, and session variable, so the three entry points keep
+// their exact check text (line wrapping aside) from one source.
+test.each([
+  [
+    "claude",
+    "Claude Code",
+    "Do not use `${CLAUDE_SESSION_ID}` to make this decision, because a foreign harness leaves the literal in place and a nested harness inherits the value.",
+  ],
+  [
+    "codex",
+    "Codex CLI",
+    "Do not use `CODEX_THREAD_ID` to make this decision, because a nested harness inherits it.",
+  ],
+  [
+    "antigravity",
+    "Antigravity CLI",
+    "Do not use `ANTIGRAVITY_CONVERSATION_ID` to make this decision, because a nested harness inherits it.",
+  ],
+])("the %s skill renders the shared harness-check paragraph", async (harness, label, closing) => {
+  const home = await makeHome();
+  const targets = await targetPaths(harness, home);
+  const skill = targets.files.find((file) => file.path.endsWith("SKILL.md")).content;
+  const expected =
+    `Before the init dispatch call, run \`${gateCommand(harness)}\`. It exits 0 only when the ` +
+    `nearest harness process above this shell is ${label}. If it exits 3, stop and report that ` +
+    "another harness owns the session; do not start a run. If it exits with any other non-zero " +
+    "code, stop and report that the check could not run or found no harness ancestor, which is " +
+    `distinct from a harness refusal. ${closing}`;
+  expect(skill.replace(/\s+/g, " ")).toContain(expected);
+  expect(skill).not.toContain("{{HARNESS_CHECK");
+});
