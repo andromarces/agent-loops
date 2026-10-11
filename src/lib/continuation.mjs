@@ -400,12 +400,14 @@ export function gateFromTranscript(earlier) {
  * `unborn`, a SHA-256 digest, `exact` true) and the current snapshot is exact with
  * the same head and digest as `lastReviewed`. The restored `lastReviewed` is the
  * current runtime state, so `clean` and `exact` never come from the record. A
- * snapshot that cannot be read gives null: the reset costs only a reviewer turn.
+ * snapshot that cannot be read gives null: the reset costs only a reviewer turn. A cancel through
+ * `signal` rejects with the cancel error instead.
  * @param {object | null | undefined} earlierGate from `gateFromTranscript`
  * @param {string} cwd
+ * @param {{ signal?: AbortSignal }} [options]
  * @returns {Promise<{ workerRan: boolean, reviewerRan: boolean, reviewerTurnDispatched: boolean, acceptedSinceWorker: boolean, lastReviewed: object } | null>}
  */
-export async function matchingGate(earlierGate, cwd) {
+export async function matchingGate(earlierGate, cwd, { signal } = {}) {
   const reviewed = earlierGate?.lastReviewed;
   if (
     GATE_FLAGS.some((flag) => typeof earlierGate?.[flag] !== "boolean") ||
@@ -420,8 +422,12 @@ export async function matchingGate(earlierGate, cwd) {
   }
   let current;
   try {
-    current = reviewedState(await snapshot(cwd));
-  } catch {
+    current = reviewedState(await snapshot(cwd, { signal }));
+  } catch (err) {
+    // A cancel is not a missing gate, so it reaches the caller as a cancel.
+    if (err?.isCanceled) {
+      throw err;
+    }
     return null;
   }
   if (!current.exact || current.head !== reviewed.head || current.digest !== reviewed.digest) {

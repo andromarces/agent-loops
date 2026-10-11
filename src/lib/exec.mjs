@@ -156,3 +156,30 @@ export async function exec(command, args = [], options = {}) {
     durationMs,
   };
 }
+
+/**
+ * Runs `command` and returns the raw execa result, never throwing for a nonzero exit, a timeout, or
+ * a cancel: the caller reads `exitCode`, `timedOut`, `isCanceled`, and the output. `timeoutMs`
+ * bounds the call and `signal` cancels it. Either one kills the child, with SIGTERM then SIGKILL
+ * after 1 s on POSIX and `taskkill /T /F` over the process tree on Windows, so no platform keeps a
+ * child the bound gave up on (#329). `execaOptions` pass through, for example `stripFinalNewline`.
+ * The run logs nothing, so a caller that reads sensitive output controls what is logged.
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{ cwd?: string, timeoutMs?: number, signal?: AbortSignal | null } & import("execa").Options} [options]
+ */
+export function execBounded(
+  command,
+  args,
+  { cwd, timeoutMs = 0, signal = null, ...execaOptions } = {},
+) {
+  const options = { cwd, reject: false, cleanup: true, killDescendants: true, ...execaOptions };
+  if (timeoutMs > 0) {
+    options.timeout = timeoutMs;
+    options.forceKillAfterDelay = 1000;
+  }
+  if (signal) {
+    options.cancelSignal = signal;
+  }
+  return killTreeOnExit(execa(command, args, options));
+}

@@ -5,8 +5,7 @@
 //
 // The `gh` runner is injected so a caller can run the gate against captured
 // responses. The default runner shells out to the `gh` CLI.
-import { execa } from "execa";
-import { killTreeOnExit } from "./exec-tree.mjs";
+import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { isJsonObject } from "./json.mjs";
 
@@ -23,15 +22,7 @@ const PASS_CHECK_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
  * Windows, so no platform keeps a child the bound has given up on (#329).
  */
 export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
-  const options = { cwd, reject: false, cleanup: true, killDescendants: true };
-  if (timeoutMs > 0) {
-    options.timeout = timeoutMs;
-    options.forceKillAfterDelay = 1000;
-  }
-  if (signal) {
-    options.cancelSignal = signal;
-  }
-  const result = await killTreeOnExit(execa("gh", args, options));
+  const result = await execBounded("gh", args, { cwd, timeoutMs, signal });
   return {
     status: result.exitCode,
     stdout: result.stdout ?? "",

@@ -5,7 +5,7 @@ import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { killTreeOnExit } from "../../src/lib/exec-tree.mjs";
 import { removePath } from "../runtime-helpers.mjs";
-import { cancelOnSigInt } from "../../src/lib/sigint.mjs";
+import { beginEvidenceRead, cancelOnSigInt, forceCancelSignal } from "../../src/lib/sigint.mjs";
 
 // Usefulness: acceptance (#669) — the first SIGINT cancels the run and the process stays alive, so
 // the run handler can set exit 130 and write its transcript; the listener stays registered.
@@ -24,6 +24,72 @@ test("the first SIGINT aborts the controller and keeps the listener", () => {
     exit.mockRestore();
   }
   expect(process.listenerCount("SIGINT")).toBe(before);
+});
+
+// Usefulness: verifies the force-cancel signal of a run fires on the second SIGINT only, so the
+// evidence snapshot of a canceled turn survives the first cancel and ends on the second (#729).
+test("the force-cancel signal aborts on the second SIGINT and not on the first", () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+  const controller = new AbortController();
+  const remove = cancelOnSigInt(controller);
+  try {
+    const force = forceCancelSignal(controller.signal);
+    process.emit("SIGINT");
+    expect(controller.signal.aborted).toBe(true);
+    expect(force.aborted).toBe(false);
+    process.emit("SIGINT");
+    expect(force.aborted).toBe(true);
+  } finally {
+    remove();
+    exit.mockRestore();
+  }
+});
+
+// Usefulness: verifies a second SIGINT during an evidence read defers the exit so the run can write
+// its result, and that a hung write still ends at the bound with the final write, and that a third
+// SIGINT exits at once (#729).
+test("the second SIGINT defers the exit while an evidence read runs, with a bounded fallback", async () => {
+  vi.useFakeTimers();
+  const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const onForceExit = vi.fn();
+  const controller = new AbortController();
+  const remove = cancelOnSigInt(controller, { onForceExit });
+  const end = beginEvidenceRead(forceCancelSignal(controller.signal));
+  try {
+    process.emit("SIGINT");
+    process.emit("SIGINT");
+    expect(forceCancelSignal(controller.signal).aborted).toBe(true);
+    expect(exit).not.toHaveBeenCalled();
+    expect(onForceExit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4900);
+    expect(exit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onForceExit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(130);
+  } finally {
+    end();
+    remove();
+    exit.mockRestore();
+    errorSpy.mockRestore();
+    vi.useRealTimers();
+  }
+
+  const exitAgain = vi.spyOn(process, "exit").mockImplementation(() => {});
+  const second = new AbortController();
+  const removeSecond = cancelOnSigInt(second);
+  const endSecond = beginEvidenceRead(forceCancelSignal(second.signal));
+  try {
+    process.emit("SIGINT");
+    process.emit("SIGINT");
+    expect(exitAgain).not.toHaveBeenCalled();
+    process.emit("SIGINT");
+    expect(exitAgain).toHaveBeenCalledWith(130);
+  } finally {
+    endSecond();
+    removeSecond();
+    exitAgain.mockRestore();
+  }
 });
 
 // Usefulness: acceptance (#669) — a second SIGINT ends a stalled cleanup at once with exit 130, so

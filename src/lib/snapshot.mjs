@@ -1,10 +1,13 @@
 import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
-import { execa } from "execa";
-import { killTreeOnExit } from "./exec-tree.mjs";
+import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
+import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
+
+// Milliseconds that one snapshot `git` read waits before it ends the child.
+const GIT_READ_TIMEOUT_MS = 120_000;
 
 export class MutationError extends Error {
   constructor(role, paths) {
@@ -22,24 +25,28 @@ export class SnapshotError extends Error {
   constructor(message, options) {
     super(message, options);
     this.name = "SnapshotError";
+    // True when a cancel ended the read, so a caller keeps exit 130.
+    this.isCanceled = options?.isCanceled === true;
   }
 }
 
 /**
- * Refuses unless `cwd` is inside a Git work tree. `timeoutMs` bounds the probe
+ * Refuses unless `cwd` is inside a Git work tree. `timeoutMs` (default 120 s) bounds the probe
  * and terminates the `git` child on expiry, so a caller that owns a total
  * limit keeps that limit even when the probe hangs. A probe cut short by the
  * bound refuses, because a work tree it never confirmed is not a verified one.
+ * `signal` ends the probe too, and the refusal then has `isCanceled` set.
  */
-export async function assertGitWorkTree(cwd, { timeoutMs = 0 } = {}) {
-  const options = { cwd, reject: false, cleanup: true, killDescendants: true };
-  if (timeoutMs > 0) {
-    options.timeout = timeoutMs;
-    options.forceKillAfterDelay = 1000;
+export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, signal } = {}) {
+  const result = await execBounded("git", ["rev-parse", "--is-inside-work-tree"], {
+    cwd,
+    timeoutMs,
+    signal,
+  });
+
+  if (result.isCanceled) {
+    throw new SnapshotError(`--cwd validation was canceled: ${cwd}`, { isCanceled: true });
   }
-  const result = await killTreeOnExit(
-    execa("git", ["rev-parse", "--is-inside-work-tree"], options),
-  );
 
   if (result.timedOut) {
     throw new SnapshotError(
@@ -85,8 +92,21 @@ export async function sha256File(path) {
   }
 }
 
-async function gitIn(cwd, args) {
-  const result = await execa("git", args, { cwd, reject: false });
+// Runs one bounded `git` read. A timeout or a cancel throws a `SnapshotError` that names the cause,
+// because the read has no answer to return. Any other exit code is data for the caller.
+async function gitRead(cwd, args, { signal, timeoutMs = GIT_READ_TIMEOUT_MS } = {}) {
+  const result = await execBounded("git", args, { cwd, timeoutMs, signal });
+  if (result.isCanceled) {
+    throw new SnapshotError(`git ${args[0]} was canceled`, { isCanceled: true });
+  }
+  if (result.timedOut) {
+    throw new SnapshotError(`git ${args[0]} timed out after ${timeoutMs} ms`);
+  }
+  return result;
+}
+
+async function gitIn(cwd, args, bound) {
+  const result = await gitRead(cwd, args, bound);
   if (result.exitCode !== 0) {
     throw new SnapshotError(
       `git ${args[0]} failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
@@ -95,29 +115,30 @@ async function gitIn(cwd, args) {
   return result;
 }
 
-/** The Git work tree root that `snapshot` covers for `cwd`. */
-export async function workTreeRoot(cwd) {
-  const rootResult = await execa("git", ["rev-parse", "--show-toplevel"], {
-    cwd,
-    reject: false,
-  });
+/** The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`. */
+export async function workTreeRoot(cwd, bound) {
+  const rootResult = await gitRead(cwd, ["rev-parse", "--show-toplevel"], bound);
   if (rootResult.exitCode !== 0) {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
   }
   return rootResult.stdout.trim();
 }
 
-export async function snapshot(cwd) {
+/**
+ * Reads the Git-visible state of the work tree. Every `git` read has a time bound, `timeoutMs`
+ * (default 120 s), and ends on `signal`. A timeout or a cancel throws a `SnapshotError`, and a cancel
+ * sets its `isCanceled`.
+ */
+export async function snapshot(cwd, bound) {
   // git status/ls-files emit repository-root-relative paths, so run them at the root.
-  const root = await workTreeRoot(cwd);
+  const root = await workTreeRoot(cwd, bound);
 
   // 1. Work tree status
-  const statusResult = await gitIn(root, [
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "--untracked-files=all",
-  ]);
+  const statusResult = await gitIn(
+    root,
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    bound,
+  );
 
   const statusTokens = statusResult.stdout.split("\0");
   const entries = [];
@@ -149,14 +170,11 @@ export async function snapshot(cwd) {
   entries.sort((a, b) => a.path.localeCompare(b.path));
 
   // 2. Index hash (whole repository, not just cwd)
-  const lsResult = await gitIn(root, ["ls-files", "--stage", "-z"]);
+  const lsResult = await gitIn(root, ["ls-files", "--stage", "-z"], bound);
   const indexHash = sha256(lsResult.stdout);
 
   // 3. HEAD; exit 1 here means a repository without commits, so "unborn" is correct.
-  const headResult = await execa("git", ["rev-parse", "--verify", "-q", "HEAD"], {
-    cwd: root,
-    reject: false,
-  });
+  const headResult = await gitRead(root, ["rev-parse", "--verify", "-q", "HEAD"], bound);
   const head = headResult.exitCode === 0 ? headResult.stdout.trim() : "unborn";
 
   return {
@@ -237,15 +255,24 @@ export function diffSnapshots(before, after) {
  * failed: the mutation error wins over the wrapped error, which is discarded.
  * Any thrown value is rethrown unchanged, a falsy one (`null`, `undefined`) included.
  * `fn` receives the before snapshot, so a caller can derive the reviewed state
- * without taking a second snapshot.
+ * without taking a second snapshot. `signal` cancels the before snapshot only. The after snapshot
+ * ignores it, so a canceled turn still reports the paths it changed. The after snapshot ends on
+ * `forceSignal` instead (default: the second-SIGINT signal of `signal`). It then throws a canceled
+ * `SnapshotError` that says the evidence was not captured, and never reports the tree as unchanged.
  * @template T
  * @param {string} cwd
  * @param {string} role
  * @param {(before: Awaited<ReturnType<typeof snapshot>>) => Promise<T>} fn
+ * @param {{ signal?: AbortSignal, forceSignal?: AbortSignal }} [options]
  * @returns {Promise<T>}
  */
-export async function withMutationCheck(cwd, role, fn) {
-  const before = await snapshot(cwd);
+export async function withMutationCheck(
+  cwd,
+  role,
+  fn,
+  { signal, forceSignal = forceCancelSignal(signal) } = {},
+) {
+  const before = await snapshot(cwd, { signal });
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
   let threw = false;
   let actionError;
@@ -259,9 +286,16 @@ export async function withMutationCheck(cwd, role, fn) {
   }
 
   let after;
+  const endEvidenceRead = beginEvidenceRead(forceSignal);
   try {
-    after = await snapshot(cwd);
+    after = await snapshot(cwd, { signal: forceSignal });
   } catch (snapErr) {
+    if (snapErr?.isCanceled) {
+      throw new SnapshotError(
+        `${role} turn changed-path evidence not captured: the snapshot was canceled`,
+        { cause: threw ? actionError : snapErr, isCanceled: true },
+      );
+    }
     // A failed post-turn snapshot wins over the agent error; the agent error rides as cause.
     if (threw) {
       throw new SnapshotError(`post-turn snapshot failed during ${role} turn: ${snapErr.message}`, {
@@ -269,6 +303,8 @@ export async function withMutationCheck(cwd, role, fn) {
       });
     }
     throw snapErr;
+  } finally {
+    endEvidenceRead();
   }
   logDebug(`snapshot after ${role} turn taken (${after.workTree.length} work tree entries)`);
 

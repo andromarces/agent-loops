@@ -257,7 +257,7 @@ export async function runUninstallCommand(argv) {
  */
 export const HARNESS_MISMATCH_EXIT = 3;
 
-export async function runHarnessCheckCommand(argv, { lookup = nearestHarness } = {}) {
+export async function runHarnessCheckCommand(argv, { lookup = nearestHarness, signal } = {}) {
   const requested = argv[0];
   if (!requested) {
     logError("harness-check requires a harness name.");
@@ -273,8 +273,13 @@ export async function runHarnessCheckCommand(argv, { lookup = nearestHarness } =
 
   let found;
   try {
-    found = await lookup();
+    found = await lookup({ signal });
   } catch (err) {
+    if (readProp(err, "isCanceled")) {
+      logError("harness-check was canceled.");
+      process.exitCode = 130;
+      return;
+    }
     logError(`could not read the process table: ${readableErrorText(err)}`);
     process.exitCode = 1;
     return;

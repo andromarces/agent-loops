@@ -327,6 +327,46 @@ test("--require-accept follows the latest reviewer verdict", async () => {
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
 
+// A `git` answer that reports a cancel for a call that carries an aborted signal, as execa does,
+// and answers as `cleanRepoGit` otherwise.
+const cancelAwareGit = (command, args, options) =>
+  options?.cancelSignal?.aborted
+    ? { exitCode: undefined, isCanceled: true, stdout: "", stderr: "" }
+    : cleanRepoGit(command, args, options);
+
+// Usefulness: verifies the snapshot behind the `--require-accept` gate honors the cancel of the
+// command, so a canceled finish ends with exit 130 and keeps the run active (#729).
+test("--require-accept ends a canceled finish with exit 130 and keeps the run active", async () => {
+  await setup();
+  const repo = await useCleanRepo(cancelAwareGit);
+  await initWorkerRun(repo);
+  await dispatchReviewer(repo, ACCEPT);
+  const controller = new AbortController();
+  controller.abort();
+
+  const result = await finishCall(repo, ["--require-accept"], { signal: controller.signal });
+  expect(result.exitCode).toBe(130);
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies the work-tree probe of `role dispatch` honors the cancel of the command, so
+// a canceled dispatch ends with exit 130 and never starts the turn (#729).
+test("dispatch ends a canceled work-tree probe with exit 130 and runs no turn", async () => {
+  await setup();
+  const repo = await useCleanRepo(cancelAwareGit);
+  const worker = recordingAdapter([]);
+  const controller = new AbortController();
+  controller.abort();
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+    signal: controller.signal,
+  });
+  expect(result.exitCode).toBe(130);
+  expect(worker.recorded).toHaveLength(0);
+});
+
 // Usefulness: verifies a worker Checks line is reported evidence and never a
 // gate input: a finish that follows a worker turn carrying a Checks line is
 // refused until a reviewer accept covers the state (issue #310, issue #318).

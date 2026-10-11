@@ -1,8 +1,9 @@
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
+import { cancelOnSigInt } from "../../src/lib/sigint.mjs";
 import {
   MutationError,
   SnapshotError,
@@ -14,9 +15,12 @@ import {
   withMutationCheck,
 } from "../../src/lib/snapshot.mjs";
 import {
+  ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,
+  expectAbortKillsShim,
   expectBoundKillsShim,
   removePath,
+  withGitHangingAfter,
 } from "../runtime-helpers.mjs";
 
 async function createTempRepo() {
@@ -59,6 +63,155 @@ test(
     );
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies a cancel ends a hung work-tree probe and marks the refusal as a cancel, so
+// `role dispatch` and the headless run keep exit 130 instead of exit 1 (#729).
+test(
+  "assertGitWorkTree ends a hung probe on cancel and reports a cancel",
+  async () => {
+    const error = await expectAbortKillsShim("git", (signal) =>
+      assertGitWorkTree(tmpdir(), { signal }).catch((err) => err),
+    );
+    expect(error).toBeInstanceOf(SnapshotError);
+    expect(error.isCanceled).toBe(true);
+  },
+  ABORT_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies a hung `git` read in the snapshot ends at its bound with a SnapshotError, so
+// a stuck child cannot hang the turn (#729).
+test(
+  "snapshot refuses a git read that outlasts its bound",
+  async () => {
+    const error = await expectBoundKillsShim("git", (timeoutMs) =>
+      snapshot(tmpdir(), { timeoutMs }).catch((err) => err),
+    );
+    expect(error).toBeInstanceOf(SnapshotError);
+    expect(error.message).toMatch(/timed out/);
+  },
+  BOUND_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies a cancel ends a hung `git` read in the snapshot and marks the error as a
+// cancel, which the caller maps to exit 130 (#729).
+test(
+  "snapshot ends a hung git read on cancel and reports a cancel",
+  async () => {
+    const error = await expectAbortKillsShim("git", (signal) =>
+      snapshot(tmpdir(), { signal }).catch((err) => err),
+    );
+    expect(error).toBeInstanceOf(SnapshotError);
+    expect(error.isCanceled).toBe(true);
+  },
+  ABORT_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies the post-turn snapshot ignores a cancel, so a turn that was canceled after it
+// wrote a file still reports the changed path (#729).
+test("withMutationCheck keeps the changed-path evidence after a cancel", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  try {
+    await expect(
+      withMutationCheck(
+        repo,
+        "worker",
+        async () => {
+          await writeFile(join(repo, "written.txt"), "x\n");
+          controller.abort();
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ name: "MutationError", paths: ["written.txt"] });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a second cancel ends a hung evidence snapshot at once and reports the
+// evidence as not captured, never as unchanged, while the first cancel alone leaves it running (#729).
+test.skipIf(process.platform === "win32")(
+  "a second cancel ends a hung evidence snapshot and reports it as not captured",
+  async () => {
+    const repo = await createTempRepo();
+    try {
+      await withGitHangingAfter(4, async ({ hungPid }) => {
+        const first = new AbortController();
+        const second = new AbortController();
+        const pending = withMutationCheck(
+          repo,
+          "worker",
+          async () => {
+            first.abort();
+          },
+          { signal: first.signal, forceSignal: second.signal },
+        ).catch((err) => err);
+        const pid = await hungPid();
+        // The first cancel alone does not end the evidence snapshot.
+        const early = await Promise.race([pending, new Promise((r) => setTimeout(r, 700, "open"))]);
+        expect(early).toBe("open");
+        second.abort();
+        const error = await Promise.race([
+          pending,
+          new Promise((_, reject) =>
+            setTimeout(reject, 10_000, new Error("the evidence snapshot did not end")),
+          ),
+        ]);
+        expect(error).toBeInstanceOf(SnapshotError);
+        expect(error.isCanceled).toBe(true);
+        expect(error.message).toMatch(/not captured/);
+        expect(() => process.kill(pid, 0)).toThrow();
+      });
+    } finally {
+      await removePath(repo);
+    }
+  },
+  60_000,
+);
+
+// Usefulness: verifies the second SIGINT ends the evidence snapshot without exiting the process, so
+// the canceled "not captured" result reaches the caller to write, and the exit with code 130 follows
+// when the run releases its SIGINT handler (#729).
+test.skipIf(process.platform === "win32")(
+  "the second SIGINT ends the evidence snapshot and delays the exit until the run is done",
+  async () => {
+    const repo = await createTempRepo();
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+    const controller = new AbortController();
+    const remove = cancelOnSigInt(controller);
+    try {
+      await withGitHangingAfter(4, async ({ hungPid }) => {
+        const pending = withMutationCheck(
+          repo,
+          "worker",
+          async () => {
+            process.emit("SIGINT");
+          },
+          { signal: controller.signal },
+        ).catch((err) => err);
+        await hungPid();
+        process.emit("SIGINT");
+        const error = await Promise.race([
+          pending,
+          new Promise((_, reject) =>
+            setTimeout(reject, 10_000, new Error("the evidence snapshot did not end")),
+          ),
+        ]);
+        expect(error).toBeInstanceOf(SnapshotError);
+        expect(error.isCanceled).toBe(true);
+        expect(error.message).toMatch(/not captured/);
+        expect(exit).not.toHaveBeenCalled();
+        remove();
+        expect(exit).toHaveBeenCalledWith(130);
+      });
+    } finally {
+      remove();
+      exit.mockRestore();
+      await removePath(repo);
+    }
+  },
+  60_000,
 );
 
 // Usefulness: verifies diffSnapshots detects when nothing changes.

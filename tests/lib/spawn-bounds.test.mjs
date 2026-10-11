@@ -5,7 +5,8 @@ vi.mock("execa", () => ({ execa: vi.fn() }));
 import { execa } from "execa";
 import { runGh } from "../../src/lib/ci-gate.mjs";
 import { FORCE_KILL_AFTER_DELAY_MS } from "../runtime-helpers.mjs";
-import { assertGitWorkTree } from "../../src/lib/snapshot.mjs";
+import { copyLocalFiles } from "../../src/lib/local-files.mjs";
+import { assertGitWorkTree, snapshot } from "../../src/lib/snapshot.mjs";
 
 // Scoped exception to the TDD rule (issue #373, maintainer decision on PR #381).
 // These tests assert three fields of the options handed to execa, an
@@ -86,4 +87,52 @@ test("assertGitWorkTree hands the spawn layer its exact bound and force-kill del
     timeout: 300,
     forceKillAfterDelay: FORCE_KILL_AFTER_DELAY_MS,
   });
+});
+
+// Usefulness: verifies every `git` call in the snapshot path carries a time bound and the caller's
+// abort signal, so no snapshot read can hang or ignore a cancel (#729).
+test("snapshot hands every git call a bound and the abort signal", async () => {
+  execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+  const controller = new AbortController();
+  await snapshot(".", { signal: controller.signal });
+  expect(execa.mock.calls.length).toBeGreaterThanOrEqual(4);
+  for (const [, , options] of execa.mock.calls) {
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.cancelSignal).toBe(controller.signal);
+  }
+});
+
+// Usefulness: verifies the local-files `git` reads carry a time bound while they keep the final
+// newline of the output, so a stuck `git` cannot hang the init and the byte-exact reads stay exact (#729).
+test("copyLocalFiles bounds its git reads and keeps the final newline", async () => {
+  execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: `${process.cwd()}\n`, stderr: "" });
+  await copyLocalFiles(".").catch(() => {});
+  expect(execa.mock.calls.length).toBeGreaterThan(0);
+  for (const [, , options] of execa.mock.calls) {
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.stripFinalNewline).toBe(false);
+  }
+});
+
+// Usefulness: verifies the work-tree probe has a bound when the caller sets none and hands the
+// caller's abort signal to the spawn layer, so no caller can leave the probe unbounded (#729).
+test("assertGitWorkTree bounds the probe by default and hands over the abort signal", async () => {
+  execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: "true\n", stderr: "" });
+  const controller = new AbortController();
+  await assertGitWorkTree(".", { signal: controller.signal });
+  const options = spawnedWith();
+  expect(options.timeout).toBeGreaterThan(0);
+  expect(options.cancelSignal).toBe(controller.signal);
+});
+
+// Usefulness: verifies the local-files `git` reads hand the caller's abort signal to the spawn
+// layer, so an init that is canceled does not wait for a stuck `git` (#729).
+test("copyLocalFiles hands its git reads the abort signal", async () => {
+  execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: `${process.cwd()}\n`, stderr: "" });
+  const controller = new AbortController();
+  await copyLocalFiles(".", {}, { signal: controller.signal }).catch(() => {});
+  expect(execa.mock.calls.length).toBeGreaterThan(0);
+  for (const [, , options] of execa.mock.calls) {
+    expect(options.cancelSignal).toBe(controller.signal);
+  }
 });

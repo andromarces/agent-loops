@@ -4,6 +4,8 @@
 
 accepted
 
+Partly superseded by [ADR 0036: Bound every snapshot-path read and end the evidence snapshot on a second cancel](0036-bound-every-snapshot-path-read-and-end-the-evidence-snapshot-on-a-second-cancel.md): decision 8 no longer holds for the after-turn and after-command snapshots. A second SIGINT that arrives while one of them runs ends it and reports the evidence as not captured. The exit waits until the run writes its result. The other decisions hold, so this ADR stays `accepted`.
+
 ## Date
 
 2026-10-10
@@ -52,6 +54,7 @@ Andro Marces
 
 ## Links
 
+- Partly superseded by [ADR 0036](0036-bound-every-snapshot-path-read-and-end-the-evidence-snapshot-on-a-second-cancel.md) (decision 8)
 - [Issue #669: SIGINT can end the runtime by signal before the cancel handler finishes](https://github.com/andromarces/agent-loops/issues/669)
 - [Pull request #689](https://github.com/andromarces/agent-loops/pull/689)
 - [Issue #693: Record the SIGINT cancel decision in an active ADR instead of superseded ADR 0029](https://github.com/andromarces/agent-loops/issues/693)

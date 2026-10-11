@@ -844,3 +844,64 @@ export async function createPsShim(body, { ceilingSeconds = 10 } = {}) {
     cleanup: () => removePath(dir),
   };
 }
+
+/**
+ * POSIX only. Ends `pid` with SIGKILL only when its command line holds `marker`, a value that no
+ * other process carries, so a stale or reused pid is never signaled. Returns true when it sent the
+ * signal. The `ps` read ends after `timeoutMs` (default 3 s), and a read that ends that way signals
+ * nothing.
+ */
+export async function endOwnedProcess(pid, marker, { timeoutMs = 3000 } = {}) {
+  // Loaded on use, so a test file that mocks `execa` or `exec.mjs` sees its mock first.
+  const { execBounded } = await import("../src/lib/exec.mjs");
+  const read = await execBounded("ps", ["-o", "command=", "-p", String(pid)], { timeoutMs });
+  if (read.timedOut || !(read.stdout ?? "").includes(marker)) {
+    return false;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * POSIX only. Puts a `git` on PATH that runs the real `git` for its first `passes` calls and then
+ * hangs, so a test can let the before snapshot finish and stall the read that follows. `run` gets
+ * `hungPid()`, which resolves with the pid of the hung `git` once it started. The hung process
+ * carries the unique shim directory in its command line. The helper ends it through
+ * `endOwnedProcess` if the test left it alive, and removes the shim directory.
+ */
+export async function withGitHangingAfter(passes, run) {
+  const realGit = (await execa("sh", ["-c", "command -v git"])).stdout.trim();
+  const dir = await mkdtemp(join(tmpdir(), "git-hang-after-"));
+  const pidFile = join(dir, "hung.pid");
+  const count = join(dir, "count");
+  await writeFile(
+    join(dir, "git"),
+    [
+      "#!/bin/sh",
+      `n=$(cat '${count}' 2>/dev/null || echo 0)`,
+      `echo $((n + 1)) > '${count}'`,
+      `if [ "$n" -lt ${passes} ]; then exec '${realGit}' "$@"; fi`,
+      `echo $$ > '${pidFile}'`,
+      `exec '${process.execPath}' -e 'setTimeout(() => {}, 30000)' '${dir}'`,
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const hungPid = () =>
+    pollUntil(async () => {
+      const text = await readFile(pidFile, "utf8").catch(() => "");
+      return /^\d+\n$/.test(text) ? Number(text) : undefined;
+    }, 20_000);
+  try {
+    return await withShimOnPath(dir, () => run({ hungPid }));
+  } finally {
+    const text = await readFile(pidFile, "utf8").catch(() => "");
+    if (/^\d+\n$/.test(text)) {
+      await endOwnedProcess(Number(text), dir);
+    }
+    await removePath(dir);
+  }
+}

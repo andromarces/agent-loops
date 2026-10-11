@@ -7,7 +7,13 @@ import { readableErrorText } from "../../src/lib/error-message.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
 import { redactEnvSecrets } from "../../src/lib/redact.mjs";
 import { TAIL_CHARS, redactCommandText, runTestCmd } from "../../src/lib/test-cmd.mjs";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import {
+  ABORT_KILL_TEST_TIMEOUT_MS,
+  createTempRepo,
+  expectAbortKillsShim,
+  removePath,
+  withGitHangingAfter,
+} from "../runtime-helpers.mjs";
 
 const dirs = [];
 afterEach(async () => {
@@ -197,6 +203,47 @@ test("a cancel kills the command and its child process", async () => {
   expect(await outcome).toMatchObject({ isCanceled: true });
   await expectAllGone(pidFiles);
 }, 30_000);
+
+// Usefulness: verifies the before snapshot honors the cancel, so a cancel ends a hung `git` read
+// and the run rejects as canceled before any command starts (#729).
+test(
+  "a cancel during the before snapshot ends the run as canceled",
+  async () => {
+    const error = await expectAbortKillsShim("git", (signal) =>
+      runTestCmd({ command: node(""), cwd: tmpdir(), signal }).catch((err) => err),
+    );
+    expect(error.isCanceled).toBe(true);
+  },
+  ABORT_KILL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies a second cancel that ends a hung after-command snapshot loses only the
+// evidence: a command that finished before the cancel keeps its own result, and the change reads as
+// not captured, never as "no change" and never as a killed command (#729).
+test.skipIf(process.platform === "win32")(
+  "a second cancel after a finished command reports its result and the change as not captured",
+  async () => {
+    const cwd = await repo();
+    await withGitHangingAfter(4, async ({ hungPid }) => {
+      const second = new AbortController();
+      const pending = runTestCmd({ command: node(""), cwd, forceSignal: second.signal });
+      const pid = await hungPid();
+      second.abort();
+      const testRun = await pending;
+      expect(testRun).toMatchObject({
+        status: "pass",
+        exitCode: 0,
+        workTreeChanged: null,
+        changedPaths: [],
+        changedCount: null,
+      });
+      expect(testRun.summary).toMatch(/^exit 0; .*not captured/);
+      expect(testRun.summary).not.toMatch(/canceled|killed/);
+      expect(() => process.kill(pid, 0)).toThrow();
+    });
+  },
+  60_000,
+);
 
 // Usefulness: verifies a cancel still compares the work tree and carries the result on
 // the error, so a write the command made before the cancel is reported and not lost
