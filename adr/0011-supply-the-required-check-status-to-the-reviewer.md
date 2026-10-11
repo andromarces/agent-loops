@@ -114,7 +114,7 @@ the reviewer `Checks` line.
     read cannot be read as one that did. The `turns` entry keeps the fixed shape
     ADR 0008 defines, so the status is not recorded there.
 13. The prompt wording a run does not need stays unchanged. A run that declares
-    no PR gets the `origin/main` lines verbatim, including the gate line that
+    no PR gets the lines it had before this decision verbatim, including the gate line that
     calls the gate the only check read, because that run makes no supplied read
     and the qualification would describe one. Only a declared run's lines are
     reworded, so the rewording cannot reach a run this decision does not touch.

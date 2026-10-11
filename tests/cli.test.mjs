@@ -753,7 +753,7 @@ test("a Git work tree whose path contains spaces is not refused", async () => {
   }
 });
 
-// Usefulness: verifies a run with no --mode writes the origin/main transcript,
+// Usefulness: verifies a run with no --mode writes the transcript it wrote before the flag existed,
 // so a consumer of that file sees no field this flag introduced. The comparison
 // is the recorded file: the same top-level keys, the same option keys, and the
 // same event list a run without the flag wrote before it (issue #337). A
@@ -762,7 +762,7 @@ test("a Git work tree whose path contains spaces is not refused", async () => {
 test.each([
   { where: "outside the work tree", inTree: false, added: [] },
   { where: "inside the work tree", inTree: true, added: ["runNonce"] },
-])("a mode-free run writes the origin/main transcript shape $where", async ({ inTree, added }) => {
+])("a mode-free run writes the pre-flag transcript shape $where", async ({ inTree, added }) => {
   const runOnce = async (extra) => {
     const repo = await createTempRepo();
     const transcriptPath = inTree ? join(repo, "transcript.json") : `${repo}-transcript.json`;
@@ -798,7 +798,7 @@ test.each([
   };
 
   const modeFree = await runOnce([]);
-  // origin/main wrote these keys, and no more, for a run that names no mode.
+  // A mode-free run wrote these keys, and no more, before the flag existed, for a run that names no mode.
   expect(Object.keys(modeFree).sort()).toEqual(
     ["cwd", "error", "events", "exitCode", "options", "roles", "task", ...added].sort(),
   );
