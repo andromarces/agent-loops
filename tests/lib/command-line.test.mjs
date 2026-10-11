@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { holdsSession, splitWindowsArguments } from "../../src/lib/command-line.mjs";
+import { heldSessionIds, splitWindowsArguments } from "../../src/lib/command-line.mjs";
 
 // Expected tokens come from the argument parser of the C runtime, which gives `process.argv` in Node:
 // the column is `process.argv.slice(2)` of a child that node started with the raw command line
@@ -62,7 +62,7 @@ test("splitWindowsArguments matches the C runtime parser on the probed command l
 const ID = "11111111-2222-4333-8444-555555555555";
 
 // Usefulness: verifies a Windows process holds the session only through a session flag with the id, as the adapter passes it, including a quoted flag and a doubled-quote form, and never for a substring of an argument (#673).
-test("holdsSession on Windows counts a session flag followed by the id", () => {
+test("heldSessionIds on Windows counts a session flag followed by the id", () => {
   for (const command of [
     `claude -p --resume ${ID} --output-format json`,
     `claude -p --session-id ${ID} --model haiku`,
@@ -82,7 +82,7 @@ test("holdsSession on Windows counts a session flag followed by the id", () => {
     // The flag decides, not the program.
     `any-wrapper.exe --session-id ${ID}`,
   ]) {
-    expect(holdsSession(command, ID, "win32"), command).toBe(true);
+    expect(heldSessionIds(command, "win32").has(ID), command).toBe(true);
   }
   for (const command of [
     `claude -p --resume ${ID}-copy`,
@@ -99,12 +99,12 @@ test("holdsSession on Windows counts a session flag followed by the id", () => {
     `claude -p "a "" ${ID}"`,
     `claude -p --resume "x ""${ID}"" y"`,
   ]) {
-    expect(holdsSession(command, ID, "win32"), command).toBe(false);
+    expect(heldSessionIds(command, "win32").has(ID), command).toBe(false);
   }
 });
 
 // Usefulness: verifies a bare id argument is not a holder, whatever the program, so an unrelated program that carries the id, or a data argument named claude, does not block a run. This narrows the earlier bare-id refusal of ADR 0031 by maintainer decision (#673).
-test("holdsSession ignores a bare id argument and an unrelated program", () => {
+test("heldSessionIds ignores a bare id argument and an unrelated program", () => {
   for (const [command, platform] of [
     [`claude ${ID}`, "win32"],
     [`claude -p ${ID}`, "linux"],
@@ -116,12 +116,12 @@ test("holdsSession ignores a bare id argument and an unrelated program", () => {
     [`vim /notes/claude ${ID}`, "linux"],
     [`grep claude ${ID} notes.txt`, "win32"],
   ]) {
-    expect(holdsSession(command, ID, platform), command).toBe(false);
+    expect(heldSessionIds(command, platform).has(ID), command).toBe(false);
   }
 });
 
 // Usefulness: verifies a POSIX holder is found from the space-joined text of ps, where a quote or an apostrophe inside an earlier argument, or a space in a script path, must not hide a later flag and id (#673).
-test("holdsSession on POSIX counts a session flag followed by the id and splits on white space only", () => {
+test("heldSessionIds on POSIX counts a session flag followed by the id and splits on white space only", () => {
   for (const command of [
     `claude -p --resume ${ID} --output-format json`,
     `claude -p --session-id ${ID}`,
@@ -134,7 +134,7 @@ test("holdsSession on POSIX counts a session flag followed by the id and splits 
     `claude -p --append-system-prompt it's a "test --resume ${ID}`,
     `claude -p --append-system-prompt "don't --resume ${ID}`,
   ]) {
-    expect(holdsSession(command, ID, "linux"), command).toBe(true);
+    expect(heldSessionIds(command, "linux").has(ID), command).toBe(true);
   }
   for (const command of [
     `claude -p --resume ${ID}-copy`,
@@ -144,6 +144,6 @@ test("holdsSession on POSIX counts a session flag followed by the id and splits 
     `claude -p "--resume=${ID}"`,
     `claude -p --resume --verbose ${ID}`,
   ]) {
-    expect(holdsSession(command, ID, "linux"), command).toBe(false);
+    expect(heldSessionIds(command, "linux").has(ID), command).toBe(false);
   }
 });

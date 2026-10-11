@@ -11,7 +11,7 @@
 // read-modify-write of the manifest cannot drop a record, whatever the temp
 // root of each process (#193, #198).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
-import { access, readdir } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, parse, relative, resolve } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
@@ -21,6 +21,7 @@ import {
   backupPathFor,
   ensureDir,
   fileMode,
+  pathExists,
   pruneEmptyDirs,
   readTextOrNull,
   removeFileQuiet,
@@ -964,15 +965,6 @@ function executableCandidates(command) {
   return [command, ...extensions.map((extension) => `${command}${extension.toLowerCase()}`)];
 }
 
-async function exists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // Lists a directory once per detectHarnesses call, as a set of lowercase names. A directory that does not
 // exist lists as empty. A directory that fails to list for another reason (execute without read) lists
 // as null, and the caller probes it name by name.
@@ -1003,7 +995,7 @@ async function onPath(command, path, list) {
       if (names && !names.has(candidate.toLowerCase())) {
         continue;
       }
-      if (await exists(join(dir, candidate))) {
+      if (await pathExists(join(dir, candidate))) {
         return true;
       }
     }

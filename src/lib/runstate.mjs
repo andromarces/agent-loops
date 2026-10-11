@@ -39,7 +39,7 @@ export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
 // stale only once it is older than this. A writer of an older version that runs
 // the exclusive-create fallback leaves no marker, and its file cannot be told from
 // a dead one by anything but age. A file with a live marker never expires.
-export const STALE_LOCK_GRACE_MS = 60_000;
+const STALE_LOCK_GRACE_MS = 60_000;
 
 /**
  * Resolve the state paths for one run. `cwd` derives the per-work-tree state

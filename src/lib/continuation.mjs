@@ -4,6 +4,7 @@ import { logInfo, logWarn } from "./log.mjs";
 import { readableErrorText, readProp } from "./error-message.mjs";
 import { ROLE_KINDS } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
+import { isJsonObject } from "./json.mjs";
 import { isAcceptedReview } from "./report.mjs";
 import { sha256 } from "./hash.mjs";
 import { heldSessionIds } from "./command-line.mjs";
@@ -80,7 +81,7 @@ async function applySessionRecord(path, bytes, transcript) {
 
 /**
  * Refuses a continuation when a live process passes the id of a claude role session through a
- * session flag in its command line (#647, #671, #673, ADR 0031, ADR 0032, `holdsSession`). A
+ * session flag in its command line (#647, #671, #673, ADR 0031, ADR 0032, `heldSessionIds`). A
  * `SIGKILL` of the earlier parent leaves its `claude` child
  * running, and the CLI accepts a resume of that session, so two processes would write one session
  * file. Only a claude id in the UUID form is checked, so a short id cannot match another
@@ -321,12 +322,10 @@ export function applyResult(state, role, result) {
   };
 }
 
-const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-
 // A reviewed state as the runtime snapshot writes it. Its values get a stricter
 // check in `matchingGate`, against the current snapshot.
 const isReviewedShape = (value) =>
-  isObject(value) &&
+  isJsonObject(value) &&
   typeof value.clean === "boolean" &&
   typeof value.exact === "boolean" &&
   typeof value.head === "string" &&
@@ -336,7 +335,7 @@ const isReviewedShape = (value) =>
 // fields of that role's `ok` or `error` result.
 function isValidResultEvent(event) {
   const { result } = event;
-  if ((event.role !== "worker" && event.role !== "reviewer") || !isObject(result)) return false;
+  if ((event.role !== "worker" && event.role !== "reviewer") || !isJsonObject(result)) return false;
   if (result.reviewed !== undefined && !isReviewedShape(result.reviewed)) return false;
   if (result.status === "ok") return typeof result.response === "string";
   return result.status === "error" && typeof result.error === "string";
@@ -373,7 +372,7 @@ export function gateFromTranscript(earlier) {
     let state = earlier.options?.continueFrom && !continuedEvents ? resetGate() : freshGate();
     let childOpen = false;
     for (const event of events.slice(0, -1)) {
-      if (!isObject(event) || typeof event.type !== "string") return null;
+      if (!isJsonObject(event) || typeof event.type !== "string") return null;
       if (event.type === "continued") {
         state = resetGate();
         childOpen = false;

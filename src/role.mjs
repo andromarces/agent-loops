@@ -11,20 +11,14 @@ import {
   CHILD_ROLE_KINDS,
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
-  MODES,
   REVIEW_ONLY_GATE_REFUSAL,
   REVIEW_ONLY_PR_REFUSAL,
   ROLE_FLAG_BY_OPTION,
   assertOpenCodeOptions,
-  modeError,
-  readArgValue,
+  parseFlags,
   readTaskFile,
-  readInlineValue,
-  readMaxSteps,
-  readNonNegativeInt,
-  readPositiveInt,
+  readStdinText,
   roleFlags,
-  splitInlineFlag,
   TASK_SOURCE_CONFLICT,
   reviewerWorkspaceWriteError,
   testCmdError,
@@ -56,7 +50,7 @@ import {
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
-import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, failedTestRun } from "./lib/test-cmd.mjs";
+import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, failedTestRun, testCmdInput } from "./lib/test-cmd.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
@@ -136,130 +130,49 @@ export function parseRoleArgs(argv) {
     index = 1;
   }
 
-  const readValue = (flag, i, allowDash) => readArgValue(argv, flag, i, allowDash);
+  parseFlags(argv, args, {
+    start: index,
+    roleFlagMap: ROLE_FLAGS,
+    ErrorType: RoleError,
+    onFlag: (arg, readInline) => {
+      switch (arg) {
+        case "--role":
+          args.role = readInline(arg);
+          if (!ROLE_NAMES.has(args.role)) {
+            throw new RoleError(`--role must be worker or reviewer, got: ${args.role}`);
+          }
+          return true;
 
-  for (; index < argv.length; index++) {
-    const raw = argv[index];
-    const inline = splitInlineFlag(raw);
-    const arg = inline ? inline.flag : raw;
-    let inlineUsed = false;
-    const readInline = (flag, allowDash) => {
-      if (!inline) {
-        return readValue(flag, ++index, allowDash);
+        case "--parent-session":
+          args.parentSession = readInline(arg);
+          return true;
+
+        case "--prompt-file":
+          args.promptFile = resolve(readInline(arg));
+          return true;
+
+        case "--resume-interrupted":
+          args.resumeInterrupted = true;
+          return true;
+
+        case "--no-copy-local-files":
+          args.noCopyLocalFiles = true;
+          return true;
+
+        case "--reason":
+          args.reason = readInline(arg);
+          return true;
+
+        case "--help":
+        case "-h":
+          args.help = true;
+          return true;
+
+        default:
+          return false;
       }
-      inlineUsed = true;
-      return readInlineValue(inline, flag);
-    };
-
-    switch (arg) {
-      case "--role":
-        args.role = readInline(arg);
-        if (!ROLE_NAMES.has(args.role)) {
-          throw new RoleError(`--role must be worker or reviewer, got: ${args.role}`);
-        }
-        break;
-
-      case "--cwd":
-        args.cwd = resolve(readInline(arg));
-        break;
-
-      case "--task":
-        args.task = readInline(arg);
-        break;
-
-      case "--task-file":
-        args.taskFile = readInline(arg, true);
-        break;
-
-      case "--mode":
-        args.mode = readInline(arg);
-        if (!MODES.has(args.mode)) {
-          throw new RoleError(modeError(args.mode));
-        }
-        break;
-
-      case "--parent-session":
-        args.parentSession = readInline(arg);
-        break;
-
-      case "--max-steps":
-        args.maxSteps = readMaxSteps(readInline(arg));
-        break;
-
-      case "--timeout": {
-        const seconds = readNonNegativeInt(arg, readInline(arg));
-        args.timeout = seconds === 0 ? null : seconds;
-        args.timeoutProvided = true;
-        break;
-      }
-
-      case "--prompt-file":
-        args.promptFile = resolve(readInline(arg));
-        break;
-
-      case "--transcript":
-        args.transcript = resolve(readInline(arg));
-        break;
-
-      case "--resume-interrupted":
-        args.resumeInterrupted = true;
-        break;
-
-      case "--require-accept":
-        args.requireAccept = true;
-        break;
-
-      case "--no-copy-local-files":
-        args.noCopyLocalFiles = true;
-        break;
-
-      case "--require-ci":
-        args.requireCi = readPositiveInt(arg, readInline(arg));
-        break;
-
-      case "--pr":
-        args.pr = readPositiveInt(arg, readInline(arg));
-        break;
-
-      case "--test-cmd":
-        args.testCmd = readInline(arg);
-        break;
-
-      case "--reviewer-workspace-write":
-        args.reviewerWorkspaceWrite = true;
-        break;
-
-      case "--test-cmd-timeout":
-        args.testCmdTimeout = readPositiveInt(arg, readInline(arg));
-        break;
-
-      case "--reason":
-        args.reason = readInline(arg);
-        break;
-
-      case "--verbose":
-        args.verbose = true;
-        break;
-
-      case "--help":
-      case "-h":
-        args.help = true;
-        break;
-
-      default:
-        if (!Object.hasOwn(ROLE_FLAGS, arg)) {
-          throw new RoleError(`Unknown argument: ${raw}`);
-        }
-        args[ROLE_FLAGS[arg]] = readInline(arg);
-        break;
-    }
-
-    // A flag that read no value is boolean, so an inline value is an error
-    // rather than a silently dropped argument.
-    if (inline && !inlineUsed) {
-      throw new RoleError(`${arg} does not take a value.`);
-    }
-  }
+    },
+  });
 
   if (args.task !== null && args.taskFile !== null) {
     throw new RoleError(TASK_SOURCE_CONFLICT);
@@ -518,21 +431,8 @@ async function readPrompt(args, stdin) {
   return text;
 }
 
-function readStdin() {
-  return new Promise((resolveText, reject) => {
-    if (process.stdin.isTTY) {
-      reject(new RoleError("No prompt received on stdin. Pipe a prompt or use --prompt-file."));
-      return;
-    }
-    let data = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      data += chunk;
-    });
-    process.stdin.on("end", () => resolveText(data));
-    process.stdin.on("error", reject);
-  });
-}
+const readStdin = () =>
+  readStdinText("No prompt received on stdin. Pipe a prompt or use --prompt-file.");
 
 function createEventSink(transcriptFile) {
   const events = [];
@@ -743,15 +643,10 @@ async function dispatchLocked(
       },
       // The command is the flag value, which init stored a digest of or the digest
       // check above matched. Nothing the state file holds is run.
-      testCmd:
-        args.testCmd === null
-          ? null
-          : {
-              command: args.testCmd,
-              timeoutSeconds: Number.isSafeInteger(state.testCmdTimeout)
-                ? Math.max(1, state.testCmdTimeout)
-                : DEFAULT_TEST_CMD_TIMEOUT_SECONDS,
-            },
+      testCmd: testCmdInput(
+        args.testCmd,
+        Number.isSafeInteger(state.testCmdTimeout) ? Math.max(1, state.testCmdTimeout) : undefined,
+      ),
       gh,
       onEvent,
     });
@@ -1305,7 +1200,7 @@ export async function executeRoleCommand(args, deps = {}) {
       case "finish":
         return await finish(args, deps);
       case "abort":
-        return await abort(args, deps);
+        return await abort(args);
       case "extend":
         return await extend(args);
       case "wait-checks":

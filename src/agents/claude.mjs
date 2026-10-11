@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { isJsonObject, parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
+import { isUuid } from "../lib/session-record.mjs";
 import {
   asSessionId,
   childRan,
@@ -13,6 +13,8 @@ import {
   failedWithLine,
   flagMissingSession,
   keepFailedSessionId,
+  readSessionHead,
+  requireHeldUnconfirmedSession,
   resumeMismatchError,
   setUsageOrDelete,
 } from "./shared.mjs";
@@ -22,9 +24,6 @@ const missingSession = (id) => `No conversation found with session ID: ${id}`;
 
 // Claude Code prints exactly this on stderr, exit 1, when `--session-id` names an existing session.
 const sessionInUse = (id) => `Error: Session ID ${id} is already in use.`;
-
-const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const SESSION_HEAD_BYTES = 256 * 1024;
 
 /**
  * The line appended to the prompt of a first turn. It names the pre-assigned id, a fresh random
@@ -46,7 +45,7 @@ const sessionMarker = (id, role) => `[agent-loop session ${id} role ${role ?? ""
  * the turn then starts a fresh session.
  */
 async function ownsSession(id, cwd, role) {
-  if (!CANONICAL_UUID.test(id)) {
+  if (!isUuid(id)) {
     return false;
   }
   const projects = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects");
@@ -81,30 +80,6 @@ async function ownsSession(id, cwd, role) {
   return false;
 }
 
-/** Reads the head of a regular file in a real directory, or returns null for anything else. */
-async function readSessionHead(dir, name) {
-  const path = join(dir, name);
-  try {
-    if (!(await lstat(dir)).isDirectory() || !(await lstat(path)).isFile()) {
-      return null;
-    }
-    // O_NOFOLLOW is undefined on Windows, where the lstat checks above are the guard.
-    const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    try {
-      if (!(await file.stat()).isFile()) {
-        return null;
-      }
-      const buffer = Buffer.alloc(SESSION_HEAD_BYTES);
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-      return buffer.toString("utf8", 0, bytesRead);
-    } finally {
-      await file.close();
-    }
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Runs one Claude turn. A first turn pre-assigns its session id and reports it through
  * `options.onSessionAssigned` before the CLI starts, so a dispatcher can persist the id ahead of a
@@ -120,19 +95,12 @@ export async function runClaude(state, prompt, options = {}) {
   const args = ["-p"];
   const execOptions = { cwd, input: prompt, timeout, signal, role };
   const requestedSessionId = state.sessionId;
-  if (
-    requestedSessionId &&
-    state.sessionUnconfirmed &&
-    !(await ownsSession(requestedSessionId, cwd, role))
-  ) {
-    delete state.sessionUnconfirmed;
-    throw Object.assign(
-      new Error(
-        `Claude Code session ${requestedSessionId} is not verified as owned by this work tree.`,
-      ),
-      { sessionMissing: true },
-    );
-  }
+  await requireHeldUnconfirmedSession(
+    state,
+    requestedSessionId,
+    (id) => ownsSession(id, cwd, role),
+    `Claude Code session ${requestedSessionId} is not verified as owned by this work tree.`,
+  );
   // A first turn pre-assigns its id, so a kill that leaves stdout empty still names the session
   // the CLI saved (issue #395). A resumed turn passes no `--session-id`.
   const preassignedId = requestedSessionId ? null : randomUUID();

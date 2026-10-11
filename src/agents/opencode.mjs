@@ -12,6 +12,7 @@ import {
   resumeMismatchError,
   setResolvedModel,
   setUsageOrDelete,
+  throwIfCanceled,
 } from "./shared.mjs";
 
 // A part that opens a report label. The reviewer `Verdict:` line is excluded: it gates acceptance,
@@ -110,7 +111,7 @@ export async function runOpenCode(state, prompt, options = {}) {
   setResolvedModel(state, []);
   setUsage(state, events);
   keepFailedSessionId(state, events.map((event) => event.sessionID).find(Boolean));
-  throw canceledError();
+  throwIfCanceled(signal, "opencode");
 }
 
 /** Validates the stream of a turn whose child exited 0, records its session, usage, and model, and returns its text. */
@@ -235,10 +236,6 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
     const value = `${model.providerID}/${model.id}`;
     return redactEnvSecrets(value) === value ? value : undefined;
   });
-}
-
-function canceledError() {
-  return Object.assign(new Error("opencode was canceled."), { isCanceled: true });
 }
 
 /**
@@ -516,7 +513,7 @@ function lastErrorDetail(events) {
 /**
  * Returns the described detail of a provider error object, or an empty string when the object is
  * not one this adapter can read. Only the string fields and a string or number status reach
- * `describeError`, so it cannot throw on the payload, and a field of any other type is a malformed
+ * the format, so it cannot throw on the payload, and a field of any other type is a malformed
  * detail rather than a coerced one (issue #326).
  */
 function providerDetail(error) {
@@ -533,7 +530,8 @@ function providerDetail(error) {
     return "";
   }
 
-  return boundedLine(describeError({ type, message, status }), DETAIL_LIMIT);
+  const detail = [type, message].filter(Boolean).join(": ");
+  return boundedLine(status === undefined ? detail : `${detail} (status ${status})`, DETAIL_LIMIT);
 }
 
 /** Returns the byte count of a stream, for a debug line that carries size and not content. */
@@ -551,17 +549,4 @@ function boundedLine(text, limit) {
     .trim();
 
   return flat.length > limit ? `${flat.slice(0, limit)}...` : flat;
-}
-
-/**
- * Formats an OpenCode error event payload for the thrown message.
- * The payload carries `{ type, message, status }`; any field can be absent.
- */
-function describeError(error) {
-  if (!error || typeof error !== "object") {
-    return "unknown error";
-  }
-
-  const detail = [error.type, error.message].filter(Boolean).join(": ") || "unknown error";
-  return error.status == null ? detail : `${detail} (status ${error.status})`;
 }

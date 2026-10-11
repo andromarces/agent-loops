@@ -1,23 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
+import { isUuid } from "../lib/session-record.mjs";
 import {
   asSessionId,
   childRan,
   recordResolvedModel,
   keepFailedSessionId,
   lastClosingMessage,
+  readSessionHead,
+  requireHeldUnconfirmedSession,
   resumeMismatchError,
   setMainLoopUsage,
 } from "./shared.mjs";
 
-const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const SESSION_HEAD_BYTES = 256 * 1024;
 // Text Copilot returns for a tool call that `--no-ask-user` leaves without an approval (issue #713).
 const SHELL_DENIAL_TEXT = "Permission denied because no interactive user response was available";
 
@@ -32,43 +31,21 @@ const SHELL_DENIAL_TEXT = "Permission denied because no interactive user respons
  * the next turn then starts a fresh session.
  */
 async function holdsTurn(id, cwd) {
-  if (!CANONICAL_UUID.test(id)) {
+  if (!isUuid(id)) {
     return false;
   }
   const home = resolve(
     cwd ?? process.cwd(),
     process.env.COPILOT_HOME || join(homedir(), ".copilot"),
   );
-  const dir = join(home, "session-state", id);
-  const path = join(dir, "events.jsonl");
-  try {
-    if (!(await lstat(dir)).isDirectory() || !(await lstat(path)).isFile()) {
+  const head = await readSessionHead(join(home, "session-state", id), "events.jsonl");
+  return (head?.split("\n") ?? []).some((line) => {
+    try {
+      return JSON.parse(line)?.type === "user.message";
+    } catch {
       return false;
     }
-    // O_NOFOLLOW is undefined on Windows, where the lstat checks above are the guard.
-    const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    try {
-      if (!(await file.stat()).isFile()) {
-        return false;
-      }
-      const buffer = Buffer.alloc(SESSION_HEAD_BYTES);
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-      return buffer
-        .toString("utf8", 0, bytesRead)
-        .split("\n")
-        .some((line) => {
-          try {
-            return JSON.parse(line)?.type === "user.message";
-          } catch {
-            return false;
-          }
-        });
-    } finally {
-      await file.close();
-    }
-  } catch {
-    return false;
-  }
+  });
 }
 
 /**
@@ -98,16 +75,12 @@ async function keepSavedPreassignedId(state, sessionId, error, cwd) {
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly, timeout, signal, role } = options;
   const requestedSessionId = state.sessionId;
-  if (
-    requestedSessionId &&
-    state.sessionUnconfirmed &&
-    !(await holdsTurn(requestedSessionId, cwd))
-  ) {
-    delete state.sessionUnconfirmed;
-    throw Object.assign(new Error(`Copilot session ${requestedSessionId} holds no saved turn.`), {
-      sessionMissing: true,
-    });
-  }
+  await requireHeldUnconfirmedSession(
+    state,
+    requestedSessionId,
+    (id) => holdsTurn(id, cwd),
+    `Copilot session ${requestedSessionId} holds no saved turn.`,
+  );
   const sessionId = requestedSessionId ?? randomUUID();
 
   const args = ["--session-id", sessionId, "-s", "--no-ask-user", "--output-format", "json"];

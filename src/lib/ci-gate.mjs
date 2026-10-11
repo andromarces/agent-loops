@@ -365,16 +365,7 @@ function classifyRulesets(data) {
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
 function classifyProtection(data) {
-  if (!isJsonObject(data)) {
-    return { state: UNKNOWN, contexts: [] };
-  }
-  const required = data.required_status_checks;
-  if (required === undefined) {
-    return { state: UNKNOWN, contexts: [] };
-  }
-  if (required === null) {
-    return { state: UNKNOWN, contexts: [] };
-  }
+  const required = isJsonObject(data) ? data.required_status_checks : undefined;
   if (!isJsonObject(required)) {
     return { state: UNKNOWN, contexts: [] };
   }

@@ -1,6 +1,5 @@
 # Tool-local artifacts
 .vite-hooks/_/
-.ruff_cache/
 
 # Local environment and secrets
 .env

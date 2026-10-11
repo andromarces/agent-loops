@@ -43,7 +43,7 @@ function existingArray(settings, locator) {
 }
 
 /** Returns the array a target writes into, creating missing objects if asked. */
-export function arrayAt(settings, locator, { create = false } = {}) {
+function arrayAt(settings, locator, { create = false } = {}) {
   const existing = existingArray(settings, locator);
   if (existing || !create) {
     return existing;
