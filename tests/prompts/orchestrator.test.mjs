@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import {
   initialPrompt,
@@ -849,6 +849,69 @@ test("the headless wait states the childExitUnconfirmed rule", () => {
   const prompt = waitPrompt(3600).replace(/\s+/g, " ");
   expect(prompt).toMatch(/"childExitUnconfirmed": true[^.]*unaccounted/i);
   expect(prompt).toMatch(/settle that process before you start another wait/i);
+});
+
+// Usefulness: verifies the wait prompt and its bound follow `CHILD_EXIT_CEILING_MS`.
+// A constant change then leaves no stale number in the prompt text.
+// It also renders no fractional `--timeout`, which the CLI rejects (issue #736).
+test.each([
+  [5000, 7, "five"],
+  [2500, 7, "three"],
+  [12000, 4, "12"],
+])(
+  "the headless wait prompt follows a %i ms child-exit ceiling",
+  async (ceilingMs, bound, word) => {
+    vi.resetModules();
+    vi.doMock("../../src/lib/check-wait.mjs", async (importOriginal) => ({
+      ...(await importOriginal()),
+      CHILD_EXIT_CEILING_MS: ceilingMs,
+    }));
+    try {
+      const { initialPrompt: render, headlessWaitSeconds } =
+        await import("../../src/prompts/orchestrator.mjs");
+      expect(headlessWaitSeconds(2 * (bound + Math.ceil(ceilingMs / 1000)))).toBe(bound);
+      const prompt = render({
+        task: "T",
+        maxSteps: 10,
+        requireCi: 42,
+        orchestratorKind: "claude",
+        reviewerKind: "claude",
+        timeout: 2 * (bound + Math.ceil(ceilingMs / 1000)),
+        waitCommand: WAIT_COMMAND,
+      }).replace(/\s+/g, " ");
+      expect(prompt).toMatch(new RegExp(`--pr 42 --timeout ${bound}(?![.\\d])`));
+      expect(prompt).toContain(`${bound} seconds plus ${word}, before this turn ends`);
+      expect(prompt).toContain(`${word}-second window expired`);
+    } finally {
+      vi.doUnmock("../../src/lib/check-wait.mjs");
+      vi.resetModules();
+    }
+  },
+);
+
+// Usefulness: verifies the wait prompt names the `DEFAULT_TIMEOUT` value when the run sets
+// no turn timeout. The stated default then cannot drift from the CLI default.
+test("the headless wait prompt states the DEFAULT_TIMEOUT value", async () => {
+  vi.resetModules();
+  vi.doMock("../../src/lib/args.mjs", async (importOriginal) => ({
+    ...(await importOriginal()),
+    DEFAULT_TIMEOUT: 1800,
+  }));
+  try {
+    const { initialPrompt: render } = await import("../../src/prompts/orchestrator.mjs");
+    const prompt = render({
+      task: "T",
+      maxSteps: 10,
+      requireCi: 42,
+      orchestratorKind: "claude",
+      reviewerKind: "claude",
+      waitCommand: WAIT_COMMAND,
+    }).replace(/\s+/g, " ");
+    expect(prompt).toContain("(1800 seconds by default)");
+  } finally {
+    vi.doUnmock("../../src/lib/args.mjs");
+    vi.resetModules();
+  }
 });
 
 // Usefulness: verifies the platform decides the shell forms: a Windows run gets

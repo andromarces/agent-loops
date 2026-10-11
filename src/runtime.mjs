@@ -467,9 +467,11 @@ export async function runLoop(options) {
   }
 
   let stepsUsed = 0;
-  // Completion gate state (#234). The headless loop has no mode: a worker turn
-  // marks work mode and needs a later reviewer accept; no worker turn maps to
-  // review-only and needs at least one reviewer report.
+  // Completion gate state (#234). Without `mode`, a worker turn marks work mode,
+  // and work mode needs a later reviewer accept. A run with no worker turn maps
+  // to review-only and needs at least one reviewer report. `mode: "review-only"`
+  // refuses a worker action. It also refuses a finish before a reviewer turn.
+  //
   // A continued run restores the earlier run's gate state only when it is valid
   // and the current work tree is the state that run's last reviewer turn
   // reviewed (#393). The CLI derives `earlierGate` from the result events of the

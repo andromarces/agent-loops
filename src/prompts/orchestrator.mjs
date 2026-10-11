@@ -1,6 +1,7 @@
 import { posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { actionFormats, SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
+import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
 
 // Shared rule source: docs/orchestrator-instructions.md states the role rules
@@ -32,19 +33,38 @@ export function requiredCheckWait({ requireCi, orchestratorKind, reviewerKind })
   return NETWORKED_READ_ONLY_CLIS.has(reviewerKind) ? "reviewer" : "gate";
 }
 
+// Whole seconds, rounded up, so the wait bound stays an integer and never overstates the time left.
+const CEILING_SECONDS = Math.ceil(CHILD_EXIT_CEILING_MS / 1000);
+const SMALL_NUMBER_WORDS = [
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+];
+// The child-exit ceiling as the prompt words it: "five" for 5, digits past ten.
+const CEILING_WORD = SMALL_NUMBER_WORDS[CEILING_SECONDS] ?? String(CEILING_SECONDS);
+
 /**
  * The `--timeout` the headless orchestrator passes to `role wait-checks`, in
  * seconds, or null when no bound fits the turn. The command runs for its bound
- * plus `CHILD_EXIT_CEILING_MS`, so the bound leaves that ceiling and half the
- * turn free for the orchestrator's own work: the wait and its child-exit window
- * always end before the turn `timeout` (seconds, null when unbounded) does. A
- * turn under 12 seconds fits no positive bound, and the prompt then names no
- * wait (#348).
+ * plus `CHILD_EXIT_CEILING_MS`, rounded up to whole seconds. The bound leaves
+ * that ceiling and half the turn free for the orchestrator's own work. The wait
+ * and its child-exit window always end before the turn `timeout` (seconds, null
+ * when unbounded) does.
+ *
+ * A turn under twice the ceiling plus two seconds fits no positive bound. That is
+ * 12 seconds at the five-second ceiling. The prompt then names no wait (#348).
  */
 export function headlessWaitSeconds(timeout) {
   if (typeof timeout !== "number" || timeout <= 0) return DEFAULT_WAIT_SECONDS;
-  const ceilingSeconds = CHILD_EXIT_CEILING_MS / 1000;
-  const bound = Math.min(DEFAULT_WAIT_SECONDS, Math.floor(timeout / 2) - ceilingSeconds);
+  const bound = Math.min(DEFAULT_WAIT_SECONDS, Math.floor(timeout / 2) - CEILING_SECONDS);
   return bound >= 1 ? bound : null;
 }
 
@@ -151,7 +171,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
   if (rule === "wait" && (bound === null || waitCommand === null)) {
     const why =
       bound === null
-        ? `the turn --timeout (${timeout} seconds) is too short for a wait that ends, with its five-second child-exit window, inside the turn`
+        ? `the turn --timeout (${timeout} seconds) is too short for a wait that ends, with its ${CEILING_WORD}-second child-exit window, inside the turn`
         : "the runtime cannot render a command for this install and work tree that every shell reads the same way";
     return [
       gate,
@@ -167,10 +187,10 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
       "- Wait for the required checks at two points:",
       "  - Before you dispatch the reviewer on a new PR head, wait for the required checks on that head to complete.",
       "  - When a reviewer turn reports a pending required check, wait for that check to complete before you finish. A check still pending after a wait is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check, so dispatch the reviewer again, or wait again on a later turn, or abort with the pending check named in the reason.",
-      `- Run each wait with the command for the shell that your shell tool runs, exactly as written, from any directory: ${waitCommand.map(({ shell, command }) => `${shell}: ${command} --pr ${requireCi} --timeout ${bound}`).join(" ; ")}. The command names the Node binary, the CLI script, and the work tree of this run. The runtime owns the bound, so the command returns within ${bound} seconds plus five, before this turn ends. Do not watch the checks with gh directly, because gh has no timeout for a watch.`,
-      `- The command prints one JSON envelope with "timedOut" and the last "checks" it read. The status read changes nothing and spends no step, because a step is charged only to run_worker and run_reviewer. This turn is bounded by the turn --timeout (${typeof timeout === "number" ? `${timeout} seconds` : "3600 seconds by default"}), and a turn that outlasts it ends the run on exit 1 before it returns an action.`,
+      `- Run each wait with the command for the shell that your shell tool runs, exactly as written, from any directory: ${waitCommand.map(({ shell, command }) => `${shell}: ${command} --pr ${requireCi} --timeout ${bound}`).join(" ; ")}. The command names the Node binary, the CLI script, and the work tree of this run. The runtime owns the bound, so the command returns within ${bound} seconds plus ${CEILING_WORD}, before this turn ends. Do not watch the checks with gh directly, because gh has no timeout for a watch.`,
+      `- The command prints one JSON envelope with "timedOut" and the last "checks" it read. The status read changes nothing and spends no step, because a step is charged only to run_worker and run_reviewer. This turn is bounded by the turn --timeout (${typeof timeout === "number" ? `${timeout} seconds` : `${DEFAULT_TIMEOUT} seconds by default`}), and a turn that outlasts it ends the run on exit 1 before it returns an action.`,
       '- Read the wait result as follows. A failing required check is settled, so act on the failure. "timedOut": true means the bound was reached with a required check still pending, or with no check state read: it is a completed read and not a pass, so the pending check is not a finish condition. Do not wait again in the same turn: dispatch the reviewer, or abort with the pending check named in the reason. An exit 1 with "status": "error" is an unresolved read, so never record its checks as passed.',
-      '- "childExitUnconfirmed": true appears only when the five-second window expired with the gh child still unaccounted for. The command does not claim an exit it did not observe, so a gh process from this wait may still run. Settle that process before you start another wait, and if you cannot, do not wait again.',
+      `- "childExitUnconfirmed": true appears only when the ${CEILING_WORD}-second window expired with the gh child still unaccounted for. The command does not claim an exit it did not observe, so a gh process from this wait may still run. Settle that process before you start another wait, and if you cannot, do not wait again.`,
     ];
   }
 

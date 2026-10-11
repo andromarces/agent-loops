@@ -15,6 +15,16 @@ export function normalizeAgent(kind) {
  * `state.sessionId` to hold the persistent session id used for resume.
  * An adapter may set `state.usage` for the turn it just completed; the runtime
  * consumes and removes it after every call. Adapters that expose no usage leave it unset.
+ *
+ * Other fields an adapter sets on `state`, which the runtime reads:
+ * - `conversationReplaced`: a resume ran the turn in a new conversation.
+ * - `sessionUnconfirmed`: the session id is not yet confirmed by CLI output.
+ * - `shellDenied`: the turn reported a refused shell call.
+ * - `resolvedModel`: the model the CLI reported (see `REPORTS_RESOLVED_MODEL`).
+ *
+ * An adapter throws an error with `sessionMissing` set when a resumed session no longer
+ * exists, so the runtime reruns the turn as a first turn. An adapter that pre-assigns a
+ * session id awaits `options.onSessionAssigned(id)` before its CLI starts.
  */
 export const defaultAgents = {
   claude: { run: runClaude },
