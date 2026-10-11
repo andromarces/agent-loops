@@ -43,10 +43,10 @@ import {
   readClaudeSessions,
   readState,
   statePaths,
-  withStateLock,
   writeSessionEntry,
   writeState,
 } from "./lib/runstate.mjs";
+import { withStateLock } from "./lib/state-lock.mjs";
 import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";

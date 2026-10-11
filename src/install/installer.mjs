@@ -14,7 +14,7 @@ import { lstatSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
 import { logWarn, logWarnFull } from "../lib/log.mjs";
-import { withStateLock } from "../lib/runstate.mjs";
+import { withStateLock } from "../lib/state-lock.mjs";
 import {
   backupPathFor,
   ensureDir,

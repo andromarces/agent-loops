@@ -5,13 +5,12 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import {
-  processStartTime,
   readState,
   readStatesForSession,
   statePaths,
-  withStateLock,
   writeSessionEntry,
 } from "../../src/lib/runstate.mjs";
+import { processStartTime, withStateLock } from "../../src/lib/state-lock.mjs";
 import { deadPid, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
 
 let dirs = [];
