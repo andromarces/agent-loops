@@ -1872,10 +1872,7 @@ const RUN_REVIEWER = JSON.stringify({ action: "run_reviewer", prompt: "r" });
 // the gate refuses unless it restored an accept. Returns the reviewer calls of the continuation
 // and the exit code. The transcript sits outside the work tree, so the tree stays unchanged.
 async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
-  const T = [performance.now()];
-  const lap = () => T.push(performance.now());
   const repo = await createTempRepo();
-  lap();
   const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
   const transcriptPath = join(transcriptDir, "run.json");
   const origExitCode = process.exitCode;
@@ -1900,21 +1897,14 @@ async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
       transcriptPath,
     ];
     await main(args, agents(firstOrch));
-    lap();
     const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
     tamper(transcript);
     await writeFile(transcriptPath, JSON.stringify(transcript));
-    lap();
     const before = reviewerCalls;
     await main(
       [...args, "--continue-from", transcriptPath],
       agents([FINISH, RUN_REVIEWER, FINISH]),
     );
-    lap();
-    process.stderr.write(`STEPS750 ${process.platform} ${T.slice(1)
-      .map((t, i) => Math.round(t - T[i]))
-      .join(" ")}
-`);
     return { exitCode: process.exitCode, reviewerCalls: reviewerCalls - before };
   } finally {
     process.exitCode = origExitCode;
