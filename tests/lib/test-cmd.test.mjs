@@ -344,18 +344,24 @@ test("a short secret-named value is not redacted", () => {
 });
 
 // Usefulness: verifies a canceled run throws a cancel the caller already handles
-// and kills the command it was running (issue #420).
+// and kills the command it was running (issue #420). The abort waits for the command to record
+// its pid, so it never lands while the shell is still starting the process (issue #759).
 test("an abort signal cancels the command", async () => {
+  const t0 = Date.now();
+  const laps = [];
+  const lap = (step) => laps.push(`${step} ${Date.now() - t0}ms`);
   const cwd = await repo();
+  lap("repo setup");
+  const { command, pidFiles } = await hangingTree({});
   const controller = new AbortController();
-  const pending = runTestCmd({
-    command: node("setTimeout(() => {}, 60000)"),
-    cwd,
-    signal: controller.signal,
-  });
-  await delay(300);
+  const pending = runTestCmd({ command, cwd, signal: controller.signal });
+  await waitForPidFiles([pidFiles[0]]);
+  lap("command started");
   controller.abort();
   await expect(pending).rejects.toMatchObject({ isCanceled: true });
+  lap("canceled");
+  process.stderr.write(`PROBE759 ${process.platform} ${laps.join(", ")}
+`);
 }, 20_000);
 
 // Usefulness: verifies the secret name test ignores case, so a Windows variable that the OS reports
