@@ -551,13 +551,14 @@ async function applyWrite(plan, { dryRun, dirs, write }) {
     await write(plan.path, plan.content, { mode });
   } catch (err) {
     // The target kept its original bytes, so the backup just written is
-    // unneeded. Remove it before the error propagates. A cleanup failure rides
-    // on the write error as `backupCleanupError` and never replaces it.
+    // unneeded. Remove it before the error propagates. A cleanup failure
+    // becomes a warning and never replaces the write error.
     if (plan.backup) {
       await removeFileQuiet(plan.backup.path).catch((cleanupErr) => {
-        if (err instanceof Error) {
-          err.backupCleanupError = cleanupErr;
-        }
+        logWarn(
+          `could not remove the backup ${plan.backup.path} after a failed write ` +
+            `(${readableErrorText(cleanupErr)}); remove it by hand`,
+        );
       });
     }
     throw err;

@@ -172,17 +172,21 @@ test("a guard settings write failure leaves no unguarded entry point", async () 
 });
 
 // Usefulness: verifies that a failed backup cleanup does not replace the write
-// error, so the maintainer sees the real cause and the cleanup failure stays
-// reachable on the error.
-test("a backup cleanup failure does not hide the settings write error", async () => {
+// error, whether the write error is ordinary or frozen, and that the cleanup
+// failure reaches the user as a warning that names the backup path.
+test.each([
+  ["an ordinary error", (message) => new Error(message)],
+  ["a frozen error", (message) => Object.freeze(new Error(message))],
+])("a backup cleanup failure does not hide %s from the settings write", async (_name, make) => {
   const home = await makeHome();
   const settingsPath = join(home, ".claude", "settings.json");
   await writeJson(settingsPath, { hooks: { PreToolUse: [] } });
   const backupPath = `${settingsPath}.agent-loops-backup`;
+  const writeError = make("simulated guard settings write failure");
 
   const write = async (path, ...rest) => {
     if (path === settingsPath) {
-      throw new Error("simulated guard settings write failure");
+      throw writeError;
     }
     await writeTextAtomic(path, ...rest);
     if (path === backupPath) {
@@ -192,15 +196,20 @@ test("a backup cleanup failure does not hide the settings write error", async ()
     }
   };
 
-  const error = await install({
-    harnesses: ["claude"],
-    home,
-    packageRoot: PACKAGE_ROOT,
-    write,
-  }).catch((err) => err);
+  const warnings = [];
+  const originalError = console.error;
+  console.error = (message) => warnings.push(String(message));
+  let error;
+  try {
+    error = await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT, write }).catch(
+      (err) => err,
+    );
+  } finally {
+    console.error = originalError;
+  }
 
-  expect(error.message).toBe("simulated guard settings write failure");
-  expect(error.backupCleanupError).toBeInstanceOf(Error);
+  expect(error).toBe(writeError);
+  expect(warnings.join("\n")).toContain(backupPath);
 });
 
 // Usefulness: verifies the regression fix — an identical guard entry that the
