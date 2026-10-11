@@ -8,7 +8,13 @@ import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { applyResult, freshGate, matchingGate, resetGate } from "./lib/continuation.mjs";
 import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { decide } from "./orchestrator.mjs";
-import { carryTestRun, failedTestRun, runTestCmd, testCmdInput } from "./lib/test-cmd.mjs";
+import {
+  carryTestRun,
+  failedTestRun,
+  reportLateChangedPaths,
+  runTestCmd,
+  testCmdInput,
+} from "./lib/test-cmd.mjs";
 import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
@@ -251,6 +257,7 @@ export async function runChild(options) {
             // The reviewed state comes from the runtime snapshot, never from the
             // child response, so the child cannot misreport it.
             reviewed = reviewedState(before);
+            if (testRun) reportLateChangedPaths(testRun, before);
             prChecks = await readStatus(reviewed);
             return runFn(reviewerPrompt(prompt, prChecks, testRun, sandbox !== null));
           },

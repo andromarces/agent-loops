@@ -39,6 +39,22 @@ export function failedTestRun(err) {
   return carriedTestRuns.get(err) ?? readProp(err, "testRun");
 }
 const MAX_CHANGED_PATHS = 20;
+
+// The after-command snapshot of each result, kept off the result so it never reaches an output.
+const finalSnapshots = new WeakMap();
+
+/**
+ * Reports the paths that differ between the after-command snapshot and the reviewer baseline as
+ * `testRun.lateChangedPaths`, at most 20: a write by a process that the command left behind,
+ * made between the two snapshots, which the baseline absorbs. The field is `null` when a second
+ * cancel ended the after-command snapshot. The report is advisory and never fails the turn.
+ */
+export function reportLateChangedPaths(testRun, baseline) {
+  const final = finalSnapshots.get(testRun);
+  testRun.lateChangedPaths = final
+    ? diffSnapshots(final, baseline).slice(0, MAX_CHANGED_PATHS)
+    : null;
+}
 // Control characters other than newline and tab never help a reviewer and can
 // hide text in a terminal, so they are dropped.
 function stripControl(text) {
@@ -160,9 +176,11 @@ export async function runTestCmd({
   // so this read ignores it. Only `forceSignal`, the second cancel, ends it. The change is then
   // unknown (`null`), never "none".
   let changed = null;
+  let finalSnapshot = null;
   const endEvidenceRead = beginEvidenceRead(forceSignal);
   try {
-    changed = diffSnapshots(before, await snapshot(cwd, { signal: forceSignal }));
+    finalSnapshot = await snapshot(cwd, { signal: forceSignal });
+    changed = diffSnapshots(before, finalSnapshot);
   } catch (err) {
     if (!err?.isCanceled) {
       throw err;
@@ -214,6 +232,9 @@ export async function runTestCmd({
     changedCount: changed?.length ?? null,
     advisory: true,
   };
+  if (finalSnapshot) {
+    finalSnapshots.set(testRun, finalSnapshot);
+  }
   if (canceled) {
     const err = new Error("test command canceled");
     err.isCanceled = true;

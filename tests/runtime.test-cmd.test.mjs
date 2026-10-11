@@ -1,7 +1,8 @@
+import { writeFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { reviewerPrompt } from "../src/prompts/reviewer.mjs";
 import { runLoop } from "../src/runtime.mjs";
@@ -152,6 +153,59 @@ test("a command that changes the work tree is reported and is not a mutation", a
     });
     expect(reviewed.reviewed.clean).toBe(false);
   } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a write by a process that the command left behind, made after the command
+// snapshot and before the reviewer baseline, is reported in `lateChangedPaths` and does not halt
+// the run, so the gap the baseline absorbed is visible without a false MutationError (issue #738).
+test("a write by a leftover command process is reported as late and does not halt the run", async () => {
+  const repo = await createTempRepo();
+  const signalDir = await mkdtemp(join(tmpdir(), "late-write-"));
+  const go = join(signalDir, "go");
+  // Files stay outside the work tree so only the late write dirties it.
+  const childFile = join(signalDir, "child.cjs");
+  const spawnerFile = join(signalDir, "spawner.cjs");
+  writeFileSync(
+    childFile,
+    `const fs = require("fs");
+const t = setInterval(() => {
+  if (fs.existsSync(${JSON.stringify(go)})) {
+    fs.writeFileSync("late.txt", "x");
+    clearInterval(t);
+  }
+}, 5);`,
+  );
+  writeFileSync(
+    spawnerFile,
+    `require("child_process")
+  .spawn(process.execPath, [${JSON.stringify(childFile)}], { detached: true, stdio: "ignore" })
+  .unref();`,
+  );
+  // The "finished" log line follows the command snapshot, so the signal lands between the snapshots.
+  const realLog = console.log;
+  const log = vi.spyOn(console, "log").mockImplementation((...args) => {
+    if (String(args[0]).includes("test command finished")) writeFileSync(go, "");
+    realLog(...args);
+  });
+  try {
+    const { result, reviewed } = await reviewOnce(
+      repo,
+      { testCmd: `node "${spawnerFile}"` },
+      async () => {
+        for (let i = 0; i < 120; i++) {
+          if (await readFile(join(repo, "late.txt"), "utf8").catch(() => null)) break;
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        return REVIEW;
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(reviewed.testRun).toMatchObject({ changedPaths: [], lateChangedPaths: ["late.txt"] });
+  } finally {
+    log.mockRestore();
+    await removePath(signalDir);
     await removePath(repo);
   }
 });
