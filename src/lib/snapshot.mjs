@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { lstat, readFile, readlink } from "node:fs/promises";
+import { lstat, readFile, readlink, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
@@ -122,8 +122,10 @@ const rootCache = new AsyncLocalStorage();
 /**
  * Runs `fn` with a root cache: `workTreeRoot`, and so `snapshot`, asks `git` for the root of a
  * directory once, and later reads of that directory in `fn` reuse the answer. The cache lives for
- * one run, because the root of a directory does not change during a run. A failed or canceled
- * lookup is not cached. Outside this scope every read asks `git` again (#760).
+ * one run, because the root of a directory does not change during a run. A cached root is served
+ * only while the directory and the `.git` entry of the root still exist, so a removed work tree or
+ * lost Git metadata asks `git` again and gets its refusal. A failed or canceled lookup is not
+ * cached. Outside this scope every read asks `git` again (#760).
  * @template T
  * @param {() => Promise<T>} fn
  * @returns {Promise<T>}
@@ -132,11 +134,24 @@ export function withWorkTreeRootCache(fn) {
   return rootCache.run(new Map(), fn);
 }
 
+// Two cheap `stat` calls in place of a `git` process. A root found through `GIT_DIR` has no `.git`
+// entry, so it is never served from the cache.
+async function stillWorkTree(cwd, root) {
+  try {
+    await stat(cwd);
+    await stat(join(root, ".git"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`. */
 export async function workTreeRoot(cwd, bound) {
   const cache = rootCache.getStore();
-  if (cache?.has(cwd)) {
-    return cache.get(cwd);
+  const cached = cache?.get(cwd);
+  if (cached !== undefined && (await stillWorkTree(cwd, cached))) {
+    return cached;
   }
   const rootResult = await gitRead(cwd, ["rev-parse", "--show-toplevel"], bound);
   if (rootResult.exitCode !== 0) {

@@ -1687,7 +1687,8 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
 // tests: first main() 1.67-2.75 s, second main() 1.62-1.83 s. Per second main(): 2 rev-parse
 // --show-toplevel (0.10-0.12 s), 8 status, 8 ls-files and 8 rev-parse --verify (0.42-0.54 s each),
 // 3 other calls (about 0.05 s each). The 2 root calls are one cached snapshot root and one byte-exact
-// read of the local-files copy. fs calls take 1-4 ms.
+// read of the local-files copy. fs calls take 0-4 ms in total per call name, except one writeFile of
+// 40 ms. A cached root now costs 2 more stat calls (27 stat calls took 2-3 ms), so these numbers hold.
 // The tests keep real Git, so the timeout covers this cost. The #744 timeout at 15028 ms
 // (run 38115126864) did not reproduce in these runs.
 const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 30_000;

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -93,5 +93,38 @@ test("a failed root lookup is not cached", async () => {
     });
   } finally {
     await removePath(dir);
+  }
+});
+
+// Usefulness: verifies a cached root is never served after the work tree is removed during a run,
+// so the refusal `--cwd must be inside a Git work tree` still fires (#760, review of PR #764).
+test("a cached root is not served after the work tree is removed", async () => {
+  const repo = await createRepo();
+  try {
+    await withWorkTreeRootCache(async () => {
+      await snapshot(repo, {});
+      await rm(repo, { recursive: true, force: true });
+      await expect(snapshot(repo, {})).rejects.toThrow(/--cwd must be inside a Git work tree/);
+      await expect(workTreeRoot(repo, {})).rejects.toThrow(/--cwd must be inside a Git work tree/);
+    });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cached root is never served after the Git metadata of the work tree is
+// lost during a run, so the same refusal fires (#760, review of PR #764).
+test("a cached root is not served after the Git metadata is removed", async () => {
+  const repo = await createRepo();
+  try {
+    await withWorkTreeRootCache(async () => {
+      await snapshot(join(repo, "sub"), {});
+      await rm(join(repo, ".git"), { recursive: true, force: true });
+      await expect(snapshot(join(repo, "sub"), {})).rejects.toThrow(
+        /--cwd must be inside a Git work tree/,
+      );
+    });
+  } finally {
+    await removePath(repo);
   }
 });
