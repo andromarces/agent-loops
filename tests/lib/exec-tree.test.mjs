@@ -4,22 +4,13 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { killLiveTrees, killTreeOnExit } from "../../src/lib/exec-tree.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { processExists, removePath } from "../runtime-helpers.mjs";
 
 const EXEC_TREE_URL = new URL("../../src/lib/exec-tree.mjs", import.meta.url).href;
 const LOG_URL = new URL("../../src/lib/log.mjs", import.meta.url).href;
 const EXECA_URL = import.meta.resolve("execa");
 const IS_WINDOWS = process.platform === "win32";
 const MISSING_ROOT = "Z:/exec-tree-missing-root";
-
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function waitUntil(predicate, ms) {
   const deadline = Date.now() + ms;
@@ -35,7 +26,7 @@ function sleep(ms) {
 }
 
 function endProcess(pid) {
-  if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) process.kill(pid, "SIGKILL");
+  if (Number.isInteger(pid) && pid > 0 && processExists(pid)) process.kill(pid, "SIGKILL");
 }
 
 /**
@@ -142,12 +133,12 @@ test.skipIf(!IS_WINDOWS)(
       );
 
       parentPid = await startOutsideRunner(join(dir, "parent.mjs"));
-      expect(await waitUntil(() => !isAlive(parentPid), 30000)).toBe(true);
+      expect(await waitUntil(() => !processExists(parentPid), 30000)).toBe(true);
       expect(await readFile(failedFile, "utf8").catch(() => "")).toBe("");
 
       const tree = await Promise.all([shellPidFile, childPidFile, pidFile].map(readPid));
       expect(tree.every((pid) => typeof pid === "number")).toBe(true);
-      expect(await waitUntil(() => tree.every((pid) => !isAlive(pid)), 8000)).toBe(true);
+      expect(await waitUntil(() => tree.every((pid) => !processExists(pid)), 8000)).toBe(true);
     } finally {
       await endRecorded([parentPid], [shellPidFile, childPidFile, pidFile]);
       await removePath(dir);
@@ -298,7 +289,7 @@ test("killLiveTrees ends a live child that ignores SIGTERM", async () => {
       true,
     );
     killLiveTrees();
-    expect(await waitUntil(() => !isAlive(pid), 5000)).toBe(true);
+    expect(await waitUntil(() => !processExists(pid), 5000)).toBe(true);
   } finally {
     endProcess(pid);
     await subprocess;
