@@ -1679,19 +1679,19 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
 // - ubuntu-latest, same run: 22-40 ms / 134-283 ms / 0-8 ms / 148-171 ms.
 // - macos-latest, same run: 67-110 ms / 348-738 ms / 1 ms / 367-458 ms.
 // Cause: a main() runs its git calls through execa one after another, and each call costs about
-// 0.05-0.06 s on windows-latest. Before #760, run 38162688022 (timing patch, since removed): a second
-// main() ran 37 git calls, 2.07-2.25 s of its 2.09-2.27 s, and a first main() ran 37, 45 or 61 calls
+// 0.04-0.06 s on windows-latest. Run 38162688022 (timing patch, since removed): a second main() ran
+// 37 git calls, 2.07-2.25 s of its 2.09-2.27 s, and a first main() ran 37, 45 or 61 calls
 // (2.05-3.69 s). Per second main(): 10 rev-parse --show-toplevel (0.54-0.60 s), 8 status, 8 ls-files and
 // 8 rev-parse --verify (0.43-0.53 s each).
-// After #760 (one root per run), windows-latest run 38174971074 (timing patch, since removed), seven
-// tests: first main() 1.67-2.75 s, second main() 1.62-1.83 s. Per second main(): 2 rev-parse
-// --show-toplevel (0.10-0.12 s), 8 status, 8 ls-files and 8 rev-parse --verify (0.42-0.54 s each),
-// 3 other calls (about 0.05 s each). The 2 root calls are one cached snapshot root and one byte-exact
-// read of the local-files copy. fs calls take 0-4 ms in total per call name, except one writeFile of
-// 40 ms. The root cache adds one stat call to a snapshot that succeeds (27 stat calls took 2-3 ms), so
-// these numbers hold.
-// The tests keep real Git, so the timeout covers this cost. The #744 timeout at 15028 ms
-// (run 38115126864) did not reproduce in these runs.
+// Run 38205835481 (timing patch, since removed), seven tests, on the code after #760: first main()
+// 1.73-3.23 s, second main() 1.73-2.02 s. A second main() runs 10 rev-parse --show-toplevel
+// (0.45-0.54 s), 8 status, 8 ls-files and 8 rev-parse --verify (0.36-0.48 s each). A first main()
+// runs 10, 12 or 16 show-toplevel calls. #760 left the count unchanged: each snapshot resolves its
+// own root, and no change of this PR explains the lower timings. fs calls take
+// 0-7 ms per call name.
+// The tests keep real Git, so the timeout covers this cost. The slowest run above, plus setup, takes
+// about 6 s on windows-latest and up to 20 s on a slow local Windows machine, so 30 s keeps a margin.
+// The #744 timeout at 15028 ms (run 38115126864) did not reproduce in these runs.
 const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 30_000;
 
 // Usefulness: verifies --continue-from refuses, before any turn, a claude session that a live
