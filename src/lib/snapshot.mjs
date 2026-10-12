@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { lstat, readFile, readlink } from "node:fs/promises";
+import { lstat, readFile, readlink, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
@@ -123,13 +123,13 @@ const rootCache = new AsyncLocalStorage();
 /**
  * Runs `fn` with a root cache: `snapshot` asks `git` for the root of a directory once, and later
  * snapshots of that directory in `fn` reuse the answer, because the root of a directory does not
- * change during a run. Git is the validity check. A snapshot that reuses a root and whose `git`
- * command exits with an error drops the root and runs again from a fresh `git rev-parse
- * --show-toplevel`, so a removed work tree, a removed gitdir of a linked work tree, or a Git
- * directory without HEAD gives the same `--cwd must be inside a Git work tree` refusal as an
- * uncached read. A happy-path snapshot adds no `git` call. `workTreeRoot` always asks `git` and
- * refreshes the cache. A canceled or timed-out read keeps the cached root. Outside this scope
- * every read asks `git` again (#760).
+ * change during a run. A snapshot never runs twice. It reuses a root only while `cwd` itself still
+ * exists (one `stat`). When a `git` command of a snapshot that reused a root fails, the root is
+ * dropped and the root lookup runs once to choose the error: a refused lookup (a removed work
+ * tree, a removed gitdir of a linked work tree, or a Git directory without HEAD) throws the
+ * `--cwd must be inside a Git work tree` refusal, and any other failure throws the original
+ * snapshot error unchanged. A cancel or a timeout propagates and keeps the root. `workTreeRoot`
+ * always asks `git` and refreshes the cache. Outside this scope every read asks `git` again (#760).
  * @template T
  * @param {() => Promise<T>} fn
  * @returns {Promise<T>}
@@ -157,17 +157,25 @@ export async function workTreeRoot(cwd, bound) {
 export async function snapshot(cwd, bound) {
   const cache = rootCache.getStore();
   const cached = cache?.get(cwd);
-  if (cached !== undefined) {
-    try {
-      return await readSnapshot(cached, bound);
-    } catch (err) {
-      if (err?.gitFailed !== true) {
-        throw err;
-      }
+  if (
+    cached === undefined ||
+    !(await stat(cwd).then(
+      () => true,
+      () => false,
+    ))
+  ) {
+    return readSnapshot(await workTreeRoot(cwd, bound), bound);
+  }
+  try {
+    return await readSnapshot(cached, bound);
+  } catch (err) {
+    if (err?.gitFailed === true) {
+      cache.delete(cwd);
+      await workTreeRoot(cwd, bound);
       cache.delete(cwd);
     }
+    throw err;
   }
-  return readSnapshot(await workTreeRoot(cwd, bound), bound);
 }
 
 async function readSnapshot(root, bound) {

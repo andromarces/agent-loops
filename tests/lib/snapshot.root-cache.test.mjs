@@ -170,3 +170,74 @@ test("a cached root is not served after the gitdir of a linked work tree is remo
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a --cwd below the root that is removed during a run is refused although
+// its root survives and the cached root would still answer `git status` (#760).
+test("a cached root is not served after a subdirectory cwd is removed", async () => {
+  const repo = await createRepo();
+  try {
+    await withWorkTreeRootCache(async () => {
+      await snapshot(join(repo, "sub"), {});
+      await rm(join(repo, "sub"), { recursive: true });
+      await expect(snapshot(join(repo, "sub"), {})).rejects.toThrow(
+        /--cwd must be inside a Git work tree/,
+      );
+    });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+const statusCalls = () => gitCalls.filter((call) => call.args[0] === "status");
+
+// Usefulness: verifies a genuine Git failure of a snapshot that used a cached root surfaces with its
+// original error and the snapshot runs once, so a failure is never hidden by a second run (#760).
+test("a Git failure of a cached snapshot keeps its error and does not run the snapshot again", async () => {
+  const repo = await createRepo();
+  try {
+    await withWorkTreeRootCache(async () => {
+      await snapshot(repo, {});
+      await writeFile(join(repo, ".git", "index"), "not an index");
+      gitCalls.length = 0;
+      await expect(snapshot(repo, {})).rejects.toThrow(/git status failed \(exit 128\)/);
+      expect(statusCalls()).toHaveLength(1);
+    });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the mutation check under a root cache keeps what it observed: a turn that
+// edits a file is reported as a mutation of that path (#760).
+test("withMutationCheck under a root cache still reports the changed path", async () => {
+  const repo = await createRepo();
+  try {
+    await withWorkTreeRootCache(async () => {
+      await expect(
+        withMutationCheck(repo, "reviewer", () => writeFile(join(repo, "sub", "a.txt"), "b\n")),
+      ).rejects.toMatchObject({ name: "MutationError", paths: ["sub/a.txt"] });
+    });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a post-turn snapshot that fails in Git under a root cache throws its original
+// error after one run, never a second run that could discard the evidence of the first (#760).
+test("a failed post-turn snapshot under a root cache runs once and keeps its error", async () => {
+  const repo = await createRepo();
+  try {
+    await withWorkTreeRootCache(async () => {
+      await workTreeRoot(repo, {});
+      gitCalls.length = 0;
+      await expect(
+        withMutationCheck(repo, "reviewer", () =>
+          writeFile(join(repo, ".git", "index"), "not an index"),
+        ),
+      ).rejects.toThrow(/git status failed \(exit 128\)/);
+      expect(statusCalls()).toHaveLength(2);
+    });
+  } finally {
+    await removePath(repo);
+  }
+});
