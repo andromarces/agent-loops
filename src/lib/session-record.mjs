@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { sha256 } from "./hash.mjs";
 import { isJsonObject } from "./json.mjs";
 import { logWarn } from "./log.mjs";
-import { resolveWriteTarget, writeFileAtomic } from "./runstate.mjs";
+import { resolveWriteTarget, writeFileAtomic } from "./atomic-write.mjs";
 
 // A session record keeps the pre-assigned session id of a Claude first turn outside the work tree,
 // for a headless run whose `--transcript` is inside it (ADR 0027). The mutation check of an

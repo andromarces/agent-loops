@@ -150,7 +150,7 @@ running process. It also asks to check a reported PID-reuse window.
      writes a nonce (#363). The marker name carries only a pid, so `hasLiveWriter`
      stays pid-only; decision 5 closes the marker race for tokened markers, and an
      older version's marker is never removed.
-   - Remaining limits (`known-limit` in `src/lib/runstate.mjs`): the one-second
+   - Remaining limits (`known-limit` in `src/lib/state-lock.mjs`): the one-second
      resolution on macOS and Windows, a file without a stamp, the unverified
      clock-step behavior on macOS and Windows, the Windows startup cost, and the
      lock with a valid `linux-proc` stamp of a crashed owner of another PID namespace,
@@ -222,7 +222,7 @@ Andro Marces
 - [Issue #498](https://github.com/andromarces/agent-loops/issues/498): owner start time
 - [Issue #377](https://github.com/andromarces/agent-loops/issues/377), [PR #445](https://github.com/andromarces/agent-loops/pull/445), [Issue #363](https://github.com/andromarces/agent-loops/issues/363), [PR #370](https://github.com/andromarces/agent-loops/pull/370)
 - Implementation: `hasLiveWriter`, `stillStale`, `pruneOrphanClaims`, `ownerAlive`, and
-  `processStartTime` in `src/lib/runstate.mjs`; tests in `tests/lib/runstate.test.mjs`,
+  `processStartTime` in `src/lib/state-lock.mjs`; tests in `tests/lib/runstate.test.mjs`,
   `tests/lib/runstate.stale-takeover.test.mjs`, and
   `tests/lib/runstate.link-fallback.test.mjs`
 - [ADR Index](README.md)

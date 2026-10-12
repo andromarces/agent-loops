@@ -29,7 +29,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...real, access: accessPath, readdir };
 });
 
-const { detectHarnesses } = await import("../../src/install/installer.mjs");
+const { detectHarnesses } = await import("../../src/install/detect-harnesses.mjs");
 
 const DIR_COUNT = 30;
 let root;

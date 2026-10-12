@@ -6,7 +6,7 @@ import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
-import { pidAlive } from "../src/lib/runstate.mjs";
+import { pidAlive } from "../src/lib/state-lock.mjs";
 import {
   BOUND_KILL_TEST_TIMEOUT_MS,
   cleanRepoGit,

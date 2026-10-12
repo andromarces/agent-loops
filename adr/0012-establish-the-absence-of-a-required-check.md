@@ -374,8 +374,8 @@ Andro Marces
 
 - [Issue #336: Decide how a declared PR run finishes on a base branch with no required checks](https://github.com/andromarces/agent-loops/issues/336)
 - Implementation: `readRequiredSource`, `classifyRulesets`, `classifyProtection`,
-  `ghRequiredNames`, `requiredContexts`, and the empty-union branch of `checkCi` in
-  `src/lib/ci-gate.mjs`, `ciGate` and the accepted-finish branch in
+  `ghRequiredNames`, and `requiredContexts` in `src/lib/ci-required-sources.mjs`, the
+  empty-union branch of `checkCi` in `src/lib/ci-gate.mjs`, `ciGate` and the accepted-finish branch in
   `src/runtime.mjs`, the `noRequiredChecks` record in `src/role.mjs`, the gate
   line in `src/prompts/orchestrator.mjs`; tests in
   `tests/lib/ci-gate.*.test.mjs`, `tests/runtime*.test.mjs`,

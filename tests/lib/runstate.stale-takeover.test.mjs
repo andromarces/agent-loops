@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { withStateLock } from "../../src/lib/runstate.mjs";
+import { withStateLock } from "../../src/lib/state-lock.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // The stale-lock race needs a second process to act between the owner read and

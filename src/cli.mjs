@@ -37,7 +37,7 @@ import {
   runUninstallCommand,
 } from "./install/commands.mjs";
 import { logWarn, setVerbose } from "./lib/log.mjs";
-import { resolveWriteTarget, writeFileAtomic, writeFileAtomicSync } from "./lib/runstate.mjs";
+import { resolveWriteTarget, writeFileAtomic, writeFileAtomicSync } from "./lib/atomic-write.mjs";
 import {
   isInside,
   removeSessionRecord,

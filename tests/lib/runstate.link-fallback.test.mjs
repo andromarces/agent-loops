@@ -2,7 +2,7 @@ import { link, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { withStateLock } from "../../src/lib/runstate.mjs";
+import { withStateLock } from "../../src/lib/state-lock.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // A filesystem without hard links (FAT/exFAT, some network mounts) makes every
@@ -134,9 +134,9 @@ test("a process that reuses a pid never removes another process's marker", async
   const lockFile = join(dir, "state.lock");
   vi.resetModules();
   const firstFs = await import("node:fs/promises");
-  const first = await import("../../src/lib/runstate.mjs");
+  const first = await import("../../src/lib/state-lock.mjs");
   vi.resetModules();
-  const second = await import("../../src/lib/runstate.mjs");
+  const second = await import("../../src/lib/state-lock.mjs");
   const created = Promise.withResolvers();
   const resume = Promise.withResolvers();
   vi.mocked(firstFs.writeFile).mockImplementationOnce(async (file, data, options) => {
