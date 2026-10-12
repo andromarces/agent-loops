@@ -20,9 +20,10 @@ The issue asks two questions:
 ## Decision
 
 1. The first worker turn and every reviewer turn state one shared rule (`processRule` in `src/prompts/report.mjs`): never stop, kill, or signal a process that the turn did not start, and never select processes by name or by a command-line match. End only the exact PIDs that the turn's own commands started.
-2. The runtime adds no dead-child report. Two cases exist, and each already has a report:
-   - The dispatcher survives and the child dies. When `runChild` throws, the runtime records the turn with status `error`, sets the lifecycle to `halted`, and returns the error message in the envelope.
-   - The dispatcher dies, with or without the child. No code runs after the kill, so the dispatcher cannot write a cause. The next `role dispatch` call finds the lifecycle `dispatched`, records the turn as `interrupted`, marks the run `interrupted`, and reports "Previous turn ended uncertainly".
+2. The runtime adds no dead-child report. Three cases exist, and each already has a report:
+   - The dispatcher survives and the child fails. `runChild` returns a handled error result (`status: "error"`). Dispatch records the turn and the result, leaves the lifecycle `active`, and returns the error message in the envelope with exit code 1.
+   - A fatal error or a cancel throws out of `runChild`. Dispatch records the turn with status `error`, sets the lifecycle to `halted` (`interrupted` on a cancel), and returns exit code 1 (130 on a cancel).
+   - The dispatcher dies, with or without the child. No code runs after the kill, so the dispatcher cannot write a cause. The state file stays `dispatched` with no turn result. The next `role dispatch` call records the turn as `interrupted`, marks the run `interrupted`, and reports "Previous turn ended uncertainly".
 
 ## Consequences
 
