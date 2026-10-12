@@ -1678,14 +1678,19 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
 // - Local Windows 11, five runs: 0.34-2.4 s / 1.8-10.0 s / 6-30 ms / 1.8-7.0 s.
 // - ubuntu-latest, same run: 22-40 ms / 134-283 ms / 0-8 ms / 148-171 ms.
 // - macos-latest, same run: 67-110 ms / 348-738 ms / 1 ms / 367-458 ms.
-// Cause, windows-latest run 38162688022 (timing patch, since removed): a second main() runs 37 git
-// calls through execa. Their summed time is 2.07-2.25 s, 99% of the 2.09-2.27 s main() time, so
-// they do not overlap. A first main() runs 37, 45 or 61 git calls (2.05-3.69 s, 99% of its time).
-// Per second main(): 10 rev-parse --show-toplevel (0.55-0.60 s), 8 status, 8 ls-files and
-// 8 rev-parse --verify (0.43-0.53 s each), 3 other calls (about 0.06 s each). fs calls take 5-9 ms.
+// Cause: a main() runs its git calls through execa one after another, and each call costs about
+// 0.05-0.06 s on windows-latest. Before #760, run 38162688022 (timing patch, since removed): a second
+// main() ran 37 git calls, 2.07-2.25 s of its 2.09-2.27 s, and a first main() ran 37, 45 or 61 calls
+// (2.05-3.69 s). Per second main(): 10 rev-parse --show-toplevel (0.54-0.60 s), 8 status, 8 ls-files and
+// 8 rev-parse --verify (0.43-0.53 s each).
+// After #760 (one root per run), windows-latest run 38174971074 (timing patch, since removed), seven
+// tests: first main() 1.67-2.75 s, second main() 1.62-1.83 s. Per second main(): 2 rev-parse
+// --show-toplevel (0.10-0.12 s), 8 status, 8 ls-files and 8 rev-parse --verify (0.42-0.54 s each),
+// 3 other calls (about 0.05 s each). The 2 root calls are one cached snapshot root and one byte-exact
+// read of the local-files copy. fs calls take 1-4 ms.
 // The tests keep real Git, so the timeout covers this cost. The #744 timeout at 15028 ms
 // (run 38115126864) did not reproduce in these runs.
-const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 45_000;
+const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 30_000;
 
 // Usefulness: verifies --continue-from refuses, before any turn, a claude session that a live
 // process still holds (#647), through the real process table. No other CLI test starts a holder.
