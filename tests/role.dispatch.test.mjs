@@ -37,19 +37,12 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import {
-  apiArgs,
   createTempRepo,
-  equalsArgs,
-  expectNoReplyToMalformedCalls,
-  gateReadCalls,
   gitAbortingPostTurn,
   gitWhileDotGitExists,
-  isApiRead,
-  PAGED,
-  prChecksArgs,
-  prViewArgs,
+  PASSING_RUN,
+  prGateGh,
   removePath,
-  REPO_VIEW_ARGS,
 } from "./runtime-helpers.mjs";
 
 // A directory that `gitWhileDotGitExists` treats as a work tree. Callers remove it
@@ -457,18 +450,43 @@ test("reviewer dispatch carries the optional Checks, Notes, and Deferred labels"
   });
 });
 
-// Usefulness: verifies an empty optional label with bullets below it reaches the
-// envelope through `raw` at the dispatch seam instead of being dropped (issue
-// #229).
-test("worker dispatch carries text under an empty optional label into raw", async () => {
+// Usefulness: verifies each parser case below reaches the envelope through `raw` at the dispatch
+// seam instead of being dropped, so the next turn still sees the text (issues #229, #240, #243, #249).
+test.each([
+  {
+    name: "text under an empty optional label",
+    extra: "\nNotes:\n- item one\n- item two",
+    expected: "item one",
+  },
+  {
+    name: "a decorated label",
+    extra: "\nNotes: tidy\n**Deferred:** migrate the legacy path",
+    expected: "migrate the legacy path",
+  },
+  {
+    name: "a spaceless bullet",
+    extra: "\nDeferred:\n-migrate the legacy path",
+    expected: "migrate the legacy path",
+  },
+  {
+    name: "a list under the Blockers label",
+    extra: "\nBlockers: see below\n- real blocker",
+    expected: "real blocker",
+  },
+  {
+    name: "a list under a shadowed earlier label",
+    extra: "\nNotes: first pass\n- dropped item\nNotes: second pass",
+    expected: "dropped item",
+  },
+])("worker dispatch carries $name into raw", async ({ extra, expected }) => {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
 
   const worker = recordingAdapter([]);
   worker.run = async (state) => {
-    state.sessionId = "sess-notes";
-    return `${REPORT}\nNotes:\n- item one\n- item two`;
+    state.sessionId = "sess-raw";
+    return `${REPORT}${extra}`;
   };
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
     agents: { fake1: worker, fake2: recordingAdapter([]) },
@@ -476,94 +494,7 @@ test("worker dispatch carries text under an empty optional label into raw", asyn
   });
   expect(result.exitCode).toBe(0);
   expect(result.payload.report).toBeNull();
-  expect(result.payload.raw).toContain("item one");
-});
-
-// Usefulness: verifies a decorated optional label reaches the envelope through
-// `raw` at the dispatch seam instead of dropping its value (issue #243).
-test("worker dispatch carries a decorated label into raw", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const worker = recordingAdapter([]);
-  worker.run = async (state) => {
-    state.sessionId = "sess-decorated";
-    return `${REPORT}\nNotes: tidy\n**Deferred:** migrate the legacy path`;
-  };
-  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-    agents: { fake1: worker, fake2: recordingAdapter([]) },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload.report).toBeNull();
-  expect(result.payload.raw).toContain("migrate the legacy path");
-});
-
-// Usefulness: verifies a bullet with no space after the marker under an empty
-// optional label reaches the envelope through `raw` at the dispatch seam
-// instead of being dropped (issue #243).
-test("worker dispatch carries a spaceless bullet into raw", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const worker = recordingAdapter([]);
-  worker.run = async (state) => {
-    state.sessionId = "sess-spaceless";
-    return `${REPORT}\nDeferred:\n-migrate the legacy path`;
-  };
-  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-    agents: { fake1: worker, fake2: recordingAdapter([]) },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload.report).toBeNull();
-  expect(result.payload.raw).toContain("migrate the legacy path");
-});
-
-// Usefulness: verifies a bullet list under the required `Blockers` label reaches
-// the envelope through `raw` at the dispatch seam instead of being dropped, so
-// the next turn still sees the blocker (issue #240).
-test("worker dispatch carries a list under the Blockers label into raw", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const worker = recordingAdapter([]);
-  worker.run = async (state) => {
-    state.sessionId = "sess-blocker";
-    return `${REPORT}\nBlockers: see below\n- real blocker`;
-  };
-  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-    agents: { fake1: worker, fake2: recordingAdapter([]) },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload.report).toBeNull();
-  expect(result.payload.raw).toContain("real blocker");
-});
-
-// Usefulness: verifies a list under an earlier, shadowed occurrence of a label
-// reaches the envelope through `raw` at the dispatch seam instead of being
-// dropped when a later occurrence wins the label value (issue #249).
-test("worker dispatch carries a list under a shadowed earlier label into raw", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-
-  const worker = recordingAdapter([]);
-  worker.run = async (state) => {
-    state.sessionId = "sess-shadow";
-    return `${REPORT}\nNotes: first pass\n- dropped item\nNotes: second pass`;
-  };
-  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-    agents: { fake1: worker, fake2: recordingAdapter([]) },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload.report).toBeNull();
-  expect(result.payload.raw).toContain("dropped item");
+  expect(result.payload.raw).toContain(expected);
 });
 
 // Usefulness: verifies the dispatch seam when the closing block does not parse
@@ -1513,65 +1444,14 @@ test("main keeps a non-string message redacted by its toJSON", async () => {
 });
 
 // A `gh` double for the gate's reads of PR 42 whose required check `ci (macos-latest)`
-// fails on the PR head `localHead`. It replies only to the exact argument elements
-// of each read and fails any other call with the arguments printed as an array.
-function failingCheckGh(localHead) {
-  return async (args) => {
-    const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
-    if (equalsArgs(args, prViewArgs(42))) {
-      return json({ headRefOid: localHead, baseRefName: "main", mergeStateStatus: "CLEAN" });
-    }
-    if (equalsArgs(args, REPO_VIEW_ARGS)) {
-      return { status: 0, stdout: "owner/repo", stderr: "" };
-    }
-    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
-      return json([
-        [
-          {
-            type: "required_status_checks",
-            parameters: { required_status_checks: [{ context: "ci (macos-latest)" }] },
-          },
-        ],
-      ]);
-    }
-    if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection", []))) {
-      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
-    }
-    if (isApiRead(args, "/check-runs", PAGED)) {
-      return json([
-        {
-          check_runs: [
-            {
-              id: 1,
-              name: "ci (macos-latest)",
-              status: "completed",
-              conclusion: "failure",
-              started_at: "2026-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]);
-    }
-    if (isApiRead(args, "/status", PAGED)) {
-      return json([{ statuses: [] }]);
-    }
-    // `gh pr checks` names no check beyond the ruleset.
-    if (equalsArgs(args, prChecksArgs(42))) {
-      return json([]);
-    }
-    return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
-  };
-}
-
-// Usefulness: verifies the double for the failing required check replies only to the
-// exact argument elements of the gate's reads, so a malformed call gets no reply and
-// the reviewer-turn test cannot pass on a call that no longer matches (issue #538).
-test("the failing-check double gives no reply to a malformed call", async () => {
-  await expectNoReplyToMalformedCalls(
-    failingCheckGh("a".repeat(40)),
-    gateReadCalls("a".repeat(40)),
+// fails on the PR head `localHead`.
+const failingCheckGh = (localHead) =>
+  prGateGh(
+    localHead,
+    [],
+    [{ ...PASSING_RUN, name: "ci (macos-latest)", conclusion: "failure" }],
+    "ci (macos-latest)",
   );
-});
 
 // Usefulness: verifies acceptance — a run that declared a PR supplies the
 // required-check status the runtime read to the reviewer turn and reports that

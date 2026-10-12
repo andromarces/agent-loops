@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the test that switches it on (see `cleanRepoGit`
-// below); every other test reaches the real `execa`.
+// in runtime-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -32,7 +32,7 @@ import {
   withRepo,
   WORKER_REPLY,
 } from "./role-helpers.mjs";
-import { createTempRepo, deadPid } from "./runtime-helpers.mjs";
+import { cleanRepoGit, createTempRepo, deadPid } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -87,26 +87,6 @@ test("crash aftermath: interrupted lifecycle, stale lock removal, abort path", a
   expect(aborted.exitCode).toBe(0);
   expect((await readRepoState(repo)).lifecycle).toBe("aborted");
 });
-
-const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
-
-// A clean repo at one commit, answered from memory. The role code is real: the
-// dispatches and the snapshots run over these answers, and only the `git`
-// processes are gone.
-function cleanRepoGit(command, args, options) {
-  expect(command).toBe("git");
-  const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
-  if (args[0] === "rev-parse") {
-    if (args.includes("--is-inside-work-tree")) {
-      return answer("true\n");
-    }
-    return answer(args.includes("--show-toplevel") ? options.cwd : `${CLEAN_REPO_HEAD}\n`);
-  }
-  if (args[0] === "status" || args[0] === "ls-files") {
-    return answer("");
-  }
-  throw new Error(`unexpected git call: ${JSON.stringify(args)}`);
-}
 
 // Usefulness: verifies acceptance — two concurrent calls: exactly one runs a
 // child; the other exits non-zero and the step count rises by one.
@@ -172,18 +152,4 @@ test("concurrent dispatches: exactly one child runs, the loser exits non-zero", 
   } finally {
     gitDouble.answer = null;
   }
-});
-
-// Usefulness: acceptance (#522) — a merged-argument call reads differently from the split call in the error.
-test("cleanRepoGit error for a merged-argument call differs from the split call text", () => {
-  const message = (args) => {
-    try {
-      cleanRepoGit("git", args, { cwd: tmpdir() });
-    } catch (error) {
-      return error.message;
-    }
-    return undefined;
-  };
-  expect(message(["branch", "--show-current"])).toBeDefined();
-  expect(message(["branch --show-current"])).not.toBe(message(["branch", "--show-current"]));
 });

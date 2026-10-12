@@ -21,7 +21,7 @@ import { assertGitWorkTree, snapshot } from "../../src/lib/snapshot.mjs";
 //   look the same in any wall-clock measurement.
 //
 // `killDescendants` and `cleanup` are not asserted here. The real-process tests
-// in ci-gate.test.mjs and snapshot.test.mjs fail when `killDescendants` is off,
+// in ci-gate.run-gh.test.mjs and snapshot.test.mjs fail when `killDescendants` is off,
 // so they cover it. `cleanup` only matters when the parent process exits, which
 // none of the named behaviors involve.
 
@@ -56,7 +56,7 @@ test("runGh hands the spawn layer the caller's abort signal", async () => {
 // Usefulness: verifies a status read through the `gh` runner returns the answer the
 // spawn layer produced while it passes the bound and the abort signal on, so a
 // runner that stops returning the answer fails here. No `gh` process starts, and
-// the installed execa accepts the options in ci-gate.test.mjs (issues #320, #399).
+// the installed execa accepts the options in ci-gate.run-gh.test.mjs (issues #320, #399).
 test("runGh answers a read through the bound and signal the read passes", async () => {
   execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: "gh version 2.0.0\n", stderr: "" });
   const controller = new AbortController();

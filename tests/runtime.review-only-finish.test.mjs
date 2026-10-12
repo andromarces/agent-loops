@@ -7,9 +7,7 @@ vi.mock("execa", () => ({ execa: vi.fn() }));
 
 import { execa } from "execa";
 import { runLoop } from "../src/runtime.mjs";
-import { removePath, scripted } from "./runtime-helpers.mjs";
-
-const HEAD = "1111111111111111111111111111111111111111";
+import { cleanRepoGit, removePath, scripted } from "./runtime-helpers.mjs";
 
 const dirs = [];
 afterEach(async () => {
@@ -17,34 +15,6 @@ afterEach(async () => {
     await removePath(dir);
   }
 });
-
-// A clean repo at one commit, answered from memory. The real snapshot code still
-// runs over these answers, so a turn that changed the repo is still detected by
-// the difference between two snapshots; only the `git` processes are gone.
-function cleanRepoGit(cwd) {
-  return async (command, args) => {
-    expect(command).toBe("git");
-    const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
-    switch (args[0]) {
-      case "rev-parse":
-        if (args.includes("--git-common-dir")) {
-          // The directory holds a `.git` directory, which is the common Git directory.
-          return answer(".git\n");
-        }
-        return answer(args.includes("--show-toplevel") ? cwd : `${HEAD}\n`);
-
-      case "status":
-      case "ls-files":
-        return answer("");
-      // The directory is the only work tree, so the init copy of local files has
-      // no main work tree to copy from.
-      case "worktree":
-        return answer(`worktree ${cwd}\0HEAD ${HEAD}\0\0`);
-      default:
-        throw new Error(`unexpected git call: ${JSON.stringify(args)}`);
-    }
-  };
-}
 
 // Runs a review-only loop whose one reviewer turn returns `reply`, then checks
 // that the finish after it was accepted and recorded what the turn returned.
@@ -58,7 +28,7 @@ async function expectFinishAcceptedAfterReviewerTurn(what, reply) {
   const cwd = await mkdtemp(join(tmpdir(), "review-only-finish-"));
   dirs.push(cwd);
   await mkdir(join(cwd, ".git"));
-  execa.mockReset().mockImplementation(cleanRepoGit(cwd));
+  execa.mockReset().mockImplementation(cleanRepoGit);
   const orchAdapter = scripted([
     JSON.stringify({ action: "run_reviewer", prompt: "inspect the repo" }),
     JSON.stringify({
@@ -104,18 +74,5 @@ test("a review-only run accepts a finish after a reviewer report with no verdict
   await expectFinishAcceptedAfterReviewerTurn(
     "a reviewer report with no verdict line",
     "Conclusion: read the code\nWhy: no verdict here\nBlockers: none",
-  );
-});
-
-// Usefulness: acceptance (#522) — a merged-argument call reads differently from the split call in the error.
-test("cleanRepoGit error for a merged-argument call differs from the split call text", async () => {
-  const message = (args) =>
-    cleanRepoGit(tmpdir())("git", args).then(
-      () => undefined,
-      (error) => error.message,
-    );
-  expect(await message(["branch", "--show-current"])).toBeDefined();
-  expect(await message(["branch --show-current"])).not.toBe(
-    await message(["branch", "--show-current"]),
   );
 });

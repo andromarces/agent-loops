@@ -378,7 +378,7 @@ Andro Marces
   `src/lib/ci-gate.mjs`, `ciGate` and the accepted-finish branch in
   `src/runtime.mjs`, the `noRequiredChecks` record in `src/role.mjs`, the gate
   line in `src/prompts/orchestrator.mjs`; tests in
-  `tests/lib/ci-gate.test.mjs`, `tests/runtime.test.mjs`,
+  `tests/lib/ci-gate.*.test.mjs`, `tests/runtime*.test.mjs`,
   `tests/role.finish-abort.test.mjs`, and `tests/prompts/orchestrator.test.mjs`;
   documented in `docs/orchestrator-instructions.md` and `README.md`
 - Read-only probe behind the classification, 2026-09-29, on
