@@ -384,13 +384,26 @@ test(
 
 // Usefulness: verifies an abort that lands while the command still starts is a cancel too, the
 // case that the fixed delay of the original test reached (issue #420, issue #759). The command
-// ends itself after 5 s, so a child that a missed kill left alive does not outlive the fixture.
+// writes a marker when it ends on its own after 5 s, so a kill that never happens, or that misses
+// the node process, shows as the marker: the run settles only when the command ends, and the
+// command ends only after it wrote the marker. With the kill disabled, the test fails after about
+// 5.8 s (Windows, local). The self-exit is also the leak guard.
 test(
-  "an abort signal during the command startup cancels the command",
+  "an abort signal during the command startup kills the command",
   async () => {
     const cwd = await repo();
-    const error = await abortAfter(node("setTimeout(() => {}, 5000)"), cwd, () => delay(300));
+    const dir = await mkdtemp(join(tmpdir(), "test-cmd-startup-abort-"));
+    dirs.push(dir);
+    const marker = join(dir, "ended-on-its-own.txt");
+    const script = join(dir, "command.js");
+    await writeFile(
+      script,
+      `setTimeout(() => require("fs").writeFileSync(${JSON.stringify(marker)}, ""), 5000);
+`,
+    );
+    const error = await abortAfter(`node "${script}"`, cwd, () => delay(300));
     expect(error).toMatchObject({ isCanceled: true });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   },
   ABORT_CANCEL_TEST_TIMEOUT_MS,
 );
