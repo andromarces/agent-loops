@@ -147,6 +147,17 @@ test("first worker turn tells a worker to name a refused command in the report",
   );
 });
 
+// Usefulness: verifies a worker prompt built from text that holds a line separator renders none
+// raw, on the first turn and later turns (issue #761).
+test("workerPrompt renders no raw line separator", () => {
+  for (const firstTurn of [true, false]) {
+    const prompt = workerPrompt("fix\u{2028}this\u{2029}now\u0085", firstTurn);
+    for (const raw of ["\u{2028}", "\u{2029}", "\u0085"]) {
+      expect(prompt).not.toContain(raw);
+    }
+  }
+});
+
 // Usefulness: verifies requirement "a worker never ends a process by name or command-line match" (issue #762): a worker that kills by match can end its own dispatcher and CLI.
 test("first worker turn forbids ending a process by name or command-line match", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");

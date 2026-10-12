@@ -87,6 +87,130 @@ export async function expectNoReplyToMalformedCalls(gh, calls) {
   }
 }
 
+/** The finish summary the gate tests send. */
+export const SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
+
+/** A reviewer reply whose verdict accepts the reviewed state. */
+export const REVIEW_ACCEPT = [
+  "Conclusion: the state passes.",
+  "Why: changes match the task.",
+  "Blockers: none.",
+  "Checks: npm test",
+  "Verdict: accept",
+].join("\n");
+
+/** A reviewer reply whose verdict rejects the reviewed state. */
+export const REVIEW_REJECT = [
+  "Conclusion: the state fails.",
+  "Why: the change is incomplete.",
+  "Blockers: none.",
+  "Verdict: reject",
+].join("\n");
+
+/** Role state for a run whose orchestrator, worker, and reviewer use the `orch`, `work`, and `rev` adapters. */
+export function gateRoles() {
+  return {
+    orchestrator: { kind: "orch", sessionId: null },
+    worker: { kind: "work", sessionId: null },
+    reviewer: { kind: "rev", sessionId: null },
+  };
+}
+
+/** The check run that `prGateGh` reports by default: a passing required check. */
+export const PASSING_RUN = {
+  id: 1,
+  name: "ci (ubuntu-latest)",
+  status: "completed",
+  conclusion: "success",
+  started_at: "2026-01-01T00:00:00Z",
+};
+
+/**
+ * A `gh` double for the gate's reads of PR 42 on `owner/repo`. It replies only to the exact
+ * argument elements of each read and fails any other call with the arguments printed as an array.
+ * `headRefOid` is the PR head the gate compares with the reviewed commit. `calls` receives each
+ * call as joined text. `runs` are the check runs every commit carries, and `required` is the
+ * context the base-branch ruleset requires.
+ */
+export function prGateGh(
+  headRefOid,
+  calls = [],
+  runs = [PASSING_RUN],
+  required = "ci (ubuntu-latest)",
+) {
+  return async (args) => {
+    calls.push(args.join(" "));
+    const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
+    if (equalsArgs(args, prViewArgs(42))) {
+      return json({
+        headRefOid,
+        baseRefName: "main",
+        mergeStateStatus: "CLEAN",
+        potentialMergeCommit: null,
+        state: "OPEN",
+      });
+    }
+    if (equalsArgs(args, REPO_VIEW_ARGS)) {
+      return { status: 0, stdout: "owner/repo", stderr: "" };
+    }
+    if (equalsArgs(args, prChecksArgs(42))) {
+      return json([]);
+    }
+    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
+      // The ruleset read is paginated, so its body is an array of pages.
+      return json([
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: required }] },
+          },
+        ],
+      ]);
+    }
+    if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection", []))) {
+      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
+    }
+    if (isApiRead(args, "/check-runs", PAGED)) {
+      return json([{ check_runs: runs }]);
+    }
+    if (isApiRead(args, "/status", PAGED)) {
+      // The status read paginates, so its reply is an array of pages.
+      return json([{ statuses: [] }]);
+    }
+    return { status: 1, stdout: "", stderr: `unmatched: ${JSON.stringify(args)}` };
+  };
+}
+
+/**
+ * The `gh` state of a ruleset-only base branch with no required check: the ruleset read returns
+ * well-formed rules with no required-status-check rule, classic protection answers the exact 404,
+ * and the required-names read carries no list. `calls` receives those two reads as joined text.
+ */
+export function noRequiredCheckGh(headRefOid, calls = []) {
+  const read = prGateGh(headRefOid);
+  return async (args) => {
+    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
+      calls.push(args.join(" "));
+      return {
+        status: 0,
+        stdout: JSON.stringify([
+          [
+            { type: "deletion" },
+            { type: "non_fast_forward" },
+            { type: "pull_request", parameters: { required_approving_review_count: 0 } },
+          ],
+        ]),
+        stderr: "",
+      };
+    }
+    if (equalsArgs(args, prChecksArgs(42))) {
+      calls.push(args.join(" "));
+      return { status: 1, stdout: "", stderr: "no required checks reported" };
+    }
+    return read(args);
+  };
+}
+
 /**
  * Creates a symlink, or skips the test where the host cannot: Windows without the symlink
  * privilege. Every other failure throws, so Linux and macOS never skip silently.
@@ -396,8 +520,8 @@ async function waitForRecord(started, waitMs) {
 // POSIX and on Windows (where Node reports an exited process as ESRCH).
 // known-limit: the OS may hand the pid to another process inside the window, which
 // reads as alive and fails the test; the window is seconds, so reuse is not a
-// practical risk.
-function processExists(pid) {
+// practical risk. Exported for tests that poll a pid.
+export function processExists(pid) {
   try {
     process.kill(pid, 0);
     return true;
@@ -661,6 +785,17 @@ export function cleanRepoGit(command, args, options) {
     default:
       throw new Error(`unexpected git call: ${JSON.stringify(args)}`);
   }
+}
+
+/**
+ * A temporary directory that holds a `.git` directory, for a test that routes `git` through
+ * `cleanRepoGit`. The directory is not a repository: only the double answers for it, so the test
+ * starts no `git` process. The caller removes it with `removePath`.
+ */
+export async function createCleanRepoDir() {
+  const dir = await mkdtemp(join(tmpdir(), "clean-repo-"));
+  await mkdir(join(dir, ".git"));
+  return dir;
 }
 
 /**

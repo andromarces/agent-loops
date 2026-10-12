@@ -343,20 +343,70 @@ test("a short secret-named value is not redacted", () => {
   expect(redactEnvSecrets("a 1234 b", { MY_TOKEN: "1234" })).toBe("a 1234 b");
 });
 
-// Usefulness: verifies a canceled run throws a cancel the caller already handles
-// and kills the command it was running (issue #420).
-test("an abort signal cancels the command", async () => {
-  const cwd = await repo();
+// Runs `command`, waits for `beforeAbort`, then aborts. The abort and the wait for the settled
+// run happen on every path, so a failed wait never leaves a live command for the cleanup hooks.
+async function abortAfter(command, cwd, beforeAbort) {
   const controller = new AbortController();
-  const pending = runTestCmd({
-    command: node("setTimeout(() => {}, 60000)"),
-    cwd,
-    signal: controller.signal,
-  });
-  await delay(300);
-  controller.abort();
-  await expect(pending).rejects.toMatchObject({ isCanceled: true });
-}, 20_000);
+  const settled = runTestCmd({ command, cwd, signal: controller.signal }).then(
+    () => null,
+    (error) => error,
+  );
+  try {
+    await beforeAbort();
+  } finally {
+    controller.abort();
+    await settled;
+  }
+  return settled;
+}
+
+// Timeout for the two abort-signal tests. Windows, local, 5 runs of each test, repo setup included:
+// the start-wait test took 0.9-1.5 s and the startup-abort test 0.9-1.2 s. On windows-latest, run
+// 38196966644 attempts 1-3, the start-wait test alone took 959, 1402, and 999 ms. The failure of
+// run 38160795603 (25.5 s, `Hook timed out` after it) came with an 18 s gap in the runner log,
+// not with one measured slow step. The explicit timeout leaves room for load without raising the
+// suite default.
+const ABORT_CANCEL_TEST_TIMEOUT_MS = 45_000;
+
+// Usefulness: verifies a canceled run throws a cancel the caller already handles and kills the
+// command it was running (issue #420). The abort waits for the command to record its pid, so it
+// lands on a live command, not on one that the shell still starts (issue #759).
+test(
+  "an abort signal cancels a started command",
+  async () => {
+    const cwd = await repo();
+    const { command, pidFiles } = await hangingTree({});
+    const error = await abortAfter(command, cwd, () => waitForPidFiles([pidFiles[0]]));
+    expect(error).toMatchObject({ isCanceled: true });
+  },
+  ABORT_CANCEL_TEST_TIMEOUT_MS,
+);
+
+// Usefulness: verifies an abort that lands while the command still starts is a cancel too, the
+// case that the fixed delay of the original test reached (issue #420, issue #759). The command
+// writes a marker when it ends on its own after 5 s, so a kill that never happens, or that misses
+// the node process, shows as the marker: the run settles only when the command ends, and the
+// command ends only after it wrote the marker. With the kill disabled, the test fails after about
+// 5.8 s (Windows, local). The self-exit is also the leak guard.
+test(
+  "an abort signal during the command startup kills the command",
+  async () => {
+    const cwd = await repo();
+    const dir = await mkdtemp(join(tmpdir(), "test-cmd-startup-abort-"));
+    dirs.push(dir);
+    const marker = join(dir, "ended-on-its-own.txt");
+    const script = join(dir, "command.js");
+    await writeFile(
+      script,
+      `setTimeout(() => require("fs").writeFileSync(${JSON.stringify(marker)}, ""), 5000);
+`,
+    );
+    const error = await abortAfter(`node "${script}"`, cwd, () => delay(300));
+    expect(error).toMatchObject({ isCanceled: true });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  },
+  ABORT_CANCEL_TEST_TIMEOUT_MS,
+);
 
 // Usefulness: verifies the secret name test ignores case, so a Windows variable that the OS reports
 // as `Github_Token` is redacted like `GITHUB_TOKEN` (issue #431, ADR 0017).

@@ -430,6 +430,28 @@ test("a path with a newline and a fence marker never starts a line of its own", 
   expect(prompt).toContain("\\u2028## Fake\\u2029Next\\u0085End");
 });
 
+// Usefulness: verifies the operator's test command, the summary, and the output tail reach the
+// reviewer prompt with no raw line-separator character, so test-controlled text cannot start a
+// line of its own (issue #761).
+test("the test group renders no raw line separator from the command, summary, or tail", () => {
+  const hostile = "a\u{2028}b\u{2029}c\u0085d";
+  const prompt = reviewerPrompt(
+    "check",
+    { pr: 7, summary: `ok${hostile}` },
+    {
+      ...TEST_RUN,
+      command: `run${hostile}`,
+      summary: `exit${hostile}`,
+      tail: `FAIL${hostile}`,
+    },
+  );
+  for (const raw of ["\u{2028}", "\u{2029}", "\u0085"]) {
+    expect(prompt).not.toContain(raw);
+  }
+  expect(prompt).toContain("run" + "a\\u2028b\\u2029c\\u0085d");
+  expect(prompt).toContain("FAIL" + "a\\u2028b\\u2029c\\u0085d");
+});
+
 // Usefulness: verifies requirement "a reviewer never ends a process by name or command-line match" (issue #762): a live probe that kills by match can end the dispatcher of the run.
 test("reviewer prompt forbids ending a process by name or command-line match", () => {
   const prompt = reviewerPrompt("check the tests").replace(/\s+/g, " ");

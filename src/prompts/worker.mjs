@@ -1,11 +1,13 @@
+import { escapeLineSeparators } from "./escape.mjs";
 import { processRule, reportBlock } from "./report.mjs";
 
 export function workerPrompt(prompt, firstTurn = false) {
   if (!firstTurn) {
-    return prompt;
+    return escapeLineSeparators(prompt);
   }
 
-  return `
+  return escapeLineSeparators(
+    `
 You are the implementation agent (worker) in an automated loop.
 Your role:
 - Implement the requested changes.
@@ -28,5 +30,6 @@ ${reportBlock}
 
 Instructions:
 ${prompt}
-`.trim();
+`.trim(),
+  );
 }

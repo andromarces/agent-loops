@@ -16,20 +16,17 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import { main } from "../src/role.mjs";
-import { createTempRepo, removePath, restoreRunsRoot, within } from "./runtime-helpers.mjs";
+import {
+  createTempRepo,
+  processExists,
+  removePath,
+  restoreRunsRoot,
+  within,
+} from "./runtime-helpers.mjs";
 import { INIT_OVERRIDES, recordingAdapter, spyStdoutWrite } from "./role-helpers.mjs";
 
 const ROLE = fileURLToPath(new URL("../src/role.mjs", import.meta.url));
 const EXEC = fileURLToPath(new URL("../src/lib/exec.mjs", import.meta.url));
-
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // Usefulness: acceptance (#669) — a second real SIGINT during a role dispatch whose child ignores
 // SIGTERM leaves no child alive, prints one cancel envelope, and exits 130. Windows has no
@@ -94,16 +91,19 @@ test.skipIf(process.platform === "win32")(
       await new Promise((resolve) => setTimeout(resolve, 500));
       // The first SIGINT cancels the child with SIGTERM, which it ignores.
       expect(child.exitCode).toBeNull();
-      expect(isAlive(pid)).toBe(true);
+      expect(processExists(pid)).toBe(true);
       child.kill("SIGINT");
       const { code, signal } = await within(exited, 20_000, "The role exit");
       expect({ code, signal }).toEqual({ code: 130, signal: null });
-      await vi.waitFor(() => expect(isAlive(pid)).toBe(false), { timeout: 3000, interval: 100 });
+      await vi.waitFor(() => expect(processExists(pid)).toBe(false), {
+        timeout: 3000,
+        interval: 100,
+      });
       const lines = stdout.trim().split("\n");
       expect(lines).toHaveLength(1);
       expect(JSON.parse(lines[0])).toMatchObject({ status: "error" });
     } finally {
-      if (pid && isAlive(pid)) process.kill(pid, "SIGKILL");
+      if (pid && processExists(pid)) process.kill(pid, "SIGKILL");
       if (child && child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }

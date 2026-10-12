@@ -18,7 +18,7 @@ vi.mock("../src/lib/test-cmd.mjs", async (importOriginal) => {
 });
 
 import { main } from "../src/cli.mjs";
-import { createTempRepo, removePath, within } from "./runtime-helpers.mjs";
+import { createTempRepo, processExists, removePath, within } from "./runtime-helpers.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const ARGS = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];
@@ -100,12 +100,12 @@ test.skipIf(process.platform === "win32")(
       await new Promise((resolve) => setTimeout(resolve, 500));
       // The first SIGINT cancels the child with SIGTERM, which the tree ignores.
       expect(child.exitCode).toBeNull();
-      expect(pids.every(isAlive)).toBe(true);
+      expect(pids.every(processExists)).toBe(true);
       child.kill("SIGINT");
       const { code, signal } = await within(exited, 20_000, "The CLI exit");
       expect({ code, signal }).toEqual({ code: 130, signal: null });
       // The force kill ends the tree well before the 5 s SIGKILL delay of execa.
-      await vi.waitFor(() => expect(pids.some(isAlive)).toBe(false), {
+      await vi.waitFor(() => expect(pids.some(processExists)).toBe(false), {
         timeout: 3000,
         interval: 100,
       });
@@ -113,7 +113,7 @@ test.skipIf(process.platform === "win32")(
       expect(transcript.exitCode).toBe(130);
       expect(transcript.error).toContain("Interrupted by SIGINT");
     } finally {
-      pids.forEach((pid) => isAlive(pid) && process.kill(pid, "SIGKILL"));
+      pids.forEach((pid) => processExists(pid) && process.kill(pid, "SIGKILL"));
       if (child && child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }
@@ -214,12 +214,3 @@ test.skipIf(process.platform === "win32")(
   },
   60_000,
 );
-
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}

@@ -42,8 +42,10 @@ import {
   expectNoReplyToMalformedCalls,
   gateReadCalls,
   isApiRead,
+  noRequiredCheckGh,
   PAGED,
   prChecksArgs,
+  prGateGh,
   prViewArgs,
   removePath,
   REPO_VIEW_ARGS,
@@ -740,65 +742,14 @@ async function initPrRun(repo, pr) {
   });
 }
 
-function cleanPrGh(head) {
-  return async (args) => {
-    const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" });
-    if (equalsArgs(args, prViewArgs(42))) {
-      return json({
-        headRefOid: head,
-        baseRefName: "main",
-        mergeStateStatus: "CLEAN",
-        potentialMergeCommit: null,
-        state: "OPEN",
-      });
-    }
-    if (equalsArgs(args, REPO_VIEW_ARGS)) {
-      return { status: 0, stdout: "owner/repo", stderr: "" };
-    }
-    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
-      // The ruleset read is paginated, so its body is an array of pages.
-      return json([
-        [
-          {
-            type: "required_status_checks",
-            parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
-          },
-        ],
-      ]);
-    }
-    if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection", []))) {
-      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
-    }
-    if (isApiRead(args, "/check-runs", PAGED)) {
-      return json([
-        {
-          check_runs: [
-            {
-              name: "ci (ubuntu-latest)",
-              status: "completed",
-              conclusion: "success",
-              started_at: "2026-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]);
-    }
-    if (isApiRead(args, "/status", PAGED)) {
-      return json({ statuses: [] });
-    }
-    return { status: 1, stdout: "", stderr: `unmatched: ${JSON.stringify(args)}` };
-  };
-}
-
-// Usefulness: verifies the `--require-ci` doubles route on the exact argument
+// Usefulness: verifies the `--require-ci` merge-state double routes on the exact argument
 // elements, so a call that merges two elements into one, drops one, or adds one
 // gets no reply and its error prints the array (issues #530 and #538).
-test.each([
-  ["the merge-state double", ciGh(CLEAN_REPO_HEAD, "CLEAN")],
-  ["the clean-PR double", cleanPrGh(CLEAN_REPO_HEAD)],
-  ["the no-required-check double", noRequiredCheckGh(CLEAN_REPO_HEAD)],
-])("%s gives no reply to a malformed call", async (_name, gh) => {
-  await expectNoReplyToMalformedCalls(gh, gateReadCalls(CLEAN_REPO_HEAD));
+test("the merge-state double gives no reply to a malformed call", async () => {
+  await expectNoReplyToMalformedCalls(
+    ciGh(CLEAN_REPO_HEAD, "CLEAN"),
+    gateReadCalls(CLEAN_REPO_HEAD),
+  );
 });
 
 // Usefulness: verifies an interactive run that declares a PR refuses a finish
@@ -863,38 +814,6 @@ test("a declared PR with no gate reports the marker and the gate in one refusal"
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 
-// A `gh` runner for a ruleset-only base branch with no required check: the ruleset
-// read returns a non-empty array of well-formed rules with no
-// required-status-check rule, and classic protection answers the exact 404 that
-// only a caller able to read it receives on an unprotected branch. Each source
-// stated that it holds no required check, so the gate establishes the absence
-// rather than inferring it (#336). `gh pr checks --required` prints nothing there,
-// which is not a statement about the branch and is not read as one.
-function noRequiredCheckGh(head, calls = []) {
-  const read = cleanPrGh(head);
-  return async (args) => {
-    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
-      calls.push(args);
-      return {
-        status: 0,
-        stdout: JSON.stringify([
-          [
-            { type: "deletion" },
-            { type: "non_fast_forward" },
-            { type: "pull_request", parameters: { required_approving_review_count: 0 } },
-          ],
-        ]),
-        stderr: "",
-      };
-    }
-    if (equalsArgs(args, prChecksArgs(42))) {
-      calls.push(args);
-      return { status: 1, stdout: "", stderr: "no required checks reported" };
-    }
-    return read(args);
-  };
-}
-
 // The finishes below run on a repo whose `git` is answered from memory. A
 // declared run with one accepted reviewer turn takes about twenty `git`
 // processes to reach the finish (a repo, then a snapshot around each turn), and a
@@ -932,7 +851,10 @@ describe("finish on a run that declares a PR", () => {
     expect(result.exitCode).toBe(0);
     // The absence rests on the two fixtures this double names, so a route that
     // stops matching fails here instead of passing on a fallback.
-    expect(calls).toEqual([apiArgs("repos/owner/repo/rules/branches/main"), prChecksArgs(42)]);
+    expect(calls).toEqual([
+      apiArgs("repos/owner/repo/rules/branches/main").join(" "),
+      prChecksArgs(42).join(" "),
+    ]);
     expect(result.payload).toMatchObject({ noRequiredChecks: true });
     const state = await readRepoState(repo);
     expect(state.lifecycle).toBe("finished");
@@ -946,7 +868,7 @@ describe("finish on a run that declares a PR", () => {
     await setup();
     const { repo, head } = await useAcceptedPrRun();
 
-    const result = await finishCall(repo, ["--require-ci", "42"], { gh: cleanPrGh(head) });
+    const result = await finishCall(repo, ["--require-ci", "42"], { gh: prGateGh(head) });
     expect(result.exitCode).toBe(0);
     expect(result.payload.noRequiredChecks).toBeUndefined();
     expect((await readRepoState(repo)).noRequiredChecks).toBeUndefined();
@@ -981,7 +903,7 @@ describe("finish on a run that declares a PR", () => {
     await setup();
     const { repo, head } = await useAcceptedPrRun();
 
-    const result = await finishCall(repo, ["--require-ci", "42"], { gh: cleanPrGh(head) });
+    const result = await finishCall(repo, ["--require-ci", "42"], { gh: prGateGh(head) });
     expect(result.exitCode).toBe(0);
     expect((await readRepoState(repo)).lifecycle).toBe("finished");
   });

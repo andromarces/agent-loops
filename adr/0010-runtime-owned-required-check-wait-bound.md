@@ -161,7 +161,7 @@ Andro Marces
   in `runGh` and `src/lib/ci-gate.mjs`, the `wait-checks` operation in
   `src/role.mjs`, the help text in `src/cli.mjs`; tests in
   `tests/lib/check-wait.test.mjs`, `tests/role.wait-checks.test.mjs`, and
-  `tests/lib/ci-gate.test.mjs`; documented in
+  `tests/lib/ci-gate.*.test.mjs`; documented in
   `docs/orchestrator-instructions.md` and `README.md`
 - [Issue #319: State the required-check wait per role and CLI](https://github.com/andromarces/agent-loops/issues/319)
 - [PR #322](https://github.com/andromarces/agent-loops/pull/322)
