@@ -44,7 +44,7 @@ import {
   sessionRecordPath,
   writeSessionRecord,
 } from "./lib/session-record.mjs";
-import { assertGitWorkTree, withWorkTreeRootCache, workTreeRoot } from "./lib/snapshot.mjs";
+import { assertGitWorkTree, workTreeRoot } from "./lib/snapshot.mjs";
 import { redactCommandText } from "./lib/test-cmd.mjs";
 import { runLoop, runProbeTurn, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
@@ -439,12 +439,7 @@ function formatSummary(summary) {
   ].join("\n");
 }
 
-// One run resolves the work tree root of a directory once (#760).
-export function main(...args) {
-  return withWorkTreeRootCache(() => runMain(...args));
-}
-
-async function runMain(
+export async function main(
   argv = process.argv.slice(2),
   agents = defaultAgents,
   { stdin = readStdinText } = {},
