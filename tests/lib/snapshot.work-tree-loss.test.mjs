@@ -1,0 +1,128 @@
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execa } from "execa";
+import { expect, test } from "vite-plus/test";
+import { snapshot, withMutationCheck } from "../../src/lib/snapshot.mjs";
+import { removePath } from "../runtime-helpers.mjs";
+
+const REFUSAL = /--cwd must be inside a Git work tree/;
+
+async function createRepo() {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-loss-"));
+  await execa("git", ["init"], { cwd: dir });
+  await mkdir(join(dir, "sub"));
+  await writeFile(join(dir, "sub", "a.txt"), "a\n");
+  return dir;
+}
+
+// Usefulness: verifies a work tree removed between two snapshots of one run is refused, so a
+// resolved root is never carried from one snapshot to the next (#760).
+test("a snapshot refuses a work tree that was removed since the last snapshot", async () => {
+  const repo = await createRepo();
+  try {
+    await snapshot(repo, {});
+    await rm(repo, { recursive: true, force: true });
+    await expect(snapshot(repo, {})).rejects.toThrow(REFUSAL);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a --cwd below the root that is removed since the last snapshot is refused
+// although its root survives (#760).
+test("a snapshot refuses a subdirectory cwd that was removed while its root survives", async () => {
+  const repo = await createRepo();
+  try {
+    await snapshot(join(repo, "sub"), {});
+    await rm(join(repo, "sub"), { recursive: true });
+    await expect(snapshot(join(repo, "sub"), {})).rejects.toThrow(REFUSAL);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a --cwd that is replaced by a file is refused (#760).
+test("a snapshot refuses a cwd that became a file", async () => {
+  const repo = await createRepo();
+  try {
+    await snapshot(join(repo, "sub"), {});
+    await rm(join(repo, "sub"), { recursive: true });
+    await writeFile(join(repo, "sub"), "file\n");
+    await expect(snapshot(join(repo, "sub"), {})).rejects.toThrow(REFUSAL);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a work tree that lost its `.git` directory since the last snapshot is
+// refused (#760).
+test("a snapshot refuses a work tree that lost its .git directory", async () => {
+  const repo = await createRepo();
+  try {
+    await snapshot(join(repo, "sub"), {});
+    await rm(join(repo, ".git"), { recursive: true, force: true });
+    await expect(snapshot(join(repo, "sub"), {})).rejects.toThrow(REFUSAL);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a surviving `.git` directory without HEAD is refused (#760).
+test("a snapshot refuses a .git directory that lost HEAD", async () => {
+  const repo = await createRepo();
+  try {
+    await snapshot(join(repo, "sub"), {});
+    await rm(join(repo, ".git", "HEAD"));
+    await expect(snapshot(join(repo, "sub"), {})).rejects.toThrow(REFUSAL);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a linked work tree whose gitdir target is removed is refused (#760).
+test("a snapshot refuses a linked work tree whose gitdir was removed", async () => {
+  const repo = await createRepo();
+  const linked = `${repo}-linked`;
+  try {
+    const git = (...args) =>
+      execa("git", ["-c", "user.name=T", "-c", "user.email=t@example.com", ...args], { cwd: repo });
+    await git("add", ".");
+    await git("commit", "-m", "initial");
+    await git("worktree", "add", linked);
+    await snapshot(linked, {});
+    const admin = join(repo, ".git", "worktrees");
+    for (const name of await readdir(admin)) {
+      await rm(join(admin, name), { recursive: true, force: true });
+    }
+    await expect(snapshot(linked, {})).rejects.toThrow(REFUSAL);
+  } finally {
+    await removePath(linked);
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a genuine Git failure of a snapshot surfaces with its own error, not the
+// refusal, because the work tree is still a work tree (#760).
+test("a snapshot keeps the original error of a genuine Git failure", async () => {
+  const repo = await createRepo();
+  try {
+    await snapshot(repo, {});
+    await writeFile(join(repo, ".git", "index"), "not an index");
+    await expect(snapshot(repo, {})).rejects.toThrow(/git status failed \(exit 128\)/);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the mutation check reports the path that a turn changed (#760).
+test("withMutationCheck reports the path that a turn changed", async () => {
+  const repo = await createRepo();
+  try {
+    await expect(
+      withMutationCheck(repo, "reviewer", () => writeFile(join(repo, "sub", "a.txt"), "b\n")),
+    ).rejects.toMatchObject({ name: "MutationError", paths: ["sub/a.txt"] });
+  } finally {
+    await removePath(repo);
+  }
+});
