@@ -25,7 +25,6 @@ export function createTmpdirIsolation({ makeDir = mkdtemp, removeDir = removePat
       }
     },
     async exit() {
-      const t759 = Date.now();
       if (original) {
         for (const name of TMP_VARS) {
           if (original[name] === undefined) {
@@ -37,8 +36,6 @@ export function createTmpdirIsolation({ makeDir = mkdtemp, removeDir = removePat
       }
       if (root) {
         await removeDir(root);
-        process.stderr.write(`PROBE759 afterAll removeDir ${Date.now() - t759}ms
-`);
       }
     },
   };

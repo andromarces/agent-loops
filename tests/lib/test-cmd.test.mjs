@@ -343,26 +343,31 @@ test("a short secret-named value is not redacted", () => {
   expect(redactEnvSecrets("a 1234 b", { MY_TOKEN: "1234" })).toBe("a 1234 b");
 });
 
+// Timeout for the abort-signal test. Windows (ci windows-latest, three runs 38173540298,
+// 38174100776, 38174595532): repo setup 0.4-0.6 s, command start 0.4-0.5 s, abort to rejection
+// 0.3-0.4 s, 1.1-1.4 s in all. The failure of run 38160795603 (25.5 s, `Hook timed out` after it)
+// came with an 18 s gap in the runner log, not with one measured slow step. The fixed 300 ms delay
+// that the test used before could abort while `cmd.exe` was still starting node. A kill at that
+// moment is the likely source of a leaked child, but no local run reproduced it. The explicit
+// timeout leaves room for load without raising the suite default.
+const ABORT_CANCEL_TEST_TIMEOUT_MS = 45_000;
+
 // Usefulness: verifies a canceled run throws a cancel the caller already handles
 // and kills the command it was running (issue #420). The abort waits for the command to record
 // its pid, so it never lands while the shell is still starting the process (issue #759).
-test("an abort signal cancels the command", async () => {
-  const t0 = Date.now();
-  const laps = [];
-  const lap = (step) => laps.push(`${step} ${Date.now() - t0}ms`);
-  const cwd = await repo();
-  lap("repo setup");
-  const { command, pidFiles } = await hangingTree({});
-  const controller = new AbortController();
-  const pending = runTestCmd({ command, cwd, signal: controller.signal });
-  await waitForPidFiles([pidFiles[0]]);
-  lap("command started");
-  controller.abort();
-  await expect(pending).rejects.toMatchObject({ isCanceled: true });
-  lap("canceled");
-  process.stderr.write(`PROBE759 ${process.platform} ${laps.join(", ")}
-`);
-}, 20_000);
+test(
+  "an abort signal cancels the command",
+  async () => {
+    const cwd = await repo();
+    const { command, pidFiles } = await hangingTree({});
+    const controller = new AbortController();
+    const pending = runTestCmd({ command, cwd, signal: controller.signal });
+    await waitForPidFiles([pidFiles[0]]);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ isCanceled: true });
+  },
+  ABORT_CANCEL_TEST_TIMEOUT_MS,
+);
 
 // Usefulness: verifies the secret name test ignores case, so a Windows variable that the OS reports
 // as `Github_Token` is redacted like `GITHUB_TOKEN` (issue #431, ADR 0017).
