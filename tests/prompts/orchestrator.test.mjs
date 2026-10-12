@@ -982,6 +982,9 @@ const UNSAFE_CHARACTERS = [
   ["\r", "carriage return"],
   ["\t", "tab"],
   ["\u0000", "NUL"],
+  ["\u{85}", "next line (escaped in every prompt, so the command would name another path)"],
+  ["\u{2028}", "line separator (escaped in every prompt)"],
+  ["\u{2029}", "paragraph separator (escaped in every prompt)"],
 ];
 
 // Usefulness: verifies a Node path, a CLI path, or a work tree path that holds a
@@ -1041,6 +1044,26 @@ test("a run with no renderable command names no wait", () => {
   expect(prompt).toMatch(/cannot wait for the required checks/i);
   expect(prompt).toMatch(/work tree that every shell reads the same way/i);
 });
+
+// Usefulness: verifies a work tree path that holds U+2028 or U+2029 leads to the no-wait fallback
+// through the default command, so the prompt never tells the reader to run a command whose path
+// the prompt escape rewrote (issue #761).
+test.each(["\u{2028}", "\u{2029}", "\u{85}"])(
+  "a work tree path holding a line separator gives the no-wait fallback",
+  (char) => {
+    const prompt = initialPrompt({
+      task: "T",
+      maxSteps: 10,
+      requireCi: 42,
+      orchestratorKind: "claude",
+      reviewerKind: "claude",
+      timeout: 3600,
+      cwd: `/srv/tree${char}x`,
+    });
+    expect(prompt).not.toContain("--pr 42 --timeout");
+    expect(prompt).toMatch(/cannot wait for the required checks/i);
+  },
+);
 
 const isWindows = process.platform === "win32";
 

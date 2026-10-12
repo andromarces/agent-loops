@@ -79,14 +79,16 @@ const CLI_PATH = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 // - `%` expands in cmd, and `!` expands in cmd with delayed expansion and in
 //   interactive bash history;
 // - a control character (Unicode category Cc), a line break included, ends or
-//   corrupts the line.
+//   corrupts the line;
+// - U+2028 and U+2029, which every prompt escapes as text (escape.mjs), so the
+//   rendered command would name another path. U+0085 is a control character.
 // On Windows a backslash is a path separator and is rewritten to a slash first,
 // so it is not listed. On POSIX it is a name character that bash reads as an
 // escape inside double quotes, and the path cannot be rewritten without pointing
 // at another path, so a POSIX path holding one is refused.
 // known-limit: a non-ASCII path is rendered as is, and cmd reads it through its
 // active code page.
-const UNSAFE_IN_QUOTES = /["$`%!\u201C\u201D\u201E\p{Cc}]/u;
+const UNSAFE_IN_QUOTES = /["$`%!\u201C\u201D\u201E\u{2028}\u{2029}\p{Cc}]/u;
 const UNSAFE_IN_QUOTES_POSIX = new RegExp(`${UNSAFE_IN_QUOTES.source}|\\\\`, "u");
 
 /**
