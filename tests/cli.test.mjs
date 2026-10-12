@@ -8,70 +8,14 @@ import { expect, test, vi } from "vite-plus/test";
 // Answers `git` from memory for the tests that switch it on (see
 // `withContinueRepo`); every other test, and every other command, reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
-const P750 = vi.hoisted(() => {
-  const rows = new Map();
-  const add = (key, ms) => {
-    const r = rows.get(key) ?? { n: 0, ms: 0 };
-    r.n += 1;
-    r.ms += ms;
-    rows.set(key, r);
-  };
-  const wrap = (mod, label) => {
-    const out = { ...mod };
-    for (const [name, fn] of Object.entries(mod)) {
-      if (typeof fn !== "function" || !/^[a-z]/.test(name)) continue;
-      out[name] = Object.assign(function (...a) {
-        const t0 = performance.now();
-        const done = () => add(`${label}.${name}`, performance.now() - t0);
-        if (typeof a.at(-1) === "function") {
-          const cb = a.pop();
-          a.push((...r) => {
-            done();
-            return cb(...r);
-          });
-        }
-        const r = fn.apply(this, a);
-        if (r && typeof r.then === "function") r.then(done, done);
-        else done();
-        return r;
-      }, fn);
-    }
-    out.default = out;
-    return out;
-  };
-  return {
-    add,
-    wrap,
-    reset: () => rows.clear(),
-    report(label, wall) {
-      const top = [...rows].sort((x, y) => y[1].ms - x[1].ms).slice(0, 14);
-      process.stderr.write(
-        `P750 ${process.platform} ${label} wall=${Math.round(wall)}ms | ${top
-          .map(([k, r]) => `${k} n=${r.n} ms=${Math.round(r.ms)}`)
-          .join(" | ")}
-`,
-      );
-    },
-  };
-});
-vi.mock("node:child_process", async (importOriginal) => P750.wrap(await importOriginal(), "cp"));
-vi.mock("node:fs", async (importOriginal) => P750.wrap(await importOriginal(), "fs"));
-vi.mock("node:fs/promises", async (importOriginal) => P750.wrap(await importOriginal(), "fsp"));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
-    execa: (command, args, options) => {
-      const t0 = performance.now();
-      const run =
-        gitDouble.answer && command === "git"
-          ? gitDouble.answer(command, args, options)
-          : real.execa(command, args, options);
-      const done = () =>
-        P750.add(`execa ${command} ${(args ?? []).slice(0, 2).join(" ")}`, performance.now() - t0);
-      run.then(done, done);
-      return run;
-    },
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
   };
 });
 
@@ -1965,21 +1909,15 @@ async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
       "--transcript",
       transcriptPath,
     ];
-    P750.reset();
-    let t0 = performance.now();
     await main(args, agents(firstOrch));
-    P750.report("main1", performance.now() - t0);
     const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
     tamper(transcript);
     await writeFile(transcriptPath, JSON.stringify(transcript));
     const before = reviewerCalls;
-    P750.reset();
-    t0 = performance.now();
     await main(
       [...args, "--continue-from", transcriptPath],
       agents([FINISH, RUN_REVIEWER, FINISH]),
     );
-    P750.report("main2", performance.now() - t0);
     return { exitCode: process.exitCode, reviewerCalls: reviewerCalls - before };
   } finally {
     process.exitCode = origExitCode;
