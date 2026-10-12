@@ -1,5 +1,5 @@
 import { escapeLineSeparators } from "./escape.mjs";
-import { reportBlock } from "./report.mjs";
+import { processRule, reportBlock } from "./report.mjs";
 
 export function workerPrompt(prompt, firstTurn = false) {
   if (!firstTurn) {
@@ -22,6 +22,7 @@ Your role:
   this run targets the same \`--cwd\`.
 - Report what changed, what was verified, and state any disagreements with evidence.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
+- ${processRule}
 - If a late event arrives after the closing block, end again with the closing block for the whole turn. The parent reads only your last message.
 - You do NOT decide when the loop ends.
 

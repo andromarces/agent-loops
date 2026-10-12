@@ -157,3 +157,12 @@ test("workerPrompt renders no raw line separator", () => {
     }
   }
 });
+
+// Usefulness: verifies requirement "a worker never ends a process by name or command-line match" (issue #762): a worker that kills by match can end its own dispatcher and CLI.
+test("first worker turn forbids ending a process by name or command-line match", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Never stop, kill, or signal a process that your own commands did not start, and never select processes by name or by a command-line match.",
+  );
+  expect(prompt).toContain("End only the exact PIDs your own commands started.");
+});
