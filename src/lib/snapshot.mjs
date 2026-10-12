@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { lstat, readFile, readlink, stat } from "node:fs/promises";
+import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
@@ -109,8 +109,9 @@ async function gitRead(cwd, args, { signal, timeoutMs = GIT_READ_TIMEOUT_MS } = 
 async function gitIn(cwd, args, bound) {
   const result = await gitRead(cwd, args, bound);
   if (result.exitCode !== 0) {
-    throw new SnapshotError(
-      `git ${args[0]} failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
+    throw Object.assign(
+      new SnapshotError(`git ${args[0]} failed (exit ${result.exitCode}): ${result.stderr.trim()}`),
+      { gitFailed: true },
     );
   }
   return result;
@@ -120,12 +121,15 @@ async function gitIn(cwd, args, bound) {
 const rootCache = new AsyncLocalStorage();
 
 /**
- * Runs `fn` with a root cache: `workTreeRoot`, and so `snapshot`, asks `git` for the root of a
- * directory once, and later reads of that directory in `fn` reuse the answer. The cache lives for
- * one run, because the root of a directory does not change during a run. A cached root is served
- * only while the directory and the `.git` entry of the root still exist, so a removed work tree or
- * lost Git metadata asks `git` again and gets its refusal. A failed or canceled lookup is not
- * cached. Outside this scope every read asks `git` again (#760).
+ * Runs `fn` with a root cache: `snapshot` asks `git` for the root of a directory once, and later
+ * snapshots of that directory in `fn` reuse the answer, because the root of a directory does not
+ * change during a run. Git is the validity check. A snapshot that reuses a root and whose `git`
+ * command exits with an error drops the root and runs again from a fresh `git rev-parse
+ * --show-toplevel`, so a removed work tree, a removed gitdir of a linked work tree, or a Git
+ * directory without HEAD gives the same `--cwd must be inside a Git work tree` refusal as an
+ * uncached read. A happy-path snapshot adds no `git` call. `workTreeRoot` always asks `git` and
+ * refreshes the cache. A canceled or timed-out read keeps the cached root. Outside this scope
+ * every read asks `git` again (#760).
  * @template T
  * @param {() => Promise<T>} fn
  * @returns {Promise<T>}
@@ -134,31 +138,14 @@ export function withWorkTreeRootCache(fn) {
   return rootCache.run(new Map(), fn);
 }
 
-// Two cheap `stat` calls in place of a `git` process. A root found through `GIT_DIR` has no `.git`
-// entry, so it is never served from the cache.
-async function stillWorkTree(cwd, root) {
-  try {
-    await stat(cwd);
-    await stat(join(root, ".git"));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`. */
 export async function workTreeRoot(cwd, bound) {
-  const cache = rootCache.getStore();
-  const cached = cache?.get(cwd);
-  if (cached !== undefined && (await stillWorkTree(cwd, cached))) {
-    return cached;
-  }
   const rootResult = await gitRead(cwd, ["rev-parse", "--show-toplevel"], bound);
   if (rootResult.exitCode !== 0) {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
   }
   const root = rootResult.stdout.trim();
-  cache?.set(cwd, root);
+  rootCache.getStore()?.set(cwd, root);
   return root;
 }
 
@@ -168,8 +155,23 @@ export async function workTreeRoot(cwd, bound) {
  * sets its `isCanceled`.
  */
 export async function snapshot(cwd, bound) {
+  const cache = rootCache.getStore();
+  const cached = cache?.get(cwd);
+  if (cached !== undefined) {
+    try {
+      return await readSnapshot(cached, bound);
+    } catch (err) {
+      if (err?.gitFailed !== true) {
+        throw err;
+      }
+      cache.delete(cwd);
+    }
+  }
+  return readSnapshot(await workTreeRoot(cwd, bound), bound);
+}
+
+async function readSnapshot(root, bound) {
   // git status/ls-files emit repository-root-relative paths, so run them at the root.
-  const root = await workTreeRoot(cwd, bound);
 
   // 1. Work tree status
   const statusResult = await gitIn(

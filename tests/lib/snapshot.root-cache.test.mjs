@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -37,10 +37,10 @@ test("a run scope resolves the work tree root once for repeated snapshots of one
   try {
     gitCalls.length = 0;
     await withWorkTreeRootCache(async () => {
+      await workTreeRoot(join(repo, "sub"), {});
       await snapshot(join(repo, "sub"), {});
       await snapshot(join(repo, "sub"), {});
       await withMutationCheck(join(repo, "sub"), "reviewer", async () => {});
-      await workTreeRoot(join(repo, "sub"), {});
     });
     expect(rootCalls()).toHaveLength(1);
   } finally {
@@ -125,6 +125,48 @@ test("a cached root is not served after the Git metadata is removed", async () =
       );
     });
   } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cached root is not served after a surviving `.git` directory loses its
+// HEAD, a loss that an existence check of `.git` cannot see, so the same refusal fires (#760).
+test("a cached root is not served after the .git directory loses HEAD", async () => {
+  const repo = await createRepo();
+  try {
+    await withWorkTreeRootCache(async () => {
+      await snapshot(join(repo, "sub"), {});
+      await rm(join(repo, ".git", "HEAD"));
+      await expect(snapshot(join(repo, "sub"), {})).rejects.toThrow(
+        /--cwd must be inside a Git work tree/,
+      );
+    });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a cached root is not served after the gitdir that a linked work tree points
+// to is removed, while the `.git` file of the work tree survives, so the same refusal fires (#760).
+test("a cached root is not served after the gitdir of a linked work tree is removed", async () => {
+  const repo = await createRepo();
+  const linked = `${repo}-linked`;
+  try {
+    const git = (...args) =>
+      execa("git", ["-c", "user.name=T", "-c", "user.email=t@example.com", ...args], { cwd: repo });
+    await git("add", ".");
+    await git("commit", "-m", "initial");
+    await git("worktree", "add", linked);
+    await withWorkTreeRootCache(async () => {
+      await snapshot(linked, {});
+      const admin = join(repo, ".git", "worktrees");
+      for (const name of await readdir(admin)) {
+        await rm(join(admin, name), { recursive: true, force: true });
+      }
+      await expect(snapshot(linked, {})).rejects.toThrow(/--cwd must be inside a Git work tree/);
+    });
+  } finally {
+    await removePath(linked);
     await removePath(repo);
   }
 });
