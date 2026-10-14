@@ -4,7 +4,8 @@
 
 accepted
 
-Supersedes [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md). The decisions of ADR 0011 that still hold are restated below. One changes: a headless run that takes only `--require-ci <pr>` now reads and supplies the status, where ADR 0011 keyed the read on `--pr` alone. It also narrows [ADR 0013](0013-bound-the-headless-required-check-wait.md) decision 6, which stays `accepted` (item 15).
+Supersedes [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md). The decisions of ADR 0011 that still hold are restated below. One changes: a headless run that takes only `--require-ci <pr>` now reads and supplies the status, where ADR 0011 keyed the read on `--pr` alone.
+Partially supersedes [ADR 0013: Bound the headless required-check wait with the runtime wait](0013-bound-the-headless-required-check-wait.md). This ADR narrows decision 6 of ADR 0013 (item 15). ADR 0013 stays `accepted`.
 
 ## Date
 
@@ -239,6 +240,6 @@ Andro Marces
 - Implementation: `readRequiredChecks` in `src/lib/ci-gate.mjs`, `runtimeReadLines` in `src/prompts/reviewer.mjs`, the read and the `prChecks` result field in `runChild` in `src/runtime.mjs`, the dispatch wiring and the `prChecks` envelope field in `src/role.mjs`; tests in `tests/lib/ci-gate.*.test.mjs`, `tests/prompts/reviewer.test.mjs`, `tests/runtime*.test.mjs`, and `tests/role.dispatch.test.mjs`; documented in `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
 - [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md), the superseded decision
 - [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md)
-- [ADR 0013: Bound the headless required-check wait with the runtime wait](0013-bound-the-headless-required-check-wait.md), narrowed by item 15
+- Partially supersedes [ADR 0013: Bound the headless required-check wait with the runtime wait](0013-bound-the-headless-required-check-wait.md) (decision 6, item 15)
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
 - [ADR Index](README.md)

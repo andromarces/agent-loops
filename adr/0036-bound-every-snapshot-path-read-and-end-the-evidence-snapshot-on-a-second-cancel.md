@@ -4,7 +4,7 @@
 
 accepted
 
-Partly supersedes [ADR 0033: Cancel a run on SIGINT and escalate on a second SIGINT](0033-cancel-a-run-on-sigint-and-escalate-on-a-second-sigint.md): decision 8, which drops the snapshot of the turn on a second SIGINT, no longer holds for the evidence snapshot. Decision 3 gains the deferral of decision 4 below while that snapshot runs.
+Partially supersedes [ADR 0033: Cancel a run on SIGINT and escalate on a second SIGINT](0033-cancel-a-run-on-sigint-and-escalate-on-a-second-sigint.md): decision 8, which drops the snapshot of the turn on a second SIGINT, no longer holds for the evidence snapshot. Decision 3 gains the deferral of decision 4 below while that snapshot runs.
 
 ## Date
 
@@ -47,7 +47,7 @@ Andro Marces
 
 - [Issue #729: Bound every process-table read and git call in the snapshot path](https://github.com/andromarces/agent-loops/issues/729)
 - [Pull request #743](https://github.com/andromarces/agent-loops/pull/743)
-- Supersedes decision 8 of [ADR 0033: Cancel a run on SIGINT and escalate on a second SIGINT](0033-cancel-a-run-on-sigint-and-escalate-on-a-second-sigint.md)
+- Partially supersedes [ADR 0033: Cancel a run on SIGINT and escalate on a second SIGINT](0033-cancel-a-run-on-sigint-and-escalate-on-a-second-sigint.md) (decision 8)
 - [ADR 0017: Run a test command before each reviewer turn](0017-run-a-test-command-before-each-reviewer-turn.md)
 - [ADR 0028: End the Windows process tree of a child when the runtime exits](0028-end-the-windows-process-tree-when-the-runtime-exits.md)
 - Implementation: `execBounded` in `src/lib/exec.mjs`, `forceCancelSignal` and `beginEvidenceRead` in `src/lib/sigint.mjs`, `withMutationCheck` in `src/lib/snapshot.mjs`, and `runTestCmd` in `src/lib/test-cmd.mjs`.

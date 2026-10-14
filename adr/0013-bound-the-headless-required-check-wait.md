@@ -4,7 +4,7 @@
 
 accepted
 
-Partly superseded by [ADR 0024: Supply the required-check status to the reviewer for every run that names a PR](0024-supply-the-required-check-status-for-a-named-pr.md): decision 6 is narrowed. The other decisions hold, so this ADR stays `accepted`.
+Partially superseded by [ADR 0024: Supply the required-check status to the reviewer for every run that names a PR](0024-supply-the-required-check-status-for-a-named-pr.md): decision 6 is narrowed. The other decisions hold, so this ADR stays `accepted`.
 
 ## Date
 
