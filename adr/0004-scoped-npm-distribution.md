@@ -54,7 +54,7 @@ Andro Marces
 - [Pull Request #111: chore(release): 0.2.1](https://github.com/andromarces/agent-loops/pull/111)
 - [Pull Request #112: feat: stage releases with npm stage publish](https://github.com/andromarces/agent-loops/pull/112)
 - [Implementation: package manifest](../package.json)
-- [Implementation: prepare guard](../.husky/install.mjs)
+- Implementation: prepare guard, the Husky guard that [ADR 0022](0022-vite-plus-toolchain-and-npm-distribution.md) replaced with `.vite-hooks/install.mjs`
 - [Implementation: entry-point detection](../src/lib/entrypoint.mjs)
 - [Implementation: release workflow](../.github/workflows/release.yml)
 - [npm trusted publishing with OIDC](https://docs.npmjs.com/trusted-publishers)

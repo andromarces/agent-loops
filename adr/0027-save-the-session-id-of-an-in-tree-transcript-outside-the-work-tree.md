@@ -6,7 +6,7 @@ accepted
 
 Supersedes [ADR 0016: Resume the session of a failed first turn, with a fallback to a new session](0016-resume-a-failed-first-turn-with-a-fallback.md). The decisions of ADR 0016 that still hold are restated below. One changes: a headless run whose `--transcript` is inside the Git work tree now saves the session id before an orchestrator or reviewer first turn. ADR 0016 left that crash gap open.
 
-Partly superseded by [ADR 0030: Keep the pre-assigned id of a failed first Copilot turn that saved a turn](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md): decision 2 no longer holds. The other decisions hold, so this ADR stays `accepted`.
+Partially superseded by [ADR 0030: Keep the pre-assigned id of a failed first Copilot turn that saved a turn](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md): decision 2 no longer holds. The other decisions hold, so this ADR stays `accepted`.
 
 ## Date
 
@@ -207,7 +207,7 @@ Andro Marces
 - [Issue #712](https://github.com/andromarces/agent-loops/issues/712)
 - [Issue #641](https://github.com/andromarces/agent-loops/issues/641)
 - [Issue #642](https://github.com/andromarces/agent-loops/issues/642)
-- Partly superseded by [ADR 0030](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md) (decision 2)
+- Partially superseded by [ADR 0030](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md) (decision 2)
 - [Issue #652](https://github.com/andromarces/agent-loops/issues/652)
 - [Issue #658](https://github.com/andromarces/agent-loops/issues/658)
 - [Pull request #661](https://github.com/andromarces/agent-loops/pull/661)
