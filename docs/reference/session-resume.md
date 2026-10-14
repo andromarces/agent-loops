@@ -100,11 +100,15 @@ Two builds ran. One was the global `opencode v0.0.0-dev-20800`, a dev build. The
 
 Each probe exited 1 with empty stderr. The envelope was identical on both builds:
 
-| Failure mode   | How provoked                                                                                                                                                                                              | Error event (`error.type`, `message`, `status`)                                                                                                                             | Envelope `error`                                                                                                    |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| No route       | `--worker-model opencode-go/no-such-model-xyz`                                                                                                                                                            | `provider.no-route`, `Model unavailable: opencode-go/no-such-model-xyz`, no status. One stdout line.                                                                        | `opencode exited with code 1: provider.no-route: Model unavailable: opencode-go/no-such-model-xyz`                  |
-| Authentication | `--worker-model anthropic/claude-sonnet-4-5` with `ANTHROPIC_API_KEY` set to a dummy value, a live HTTP 401                                                                                               | `provider.auth`, `invalid x-api-key`, `401`. The event also carries `response.body`, a JSON string with the provider `request_id`. Two stdout lines: `step_start`, `error`. | `opencode exited with code 1: provider.auth: invalid x-api-key (status 401)`                                        |
-| Invalid stream | A local OpenAI-compatible mock configured as a custom `providers` entry in the repository `opencode.jsonc`. It streams one content chunk containing a marker string, then closes with no `finish_reason`. | `provider.invalid-output`, `OpenAI Chat stream ended without finish_reason`, `200`.                                                                                         | `opencode exited with code 1: provider.invalid-output: OpenAI Chat stream ended without finish_reason (status 200)` |
+| Failure mode   | `error.type`              | Status |
+| -------------- | ------------------------- | ------ |
+| No route       | `provider.no-route`       | none   |
+| Authentication | `provider.auth`           | `401`  |
+| Invalid stream | `provider.invalid-output` | `200`  |
+
+- **No route.** Provoked with `--worker-model opencode-go/no-such-model-xyz`. The error message is `Model unavailable: opencode-go/no-such-model-xyz`. Stdout holds one line. The envelope `error` is `opencode exited with code 1: provider.no-route: Model unavailable: opencode-go/no-such-model-xyz`.
+- **Authentication.** Provoked with `--worker-model anthropic/claude-sonnet-4-5` and `ANTHROPIC_API_KEY` set to a dummy value, a live HTTP 401. The error message is `invalid x-api-key`. The event also carries `response.body`, a JSON string with the provider `request_id`. Stdout holds two lines: `step_start`, `error`. The envelope `error` is `opencode exited with code 1: provider.auth: invalid x-api-key (status 401)`.
+- **Invalid stream.** Provoked with a local OpenAI-compatible mock configured as a custom `providers` entry in the repository `opencode.jsonc`. The mock streams one content chunk containing a marker string, then closes with no `finish_reason`. The error message is `OpenAI Chat stream ended without finish_reason`. The envelope `error` is `opencode exited with code 1: provider.invalid-output: OpenAI Chat stream ended without finish_reason (status 200)`.
 
 Every envelope names the exit code and the provider detail. No envelope holds the `response.body` text or the streamed marker text. The raw stdout holds both.
 
@@ -114,14 +118,21 @@ The live shapes match the fixtures, with one addition. The authentication event 
 
 Issue #638 repeated the probes on Windows 11 on the released build `opencode v2.0.26`, installed in a temporary prefix as above. The installed global build was the dev build `v0.0.0-dev-20800`, so it was not used. Each probe ran through `agent-loop role dispatch --role worker --worker opencode` in a disposable Git repository in the system temporary directory, with isolated `XDG_*` directories. A local mock server on 127.0.0.1, configured as a custom `providers` entry in the repository `opencode.jsonc`, stood in for the provider, so no probe spent money or changed an account setting.
 
-| Failure mode   | How provoked                                                                                     | Result                                                                                                                                                                                                                                                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No route       | `--worker-model opencode-go/no-such-model-xyz`. This is the Windows probe.                       | Exit 1. Envelope `opencode exited with code 1: provider.no-route: Model unavailable: opencode-go/no-such-model-xyz`. Same as on macOS.                                                                                                                                                         |
-| Authentication | `anthropic/claude-sonnet-4-5` with `ANTHROPIC_API_KEY` set to a dummy value.                     | Exit 1. Envelope `opencode exited with code 1: provider.auth: invalid x-api-key (status 401)`. Same as on macOS.                                                                                                                                                                               |
-| Rate limit     | The mock answered every request with HTTP 429, a `rate_limit_error` body, and `Retry-After: 1`.  | No error event within the #638 observation. OpenCode retried with a growing delay and ran until the dispatch timeout, so the envelope was the timeout envelope below. A direct run was still retrying after 110 seconds. Issue #676 did not reproduce this: see the paragraph after the table. |
-| Quota 429      | The mock answered HTTP 429 with an `insufficient_quota` body and no `Retry-After`.               | Exit 1 after 2 seconds. Error event `provider.quota`, status 429, with `response.body`. Envelope `opencode exited with code 1: provider.quota: <provider message> (status 429)`. The body is absent.                                                                                           |
-| Timeout        | The mock sent one content chunk with a marker string, then held the stream open. `--timeout 20`. | Envelope `worker timed out after 20 seconds`. It names no exit code, because the turn has none, and no provider detail. No `opencode.exe` process stayed behind.                                                                                                                               |
-| Signal         | The same hung stream. `taskkill /F /IM opencode.exe` ended the CLI.                              | Windows reports a forced end as exit code 1, not as a signal. Envelope `opencode exited with code 1: no provider error event in the output`.                                                                                                                                                   |
+| Failure mode   | Result                                          |
+| -------------- | ----------------------------------------------- |
+| No route       | Exit 1. Same as on macOS.                       |
+| Authentication | Exit 1. Same as on macOS.                       |
+| Rate limit     | The timeout envelope. No error event.           |
+| Quota 429      | Exit 1 after 2 seconds, event `provider.quota`. |
+| Timeout        | Envelope `worker timed out after 20 seconds`.   |
+| Signal         | Exit 1. No provider error event.                |
+
+- **No route.** Provoked with `--worker-model opencode-go/no-such-model-xyz`. This is the Windows probe. The exit is 1. The envelope is `opencode exited with code 1: provider.no-route: Model unavailable: opencode-go/no-such-model-xyz`. It is the same as on macOS.
+- **Authentication.** Provoked with `anthropic/claude-sonnet-4-5` and `ANTHROPIC_API_KEY` set to a dummy value. The exit is 1. The envelope is `opencode exited with code 1: provider.auth: invalid x-api-key (status 401)`. It is the same as on macOS.
+- **Rate limit.** The mock answered every request with HTTP 429, a `rate_limit_error` body, and `Retry-After: 1`. No error event arrived within the #638 observation. OpenCode retried with a growing delay and ran until the dispatch timeout, so the envelope was the timeout envelope below. A direct run was still retrying after 110 seconds. Issue #676 did not reproduce this: see the issue #676 paragraph below.
+- **Quota 429.** The mock answered HTTP 429 with an `insufficient_quota` body and no `Retry-After`. The exit was 1 after 2 seconds. The error event is `provider.quota`, status 429, with `response.body`. The envelope is `opencode exited with code 1: provider.quota: <provider message> (status 429)`. The body is absent.
+- **Timeout.** The mock sent one content chunk with a marker string, then held the stream open. The probe used `--timeout 20`. The envelope is `worker timed out after 20 seconds`. It names no exit code, because the turn has none, and no provider detail. No `opencode.exe` process stayed behind.
+- **Signal.** The mock held the same hung stream. `taskkill /F /IM opencode.exe` ended the CLI. Windows reports a forced end as exit code 1, not as a signal. The envelope is `opencode exited with code 1: no provider error event in the output`.
 
 Every envelope holds no streamed marker text and no `response.body` JSON. The no-route and quota envelopes also ran on `opencode v2.0.0`, the oldest release of `@opencode/cli`, and matched.
 
@@ -139,12 +150,14 @@ In those runs OpenCode stopped the retry on its own. Three direct runs and one r
 
 Issue #699 repeated the mock probe on macOS 27.2 (arm64) with other `Retry-After` values and two builds. The builds were the released `opencode v2.0.26` (`@opencode/cli`, installed in a temporary prefix) and the installed dev build `opencode v0.0.0-dev-20800`. Each run was `opencode run --standalone --format json --model mock/m` in a disposable Git repository, with isolated `XDG_*` directories. A local mock on 127.0.0.1 answered every request with HTTP 429 and a `rate_limit_error` body. The probe set a timeout, but its value is not recorded in a saved field. The released build ran through the one-line `exec` wrapper described below.
 
-| `Retry-After` | Duration on `v2.0.26` | Duration on `v0.0.0-dev-20800` | Attempts                                 | Final event                               |
-| ------------- | --------------------- | ------------------------------ | ---------------------------------------- | ----------------------------------------- |
-| 0             | 86.1 s                | 85.7 s                         | 11 `step_start` events, 12 mock requests | `provider.rate-limit`, status 429, exit 1 |
-| 5             | 94.6 s                | 85.6 s                         | 11 `step_start` events, 12 mock requests | `provider.rate-limit`, status 429, exit 1 |
-| 30            | 302.4 s               | 302.0 s                        | 11 `step_start` events, 12 mock requests | `provider.rate-limit`, status 429, exit 1 |
-| none          | 88.6 s                | 86.8 s                         | 11 `step_start` events, 12 mock requests | `provider.rate-limit`, status 429, exit 1 |
+Every run made 11 `step_start` events and 12 mock requests. Every run ended with the event `provider.rate-limit`, status 429, and exit 1.
+
+| `Retry-After` | Duration on `v2.0.26` | Duration on `v0.0.0-dev-20800` |
+| ------------- | --------------------- | ------------------------------ |
+| 0             | 86.1 s                | 85.7 s                         |
+| 5             | 94.6 s                | 85.6 s                         |
+| 30            | 302.4 s               | 302.0 s                        |
+| none          | 88.6 s                | 86.8 s                         |
 
 Observed: `timedOut` is false in each of the eight saved results of these runs, so each run ended on its own. In every run the first two mock requests arrived together, within 1.0 to 1.7 seconds. With `Retry-After: 30`, the later requests were about 30 seconds apart. With `Retry-After` 0, 5, or none, the runs took 85.6 to 94.6 seconds. The adapter passes no limit and detects no retry loop, because none of these runs needed either. No ADR was written.
 
@@ -156,10 +169,13 @@ Issue #677 ran the signal probes on macOS 27.2 (arm64) on the released build `op
 
 The temporary-prefix binary only resolved the mock provider when a one-line `exec` wrapper named `opencode` started it by absolute path. The bare name reported `provider.no-route`. The cause was not investigated.
 
-| Signal    | Result of the CLI                                                                           | Envelope `error`                                                                                                                                                                   |
-| --------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SIGKILL` | The OS ended the process. `exec` reports `isTerminated` and the signal description.         | `opencode was killed by Forced termination.`                                                                                                                                       |
-| `SIGTERM` | OpenCode handled the signal. It wrote an `error` event and exited with code 130, no signal. | ``opencode exited with code 130: unknown: Transport: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()`` |
+| Signal    | How the CLI ended                           |
+| --------- | ------------------------------------------- |
+| `SIGKILL` | The OS ended the process.                   |
+| `SIGTERM` | OpenCode handled the signal, exit code 130. |
+
+- **`SIGKILL`.** The OS ended the process. `exec` reports `isTerminated` and the signal description. The envelope `error` is `opencode was killed by Forced termination.`
+- **`SIGTERM`.** OpenCode handled the signal. It wrote an `error` event and exited with code 130, no signal. The envelope `error` is ``opencode exited with code 130: unknown: Transport: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()``.
 
 Neither envelope holds the streamed marker text. The `SIGKILL` envelope names the signal by its description, `Forced termination`, and not by the name `SIGKILL`. The execa dependency supplies the description as `signalDescription`, from its `human-signals` dependency, and `src/lib/exec.mjs` uses it in place of the signal name. The `SIGTERM` envelope names the exit code. Its detail is the transport error that the CLI wrote while it shut down, so it does not name the signal.
 
