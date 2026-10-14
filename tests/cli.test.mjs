@@ -1721,6 +1721,11 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
 // runs 10, 12 or 16 show-toplevel calls. #760 left the count unchanged: each snapshot resolves its
 // own root, and no change of this PR explains the lower timings. fs calls take
 // 0-7 ms per call name.
+// Local macOS count (#760), one test, a git shim on PATH: each main() runs 37 git calls. The 10
+// show-toplevel calls are 8 snapshots, 1 transcript containment check and 1 local-files copy. The
+// other 27 are 8 status, 8 ls-files, 8 rev-parse --verify, and 1 each of --is-inside-work-tree,
+// worktree list and --git-common-dir. No call is safe to share: a snapshot pair spans an agent turn,
+// and a root can change between any two calls. The tests of #760 pin each of those changes.
 // The tests keep real Git, so the timeout covers this cost. The slowest run above, plus setup, takes
 // about 6 s on windows-latest and up to 20 s on a slow local Windows machine, so 30 s keeps a margin.
 // The #744 timeout at 15028 ms (run 38115126864) did not reproduce in these runs.
