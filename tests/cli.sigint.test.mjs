@@ -1,9 +1,23 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the tests that switch it on (see
+// `withContinueRepo`); every other test, and every other command, reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
 
 const redaction = vi.hoisted(() => ({ throwOnRedact: false }));
 vi.mock("../src/lib/test-cmd.mjs", async (importOriginal) => {
@@ -18,7 +32,13 @@ vi.mock("../src/lib/test-cmd.mjs", async (importOriginal) => {
 });
 
 import { main } from "../src/cli.mjs";
-import { createTempRepo, processExists, removePath, within } from "./runtime-helpers.mjs";
+import {
+  cleanRepoGit,
+  createTempRepo,
+  processExists,
+  removePath,
+  within,
+} from "./runtime-helpers.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const ARGS = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];
@@ -214,3 +234,339 @@ test.skipIf(process.platform === "win32")(
   },
   60_000,
 );
+
+// Runs `fn(repo, transcriptPath, errorSpy)` with a clean exit-code and error state. The
+// repo is a directory with a `.git` directory and `git` is answered from memory
+// (`cleanRepoGit`), so the test starts no `git` process.
+async function withContinueRepo(fn) {
+  const repo = await mkdtemp(join(tmpdir(), "cli-test-clean-repo-"));
+  await mkdir(join(repo, ".git"));
+  gitDouble.answer = cleanRepoGit;
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    await fn(repo, join(repo, "run.json"), errorSpy);
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    logSpy.mockRestore();
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+}
+
+// Usefulness: verifies SIGINT cancel through cli.mjs sets exitCode 130 and writes transcript.
+test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  const fakeAgents = {
+    codex: {
+      async run() {
+        process.emit("SIGINT");
+        // Simulate execa cancel behavior on signal
+        const err = new Error("canceled");
+        err.isCanceled = true;
+        throw err;
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "task",
+        "--cwd",
+        repo,
+        "--transcript",
+        transcriptPath,
+      ],
+      fakeAgents,
+    );
+
+    expect(process.exitCode).toBe(130);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(transcript.exitCode).toBe(130);
+    expect(transcript.error).toContain("Interrupted by SIGINT");
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a headless reviewer turn whose evidence snapshot a second SIGINT ended keeps
+// the "not captured" reason in the error report and the transcript, so the cancel never reads as a
+// plain interrupt (#729).
+test("a headless reviewer cancel in the evidence snapshot reports the evidence as not captured", async () => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+    let armed = false;
+    let fired = false;
+    gitDouble.answer = (command, args, options) => {
+      if (armed && !fired && args[1] === "--show-toplevel") {
+        fired = true;
+        process.emit("SIGINT");
+        process.emit("SIGINT");
+      }
+      return options?.cancelSignal?.aborted
+        ? { exitCode: undefined, isCanceled: true, stdout: "", stderr: "" }
+        : cleanRepoGit(command, args, options);
+    };
+    const agents = {
+      codex: {
+        async run() {
+          return JSON.stringify({ action: "run_reviewer", prompt: "check" });
+        },
+      },
+      claude: {
+        async run() {
+          return "worker ok";
+        },
+      },
+      agy: {
+        async run() {
+          armed = true;
+          return "reviewer ok";
+        },
+      },
+    };
+    try {
+      await main(
+        [
+          "--orchestrator",
+          "codex",
+          "--worker",
+          "claude",
+          "--reviewer",
+          "agy",
+          "--task",
+          "task",
+          "--cwd",
+          repo,
+          "--transcript",
+          transcriptPath,
+        ],
+        agents,
+      );
+      expect(fired).toBe(true);
+      expect(process.exitCode).toBe(130);
+      const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+      expect(transcript.exitCode).toBe(130);
+      expect(transcript.error).toMatch(/Interrupted by SIGINT.*not captured/);
+      expect(errorSpy.mock.calls.flat().join("\n")).toMatch(/not captured/);
+    } finally {
+      exit.mockRestore();
+    }
+  });
+});
+
+// Usefulness: verifies a canceled snapshot error whose message cannot convert to text still ends the
+// run with exit 130 and a written transcript, so a hostile reason never escapes the cancel path (#729).
+test("a cancel whose snapshot reason cannot convert to text still exits 130", async () => {
+  const repo = await createTempRepo();
+  const transcriptPath = join(repo, "transcript.json");
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const hostile = new Error("placeholder");
+  hostile.name = "SnapshotError";
+  hostile.isCanceled = true;
+  Object.defineProperty(hostile, "message", {
+    get() {
+      return {
+        toJSON() {
+          throw new Error("no JSON");
+        },
+        toString() {
+          throw new Error("no text");
+        },
+      };
+    },
+  });
+  const agents = {
+    codex: {
+      async run() {
+        throw hostile;
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "task",
+        "--cwd",
+        repo,
+        "--transcript",
+        transcriptPath,
+      ],
+      agents,
+    );
+    expect(process.exitCode).toBe(130);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    expect(transcript.exitCode).toBe(130);
+    expect(transcript.error).toContain("Interrupted by SIGINT");
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: acceptance (#669) — a real SIGINT while an execa child runs ends the run through its
+// handler (exit 130, transcript written), not by re-raised signal. A child process is needed: the
+// execa exit handler re-raises the signal only when no other SIGINT listener remains. Windows has
+// no signals, so `kill("SIGINT")` ends the process there at once and the case cannot run.
+test.skipIf(process.platform === "win32")(
+  "a real SIGINT during a child turn exits 130 and writes the transcript",
+  async () => {
+    const repo = await createTempRepo();
+    const transcriptPath = join(repo, "transcript.json");
+    const runner = [
+      `import { main } from ${JSON.stringify(pathToFileURL(CLI).href)};`,
+      `import { exec } from ${JSON.stringify(pathToFileURL(CLI.replace("cli.mjs", "lib/exec.mjs")).href)};`,
+      "const stall = { async run(_state, _prompt, { signal }) {",
+      '  console.log("ready");',
+      '  await exec(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { signal });',
+      "} };",
+      "const ok = { async run() { return 'ok'; } };",
+      "await main(process.argv.slice(1), { codex: stall, claude: ok, agy: ok });",
+    ].join("\n");
+    let child;
+    try {
+      child = spawn(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          runner,
+          "--",
+          "--orchestrator",
+          "codex",
+          "--worker",
+          "claude",
+          "--reviewer",
+          "agy",
+          "--task",
+          "task",
+          "--cwd",
+          repo,
+          "--transcript",
+          transcriptPath,
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      const exited = new Promise((resolve) =>
+        child.once("exit", (code, signal) => resolve({ code, signal })),
+      );
+      await within(
+        new Promise((resolve) =>
+          child.stdout.on("data", (chunk) => /ready/.test(chunk) && resolve()),
+        ),
+        20_000,
+        "The stalled turn start",
+      );
+      child.kill("SIGINT");
+      const { code, signal } = await within(exited, 20_000, "The CLI exit");
+      expect({ code, signal }).toEqual({ code: 130, signal: null });
+      const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+      expect(transcript.exitCode).toBe(130);
+      expect(transcript.error).toContain("Interrupted by SIGINT");
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await removePath(repo);
+    }
+  },
+  60_000,
+);
+
+// Usefulness: acceptance (#669) — the SIGINT listener stays registered while the run handles the
+// first signal, so the exit handler of execa finds another listener and does not re-raise it.
+// Holds on every platform, unlike the real-signal case above.
+test("the SIGINT listener of a run stays registered after the signal fires", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const before = process.listenerCount("SIGINT");
+  let during;
+  const fakeAgents = {
+    codex: {
+      async run() {
+        process.emit("SIGINT");
+        during = process.listenerCount("SIGINT");
+        throw Object.assign(new Error("canceled"), { isCanceled: true });
+      },
+    },
+    claude: {
+      async run() {
+        return "ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "ok";
+      },
+    },
+  };
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "t",
+        "--cwd",
+        repo,
+      ],
+      fakeAgents,
+    );
+    expect(during).toBe(before + 1);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await removePath(repo);
+  }
+});

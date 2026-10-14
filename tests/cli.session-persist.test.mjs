@@ -25,7 +25,7 @@ vi.mock("../src/lib/exec.mjs", async (importOriginal) => ({
 }));
 
 // The holder check (#647) reads the process table through `exec`, which this file mocks and reads
-// by call index. The table is empty here, and tests/cli.test.mjs covers the check with a real holder.
+// by call index. The table is empty here, and tests/cli.continue-from.test.mjs covers the check with a real holder.
 vi.mock("../src/lib/process-ancestry.mjs", async (importOriginal) => ({
   ...(await importOriginal()),
   readProcessCommands: async () => [],

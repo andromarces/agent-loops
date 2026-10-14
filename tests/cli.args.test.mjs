@@ -1,0 +1,609 @@
+import { tmpdir } from "node:os";
+import { expect, test, vi } from "vite-plus/test";
+import { main, parseArgs } from "../src/cli.mjs";
+import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+
+// Usefulness: verifies missing required --orchestrator flag throws error.
+test("missing --orchestrator fails", () => {
+  expect(() => parseArgs(["--worker", "claude", "--reviewer", "agy", "--task", "work"])).toThrow(
+    "Missing required --orchestrator.",
+  );
+});
+
+// Usefulness: verifies missing required --worker flag throws error.
+test("missing --worker fails", () => {
+  expect(() =>
+    parseArgs(["--orchestrator", "codex", "--reviewer", "agy", "--task", "work"]),
+  ).toThrow("Missing required --worker.");
+});
+
+// Usefulness: verifies missing required --reviewer flag throws error.
+test("missing --reviewer fails", () => {
+  expect(() =>
+    parseArgs(["--orchestrator", "codex", "--worker", "claude", "--task", "work"]),
+  ).toThrow("Missing required --reviewer.");
+});
+
+// Usefulness: verifies missing required --task flag throws error.
+test("missing --task fails", () => {
+  expect(() =>
+    parseArgs(["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy"]),
+  ).toThrow("Missing required --task.");
+});
+
+// Usefulness: verifies unsupported agent for any role fails.
+test("unsupported agent fails", () => {
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "unknown",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--task",
+      "t",
+    ]),
+  ).toThrow("Unsupported orchestrator: unknown");
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "codex",
+      "--worker",
+      "unknown",
+      "--reviewer",
+      "agy",
+      "--task",
+      "t",
+    ]),
+  ).toThrow("Unsupported worker: unknown");
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "codex",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "unknown",
+      "--task",
+      "t",
+    ]),
+  ).toThrow("Unsupported reviewer: unknown");
+});
+
+// Usefulness: verifies legacy --max-reviews flag is rejected as unknown argument.
+test("--max-reviews is rejected", () => {
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "codex",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--task",
+      "t",
+      "--max-reviews",
+      "5",
+    ]),
+  ).toThrow("Unknown argument: --max-reviews");
+});
+
+const BASE_FOR_MAX_STEPS = [
+  "--orchestrator",
+  "codex",
+  "--worker",
+  "claude",
+  "--reviewer",
+  "agy",
+  "--task",
+  "t",
+];
+
+// Usefulness: verifies invalid --max-steps values are rejected.
+test("invalid --max-steps is rejected", () => {
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "codex",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--task",
+      "t",
+      "--max-steps",
+      "0",
+    ]),
+  ).toThrow("--max-steps must be a positive integer.");
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "codex",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--task",
+      "t",
+      "--max-steps",
+      "abc",
+    ]),
+  ).toThrow("--max-steps must be a positive integer.");
+  // A value above the safe integer range is refused, so `stepsUsed + 1` always
+  // advances and the documented step budget holds (issue #312).
+  expect(() => parseArgs([...BASE_FOR_MAX_STEPS, "--max-steps", "1000000000000000000000"])).toThrow(
+    "--max-steps must be a positive integer.",
+  );
+  expect(parseArgs([...BASE_FOR_MAX_STEPS, "--max-steps", "9007199254740991"]).maxSteps).toBe(
+    9007199254740991,
+  );
+});
+
+const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];
+
+// Usefulness: verifies an unattended run is bounded by default (issue #48).
+test("--timeout defaults to 3600 seconds when unset", () => {
+  expect(parseArgs(BASE).timeout).toBe(3600);
+});
+
+// Usefulness: verifies --timeout 0 is the documented way to remove the bound.
+test("--timeout 0 disables the per-invocation bound", () => {
+  expect(parseArgs([...BASE, "--timeout", "0"]).timeout).toBeNull();
+});
+
+// Usefulness: verifies negative and non-integer --timeout values are rejected.
+test("invalid --timeout is rejected", () => {
+  for (const bad of ["abc", "1.5"]) {
+    expect(() => parseArgs([...BASE, "--timeout", bad])).toThrow(
+      "--timeout must be a non-negative integer.",
+    );
+  }
+});
+
+// Usefulness: verifies --require-accept is an opt-in boolean gate that defaults
+// off and rejects an inline value like the other boolean flags (issue #234).
+test("--require-accept is a boolean flag", () => {
+  expect(parseArgs(BASE).requireAccept).toBe(false);
+  expect(parseArgs([...BASE, "--require-accept"]).requireAccept).toBe(true);
+  expect(() => parseArgs([...BASE, "--require-accept=1"])).toThrow(
+    "--require-accept does not take a value.",
+  );
+});
+
+// Usefulness: verifies the headless loop takes a PR number for the finish gate,
+// defaults it off, and rejects a value that is not a positive integer, so a bad
+// PR number fails at parse time instead of inside the gate (issue #293).
+test("--require-ci takes a positive integer PR number", () => {
+  expect(parseArgs(BASE).requireCi).toBeNull();
+  expect(parseArgs([...BASE, "--require-ci", "42"]).requireCi).toBe(42);
+  expect(parseArgs([...BASE, "--require-ci=7"]).requireCi).toBe(7);
+  for (const bad of ["0", "abc"]) {
+    expect(() => parseArgs([...BASE, "--require-ci", bad])).toThrow(
+      "--require-ci must be a positive integer.",
+    );
+  }
+});
+
+// Usefulness: verifies the run PR declaration takes a positive integer PR
+// number, defaults to absent, and rejects a value that is not a positive integer,
+// so a run cannot declare a PR the gate could not read (issue #302).
+test("--pr declares the run PR and takes a positive integer", () => {
+  expect(parseArgs(BASE).pr).toBeNull();
+  expect(parseArgs([...BASE, "--pr", "42"]).pr).toBe(42);
+  expect(parseArgs([...BASE, "--pr=7"]).pr).toBe(7);
+  for (const bad of ["0", "abc"]) {
+    expect(() => parseArgs([...BASE, "--pr", bad])).toThrow("--pr must be a positive integer.");
+  }
+});
+
+// Usefulness: verifies the headless loop takes the test command and its bound,
+// defaults both off, and refuses a blank command, a bound with no command, and a
+// bound that is not a positive integer, so a bad value fails at parse time and
+// the run never starts with a command it cannot run (issue #420).
+test("--test-cmd and --test-cmd-timeout parse and refuse bad values", () => {
+  expect(parseArgs(BASE)).toMatchObject({ testCmd: null, testCmdTimeout: null });
+  expect(parseArgs([...BASE, "--test-cmd", "pnpm test"]).testCmd).toBe("pnpm test");
+  expect(parseArgs([...BASE, "--test-cmd=pnpm test", "--test-cmd-timeout", "90"])).toMatchObject({
+    testCmd: "pnpm test",
+    testCmdTimeout: 90,
+  });
+  expect(() => parseArgs([...BASE, "--test-cmd", "   "])).toThrow("--test-cmd must not be blank.");
+  expect(() => parseArgs([...BASE, "--test-cmd-timeout", "90"])).toThrow(
+    "--test-cmd-timeout requires --test-cmd.",
+  );
+  for (const bad of ["0", "abc"]) {
+    expect(() => parseArgs([...BASE, "--test-cmd", "x", "--test-cmd-timeout", bad])).toThrow(
+      "--test-cmd-timeout must be a positive integer.",
+    );
+  }
+});
+
+// Usefulness: verifies the headless loop takes --reviewer-sandbox with the two opt-in modes,
+// leaves the mode unset by default, and refuses another value or a non-Codex reviewer, so the flag
+// never silently does nothing while the prompt says it is on (ADR 0038).
+test("--reviewer-sandbox parses both modes, defaults unset, and needs a Codex reviewer", () => {
+  expect(parseArgs(BASE).reviewerSandbox).toBeNull();
+  const codexReviewer = BASE.map((v) => (v === "agy" ? "codex" : v));
+  for (const mode of ["read-only", "workspace-write"]) {
+    expect(parseArgs([...codexReviewer, "--reviewer-sandbox", mode]).reviewerSandbox).toBe(mode);
+    expect(parseArgs([...codexReviewer, `--reviewer-sandbox=${mode}`]).reviewerSandbox).toBe(mode);
+  }
+  expect(() => parseArgs([...codexReviewer, "--reviewer-sandbox", "none"])).toThrow(
+    "--reviewer-sandbox must be one of read-only, workspace-write, got: none",
+  );
+  expect(() => parseArgs([...BASE, "--reviewer-sandbox", "read-only"])).toThrow(
+    "--reviewer-sandbox requires --reviewer codex.",
+  );
+});
+
+// Usefulness: verifies the kept alias means --reviewer-sandbox workspace-write, so existing scripts
+// keep their meaning, and that a conflicting pair is refused in either order (ADR 0038).
+test("--reviewer-workspace-write stays an alias of --reviewer-sandbox workspace-write", () => {
+  const codexReviewer = BASE.map((v) => (v === "agy" ? "codex" : v));
+  expect(parseArgs([...codexReviewer, "--reviewer-workspace-write"]).reviewerSandbox).toBe(
+    "workspace-write",
+  );
+  expect(
+    parseArgs([
+      ...codexReviewer,
+      "--reviewer-workspace-write",
+      "--reviewer-sandbox",
+      "workspace-write",
+    ]).reviewerSandbox,
+  ).toBe("workspace-write");
+  for (const pair of [
+    ["--reviewer-workspace-write", "--reviewer-sandbox", "read-only"],
+    ["--reviewer-sandbox", "read-only", "--reviewer-workspace-write"],
+  ]) {
+    expect(() => parseArgs([...codexReviewer, ...pair])).toThrow(
+      "--reviewer-workspace-write conflicts with --reviewer-sandbox read-only.",
+    );
+  }
+  expect(() => parseArgs([...BASE, "--reviewer-workspace-write"])).toThrow(
+    "--reviewer-sandbox requires --reviewer codex.",
+  );
+  expect(() => parseArgs([...codexReviewer, "--reviewer-workspace-write=1"])).toThrow(
+    "--reviewer-workspace-write does not take a value.",
+  );
+});
+
+// Usefulness: verifies the headless path refuses a gate for another pull request
+// at parse time, before any child turn runs and before the prompt is built. Both
+// flags arrive on one command line there, so a run that could never be gated
+// never starts, and the prompt never has to describe a case it cannot reach.
+// A matching gate is still accepted, and `--pr` alone is still accepted (issue #302).
+test("--pr with --require-ci for another pull request is a usage error", () => {
+  expect(() => parseArgs([...BASE, "--pr", "42", "--require-ci", "7"])).toThrow(
+    "--pr 42 and --require-ci 7 must name the same pull request.",
+  );
+  expect(() => parseArgs([...BASE, "--pr=42", "--require-ci=7"])).toThrow(
+    "--pr 42 and --require-ci 7 must name the same pull request.",
+  );
+  expect(parseArgs([...BASE, "--pr", "42", "--require-ci", "42"]).requireCi).toBe(42);
+  expect(parseArgs([...BASE, "--pr", "42"]).pr).toBe(42);
+  expect(parseArgs([...BASE, "--require-ci", "7"]).requireCi).toBe(7);
+});
+
+// Usefulness: verifies a review-only headless run refuses --pr, --require-accept,
+// and --require-ci before any child turn runs, with the interactive wordings, so
+// the two paths state one rule for a mode that could never reach a gate. The
+// check is the command outcome: exit 1, the refusal on stderr, and no child CLI
+// call (issue #337).
+test("a review-only run refuses the PR flags before any child turn", async () => {
+  const refusals = [
+    [["--pr", "42"], "--pr declares PR work, which needs the --require-ci gate"],
+    [
+      ["--require-accept"],
+      "--require-accept and --require-ci apply only to work-first and review-first",
+    ],
+    [
+      ["--require-ci", "42"],
+      "--require-accept and --require-ci apply only to work-first and review-first",
+    ],
+  ];
+  const origExitCode = process.exitCode;
+  // The refusal is raised by `parseArgs`, before any Git validation, so the run
+  // needs no repo: creating one spawns six `git` processes, which is most of the
+  // cost of a run on Windows.
+  const cwd = tmpdir();
+
+  try {
+    for (const [flags, message] of refusals) {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const agents = {
+        codex: {
+          async run() {
+            throw new Error("orchestrator must not run");
+          },
+        },
+        claude: {
+          async run() {
+            throw new Error("worker must not run");
+          },
+        },
+        agy: {
+          async run() {
+            throw new Error("reviewer must not run");
+          },
+        },
+      };
+      try {
+        await main([...BASE, "--mode", "review-only", ...flags, "--cwd", cwd], agents);
+        expect(process.exitCode).toBe(1);
+        expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(message));
+      } finally {
+        process.exitCode = origExitCode;
+        errorSpy.mockRestore();
+      }
+    }
+  } finally {
+    process.exitCode = origExitCode;
+  }
+});
+
+// Usefulness: verifies a work-first or review-first run still takes the PR flags
+// the review-only run refuses, and that a run with no --mode takes them too,
+// because only review-only rejects a gate. The check is the command outcome: the
+// run starts, so the orchestrator CLI is called and no usage error is printed
+// (issue #337).
+test("the other modes and a mode-free run still take the PR flags", async () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  // One repo serves every run: creating a repo spawns six `git` processes, which
+  // is most of the cost of a run on Windows, and no run here changes the repo.
+  const repo = await createTempRepo();
+
+  try {
+    for (const flags of [["--mode", "work-first"], ["--mode", "review-first"], []]) {
+      let orchestratorCalls = 0;
+      const agents = {
+        codex: {
+          async run() {
+            orchestratorCalls += 1;
+            return JSON.stringify({
+              action: "finish",
+              summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+            });
+          },
+        },
+        claude: {
+          async run() {
+            return "worker ok";
+          },
+        },
+        agy: {
+          async run() {
+            return "reviewer ok";
+          },
+        },
+      };
+      try {
+        // The gate is declared but never evaluated: this orchestrator finishes
+        // with no reviewer turn, so the gate refuses and the run ends on exit 1
+        // with a gate reason rather than a usage error.
+        await main([...BASE, ...flags, "--pr", "42", "--require-ci", "42", "--cwd", repo], agents);
+        // The run started, so the orchestrator CLI was called at least once, and
+        // no usage error named a review-only refusal.
+        expect(orchestratorCalls).toBeGreaterThan(0);
+        expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("review-only"));
+      } finally {
+        process.exitCode = origExitCode;
+      }
+    }
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the headless --mode accepts the same three values as the
+// interactive path and refuses any other, so a caller learns the mode names from
+// one list on both paths. The check is the command outcome: a known value starts
+// the run, an unknown one exits 1 with the message (issue #337).
+test("--mode takes the interactive mode values", async () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  // One repo serves every run: see the PR flags test above.
+  const repo = await createTempRepo();
+
+  try {
+    for (const mode of ["work-first", "review-first", "review-only"]) {
+      let orchestratorCalls = 0;
+      const agents = {
+        codex: {
+          async run() {
+            orchestratorCalls += 1;
+            return JSON.stringify({ action: "abort", reason: "done" });
+          },
+        },
+        claude: {
+          async run() {
+            return "worker ok";
+          },
+        },
+        agy: {
+          async run() {
+            return "reviewer ok";
+          },
+        },
+      };
+      try {
+        await main([...BASE, "--mode", mode, "--cwd", repo], agents);
+        expect(orchestratorCalls).toBe(1);
+      } finally {
+        process.exitCode = origExitCode;
+      }
+    }
+
+    await main([...BASE, "--mode", "nope", "--cwd", repo]);
+    expect(process.exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "--mode must be one of work-first, review-first, review-only, got: nope",
+      ),
+    );
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a repeated --mode takes the last value, the way every
+// other repeated single-value flag on this path already behaves, such as --task,
+// so the flag adds no new rule. The check is the command outcome: the last value
+// decides, so review-only last refuses the PR flag and work-first last accepts
+// it (issue #337).
+test("a repeated --mode takes the last value", async () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  try {
+    const refused = await createTempRepo();
+    try {
+      await main([
+        ...BASE,
+        "--mode",
+        "work-first",
+        "--mode",
+        "review-only",
+        "--pr",
+        "42",
+        "--cwd",
+        refused,
+      ]);
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("review-only rejects that gate"),
+      );
+    } finally {
+      process.exitCode = origExitCode;
+      await removePath(refused);
+    }
+
+    const accepted = await createTempRepo();
+    let orchestratorCalls = 0;
+    const agents = {
+      codex: {
+        async run() {
+          orchestratorCalls += 1;
+          return JSON.stringify({
+            action: "finish",
+            summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+          });
+        },
+      },
+      claude: {
+        async run() {
+          return "worker ok";
+        },
+      },
+      agy: {
+        async run() {
+          return "reviewer ok";
+        },
+      },
+    };
+    try {
+      await main(
+        [...BASE, "--mode", "review-only", "--mode", "work-first", "--pr", "42", "--cwd", accepted],
+        agents,
+      );
+      // work-first won, so the declaration was accepted and the run started.
+      expect(orchestratorCalls).toBeGreaterThan(0);
+    } finally {
+      process.exitCode = origExitCode;
+      await removePath(accepted);
+    }
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+  }
+});
+
+// Usefulness: verifies readValue guards against missing value or value starting with -.
+test("readValue guards against missing or flag-like values", () => {
+  expect(() => parseArgs(["--orchestrator", "--worker"])).toThrow(
+    "Missing value for --orchestrator.",
+  );
+  expect(() => parseArgs(["--orchestrator", "codex", "--worker"])).toThrow(
+    "Missing value for --worker.",
+  );
+});
+
+// Usefulness: verifies acceptance (#210) — the inline form accepts a value that
+// starts with `-`, which the space-separated form rejects.
+test("--task=-x sets the task", () => {
+  expect(parseArgs([...BASE, "--task=-x"]).task).toBe("-x");
+});
+
+// Usefulness: verifies acceptance (#210) — an empty inline value is rejected at
+// parse time, matching the space-separated form, so a no-op flag value cannot
+// silently pass through.
+test("--task= is rejected as a missing value", () => {
+  expect(() => parseArgs([...BASE, "--task="])).toThrow("Missing value for --task.");
+});
+
+// Usefulness: verifies acceptance (#210) — a boolean flag rejects an inline value.
+test("--verbose=1 is rejected", () => {
+  expect(() => parseArgs([...BASE, "--verbose=1"])).toThrow("--verbose does not take a value.");
+});
+
+// Usefulness: verifies acceptance (#215) — an unknown inline argument keeps the
+// `=value` segment in the error, so the whole token the user typed is reported.
+test("unknown inline argument keeps its value in the error", () => {
+  expect(() => parseArgs([...BASE, "--nope=bar"])).toThrow("Unknown argument: --nope=bar");
+});
+
+// Usefulness: verifies acceptance (#215) — an empty inline value on a boolean
+// flag is rejected as a value on a no-value flag, not as a missing value.
+test("--verbose= is rejected as not taking a value", () => {
+  expect(() => parseArgs([...BASE, "--verbose="])).toThrow("--verbose does not take a value.");
+});
+
+// Usefulness: verifies acceptance (#215) — an unknown inline argument with an
+// empty value still reports the full token rather than a missing value.
+test("unknown inline argument with an empty value reports the full token", () => {
+  expect(() => parseArgs([...BASE, "--nope="])).toThrow("Unknown argument: --nope=");
+});
+
+// Usefulness: verifies an effort-only OpenCode role is rejected, because the installed CLI accepts
+// a variant only inside --model provider/model#variant.
+test("OpenCode effort without a model is rejected", () => {
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "opencode",
+      "--orchestrator-effort",
+      "high",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--task",
+      "t",
+    ]),
+  ).toThrow("--orchestrator-effort requires --orchestrator-model");
+});
+
+// Usefulness: verifies a model that already carries a variant still conflicts with a separate effort.
+test("OpenCode model variant with effort is rejected", () => {
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "opencode",
+      "--orchestrator-model",
+      "claude-3-5#variant",
+      "--orchestrator-effort",
+      "high",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--task",
+      "t",
+    ]),
+  ).toThrow("already contains a variant");
+});
