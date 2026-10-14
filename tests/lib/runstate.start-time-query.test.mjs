@@ -7,11 +7,16 @@ import { removePath } from "../runtime-helpers.mjs";
 
 // The start-time query runs `ps` or PowerShell. Its failure modes (error, timeout,
 // empty or unparseable output) cannot be produced on demand with the real command,
-// so `execFile` is replaced by a stub that answers each query with a chosen result.
+// so `execBounded` is replaced by a stub that answers each query with a chosen result.
+// `err` stands for the result of a failed query: a spawn error or a timeout.
 let answer = { err: null, out: "" };
 
-vi.mock("node:child_process", () => ({
-  execFile: vi.fn((_command, _args, _options, callback) => callback(answer.err, answer.out)),
+vi.mock("../../src/lib/exec.mjs", () => ({
+  execBounded: vi.fn(async () =>
+    answer.err
+      ? { exitCode: undefined, stdout: "", timedOut: Boolean(answer.err.killed) }
+      : { exitCode: 0, stdout: answer.out, timedOut: false },
+  ),
 }));
 
 // The darwin query path is the one under test, so the platform is fixed to it.
