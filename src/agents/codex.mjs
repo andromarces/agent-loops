@@ -17,9 +17,12 @@ export async function runCodex(state, prompt, options = {}) {
   const { cwd, readOnly, sandbox, timeout, signal, role } = options;
   const configArgs = [];
 
-  // `sandbox` is the reviewer-only input of the opt-in `--reviewer-workspace-write` (ADR 0019).
-  // Network access is set off explicitly, because the user config can turn it on for this mode.
-  if (sandbox === "workspace-write") {
+  // `sandbox` is the reviewer-only mode input (ADR 0038): `none`, `read-only`, or `workspace-write`.
+  // `exec` and `exec resume` both accept the `-c sandbox_mode` form, so one form serves every turn.
+  // Network access is set off explicitly for `workspace-write`, because the user config can turn it on.
+  if (sandbox === "none") {
+    configArgs.push("-c", 'sandbox_mode="danger-full-access"');
+  } else if (sandbox === "workspace-write") {
     configArgs.push(
       "-c",
       'sandbox_mode="workspace-write"',

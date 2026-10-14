@@ -2,57 +2,67 @@
 
 ## Reviewer safety
 
-Reviewer and orchestrator turns run in read-only mode to prevent unintended repository mutations.
+Orchestrator turns run in read-only mode to prevent unintended repository mutations. Reviewer turns of every CLI except Codex run read-only too. A Codex reviewer turn runs with no sandbox by default, and the operator can choose a sandbox ([Codex reviewer sandbox mode](#codex-reviewer-sandbox-mode), [ADR 0038](https://github.com/andromarces/agent-loops/blob/main/adr/0038-run-the-codex-reviewer-with-no-sandbox-by-default.md)). The mutation check wraps every turn in every mode.
 
 ### Read-only CLI flags
 
-| CLI        | Read-only invocation flag     | Flag effect                                                                                                                        | Role-model subagent fan-out                                              | Evidence                              |
-| ---------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
-| `claude`   | `--permission-mode plan`      | Plan mode blocks file edits.                                                                                                       | Yes; Explore and Plan subagents run on the role model. Adapter disables. | Claude docs; issue #46 smoke test     |
-| `codex`    | `-c sandbox_mode="read-only"` | Passes read-only sandbox mode on new and resumed sessions. Also blocks shell network access, except under a user execpolicy rule.  | Yes; `spawn_agent` subagents inherit the parent model and effort.        | Codex rollout transcript              |
-| `agy`      | `--mode plan`                 | Plan mode disables file edits.                                                                                                     | Yes; `invoke_subagent` subagents inherit the parent model by default.    | CLI `stream-json` step                |
-| `opencode` | `--agent plan`                | The plan agent blocks edits; a global permissions allow can cancel it. Adapter denies `edit` per turn. Shell writes stay possible. | Yes; the `subagent` tool inherits the session model. Adapter denies it.  | `run --format json` tool call; A/B    |
-| `copilot`  | `--deny-tool write`           | Denies write/edit tools. External permissions may still permit shell writes.                                                       | No; subagents run on an agent-definition default model.                  | `--output-format json` subagent event |
+| CLI        | Read-only invocation flag     | Flag effect                                                                                                                                                                                                   | Role-model subagent fan-out                                              | Evidence                              |
+| ---------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
+| `claude`   | `--permission-mode plan`      | Plan mode blocks file edits.                                                                                                                                                                                  | Yes; Explore and Plan subagents run on the role model. Adapter disables. | Claude docs; issue #46 smoke test     |
+| `codex`    | `-c sandbox_mode="read-only"` | Orchestrator turns, and reviewer turns with `--reviewer-sandbox read-only`. Passes read-only sandbox mode on new and resumed sessions. Also blocks shell network access, except under a user execpolicy rule. | Yes; `spawn_agent` subagents inherit the parent model and effort.        | Codex rollout transcript              |
+| `agy`      | `--mode plan`                 | Plan mode disables file edits.                                                                                                                                                                                | Yes; `invoke_subagent` subagents inherit the parent model by default.    | CLI `stream-json` step                |
+| `opencode` | `--agent plan`                | The plan agent blocks edits; a global permissions allow can cancel it. Adapter denies `edit` per turn. Shell writes stay possible.                                                                            | Yes; the `subagent` tool inherits the session model. Adapter denies it.  | `run --format json` tool call; A/B    |
+| `copilot`  | `--deny-tool write`           | Denies write/edit tools. External permissions may still permit shell writes.                                                                                                                                  | No; subagents run on an agent-definition default model.                  | `--output-format json` subagent event |
 
 #### Codex read-only network limit
 
-`-c sandbox_mode="read-only"` restricts network access of the shell commands that the sandbox runs, as well as writes. It does not block model-side tools. The Codex `web_search` tool ran and returned results in a read-only probe on 2026-10-04 (issue #421). A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.
+`-c sandbox_mode="read-only"` restricts network access of the shell commands that the sandbox runs, as well as writes. It applies to every Codex orchestrator turn, and to a Codex reviewer turn only with `--reviewer-sandbox read-only` (or `workspace-write`, which also keeps network off). A Codex reviewer with no sandbox keeps shell network. It does not block model-side tools. The Codex `web_search` tool ran and returned results in a read-only probe on 2026-10-04 (issue #421). A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.
 
 A Codex orchestrator turn cannot run `gh` from its sandboxed shell to resolve a PR head, except under the user-rule exception above. A Codex-orchestrated PR run must then abort, or record the unresolved compare under `notDone` and `open` with `"unresolvedCompare": true`. It must not finish as verified, unless the run carries `--require-ci <pr>`. That gate runs in the runtime process, which the Codex sandbox does not cover. The gate resolves the PR head without the orchestrator needing network access (#293).
 
-A Codex reviewer turn cannot run `gh` from its sandboxed shell either, for example to check a PR's CI status. The same exception applies.
+A Codex reviewer turn in a sandboxed mode cannot run `gh` from its sandboxed shell either, for example to check a PR's CI status. The same exception applies. A Codex reviewer turn with no sandbox can run `gh`, so the headless `requiredCheckWait` rule is `reviewer` for it, unless the orchestrator is a waiting CLI ([ADR 0038](https://github.com/andromarces/agent-loops/blob/main/adr/0038-run-the-codex-reviewer-with-no-sandbox-by-default.md)).
 
 Read-only file
 protection stays in place on every adapter: the Codex sandbox flag remains, and
 the pre/post mutation check still aborts on a detected change. The other
 adapters' read-only invocations keep shell network access, except `copilot`, which refuses most shell commands without approval (see [Denial probe](#denial-probe-issue-432)).
 
-#### Codex reviewer workspace-write opt-in
+#### Codex reviewer sandbox mode
 
-`--reviewer-workspace-write` runs a Codex reviewer turn with
-`-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=false`
-instead of `-c sandbox_mode="read-only"`
-([ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)).
-The default stays `read-only`. The flag needs `--reviewer codex`. The reviewer
-prompt gains one line with these statements:
+A Codex reviewer turn runs in one of three modes
+([ADR 0038](https://github.com/andromarces/agent-loops/blob/main/adr/0038-run-the-codex-reviewer-with-no-sandbox-by-default.md),
+which partially supersedes
+[ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)).
+The flag needs `--reviewer codex`. The adapter uses the same `-c sandbox_mode` form on new and resumed sessions, because `codex exec resume` accepts `-c` and not `--sandbox` (codex-cli 0.163.0-alpha.10).
 
-- The turn has the sandbox.
-- Its shell commands have no network.
-- A user execpolicy rule is an exception.
-- The limit covers shell commands only.
-- A package manager that writes outside the work tree fails there, so the reviewer calls the project's local binary.
+| Mode               | Selected by                                                                     | Codex setting                                                                       |
+| ------------------ | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| none (the default) | no flag                                                                         | `-c sandbox_mode="danger-full-access"`                                              |
+| `read-only`        | `--reviewer-sandbox read-only`                                                  | `-c sandbox_mode="read-only"`                                                       |
+| `workspace-write`  | `--reviewer-sandbox workspace-write`, or the alias `--reviewer-workspace-write` | `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=false` |
+
+The mode is fixed at init on the interactive path, and a headless `--continue-from` run keeps the earlier mode. A run from before ADR 0038 keeps its sandbox: `workspace-write` if it held `--reviewer-workspace-write`, `read-only` otherwise.
+The reviewer prompt gains one note that states the actual mode:
+
+- The turn has no sandbox, or the read-only sandbox, or the workspace-write sandbox.
+- In a sandboxed mode, its shell commands have no network, and a user execpolicy rule is an exception.
+- In a sandboxed mode, the limit covers shell commands only.
+- With no sandbox, the rules against file changes and remote writes are the only limits.
+- In `workspace-write`, a package manager that writes outside the work tree fails there, so the reviewer calls the project's local binary.
 
 The orchestrator turns, the worker turns, and the other
 four adapters keep their invocations, and the mutation check still wraps every reviewer turn.
 
-Shell network is off on purpose. The option is set explicitly, because `workspace-write` takes network from the user Codex config when the command line does not set it. `network_access=false` covers the shell commands that the sandbox runs. A model-side tool (for example Codex `web_search`) and any other channel outside the sandbox, such as a connector, are not covered. A user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` also runs a shell command with an expansion outside the sandbox.
+With no sandbox, the shell commands of the reviewer turn can write anywhere that the user account can write and can reach the network. The mutation check is then the only edit guard, and it sees the repository only. The user execpolicy exception does not apply, because no sandbox exists to skip. Not verified with a live Codex turn: the no-sandbox mode on Windows, macOS, and Linux (issues #708, #709), and under a Codex requirements file that does not allow `danger-full-access` (issue #710).
+
+In `workspace-write`, shell network is off on purpose. The option is set explicitly, because `workspace-write` takes network from the user Codex config when the command line does not set it. `network_access=false` covers the shell commands that the sandbox runs. A model-side tool (for example Codex `web_search`) and any other channel outside the sandbox, such as a connector, are not covered. A user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` also runs a shell command with an expansion outside the sandbox.
 
 The runtime read of the required-check status for a named PR ([ADR 0024](https://github.com/andromarces/agent-loops/blob/main/adr/0024-supply-the-required-check-status-for-a-named-pr.md)) still reaches
 the reviewer.
 
 The probe evidence is in [ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md). On macOS, a reviewer ran the local test binary to exit 0, and shell network calls failed. The sandbox blocks `ps`, so the `ps`-gated tests skip. On the unelevated Windows sandbox, `pnpm exec` failed with a store lock error. Linux and the elevated Windows sandbox are not verified.
 
-Accepted gaps, as the ADR states them:
+Accepted gaps of the two sandboxed modes, as ADR 0019 states them (the no-sandbox mode adds the gaps in the section "Safety trade-off of the no-sandbox mode" below):
 
 - Detection only. The sandbox no longer prevents an edit. An edit succeeds, and the run then halts with a `MutationError`, exit 1, with no revert.
 - Snapshot blind spots. The snapshot does not see a write to an ignored file (for example `.env` or `node_modules/`), a write outside the repository, a write that the turn restores before it ends, or Git state other than the index and `HEAD` (other refs, the stash, the config).
@@ -60,7 +70,17 @@ Accepted gaps, as the ADR states them:
 - A larger prompt-injection blast radius. Reviewed content that holds an instruction can steer a command that writes, not only one that reads.
 - Likely no gain on the unelevated Windows sandbox, which blocks a child spawn with `EPERM` under `workspace-write` (`docs/parent-guard.md`). The probe above shows a failed child `node` spawn and a pnpm store lock failure. Not verified for a test runner.
 
+#### Safety trade-off of the no-sandbox mode
+
+- The shell commands of a reviewer turn can write outside the work tree, and the mutation check does not see such a write.
+- A command that a reviewer starts can write after its parent ends, and it is not limited to the work tree or to no network ([ADR 0034](https://github.com/andromarces/agent-loops/blob/main/adr/0034-keep-the-codex-reviewer-descendant-gap-after-a-parent-end.md)).
+- With shell network on, a reviewer turn can run `gh` and `git` and push, merge, review, or comment. The runtime does not see a remote write. The rule of issue #422 is advisory.
+- Reviewed content that holds an instruction can steer a shell command that writes outside the work tree or sends data over the network.
+- An operator who needs containment passes `--reviewer-sandbox read-only` or `workspace-write`, or runs the reviewer in an external sandbox with no credential for the remote.
+
 #### Codex read-only child-spawn limit
+
+This limit applies to a Codex reviewer in the `read-only` mode, and to Codex orchestrator turns. A reviewer with no sandbox is not limited this way.
 
 Direct probe: on 2026-09-29, a `codex exec` run on Windows 11 with codex-cli
 0.159.0-alpha.12 and `-c sandbox_mode="read-only"` observed two results. A child
@@ -103,7 +123,7 @@ Per-model usage cannot separate parent tokens from subagent tokens on the same m
 
 ### Mutation detection
 
-Before and after every read-only turn (reviewer and orchestrator), including a reviewer turn that runs in the `workspace-write` opt-in, the runtime takes a snapshot of the Git work tree, index, and `HEAD`.
+Before and after every read-only turn (reviewer and orchestrator), including a reviewer turn that runs in the `workspace-write` mode or with no sandbox, the runtime takes a snapshot of the Git work tree, index, and `HEAD`.
 If any modified, added, or deleted tracked or untracked file, index change, or commit is detected, the run aborts immediately with a fatal `MutationError` (exit code 1).
 
 **No-revert rule**: Detected modifications are left intact in the work tree so the user can inspect what the agent did.
@@ -113,7 +133,7 @@ Known limits:
 - Ignored files (matching `.gitignore`) are not tracked.
 - Mutations reverted within the same turn are not detected.
 - A change anywhere in the repository that contains `--cwd` aborts a read-only turn, even outside `--cwd`.
-- With `--reviewer-workspace-write`, this check is the only enforcement on the reviewer turn: it detects an edit and does not prevent it, and it does not revert it.
+- With `--reviewer-sandbox workspace-write` or with no sandbox, this check is the only enforcement on the reviewer turn: it detects an edit and does not prevent it, and it does not revert it.
 - A `--test-cmd` run happens before the reviewer snapshot. Its writes to the work tree are reported in `testRun` and become the baseline of that turn, so the mutation check does not flag them.
 
 ### Remote writes
@@ -122,7 +142,7 @@ The mutation check reads only the local work tree, index, and `HEAD`, so the run
 
 Two paths can carry a remote write:
 
-- Shell network. The `claude`, `agy`, and `opencode` read-only invocations keep shell network access (see [Codex read-only network limit](#codex-read-only-network-limit)), so a turn on one of them can run `gh` or `git` and change remote state. The `copilot` invocation refuses most shell commands without approval, but it runs `gh pr checks` (see the probe below).
+- Shell network. The `claude`, `agy`, and `opencode` read-only invocations keep shell network access (see [Codex read-only network limit](#codex-read-only-network-limit)), so a turn on one of them can run `gh` or `git` and change remote state. A Codex reviewer with no sandbox, the default, keeps shell network too. The `copilot` invocation refuses most shell commands without approval, but it runs `gh pr checks` (see the probe below).
 - A GitHub app connector on Codex. A read-only Codex probe on 2026-10-04, codex-cli 0.162.0-alpha.9, listed GitHub write tools from the connector (server name `codex_apps`), for example `github_create_issue`, `github_update_issue`, `github_add_comment_to_issue`, and `github_merge_pull_request`. The probe observed only that the tools were listed in a read-only turn. A write through those tools was not probed, so whether it succeeds or is refused is unverified. The observation applies to a Codex session that has that connector.
 
 #### Denial probe (issue #432)

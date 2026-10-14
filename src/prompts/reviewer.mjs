@@ -87,21 +87,37 @@ function testRunLines(testRun) {
 const remoteWriteRule =
   "Do not write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A read-only query changes nothing, so it stays allowed.";
 
-// Present only when the operator opted in to the `workspace-write` reviewer sandbox (ADR 0019).
-// The line fits any repository: it names no tool or path, only the sandbox limit that makes a
-// package manager fail and the local binary that does not.
-const workspaceWriteLine = [
-  "Sandbox note, supplied by the runtime:",
-  "- This turn runs in a workspace-write sandbox. The shell commands that you run have no network access, so you can run a targeted test or a probe in the work tree. That limit covers shell commands only: it does not block model-side tools, such as web search, or any other channel outside the sandbox.",
-  `- ${SHELL_EXCEPTION} A shell network result is therefore possible.`,
-  "- A package manager that writes to a store or cache outside the work tree fails here: call the project's local binary directly instead.",
-  "- The rule against file changes still holds. The runtime compares the work tree before and after this turn, and a change halts the run.",
-].join("\n");
+// The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
+// that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
+// repository: it names no tool or path, only what the mode allows.
+const noEditLine =
+  "- The rule against file changes still holds. The runtime compares the work tree before and after this turn, and a change halts the run.";
+const sandboxNotes = {
+  none: [
+    "Sandbox note, supplied by the runtime:",
+    "- This turn runs with no sandbox. The shell commands that you run can write anywhere that the user account can write, and can reach the network, so you can run the project's tests and read the required checks with gh pr checks.",
+    "- Nothing contains a shell command in this turn. The rule against file changes and the rule against remote writes above are the only limits. The runtime does not see a write outside the repository, a write to an ignored file, or a remote write.",
+    noEditLine,
+  ],
+  "read-only": [
+    "Sandbox note, supplied by the runtime:",
+    "- This turn runs in a read-only sandbox. The shell commands that you run have no network access, and a child process spawn or a test run can fail here. That limit covers shell commands only: it does not block model-side tools, such as web search, or any other channel outside the sandbox.",
+    `- ${SHELL_EXCEPTION} A shell network result is therefore possible.`,
+    noEditLine,
+  ],
+  "workspace-write": [
+    "Sandbox note, supplied by the runtime:",
+    "- This turn runs in a workspace-write sandbox. The shell commands that you run have no network access, so you can run a targeted test or a probe in the work tree. That limit covers shell commands only: it does not block model-side tools, such as web search, or any other channel outside the sandbox.",
+    `- ${SHELL_EXCEPTION} A shell network result is therefore possible.`,
+    "- A package manager that writes to a store or cache outside the work tree fails here: call the project's local binary directly instead.",
+    noEditLine,
+  ],
+};
 
-export function reviewerPrompt(prompt, prChecks = null, testRun = null, workspaceWrite = false) {
+export function reviewerPrompt(prompt, prChecks = null, testRun = null, sandboxMode = null) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
-  const sandbox = workspaceWrite ? `\n\n${workspaceWriteLine}` : "";
+  const sandbox = sandboxMode === null ? "" : `\n\n${sandboxNotes[sandboxMode].join("\n")}`;
   return escapeLineSeparators(
     `
 Do not implement, fix, edit, or change any file. Review, assess, and verify only. Live probes and read-only queries are authorized.

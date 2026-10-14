@@ -6,6 +6,8 @@ accepted
 
 Supersedes [ADR 0001: Hybrid orchestrator with deterministic runtime](0001-hybrid-orchestrator-runtime.md). The decisions of ADR 0001 that still hold are restated below, with one change: a reviewer turn is read-only by default, and an operator can opt in to `workspace-write`.
 
+Partially superseded by [ADR 0038: Run the Codex reviewer with no sandbox by default](0038-run-the-codex-reviewer-with-no-sandbox-by-default.md). ADR 0038 replaces the `read-only` default and the boolean `--reviewer-workspace-write` opt-in with a no-sandbox default and `--reviewer-sandbox <read-only|workspace-write>`. The two sandboxed modes, the accepted gaps, and the decisions carried over from ADR 0001 still hold.
+
 ## Date
 
 2026-10-05

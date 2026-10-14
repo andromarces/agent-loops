@@ -41,7 +41,11 @@ import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, failedTestRun, testCmdInput } from "./lib/test-cmd.mjs";
 import { RoleError } from "./role-error.mjs";
 import { printEnvelope, errorResult, writeAllSync } from "./role-envelope.mjs";
-import { rejectInitFlagChanges, validateInitFlags } from "./role-init-flags.mjs";
+import {
+  rejectInitFlagChanges,
+  storedReviewerSandbox,
+  validateInitFlags,
+} from "./role-init-flags.mjs";
 import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
@@ -97,7 +101,7 @@ export function parseRoleArgs(argv) {
     pr: null,
     testCmd: null,
     testCmdTimeout: null,
-    reviewerWorkspaceWrite: false,
+    reviewerSandbox: null,
     verbose: false,
     timeoutProvided: false,
     help: false,
@@ -218,8 +222,11 @@ function initialState(args) {
     lifecycle: "active",
     pr: args.pr,
     copyLocalFiles: !args.noCopyLocalFiles,
-    // Stored only when on, so a run without the opt-in keeps the earlier state shape (ADR 0019).
-    ...(args.reviewerWorkspaceWrite ? { reviewerWorkspaceWrite: true } : {}),
+    // The mode of a Codex reviewer, `none` by default. A reviewer that is not Codex has none, so its
+    // state keeps the earlier shape (ADR 0038).
+    ...(args.reviewer !== null && normalizeAgent(args.reviewer) === "codex"
+      ? { reviewerSandbox: args.reviewerSandbox ?? "none" }
+      : {}),
     // The state file holds a digest of the command and never the command: the
     // flag on each reviewer dispatch is the only source of what runs, and the
     // digest only detects a changed flag (ADR 0017). A run with no command
@@ -483,7 +490,7 @@ async function dispatchLocked(
       // required-check status the runtime read (#320). A run that declares no PR
       // reads nothing, and the reviewer keeps its own read.
       pr: state.pr ?? null,
-      reviewerWorkspaceWrite: state.reviewerWorkspaceWrite === true,
+      reviewerSandbox: storedReviewerSandbox(state),
       // A pre-assigned session id is written before the CLI starts, so a crash during the turn
       // still leaves the id for the resume after `--resume-interrupted` (issue #395). The
       // result write below replaces it, with null when the turn kept no id.

@@ -256,17 +256,49 @@ test("--test-cmd and --test-cmd-timeout parse and refuse bad values", () => {
   }
 });
 
-// Usefulness: verifies the headless loop takes the reviewer sandbox opt-in, defaults it off, and
-// refuses it for a reviewer that is not Codex, so the opt-in never silently does nothing while the
-// prompt says it is on (issue #421).
-test("--reviewer-workspace-write parses, defaults off, and needs a Codex reviewer", () => {
-  expect(parseArgs(BASE).reviewerWorkspaceWrite).toBe(false);
+// Usefulness: verifies the headless loop takes --reviewer-sandbox with the two opt-in modes,
+// leaves the mode unset by default, and refuses another value or a non-Codex reviewer, so the flag
+// never silently does nothing while the prompt says it is on (ADR 0038).
+test("--reviewer-sandbox parses both modes, defaults unset, and needs a Codex reviewer", () => {
+  expect(parseArgs(BASE).reviewerSandbox).toBeNull();
   const codexReviewer = BASE.map((v) => (v === "agy" ? "codex" : v));
-  expect(parseArgs([...codexReviewer, "--reviewer-workspace-write"]).reviewerWorkspaceWrite).toBe(
-    true,
+  for (const mode of ["read-only", "workspace-write"]) {
+    expect(parseArgs([...codexReviewer, "--reviewer-sandbox", mode]).reviewerSandbox).toBe(mode);
+    expect(parseArgs([...codexReviewer, `--reviewer-sandbox=${mode}`]).reviewerSandbox).toBe(mode);
+  }
+  expect(() => parseArgs([...codexReviewer, "--reviewer-sandbox", "none"])).toThrow(
+    "--reviewer-sandbox must be one of read-only, workspace-write, got: none",
   );
+  expect(() => parseArgs([...BASE, "--reviewer-sandbox", "read-only"])).toThrow(
+    "--reviewer-sandbox requires --reviewer codex.",
+  );
+});
+
+// Usefulness: verifies the kept alias means --reviewer-sandbox workspace-write, so existing scripts
+// keep their meaning, and that a conflicting pair is refused in either order (ADR 0038).
+test("--reviewer-workspace-write stays an alias of --reviewer-sandbox workspace-write", () => {
+  const codexReviewer = BASE.map((v) => (v === "agy" ? "codex" : v));
+  expect(parseArgs([...codexReviewer, "--reviewer-workspace-write"]).reviewerSandbox).toBe(
+    "workspace-write",
+  );
+  expect(
+    parseArgs([
+      ...codexReviewer,
+      "--reviewer-workspace-write",
+      "--reviewer-sandbox",
+      "workspace-write",
+    ]).reviewerSandbox,
+  ).toBe("workspace-write");
+  for (const pair of [
+    ["--reviewer-workspace-write", "--reviewer-sandbox", "read-only"],
+    ["--reviewer-sandbox", "read-only", "--reviewer-workspace-write"],
+  ]) {
+    expect(() => parseArgs([...codexReviewer, ...pair])).toThrow(
+      "--reviewer-workspace-write conflicts with --reviewer-sandbox read-only.",
+    );
+  }
   expect(() => parseArgs([...BASE, "--reviewer-workspace-write"])).toThrow(
-    "--reviewer-workspace-write requires --reviewer codex.",
+    "--reviewer-sandbox requires --reviewer codex.",
   );
   expect(() => parseArgs([...codexReviewer, "--reviewer-workspace-write=1"])).toThrow(
     "--reviewer-workspace-write does not take a value.",

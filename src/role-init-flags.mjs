@@ -6,7 +6,9 @@ import {
   REVIEW_ONLY_PR_REFUSAL,
   ROLE_FLAG_BY_OPTION,
   assertOpenCodeOptions,
-  reviewerWorkspaceWriteError,
+  REVIEWER_SANDBOX_MODES,
+  legacyReviewerSandbox,
+  reviewerSandboxError,
   testCmdError,
 } from "./lib/args.mjs";
 import { sha256 } from "./lib/hash.mjs";
@@ -21,6 +23,22 @@ const INIT_FIELDS = [
   "pr",
   "testCmdTimeout",
 ];
+
+/**
+ * The reviewer sandbox mode that a state file holds, or null for a reviewer that is not Codex. A
+ * state file from before ADR 0038 has no `reviewerSandbox`: it gets `workspace-write` when it holds
+ * the legacy `reviewerWorkspaceWrite: true` and `read-only` otherwise, never `none`.
+ */
+export function storedReviewerSandbox(state) {
+  if (state.roles?.reviewer?.kind !== "codex") return null;
+  const mode = state.reviewerSandbox ?? legacyReviewerSandbox(state.reviewerWorkspaceWrite);
+  if (!REVIEWER_SANDBOX_MODES.includes(mode)) {
+    throw new RoleError(
+      `State file field reviewerSandbox must be one of ${REVIEWER_SANDBOX_MODES.join(", ")}, got: ${JSON.stringify(mode)}.`,
+    );
+  }
+  return mode;
+}
 
 export function validateInitFlags(args, agents = {}) {
   if (args.task === null || String(args.task).trim() === "") {
@@ -38,8 +56,8 @@ export function validateInitFlags(args, agents = {}) {
   if (testCmdRefusal) {
     throw new RoleError(testCmdRefusal);
   }
-  const sandboxRefusal = reviewerWorkspaceWriteError(
-    args.reviewerWorkspaceWrite,
+  const sandboxRefusal = reviewerSandboxError(
+    args.reviewerSandbox,
     args.reviewer === null ? null : normalizeAgent(args.reviewer),
   );
   if (sandboxRefusal) {
@@ -90,11 +108,11 @@ export function rejectInitFlagChanges(args, state, allowed = []) {
       `--test-cmd cannot be changed after init (state holds: ${state.testCmdSha256 ? "a different command" : "null"}).`,
     );
   }
-  // The opt-in is fixed at init, so a later call cannot widen the sandbox of a read-only run.
-  // Omitting the flag is not a change: the stored value governs.
-  if (args.reviewerWorkspaceWrite && state.reviewerWorkspaceWrite !== true) {
+  // The mode is fixed at init, so a later call cannot widen or narrow the reviewer sandbox. Omitting
+  // the flag is not a change: the stored value governs (ADR 0038).
+  if (args.reviewerSandbox !== null && args.reviewerSandbox !== storedReviewerSandbox(state)) {
     throw new RoleError(
-      "--reviewer-workspace-write cannot be changed after init (state holds: null).",
+      `--reviewer-sandbox cannot be changed after init (state holds: ${storedReviewerSandbox(state)}).`,
     );
   }
   // A task file is read only at init, so a later call never holds it as `task`.

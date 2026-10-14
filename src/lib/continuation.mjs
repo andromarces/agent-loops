@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { normalizeAgent, REPORTS_RESOLVED_MODEL } from "../agents/index.mjs";
 import { logInfo, logWarn } from "./log.mjs";
 import { readableErrorText, readProp } from "./error-message.mjs";
-import { ROLE_KINDS } from "./args.mjs";
+import { REVIEWER_SANDBOX_MODES, ROLE_KINDS, legacyReviewerSandbox } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isJsonObject } from "./json.mjs";
 import { isAcceptedReview } from "./report.mjs";
@@ -55,6 +55,25 @@ export async function readContinuation(path) {
   }
   await applySessionRecord(path, bytes, transcript);
   return transcript;
+}
+
+/**
+ * The reviewer sandbox mode that the earlier run recorded in the transcript `options`. A transcript
+ * from before ADR 0038 has none: it gets `workspace-write` when it holds the legacy
+ * `reviewerWorkspaceWrite: true` and `read-only` otherwise, never `none`.
+ * @param {{ options?: object }} transcript
+ * @param {string} path the transcript path, for the refusal text
+ * @returns {"none" | "read-only" | "workspace-write"}
+ */
+export function earlierReviewerSandbox(transcript, path) {
+  const recorded = transcript.options?.reviewerSandbox;
+  if (recorded === undefined) {
+    return legacyReviewerSandbox(transcript.options?.reviewerWorkspaceWrite);
+  }
+  if (!REVIEWER_SANDBOX_MODES.includes(recorded)) {
+    throw new Error(`--continue-from ${path} has an invalid reviewerSandbox option.`);
+  }
+  return recorded;
 }
 
 /**

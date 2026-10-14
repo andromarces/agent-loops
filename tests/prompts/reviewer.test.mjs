@@ -373,20 +373,27 @@ test("reviewer prompt requires each blocker stated inside the Blockers line", ()
   expect(prompt.split("Blockers:")).toHaveLength(2);
 });
 
-// Usefulness: verifies the sandbox line is present only for an opted-in turn, tells the reviewer
-// to call the project's local binary because a package manager writes outside the work tree, keeps
-// the edit ban, and names no repository-specific tool, so it fits any repository (issue #421).
-test("reviewer prompt carries the workspace-write line only when the opt-in is on", () => {
-  const off = reviewerPrompt("check the fix");
-  expect(reviewerPrompt("check the fix", null, null, false)).toBe(off);
-  expect(off).not.toContain("workspace-write");
+// Usefulness: verifies the sandbox note states the actual mode, is absent for a turn with no mode,
+// keeps the edit ban, and names no repository-specific tool, so it fits any repository (ADR 0038).
+test("reviewer prompt carries the sandbox note of its mode only", () => {
+  const none = reviewerPrompt("check the fix");
+  expect(reviewerPrompt("check the fix", null, null, null)).toBe(none);
+  expect(none).not.toContain("Sandbox note");
 
-  const on = reviewerPrompt("check the fix", null, null, true);
-  expect(on).toContain("workspace-write");
+  for (const [mode, phrase] of [
+    ["none", "runs with no sandbox"],
+    ["read-only", "runs in a read-only sandbox"],
+    ["workspace-write", "runs in a workspace-write sandbox"],
+  ]) {
+    const prompt = reviewerPrompt("check the fix", null, null, mode);
+    expect(prompt).toContain(phrase);
+    expect(prompt).toContain("Do not implement, fix, edit, or change any file.");
+    expect(prompt).toContain("Do not write to GitHub or any remote");
+    expect(prompt).not.toMatch(/pnpm|npm|yarn|vitest|jest|node_modules|agent-loop/i);
+  }
+  const on = reviewerPrompt("check the fix", null, null, "workspace-write");
   expect(on).toContain("local binary");
   expect(on).toContain("outside the work tree");
-  expect(on).toContain("Do not implement, fix, edit, or change any file.");
-  expect(on).not.toMatch(/pnpm|npm|yarn|vitest|jest|node_modules|agent-loop/i);
 });
 
 // Usefulness: verifies the late-write line appears only for a non-empty `lateChangedPaths`, with

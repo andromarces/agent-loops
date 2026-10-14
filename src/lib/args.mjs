@@ -134,17 +134,50 @@ export function testCmdError(testCmd, testCmdTimeout) {
   return null;
 }
 
+// The reviewer sandbox modes of a Codex reviewer (ADR 0038). `none` is the default of a new run
+// and has no flag. The flag names only the two sandboxed modes.
+export const REVIEWER_SANDBOX_FLAG_MODES = ["read-only", "workspace-write"];
+export const REVIEWER_SANDBOX_MODES = ["none", ...REVIEWER_SANDBOX_FLAG_MODES];
+
 /**
- * The `--reviewer-workspace-write` opt-in, validated once for both paths (ADR 0019). Only the
- * Codex adapter reads the reviewer sandbox input, so any other reviewer would run read-only
- * while the prompt said otherwise.
- * @returns {string | null} the refusal, or null when the opt-in is off or valid
+ * The mode of a run that recorded none: a state file or a transcript from before ADR 0038. A legacy
+ * run never gets `none`, so it never loses its sandbox.
+ * @param {boolean | undefined} reviewerWorkspaceWrite the legacy field
+ * @returns {"read-only" | "workspace-write"}
  */
-export function reviewerWorkspaceWriteError(reviewerWorkspaceWrite, reviewerKind) {
-  if (reviewerWorkspaceWrite && reviewerKind !== "codex") {
-    return "--reviewer-workspace-write requires --reviewer codex.";
+export function legacyReviewerSandbox(reviewerWorkspaceWrite) {
+  return reviewerWorkspaceWrite === true ? "workspace-write" : "read-only";
+}
+
+/**
+ * The `--reviewer-sandbox` flag, validated once for both paths (ADR 0038). Only the Codex adapter
+ * reads the reviewer sandbox input, so any other reviewer would run as before while the prompt
+ * said otherwise.
+ * @returns {string | null} the refusal, or null when the flag is absent or valid
+ */
+export function reviewerSandboxError(reviewerSandbox, reviewerKind) {
+  if (reviewerSandbox !== null && reviewerKind !== "codex") {
+    return "--reviewer-sandbox requires --reviewer codex.";
   }
   return null;
+}
+
+// The parsed option objects that used the `--reviewer-workspace-write` alias, for the conflict text.
+const aliasUsers = new WeakSet();
+
+function setReviewerSandbox(args, value, viaAlias, ErrorType) {
+  const earlier = args.reviewerSandbox;
+  if (earlier !== null && earlier !== value) {
+    const alias = viaAlias || aliasUsers.has(args);
+    const shown = viaAlias ? earlier : value;
+    throw new ErrorType(
+      alias
+        ? `--reviewer-workspace-write conflicts with --reviewer-sandbox ${shown}.`
+        : `--reviewer-sandbox ${value} conflicts with --reviewer-sandbox ${earlier}.`,
+    );
+  }
+  if (viaAlias) aliasUsers.add(args);
+  args.reviewerSandbox = value;
 }
 
 // Defaults shared by the headless CLI, the role subcommand, and the loop runtime.
@@ -289,8 +322,18 @@ function applyCommonFlag(args, arg, readInline, ErrorType) {
     case "--test-cmd-timeout":
       args.testCmdTimeout = readPositiveInt(arg, readInline(arg));
       break;
+    case "--reviewer-sandbox": {
+      const value = readInline(arg);
+      if (!REVIEWER_SANDBOX_FLAG_MODES.includes(value)) {
+        throw new ErrorType(
+          `--reviewer-sandbox must be one of ${REVIEWER_SANDBOX_FLAG_MODES.join(", ")}, got: ${value}`,
+        );
+      }
+      setReviewerSandbox(args, value, false, ErrorType);
+      break;
+    }
     case "--reviewer-workspace-write":
-      args.reviewerWorkspaceWrite = true;
+      setReviewerSandbox(args, "workspace-write", true, ErrorType);
       break;
     case "--mode":
       args.mode = readInline(arg);
