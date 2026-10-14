@@ -24,9 +24,9 @@ const waitPrompt = (timeout, extra = {}) =>
     ...extra,
   });
 
-// Usefulness: verifies the headless wait runs through the runtime-owned command
-// with a stated bound below the turn timeout, and never through an unbounded
-// `gh` watch, so a wait cannot end the run on the turn timeout (issue #348).
+// Usefulness: verifies the headless wait runs through the runtime-owned command with a stated bound
+// below the turn timeout (issue #348). It never runs through an unbounded `gh` watch, so a wait
+// cannot end the run on the turn timeout.
 test.each([
   [undefined, 300],
   [null, 300],
@@ -46,9 +46,9 @@ test.each([
   }
 });
 
-// Usefulness: verifies no turn timeout gets a wait that can outlast it: every
-// timeout either gets a positive bound whose wait and five-second child-exit
-// window end inside the turn, or gets no wait command at all (issue #348).
+// Usefulness: verifies no turn timeout gets a wait that can outlast it (issue #348). Every timeout
+// either gets a positive bound whose wait and five-second child-exit window end inside the turn, or
+// gets no wait command at all.
 test("no turn timeout gets a wait that outlasts the turn", () => {
   for (let timeout = 1; timeout <= 700; timeout += 1) {
     const prompt = waitPrompt(timeout);
@@ -65,9 +65,8 @@ test("no turn timeout gets a wait that outlasts the turn", () => {
   }
 });
 
-// Usefulness: verifies a run whose turn is too short for any wait tells the
-// orchestrator to rely on the gate instead of running a wait that ends the run
-// (issue #348).
+// Usefulness: verifies a run whose turn is too short for any wait tells the orchestrator to rely on
+// the gate (issue #348). It does not run a wait that ends the run.
 test.each([1, 2, 5, 10, 11])("a %s second turn names no wait", (timeout) => {
   const prompt = waitPrompt(timeout);
   expect(prompt).not.toContain("--pr 42 --timeout");
@@ -147,9 +146,9 @@ test("the headless wait prompt states the DEFAULT_TIMEOUT value", async () => {
   }
 });
 
-// Usefulness: verifies the platform decides the shell forms: a Windows run gets
-// a PowerShell form with the call operator and a bash-or-cmd form without it,
-// and any other platform gets one plain form (issue #348).
+// Usefulness: verifies the platform decides the shell forms (issue #348). A Windows run gets a
+// PowerShell form with the call operator and a bash-or-cmd form without it. Any other platform gets
+// one plain form.
 test("the wait command renders the shell forms of the platform", () => {
   const input = {
     execPath: "C:\\Program Files\\nodejs\\node.exe",
@@ -177,9 +176,9 @@ test("the wait command renders the shell forms of the platform", () => {
   ]);
 });
 
-// Usefulness: verifies the command carries the run's resolved work tree, so the
-// wait reads the right repository whatever directory the shell starts in, and the
-// prompt passes the run's `cwd` through (issue #348).
+// Usefulness: verifies the command carries the resolved work tree of the run (issue #348). The wait
+// then reads the right repository, whatever directory the shell starts in. The prompt passes the
+// `cwd` of the run through.
 test("the wait command and the prompt carry the resolved work tree", () => {
   const forms = waitChecksCommand({ cwd: "relative/tree" });
   expect(forms[0].command).toContain(`--cwd "${resolve("relative/tree").replaceAll("\\", "/")}"`);
@@ -215,9 +214,9 @@ const UNSAFE_CHARACTERS = [
   ["\u{2029}", "paragraph separator (escaped in every prompt)"],
 ];
 
-// Usefulness: verifies a Node path, a CLI path, or a work tree path that holds a
-// character a shell expands inside double quotes gets no command, so the prompt
-// never renders a command that runs something else (issue #348).
+// Usefulness: verifies a Node, CLI, or work tree path that holds a character a shell expands inside
+// double quotes gets no command (issue #348). The prompt never renders a command that runs
+// something else.
 test.each(UNSAFE_CHARACTERS)("the wait command refuses a path holding %j (%s)", (char) => {
   const safe = { execPath: "/opt/node", cliPath: "/opt/cli.mjs", cwd: "/srv/tree" };
   expect(waitChecksCommand({ ...safe, platform: "linux" })).not.toBeNull();
@@ -228,10 +227,9 @@ test.each(UNSAFE_CHARACTERS)("the wait command refuses a path holding %j (%s)", 
   }
 });
 
-// Usefulness: verifies a POSIX path keeps its backslashes or is refused, never
-// rewritten: a POSIX backslash is a name character, so a slash in its place would
-// point the command at another path. The slash rewrite stays Windows-only
-// (issue #348).
+// Usefulness: verifies a POSIX path keeps its backslashes or is refused, and is never rewritten
+// (issue #348). A POSIX backslash is a name character, so a slash in its place points the command
+// at another path. The slash rewrite stays Windows-only.
 test("a POSIX path is never rewritten and a backslash in it is refused", () => {
   const safe = { execPath: "/opt/node", cliPath: "/opt/cli.mjs", cwd: "/srv/tree" };
   const rendered = waitChecksCommand({ ...safe, platform: "linux" });
@@ -252,8 +250,8 @@ test("a POSIX path is never rewritten and a backslash in it is refused", () => {
   );
 });
 
-// Usefulness: verifies a run with no renderable command names no wait, and says
-// why, instead of a wait command the shell would misread (issue #348).
+// Usefulness: verifies a run with no renderable command names no wait, and says why (issue #348).
+// It does not name a wait command that the shell misreads.
 test("a run with no renderable command names no wait", () => {
   const prompt = waitPrompt(3600, { waitCommand: null });
   expect(prompt).not.toContain("--pr 42 --timeout");
@@ -262,8 +260,8 @@ test("a run with no renderable command names no wait", () => {
 });
 
 // Usefulness: verifies a work tree path that holds U+2028 or U+2029 leads to the no-wait fallback
-// through the default command, so the prompt never tells the reader to run a command whose path
-// the prompt escape rewrote (issue #761).
+// through the default command (issue #761). The prompt never tells the reader to run a command
+// whose path the prompt escape rewrote.
 test.each(["\u{2028}", "\u{2029}", "\u{85}"])(
   "a work tree path holding a line separator gives the no-wait fallback",
   (char) => {
@@ -314,10 +312,9 @@ async function runForm(shell, command, dir) {
   return execa("cmd", ["/d", "/c", script], { reject: false, all: true });
 }
 
-// Usefulness: verifies each rendered form starts the CLI in a real shell, with a
-// Node path and a work tree path that hold spaces, since a form that a shell
-// rejects would leave the orchestrator with no wait. PowerShell needs the call
-// operator and bash and cmd reject it (issue #348).
+// Usefulness: verifies each rendered form starts the CLI in a real shell, with a Node path and a
+// work tree path that hold spaces. A form that a shell rejects leaves the orchestrator with no
+// wait. PowerShell needs the call operator, and bash and cmd reject it (issue #348).
 describe("the rendered wait forms run in a real shell", () => {
   const withDir = async (run) => {
     const dir = await mkdtemp(join(tmpdir(), "wait form "));
@@ -390,9 +387,9 @@ describe("the rendered wait forms run in a real shell", () => {
   );
 });
 
-// Usefulness: verifies the default prompt names a command built from this
-// install, not a bare `agent-loop` that a clone run has no PATH entry for: the
-// rendered Node binary and CLI script exist (issue #348).
+// Usefulness: verifies the default prompt names a command built from this install (issue #348). A
+// bare `agent-loop` has no PATH entry in a clone run. The rendered Node binary and CLI script
+// exist.
 test("the default wait command names the Node binary and CLI script of this run", async () => {
   const prompt = initialPrompt({
     task: "T",

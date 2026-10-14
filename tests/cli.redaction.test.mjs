@@ -6,8 +6,9 @@ import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];
 
-// Usefulness: acceptance (#537) — the fallback text for an empty thrown value goes through the shared
-// redactor, so an environment value that matches part of it never reaches the transcript or stderr.
+// Usefulness: acceptance (#537). The fallback text for an empty thrown value goes through the
+// shared redactor. An environment value that matches part of it never reaches the transcript or
+// stderr.
 test("the fallback error text for an empty thrown value is redacted", async () => {
   const repo = await createTempRepo();
   const transcriptPath = join(repo, "transcript.json");
@@ -38,10 +39,10 @@ test("the fallback error text for an empty thrown value is redacted", async () =
   }
 });
 
-// Usefulness: verifies a command text that holds the value of a secret-named environment
-// variable reaches the transcript options, the transcript events, and the stderr report of
-// a fatal run as `[redacted:NAME]`, so the file a parent keeps never holds the secret
-// (issue #431, ADR 0017).
+// Usefulness: verifies a command text that holds the value of a secret-named environment variable
+// reaches three places as `[redacted:NAME]`. Those places are the transcript options, the
+// transcript events, and the stderr report of a fatal run. The file that a parent keeps never holds
+// the secret (issue #431, ADR 0017).
 test("a secret value in the command text is redacted in the transcript and the stderr report", async () => {
   const repo = await createTempRepo();
   const transcriptPath = join(repo, "transcript.json");
@@ -99,7 +100,7 @@ test("a secret value in the command text is redacted in the transcript and the s
 });
 
 // Usefulness: verifies each headless refusal that echoes an argument prints a secret-named
-// environment value as `[redacted:NAME]`, so a command passed unquoted, a mistyped flag, or a bad
+// environment value as `[redacted:NAME]`. A command passed unquoted, a mistyped flag, or a bad
 // value never puts the secret on stderr (issue #431, ADR 0017).
 test.each([
   ["an unknown flag with a value", ["--bogus=SECRET"]],
@@ -134,7 +135,8 @@ test.each([
 });
 
 // Usefulness: verifies a fatal headless error whose text holds a secret-named environment value
-// reaches the stderr report and the transcript error as `[redacted:NAME]` (issue #431, ADR 0017).
+// reaches two places as `[redacted:NAME]`. Those places are the stderr report and the transcript
+// error (issue #431, ADR 0017).
 test("a fatal headless error redacts a secret value in the stderr report and the transcript", async () => {
   const repo = await createTempRepo();
   const transcriptPath = join(repo, "transcript.json");
@@ -176,9 +178,9 @@ test("a fatal headless error redacts a secret value in the stderr report and the
   }
 });
 
-// Usefulness: verifies a thrown value whose message is not a string, or that is not an Error,
-// reaches the headless stderr report and the transcript with a secret-named environment value
-// redacted, so a non-string message cannot bypass the shared sink (issue #431, ADR 0017).
+// Usefulness: verifies a thrown value whose message is not a string, or that is not an Error, is
+// redacted. The headless stderr report and the transcript hold no secret-named environment value. A
+// non-string message cannot bypass the shared sink (issue #431, ADR 0017).
 test.each([
   ["an object message", (secret) => ({ message: { detail: secret } })],
   ["an array message", (secret) => ({ message: [secret] })],
@@ -246,8 +248,8 @@ test("the headless transcript write warning redacts a secret value", async () =>
   }
 });
 
-// Usefulness: verifies the headless stderr report and transcript redact a value with a quote and a
-// backslash that a thrown object carries (issue #431, ADR 0017).
+// Usefulness: verifies the headless stderr report and transcript redact a value that holds a quote
+// and a backslash. A thrown object carries the value (issue #431, ADR 0017).
 test("a headless thrown object that holds a value with a quote and a backslash is redacted", async () => {
   const repo = await createTempRepo();
   const transcriptPath = join(repo, "transcript.json");

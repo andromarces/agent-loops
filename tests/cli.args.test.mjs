@@ -171,9 +171,9 @@ test("--require-accept is a boolean flag", () => {
   );
 });
 
-// Usefulness: verifies the headless loop takes a PR number for the finish gate,
-// defaults it off, and rejects a value that is not a positive integer, so a bad
-// PR number fails at parse time instead of inside the gate (issue #293).
+// Usefulness: verifies the headless loop takes a PR number for the finish gate and defaults it off.
+// It rejects any value that is not a positive integer. A bad PR number then fails at parse time,
+// not inside the gate (issue #293).
 test("--require-ci takes a positive integer PR number", () => {
   expect(parseArgs(BASE).requireCi).toBeNull();
   expect(parseArgs([...BASE, "--require-ci", "42"]).requireCi).toBe(42);
@@ -185,9 +185,8 @@ test("--require-ci takes a positive integer PR number", () => {
   }
 });
 
-// Usefulness: verifies the run PR declaration takes a positive integer PR
-// number, defaults to absent, and rejects a value that is not a positive integer,
-// so a run cannot declare a PR the gate could not read (issue #302).
+// Usefulness: verifies the run PR declaration takes a positive integer and defaults to absent. It
+// rejects any other value, so a run cannot declare a PR that the gate cannot read (issue #302).
 test("--pr declares the run PR and takes a positive integer", () => {
   expect(parseArgs(BASE).pr).toBeNull();
   expect(parseArgs([...BASE, "--pr", "42"]).pr).toBe(42);
@@ -197,10 +196,10 @@ test("--pr declares the run PR and takes a positive integer", () => {
   }
 });
 
-// Usefulness: verifies the headless loop takes the test command and its bound,
-// defaults both off, and refuses a blank command, a bound with no command, and a
-// bound that is not a positive integer, so a bad value fails at parse time and
-// the run never starts with a command it cannot run (issue #420).
+// Usefulness: verifies the headless loop takes the test command and its bound, and defaults both
+// off. It refuses a blank command, a bound with no command, and a bound that is not a positive
+// integer. A bad value fails at parse time, so no run starts with a command that it cannot run
+// (issue #420).
 test("--test-cmd and --test-cmd-timeout parse and refuse bad values", () => {
   expect(parseArgs(BASE)).toMatchObject({ testCmd: null, testCmdTimeout: null });
   expect(parseArgs([...BASE, "--test-cmd", "pnpm test"]).testCmd).toBe("pnpm test");
@@ -219,9 +218,9 @@ test("--test-cmd and --test-cmd-timeout parse and refuse bad values", () => {
   }
 });
 
-// Usefulness: verifies the headless loop takes --reviewer-sandbox with the two opt-in modes,
-// leaves the mode unset by default, and refuses another value or a non-Codex reviewer, so the flag
-// never silently does nothing while the prompt says it is on (ADR 0038).
+// Usefulness: verifies the headless loop takes --reviewer-sandbox with the two opt-in modes. The
+// mode is unset by default. Another value or a non-Codex reviewer is refused, so the flag never
+// silently does nothing while the prompt says it is on (ADR 0038).
 test("--reviewer-sandbox parses both modes, defaults unset, and needs a Codex reviewer", () => {
   expect(parseArgs(BASE).reviewerSandbox).toBeNull();
   const codexReviewer = BASE.map((v) => (v === "agy" ? "codex" : v));
@@ -238,7 +237,7 @@ test("--reviewer-sandbox parses both modes, defaults unset, and needs a Codex re
 });
 
 // Usefulness: verifies the kept alias means --reviewer-sandbox workspace-write, so existing scripts
-// keep their meaning, and that a conflicting pair is refused in either order (ADR 0038).
+// keep their meaning. A conflicting pair is refused in either order (ADR 0038).
 test("--reviewer-workspace-write stays an alias of --reviewer-sandbox workspace-write", () => {
   const codexReviewer = BASE.map((v) => (v === "agy" ? "codex" : v));
   expect(parseArgs([...codexReviewer, "--reviewer-workspace-write"]).reviewerSandbox).toBe(
@@ -268,11 +267,10 @@ test("--reviewer-workspace-write stays an alias of --reviewer-sandbox workspace-
   );
 });
 
-// Usefulness: verifies the headless path refuses a gate for another pull request
-// at parse time, before any child turn runs and before the prompt is built. Both
-// flags arrive on one command line there, so a run that could never be gated
-// never starts, and the prompt never has to describe a case it cannot reach.
-// A matching gate is still accepted, and `--pr` alone is still accepted (issue #302).
+// Usefulness: verifies the headless path refuses a gate for another pull request at parse time. The
+// refusal comes before any child turn runs and before the prompt is built. Both flags arrive on one
+// command line there, so a run that cannot be gated never starts. A matching gate is still
+// accepted, and `--pr` alone is still accepted (issue #302).
 test("--pr with --require-ci for another pull request is a usage error", () => {
   expect(() => parseArgs([...BASE, "--pr", "42", "--require-ci", "7"])).toThrow(
     "--pr 42 and --require-ci 7 must name the same pull request.",
@@ -285,11 +283,10 @@ test("--pr with --require-ci for another pull request is a usage error", () => {
   expect(parseArgs([...BASE, "--require-ci", "7"]).requireCi).toBe(7);
 });
 
-// Usefulness: verifies a review-only headless run refuses --pr, --require-accept,
-// and --require-ci before any child turn runs, with the interactive wordings, so
-// the two paths state one rule for a mode that could never reach a gate. The
-// check is the command outcome: exit 1, the refusal on stderr, and no child CLI
-// call (issue #337).
+// Usefulness: verifies a review-only headless run refuses --pr, --require-accept, and --require-ci
+// before any child turn runs, with the interactive wordings. The two paths state one rule for a
+// mode that cannot reach a gate. The check is the command outcome: exit 1, the refusal on stderr,
+// and no child CLI call (issue #337).
 test("a review-only run refuses the PR flags before any child turn", async () => {
   const refusals = [
     [["--pr", "42"], "--pr declares PR work, which needs the --require-ci gate"],
@@ -303,9 +300,8 @@ test("a review-only run refuses the PR flags before any child turn", async () =>
     ],
   ];
   const origExitCode = process.exitCode;
-  // The refusal is raised by `parseArgs`, before any Git validation, so the run
-  // needs no repo: creating one spawns six `git` processes, which is most of the
-  // cost of a run on Windows.
+  // The refusal comes from `parseArgs`, before any Git validation, so the run needs no repo.
+  // Creating a repo spawns six `git` processes, which is most of the cost of a run on Windows.
   const cwd = tmpdir();
 
   try {
@@ -342,16 +338,15 @@ test("a review-only run refuses the PR flags before any child turn", async () =>
   }
 });
 
-// Usefulness: verifies a work-first or review-first run still takes the PR flags
-// the review-only run refuses, and that a run with no --mode takes them too,
-// because only review-only rejects a gate. The check is the command outcome: the
-// run starts, so the orchestrator CLI is called and no usage error is printed
-// (issue #337).
+// Usefulness: verifies a work-first or review-first run still takes the PR flags that the
+// review-only run refuses. A run with no --mode takes them too, because only review-only rejects a
+// gate. The check is the command outcome: the run starts, so the orchestrator CLI is called and no
+// usage error is printed (issue #337).
 test("the other modes and a mode-free run still take the PR flags", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  // One repo serves every run: creating a repo spawns six `git` processes, which
-  // is most of the cost of a run on Windows, and no run here changes the repo.
+  // One repo serves every run, and no run here changes it. Creating a repo spawns six `git`
+  // processes, which is most of the cost of a run on Windows.
   const repo = await createTempRepo();
 
   try {
@@ -379,9 +374,8 @@ test("the other modes and a mode-free run still take the PR flags", async () => 
         },
       };
       try {
-        // The gate is declared but never evaluated: this orchestrator finishes
-        // with no reviewer turn, so the gate refuses and the run ends on exit 1
-        // with a gate reason rather than a usage error.
+        // The gate is declared but never evaluated. This orchestrator finishes with no reviewer
+        // turn. The gate refuses, and the run ends on exit 1 with a gate reason, not a usage error.
         await main([...BASE, ...flags, "--pr", "42", "--require-ci", "42", "--cwd", repo], agents);
         // The run started, so the orchestrator CLI was called at least once, and
         // no usage error named a review-only refusal.
@@ -398,10 +392,10 @@ test("the other modes and a mode-free run still take the PR flags", async () => 
   }
 });
 
-// Usefulness: verifies the headless --mode accepts the same three values as the
-// interactive path and refuses any other, so a caller learns the mode names from
-// one list on both paths. The check is the command outcome: a known value starts
-// the run, an unknown one exits 1 with the message (issue #337).
+// Usefulness: verifies the headless --mode accepts the same three values as the interactive path
+// and refuses any other. A caller learns the mode names from one list on both paths. The check is
+// the command outcome: a known value starts the run, and an unknown one exits 1 with the message
+// (issue #337).
 test("--mode takes the interactive mode values", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -451,11 +445,10 @@ test("--mode takes the interactive mode values", async () => {
   }
 });
 
-// Usefulness: verifies a repeated --mode takes the last value, the way every
-// other repeated single-value flag on this path already behaves, such as --task,
-// so the flag adds no new rule. The check is the command outcome: the last value
-// decides, so review-only last refuses the PR flag and work-first last accepts
-// it (issue #337).
+// Usefulness: verifies a repeated --mode takes the last value, as every other repeated single-value
+// flag on this path does, such as --task. The flag adds no new rule. The check is the command
+// outcome: the last value decides. Review-only last refuses the PR flag, and work-first last
+// accepts it (issue #337).
 test("a repeated --mode takes the last value", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -539,9 +532,8 @@ test("--task=-x sets the task", () => {
   expect(parseArgs([...BASE, "--task=-x"]).task).toBe("-x");
 });
 
-// Usefulness: verifies acceptance (#210) — an empty inline value is rejected at
-// parse time, matching the space-separated form, so a no-op flag value cannot
-// silently pass through.
+// Usefulness: verifies acceptance (#210). An empty inline value is rejected at parse time, as the
+// space-separated form is, so a no-op flag value cannot pass through silently.
 test("--task= is rejected as a missing value", () => {
   expect(() => parseArgs([...BASE, "--task="])).toThrow("Missing value for --task.");
 });
@@ -557,8 +549,8 @@ test("unknown inline argument keeps its value in the error", () => {
   expect(() => parseArgs([...BASE, "--nope=bar"])).toThrow("Unknown argument: --nope=bar");
 });
 
-// Usefulness: verifies acceptance (#215) — an empty inline value on a boolean
-// flag is rejected as a value on a no-value flag, not as a missing value.
+// Usefulness: verifies acceptance (#215). An empty inline value on a boolean flag is rejected as a
+// value on a no-value flag, not as a missing value.
 test("--verbose= is rejected as not taking a value", () => {
   expect(() => parseArgs([...BASE, "--verbose="])).toThrow("--verbose does not take a value.");
 });

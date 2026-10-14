@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vite-plus/test";
 
-// Answers `git` from memory for the tests that switch it on (see
-// `withContinueRepo`); every other test, and every other command, reaches the real `execa`.
+// Answers `git` from memory for the tests that switch it on (see `withContinueRepo`). Every other
+// test, and every other command, reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -23,6 +23,7 @@ import { main, parseArgs } from "../src/cli.mjs";
 import { readProcessCommands } from "../src/lib/process-ancestry.mjs";
 import {
   cleanRepoGit,
+  createCleanRepoDir,
   createTempRepo,
   removePath,
   createPsShim,
@@ -59,8 +60,7 @@ const FINISH = JSON.stringify({
 // repo is a directory with a `.git` directory and `git` is answered from memory
 // (`cleanRepoGit`), so the test starts no `git` process.
 async function withContinueRepo(fn) {
-  const repo = await mkdtemp(join(tmpdir(), "cli-test-clean-repo-"));
-  await mkdir(join(repo, ".git"));
+  const repo = await createCleanRepoDir();
   gitDouble.answer = cleanRepoGit;
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -76,8 +76,8 @@ async function withContinueRepo(fn) {
   }
 }
 
-// Each fake agent assigns a session id on its first call, as a real adapter does,
-// and records the id it held when the call arrived.
+// Each fake agent assigns a session id on its first call, as a real adapter does. It records the id
+// that it held when the call arrived.
 function sessionAgents(orchReplies, seen) {
   let orchCall = 0;
   const adapter = (name, reply) => ({
@@ -140,8 +140,8 @@ test("--continue-from resumes the earlier role sessions with a new budget", asyn
   });
 });
 
-// Usefulness: verifies a pre-assigned worker session id is in the transcript before the CLI runs,
-// with its unconfirmed mark, so a parent killed during a first turn leaves a record that
+// Usefulness: verifies a pre-assigned worker session id is in the transcript, with its unconfirmed
+// mark, before the CLI runs. A parent killed during a first turn then leaves a record that
 // --continue-from resumes after the ownership check (#564). No other test reads the transcript
 // mid-turn.
 test("a pre-assigned session id reaches the transcript before the turn and --continue-from restores it", async () => {
@@ -192,30 +192,13 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
   });
 });
 
-// Timeout for a --continue-from test that calls main() twice with a real Git repo. Measured per
-// continueAfterEdit test (seven tests), as setup / first main() / transcript edit / second main():
-// - windows-latest, run 38161410038: 0.51-0.61 s / 3.0-5.2 s / 1-3 ms / 2.9-3.2 s.
-// - Local Windows 11, five runs: 0.34-2.4 s / 1.8-10.0 s / 6-30 ms / 1.8-7.0 s.
-// - ubuntu-latest, same run: 22-40 ms / 134-283 ms / 0-8 ms / 148-171 ms.
-// - macos-latest, same run: 67-110 ms / 348-738 ms / 1 ms / 367-458 ms.
-// Cause: a main() runs its git calls through execa one after another, and each call costs about
-// 0.04-0.06 s on windows-latest. Run 38162688022 (timing patch, since removed): a second main() ran
-// 37 git calls, 2.07-2.25 s of its 2.09-2.27 s, and a first main() ran 37, 45 or 61 calls
-// (2.05-3.69 s). Per second main(): 10 rev-parse --show-toplevel (0.54-0.60 s), 8 status, 8 ls-files and
-// 8 rev-parse --verify (0.43-0.53 s each).
-// Run 38205835481 (timing patch, since removed), seven tests, on the code after #760: first main()
-// 1.73-3.23 s, second main() 1.73-2.02 s. A second main() runs 10 rev-parse --show-toplevel
-// (0.45-0.54 s), 8 status, 8 ls-files and 8 rev-parse --verify (0.36-0.48 s each). A first main()
-// runs 10, 12 or 16 show-toplevel calls. #760 left the count unchanged: each snapshot resolves its
-// own root, and no change of this PR explains the lower timings. fs calls take
-// 0-7 ms per call name.
-// Local macOS, git shim log of the test "resets when the transcript has no gate record" (#760): the
-// second main() ran 37 git calls. The 10 show-toplevel calls were 8 snapshots, 1 transcript
-// containment check and 1 local-files copy. The other 27 were 8 status, 8 ls-files, 8 rev-parse
-// --verify, and 1 each of --is-inside-work-tree, worktree list and --git-common-dir.
-// The tests keep real Git, so the timeout covers this cost. The slowest run above, plus setup, takes
-// about 6 s on windows-latest and up to 20 s on a slow local Windows machine, so 30 s keeps a margin.
-// The #744 timeout at 15028 ms (run 38115126864) did not reproduce in these runs.
+// Timeout for a --continue-from test that calls main() twice with a real Git repo. A main() runs
+// its git calls through execa one after another, at about 0.04-0.06 s each on windows-latest. A
+// second main() runs 37 git calls: 10 rev-parse --show-toplevel, 8 status, 8 ls-files, 8 rev-parse
+// --verify, and 3 others. On windows-latest the first main() takes 1.7-5.2 s and the second takes
+// 1.7-3.2 s (runs 38161410038 and 38205835481). The slowest run with setup takes 6 s on
+// windows-latest and 20 s on a slow Windows machine. The tests keep real Git, so a 30 s timeout
+// keeps a margin.
 const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 30_000;
 
 // Usefulness: verifies --continue-from refuses, before any turn, a claude session that a live
@@ -263,9 +246,9 @@ test(
   CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
 
-// Usefulness: verifies the transcript carries the gate state across --continue-from through the
-// CLI (#393): a reviewer accept recorded by the first run satisfies --require-accept in the
-// continued run on the unchanged tree, so the continued run dispatches no reviewer.
+// Usefulness: verifies the transcript carries the gate state across --continue-from through the CLI
+// (#393). A reviewer accept from the first run satisfies --require-accept in the continued run on
+// the unchanged tree. The continued run dispatches no reviewer.
 test(
   "--continue-from restores the recorded reviewer accept on an unchanged tree",
   async () => {
@@ -326,9 +309,9 @@ test(
   CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
 
-// Usefulness: verifies an edited transcript cannot bypass --require-accept (#393 review): a
-// forged `gate` record that claims an accept is ignored, because the restore reads only the
-// reviewer and worker result events, and the last reviewer turn here rejected.
+// Usefulness: verifies an edited transcript cannot bypass --require-accept (#393 review). A forged
+// `gate` record that claims an accept is ignored, because the restore reads only the reviewer and
+// worker result events. The last reviewer turn here rejected.
 test(
   "--continue-from ignores a forged gate record that claims an accept",
   async () => {
@@ -407,9 +390,9 @@ const RUN_WORKER = JSON.stringify({ action: "run_worker", prompt: "w" });
 
 const RUN_REVIEWER = JSON.stringify({ action: "run_reviewer", prompt: "r" });
 
-// Runs a --require-accept headless run whose reviewer replies come from `reviewerReplies`,
-// lets `tamper(transcript)` edit the written transcript, then continues it with a finish that
-// the gate refuses unless it restored an accept. Returns the reviewer calls of the continuation
+// Runs a --require-accept headless run whose reviewer replies come from `reviewerReplies`. It lets
+// `tamper(transcript)` edit the written transcript. It then continues the run with a finish that
+// the gate refuses unless it restored an accept. It returns the reviewer calls of the continuation
 // and the exit code. The transcript sits outside the work tree, so the tree stays unchanged.
 async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
   const repo = await createTempRepo();
@@ -457,9 +440,9 @@ async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
 
 const ACCEPTED_RUN = [RUN_WORKER, RUN_REVIEWER, FINISH];
 
-// Usefulness: verifies an incomplete later turn cancels the restore (#393 review): a worker turn
-// that started after the accept and never returned a result (a canceled or failed turn) can have
-// changed the tree, so the continuation needs a new reviewer turn.
+// Usefulness: verifies an incomplete later turn cancels the restore (#393 review). A worker turn
+// that started after the accept and never returned a result, such as a canceled or failed turn, can
+// have changed the tree. The continuation then needs a new reviewer turn.
 test(
   "--continue-from resets when a worker invocation follows the accepted review",
   async () => {
@@ -478,7 +461,7 @@ test(
 );
 
 // Usefulness: verifies a transcript whose later reviewer result was deleted does not restore the
-// earlier accept (#393 review): the recorded result count no longer matches the events.
+// earlier accept (#393 review). The recorded result count no longer matches the events.
 test(
   "--continue-from resets when a result event was deleted",
   async () => {
@@ -497,8 +480,8 @@ test(
 );
 
 // Usefulness: verifies an earlier result event with an unknown role resets (#393 review). The
-// replay accepts only `worker` and `reviewer` result events, so the edit cannot hide the worker
-// turn that makes a reviewer reject count as a review of work.
+// replay accepts only `worker` and `reviewer` result events. The edit cannot hide the worker turn
+// that makes a reviewer reject count as a review of work.
 test(
   "--continue-from resets when an earlier result event has a malformed role",
   async () => {
@@ -516,9 +499,9 @@ test(
   CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
 
-// Usefulness: verifies reordered reviewer results cannot let an obsolete accept replace the
-// latest rejection (#393 review): the replay in file order ends on the rewritten accept, which
-// differs from the state the run recorded, so the gate resets.
+// Usefulness: verifies reordered reviewer results cannot let an obsolete accept replace the latest
+// rejection (#393 review). The replay in file order ends on the rewritten accept. That differs from
+// the state that the run recorded, so the gate resets.
 test(
   "--continue-from resets when reviewer results were reordered",
   async () => {
@@ -539,8 +522,8 @@ test(
   CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
 
-// Usefulness: verifies a transcript with no gate record resets, as every transcript did before
-// the restore existed (#393 review), even when its events end on a reviewer accept.
+// Usefulness: verifies a transcript with no gate record resets (#393 review), as every transcript
+// did before the restore existed. This holds even when its events end on a reviewer accept.
 test(
   "--continue-from resets when the transcript has no gate record",
   async () => {
@@ -596,9 +579,8 @@ test(
   CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
 
-// Usefulness: verifies a changed role kind or model is refused before any turn
-// runs, and that the refusal leaves the earlier transcript unchanged even when
-// --transcript names the same file (#362).
+// Usefulness: verifies a changed role kind or model is refused before any turn runs (#362). The
+// refusal leaves the earlier transcript unchanged, even when --transcript names the same file.
 test("--continue-from refuses a changed role and keeps the transcript", async () => {
   await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
     const seen = { codex: [], claude: [], agy: [] };
@@ -645,8 +627,8 @@ test("--continue-from refuses a changed role and keeps the transcript", async ()
 });
 
 // Usefulness: verifies a CLI default that resolves to another model than the earlier run recorded
-// is refused before any turn of the run and leaves the transcript unchanged, and an unchanged model
-// continues (#394).
+// is refused before any turn (#394). The refusal leaves the transcript unchanged. An unchanged
+// model continues.
 test("--continue-from refuses a changed resolved model and keeps the transcript", async () => {
   await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
     const work = JSON.stringify({ action: "run_worker", prompt: "w" });
@@ -693,9 +675,9 @@ test("--continue-from refuses a changed resolved model and keeps the transcript"
   });
 });
 
-// Runs a first headless run that stops on the step limit, then records a resolved model for the
-// worker in its transcript, as a Claude or Copilot turn would. `fn(repo, transcriptPath, errorSpy)`
-// then continues it.
+// Runs a first headless run that stops on the step limit. It then records a resolved model for the
+// worker in its transcript, as a Claude or Copilot turn does. `fn(repo, transcriptPath, errorSpy)`
+// then continues the run.
 async function withRecordedModel(fn, recordedModel = "model-1") {
   const repo = await createTempRepo();
   const transcriptPath = join(await mkdtemp(join(tmpdir(), "cli-test-probe-")), "run.json");
@@ -732,9 +714,9 @@ const continueArgs = (repo, transcriptPath) => [
   transcriptPath,
 ];
 
-// Usefulness: the resolved-model probe runs under the mutation check of a child turn, so a probe
-// that changes the work tree halts the continuation with exit 1 before any turn, and the earlier
-// transcript stays whole (#394).
+// Usefulness: the resolved-model probe runs under the mutation check of a child turn (#394). A
+// probe that changes the work tree halts the continuation with exit 1 before any turn. The earlier
+// transcript stays whole.
 test(
   "--continue-from halts when the probe changes the work tree",
   async () => {
@@ -756,9 +738,9 @@ test(
   CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
 
-// Usefulness: after a turn that named no single model (recorded null), an unchanged model B must not be
-// refused, and a B-to-A change must not be compared against a stale A. The run continues, tells the
-// operator that the check did not run, and starts no probe (#394).
+// Usefulness: after a turn that named no single model (recorded null), an unchanged model B is not
+// refused (#394). A B-to-A change is not compared against a stale A. The run continues, tells the
+// operator that the check did not run, and starts no probe.
 test.each([["model-1"], ["model-2"]])(
   "--continue-from compares nothing after an unresolved turn, probe would say %s",
   async (probeModel) => {
@@ -783,8 +765,8 @@ test.each([["model-1"], ["model-2"]])(
   CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
 
-// Usefulness: a SIGINT during the probe cancels it through the run's signal and refuses the
-// continuation with exit 130, before any turn, leaving the earlier transcript whole (#394).
+// Usefulness: a SIGINT during the probe cancels it through the signal of the run (#394). The
+// continuation is refused with exit 130, before any turn, and the earlier transcript stays whole.
 test(
   "--continue-from cancels a probe on SIGINT and exits 130",
   async () => {
@@ -813,8 +795,9 @@ test(
 );
 
 // Usefulness: verifies a real SIGINT during a stalled process-table read ends the continued run
-// with exit 130 before any turn, and ends the read's shim, so the holder check cannot defeat
-// cancellation (#647). A child process is needed: a real signal exercises the exit handler of execa.
+// with exit 130 before any turn (#647). It also ends the shim of the read, so the holder check
+// cannot defeat cancellation. A child process is needed, because a real signal exercises the exit
+// handler of execa.
 test.skipIf(process.platform === "win32")(
   "--continue-from exits 130 on SIGINT during a stalled holder check",
   async () => {
@@ -982,10 +965,10 @@ test("--continue-from keeps a large earlier event whole", async () => {
 // failed on both versions at this count.
 const EARLIER_EVENTS = 500_000;
 
-// Usefulness: verifies a same-path continuation reads a written transcript with
-// more events than an argument spread can pass, and rewrites it with every earlier
-// event in order, then the boundary event. The earlier transcript is written
-// directly, so one run of the real read-and-write path is all the test pays for.
+// Usefulness: verifies a same-path continuation reads a written transcript with more events than an
+// argument spread can pass. It rewrites the transcript with every earlier event in order, then the
+// boundary event. The earlier transcript is written directly, so the test pays for one run of the
+// real read-and-write path.
 test("--continue-from rewrites a large written transcript with every earlier event", async () => {
   await withContinueRepo(async (repo, transcriptPath) => {
     const role = (kind) => ({ kind, model: null, effort: null, sessionId: "s" });

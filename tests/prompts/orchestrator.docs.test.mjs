@@ -37,13 +37,6 @@ async function readUserDocs() {
   return (await Promise.all(paths.map((path) => readFile(path, "utf8")))).join("\n\n");
 }
 
-// A prompt rule is asserted as the short clause that carries it, never as a whole
-// prompt sentence, so a same-meaning reword of the surrounding prose passes and a
-// changed rule fails. Where the polarity of a rule is the contract, the clause
-// keeps the negation and the action together, so "finish" cannot stand in for
-// "do not finish". Where a runtime gate enforces a rule, the gate test covers the
-// behavior, and this file only asserts that the prompt states the rule.
-
 // The target of every commit or push instruction in the text: the phrase after the
 // preposition, up to the next clause mark. A commit and a push in one clause each
 // yield a target, so a second target naming another branch is caught.
@@ -71,16 +64,16 @@ function commitTargets(text) {
   return [...flat.matchAll(new RegExp(BRANCH_TARGET.source, "gi"))].map((match) => match[1].trim());
 }
 
-// The parent rules the interactive instructions and the headless prompt share.
-// Each entry is one check run against both texts, so a rule that one text states
-// and the other does not, or that either text states with the negation dropped or
-// the action unbound, fails the parity check (issue #217, issue #252, #328).
+// The parent rules that the interactive instructions and the headless prompt share. Each entry is
+// one check run against both texts. A rule that one text states and the other does not fails the
+// parity check. So does a rule that either text states with the negation dropped or the action
+// unbound (issue #217, issue #252, #328).
 const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /PR work/i, /pull request/i),
   (text) =>
     expectRule(text, /name[^.!?]{0,40}PR branch/i, /worker/i, /commit/i, /push/i, /reviewed head/i),
-  // Every commit or push the parent rule names must target the branch it just
-  // named, never a branch of its own, so `on main` and `origin/main` fail.
+  // Every commit or push that the parent rule names must target the branch that it just named,
+  // never a branch of its own. So `on main` and `origin/main` fail.
   (text) => expectNoNamedBranchTarget(text),
   (text) => expectRule(text, /PR number/i, /head commit/i),
   (text) => expectRule(text, /headless/i, /task/i, /PR number/i),
@@ -94,11 +87,10 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, RECORD_UNDER_NOT_DONE_AND_OPEN),
 ];
 
-// Usefulness: verifies the interactive instructions and the headless prompt
-// state the same reviewed-state parent rules, so the two parent paths never
-// diverge (issue #217, issue #252, issue #328). The reviewer-Checks gate rule is
-// compared by the same presence check the gate test uses, so a reword keeps the
-// parity check and a removal breaks it (issue #318).
+// Usefulness: verifies the interactive instructions and the headless prompt state the same
+// reviewed-state parent rules (issue #217, issue #252, issue #328). The two parent paths never
+// diverge. The reviewer-Checks gate rule uses the same presence check as the gate test. A reword
+// keeps the parity check, and a removal breaks it (issue #318).
 test("interactive instructions and headless prompt share the reviewed-state rules", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
@@ -110,11 +102,10 @@ test("interactive instructions and headless prompt share the reviewed-state rule
   expectReviewerGateRule(prompt);
 });
 
-// Usefulness: verifies the headless prompt states that a gate on a base branch
-// whose required-check sources each state it holds none passes on the PR head, the
-// clean reviewed tree, and the merge state, and records the absence, so an
-// orchestrator on such a branch knows the gate can pass and knows what it did not
-// verify (issue #336).
+// Usefulness: verifies the headless prompt states the gate outcome on a base branch whose
+// required-check sources each state it holds none (issue #336). The gate passes on the PR head, the
+// clean reviewed tree, and the merge state, and records the absence. An orchestrator on such a
+// branch then knows the gate can pass and what it did not verify.
 test("the headless prompt states the no-required-check gate outcome", async () => {
   const prompt = initialPrompt({
     task: "Implement feature X",
@@ -136,20 +127,20 @@ test("the headless prompt states the no-required-check gate outcome", async () =
   expectRule(instructions, /cannot read/i, /refus/i);
 });
 
-// The surfaces that state the gate's empty-union rule. The reviewer found them
-// contradicting each other, so one rule is asserted on each: only an allowlisted
-// reply proves an absence, and a private Free-plan repository must omit `--pr`.
-// Usefulness: verifies every surface states the same rule, so an orchestrator
-// reading one is not told a run passes on a branch the gate refuses (#336 review).
+// The surfaces that state the empty-union rule of the gate. The reviewer found them contradicting
+// each other, so one rule is asserted on each. Only an allowlisted reply proves an absence, and a
+// private Free-plan repository must omit `--pr`. Usefulness: verifies every surface states the same
+// rule (#336 review). An orchestrator reading one is then not told that a run passes on a branch
+// that the gate refuses.
 const RULE_SURFACES = [
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
   ["the user docs", readUserDocs],
 ];
 
 for (const [name, load] of RULE_SURFACES) {
-  // Usefulness: verifies ${name} states the allowlist rule, the one absence per
-  // source, and the pagination and rule-type unknown, so it cannot describe a
-  // partial, malformed, or unreadable read as a pass (#336 review).
+  // Usefulness: verifies ${name} states the allowlist rule, the one absence per source, and the
+  // pagination and rule-type unknown (#336 review). It then cannot describe a partial, malformed,
+  // or unreadable read as a pass.
   test(`${name} states the allowlisted absence rule`, async () => {
     const text = await load();
     expectRule(text, /allowlist/i, /fails closed/i);
@@ -158,7 +149,7 @@ for (const [name, load] of RULE_SURFACES) {
     expectRule(text, /repository rulesets/i, /read of every page/i, /documented rule type/i);
     expectRule(text, /classic branch protection/i, /Branch not protected/);
     expectRule(text, /No successful classic-protection body proves an absence/i);
-    // A read of no page at all is unknown, and exactly one empty page is empty: two
+    // A read of no page at all is unknown, and exactly one empty page is empty. Those are two
     // different replies, and neither is a positive absence (#336 review).
     expectRule(text, /no page at all/i, /unknown/i);
     expectRule(text, /exactly one empty page/i, /empty/i, /positive absence/i);
@@ -168,9 +159,8 @@ for (const [name, load] of RULE_SURFACES) {
     expectRule(text, /paginated/i, /later page/i, /enforced/i);
   });
 
-  // Usefulness: verifies ${name} states the four ruleset outcomes, so the empty
-  // ruleset read is not described with the name of a reply that refuses (#336
-  // review).
+  // Usefulness: verifies ${name} states the four ruleset outcomes (#336 review). The empty ruleset
+  // read is then not described with the name of a reply that refuses.
   test(`${name} states the four ruleset outcomes`, async () => {
     const text = await load();
     // A read the gate cannot interpret refuses whatever the union holds.
@@ -186,9 +176,8 @@ for (const [name, load] of RULE_SURFACES) {
     expectRule(text, /no page at all/i, /two or more empty pages/i);
   });
 
-  // Usefulness: verifies ${name} states that an empty page inside a longer read
-  // settles nothing, so a partial read is not classified from the pages that did
-  // arrive (#336 review).
+  // Usefulness: verifies ${name} states that an empty page inside a longer read settles nothing
+  // (#336 review). A partial read is then not classified from the pages that did arrive.
   test(`${name} states that an empty page inside a longer read settles nothing`, async () => {
     const text = await load();
     expectRule(text, /empty page inside a longer read/i, /nothing/i);
@@ -201,18 +190,17 @@ for (const [name, load] of RULE_SURFACES) {
     expectRule(text, /ruleset-only branch/i, /reaches|does/i);
   });
 
-  // Usefulness: verifies ${name} states that a private Free-plan repository still
-  // refuses a declared run and must omit `--pr`, so the gap #336 leaves is
-  // visible to whoever reads it (#336 review).
+  // Usefulness: verifies ${name} states that a private Free-plan repository still refuses a
+  // declared run and must omit `--pr` (#336 review). The gap that #336 leaves is then visible to
+  // whoever reads it.
   test(`${name} states that a private Free-plan repository must omit --pr`, async () => {
     const text = await load();
     expectRule(text, /private/i, /Free.plan/i, /omit/i, /--pr/);
   });
 }
 
-// Usefulness: verifies the two parent paths state the same narrow exception, so
-// an interactive parent and a headless orchestrator resolve the role conflict the
-// same way (issue #319).
+// Usefulness: verifies the two parent paths state the same narrow exception (issue #319). An
+// interactive parent and a headless orchestrator then resolve the role conflict the same way.
 test("interactive instructions and headless prompt share the status-read exception", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = gatedPrompt("claude").replace(/\s+/g, " ");
@@ -222,10 +210,9 @@ test("interactive instructions and headless prompt share the status-read excepti
   }
 });
 
-// Usefulness: verifies the interactive instructions, the headless prompt, and the
-// user docs state the status-read exception with the same scope: one command,
-// `agent-loop role wait-checks`, so no text widens the role rule beyond what the
-// others allow (issue #348).
+// Usefulness: verifies the interactive instructions, headless prompt, and user docs state the
+// status-read exception with one scope: the command `agent-loop role wait-checks`. No text widens
+// the role rule beyond what the others allow (issue #348).
 test("instructions, prompt, and user docs share the status-read exception scope", async () => {
   const scope = "and agent-loop role wait-checks is the only command it covers";
   const flat = (text) => text.replace(/`/g, "").replace(/\s+/g, " ");
@@ -238,13 +225,22 @@ test("instructions, prompt, and user docs share the status-read exception scope"
   }
 });
 
-// Usefulness: verifies the reference architecture section states the same
-// status-read exception as the prompt, `agent-loop role wait-checks` only, so no
-// text keeps the older rule that allowed `gh pr checks` (issue #348).
+// Usefulness: verifies the reference architecture section (docs/reference/architecture.md) states
+// the same status-read exception as the prompt. `agent-loop role wait-checks` is the only command
+// it covers, so no text keeps the older rule that allowed `gh pr checks` (issue #348). The
+// exclusivity clause keeps "is the only command" whole, so a negated or widened claim fails.
 test("the reference architecture rule names role wait-checks as the only exception command", async () => {
-  const readme = await readUserDocs();
-  const rule = readme.split("\n").find((line) => line.startsWith("- **Orchestrator**"));
-  expectRule(rule, /pull request check status/i, /`agent-loop role wait-checks`/, /only command/i);
+  const architecture = await readFile(
+    join(dirname(instructionsPath), "reference/architecture.md"),
+    "utf8",
+  );
+  const rule = architecture.split("\n").find((line) => line.startsWith("- **Orchestrator**"));
+  expectRule(
+    rule,
+    /pull request check status/i,
+    /`agent-loop role wait-checks`/,
+    /status read is the only command (?:that )?the exception covers/i,
+  );
   expect(rule).not.toContain("gh pr checks");
 });
 
@@ -258,8 +254,8 @@ test("the interactive instructions forbid a remote write and allow a status read
   );
 });
 
-// Usefulness: verifies the user docs state that the runtime does not see a remote
-// write, names both paths, and says the connector write was not probed (issue #422).
+// Usefulness: verifies the user docs state that the runtime does not see a remote write (issue
+// #422). They name both paths and say that the connector write was not probed.
 test("the user docs state the remote-write limit", async () => {
   const readme = (await readUserDocs()).replace(/\s+/g, " ");
   expect(readme).toContain(
@@ -270,20 +266,19 @@ test("the user docs state the remote-write limit", async () => {
   expect(readme).toContain("A write through those tools was not probed");
 });
 
-// The refused-`--cwd` rule both parent paths state the same way. It is the
-// decision, not a repair procedure: a parent ends the run and a maintainer
-// decides what happens to the work tree. The mechanism behind it differs by
-// parent, so only the decision, the qualification, and the three refused cases
-// are pinned here, and the test fails when either side drops them (issue #327).
+// The refused-`--cwd` rule that both parent paths state the same way. It is the decision, not a
+// repair procedure: a parent ends the run, and a maintainer decides what happens to the work tree.
+// The mechanism behind it differs by parent. So only the decision, the qualification, and the three
+// refused cases are pinned here. The test fails when either side drops them (issue #327).
 const REFUSED_CWD_RULE = [
   "A refused `--cwd` is not the parent's to repair: end the run, name the path and the refusal in the reason, and leave the work tree to a maintainer, who decides whether to recreate it and start a new run.",
   "Abort only when a non-terminal run exists at the refused `--cwd`. With no run state there, from a refused init or a path that was never this run's, no run started, so report the refusal and do not abort. A run that is already terminal needs no abort.",
   "One rule covers every refused `--cwd`: a path that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason names that path and that message.",
 ];
 
-// Usefulness: verifies the interactive instructions and the headless prompt state
-// the same refused-`--cwd` rule, so neither parent path sends a maintainer
-// through a work tree repair that the runtime never asked for (issue #327).
+// Usefulness: verifies the interactive instructions and the headless prompt state the same
+// refused-`--cwd` rule (issue #327). Neither parent path then sends a maintainer through a work
+// tree repair that the runtime never asked for.
 test("interactive instructions and headless prompt share the refused --cwd rule", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
@@ -303,7 +298,9 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   }
 });
 
-// Usefulness: verifies the interactive instructions and the headless prompt state the same held-session rule, so neither parent ends a live holder of a Claude session that `--resume-interrupted` refused on (#671).
+// Usefulness: verifies the interactive instructions and the headless prompt state the same
+// held-session rule (#671). Neither parent ends a live holder of a Claude session that
+// `--resume-interrupted` refused on.
 test("interactive instructions and headless prompt share the held-session rule", async () => {
   const rule =
     "`dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the Claude session of the role. Do not end that process. The maintainer ends it or waits for it.";
@@ -313,10 +310,9 @@ test("interactive instructions and headless prompt share the held-session rule",
   expect(prompt).toContain(rule);
 });
 
-// Usefulness: verifies the interactive instructions and the headless prompt
-// state the supplied-status rule the same way, because the two paths resolve the
-// same rule for a parent and a drifted statement would tell one of them the
-// reviewer still reads the checks (issue #320 review).
+// Usefulness: verifies the interactive instructions and the headless prompt state the
+// supplied-status rule the same way (issue #320 review). The two paths resolve the same rule for a
+// parent. A drifted statement tells one of them that the reviewer still reads the checks.
 test("interactive instructions and headless prompt state the supplied-status rule alike", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = initialPrompt({
@@ -341,10 +337,9 @@ test("interactive instructions and headless prompt state the supplied-status rul
   }
 });
 
-// Usefulness: verifies the two surfaces state the supplied-status rule in the
-// same order and with the same conditions, so a parent reading the instructions
-// and an orchestrator reading the prompt resolve one rule
-// (issue #320 review, second round).
+// Usefulness: verifies the two surfaces state the supplied-status rule in the same order and with
+// the same conditions (issue #320 review, second round). A parent reading the instructions and an
+// orchestrator reading the prompt then resolve one rule.
 test("the supplied-status rule states the same conditions in both surfaces", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const declared = initialPrompt({
@@ -421,8 +416,8 @@ test("ADR 0019 names the five accepted gaps", async () => {
   }
 });
 
-// Usefulness: verifies the user docs and the orchestrator instructions describe the opt-in with the
-// ADR: the flag, the sandbox mode, the network option, the ADR, and each gap.
+// Usefulness: verifies the user docs and the orchestrator instructions describe the opt-in as ADR
+// 0019 does. Each text names the flag, the sandbox mode, the network option, the ADR, and each gap.
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
@@ -439,9 +434,9 @@ test.each([
   expect(text).toMatch(/unelevated Windows/i);
 });
 
-// Usefulness: verifies every surface that states the network limit says what it covers, shell
-// commands that the sandbox runs, and does not claim it blocks model-side tools such as
-// web_search, so a reader never takes the limit for a block on every channel.
+// Usefulness: verifies every surface that states the network limit says what it covers: the shell
+// commands that the sandbox runs. No surface claims that it blocks model-side tools such as
+// web_search. A reader never takes the limit for a block on every channel.
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
@@ -458,7 +453,7 @@ test.each([
   expect(text).toMatch(/model-side tools?|web_search|web search/i);
 });
 
-// Usefulness: verifies ADR 0019 supersedes ADR 0001 in both directions and in the index, and
+// Usefulness: verifies ADR 0019 supersedes ADR 0001 in both directions and in the index. It
 // restates the decisions of ADR 0001 that still hold, so no live decision is lost.
 test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
   const adr1 = await readRepoFile("adr/0001-hybrid-orchestrator-runtime.md");
@@ -484,7 +479,7 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
 });
 
 // Usefulness: verifies the reviewer prompt, the user docs, the orchestrator instructions, the other
-// docs, the help text, and ADR 0019 carry no unqualified denial, so the prompt and the docs state
+// docs, the help text, and ADR 0019 carry no unqualified denial. The prompt and the docs then state
 // one rule about what the Codex sandbox blocks.
 test.each([
   ["the user docs", readUserDocs],
@@ -505,7 +500,7 @@ test.each([
 
 // Usefulness: verifies requirement "no surface calls the Codex reviewer read-only or sandboxed by
 // default" (ADR 0038). Each stale phrase named the old default or the old network rule, and was
-// removed on purpose; a restored one fails here. A reword that keeps the meaning passes.
+// removed on purpose. A restored phrase fails here. A reword that keeps the meaning passes.
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
@@ -526,8 +521,8 @@ test.each([
   expect(text).not.toMatch(/`codex` does not: its sandbox blocks/);
 });
 
-// Usefulness: verifies the user docs and --help state the default and both opt-ins in one place each
-// reader looks, so the new default is not only in the ADR (ADR 0038).
+// Usefulness: verifies the user docs and --help state the default and both opt-ins in one place
+// each reader looks. The new default is then not only in the ADR (ADR 0038).
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],

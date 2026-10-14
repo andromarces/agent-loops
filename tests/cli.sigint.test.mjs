@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test, vi } from "vite-plus/test";
 
-// Answers `git` from memory for the tests that switch it on (see
-// `withContinueRepo`); every other test, and every other command, reaches the real `execa`.
+// Answers `git` from memory for the tests that switch it on (see `withContinueRepo`). Every other
+// test, and every other command, reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -34,6 +34,7 @@ vi.mock("../src/lib/test-cmd.mjs", async (importOriginal) => {
 import { main } from "../src/cli.mjs";
 import {
   cleanRepoGit,
+  createCleanRepoDir,
   createTempRepo,
   processExists,
   removePath,
@@ -239,8 +240,7 @@ test.skipIf(process.platform === "win32")(
 // repo is a directory with a `.git` directory and `git` is answered from memory
 // (`cleanRepoGit`), so the test starts no `git` process.
 async function withContinueRepo(fn) {
-  const repo = await mkdtemp(join(tmpdir(), "cli-test-clean-repo-"));
-  await mkdir(join(repo, ".git"));
+  const repo = await createCleanRepoDir();
   gitDouble.answer = cleanRepoGit;
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -316,7 +316,7 @@ test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () 
 });
 
 // Usefulness: verifies a headless reviewer turn whose evidence snapshot a second SIGINT ended keeps
-// the "not captured" reason in the error report and the transcript, so the cancel never reads as a
+// the "not captured" reason in the error report and the transcript. The cancel never reads as a
 // plain interrupt (#729).
 test("a headless reviewer cancel in the evidence snapshot reports the evidence as not captured", async () => {
   await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
@@ -381,8 +381,9 @@ test("a headless reviewer cancel in the evidence snapshot reports the evidence a
   });
 });
 
-// Usefulness: verifies a canceled snapshot error whose message cannot convert to text still ends the
-// run with exit 130 and a written transcript, so a hostile reason never escapes the cancel path (#729).
+// Usefulness: verifies a canceled snapshot error whose message cannot convert to text still ends
+// the run with exit 130 and a written transcript. A hostile reason never escapes the cancel path
+// (#729).
 test("a cancel whose snapshot reason cannot convert to text still exits 130", async () => {
   const repo = await createTempRepo();
   const transcriptPath = join(repo, "transcript.json");
@@ -449,10 +450,11 @@ test("a cancel whose snapshot reason cannot convert to text still exits 130", as
   }
 });
 
-// Usefulness: acceptance (#669) — a real SIGINT while an execa child runs ends the run through its
-// handler (exit 130, transcript written), not by re-raised signal. A child process is needed: the
-// execa exit handler re-raises the signal only when no other SIGINT listener remains. Windows has
-// no signals, so `kill("SIGINT")` ends the process there at once and the case cannot run.
+// Usefulness: acceptance (#669). A real SIGINT while an execa child runs ends the run through its
+// handler (exit 130, transcript written), not by a re-raised signal. A child process is needed,
+// because the execa exit handler re-raises the signal only when no other SIGINT listener remains.
+// Windows has no signals, so `kill("SIGINT")` ends the process there at once and the case cannot
+// run.
 test.skipIf(process.platform === "win32")(
   "a real SIGINT during a child turn exits 130 and writes the transcript",
   async () => {
@@ -518,9 +520,9 @@ test.skipIf(process.platform === "win32")(
   60_000,
 );
 
-// Usefulness: acceptance (#669) — the SIGINT listener stays registered while the run handles the
-// first signal, so the exit handler of execa finds another listener and does not re-raise it.
-// Holds on every platform, unlike the real-signal case above.
+// Usefulness: acceptance (#669). The SIGINT listener stays registered while the run handles the
+// first signal. The exit handler of execa then finds another listener and does not re-raise the
+// signal. This holds on every platform, unlike the real-signal case above.
 test("the SIGINT listener of a run stays registered after the signal fires", async () => {
   const repo = await createTempRepo();
   const origExitCode = process.exitCode;

@@ -2,6 +2,12 @@
 import { expect } from "vite-plus/test";
 import { initialPrompt } from "../../src/prompts/orchestrator.mjs";
 
+// A prompt rule is asserted as the short clause that carries it, never as a whole prompt sentence.
+// A same-meaning reword of the surrounding prose then passes, and a changed rule fails. Where the
+// polarity of a rule is the contract, the clause keeps the negation and the action together.
+// Then "finish" cannot stand in for "do not finish". Where a runtime gate enforces a rule, the gate
+// test covers the behavior. The prompt tests only assert that the prompt states the rule.
+
 /** The clauses of a prompt or instruction text, whitespace collapsed. */
 export const clauses = (text) => text.replace(/\s+/g, " ").split(/[.;]\s+/);
 
@@ -12,12 +18,11 @@ export function expectRule(text, ...terms) {
   expect(stated, `no clause carries ${terms.map(String).join(" ")}`).toBe(true);
 }
 
-// The reviewer-Checks gate rule, checked for presence only: one sentence names
-// the reviewer Checks line and a gate input. A reword that keeps those two nouns
-// passes, and a removed rule fails. Reading an inversion out of prose is out of
-// scope here, so the behavior the rule describes is covered where it runs, in
-// `--require-accept refuses a finish that relies on a worker Checks line` in
-// tests/role.finish-abort.test.mjs.
+// The reviewer-Checks gate rule is checked for presence only: one sentence names the reviewer
+// Checks line and a gate input. A reword that keeps those two nouns passes, and a removed rule
+// fails. Reading an inversion out of prose is out of scope here. The behavior of the rule is
+// covered where it runs, in `--require-accept refuses a finish that relies on a worker Checks line`
+// in tests/role.finish-abort.test.mjs.
 const REVIEWER_GATE_SENTENCE =
   /[^.!?]*(?:reviewer'?s? checks line[^.!?]*gate input|gate input[^.!?]*reviewer'?s? checks line)[^.!?]*[.!?]/i;
 
@@ -26,11 +31,10 @@ export function expectReviewerGateRule(text) {
   expect(text).toMatch(REVIEWER_GATE_SENTENCE);
 }
 
-// The rule-bearing clauses of the reviewed-state parent rules. Each keeps the
-// action with the term that gives it meaning, so a reversed rule fails: the
-// compare names both heads, `reviewed.clean: true` keeps its value, an accept
-// without a Checks line is not accepted, and the unresolved-compare rule keeps
-// "do not finish as verified" with its abort and its record.
+// The rule-bearing clauses of the reviewed-state parent rules. Each keeps the action with the term
+// that gives it meaning, so a reversed rule fails. The compare names both heads, `reviewed.clean:
+// true` keeps its value, and an accept without a Checks line is not accepted. The
+// unresolved-compare rule keeps "do not finish as verified" with its abort and its record.
 export const COMPARE_BEFORE_FINISH =
   /compare[^.!?]{0,40}reviewed\.head[^.!?]{0,40}PR head[^.!?]{0,40}\bfinish\b/i;
 
@@ -41,13 +45,12 @@ export const REQUIRE_CLEAN_TRUE = /require[^.!?]{0,40}reviewed\.clean[^.!?]{0,20
 export const ACCEPT_WITHOUT_CHECKS =
   /treat[^.!?]{0,60}accept[^.!?]{0,40}without[^.!?]{0,20}Checks[^.!?]{0,20}not accepted/i;
 
-// The unresolved-compare rule, clause by clause. `do not finish as verified` is the
-// prohibition, and the clause that follows must offer both permitted actions as
-// alternatives of one choice. The two actions are joined directly by `or`, and the run
-// from `record` to `unresolved compare` may cross neither punctuation nor a clause, so
-// the words of one option cannot be read out of two separate clauses or two separate
-// choices. The order is not the contract, so both orders pass, and a clause that drops
-// either action fails (issue #351).
+// The unresolved-compare rule is checked clause by clause: `do not finish as verified` is the
+// prohibition. The clause that follows must offer both permitted actions as alternatives of one
+// choice. The two actions are joined directly by `or`. The run from `record` to `unresolved
+// compare` crosses neither punctuation nor a clause. So the words of one option are never read out
+// of two clauses or two choices. The order is not the contract, so both orders pass, and a clause
+// that drops either action fails (issue #351).
 export const UNRESOLVED_HEAD_CONDITION = /PR head cannot be resolved/i;
 
 export const DO_NOT_FINISH_AS_VERIFIED = /do not finish as verified/i;
@@ -83,13 +86,13 @@ export const gatedPrompt = (orchestratorKind, reviewerKind = "claude") =>
     reviewerKind,
   });
 
-// A sentence that denies network, GitHub, or a check read to a turn must say that the limit
-// covers shell commands, in the sentence or in the one after it, so a reader never takes the
-// Codex sandbox for a block on a model-side tool or another channel. The positive-phrase tests
-// above cannot catch a contradicting sentence, so this scan reads every sentence of every surface
-// that states such a limit (issue #421, ADR 0019). A denial is a negation near network, GitHub, or
-// the required checks: `cannot reach ... network`, `no turn can read the checks`, `blocks
-// network`, `cannot run gh`, `with no network access`.
+// A sentence that denies network, GitHub, or a check read to a turn must say that the limit covers
+// shell commands. It says so in the same sentence or the next. A reader then never takes the Codex
+// sandbox for a block on a model-side tool or another channel. The positive-phrase tests above
+// cannot catch a contradicting sentence, so this scan reads every sentence of each such surface
+// (issue #421, ADR 0019). A denial is a negation near network, GitHub, or the required checks.
+// Examples: `cannot reach ... network`, `no turn can read the checks`, `blocks network`, `cannot
+// run gh`, `with no network access`.
 export const NETWORK_DENIAL = new RegExp(
   [
     String.raw`\b(cannot|can not|unable to|never)\b[^.;:]*\b(reach|read|run|connect|wait)\b[^.;:]*(network|GitHub|\bgh\b|credential)`,

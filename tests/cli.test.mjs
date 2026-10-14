@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +21,13 @@ vi.mock("execa", async (importOriginal) => {
 import { execa } from "execa";
 import { main } from "../src/cli.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import { cleanRepoGit, createTempRepo, removePath, untrackedFilesGit } from "./runtime-helpers.mjs";
+import {
+  cleanRepoGit,
+  createCleanRepoDir,
+  createTempRepo,
+  removePath,
+  untrackedFilesGit,
+} from "./runtime-helpers.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];
@@ -623,8 +629,7 @@ test("role help parses after an operation and rejects an inline value", () => {
 // repo is a directory with a `.git` directory and `git` is answered from memory
 // (`cleanRepoGit`), so the test starts no `git` process.
 async function withContinueRepo(fn) {
-  const repo = await mkdtemp(join(tmpdir(), "cli-test-clean-repo-"));
-  await mkdir(join(repo, ".git"));
+  const repo = await createCleanRepoDir();
   gitDouble.answer = cleanRepoGit;
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

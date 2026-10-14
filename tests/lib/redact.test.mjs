@@ -1,29 +1,29 @@
 import { expect, test } from "vite-plus/test";
 import { redactEnvSecrets } from "../../src/lib/redact.mjs";
 
-// Usefulness: verifies a short value is never redacted, because a short value
-// would match ordinary words and destroy the tail (issue #420).
+// Usefulness: verifies a short value is never redacted. A short value matches ordinary words and
+// destroys the tail (issue #420).
 test("a short secret-named value is not redacted", () => {
   expect(redactEnvSecrets("a 1234 b", { MY_TOKEN: "1234" })).toBe("a 1234 b");
 });
 
-// Usefulness: verifies the secret name test ignores case, so a Windows variable that the OS reports
-// as `Github_Token` is redacted like `GITHUB_TOKEN` (issue #431, ADR 0017).
+// Usefulness: verifies the secret name test ignores case. A Windows variable that the OS reports as
+// `Github_Token` is then redacted like `GITHUB_TOKEN` (issue #431, ADR 0017).
 test("a secret-named value is redacted whatever the case of the variable name", () => {
   expect(redactEnvSecrets("x synthetic-value-9a8b y", { My_Token: "synthetic-value-9a8b" })).toBe(
     "x [redacted:My_Token] y",
   );
 });
 
-// Usefulness: verifies the trade-off of ADR 0017: a secret-named value that is also a common word
-// is still redacted, and the marker names the variable, so a reader knows what the text masked.
+// Usefulness: verifies the trade-off of ADR 0017. A secret-named value that is also a common word
+// is still redacted. The marker names the variable, so a reader knows what the text masked.
 test("a common-word secret-named value stays redacted and the marker names the variable", () => {
   const out = redactEnvSecrets("connect failed in production", { APP_AUTH_MODE: "production" });
   expect(out).toBe("connect failed in [redacted:APP_AUTH_MODE]");
 });
 
-// Usefulness: verifies a value with a quote and a backslash is redacted in its JSON-escaped form too,
-// because a serialized error object holds the escaped text and a decoder recovers the value from it
+// Usefulness: verifies a value with a quote and a backslash is also redacted in its JSON-escaped
+// form. A serialized error object holds the escaped text, and a decoder recovers the value from it
 // (issue #431, ADR 0017).
 test("a value with a quote and a backslash is redacted in its JSON-escaped form", () => {
   const value = 'synthetic"probe\\value-8f3a1c';
@@ -34,8 +34,8 @@ test("a value with a quote and a backslash is redacted in its JSON-escaped form"
   );
 });
 
-// Usefulness: verifies no fragment of a secret survives when one value is a prefix of another,
-// the case that a per-value replacement order leaves open (issue #521, ADR 0017).
+// Usefulness: verifies no fragment of a secret survives when one value is a prefix of another. A
+// per-value replacement order leaves that case open (issue #521, ADR 0017).
 test("a secret that is a prefix of another secret leaves no fragment", () => {
   const env = { A_TOKEN: "prefixvalue", B_TOKEN: "prefixvalue-TAILSUFFIX" };
   const out = redactEnvSecrets("x prefixvalue-TAILSUFFIX y", env);
@@ -60,8 +60,8 @@ test("a self-overlapping secret occurrence leaves no fragment", () => {
   expect(out).toBe("x [redacted:SELF_TOKEN] y");
 });
 
-// Usefulness: verifies a value that starts with a quote is redacted in its escaped form with the
-// main output: the raw match leaves the escape backslash, and no value stays (issue #521).
+// Usefulness: verifies a value that starts with a quote is redacted in its escaped form, with the
+// main output. The raw match leaves the escape backslash, and no value stays (issue #521).
 test("a value that starts with a quote leaves only the escape backslash", () => {
   const value = '"abcdefg';
   const escaped = JSON.stringify(value).slice(1, -1);
@@ -95,15 +95,13 @@ const MAIN_MIN_SECRET_LENGTH = 8;
 const MAIN_SECRET_NAME = /token|secret|passw|key|credential|auth/i;
 
 /**
- * Replaces every occurrence of the value of a secret-named environment variable
- * with `[redacted:NAME]`, in its raw form and in its JSON-escaped form, because a
- * serialized error holds the escaped text and a decoder recovers the value from it.
- * Exact-value match only: a secret that the command derives, encodes, or reads from
- * a file is not found.
+ * Replaces every occurrence of the value of a secret-named environment variable with
+ * `[redacted:NAME]`. It matches the raw form and the JSON-escaped form, because a serialized error
+ * holds the escaped text and a decoder recovers the value from it. Exact-value match only: a
+ * secret that the command derives, encodes, or reads from a file is not found.
  * @param {string} text
  * @param {NodeJS.ProcessEnv} env
  */
-
 function redactEnvSecretsOnMain(text, env = process.env) {
   let out = text;
   for (const [name, value] of Object.entries(env)) {
@@ -147,7 +145,8 @@ test("adjacent markers do not rebuild the raw value of another secret", () => {
 });
 
 // Usefulness: verifies a single secret that overlaps nothing gives the output of the pass-based
-// redaction, at the start, at the end, repeated, next to marker-like text, and with brackets (issue #521).
+// redaction. The cases are the start, the end, a repeat, marker-like text, and brackets (issue
+// #521).
 test.each([
   ["start", "synthetic-aaa tail"],
   ["end", "head synthetic-aaa"],
@@ -171,8 +170,8 @@ test.each([
   expect(redactEnvSecrets(text, env)).toBe(redactEnvSecretsOnMain(text, env));
 });
 
-// Usefulness: verifies a second redaction of an output is a no-op, so a later redaction (a log line cut,
-// a caller cleanup) never grows a bounded text (issue #521).
+// Usefulness: verifies a second redaction of an output is a no-op. A later redaction, such as a log
+// line cut or a caller cleanup, never grows a bounded text (issue #521).
 test.each([
   [{ A_TOKENx: 'x]"abcdefg' }, 'x]"abcdefg\\"abcdefg'],
   [{ A_TOKEN: "synthetic-aaa", C_KEY: "TOKEN][redacted:A_TOKEN" }, "synthetic-aaasynthetic-aaa"],
@@ -184,7 +183,7 @@ test.each([
 });
 
 // Usefulness: verifies the redaction ends and leaves no value when every character that a marker
-// could use appears in some value (issue #521).
+// can use appears in some value (issue #521).
 test("the redaction ends when every candidate marker character is part of a value", () => {
   let every = "";
   for (let code = 0; code < 0x10000; code++) every += String.fromCharCode(code);
@@ -195,15 +194,15 @@ test("the redaction ends when every candidate marker character is part of a valu
   }
 });
 
-// Usefulness: verifies a marker never shows a variable name that holds a value, and no fragment of
-// the escaped form stays after the marker (issue #521).
+// Usefulness: verifies a marker never shows a variable name that holds a value. No fragment of the
+// escaped form stays after the marker (issue #521).
 test("a boundary hit between a marker and the text after it leaves no fragment", () => {
   const out = redactEnvSecrets('x]"abcdefg\\"abcdefg', { A_TOKENx: 'x]"abcdefg' });
   expect(out).not.toContain("abcdefg");
 });
 
 // Usefulness: verifies the redaction of an adversarial cascade stays near-linear (issue #521). Each
-// round of a naive rescan removes one layer of this text, so many rounds would cost a quadratic scan.
+// round of a naive rescan removes one layer of this text, so many rounds cost a quadratic scan.
 test("an adversarial cascade input redacts in bounded time and leaves no value", () => {
   const value = "ab[*]cdef";
   const env = { "X_ab[*]cdef_KEY": value };
@@ -216,8 +215,8 @@ test("an adversarial cascade input redacts in bounded time and leaves no value",
   expect(redactEnvSecrets(out, env)).toBe(out);
 });
 
-// Usefulness: verifies the repeated cut redaction of a log line never grows the line past the bound
-// of 300 characters plus the cut marker (issue #521).
+// Usefulness: verifies the repeated cut redaction of a log line never grows the line past the
+// bound. The bound is 300 characters plus the cut marker (issue #521).
 test("a redaction after the log cut keeps the line within the bound", () => {
   const env = { AGENT_TEST_SECRET: "abcdefgh..." };
   const cut = `${"x".repeat(292)}abcdefgh${"y".repeat(20)}`.slice(0, 300) + "...";
@@ -226,8 +225,9 @@ test("a redaction after the log cut keeps the line within the bound", () => {
   expect(out).not.toContain("abcdefgh...");
 });
 
-// Usefulness: verifies a single secret that overlaps nothing gives the output of the main algorithm over a
-// systematic set of boundary inputs, so the one exception of ADR 0017 stays the only difference (issue #521).
+// Usefulness: verifies a single secret that overlaps nothing gives the output of the main algorithm
+// over a systematic set of boundary inputs. The one exception of ADR 0017 stays the only difference
+// (issue #521).
 test("a single secret keeps the main output over systematic boundary inputs", () => {
   const values = [
     "abcdefgh",
@@ -295,8 +295,8 @@ function hasOverlappingOccurrences(text, forms) {
   return spans.some((span, i) => i > 0 && span[0] < spans[i - 1][1]);
 }
 
-// Usefulness: verifies the stated exceptions of ADR 0017: where the main output holds a complete value
-// or a piece of a self-overlapping occurrence, the new output holds none (issue #521).
+// Usefulness: verifies the stated exceptions of ADR 0017. Where the main output holds a complete
+// value or a piece of a self-overlapping occurrence, the new output holds none (issue #521).
 test("the only differences from the main output are where the main output leaks", () => {
   const rebuilt = { A_TOKENx: "x]abcdefg" };
   const boundary = "x]abcdefgabcdefg";
@@ -308,8 +308,9 @@ test("the only differences from the main output are where the main output leaks"
   expect(redactEnvSecrets("abcabcabcabc", selfOverlap)).toBe("[redacted:SELF_TOKEN]");
 });
 
-// Usefulness: pins the third difference from the main output in ADR 0017: overlapping occurrences that the
-// main output masks fully give one marker for the merged run, not one for each match (issue #521).
+// Usefulness: pins the third difference from the main output in ADR 0017. Overlapping occurrences
+// that the main output masks fully give one marker for the merged run, not one for each match
+// (issue #521).
 test("a tiled self-overlapping value gives one marker where main gives two", () => {
   const env = { S_TOKEN: "abcabcabc" };
   const text = "abcabcabcabcabcabc";
@@ -319,8 +320,8 @@ test("a tiled self-overlapping value gives one marker where main gives two", () 
   expect(out).not.toContain("abc");
 });
 
-// Usefulness: verifies two variables with one value give the output of the main algorithm: the first
-// variable in the environment owns the marker, and no value stays (issue #521).
+// Usefulness: verifies two variables with one value give the output of the main algorithm. The
+// first variable in the environment owns the marker, and no value stays (issue #521).
 test("two variables with the same value give the main output", () => {
   const env = { A_TOKEN: "synthetic-aaa", B_KEY: "synthetic-aaa" };
   const text = "x synthetic-aaa y";
@@ -328,11 +329,12 @@ test("two variables with the same value give the main output", () => {
   expect(redactEnvSecrets(text, env)).toBe("x [redacted:A_TOKEN] y");
 });
 
-// Usefulness: verifies the setup and the marker choice stay near-linear in the number of unique values,
-// so an environment with many secret-named variables does not slow every redaction (issue #521). The
-// check compares the best run time of 2,500 values with that of 40,000 values on a short text, so a slow
-// runner does not change the verdict: the size ratio is 16, linear growth gives about 16 (measured 15 to
-// 17), and quadratic growth gives about 256 (measured 160 to 220). The bound of 64 sits between them.
+// Usefulness: verifies the setup and the marker choice stay near-linear in the number of unique
+// values (issue #521). Many secret-named variables then do not slow every redaction. The check
+// compares the best run time of 2,500 values with that of 40,000 values on a short text. A slow
+// runner does not change the verdict. The size ratio is 16, so linear growth gives about 16
+// (measured 15 to 17) and quadratic growth about 256 (measured 160 to 220). The bound of 64 sits
+// between them.
 test("the redaction time grows near-linearly with the number of unique values", () => {
   const run = (count, attempts) => {
     const env = {};
