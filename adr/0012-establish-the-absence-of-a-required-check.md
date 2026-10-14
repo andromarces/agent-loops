@@ -373,14 +373,19 @@ Andro Marces
 ## Links
 
 - [Issue #336: Decide how a declared PR run finishes on a base branch with no required checks](https://github.com/andromarces/agent-loops/issues/336)
-- Implementation: `readRequiredSource`, `classifyRulesets`, `classifyProtection`,
-  `ghRequiredNames`, and `requiredContexts` in `src/lib/ci-required-sources.mjs`, the
-  empty-union branch of `checkCi` in `src/lib/ci-gate.mjs`, `ciGate` and the accepted-finish branch in
-  `src/runtime.mjs`, the `noRequiredChecks` record in `src/role.mjs`, the gate
-  line in `src/prompts/orchestrator.mjs`; tests in
-  `tests/lib/ci-gate.*.test.mjs`, `tests/runtime*.test.mjs`,
-  `tests/role.finish-abort.test.mjs`, and `tests/prompts/orchestrator*.test.mjs`;
-  documented in `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role) and [Options](../docs/reference/usage.md#options)
+- Implementation:
+  - Source: `readRequiredSource`, `classifyRulesets`, `classifyProtection`, `ghRequiredNames`, and `requiredContexts` in `src/lib/ci-required-sources.mjs`
+  - Source: The empty-union branch of `checkCi` in `src/lib/ci-gate.mjs`
+  - Source: `ciGate` and the accepted-finish branch in `src/runtime.mjs`
+  - Source: The `noRequiredChecks` record in `src/role.mjs`
+  - Source: The gate line in `src/prompts/orchestrator.mjs`
+  - Test: `tests/lib/ci-gate.*.test.mjs`
+  - Test: `tests/runtime*.test.mjs`
+  - Test: `tests/role.finish-abort.test.mjs`
+  - Test: `tests/prompts/orchestrator*.test.mjs`
+  - Documented in `docs/orchestrator-instructions.md`
+  - Documented in [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
+  - Documented in [Options](../docs/reference/usage.md#options)
 - Read-only probe behind the classification, 2026-09-29, on
   `sindresorhus/slugify` (a repository with no required check): repository rulesets
   read `[]`, classic branch protection answered `Not Found` (HTTP 404), and
