@@ -32,7 +32,7 @@ adapters' read-only invocations keep shell network access, except `copilot`, whi
 `--reviewer-workspace-write` runs a Codex reviewer turn with
 `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=false`
 instead of `-c sandbox_mode="read-only"`
-([ADR 0019](../../adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)).
+([ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)).
 The default stays `read-only`. The flag needs `--reviewer codex`. The reviewer
 prompt gains one line with these statements:
 
@@ -47,10 +47,10 @@ four adapters keep their invocations, and the mutation check still wraps every r
 
 Shell network is off on purpose. The option is set explicitly, because `workspace-write` takes network from the user Codex config when the command line does not set it. `network_access=false` covers the shell commands that the sandbox runs. A model-side tool (for example Codex `web_search`) and any other channel outside the sandbox, such as a connector, are not covered. A user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` also runs a shell command with an expansion outside the sandbox.
 
-The runtime read of the required-check status for a named PR ([ADR 0024](../../adr/0024-supply-the-required-check-status-for-a-named-pr.md)) still reaches
+The runtime read of the required-check status for a named PR ([ADR 0024](https://github.com/andromarces/agent-loops/blob/main/adr/0024-supply-the-required-check-status-for-a-named-pr.md)) still reaches
 the reviewer.
 
-The probe evidence is in [ADR 0019](../../adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md). On macOS, a reviewer ran the local test binary to exit 0, and shell network calls failed. The sandbox blocks `ps`, so the `ps`-gated tests skip. On the unelevated Windows sandbox, `pnpm exec` failed with a store lock error. Linux and the elevated Windows sandbox are not verified.
+The probe evidence is in [ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md). On macOS, a reviewer ran the local test binary to exit 0, and shell network calls failed. The sandbox blocks `ps`, so the `ps`-gated tests skip. On the unelevated Windows sandbox, `pnpm exec` failed with a store lock error. Linux and the elevated Windows sandbox are not verified.
 
 Accepted gaps, as the ADR states them:
 

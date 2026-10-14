@@ -111,7 +111,7 @@ file that you edited after install.
 - [Full reference](docs/reference.md): every option, safety rule, and verified
   behavior.
 - [Develop from a clone](docs/reference/install.md#from-a-clone-development)
-- [Architecture Decision Records](adr/README.md)
+- [Architecture Decision Records](https://github.com/andromarces/agent-loops/blob/main/adr/README.md)
 
 ## License
 

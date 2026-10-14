@@ -49,4 +49,4 @@ Other documents:
 - [Orchestrator instructions](orchestrator-instructions.md): the role rules for an
   interactive parent session.
 - [Parent guard details](parent-guard.md): every guard target and matcher.
-- [Architecture Decision Records](../adr/README.md).
+- [Architecture Decision Records](https://github.com/andromarces/agent-loops/blob/main/adr/README.md).

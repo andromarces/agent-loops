@@ -11,7 +11,7 @@ pnpm test        # Run the test suite with vp test (Vitest)
 
 The toolchain config lives in `vite.config.mjs`. A `vite-plus` upgrade re-pins the
 `vitest` override in `pnpm-workspace.yaml` to the version that `pnpm exec vp --version`
-lists ([ADR 0022](../../adr/0022-vite-plus-toolchain-and-npm-distribution.md)).
+lists ([ADR 0022](https://github.com/andromarces/agent-loops/blob/main/adr/0022-vite-plus-toolchain-and-npm-distribution.md)).
 
 ## Releasing
 
