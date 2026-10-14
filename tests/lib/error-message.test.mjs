@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import {
   errorMessage,
+  firstErrorLine,
   readableErrorMessage,
   readableErrorText,
   readProp,
@@ -141,6 +142,16 @@ describe("readableErrorMessage and readableErrorText", () => {
   // Usefulness: requirement — a plain message passes through unchanged.
   test("readableErrorText passes a string message through", () => {
     expect(readableErrorText(new Error("plain"))).toBe("plain");
+  });
+});
+
+describe("firstErrorLine", () => {
+  // Usefulness: requirement — a log line shows only the first line of a multi-line error text, and
+  // a single-line or empty text passes through unchanged.
+  test("returns the text before the first newline", () => {
+    expect(firstErrorLine("first\nsecond\nthird")).toBe("first");
+    expect(firstErrorLine("only")).toBe("only");
+    expect(firstErrorLine("")).toBe("");
   });
 });
 

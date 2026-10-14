@@ -1,7 +1,7 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
 import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
-import { readableErrorText, readProp } from "./lib/error-message.mjs";
+import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { checkCi, DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
@@ -202,7 +202,7 @@ export async function runChild(options) {
           throw err;
         }
         logWarn(
-          `worker: the preamble turn in the new conversation failed: ${readableErrorText(err).split("\n")[0]}`,
+          `worker: the preamble turn in the new conversation failed: ${firstErrorLine(readableErrorText(err))}`,
         );
       }
     }
@@ -304,7 +304,7 @@ export async function runChild(options) {
     if (timedOut) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
     }
-    logWarn(timedOut ? errorMessage : `${roleName}: ${errorMessage.split("\n")[0]}`);
+    logWarn(timedOut ? errorMessage : `${roleName}: ${firstErrorLine(errorMessage)}`);
     return {
       role: roleName,
       status: "error",
@@ -604,7 +604,7 @@ export async function runLoop(options) {
     } catch (err) {
       if (readProp(err, "name") !== "MutationError") {
         // A MutationError is already logged at the detection site in withMutationCheck.
-        logError(`orchestrator turn failed: ${readableErrorText(err).split("\n")[0]}`);
+        logError(`orchestrator turn failed: ${firstErrorLine(readableErrorText(err))}`);
       }
       throw err;
     }
@@ -895,7 +895,7 @@ async function ciGate({ pr, reviewed, cwd, gh }) {
   try {
     gate = await checkCi({ pr, reviewed, cwd, gh });
   } catch (err) {
-    const detail = readableErrorText(err).split("\n")[0];
+    const detail = firstErrorLine(readableErrorText(err));
     logError(`ci gate could not run: ${detail}`);
     return {
       refusal: {

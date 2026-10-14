@@ -76,6 +76,11 @@ export function readableErrorText(err) {
   return typeof message === "string" ? message : JSON.stringify(message);
 }
 
+/** The first line of an error text, for a one-line log entry. */
+export function firstErrorLine(text) {
+  return text.split("\n")[0];
+}
+
 /** Reads `err[key]`, and returns `undefined` when the read throws, so a hostile getter never escapes an error path. */
 export function readProp(err, key) {
   try {
