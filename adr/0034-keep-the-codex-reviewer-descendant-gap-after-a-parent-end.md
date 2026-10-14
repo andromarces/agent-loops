@@ -34,7 +34,7 @@ The issue leaves three options open: leave no such command after a parent end, d
 1. The runtime adds no behavior for a Codex reviewer descendant that outlives its parent. The gap stays. This decision follows ADR 0031 decision 7 and ADR 0032 decision 4, which also leave the gaps that need a process that the runtime did not start in this run.
 2. The runtime adds no new `SIGTERM` handling. A `SIGTERM` already ends the process group of the child with `SIGTERM` through execa (see Context). What survives, and why, is not verified: whether the Codex process, a trapping command, or a command outside the group wrote after the signal is open in issue #708. A stronger end signal needs that result, and it cannot cover `SIGKILL`. The Windows host cannot deliver the signal, so a test there would assert a path that never runs.
 3. The runtime does not detect such a command before a turn. The stored-id match and the `--cd` match are evaluated in Alternatives 2 and 3 and are deferred. A bare process-name match would refuse a run for any unrelated `codex` or `sh` process on the host.
-4. The operator rule is stated in the README. After a parent of a `--reviewer-workspace-write` run ends by a signal other than `SIGINT`, the operator checks for a surviving `codex` process or shell child and the state of the work tree before the next run.
+4. The operator rule is stated in [Continue a run](../docs/reference/usage.md#continue-a-run). After a parent of a `--reviewer-workspace-write` run ends by a signal other than `SIGINT`, the operator checks for a surviving `codex` process or shell child and the state of the work tree before the next run.
 5. The decision has no test, because the code does not change. The acceptance allows this: the ADR records why the gap stays.
 
 ## Consequences
@@ -84,5 +84,5 @@ Andro Marces
 - [ADR 0031: Refuse --continue-from and --resume-interrupted while a live process holds a Claude session](0031-refuse-continue-from-and-resume-interrupted-while-a-live-process-holds-a-claude-session.md)
 - [ADR 0032: Detect a live session holder on interactive init, keep the headless gap](0032-detect-a-live-session-holder-on-interactive-init.md)
 - [ADR 0033: Cancel a run on SIGINT and escalate on a second SIGINT](0033-cancel-a-run-on-sigint-and-escalate-on-a-second-sigint.md)
-- Implementation: none. Documented in `README.md`.
+- Implementation: none. Documented in [Continue a run](../docs/reference/usage.md#continue-a-run).
 - [ADR Index](README.md)

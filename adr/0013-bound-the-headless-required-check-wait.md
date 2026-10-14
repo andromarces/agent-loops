@@ -77,7 +77,7 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
    means the `gh` child was not observed to exit, so the orchestrator settles that
    process before another wait and does not wait again when it cannot.
 10. `docs/orchestrator-instructions.md` ("Headless loop waits") and the
-    README state the same rule. A test pins the identical exception sentence in the instructions, the prompt, and the README.
+    reference docs state the same rule. A test pins the identical exception sentence in the instructions, the prompt, and the reference docs.
 
 ## Consequences
 
@@ -146,7 +146,7 @@ Andro Marces
 - Implementation: `headlessWaitSeconds`, `waitChecksCommand`, and the `wait` rule in
   `src/prompts/orchestrator.mjs`, the `timeout` input from `src/runtime.mjs`;
   tests in `tests/prompts/orchestrator.test.mjs` and `tests/runtime*.test.mjs`;
-  documented in `docs/orchestrator-instructions.md` and `README.md`
+  documented in `docs/orchestrator-instructions.md` and [Options](../docs/reference/usage.md#options)
 - [PR #382](https://github.com/andromarces/agent-loops/pull/382)
 - [ADR 0024: Supply the required-check status to the reviewer for every run that names a PR](0024-supply-the-required-check-status-for-a-named-pr.md), which narrows decision 6 and its Consequences statement that only the gate reads the checks
 - [ADR 0010: A runtime-owned bound on the interactive required-check wait](0010-runtime-owned-required-check-wait-bound.md)

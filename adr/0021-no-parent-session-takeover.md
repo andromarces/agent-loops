@@ -71,7 +71,7 @@ A takeover command cannot meet the second requirement:
      the guard. A sound check must tell a runtime-spawned child from the user's new
      session, and a session id does not.
 4. The environment does not tell them apart either, per the repository docs. The
-   README states that a nested harness inherits `CODEX_THREAD_ID`, and
+   [Interactive orchestrator: harness entry points](../docs/reference/harness-entry-points.md#interactive-orchestrator-harness-entry-points) states that a nested harness inherits `CODEX_THREAD_ID`, and
    `docs/parent-guard.md` states that child processes inherit
    `ANTIGRAVITY_CONVERSATION_ID`. ADR 0014 point 8 states the run marker. It names a child of the run and does
    not identify a new user session.
