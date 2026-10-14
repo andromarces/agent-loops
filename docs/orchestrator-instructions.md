@@ -79,6 +79,9 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
 - Always pass `--cwd`. It defaults to the current directory, which for an
   interactive parent is normally not the target work tree.
 - Pass the child prompt on stdin. The exception is an init with `--task-file -`, which takes `--prompt-file`.
+- The init task (`--task` or `--task-file`) is run configuration. No child receives it. A child sees only the
+  prompt of its dispatch, so every child prompt must carry the task text, or the part of it that the turn needs.
+  A prompt such as "Carry out the task" gives the child no task and still charges a step.
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot
   be combined. `--task-file -` reads the task from stdin, which also carries the
   prompt here. Stdin carries only one input, so pass `--prompt-file` for the
