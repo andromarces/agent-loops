@@ -141,5 +141,17 @@ Andro Marces
 - [Pull Request #562](https://github.com/andromarces/agent-loops/pull/562)
 - [Pull Request #662: Record the live changed-default check of --continue-from](https://github.com/andromarces/agent-loops/pull/662)
 - [Pull Request #586: Record the opencode resolved model from session export](https://github.com/andromarces/agent-loops/pull/586)
-- Implementation: `gateFromTranscript`, `matchingGate`, `verifyResolvedModels`, and `restoreSessions` in `src/lib/continuation.mjs`, `runProbeTurn` in `src/runtime.mjs`, `setResolvedModel` in `src/agents/shared.mjs`, the adapters `src/agents/claude.mjs`, `src/agents/copilot.mjs`, and `src/agents/opencode.mjs` (`exportedModels`), and `--continue-from` in `src/cli.mjs`; tests in `tests/lib/continuation.test.mjs`, `tests/cli.continue-from.test.mjs`, `tests/runtime.mutation.test.mjs`, `tests/agents/claude.test.mjs`, and `tests/agents/copilot.test.mjs`, and `tests/agents/opencode.*.test.mjs`; documented in [Continue a run](../docs/reference/usage.md#continue-a-run)
+- Implementation:
+  - Source: `gateFromTranscript`, `matchingGate`, `verifyResolvedModels`, and `restoreSessions` in `src/lib/continuation.mjs`
+  - Source: `runProbeTurn` in `src/runtime.mjs`
+  - Source: `setResolvedModel` in `src/agents/shared.mjs`
+  - Source: The adapters `src/agents/claude.mjs`, `src/agents/copilot.mjs`, and `src/agents/opencode.mjs` (`exportedModels`)
+  - Source: `--continue-from` in `src/cli.mjs`
+  - Test: `tests/lib/continuation.test.mjs`
+  - Test: `tests/cli.continue-from.test.mjs`
+  - Test: `tests/runtime.mutation.test.mjs`
+  - Test: `tests/agents/claude.test.mjs`
+  - Test: `tests/agents/copilot.test.mjs`
+  - Test: `tests/agents/opencode.*.test.mjs`
+  - Documented in [Continue a run](../docs/reference/usage.md#continue-a-run)
 - [ADR Index](README.md)

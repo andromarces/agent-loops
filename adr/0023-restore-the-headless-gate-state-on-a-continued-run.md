@@ -62,6 +62,13 @@ Andro Marces
 - [Issue #362: Continue a headless run with a new step budget and its earlier role sessions](https://github.com/andromarces/agent-loops/issues/362)
 - [Issue #393: Restore the headless gate state on --continue-from when the tree is unchanged](https://github.com/andromarces/agent-loops/issues/393)
 - [Pull Request #536](https://github.com/andromarces/agent-loops/pull/536)
-- Implementation: `gateFromTranscript` and `matchingGate` in `src/lib/continuation.mjs`, the `continued` and `earlierGate` inputs of `runLoop`, and `--continue-from` in `src/cli.mjs`; tests in `tests/lib/continuation.test.mjs`, `tests/cli.continue-from.test.mjs`, and `tests/runtime*.test.mjs`; documented in [Continue a run](../docs/reference/usage.md#continue-a-run)
+- Implementation:
+  - Source: `gateFromTranscript` and `matchingGate` in `src/lib/continuation.mjs`
+  - Source: The `continued` and `earlierGate` inputs of `runLoop`
+  - Source: `--continue-from` in `src/cli.mjs`
+  - Test: `tests/lib/continuation.test.mjs`
+  - Test: `tests/cli.continue-from.test.mjs`
+  - Test: `tests/runtime*.test.mjs`
+  - Documented in [Continue a run](../docs/reference/usage.md#continue-a-run)
 - Superseded by [ADR 0026: Detect a changed resolved model on --continue-from](0026-detect-a-changed-resolved-model-on-continue-from.md)
 - [ADR Index](README.md)

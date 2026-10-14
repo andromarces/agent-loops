@@ -37,7 +37,15 @@ A working directory match was also examined. Probed on Windows 11 Pro 10.0.26220
 - The headless fresh run and a holder without a session flag stay unfound. An orphan of a headless run can still write to the tree.
 - The `--resume-interrupted` check of ADR 0031 decision 5 and the `--continue-from` check use the same `holdsSession` through `refuseHeldSessions`, so the session-flag rule narrows both. An orphan that carries no session flag is not found on either path.
 - The check and the init are not atomic. A holder that starts between them is not found.
-- Verified on Windows 11 Pro 10.0.26220, Node v26.8.1, Claude Code 2.1.296, through the real process table: a live `claude -p --session-id <id>` and a live `claude -p --resume <id>`, started as the adapter starts them, are found by their pid, and nothing is found after the first exits. A live `node` child whose arguments are `-- "a "" <id>"`, the shape that `CommandLineToArgvW` splits, a child with `claude <id>`, and a child with `--resume --verbose <id>` are not found. A `claude -p` child with stdin left open exits after about 3 seconds in this probe, so the read must run sooner. Tests cover the refusal, the archived-state case, the no-holder case, the unrelated-program case, the bare-id case, and the match rules, with an injected process table. `tests/cli.continue-from.test.mjs` starts a holder that passes `--resume <id>`.
+- Verified on Windows 11 Pro 10.0.26220, Node v26.8.1, Claude Code 2.1.296, through the real process table.
+  - A live `claude -p --session-id <id>` and a live `claude -p --resume <id>`, started as the adapter starts them, are found by their pid.
+  - Nothing is found after the first exits.
+  - A live `node` child whose arguments are `-- "a "" <id>"` is not found. That is the shape that `CommandLineToArgvW` splits.
+  - A child with `claude <id>` is not found.
+  - A child with `--resume --verbose <id>` is not found.
+  - A `claude -p` child with stdin left open exits after about 3 seconds in this probe, so the read must run sooner.
+  - Tests cover the refusal, the archived-state case, the no-holder case, the unrelated-program case, the bare-id case, and the match rules, with an injected process table.
+  - `tests/cli.continue-from.test.mjs` starts a holder that passes `--resume <id>`.
 - Verified on macOS 27.2 (Darwin 27.2.0, arm64), Node v26.11.1, Claude Code 2.1.296, through the real `ps` table, with a real orphan (issue #697, probe on 2026-10-10). The work tree was a throwaway Git repository under the system temporary directory. `AGENT_LOOP_RUNS_ROOT` named a directory beside it.
   1. A worker turn of `role dispatch` on `claude` ran one long `Bash` call, `node -e "setTimeout(()=>{},600000)"`.
   2. A `SIGKILL` to the dispatch pid only left the `claude -p --session-id <id> --output-format json --verbose` child alive, with parent pid 1.
@@ -75,5 +83,12 @@ Andro Marces
 - [ADR 0031: Refuse --continue-from and --resume-interrupted while a live process holds a Claude session](0031-refuse-continue-from-and-resume-interrupted-while-a-live-process-holds-a-claude-session.md)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
-- Implementation: `readClaudeSessions` in `src/lib/runstate.mjs`, `refuseHeldIds` in `src/lib/continuation.mjs`, `holdsSession` in `src/lib/command-line.mjs`, and the call in `dispatchLocked` in `src/role.mjs`. Tests in `tests/role.init.test.mjs`, `tests/lib/continuation.test.mjs`, and `tests/lib/command-line.test.mjs`.
+- Implementation:
+  - Source: `readClaudeSessions` in `src/lib/runstate.mjs`
+  - Source: `refuseHeldIds` in `src/lib/continuation.mjs`
+  - Source: `holdsSession` in `src/lib/command-line.mjs`
+  - Source: The call in `dispatchLocked` in `src/role.mjs`
+  - Test: `tests/role.init.test.mjs`
+  - Test: `tests/lib/continuation.test.mjs`
+  - Test: `tests/lib/command-line.test.mjs`
 - [ADR Index](README.md)

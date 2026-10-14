@@ -158,7 +158,19 @@ Andro Marces
 ## Links
 
 - [Issue #302: Require a PR input on every run so an omitted unresolvedCompare marker cannot read as verified](https://github.com/andromarces/agent-loops/issues/302)
-- Implementation: `missingGateRefusal` in `src/runtime.mjs`, the finish gate in `src/role.mjs`, the `--pr` flag in `src/cli.mjs`, the prompt block in `src/prompts/orchestrator.mjs`; tests in `tests/runtime*.test.mjs`, `tests/role.finish-abort.test.mjs`, `tests/role.init.test.mjs`, `tests/cli.args.test.mjs`, and `tests/prompts/orchestrator*.test.mjs`; documented in `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role) and [Options](../docs/reference/usage.md#options)
+- Implementation:
+  - Source: `missingGateRefusal` in `src/runtime.mjs`
+  - Source: The finish gate in `src/role.mjs`
+  - Source: The `--pr` flag in `src/cli.mjs`
+  - Source: The prompt block in `src/prompts/orchestrator.mjs`
+  - Test: `tests/runtime*.test.mjs`
+  - Test: `tests/role.finish-abort.test.mjs`
+  - Test: `tests/role.init.test.mjs`
+  - Test: `tests/cli.args.test.mjs`
+  - Test: `tests/prompts/orchestrator*.test.mjs`
+  - Documented in `docs/orchestrator-instructions.md`
+  - Documented in [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
+  - Documented in [Options](../docs/reference/usage.md#options)
 - [Issue #337: Reject --require-ci and --pr on a review-only headless run](https://github.com/andromarces/agent-loops/issues/337) — the headless `--mode`, the two refusals, and the shared refusal wording in `src/lib/args.mjs`
 - [Issue #286: An omitted unresolvedCompare marker reads as a verified finish](https://github.com/andromarces/agent-loops/issues/286)
 - [PR #293](https://github.com/andromarces/agent-loops/pull/293)

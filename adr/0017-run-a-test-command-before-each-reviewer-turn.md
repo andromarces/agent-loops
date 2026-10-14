@@ -166,7 +166,24 @@ Andro Marces
 - [Issue #497: Probe secret-name casing of the redaction on Windows](https://github.com/andromarces/agent-loops/issues/497)
 - [Issue #601: Clarify the ADR 0017 child-env casing rule and probe the casing on POSIX](https://github.com/andromarces/agent-loops/issues/601)
 - [Issue #342: Document that a Codex reviewer on Windows cannot spawn the test runner](https://github.com/andromarces/agent-loops/issues/342)
-- Implementation: `runTestCmd` and `redactCommandText` in `src/lib/test-cmd.mjs`, `redactEnvSecrets` in `src/lib/redact.mjs`, `reportFailure` in `src/entrypoints/copilot.mjs`, the error text in `src/lib/error-message.mjs` and `src/lib/log.mjs`, `testRunLines` in `src/prompts/reviewer.mjs`, the run and the `testRun` result field in `runChild` in `src/runtime.mjs`, the init field in `src/role.mjs`, the flags in `src/cli.mjs` and `src/lib/args.mjs`; tests in `tests/lib/test-cmd.test.mjs`, `tests/lib/redact.test.mjs`, `tests/runtime.test-cmd.test.mjs`, `tests/role.test-cmd.test.mjs`, `tests/cli*.test.mjs`, and `tests/prompts/`; documented in `docs/orchestrator-instructions.md` and [Options](../docs/reference/usage.md#options) and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
+- Implementation:
+  - Source: `runTestCmd` and `redactCommandText` in `src/lib/test-cmd.mjs`
+  - Source: `redactEnvSecrets` in `src/lib/redact.mjs`
+  - Source: `reportFailure` in `src/entrypoints/copilot.mjs`
+  - Source: The error text in `src/lib/error-message.mjs` and `src/lib/log.mjs`
+  - Source: `testRunLines` in `src/prompts/reviewer.mjs`
+  - Source: The run and the `testRun` result field in `runChild` in `src/runtime.mjs`
+  - Source: The init field in `src/role.mjs`
+  - Source: The flags in `src/cli.mjs` and `src/lib/args.mjs`
+  - Test: `tests/lib/test-cmd.test.mjs`
+  - Test: `tests/lib/redact.test.mjs`
+  - Test: `tests/runtime.test-cmd.test.mjs`
+  - Test: `tests/role.test-cmd.test.mjs`
+  - Test: `tests/cli*.test.mjs`
+  - Test: `tests/prompts/`
+  - Documented in `docs/orchestrator-instructions.md`
+  - Documented in [Options](../docs/reference/usage.md#options)
+  - Documented in [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
 - [ADR 0028: End the Windows process tree of a child when the runtime exits](0028-end-the-windows-process-tree-when-the-runtime-exits.md)
 - [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md)
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
