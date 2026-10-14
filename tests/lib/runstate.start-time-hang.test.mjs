@@ -57,10 +57,13 @@ function isAlive(pid) {
 
 const pidFile = () => join(dir, "ps.pid");
 
-// The pid of the hanging query process, or null when it never wrote its pid file.
+// The pid of the hanging query process, or null when the pid file is missing, empty, or
+// partly written. A pid of 0 or a negative one would address a process group, so only a
+// positive safe integer counts.
 async function queryPid() {
   try {
-    return Number(await readFile(pidFile(), "utf8"));
+    const pid = Number(await readFile(pidFile(), "utf8"));
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
   } catch {
     return null;
   }
@@ -70,8 +73,15 @@ async function queryPid() {
 // never leaks a process into the host.
 afterEach(async () => {
   const pid = await queryPid();
-  if (pid !== null && isAlive(pid)) {
-    process.kill(pid, "SIGKILL");
+  if (pid !== null) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch (err) {
+      // The process exited on its own, which is the wanted end state.
+      if (err.code !== "ESRCH") {
+        throw err;
+      }
+    }
   }
   await rm(pidFile(), { force: true });
 });
