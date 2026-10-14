@@ -1,10 +1,10 @@
 // Exclusive state lock and the owner liveness checks behind it (#173, ADR 0020). One lock file
 // guards one read-modify-write of a state file or a manifest.
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { link, mkdir, readFile, readdir, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { removeTemp } from "./atomic-write.mjs";
+import { execBounded } from "./exec.mjs";
 import { sha256 } from "./hash.mjs";
 import { logWarn } from "./log.mjs";
 
@@ -437,25 +437,17 @@ function parseLstart(text) {
 const START_TIME_QUERY_MS = 5000;
 
 // Output of `command` run under TZ=UTC and LC_ALL=C, trimmed; "" when the command
-// fails, times out after START_TIME_QUERY_MS, or prints nothing.
+// fails, times out after START_TIME_QUERY_MS, overflows its output buffer (a cut
+// read, which execa can report with exit code 0), or prints nothing.
 async function queryOutput(command, args) {
-  const stdout = await new Promise((resolve) => {
-    try {
-      execFile(
-        command,
-        args,
-        {
-          env: { ...process.env, TZ: "UTC", LC_ALL: "C" },
-          timeout: START_TIME_QUERY_MS,
-          windowsHide: true,
-        },
-        (err, out) => resolve(err ? "" : String(out)),
-      );
-    } catch {
-      resolve("");
-    }
+  const result = await execBounded(command, args, {
+    env: { TZ: "UTC", LC_ALL: "C" },
+    timeoutMs: START_TIME_QUERY_MS,
+    windowsHide: true,
   });
-  return stdout.trim();
+  return result.exitCode === 0 && !result.timedOut && !result.isCanceled && !result.isMaxBuffer
+    ? String(result.stdout ?? "").trim()
+    : "";
 }
 
 // Field 22 (starttime, clock ticks since boot) of /proc/<pid>/stat, joined with the
