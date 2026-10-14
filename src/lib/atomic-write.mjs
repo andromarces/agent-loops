@@ -154,7 +154,7 @@ const RENAME_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 // Wait before each retry, in order. Six attempts total wait 385 ms.
 const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100, 200];
 
-async function renameWithRetry(from, to) {
+export async function renameWithRetry(from, to) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await rename(from, to);
