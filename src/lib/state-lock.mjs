@@ -437,14 +437,15 @@ function parseLstart(text) {
 const START_TIME_QUERY_MS = 5000;
 
 // Output of `command` run under TZ=UTC and LC_ALL=C, trimmed; "" when the command
-// fails, times out after START_TIME_QUERY_MS, or prints nothing.
+// fails, times out after START_TIME_QUERY_MS, overflows its output buffer (a cut
+// read, which execa can report with exit code 0), or prints nothing.
 async function queryOutput(command, args) {
   const result = await execBounded(command, args, {
     env: { TZ: "UTC", LC_ALL: "C" },
     timeoutMs: START_TIME_QUERY_MS,
     windowsHide: true,
   });
-  return result.exitCode === 0 && !result.timedOut && !result.isCanceled
+  return result.exitCode === 0 && !result.timedOut && !result.isCanceled && !result.isMaxBuffer
     ? String(result.stdout ?? "").trim()
     : "";
 }

@@ -8,14 +8,20 @@ import { removePath } from "../runtime-helpers.mjs";
 // The start-time query runs `ps` or PowerShell. Its failure modes (error, timeout,
 // empty or unparseable output) cannot be produced on demand with the real command,
 // so `execBounded` is replaced by a stub that answers each query with a chosen result.
-// `err` stands for the result of a failed query: a spawn error or a timeout.
-let answer = { err: null, out: "" };
+// `err` stands for the result of a failed query: a spawn error or a timeout. `overflow`
+// stands for an output that exceeded the buffer limit and was cut, with exit code 0.
+let answer = { err: null, out: "", overflow: false };
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   execBounded: vi.fn(async () =>
     answer.err
       ? { exitCode: undefined, stdout: "", timedOut: Boolean(answer.err.killed) }
-      : { exitCode: 0, stdout: answer.out, timedOut: false },
+      : {
+          exitCode: 0,
+          stdout: answer.out,
+          timedOut: false,
+          isMaxBuffer: Boolean(answer.overflow),
+        },
   ),
 }));
 
@@ -42,6 +48,10 @@ afterEach(async () => {
 const FAILURES = [
   ["a failed query", { err: new Error("spawn ps ENOENT"), out: "" }],
   ["a timed-out query", { err: Object.assign(new Error("timeout"), { killed: true }), out: "" }],
+  [
+    "an overflowed read of a valid line",
+    { err: null, out: "Thu Jan  1 00:01:00 1970\n", overflow: true },
+  ],
   ["an empty answer", { err: null, out: "  \n" }],
   ["an unparseable answer", { err: null, out: "mar.  6 oct. 04:22:29 2026\n" }],
   ["a 31st of a 30-day month", { err: null, out: "Tue Jun 31 10:00:00 2026\n" }],
