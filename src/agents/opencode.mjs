@@ -29,7 +29,7 @@ const UNKNOWN_ERROR = "unknown error";
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
-// invisibly. Deny the action for the read-only turn only; see the README.
+// invisibly. Deny the action for the read-only turn only; see docs/reference/reviewer-safety.md.
 // A global permissions allow can resolve after the plan agent's `edit` deny and cancel it, so
 // deny `edit` here too. Shell stays available for read-only commands such as `git diff`.
 const READONLY_CONFIG =

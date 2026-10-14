@@ -385,7 +385,7 @@ test("parseReportBlock returns null when an emphasis run is glued to a following
 // this way, not only the first, so a block can lose three lines under one label
 // and still parse. The gap is accepted, and the acceptance is stated in the
 // `known-limit` note in src/lib/report.mjs, in docs/orchestrator-instructions.md,
-// and in the README. This test pins the accepted cost, so a future narrowing
+// and in docs/reference/role.md. This test pins the accepted cost, so a future narrowing
 // changes it on purpose.
 // Usefulness: `*glob é*` and `*emph*٢` pin the two checks that the four ASCII
 // shapes above never reach. The letter before the close is `\p{L}`, so a

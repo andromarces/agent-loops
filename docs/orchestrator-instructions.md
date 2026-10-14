@@ -45,8 +45,8 @@ Collect these before the first dispatch:
 ## Resolving the CLI
 
 The command blocks below call `agent-loop` directly. Install and link steps are in
-the README sections [Install](../README.md#install) and
-[From a clone (development)](../README.md#from-a-clone-development).
+the reference sections [Install](reference/install.md#install) and
+[From a clone (development)](reference/install.md#from-a-clone-development).
 
 If `agent-loop` does not resolve on PATH, replace it with
 `node "<repo>/src/cli.mjs"` and quote the repository path, so a path with spaces
@@ -218,7 +218,9 @@ dispatch already charged: it charges no second step and adds no `turns` entry.
 
 When `--cwd` is a linked work tree, the init call copies the untracked local files
 of the main work tree that `--cwd` ignores (agent instructions, harness
-configuration, `.env`, and the other paths in the README) into `--cwd`, before the
+configuration, `.env`, and the other paths in
+[Local files in a linked work tree](reference/harness-entry-points.md#local-files-in-a-linked-work-tree))
+into `--cwd`, before the
 first child turn. A file already in `--cwd` is never replaced, and no symlink is
 followed: a symlink in the main work tree is skipped and named. The init envelope reports the paths as `localFiles: {copied, skipped}`,
 by name only, and a path in `skipped` is untracked in the main work tree but not
@@ -475,8 +477,8 @@ other reviewer is refused at init. The run is unchanged without it.
 ## Test evidence when the reviewer cannot run tests
 
 A read-only Codex reviewer cannot run the test suite on Windows or on macOS. A child
-spawn fails, or `vp` cannot write its temporary directory. The README section
-[Codex read-only child-spawn limit](../README.md#codex-read-only-child-spawn-limit)
+spawn fails, or `vp` cannot write its temporary directory. The reference section
+[Codex read-only child-spawn limit](reference/reviewer-safety.md#codex-read-only-child-spawn-limit)
 holds the probes. Linux and the elevated Windows sandbox are not verified.
 
 When a reviewer `Checks` line shows that tests did not run, for any reason, the

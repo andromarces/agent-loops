@@ -20,6 +20,8 @@
   "files": [
     "src",
     "docs/orchestrator-instructions.md",
+    "docs/reference.md",
+    "docs/reference",
     "LICENSE"
   ],
   "type": "module",
