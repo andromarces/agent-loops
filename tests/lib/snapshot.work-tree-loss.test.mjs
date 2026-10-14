@@ -102,6 +102,21 @@ test("a snapshot refuses a linked work tree whose gitdir was removed", async () 
   }
 });
 
+// Usefulness: verifies a root that changes between two snapshots is read again. A subdirectory
+// that becomes its own work tree is covered from its new root, so a root is never carried over (#760).
+test("a snapshot covers the new root after the cwd becomes its own work tree", async () => {
+  const repo = await createRepo();
+  try {
+    const first = await snapshot(join(repo, "sub"), {});
+    expect(first.workTree.map((entry) => entry.path)).toContain("sub/a.txt");
+    await execa("git", ["init"], { cwd: join(repo, "sub") });
+    const second = await snapshot(join(repo, "sub"), {});
+    expect(second.workTree.map((entry) => entry.path)).toEqual(["a.txt"]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a genuine Git failure of a snapshot surfaces with its own error, not the
 // refusal, because the work tree is still a work tree (#760).
 test("a snapshot keeps the original error of a genuine Git failure", async () => {
