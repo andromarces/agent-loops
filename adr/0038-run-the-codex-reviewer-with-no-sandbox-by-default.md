@@ -90,6 +90,7 @@ Andro Marces
 
 ## Links
 
+- [Pull request #777](https://github.com/andromarces/agent-loops/pull/777)
 - [Issue #776](https://github.com/andromarces/agent-loops/issues/776)
 - [Issue #707: Verification checklist: Linux](https://github.com/andromarces/agent-loops/issues/707)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
