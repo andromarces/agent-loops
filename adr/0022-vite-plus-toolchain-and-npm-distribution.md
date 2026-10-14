@@ -149,7 +149,7 @@ Andro Marces
 - [Pull Request #501](https://github.com/andromarces/agent-loops/pull/501)
 - [Implementation: toolchain config](../vite.config.mjs)
 - [Implementation: prepare guard](../.vite-hooks/install.mjs)
-- [Implementation: hook scripts](../.vite-hooks/)
+- Implementation: hook scripts [`.vite-hooks/install.mjs`](../.vite-hooks/install.mjs), [`pre-commit`](../.vite-hooks/pre-commit), and [`pre-push`](../.vite-hooks/pre-push)
 - [Implementation: package manifest](../package.json)
 - [Implementation: overrides](../pnpm-workspace.yaml)
 - [Implementation: release workflow](../.github/workflows/release.yml)
