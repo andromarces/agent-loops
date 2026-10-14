@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
+import { symlinkOrSkip } from "../runtime-helpers.mjs";
 import { cleanupHomes, trackHome } from "./install-helpers.mjs";
 
 afterEach(cleanupHomes);
@@ -39,4 +40,20 @@ test("concurrent atomic writes to one path both succeed and leave no temp file",
   expect(["first", "second"]).toContain(await readFile(target, "utf8"));
   expect(await readdir(dir)).toEqual(["target.json"]);
   await rm(dir, { recursive: true, force: true });
+});
+
+// Usefulness: verifies a write through a file symlink keeps the link and updates
+// its target, so a symlinked settings file survives install and restore (#790).
+test("writeTextAtomic writes through a file symlink and keeps the link", async (ctx) => {
+  const dir = await makeDir();
+  const real = join(dir, "real.json");
+  const link = join(dir, "link.json");
+  await writeFile(real, "old");
+  await symlinkOrSkip(ctx, "real.json", link);
+
+  await writeTextAtomic(link, "new");
+
+  expect((await lstat(link)).isSymbolicLink()).toBe(true);
+  expect(await readFile(real, "utf8")).toBe("new");
+  expect((await readdir(dir)).sort()).toEqual(["link.json", "real.json"]);
 });
