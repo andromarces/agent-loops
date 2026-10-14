@@ -8,9 +8,9 @@ on:
 permissions:
   contents: read
 
-# AGENTS.md's cancel-in-progress rule targets CI validation runs. A publish is
-# not validation, so this workflow keeps the concurrency group but never cancels
-# a running publish.
+# Every CI validation workflow cancels an in-progress run of the same workflow
+# and ref. A publish is not validation, so this workflow keeps the concurrency
+# group but never cancels a running publish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false

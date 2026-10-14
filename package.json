@@ -19,10 +19,7 @@
   },
   "files": [
     "src",
-    "docs/orchestrator-instructions.md",
-    "docs/parent-guard.md",
-    "docs/reference.md",
-    "docs/reference",
+    "docs",
     "LICENSE"
   ],
   "type": "module",
