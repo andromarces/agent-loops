@@ -48,9 +48,9 @@ export const ACCEPT_WITHOUT_CHECKS =
 // The unresolved-compare rule is checked clause by clause: `do not finish as verified` is the
 // prohibition. The clause that follows must offer both permitted actions as alternatives of one
 // choice. The two actions are joined directly by `or`. The run from `record` to `unresolved
-// compare` crosses neither punctuation nor a clause. So the words of one option are never read out
-// of two clauses or two choices. The order is not the contract, so both orders pass, and a clause
-// that drops either action fails (issue #351).
+// compare` must cross neither punctuation nor a clause. So the words of one option cannot be read
+// out of two separate clauses or two separate choices. The order is not the contract, so both
+// orders pass, and a clause that drops either action fails (issue #351).
 export const UNRESOLVED_HEAD_CONDITION = /PR head cannot be resolved/i;
 
 export const DO_NOT_FINISH_AS_VERIFIED = /do not finish as verified/i;

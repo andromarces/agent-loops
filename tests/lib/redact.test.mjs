@@ -1,8 +1,8 @@
 import { expect, test } from "vite-plus/test";
 import { redactEnvSecrets } from "../../src/lib/redact.mjs";
 
-// Usefulness: verifies a short value is never redacted. A short value matches ordinary words and
-// destroys the tail (issue #420).
+// Usefulness: verifies a short value is never redacted. Redacting a short value that matches
+// ordinary words destroys the tail (issue #420).
 test("a short secret-named value is not redacted", () => {
   expect(redactEnvSecrets("a 1234 b", { MY_TOKEN: "1234" })).toBe("a 1234 b");
 });
@@ -23,8 +23,8 @@ test("a common-word secret-named value stays redacted and the marker names the v
 });
 
 // Usefulness: verifies a value with a quote and a backslash is also redacted in its JSON-escaped
-// form. A serialized error object holds the escaped text, and a decoder recovers the value from it
-// (issue #431, ADR 0017).
+// form (issue #431, ADR 0017). This holds because a serialized error object holds the escaped text
+// and a decoder recovers the value from it.
 test("a value with a quote and a backslash is redacted in its JSON-escaped form", () => {
   const value = 'synthetic"probe\\value-8f3a1c';
   const env = { SYNTH_PROBE_TOKEN: value };
@@ -202,7 +202,8 @@ test("a boundary hit between a marker and the text after it leaves no fragment",
 });
 
 // Usefulness: verifies the redaction of an adversarial cascade stays near-linear (issue #521). Each
-// round of a naive rescan removes one layer of this text, so many rounds cost a quadratic scan.
+// round of a naive rescan removes one layer of this text. A naive rescan over many rounds therefore
+// costs a quadratic scan.
 test("an adversarial cascade input redacts in bounded time and leaves no value", () => {
   const value = "ab[*]cdef";
   const env = { "X_ab[*]cdef_KEY": value };

@@ -192,13 +192,34 @@ test("a pre-assigned session id reaches the transcript before the turn and --con
   });
 });
 
-// Timeout for a --continue-from test that calls main() twice with a real Git repo. A main() runs
-// its git calls through execa one after another, at about 0.04-0.06 s each on windows-latest. A
-// second main() runs 37 git calls: 10 rev-parse --show-toplevel, 8 status, 8 ls-files, 8 rev-parse
-// --verify, and 3 others. On windows-latest the first main() takes 1.7-5.2 s and the second takes
-// 1.7-3.2 s (runs 38161410038 and 38205835481). The slowest run with setup takes 6 s on
-// windows-latest and 20 s on a slow Windows machine. The tests keep real Git, so a 30 s timeout
-// keeps a margin.
+// Timeout for a --continue-from test that calls main() twice with a real Git repo. Measured per
+// continueAfterEdit test (seven tests), as setup / first main() / transcript edit / second main():
+// - windows-latest, run 38161410038: 0.51-0.61 s / 3.0-5.2 s / 1-3 ms / 2.9-3.2 s.
+// - Local Windows 11, five runs: 0.34-2.4 s / 1.8-10.0 s / 6-30 ms / 1.8-7.0 s.
+// - ubuntu-latest, same run: 22-40 ms / 134-283 ms / 0-8 ms / 148-171 ms.
+// - macos-latest, same run: 67-110 ms / 348-738 ms / 1 ms / 367-458 ms.
+//
+// Cause: a main() runs its git calls through execa one after another, and each call costs about
+// 0.04-0.06 s on windows-latest. Run 38162688022 (timing patch, since removed): a second main() ran
+// 37 git calls, 2.07-2.25 s of its 2.09-2.27 s. A first main() ran 37, 45 or 61 calls (2.05-3.69
+// s). Per second main(): 10 rev-parse --show-toplevel (0.54-0.60 s), 8 status, 8 ls-files and 8
+// rev-parse --verify (0.43-0.53 s each).
+//
+// Run 38205835481 (timing patch, since removed), seven tests, on the code after #760: first main()
+// 1.73-3.23 s, second main() 1.73-2.02 s. A second main() runs 10 rev-parse --show-toplevel
+// (0.45-0.54 s), 8 status, 8 ls-files and 8 rev-parse --verify (0.36-0.48 s each). A first main()
+// runs 10, 12 or 16 show-toplevel calls. #760 left the count unchanged: each snapshot resolves its
+// own root, and no change of this PR explains the lower timings. The fs calls take 0-7 ms per call
+// name.
+//
+// Local macOS, git shim log of the test "resets when the transcript has no gate record" (#760): the
+// second main() ran 37 git calls. The 10 show-toplevel calls were 8 snapshots, 1 transcript
+// containment check and 1 local-files copy. The other 27 were 8 status, 8 ls-files, 8 rev-parse
+// --verify, and 1 each of --is-inside-work-tree, worktree list and --git-common-dir.
+//
+// The tests keep real Git, so the timeout covers this cost. The slowest run above, plus setup,
+// takes about 6 s on windows-latest and up to 20 s on a slow local Windows machine. So 30 s keeps a
+// margin. The #744 timeout at 15028 ms (run 38115126864) did not reproduce in these runs.
 const CONTINUE_AFTER_EDIT_TIMEOUT_MS = 30_000;
 
 // Usefulness: verifies --continue-from refuses, before any turn, a claude session that a live
@@ -738,9 +759,9 @@ test(
   CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
 
-// Usefulness: after a turn that named no single model (recorded null), an unchanged model B is not
-// refused (#394). A B-to-A change is not compared against a stale A. The run continues, tells the
-// operator that the check did not run, and starts no probe.
+// Usefulness: after a turn that named no single model (recorded null), an unchanged model B must
+// not be refused (#394). A B-to-A change must not be compared against a stale A. The run continues,
+// tells the operator that the check did not run, and starts no probe.
 test.each([["model-1"], ["model-2"]])(
   "--continue-from compares nothing after an unresolved turn, probe would say %s",
   async (probeModel) => {
@@ -967,8 +988,8 @@ const EARLIER_EVENTS = 500_000;
 
 // Usefulness: verifies a same-path continuation reads a written transcript with more events than an
 // argument spread can pass. It rewrites the transcript with every earlier event in order, then the
-// boundary event. The earlier transcript is written directly, so the test pays for one run of the
-// real read-and-write path.
+// boundary event. The earlier transcript is written directly, so one run of the real read-and-write
+// path is all the test pays for.
 test("--continue-from rewrites a large written transcript with every earlier event", async () => {
   await withContinueRepo(async (repo, transcriptPath) => {
     const role = (kind) => ({ kind, model: null, effort: null, sessionId: "s" });

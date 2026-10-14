@@ -312,7 +312,7 @@ test("interactive instructions and headless prompt share the held-session rule",
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the
 // supplied-status rule the same way (issue #320 review). The two paths resolve the same rule for a
-// parent. A drifted statement tells one of them that the reviewer still reads the checks.
+// parent. If a statement drifts, it tells one of them that the reviewer still reads the checks.
 test("interactive instructions and headless prompt state the supplied-status rule alike", async () => {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   const prompt = initialPrompt({

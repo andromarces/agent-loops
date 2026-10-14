@@ -198,8 +198,8 @@ test("--pr declares the run PR and takes a positive integer", () => {
 
 // Usefulness: verifies the headless loop takes the test command and its bound, and defaults both
 // off. It refuses a blank command, a bound with no command, and a bound that is not a positive
-// integer. A bad value fails at parse time, so no run starts with a command that it cannot run
-// (issue #420).
+// integer. A bad value fails at parse time, so the run never starts with a command that it cannot
+// run (issue #420).
 test("--test-cmd and --test-cmd-timeout parse and refuse bad values", () => {
   expect(parseArgs(BASE)).toMatchObject({ testCmd: null, testCmdTimeout: null });
   expect(parseArgs([...BASE, "--test-cmd", "pnpm test"]).testCmd).toBe("pnpm test");
@@ -269,8 +269,9 @@ test("--reviewer-workspace-write stays an alias of --reviewer-sandbox workspace-
 
 // Usefulness: verifies the headless path refuses a gate for another pull request at parse time. The
 // refusal comes before any child turn runs and before the prompt is built. Both flags arrive on one
-// command line there, so a run that cannot be gated never starts. A matching gate is still
-// accepted, and `--pr` alone is still accepted (issue #302).
+// command line there. A run that can never be gated never starts, so the prompt never has to
+// describe a case it cannot reach. A matching gate is still accepted, and `--pr` alone is still
+// accepted (issue #302).
 test("--pr with --require-ci for another pull request is a usage error", () => {
   expect(() => parseArgs([...BASE, "--pr", "42", "--require-ci", "7"])).toThrow(
     "--pr 42 and --require-ci 7 must name the same pull request.",
@@ -285,8 +286,8 @@ test("--pr with --require-ci for another pull request is a usage error", () => {
 
 // Usefulness: verifies a review-only headless run refuses --pr, --require-accept, and --require-ci
 // before any child turn runs, with the interactive wordings. The two paths state one rule for a
-// mode that cannot reach a gate. The check is the command outcome: exit 1, the refusal on stderr,
-// and no child CLI call (issue #337).
+// mode that can never reach a gate. The check is the command outcome: exit 1, the refusal on
+// stderr, and no child CLI call (issue #337).
 test("a review-only run refuses the PR flags before any child turn", async () => {
   const refusals = [
     [["--pr", "42"], "--pr declares PR work, which needs the --require-ci gate"],

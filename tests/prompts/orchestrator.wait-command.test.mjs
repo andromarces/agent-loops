@@ -228,8 +228,8 @@ test.each(UNSAFE_CHARACTERS)("the wait command refuses a path holding %j (%s)", 
 });
 
 // Usefulness: verifies a POSIX path keeps its backslashes or is refused, and is never rewritten
-// (issue #348). A POSIX backslash is a name character, so a slash in its place points the command
-// at another path. The slash rewrite stays Windows-only.
+// (issue #348). A POSIX backslash is a name character. If a slash took its place, the command
+// points at another path. The slash rewrite stays Windows-only.
 test("a POSIX path is never rewritten and a backslash in it is refused", () => {
   const safe = { execPath: "/opt/node", cliPath: "/opt/cli.mjs", cwd: "/srv/tree" };
   const rendered = waitChecksCommand({ ...safe, platform: "linux" });
@@ -251,7 +251,7 @@ test("a POSIX path is never rewritten and a backslash in it is refused", () => {
 });
 
 // Usefulness: verifies a run with no renderable command names no wait, and says why (issue #348).
-// It does not name a wait command that the shell misreads.
+// It does not name a wait command that the shell misreads when run.
 test("a run with no renderable command names no wait", () => {
   const prompt = waitPrompt(3600, { waitCommand: null });
   expect(prompt).not.toContain("--pr 42 --timeout");
@@ -313,8 +313,8 @@ async function runForm(shell, command, dir) {
 }
 
 // Usefulness: verifies each rendered form starts the CLI in a real shell, with a Node path and a
-// work tree path that hold spaces. A form that a shell rejects leaves the orchestrator with no
-// wait. PowerShell needs the call operator, and bash and cmd reject it (issue #348).
+// work tree path that hold spaces. If a shell rejects a form, the orchestrator has no wait.
+// PowerShell needs the call operator, and bash and cmd reject it (issue #348).
 describe("the rendered wait forms run in a real shell", () => {
   const withDir = async (run) => {
     const dir = await mkdtemp(join(tmpdir(), "wait form "));
