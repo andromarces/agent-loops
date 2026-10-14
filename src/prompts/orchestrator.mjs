@@ -1,6 +1,7 @@
 import { posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { escapeLineSeparators } from "./escape.mjs";
+import { SHELL_EXCEPTION } from "./report.mjs";
 import { actionFormats, SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
 import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
@@ -147,25 +148,9 @@ export function waitChecksCommand({
  * excepts. Each statement names the role whose CLI performs the read, because
  * the orchestrator and reviewer CLIs are chosen independently.
  */
-function prGateBlock({
-  pr = null,
-  requireCi,
-  orchestratorKind,
-  reviewerKind,
-  reviewerSandbox = null,
-  timeout = null,
-  waitCommand,
-}) {
-  if (requireCi === null) return "";
-  return `\n${prGateLines({
-    pr,
-    requireCi,
-    orchestratorKind,
-    reviewerKind,
-    reviewerSandbox,
-    timeout,
-    waitCommand,
-  }).join("\n")}`;
+function prGateBlock(options) {
+  if (options.requireCi === null) return "";
+  return `\n${prGateLines(options).join("\n")}`;
 }
 
 // What a Codex sandbox (the orchestrator `read-only`, or a reviewer in a sandboxed mode) blocks is the
@@ -177,8 +162,6 @@ const SHELL_NETWORK = "from the shell commands that its sandbox runs";
 const SHELL_READ = "through a shell command that its sandbox runs";
 const SHELL_ONLY_LIMIT =
   "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything.";
-export const SHELL_EXCEPTION =
-  "A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.";
 
 // A `copilot` read-only turn keeps shell network, so the Codex sandbox wording above is false for
 // it. Its limit is a permission refusal of `role wait-checks` without approval (#432 probe, #495),
@@ -411,6 +394,13 @@ function modeBlock(mode) {
 const REMOTE_WRITE_RULE =
   "You must NOT write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.";
 
+// Closes the result and refusal prompts: the remote-write rule, then the next-action request.
+const NEXT_ACTION_TAIL = `${REMOTE_WRITE_RULE}
+
+Choose the next action.
+Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
+Supported actions: run_worker, run_reviewer, finish, abort.`;
+
 const INITIAL_FORMATS = actionFormats({
   worker: "<instructions for worker>",
   reviewer: "<instructions for reviewer>",
@@ -539,11 +529,7 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
 Role execution result:
 ${JSON.stringify(payload, null, 2)}
 
-${REMOTE_WRITE_RULE}
-
-Choose the next action.
-Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
-Supported actions: run_worker, run_reviewer, finish, abort.
+${NEXT_ACTION_TAIL}
 `.trim(),
   );
 }
@@ -558,11 +544,7 @@ export function refusalPrompt(reason) {
     `
 ${reason}
 
-${REMOTE_WRITE_RULE}
-
-Choose the next action.
-Respond with one JSON object and nothing else. A \`\`\`json fence is accepted.
-Supported actions: run_worker, run_reviewer, finish, abort.
+${NEXT_ACTION_TAIL}
 `.trim(),
   );
 }

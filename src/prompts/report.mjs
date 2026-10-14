@@ -19,3 +19,10 @@ Deferred: items found but left out of scope, or "none".
  */
 export const processRule =
   "Never stop, kill, or signal a process that your own commands did not start, and never select processes by name or by a command-line match. End only the exact PIDs your own commands started.";
+
+/**
+ * Names the one way that a Codex shell command can reach the network despite the sandbox. The
+ * orchestrator and reviewer prompts share it.
+ */
+export const SHELL_EXCEPTION =
+  "A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.";

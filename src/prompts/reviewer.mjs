@@ -1,6 +1,5 @@
 import { escapeLineSeparators } from "./escape.mjs";
-import { SHELL_EXCEPTION } from "./orchestrator.mjs";
-import { processRule, reportBlock } from "./report.mjs";
+import { SHELL_EXCEPTION, processRule, reportBlock } from "./report.mjs";
 
 // Same closing block as reportBlock, with the verdict line inside it so the
 // model treats it as part of the mandatory block, not an optional extra. The
