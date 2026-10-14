@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,18 @@ const instructionsPath = join(
   dirname(fileURLToPath(import.meta.url)),
   "../../docs/orchestrator-instructions.md",
 );
+
+/** The user docs as one text: the reference topic files, the reference index, then the README. */
+async function readUserDocs() {
+  const docs = join(dirname(instructionsPath), "reference");
+  const topics = (await readdir(docs)).filter((name) => name.endsWith(".md")).sort();
+  const paths = [
+    ...topics.map((name) => join(docs, name)),
+    join(dirname(instructionsPath), "reference.md"),
+    join(dirname(instructionsPath), "../README.md"),
+  ];
+  return (await Promise.all(paths.map((path) => readFile(path, "utf8")))).join("\n\n");
+}
 
 // A prompt rule is asserted as the short clause that carries it, never as a whole
 // prompt sentence, so a same-meaning reword of the surrounding prose passes and a
@@ -456,16 +468,16 @@ test("the headless prompt states the no-required-check gate outcome", async () =
 // Usefulness: verifies every surface states the same rule, so an orchestrator
 // reading one is not told a run passes on a branch the gate refuses (#336 review).
 const RULE_SURFACES = [
-  ["docs/orchestrator-instructions.md", instructionsPath],
-  ["README.md", join(dirname(fileURLToPath(import.meta.url)), "../../README.md")],
+  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["the user docs", readUserDocs],
 ];
 
-for (const [name, path] of RULE_SURFACES) {
+for (const [name, load] of RULE_SURFACES) {
   // Usefulness: verifies ${name} states the allowlist rule, the one absence per
   // source, and the pagination and rule-type unknown, so it cannot describe a
   // partial, malformed, or unreadable read as a pass (#336 review).
   test(`${name} states the allowlisted absence rule`, async () => {
-    const text = await readFile(path, "utf8");
+    const text = await load();
     expectRule(text, /allowlist/i, /fails closed/i);
     expectRule(text, /classes/i, /absent/i, /has-contexts/i, /empty/i, /unknown/i);
     // The one per-source absence each, and the ruleset read is every page.
@@ -486,7 +498,7 @@ for (const [name, path] of RULE_SURFACES) {
   // ruleset read is not described with the name of a reply that refuses (#336
   // review).
   test(`${name} states the four ruleset outcomes`, async () => {
-    const text = await readFile(path, "utf8");
+    const text = await load();
     // A read the gate cannot interpret refuses whatever the union holds.
     expectRule(text, /ruleset read the gate cannot interpret/i, /refuses the finish/i, /union/i);
     // Exactly one empty page is neither, so a classic-only repository still
@@ -504,14 +516,14 @@ for (const [name, path] of RULE_SURFACES) {
   // settles nothing, so a partial read is not classified from the pages that did
   // arrive (#336 review).
   test(`${name} states that an empty page inside a longer read settles nothing`, async () => {
-    const text = await readFile(path, "utf8");
+    const text = await load();
     expectRule(text, /empty page inside a longer read/i, /nothing/i);
   });
 
   // Usefulness: verifies ${name} states that a ruleset-only branch reaches the
   // absence path, the case an earlier claim got backwards (#336 review).
   test(`${name} states that a ruleset-only branch reaches the absence path`, async () => {
-    const text = await readFile(path, "utf8");
+    const text = await load();
     expectRule(text, /ruleset-only branch/i, /reaches|does/i);
   });
 
@@ -519,7 +531,7 @@ for (const [name, path] of RULE_SURFACES) {
   // refuses a declared run and must omit `--pr`, so the gap #336 leaves is
   // visible to whoever reads it (#336 review).
   test(`${name} states that a private Free-plan repository must omit --pr`, async () => {
-    const text = await readFile(path, "utf8");
+    const text = await load();
     expectRule(text, /private/i, /Free.plan/i, /omit/i, /--pr/);
   });
 }
@@ -755,13 +767,13 @@ test("interactive instructions and headless prompt share the status-read excepti
 });
 
 // Usefulness: verifies the interactive instructions, the headless prompt, and the
-// README state the status-read exception with the same scope: one command,
+// user docs state the status-read exception with the same scope: one command,
 // `agent-loop role wait-checks`, so no text widens the role rule beyond what the
 // others allow (issue #348).
-test("instructions, prompt, and README share the status-read exception scope", async () => {
+test("instructions, prompt, and user docs share the status-read exception scope", async () => {
   const scope = "and agent-loop role wait-checks is the only command it covers";
   const flat = (text) => text.replace(/`/g, "").replace(/\s+/g, " ");
-  const readme = await readFile(join(dirname(instructionsPath), "../README.md"), "utf8");
+  const readme = await readUserDocs();
   expect(flat(await readFile(instructionsPath, "utf8"))).toContain(scope);
   expect(flat(gatedPrompt("claude"))).toContain(scope);
   expect(flat(readme)).toContain(scope);
@@ -1024,11 +1036,11 @@ test("a POSIX path is never rewritten and a backslash in it is refused", () => {
   );
 });
 
-// Usefulness: verifies the README architecture section states the same
+// Usefulness: verifies the reference architecture section states the same
 // status-read exception as the prompt, `agent-loop role wait-checks` only, so no
 // text keeps the older rule that allowed `gh pr checks` (issue #348).
-test("the README architecture rule names role wait-checks as the only exception command", async () => {
-  const readme = await readFile(join(dirname(instructionsPath), "../README.md"), "utf8");
+test("the reference architecture rule names role wait-checks as the only exception command", async () => {
+  const readme = await readUserDocs();
   const rule = readme.split("\n").find((line) => line.startsWith("- **Orchestrator**"));
   expect(rule).toContain(
     "read the pull request check status with `agent-loop role wait-checks`, and that status read is the only command the exception covers",
@@ -1244,13 +1256,10 @@ test("the interactive instructions forbid a remote write and allow a status read
   );
 });
 
-// Usefulness: verifies the README states that the runtime does not see a remote
+// Usefulness: verifies the user docs state that the runtime does not see a remote
 // write, names both paths, and says the connector write was not probed (issue #422).
-test("the README states the remote-write limit", async () => {
-  const readme = (await readFile(join(dirname(instructionsPath), "../README.md"), "utf8")).replace(
-    /\s+/g,
-    " ",
-  );
+test("the user docs state the remote-write limit", async () => {
+  const readme = (await readUserDocs()).replace(/\s+/g, " ");
   expect(readme).toContain(
     "the runtime does not detect a remote write in a reviewer or orchestrator turn",
   );
@@ -1688,13 +1697,13 @@ test("ADR 0019 names the five accepted gaps", async () => {
   }
 });
 
-// Usefulness: verifies the README and the orchestrator instructions describe the opt-in with the
+// Usefulness: verifies the user docs and the orchestrator instructions describe the opt-in with the
 // ADR: the flag, the sandbox mode, the network option, the ADR, and each gap.
 test.each([
-  ["README.md", "README.md"],
-  ["docs/orchestrator-instructions.md", "docs/orchestrator-instructions.md"],
-])("%s describes the reviewer sandbox opt-in consistently with ADR 0019", async (_name, path) => {
-  const text = await readRepoFile(path);
+  ["the user docs", readUserDocs],
+  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+])("%s describes the reviewer sandbox opt-in consistently with ADR 0019", async (_name, load) => {
+  const text = await load();
   expect(text).toContain("--reviewer-workspace-write");
   expect(text).toContain("workspace-write");
   expect(text).toContain("network_access=false");
@@ -1710,7 +1719,7 @@ test.each([
 // commands that the sandbox runs, and does not claim it blocks model-side tools such as
 // web_search, so a reader never takes the limit for a block on every channel.
 test.each([
-  ["README.md", () => readRepoFile("README.md")],
+  ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
@@ -1904,11 +1913,11 @@ test("the exception scan flags a denial without the user-rule exception", () => 
   ).toHaveLength(1);
 });
 
-// Usefulness: verifies the reviewer prompt, the README, the orchestrator instructions, the other
+// Usefulness: verifies the reviewer prompt, the user docs, the orchestrator instructions, the other
 // docs, the help text, and ADR 0019 carry no unqualified denial, so the prompt and the docs state
 // one rule about what the Codex sandbox blocks.
 test.each([
-  ["README.md", () => readRepoFile("README.md")],
+  ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
   ["docs/parent-guard.md", () => readRepoFile("docs/parent-guard.md")],
   ["ADR 0019", () => readRepoFile(adr19)],

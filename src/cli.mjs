@@ -372,9 +372,9 @@ Options:
   --no-copy-local-files         Do not copy local files into a linked --cwd. By default, when --cwd is a
                                 linked work tree, the run copies each untracked file of the main work
                                 tree that --cwd ignores (agent instructions, harness configuration,
-                                .env, .envrc, and the other paths in the README) before the first
-                                turn, never overwriting a file and never following a symlink. The
-                                transcript names the copied and skipped paths and never a content.
+                                .env, .envrc, and the other paths in the reference docs) before the
+                                first turn, never overwriting a file and never following a symlink.
+                                The transcript names the copied and skipped paths and never a content.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   --require-accept              Refuse finish until a reviewer turn reports on the state, and
                                 after a worker turn that reviewer turn accepts with a Checks

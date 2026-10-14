@@ -1,0 +1,239 @@
+# Headless runs
+
+## Usage
+
+```bash
+agent-loop \
+  --orchestrator codex \
+  --worker claude \
+  --reviewer agy \
+  --task "Implement the change."
+```
+
+PowerShell:
+
+```powershell
+agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement the change."
+```
+
+### Options
+
+```text
+--orchestrator <agent>        Agent that directs the loop. Required.
+--worker <agent>              Agent that implements changes. Required.
+--reviewer <agent>            Agent that reviews the repository (read-only). Required.
+--orchestrator-model <model>  Model passed to the orchestrator CLI. Optional.
+--orchestrator-effort <level> Thinking effort passed to the orchestrator CLI. Optional.
+--worker-model <model>        Model passed to the worker CLI. Optional.
+--worker-effort <level>       Thinking effort passed to the worker CLI. Optional.
+--reviewer-model <model>      Model passed to the reviewer CLI. Optional.
+--reviewer-effort <level>     Thinking effort passed to the reviewer CLI. Optional.
+--cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
+--task <text>                 Task description. Required, unless --task-file is given.
+--task-file <path|->          Read the task from a file, or from stdin for `-`. Replaces
+                              --task, and the two cannot be combined. An empty file is refused.
+--mode <mode>                 Loop policy: work-first, review-first, or review-only, the
+                              same values `agent-loop role` takes. `review-only` dispatches
+                              no worker, so it takes neither `--pr`, nor `--require-accept`,
+                              nor `--require-ci`, each refused with the same wording the role
+                              path uses. At runtime it refuses a `run_worker` action, and
+                              refuses a `finish` until a reviewer turn has run, whatever
+                              that turn returned. Off by default, so a run without the flag
+                              keeps the current behavior. A repeated `--mode` takes the last
+                              value, as every other repeated value flag here does.
+--max-steps <count>           Maximum child steps. Defaults to 20. 1 to 9007199254740991.
+--timeout <seconds>           Timeout per agent invocation. Defaults to 3600. 0 disables the bound.
+--transcript <file>           Record execution transcript to a JSON file.
+--continue-from <file>        Continue the earlier headless run whose --transcript file this is,
+                              with the new --max-steps budget and the earlier orchestrator,
+                              worker, and reviewer sessions. The role kinds, recorded role models
+                              and efforts, and --cwd must equal the earlier run's, or the run
+                              is refused before any turn. An omitted model or effort matches
+                              only an omitted one. For claude, copilot, and opencode, which report
+                              the model they resolved, a role whose latest recorded turn, failed or
+                              not, named one model is probed with one read-only turn before
+                              any turn of the run, and a changed resolved model refuses the
+                              run. A role whose latest recorded turn named no single model, or
+                              that has no record, is not checked, and the run warns that the
+                              check did not run. codex and agy report no model, so
+                              a changed CLI default is not detected for them. The completion
+                              gate is
+                              restored only when the work tree is the state the earlier run's
+                              last reviewer turn reviewed, and otherwise reset (see Continue a
+                              run). The file is read once
+                              at start and the transcript write is atomic, so --transcript can
+                              name the same file and a failed write keeps the earlier file.
+--no-copy-local-files         Do not copy local files into a linked --cwd (see Local files in a
+                              linked work tree). Off by default: the copy is on.
+--verbose                     Enable debug-level lifecycle logging, including snapshot activity.
+--require-accept              Refuse finish until a reviewer turn reports on the state, and
+                              after a worker turn that reviewer turn accepts with a Checks
+                              line. Off by default; a repeated refusal, or a refusal with no
+                              step budget left, ends the run.
+--pr <pr>                     Declare the run PR work on this pull request. Every finish
+                              must end through the --require-ci <pr> gate for the same PR,
+                              and a finish that sets unresolvedCompare is refused, because
+                              that gate resolves the compare. --pr with --require-ci for
+                              another pull request is rejected as a usage error. A declared
+                              run with no matching gate cannot finish, and no turn in the
+                              run can add the flag. A base branch whose required-check
+                              sources each state that it holds none does not refuse the
+                              declaration; the gate passes on the PR head, the clean
+                              reviewed tree, and the merge state, and records that no
+                              required check exists. A private GitHub Free-plan repository
+                              still refuses a declared run, so it must omit --pr. Off by
+                              default; a run
+                              with neither --pr
+                              nor --require-ci keeps the unresolvedCompare marker as the
+                              only record of an unresolved compare.
+--require-ci <pr>             Refuse finish until the runtime resolves the PR head from
+                               this pull request: the PR head must match the reviewed
+                               commit, the reviewed tree must be clean, the PR must not be
+                               behind its base, must have no merge conflicts, must not be
+                               blocked, and every required check must have passed on the
+                               commit GitHub evaluates. A base branch whose required-check
+                               sources each state that it holds none has no check to wait
+                               for, so the gate passes on the PR head, the clean reviewed
+                               tree, and the merge state, and the run records the absence.
+                               Refuses a finish that also sets
+                               unresolvedCompare. Off by default; without it the
+                               unresolvedCompare marker is the only record of an
+                               unresolved compare.
+--test-cmd <command>          Run this command before each reviewer turn, in --cwd, through
+                              the platform shell (/bin/sh -c, or cmd.exe on Windows), in the
+                              runtime and outside the reviewer sandbox. The exit code and an
+                              output tail go to the reviewer prompt as advisory evidence,
+                              and to the orchestrator as testRun beside the reviewer
+                              response. This flag is the only source of the command. It
+                              runs with the environment of the runtime, so keep secrets out
+                              of the command text. Off by default; a run without it is
+                              unchanged. On `agent-loop role` it is an init flag, and every
+                              reviewer dispatch passes the same value again; a changed or
+                              missing value is refused.
+--test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. At the bound the
+                              command's own process group (POSIX) or process tree
+                              (Windows) is killed, and the run reports timed-out, which is
+                              neither a pass nor a failure. An orphan that left the group,
+                              or whose parent exited on Windows, can survive (ADR 0017).
+                              Requires --test-cmd.
+--reviewer-workspace-write    Run each Codex reviewer turn in the workspace-write sandbox
+                              instead of read-only. Network access stays off for the shell
+                              commands that the sandbox runs. That limit covers shell commands
+                              only: model-side tools such as web_search and other channels
+                              outside the sandbox are not blocked. A user Codex execpolicy
+                              rule that allows bash -c, sh -c, or zsh -c is an exception (ADR
+                              0019). Needs --reviewer codex, and is off by default. The
+                              orchestrator turns stay read-only, and the mutation check still
+                              halts the run on a change (ADR 0019). On `agent-loop role` it is
+                              an init flag. A later call can repeat it or omit it, and a call
+                              that turns it on later is refused.
+-h, --help                    Show help. Also valid after role.
+-V, --version                 Print the package version and exit. Must be the first
+                              argument.
+```
+
+A value flag also accepts the inline form `--flag=value`, for example
+`--task=-x`, which allows a value that starts with `-`. A boolean flag rejects
+the inline form. This applies to every flag, including `--harness` for
+`install` and `uninstall`.
+
+## Continue a run
+
+A headless run that ends on exit 2 (step limit) keeps its work tree, but a new invocation starts every role in a new session. `--continue-from <transcript>` resumes the earlier orchestrator, worker, and reviewer sessions instead, so each keeps its conversation history and provider prompt cache, and gives the run a new `--max-steps` budget:
+
+```bash
+agent-loop --orchestrator codex --worker claude --reviewer agy   --task "Add a README line that names the project."   --max-steps 20 --transcript ./run.json          # exit 2: step limit
+agent-loop --orchestrator codex --worker claude --reviewer agy   --task "Add a README line that names the project."   --max-steps 10 --continue-from ./run.json --transcript ./run.json
+```
+
+- The session ids come from the `roles` object of the earlier `--transcript` file, which holds each role's final session id. A Claude first turn writes its pre-assigned id there before the CLI starts, with `sessionUnconfirmed`, so a transcript that a killed run left resumes that session after the ownership check. A failed Copilot first turn that saved a turn leaves its pre-assigned id with `sessionUnconfirmed` in the final transcript write, and the continued run checks the saved turn before it resumes the id (ADR 0030). When the transcript is inside the work tree, an orchestrator or reviewer turn saves the id to a session record outside the tree. `--continue-from` adds a valid record to the transcript roles (ADR 0027). A canceled `agy` turn that ran in a replaced conversation also leaves `conversationReplaced: true` on its role, and the continued run restores it with the id. A role that never ran has a null id and starts a new session. The flag takes any earlier transcript, whatever its exit code.
+- The run is refused with exit 1, before any turn and without a transcript write, when another live process passes the id of a Claude role session through `--session-id`, `--resume`, or `-r` (as `--flag <id>` or `--flag=<id>`, ADR 0031 and ADR 0032). A `SIGKILL` of the earlier parent leaves its `claude` child running, and two writers on one session file fork its history. End that process or wait for it, and run again. A process table that cannot be read logs a warning and lets the run continue.
+- A Codex reviewer turn under `--reviewer-workspace-write` has no such check. A command of that turn can write to the work tree after its parent ends, after a clean tree report, and the runtime reports nothing for it (issue #712, ADR 0034). After a parent ends by a signal other than `SIGINT`, check for a surviving `codex` process or shell child and for the state of the work tree before the next run.
+- The run is refused with exit 1, before any turn and without a transcript write, when a role kind, a role's recorded model, a role's recorded effort, or `--cwd` differs from the earlier run. A session id is valid only for the CLI that created it, and a provider keeps sessions per project directory. One rule covers every CLI, including `opencode` and the orchestrator: the recorded model and effort flag values compare exactly, so an omitted value matches only an omitted value. The transcript also records, per role, the model the CLI resolved (`roles.<role>.resolvedModel`) where the CLI output names it unambiguously (ADR 0026): `claude` when the `system` `init` event of its output names a well-formed model (the main-loop model, even when a subagent ran another), or, with no `init` event, when `modelUsage` holds exactly one well-formed model, and `copilot` when every assistant message names the same model, and `opencode` when `opencode session export <id>`, run after the turn, names one `provider/model` for every assistant message that the turn streamed (only when every stream event names the one session the role keeps, and only after a turn that passed every check: a failed turn records `null` and never reads the export, which runs under the invocation's cancel signal and remaining timeout, and an aborted signal at any point after the child exits (before or during the export, or on a validation return) ends the turn as a cancel that lands while the child runs, with exit 130, never as a success; a stream part with no valid message id also records `null` and skips the export; and a model value that holds a secret environment value is never recorded). The record describes the latest turn that ran, failed or not, and has three states: a model id (resolved), `null` (unresolved: the turn named several models, no model, or a malformed value), and absent (not reported: `codex`, `agy`, and a transcript written before this change). The model counts only when the output reports the session the role keeps (the retained session id, or the new one a first turn adopts): an output that reports another session, or none, records `null`, and so does an output whose events name more than one session (an array of Claude events where a result event names another session than the system event, or a Copilot stream with two sessions), because the kept session may have run on any model. A failed turn whose output names one model records it, and a failed turn with no readable output (a non-zero exit with no output, a timeout, a cancel, a signal) records `null`, because the session may have run on another model. Only a process that never started leaves the record unchanged. Only a resolved record is compared, and never against an older model. `claude` runs with `--output-format json --verbose`, whose array of events holds the `init` event, so a turn that lists a helper model in `modelUsage` still resolves to the main-loop model. Before any turn, each role with a recorded resolved model gets one read-only probe turn in a new session. The probe runs under the same mutation check and SIGINT cancel as any child turn: a probe that changes the work tree halts the run with exit 1, and a SIGINT cancels it with exit 130, both with no transcript write. A run whose probe resolves another model is refused with exit 1, because the CLI default or alias changed. The model flags must equal the earlier run's, so a new `--<role>-model` value is refused too: restore the earlier default in the CLI, or start a new run without `--continue-from`. The probe is one extra model call per such role. A probe that does not name one model skips the comparison with a warning, and a failed probe refuses. A role whose latest recorded turn is unresolved is not probed or compared, and the run warns that the default-model check did not run because that turn did not name one model. A `claude`, `copilot`, or `opencode` role with no record, from an earlier version, gets the same warning. `codex` and `agy` report no resolved model in a supported output, so a change of their default model is not detected, and the run says so: pass an explicit `--<role>-model` in both runs to pin it. The refusal writes no transcript, so `--transcript` can name the `--continue-from` file without a refusal overwriting the sessions it holds.
+- `--transcript` rewrites its file at exit through a temporary file in the same directory and a rename, so a failed write leaves the earlier file whole, and the earlier file is read whole with no size limit. When it names the `--continue-from` file, the new file keeps every earlier event in order, then one `continued` event that records the earlier `exitCode`, `error`, and `maxSteps`, then the events of the continued run. The top-level `exitCode`, `error`, `options`, and `roles` describe the continued run. A different `--transcript` path holds only the continued run's events.
+- The completion gate state is restored only when the work tree is unchanged (ADR 0023, restated in ADR 0026). A headless run that returns an exit code ends its transcript with a `gate` event that holds its final gate state. A run that ends on a thrown error (for example SIGINT) writes none. A continued run does not trust that record. It replays the earlier events in file order through the same transitions the loop applies (a worker result clears the accept, and a reviewer result sets `reviewerRan` and sets or clears the accept from its `Verdict: accept` and Checks line), and a `continued` event restarts the replay at the reset state. It restores the gate only when every event is well formed (a role of exactly `worker` or `reviewer` on a result, and the fields of an `ok` or `error` result), no worker or reviewer invocation is left without a result, the last event is the `gate` event, the replayed state equals it, the reviewed state is well formed (a Git head or `unborn`, a SHA-256 digest, an exact snapshot), and the current work tree has the same head and digest. The restored reviewed state comes from the current work tree, not from the file. Then a reviewer accept on that state still satisfies `--require-accept`, a `--require-ci` gate, or a `--mode review-only` finish with no new reviewer turn, and the orchestrator prompt says so. In every other case the state is reset, including a transcript with no `gate` event, such as one an earlier version wrote, and any malformed value, which never aborts the run. A reset counts the work as unreviewed: under `--require-accept` a finish needs a reviewer `Verdict: accept` with a Checks line in this run, a `--require-ci` gate reads only a reviewer turn from this run, and a `--mode review-only` finish needs a reviewer turn from this run. The cost is one reviewer turn, so leave a step for it. The refusal flag is never restored, so a continued run always gets its corrective turn after a first refusal. A continuation that restored a gate and ran no turn is not reproduced by the replay, so the next continuation resets. The transcript is a local file with no signature, so the restore does not authenticate it. It checks only the rules above, and promises nothing more about a deleted, added, or reordered event: an edit resets only when it makes an event invalid or makes the replay differ from the `gate` event. A forged sequence that is well formed and replays to the recorded state restores. A `--transcript` file inside the work tree is an untracked file that changes the digest, so keep it outside the work tree or ignored by Git for the restore to apply.
+- The new transcript records `options.continueFrom`, and its `roles` hold the session ids at the end of the continued run, so a run can be continued again.
+- This flag shares no code path with the interactive `agent-loop role` design of issue #361. That path already keeps the session ids and gate state in its state file, so it needs only a raised budget. The headless path keeps neither, so it reads the transcript.
+
+## Transcript
+
+When `--transcript <file>` is specified, a JSON transcript is written upon process exit (except when argv parsing fails).
+
+The transcript records each validated orchestrator action, each child result, and one `invocation` event per CLI call, all with timestamps, plus the final exit code and error. It does not record raw orchestrator responses. Its `exitCode` is the process exit code, so a reader that treats `0` as success must also accept `4` for a recorded finish (#279). A transcript inside the Git work tree is also written once before the first turn. It records a top-level `runNonce`, a random UUID of the run (ADR 0027).
+
+A `refusal` event records a `finish` the runtime refused under `--require-accept` or `--require-ci`, and a `run_worker` action a `--mode review-only` run refused, with the `reason` string and the `stepsUsed` at the refusal. The event follows the refused `action` event, so a reader sees the refused action, then the refusal and its reason. A `--require-ci` refusal carries the gate reason, such as `the PR head differs from the reviewed commit`, or `the PR gate could not be evaluated: <error>` when the gate could not read GitHub at all. A run emits one `refusal` event per refusal. The run ends with exit 1 at a refusal that has no child turn since the last one, or at a refusal with no step budget left for the corrective turn.
+
+In the headless loop, one refusal reports every condition the finish breaks. The interactive `role finish` reports every condition above the `--require-ci` gate, in this order: the `unresolvedCompare` marker, then the completion rule, then the declared-PR gate condition. It never lists a `--require-ci` condition beside those. The marker condition applies to a run that carries the gate and to a run that declared `--pr <pr>`, because both need the gate that resolves the compare. On that path the `--require-ci` gate runs only when nothing above it refused, so a refused `finish` never reaches the gate and never reads GitHub. A later interactive `finish` can therefore report a `--require-ci` condition that the first refusal did not name. The headless loop evaluates every gate it owns, so the `--require-ci` gate runs whenever the run carries it and the declared-PR condition did not refuse, and a finish the marker, the `review-only` condition, or `--require-accept` already refused still runs the gate. Only the declared-PR gate condition skips it. Running the gate is not the same as reading GitHub: the gate checks two local conditions first, and only then reads, so it refuses with no GitHub call when the latest reviewer turn has no reviewed state and when the reviewed work tree is not clean, while every other condition it checks needs a read to settle it, the PR head comparison included, because it reads the PR first. The run ends when two refusals land with no child turn between them, or when the step budget is gone, so a prompt that named a single condition would spend its one corrective turn on a condition the next refusal named instead.
+
+Two different things are cleared here, and the wording keeps them apart. Any child turn clears the prior-refusal flag, which is bookkeeping. Satisfying the refused condition is separate: the marker is satisfied by editing the finish action, so a finish refused for the marker alone needs no child turn and costs no step, while every other condition needs one. A gate refusal needs a reviewer turn, since the gate reads the reviewed state that only a reviewer turn establishes. A worker turn resets that state to none rather than establishing it, so on its own it satisfies neither the gate nor the completion rule, and a worker turn is needed first only when the condition is about the change rather than the checks. A finish refused because a required check is still pending therefore consumes a step for the reviewer turn that re-reads the state once the check reports, so leave `--max-steps` room for it.
+
+A re-finish after a marker-only refusal is still a repeat in the bookkeeping sense: if anything else refuses it, the flag is still set and the run ends on exit 1. That is rare, and it is the price of not spending a step on a turn the marker did not need.
+
+A `gh` failure inside the gate is a refusal, not a crash, so a transient credential or network failure is refused on the ordinary path with the work of that attempt intact, and the run ends on exit 1 when the failure recurs with no child turn in between. The orchestrator does not run the gate or hold its credential, so the only retry it owns is a reviewer turn that re-runs the gate, and that costs a step like any other.
+
+An `unresolved-compare` event records a `finish` whose action set `"unresolvedCompare": true`, the case where the parent records an unresolved PR-head compare under `notDone` and `open` instead of verifying it (#266). The event follows the finish `action` event and carries `stepsUsed`. The same finish exits `4` instead of `0` and keeps the same summary, so the recorded finish stays distinguishable without a transcript: a consumer that reads only the exit code sees `4` for a recorded unresolved compare and `0` for a verified finish (#279). A run without `--require-ci` has no PR input, so only the parent can report the condition, through that field, and a `finish` that records the compare and omits the field produces no event and exits `0` (issue #286). With `--require-ci <pr>` the runtime resolves the PR head itself, so the marker is refused rather than recorded and the omission leaves nothing to detect (#293). With `--pr <pr>` the run declares that PR, so the gate for that PR is required and the marker is refused with the missing gate (issue #302).
+
+A `local-files` event records the paths the init copy of local files copied and skipped, by name only, with no file content (ADR 0018).
+
+A `no-required-checks` event records a finish the `--require-ci` gate passed because every required-check source stated that the base branch has no required check, and the merge state was one the gate could read, so the gate verified the PR head, the clean reviewed tree, and the merge state, and no check status at all. It carries the gated `pr` and the `stepsUsed`, and is emitted on an accepted finish only, so a run on a branch that does require a check never carries it and a refused finish never reports an absence. Without the event a finish on such a branch reads exactly like one whose checks passed, which is the gap issue #336 closed (issue #336).
+
+A `gate` event is the last event of a run that returned an exit code. It holds `workerRan`, `reviewerRan`, `reviewerTurnDispatched`, `acceptedSinceWorker`, and `lastReviewed`, the final gate state, and `--continue-from` checks it against a replay of the events (see Continue a run). A run that ended on a thrown error writes none.
+
+An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude and Copilot adapters map it from the CLI result:
+
+- `models`: the per-model usage map keyed by model id. The Claude CLI exposes it; the Copilot CLI does not.
+- `mainLoop`: the top-level `usage` field. Copilot exposes a session-cumulative `result.usage` object here, with no token counts and possible `codeChanges.filesModified` paths. Claude exposes its main-loop usage here.
+- `totalCostUsd`: `total_cost_usd`. The CLI must expose it for this key to exist; Copilot does not.
+
+Do not sum Copilot `mainLoop` values across invocation events. Its usage is cumulative for the session, not per turn.
+
+The OpenCode adapter maps usage from the `opencode run --standalone --format json` stream. A step that ends with tool calls emits a `step_finish` part carrying `tokens` (`input`, `output`, `reasoning`, `cache.read`, `cache.write`) and `cost`; the adapter sums both across steps:
+
+- `mainLoop`: the summed `tokens` object.
+- `totalCostUsd`: the summed `cost`.
+
+A failed turn keeps the usage its completed steps reported, the same as the Claude adapter. No event names the model, so `models` is omitted. Usage was inspected against OpenCode `v0.0.0-dev-19933`; in that version only steps that end with tool calls emit a `step_finish`, so a text-only turn, and the closing text step of a tool-using turn, contribute no usage.
+
+The Antigravity adapter maps `mainLoop` from the CLI `usage` field. Antigravity reports no cost and no per-model breakdown.
+
+The Codex adapter maps `turn.completed.usage` to `mainLoop`. The map contains input, cached input, cache-write input, output, and reasoning-output token counts. The token counts are cumulative for the thread, not per turn. Codex reports no cost or per-model usage.
+
+Other adapters emit `invocation` events without `usage` until their CLI output is mapped. Per-model usage shows which models ran inside a turn. It cannot separate parent tokens from subagent tokens on the same model.
+
+```json
+{
+  "task": "...",
+  "cwd": "...",
+  "options": { "maxSteps": 20, "timeout": 3600, "requireAccept": true },
+  "roles": {
+    "orchestrator": { "kind": "codex", "model": null, "effort": null, "sessionId": "..." },
+    "worker": { "kind": "claude", "model": "...", "effort": "...", "sessionId": "..." },
+    "reviewer": { "kind": "agy", "model": null, "effort": null, "sessionId": "..." }
+  },
+  "events": [
+    { "type": "invocation", "at": "...", "stepsUsed": 0, "role": "orchestrator", "status": "ok", "usage": { ... } },
+    { "type": "action", "at": "...", "stepsUsed": 0, "action": { ... } },
+    { "type": "invocation", "at": "...", "stepsUsed": 1, "role": "worker", "status": "ok", "usage": { ... } },
+    { "type": "result", "at": "...", "stepsUsed": 1, "role": "worker", "result": { ... } },
+    { "type": "invocation", "at": "...", "stepsUsed": 1, "role": "orchestrator", "status": "ok", "usage": { ... } },
+    { "type": "action", "at": "...", "stepsUsed": 1, "action": { "action": "finish", "summary": { ... } } },
+    { "type": "refusal", "at": "...", "stepsUsed": 1, "reason": "no reviewer accept on the latest changed state after a worker turn" },
+    { "type": "invocation", "at": "...", "stepsUsed": 2, "role": "reviewer", "status": "ok", "usage": { ... } },
+    { "type": "result", "at": "...", "stepsUsed": 2, "role": "reviewer", "result": { ... } },
+    { "type": "invocation", "at": "...", "stepsUsed": 2, "role": "orchestrator", "status": "ok", "usage": { ... } },
+    { "type": "action", "at": "...", "stepsUsed": 2, "action": { "action": "finish", "summary": { ... } } }
+  ],
+  "exitCode": 0,
+  "error": null
+}
+```
+
+## Exit codes
+
+| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Orchestrator returned `finish` with valid 5-part summary and no `unresolvedCompare` marker.                                                                                                                                                                                                                                                                                                                                                              |
+| 1    | Orchestrator returned `abort`, a `--require-accept` or `--require-ci` finish refused twice or refused with no step budget left, a `--pr` declaration with no matching gate refused the finish, a `--mode review-only` run that refused a `run_worker` action, a usage error, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover. |
+| 2    | Step limit reached (`--max-steps`) with work remaining. `--continue-from` continues that run.                                                                                                                                                                                                                                                                                                                                                            |
+| 4    | Orchestrator returned a `finish` that set `unresolvedCompare: true`. The run is a recorded finish, not a failure: the summary is printed as for exit 0 and the transcript holds no error. The code is what tells an exit-code-only consumer that the PR-head compare was never verified. A consumer that treats any nonzero code as failure must special-case 4, and so must a consumer that reads the transcript `exitCode`.                            |
+| 130  | Interrupted by `Ctrl+C` (active children killed).                                                                                                                                                                                                                                                                                                                                                                                                        |
