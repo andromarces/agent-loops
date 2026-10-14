@@ -80,6 +80,6 @@ Andro Marces
 - Implementation: `src/lib/continuation.mjs`, the `continued` input of `runLoop`
   and `initialPrompt`, and `--continue-from` in `src/cli.mjs`; tests in
   `tests/lib/continuation.test.mjs`, `tests/cli.test.mjs`, and
-  `tests/runtime*.test.mjs`; documented in `README.md`
+  `tests/runtime*.test.mjs`; documented in [Continue a run](../docs/reference/usage.md#continue-a-run)
 - Superseded by [ADR 0023: Restore the headless gate state on a continued run](0023-restore-the-headless-gate-state-on-a-continued-run.md)
 - [ADR Index](README.md)

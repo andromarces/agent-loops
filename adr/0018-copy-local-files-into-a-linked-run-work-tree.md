@@ -265,5 +265,5 @@ Andro Marces
 - [Issue #423](https://github.com/andromarces/agent-loops/issues/423)
 - Implementation: `copyLocalFiles` in `src/lib/local-files.mjs`, the init copy in
   `src/role.mjs` and `runLoop` in `src/runtime.mjs`, and the flags in `src/cli.mjs`;
-  documented in `README.md` and `docs/orchestrator-instructions.md`
+  documented in [Local files in a linked work tree](../docs/reference/harness-entry-points.md#local-files-in-a-linked-work-tree) and `docs/orchestrator-instructions.md`
 - [ADR Index](README.md)

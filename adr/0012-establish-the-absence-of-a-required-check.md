@@ -261,7 +261,7 @@ nothing else.
    is refused by another condition has not finished and verified nothing. A
    `no-required-checks` event is therefore emitted inside the accepted-finish
    branch, after every refusal has been found absent.
-9. The prompt, the interactive instructions, the README, and the CLI help state
+9. The prompt, the interactive instructions, the reference docs, and the CLI help state
    the outcome and its condition in one form: a base branch that states it has no
    required check has no check to wait for, so the gate passes on the PR head, the
    clean reviewed tree, and the merge state, and the run records the absence, when
@@ -380,7 +380,7 @@ Andro Marces
   line in `src/prompts/orchestrator.mjs`; tests in
   `tests/lib/ci-gate.*.test.mjs`, `tests/runtime*.test.mjs`,
   `tests/role.finish-abort.test.mjs`, and `tests/prompts/orchestrator.test.mjs`;
-  documented in `docs/orchestrator-instructions.md` and `README.md`
+  documented in `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role) and [Options](../docs/reference/usage.md#options)
 - Read-only probe behind the classification, 2026-09-29, on
   `sindresorhus/slugify` (a repository with no required check): repository rulesets
   read `[]`, classic branch protection answered `Not Found` (HTTP 404), and
