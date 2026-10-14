@@ -179,3 +179,62 @@ test.each([
   expect(seen[0].sandbox).toBe(mode);
   expect((await readTranscript(transcript)).options.reviewerSandbox).toBe(mode);
 });
+
+// Usefulness: verifies a recorded mode that is present but not one of the three is refused on
+// --continue-from, for every kind of bad value, before any turn and with the transcript unchanged.
+// It is never read as the legacy fallback, so it cannot bypass the change refusal (ADR 0038).
+test.each([null, 0, 1, "", "full", "danger-full-access", true, {}])(
+  "--continue-from refuses the recorded mode %j and names the field",
+  async (value) => {
+    const { repo, transcript, errors } = await firstRun();
+    const earlier = await readTranscript(transcript);
+    earlier.options.reviewerSandbox = value;
+    await writeFile(transcript, JSON.stringify(earlier));
+    const before = await readFile(transcript, "utf8");
+
+    const seen = [];
+    for (const flags of [[], ["--reviewer-sandbox", "read-only"]]) {
+      errors.mockClear();
+      await main(
+        [
+          ...ARGS,
+          ...flags,
+          "--cwd",
+          repo,
+          "--continue-from",
+          transcript,
+          "--transcript",
+          transcript,
+        ],
+        agents([FINISH], seen),
+      );
+      expect(process.exitCode).toBe(1);
+      expect(errors.mock.calls.flat().join("\n")).toContain(
+        "has an invalid reviewerSandbox option",
+      );
+    }
+    expect(seen).toEqual([]);
+    expect(await readFile(transcript, "utf8")).toBe(before);
+  },
+);
+
+// Usefulness: verifies the refusal does not depend on the reviewer kind, the same as the state file
+// of the interactive path: a transcript of a reviewer that is not Codex never records the field.
+test("--continue-from refuses an invalid recorded mode for a reviewer that is not Codex too", async () => {
+  const ws = await workspace();
+  const args = ARGS.map((v) => (v === "codex" ? "agy" : v));
+  await main(
+    [...args, "--cwd", ws.repo, "--max-steps", "1", "--transcript", ws.transcript],
+    agents([REVIEW, REVIEW]),
+  );
+  const earlier = await readTranscript(ws.transcript);
+  earlier.options.reviewerSandbox = null;
+  await writeFile(ws.transcript, JSON.stringify(earlier));
+
+  await main(
+    [...args, "--cwd", ws.repo, "--continue-from", ws.transcript, "--max-steps", "3"],
+    agents([FINISH]),
+  );
+  expect(process.exitCode).toBe(1);
+  expect(ws.errors.mock.calls.flat().join("\n")).toContain("has an invalid reviewerSandbox option");
+});

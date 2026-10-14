@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test } from "vite-plus/test";
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
 import {
@@ -154,4 +154,85 @@ test.each([
   expect((await reviewerTurn(repo, agents, [FLAG, mode])).exitCode).toBe(0);
   const other = mode === "read-only" ? "workspace-write" : "read-only";
   expect((await reviewerTurn(repo, agents, [FLAG, other])).exitCode).toBe(1);
+});
+
+// A recorded mode that is present but not one of the three is refused on every path that reads the
+// state file, with an error that names the field (ADR 0038, decision 7). It never runs a reviewer
+// turn, and it is never read as another mode, so it cannot bypass the change refusal.
+const INVALID_MODES = [null, 0, 1, "", "full", "danger-full-access", true, {}];
+const SUMMARY = JSON.stringify({
+  changed: "a",
+  verified: "b",
+  deferred: "c",
+  notDone: "d",
+  open: "e",
+});
+const PARENT = ["--parent-session", "parent-sess-1"];
+
+async function corrupt(repo, value) {
+  const { stateFile } = statePaths({ cwd: repo });
+  await writeState(stateFile, { ...(await readState(stateFile)), reviewerSandbox: value });
+}
+
+const PATHS = [
+  ["role dispatch", (repo, agents) => reviewerTurn(repo, agents)],
+  [
+    "role dispatch --resume-interrupted",
+    (repo, agents) => reviewerTurn(repo, agents, ["--resume-interrupted"]),
+  ],
+  [
+    "the init-field comparison with a flag",
+    (repo, agents) => reviewerTurn(repo, agents, [FLAG, "read-only"]),
+  ],
+  [
+    "extend",
+    (repo) =>
+      executeRoleCommand(
+        withRepo(["extend", "--cwd", "<repo>", ...PARENT, "--max-steps", "99"], repo),
+      ),
+  ],
+  [
+    "finish",
+    (repo) =>
+      executeRoleCommand(withRepo(["finish", "--cwd", "<repo>", ...PARENT], repo), {
+        stdin: async () => SUMMARY,
+      }),
+  ],
+];
+
+// Usefulness: verifies one defined outcome for an invalid recorded mode on each state-reading path:
+// a refusal that names the field, no reviewer turn, and no state change. `null` was read as the
+// legacy fallback before, so a probe with it passed the check.
+describe.each(PATHS)("%s with an invalid recorded mode", (_name, call) => {
+  test.each(INVALID_MODES)("refuses %j", async (value) => {
+    const { repo, reviewer, agents } = await start();
+    await corrupt(repo, value);
+    const { stateFile } = statePaths({ cwd: repo });
+    const before = await readState(stateFile);
+
+    const result = await call(repo, agents);
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain("State file field reviewerSandbox must be one of");
+    expect(result.payload.error).toContain("none, read-only, workspace-write");
+    expect(reviewer.recorded).toHaveLength(0);
+    expect(await readState(stateFile)).toEqual(before);
+  });
+});
+
+// Usefulness: verifies the refusal does not depend on the reviewer kind: a state of a reviewer that
+// is not Codex never holds the field, so a present invalid value is a damaged file, not a mode.
+test("an invalid recorded mode is refused for a reviewer that is not Codex too", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const other = INIT.map((v) => (v === "codex" ? "fake2" : v));
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+  await executeRoleCommand(withRepo(dispatchArgv(other, "worker"), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  await corrupt(repo, null);
+  const turn = await reviewerTurn(repo, agents);
+  expect(turn.exitCode).toBe(1);
+  expect(turn.payload.error).toContain("State file field reviewerSandbox must be one of");
 });

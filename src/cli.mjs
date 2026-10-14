@@ -520,8 +520,9 @@ export async function main(
     if (options.continueFrom) {
       try {
         const earlier = await readContinuation(options.continueFrom);
+        // Read for every reviewer kind, so a damaged record is refused, never skipped.
+        const held = earlierReviewerSandbox(earlier, options.continueFrom);
         if (reviewerSandbox !== null) {
-          const held = earlierReviewerSandbox(earlier, options.continueFrom);
           if (options.reviewerSandbox !== null && options.reviewerSandbox !== held) {
             throw new Error(
               `--reviewer-sandbox cannot be changed by --continue-from (the earlier run held: ${held}).`,

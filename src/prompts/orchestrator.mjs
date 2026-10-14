@@ -10,10 +10,11 @@ import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.m
 // JSON-action form, including the completion rule. Keep the two consistent when
 // either changes.
 // CLIs whose read-only turn keeps shell network access, so a reviewer turn on
-// one can read the required checks with `gh pr checks`. The `codex` read-only
-// sandbox blocks the network of the shell commands it runs, so a codex turn
-// cannot read the checks through one. An unknown CLI is treated the same way,
-// because a wait it cannot perform costs a run.
+// one can read the required checks with `gh pr checks`. A `codex` turn in a sandboxed mode
+// (`read-only` or `workspace-write`) has the network of its shell commands blocked, so it cannot
+// read the checks through one. A `codex` reviewer with no sandbox, the default, keeps network
+// (`isNetworkedReviewer`). An unknown CLI is treated like a sandboxed one, because a wait it cannot
+// perform costs a run.
 const NETWORKED_READ_ONLY_CLIS = new Set(["claude", "agy", "opencode", "copilot"]);
 // A Codex reviewer with no sandbox (ADR 0038) keeps shell network. Under either sandboxed mode, or
 // with no mode named, it stays in the gate class.
@@ -167,7 +168,8 @@ function prGateBlock({
   }).join("\n")}`;
 }
 
-// What the Codex read-only sandbox blocks is the network of the shell commands that it runs. The
+// What a Codex sandbox (the orchestrator `read-only`, or a reviewer in a sandboxed mode) blocks is the
+// network of the shell commands that it runs. The
 // denial lines below say so, because a model-side tool or another channel outside the sandbox is
 // not blocked, and no line may read as an all-channel denial (ADR 0019). The run counts on no such
 // channel, and only the --require-ci finish gate enforces anything.
@@ -284,7 +286,7 @@ function advisoryQualifier() {
 /**
  * The clause a gated run adds to the line that says no turn in the run can read
  * the checks through a shell command. The runtime reads the status outside every
- * read-only turn and supplies it to the reviewer prompt as advisory evidence in
+ * sandboxed turn and supplies it to the reviewer prompt as advisory evidence in
  * place of the reviewer reading the checks; the reviewer keeps its own read as
  * the fallback, and the `--require-ci` finish gate enforces the condition
  * (#320). The wording is the same rule `docs/orchestrator-instructions.md`
@@ -449,7 +451,7 @@ ${REMOTE_WRITE_RULE}
 
 You have two child roles:
 - worker: Implements changes, runs checks and tests, and reports findings and progress.
-- reviewer: Read-only inspector. Inspects and assesses the repository state and verifications. The reviewer must not edit files.
+- reviewer: Inspector. Inspects and assesses the repository state and verifications. The reviewer must not edit files.
 
 You have a maximum step budget of ${maxSteps} steps.
 A step is consumed only when you dispatch a child role (run_worker or run_reviewer).

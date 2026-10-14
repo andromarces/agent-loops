@@ -275,7 +275,7 @@ confirm it, not to test it.
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
 then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed
-head. The command reads status only, so the reviewer stays read-only. Every
+head. The command reads status only and changes nothing. Every
 rule below belongs to that one condition, so the prompt nests them under it:
 
 - When the task names a pull request, read the required checks for the reviewed

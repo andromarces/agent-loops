@@ -26,18 +26,21 @@ const INIT_FIELDS = [
 
 /**
  * The reviewer sandbox mode that a state file holds, or null for a reviewer that is not Codex. A
- * state file from before ADR 0038 has no `reviewerSandbox`: it gets `workspace-write` when it holds
- * the legacy `reviewerWorkspaceWrite: true` and `read-only` otherwise, never `none`.
+ * state file from before ADR 0038 has no `reviewerSandbox` field: it gets `workspace-write` when it
+ * holds the legacy `reviewerWorkspaceWrite: true` and `read-only` otherwise, never `none`. A field
+ * that is present with any other value, `null` included, is refused for every reviewer kind, because
+ * the run cannot tell which sandbox it recorded.
+ * @throws {RoleError} when the field is present and is not one of the three modes
  */
 export function storedReviewerSandbox(state) {
-  if (state.roles?.reviewer?.kind !== "codex") return null;
-  const mode = state.reviewerSandbox ?? legacyReviewerSandbox(state.reviewerWorkspaceWrite);
-  if (!REVIEWER_SANDBOX_MODES.includes(mode)) {
+  const recorded = state.reviewerSandbox;
+  if (recorded !== undefined && !REVIEWER_SANDBOX_MODES.includes(recorded)) {
     throw new RoleError(
-      `State file field reviewerSandbox must be one of ${REVIEWER_SANDBOX_MODES.join(", ")}, got: ${JSON.stringify(mode)}.`,
+      `State file field reviewerSandbox must be one of ${REVIEWER_SANDBOX_MODES.join(", ")}, got: ${JSON.stringify(recorded)}.`,
     );
   }
-  return mode;
+  if (state.roles?.reviewer?.kind !== "codex") return null;
+  return recorded ?? legacyReviewerSandbox(state.reviewerWorkspaceWrite);
 }
 
 export function validateInitFlags(args, agents = {}) {
@@ -109,10 +112,12 @@ export function rejectInitFlagChanges(args, state, allowed = []) {
     );
   }
   // The mode is fixed at init, so a later call cannot widen or narrow the reviewer sandbox. Omitting
-  // the flag is not a change: the stored value governs (ADR 0038).
-  if (args.reviewerSandbox !== null && args.reviewerSandbox !== storedReviewerSandbox(state)) {
+  // the flag is not a change: the stored value governs (ADR 0038). The stored value is read on every
+  // later call, so a damaged field is refused here, before any operation acts on the state.
+  const heldSandbox = storedReviewerSandbox(state);
+  if (args.reviewerSandbox !== null && args.reviewerSandbox !== heldSandbox) {
     throw new RoleError(
-      `--reviewer-sandbox cannot be changed after init (state holds: ${storedReviewerSandbox(state)}).`,
+      `--reviewer-sandbox cannot be changed after init (state holds: ${heldSandbox}).`,
     );
   }
   // A task file is read only at init, so a later call never holds it as `task`.

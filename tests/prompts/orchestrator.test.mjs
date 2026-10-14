@@ -2036,3 +2036,38 @@ test("refusalPrompt and repairPrompt render no raw line separator", () => {
     }
   }
 });
+
+// Usefulness: verifies requirement "no surface calls the Codex reviewer read-only or sandboxed by
+// default" (ADR 0038). Each stale phrase named the old default or the old network rule, and was
+// removed on purpose; a restored one fails here. A reword that keeps the meaning passes.
+test.each([
+  ["the user docs", readUserDocs],
+  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  [
+    "the headless orchestrator prompt",
+    async () => initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "none" }),
+  ],
+])("%s does not state the old Codex reviewer default", async (_name, load) => {
+  const text = (await load()).replace(/\s+/g, " ");
+  expect(text).not.toMatch(/reviewer \(read-only\)/);
+  expect(text).not.toMatch(/reviews? the repository in read-only mode/i);
+  expect(text).not.toMatch(/reviewer: Read-only inspector/i);
+  expect(text).not.toMatch(/A Codex reviewer turn runs with `sandbox_mode="read-only"`/);
+  expect(text).not.toMatch(/The default stays `read-only`/);
+  expect(text).not.toMatch(/Codex needs no shell denial, except/);
+});
+
+// Usefulness: verifies the user docs and --help state the default and both opt-ins in one place each
+// reader looks, so the new default is not only in the ADR (ADR 0038).
+test.each([
+  ["the user docs", readUserDocs],
+  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+])("%s states the no-sandbox default and the two opt-in modes", async (_name, load) => {
+  const text = (await load()).replace(/\s+/g, " ");
+  expect(text).toMatch(/no sandbox/);
+  expect(text).toContain("--reviewer-sandbox");
+  expect(text).toContain("read-only");
+  expect(text).toContain("workspace-write");
+});
