@@ -16,12 +16,13 @@ import {
   readTaskFile,
   roleFlags,
   TASK_SOURCE_CONFLICT,
-  reviewerWorkspaceWriteError,
+  reviewerSandboxError,
   testCmdError,
 } from "./lib/args.mjs";
 import {
   carryEarlierEvents,
   gateFromTranscript,
+  earlierReviewerSandbox,
   readContinuation,
   refuseHeldSessions,
   restoreSessions,
@@ -71,7 +72,7 @@ export function parseArgs(argv) {
     requireCi: null,
     testCmd: null,
     testCmdTimeout: null,
-    reviewerWorkspaceWrite: false,
+    reviewerSandbox: null,
     mode: null,
     continueFrom: null,
     copyLocalFiles: true,
@@ -134,10 +135,7 @@ export function parseArgs(argv) {
     throw new Error(testCmdRefusal);
   }
 
-  const sandboxRefusal = reviewerWorkspaceWriteError(
-    options.reviewerWorkspaceWrite,
-    options.reviewer,
-  );
+  const sandboxRefusal = reviewerSandboxError(options.reviewerSandbox, options.reviewer);
   if (sandboxRefusal) {
     throw new Error(sandboxRefusal);
   }
@@ -197,8 +195,8 @@ const TEST_CMD_TEXT =
   "Run this command through the platform shell (/bin/sh -c, or cmd.exe on Windows) in --cwd before each reviewer turn, outside the reviewer sandbox. The exit code and an output tail go to the reviewer prompt as advisory evidence. This flag is the only source of the command. It runs with the environment of the runtime, so keep secrets out of the command text.";
 const TEST_CMD_TIMEOUT_TEXT =
   "Bound on one --test-cmd run. Defaults to 600. The command's own process group (POSIX) or process tree (Windows) is killed at the bound, and the run reports timed out. An orphan that left the group, or whose parent exited on Windows, can survive (ADR 0017). Requires --test-cmd.";
-const WORKSPACE_WRITE_TEXT =
-  "Run each Codex reviewer turn in the workspace-write sandbox instead of read-only. Network access stays off for the shell commands that the sandbox runs. That limit covers shell commands only: model-side tools such as web_search and other channels outside the sandbox are not blocked. A user Codex execpolicy rule that allows bash -c, sh -c, or zsh -c is an exception (ADR 0019). Needs --reviewer codex, and is off by default. The orchestrator turns stay read-only, and the mutation check still halts the run on a change (ADR 0019).";
+const REVIEWER_SANDBOX_TEXT =
+  'Sandbox of each Codex reviewer turn: read-only or workspace-write. With no flag the reviewer runs with no sandbox (sandbox_mode="danger-full-access"), so it can run the test suite and gh pr checks. Its shell commands can write anywhere the user can write and reach the network, and the mutation check is the only edit guard (ADR 0038). read-only is the earlier default. workspace-write keeps network access off for the shell commands that the sandbox runs. That limit covers shell commands only: model-side tools such as web_search and other channels outside the sandbox are not blocked. A user Codex execpolicy rule that allows bash -c, sh -c, or zsh -c is an exception (ADR 0019). Needs --reviewer codex. The orchestrator turns stay read-only, and the mutation check still halts the run on a change (ADR 0019, ADR 0038).';
 
 function printHelp() {
   console.log(
@@ -308,13 +306,14 @@ Role flags:
                                 finish that also sets unresolvedCompare.
   --test-cmd <command>          ${wrapHelp(`init only. ${TEST_CMD_TEXT} The state file holds only a digest, so pass the same --test-cmd on every reviewer dispatch; a changed or missing value is refused.`)}
   --test-cmd-timeout <seconds>  ${wrapHelp(TEST_CMD_TIMEOUT_TEXT)}
-  --reviewer-workspace-write    ${wrapHelp(`init only. ${WORKSPACE_WRITE_TEXT}`)}
+  --reviewer-sandbox <mode>     ${wrapHelp(`init only. ${REVIEWER_SANDBOX_TEXT} A later call can repeat the stored value or omit the flag, and any other value is refused.`)}
+  --reviewer-workspace-write    Alias of --reviewer-sandbox workspace-write.
 
 Options:
 
   --orchestrator <agent>        Agent that directs the loop. Required.
   --worker <agent>              Agent that implements changes. Required.
-  --reviewer <agent>            Agent that reviews the repository (read-only). Required.
+  --reviewer <agent>            Agent that reviews the repository (read-only; see --reviewer-sandbox for codex). Required.
   --orchestrator-model <model>  Model passed to the orchestrator CLI. Optional.
   --orchestrator-effort <level> Thinking effort passed to the orchestrator CLI. Optional.
   --worker-model <model>        Model passed to the worker CLI. Optional.
@@ -406,7 +405,8 @@ Options:
                                 argument.
   --test-cmd <command>          ${wrapHelp(`${TEST_CMD_TEXT} Optional.`)}
   --test-cmd-timeout <seconds>  ${wrapHelp(TEST_CMD_TIMEOUT_TEXT)}
-  --reviewer-workspace-write    ${wrapHelp(WORKSPACE_WRITE_TEXT)}
+  --reviewer-sandbox <mode>     ${wrapHelp(`${REVIEWER_SANDBOX_TEXT} With --continue-from, an omitted flag keeps the earlier mode, and another value is refused.`)}
+  --reviewer-workspace-write    Alias of --reviewer-sandbox workspace-write.
 
   A value flag also accepts the inline form --flag=value, for example
   --task=-x, which allows a value that starts with a dash. A boolean flag,
@@ -502,6 +502,10 @@ export async function main(
       sessionId: null,
     };
   }
+  // The mode of a Codex reviewer: `none` for a new run without the flag, and the earlier run's mode
+  // for a continued run. A reviewer that is not Codex has none (ADR 0038).
+  let reviewerSandbox =
+    roles.reviewer.kind === "codex" ? (options.reviewerSandbox ?? "none") : null;
   // Created before the continuation check, so a SIGINT during a probe turn cancels it.
   const controller = new AbortController();
   // Set once the transcript data exists. A refused continuation writes none, so it stays a no-op.
@@ -516,6 +520,16 @@ export async function main(
     if (options.continueFrom) {
       try {
         const earlier = await readContinuation(options.continueFrom);
+        // Read for every reviewer kind, so a damaged record is refused, never skipped.
+        const held = earlierReviewerSandbox(earlier, options.continueFrom);
+        if (reviewerSandbox !== null) {
+          if (options.reviewerSandbox !== null && options.reviewerSandbox !== held) {
+            throw new Error(
+              `--reviewer-sandbox cannot be changed by --continue-from (the earlier run held: ${held}).`,
+            );
+          }
+          reviewerSandbox = held;
+        }
         restoreSessions(roles, earlier, options.cwd);
         await refuseHeldSessions(roles, { signal: controller.signal });
         await verifyResolvedModels(roles, {
@@ -561,7 +575,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
               testCmd: redactCommandText(options.testCmd),
               testCmdTimeout: options.testCmdTimeout,
             }),
-        ...(options.reviewerWorkspaceWrite ? { reviewerWorkspaceWrite: true } : {}),
+        ...(reviewerSandbox === null ? {} : { reviewerSandbox }),
         ...(options.mode === null ? {} : { mode: options.mode }),
         ...(options.continueFrom ? { continueFrom: options.continueFrom } : {}),
         ...(options.copyLocalFiles ? {} : { copyLocalFiles: false }),
@@ -751,7 +765,7 @@ ${redactedText(readProp(err, "message") ?? err)}`);
         requireCi: options.requireCi,
         testCmd: options.testCmd,
         testCmdTimeout: options.testCmdTimeout,
-        reviewerWorkspaceWrite: options.reviewerWorkspaceWrite,
+        reviewerSandbox,
         mode: options.mode,
         continued: Boolean(options.continueFrom),
         earlierGate,

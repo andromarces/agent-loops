@@ -4,12 +4,12 @@ Run one coding task as a loop of CLI coding agents.
 
 - An **orchestrator** agent picks the next step.
 - A **worker** agent changes the code and runs the tests.
-- A **reviewer** agent checks the result in read-only mode.
-- A Node.js runtime enforces the step budget, the timeouts, and the read-only rule.
+- A **reviewer** agent checks the result. It must not edit files: a read-only sandbox or mode enforces that on every CLI except Codex, and a Codex reviewer runs with no sandbox by default, so only the mutation check detects an edit.
+- A Node.js runtime enforces the step budget and the timeouts, and detects a change to the work tree during a reviewer or orchestrator turn.
 
 ```text
 orchestrator ──> runtime ──> worker   (edits, tests)
-                        └──> reviewer (read-only)
+                        └──> reviewer (must not edit)
 ```
 
 Supported agent CLIs: `claude`, `codex`, `agy`, `opencode`, `copilot`.

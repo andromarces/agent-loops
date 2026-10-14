@@ -38,9 +38,9 @@ Collect these before the first dispatch:
   supplies it, and a headless run names it in the task
 - the test command, when the operator names one (`--test-cmd`, with the optional
   `--test-cmd-timeout`); the operator supplies it, and no turn sets it
-- whether the Codex reviewer runs in the `workspace-write` sandbox
-  (`--reviewer-workspace-write`, off by default); the operator supplies it, and
-  no turn sets it
+- the sandbox of the Codex reviewer (`--reviewer-sandbox read-only` or
+  `workspace-write`; with no flag the reviewer runs with no sandbox); the
+  operator supplies it, and no turn sets it
 
 ## Resolving the CLI
 
@@ -107,8 +107,9 @@ printf '%s' "<prompt>" | agent-loop role dispatch --role reviewer --cwd "<work t
 
 A run that set `--test-cmd` at init passes the same `--test-cmd "<command>"` on
 every reviewer dispatch, as the section on the runtime test command states.
-A run that set `--reviewer-workspace-write` at init needs no flag on a later
-dispatch: the state file holds the choice.
+A run that set `--reviewer-sandbox` at init needs no flag on a later
+dispatch: the state file holds the mode. A later dispatch that names another
+mode is refused.
 
 Read the JSON envelope on stdout. Example reviewer envelope:
 
@@ -274,7 +275,7 @@ confirm it, not to test it.
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
 then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed
-head. The command reads status only, so the reviewer stays read-only. Every
+head. The command reads status only and changes nothing. Every
 rule below belongs to that one condition, so the prompt nests them under it:
 
 - When the task names a pull request, read the required checks for the reviewed
@@ -301,7 +302,7 @@ worker turn and no extra reviewer turn for that failure.
 ## The runtime supplies the required-check status
 
 A reviewer turn whose shell commands cannot reach the network, for example a
-sandboxed Codex reviewer, only reported the status as unresolved before. The user-rule exception of ADR 0019 applies to such a turn. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
+Codex reviewer in a sandboxed mode, only reported the status as unresolved before. The user-rule exception of ADR 0019 applies to such a turn. A Codex reviewer with no sandbox (the default, ADR 0038) keeps shell network, so its own read can succeed, and it is the fallback of the second line below. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
 knows the pull request before the first turn. So the
 runtime reads the required-check status for that PR head and supplies it to every
 reviewer prompt. The prompt adds two lines inside the required-check group, so
@@ -378,8 +379,8 @@ supplies the status there.
 
 ## The runtime supplies a test command result
 
-A reviewer turn runs read-only by default, so it cannot run the test suite. An
-operator can name a command with `--test-cmd <command>` at init. The runtime runs it in the
+A reviewer turn in a sandboxed mode may not be able to run the test suite. A Codex
+reviewer with no sandbox (the default) can run it. An operator can name a command with `--test-cmd <command>` at init. The runtime runs it in the
 work tree before each reviewer turn, outside the reviewer sandbox, and supplies
 the result in the reviewer prompt. A worker turn never runs it. A run without
 the flag is unchanged.
@@ -416,68 +417,92 @@ the flag is unchanged.
   in an error still carries it. Compare it with the
   reviewer `Checks` line and act on a disagreement. A turn with no command
   carries no `testRun`.
-- The reviewer sees the result of the whole command only. It cannot run a
-  targeted test, unless the run also set `--reviewer-workspace-write` (next
-  section).
+- A reviewer in a sandboxed mode sees the result of the whole command only. It
+  cannot run a targeted test, unless the run set `--reviewer-sandbox
+  workspace-write` or runs with no sandbox (next section).
 
-## The Codex reviewer can run in the workspace-write sandbox
+## The Codex reviewer sandbox mode
 
-A Codex reviewer turn runs with `sandbox_mode="read-only"` and cannot run a
-targeted test or a probe. An operator can opt in at init with
-`--reviewer-workspace-write` (ADR 0019). It needs `--reviewer codex`, and any
-other reviewer is refused at init. The run is unchanged without it.
+A Codex reviewer turn runs with no sandbox by default, with
+`sandbox_mode="danger-full-access"` (ADR 0038). It can run the test suite and
+`gh pr checks`. An operator can choose a sandbox at init with
+`--reviewer-sandbox read-only` or `--reviewer-sandbox workspace-write`. The
+older `--reviewer-workspace-write` stays as an alias of `--reviewer-sandbox
+workspace-write`. The flag needs `--reviewer codex`, and any other reviewer is
+refused at init.
 
-- The runtime then starts each Codex reviewer turn with
-  `sandbox_mode="workspace-write"` and `sandbox_workspace_write.network_access=false`.
-  Network access stays off for the shell commands that the sandbox runs. The
-  runtime sets it explicitly, because the mode takes network from the user Codex
-  config otherwise. A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception, as ADR 0019 states. The limit covers shell commands only. It does not block
+| Mode              | Codex setting                                                                    | Shell network          |
+| ----------------- | -------------------------------------------------------------------------------- | ---------------------- |
+| none (default)    | `sandbox_mode="danger-full-access"`                                              | on                     |
+| `read-only`       | `sandbox_mode="read-only"`                                                       | off for shell commands |
+| `workspace-write` | `sandbox_mode="workspace-write"`, `sandbox_workspace_write.network_access=false` | off for shell commands |
+
+- Only reviewer turns change. Every orchestrator turn keeps `read-only`, every
+  worker turn gets no reviewer input, and the other four adapters keep their
+  invocations. The runtime mutation check still wraps every reviewer turn in
+  every mode.
+- In the two sandboxed modes, network access stays off for the shell commands that
+  the sandbox runs. The runtime sets it explicitly for `workspace-write`, because
+  the mode takes network from the user Codex config otherwise. A user Codex
+  execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception, as
+  ADR 0019 states. The limit covers shell commands only. It does not block
   model-side tools such as Codex `web_search`, or any other channel outside the
-  sandbox.
-- Only reviewer turns change. Every orchestrator turn, every worker turn, and the
-  other four adapters keep their invocations, and the runtime mutation check
-  still wraps every reviewer turn.
-- The reviewer prompt gains one line. Without the opt-in the line is absent.
-  The reviewer still must not change files. The headless initial prompt tells
-  the orchestrator about the opt-in only for a run that set it. The line states:
-  - The turn has the sandbox, and its shell commands have no network.
-  - A user execpolicy rule is an exception.
-  - The limit covers shell commands only.
-  - A package manager that writes outside the work tree fails there, so the
-    reviewer calls the project's local binary.
-- Choose the opt-in at init, and never change it later. A later call may repeat
-  the flag or omit it. A call that turns it on after init is refused. No turn
-  sets it.
+  sandbox. With no sandbox, no such rule applies, because no sandbox exists to skip.
+- The reviewer prompt gains one note that states the actual mode. The reviewer
+  still must not change files and must not write to a remote. The headless initial
+  prompt tells the orchestrator the mode, and says that its own turns stay
+  read-only. A reviewer that is not Codex has no mode, and its prompts name none.
+- Choose the mode at init, and never change it later. A later call may repeat the
+  flag or omit it. Any other value is refused, in either direction. A headless
+  `--continue-from` run keeps the mode of the earlier run, and a flag that names
+  another mode is refused. No turn sets it.
+- A state file or a transcript from before ADR 0038 has no recorded mode. It gets
+  `workspace-write` when it held `--reviewer-workspace-write`, and `read-only`
+  otherwise. It never gets the no-sandbox mode.
+- Required-check reads with no sandbox: the runtime still supplies the status
+  first. When the orchestrator is `codex`, `copilot`, or unnamed, a headless run
+  with `--require-ci` now tells the orchestrator that the reviewer turns do the
+  wait, because a no-sandbox Codex reviewer keeps shell network. A waiting
+  orchestrator (`claude`, `agy`, `opencode`) still runs `agent-loop role
+  wait-checks`, whatever the reviewer mode. A sandboxed Codex reviewer with a
+  non-waiting orchestrator stays on the gate rule. The `--require-ci` finish gate
+  is the only read that enforces.
 - Read the accepted gaps before you rely on it:
-  - The sandbox no longer prevents a reviewer edit. An edit succeeds, and the run
-    then halts with a `MutationError`, exit 1, and the runtime does not revert it.
+  - The sandbox no longer prevents a reviewer edit with no sandbox, and does not
+    in `workspace-write`. An edit succeeds, and the run then halts with a
+    `MutationError`, exit 1, and the runtime does not revert it.
   - The snapshot does not see a write to an ignored file (for example `.env` or
     `node_modules/`), a write outside the repository, a write that the turn
     restores before it ends, or Git state other than the index and `HEAD`
-    (other refs, the stash, the config).
-  - Shell network is off, so the opt-in does not open the shell path for `gh`
-    and `git`, except under the user-rule exception in this item. Exception,
-    seen on one machine only (issue #640): a user Codex rule that allows
-    `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion such
-    as `$$` or `$HOME` outside the sandbox, with network and with a write
-    outside the work tree. The runtime does not prevent that. The sandbox does not block a channel outside it, for example a
-    GitHub app connector or another model-side tool. The local snapshot does
-    not see a remote write over any channel, so a push, a merge, a review, or a
-    comment could change remote state unseen. Codex is the only adapter that
-    blocks shell network in a read-only turn today. The rule against remote
-    writes (issue #422) is advisory and not enforced.
-  - Reviewed content that holds an instruction can steer a command that writes,
-    not only one that reads.
-  - The unelevated Windows sandbox probably gives no gain: it blocks a child
-    spawn with `EPERM` under `workspace-write`. Not verified for a test runner.
-- A reviewer `Checks` line that shows a local test run under this opt-in is the
-  reviewer's own report. Compare it with `testRun` and with the required CI
-  checks.
+    (other refs, the stash, the config). With no sandbox, a write outside the
+    repository is not limited by a sandbox either.
+  - With no sandbox, the shell commands of the turn can reach the network, so a
+    reviewer can run `gh` and `git` and push, merge, review, or comment. The local
+    snapshot does not see a remote write over any channel. The rule against remote
+    writes (issue #422) is advisory and not enforced. In the sandboxed modes, the
+    shell path is closed except under the user-rule exception (issue #640), and
+    the sandbox does not block a channel outside it, for example a GitHub app
+    connector or another model-side tool.
+  - A command that a reviewer starts can write after its parent ends (ADR 0034).
+    With no sandbox, that write is not limited to the work tree.
+  - Reviewed content that holds an instruction can steer a command that writes or
+    sends data, not only one that reads. An operator who needs containment
+    chooses a sandboxed mode, or runs the reviewer in an external sandbox with no
+    credential for the remote.
+  - The unelevated Windows sandbox probably gives no gain in `workspace-write`: it
+    blocks a child spawn with `EPERM`. Not verified for a test runner. The
+    no-sandbox mode is not verified on Windows, macOS, or Linux with a live Codex
+    turn (issues #708, #709). Its behavior under a Codex requirements file that
+    does not allow `danger-full-access` is not verified (issue #710).
+- A reviewer `Checks` line that shows a local test run is the reviewer's own
+  report. Compare it with `testRun` and with the required CI checks.
 
 ## Test evidence when the reviewer cannot run tests
 
-A read-only Codex reviewer cannot run the test suite on Windows or on macOS. A child
-spawn fails, or `vp` cannot write its temporary directory. The reference section
+A Codex reviewer in the `read-only` mode cannot run the test suite on Windows or on
+macOS. A child spawn fails, or `vp` cannot write its temporary directory. A
+reviewer with no sandbox is not limited this way, and the `workspace-write` mode
+probably is on the unelevated Windows sandbox. The reference section
 [Codex read-only child-spawn limit](reference/reviewer-safety.md#codex-read-only-child-spawn-limit)
 holds the probes. Linux and the elevated Windows sandbox are not verified.
 
@@ -1018,6 +1043,12 @@ needed: the subcommand records each dispatched turn itself.
   over a non-terminal run, so `abort` is the only route to a terminal lifecycle
   for such a run. A new init then starts normally and archives the old state
   file. No field has to be hand-corrected.
+- `abort` is not subject to the recorded reviewer sandbox mode check either (ADR 0038). `dispatch`,
+  `--resume-interrupted`, `extend`, and `finish` refuse a state file whose
+  `reviewerSandbox` is present but not `none`, `read-only`, or `workspace-write`. `abort` runs
+  no reviewer turn, so it ends such a run, and it ignores a `--reviewer-sandbox` flag that it
+  cannot compare with the damaged field. Over a valid mode, `abort` still refuses a flag that
+  names another mode.
 - Read `turns` after compaction or restart to rebuild which turns ran, which
   verdicts they returned, and which head each reviewer turn saw.
 - `--transcript <file>` still appends one JSON line per `invocation` and

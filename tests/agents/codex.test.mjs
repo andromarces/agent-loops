@@ -420,3 +420,39 @@ test.each([
     ...(sessionId ? ["-"] : []),
   ]);
 });
+
+// Usefulness: verifies the reviewer sandbox input "none" runs the Codex turn with no sandbox in the
+// same `-c` form on new and resumed sessions (ADR 0038), and that an explicit "read-only" input
+// keeps the present read-only invocation. Both are cheap to break and none is covered above.
+test.each([
+  ["initial", null, ["exec"]],
+  ["resume", "th-1", ["exec", "resume", "th-1"]],
+])(
+  "codex %s turn passes the sandbox mode of the reviewer input",
+  async (_name, sessionId, head) => {
+    const run = async (sandbox) => {
+      vi.mocked(exec).mockClear();
+      vi.mocked(exec).mockResolvedValueOnce({
+        stdout: [
+          { type: "thread.started", thread_id: "th-1" },
+          { type: "item.completed", item: { type: "agent_message", text: "ok" } },
+        ]
+          .map((e) => JSON.stringify(e))
+          .join("\n"),
+        stderr: "",
+      });
+      const state = { kind: "codex", sessionId, model: null, effort: null };
+      await runCodex(state, "p", { cwd: "/dir", readOnly: true, sandbox });
+      return vi.mocked(exec).mock.calls[0][1];
+    };
+    const tail = ["--json", ...(sessionId ? ["-"] : [])];
+
+    expect(await run("none")).toEqual([
+      ...head,
+      "-c",
+      'sandbox_mode="danger-full-access"',
+      ...tail,
+    ]);
+    expect(await run("read-only")).toEqual([...head, "-c", 'sandbox_mode="read-only"', ...tail]);
+  },
+);

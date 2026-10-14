@@ -10,11 +10,17 @@ import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.m
 // JSON-action form, including the completion rule. Keep the two consistent when
 // either changes.
 // CLIs whose read-only turn keeps shell network access, so a reviewer turn on
-// one can read the required checks with `gh pr checks`. The `codex` read-only
-// sandbox blocks the network of the shell commands it runs, so a codex turn
-// cannot read the checks through one. An unknown CLI is treated the same way,
-// because a wait it cannot perform costs a run.
+// one can read the required checks with `gh pr checks`. A `codex` turn in a sandboxed mode
+// (`read-only` or `workspace-write`) has the network of its shell commands blocked, so it cannot
+// read the checks through one. A `codex` reviewer with no sandbox, the default, keeps network
+// (`isNetworkedReviewer`). An unknown CLI is treated like a sandboxed one, because a wait it cannot
+// perform costs a run.
 const NETWORKED_READ_ONLY_CLIS = new Set(["claude", "agy", "opencode", "copilot"]);
+// A Codex reviewer with no sandbox (ADR 0038) keeps shell network. Under either sandboxed mode, or
+// with no mode named, it stays in the gate class.
+const isNetworkedReviewer = (reviewerKind, reviewerSandbox) =>
+  NETWORKED_READ_ONLY_CLIS.has(reviewerKind) ||
+  (reviewerKind === "codex" && reviewerSandbox === "none");
 // The subset that can also run `role wait-checks`. A `copilot` turn refuses that
 // command with `Permission denied because no interactive user response was
 // available` while `gh pr checks` runs (#432 probe, #495), so a `copilot`
@@ -28,10 +34,15 @@ const WAITING_ORCHESTRATORS = new Set(["claude", "agy", "opencode"]);
  * gate, "wait" when the orchestrator reads the checks itself, "reviewer" when
  * only the reviewer CLI can read them, and "gate" when neither can.
  */
-export function requiredCheckWait({ requireCi, orchestratorKind, reviewerKind }) {
+export function requiredCheckWait({
+  requireCi,
+  orchestratorKind,
+  reviewerKind,
+  reviewerSandbox = null,
+}) {
   if (requireCi === null) return null;
   if (WAITING_ORCHESTRATORS.has(orchestratorKind)) return "wait";
-  return NETWORKED_READ_ONLY_CLIS.has(reviewerKind) ? "reviewer" : "gate";
+  return isNetworkedReviewer(reviewerKind, reviewerSandbox) ? "reviewer" : "gate";
 }
 
 // Whole seconds, rounded up, so the wait bound stays an integer and never overstates the time left.
@@ -141,14 +152,24 @@ function prGateBlock({
   requireCi,
   orchestratorKind,
   reviewerKind,
+  reviewerSandbox = null,
   timeout = null,
   waitCommand,
 }) {
   if (requireCi === null) return "";
-  return `\n${prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand }).join("\n")}`;
+  return `\n${prGateLines({
+    pr,
+    requireCi,
+    orchestratorKind,
+    reviewerKind,
+    reviewerSandbox,
+    timeout,
+    waitCommand,
+  }).join("\n")}`;
 }
 
-// What the Codex read-only sandbox blocks is the network of the shell commands that it runs. The
+// What a Codex sandbox (the orchestrator `read-only`, or a reviewer in a sandboxed mode) blocks is the
+// network of the shell commands that it runs. The
 // denial lines below say so, because a model-side tool or another channel outside the sandbox is
 // not blocked, and no line may read as an all-channel denial (ADR 0019). The run counts on no such
 // channel, and only the --require-ci finish gate enforces anything.
@@ -166,9 +187,22 @@ export const SHELL_EXCEPTION =
 const COPILOT_LIMIT =
   "whose read-only turn keeps shell network but refuses agent-loop role wait-checks without approval, so you cannot run the bounded wait, and the status-read exception does not apply to you";
 
-function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand }) {
+function prGateLines({
+  pr,
+  requireCi,
+  orchestratorKind,
+  reviewerKind,
+  reviewerSandbox,
+  timeout,
+  waitCommand,
+}) {
   const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed.${noRequiredCheckClause()} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
-  const rule = requiredCheckWait({ requireCi, orchestratorKind, reviewerKind });
+  const rule = requiredCheckWait({
+    requireCi,
+    orchestratorKind,
+    reviewerKind,
+    reviewerSandbox,
+  });
 
   const bound = headlessWaitSeconds(timeout);
   if (rule === "wait" && (bound === null || waitCommand === null)) {
@@ -209,7 +243,7 @@ function prGateLines({ pr, requireCi, orchestratorKind, reviewerKind, timeout, w
             `- ${SHELL_EXCEPTION}`,
             "- Do not run gh pr checks.",
           ]),
-      `- The reviewer of this run is ${reviewerKind}, whose read-only turn keeps shell network, so every reviewer turn reads the required checks, as the reviewer scope states. The reviewer turn is where the wait happens: before you dispatch the reviewer on a new PR head, name the required checks in the reviewer prompt so that turn reads and reports them.`,
+      `- The reviewer of this run is ${reviewerKind}, whose ${reviewerSandbox === "none" ? "turn runs with no sandbox and keeps" : "read-only turn keeps"} shell network, so every reviewer turn reads the required checks, as the reviewer scope states. The reviewer turn is where the wait happens: before you dispatch the reviewer on a new PR head, name the required checks in the reviewer prompt so that turn reads and reports them.`,
       "- When a reviewer turn reports a pending required check, wait for it through another reviewer turn: dispatch the reviewer again until it reports the check complete, or abort with the pending check named in the reason. A required check still pending after a reviewer turn is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check. Each of those reviewer dispatches costs a step, so the step budget has to cover them.",
     ];
   }
@@ -252,7 +286,7 @@ function advisoryQualifier() {
 /**
  * The clause a gated run adds to the line that says no turn in the run can read
  * the checks through a shell command. The runtime reads the status outside every
- * read-only turn and supplies it to the reviewer prompt as advisory evidence in
+ * sandboxed turn and supplies it to the reviewer prompt as advisory evidence in
  * place of the reviewer reading the checks; the reviewer keeps its own read as
  * the fallback, and the `--require-ci` finish gate enforces the condition
  * (#320). The wording is the same rule `docs/orchestrator-instructions.md`
@@ -304,12 +338,27 @@ function testCmdBlock(testCmd) {
 }
 
 /**
- * The `--reviewer-workspace-write` line. The runtime runs each reviewer turn in
- * the Codex `workspace-write` sandbox with shell network off. Empty for a run without
- * the opt-in, so that prompt stays as before (ADR 0019).
+ * The reviewer sandbox lines: the actual mode of a Codex reviewer, as the runtime applies it (ADR
+ * 0019, ADR 0038). Empty when the reviewer is not Codex, so no prompt claims a mode that no adapter
+ * applies.
  */
-function reviewerSandboxBlock(reviewerWorkspaceWrite) {
-  if (!reviewerWorkspaceWrite) return "";
+function reviewerSandboxBlock(reviewerSandbox) {
+  if (reviewerSandbox === "none") {
+    return [
+      "",
+      "- This run starts the Codex reviewer with no sandbox. Its shell commands can run the project's tests, write anywhere that the user account can write, and reach the network. The reviewer still must not change files or write to a remote. The runtime compares the work tree around every reviewer turn, and a change halts the run with no revert. That check does not see a write outside the repository, a write to an ignored file, or a remote write.",
+      "- Your own turns stay read-only, and the mutation check still wraps them.",
+    ].join("\n");
+  }
+  if (reviewerSandbox === "read-only") {
+    return [
+      "",
+      "- This run keeps the Codex reviewer in the read-only sandbox. A child process spawn or a test run can fail there, and the shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox.",
+      `- ${SHELL_EXCEPTION}`,
+      "- Your own turns stay read-only. The reviewer still must not change files. The runtime compares the work tree around every reviewer turn. A change halts the run with no revert.",
+    ].join("\n");
+  }
+  if (reviewerSandbox !== "workspace-write") return "";
   return [
     "",
     "- This run lets the Codex reviewer run targeted tests and probes in the workspace-write sandbox. The shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox.",
@@ -383,7 +432,7 @@ export function initialPrompt({
   pr = null,
   requireCi = null,
   testCmd = false,
-  reviewerWorkspaceWrite = false,
+  reviewerSandbox = null,
   mode = null,
   continued = false,
   gateRestored = false,
@@ -402,7 +451,7 @@ ${REMOTE_WRITE_RULE}
 
 You have two child roles:
 - worker: Implements changes, runs checks and tests, and reports findings and progress.
-- reviewer: Read-only inspector. Inspects and assesses the repository state and verifications. The reviewer must not edit files.
+- reviewer: Inspector. Inspects and assesses the repository state and verifications. The reviewer must not edit files.
 
 You have a maximum step budget of ${maxSteps} steps.
 A step is consumed only when you dispatch a child role (run_worker or run_reviewer).
@@ -432,7 +481,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerWorkspaceWrite)}${continuedBlock(continued, gateRestored)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, timeout, waitCommand })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerSandbox)}${continuedBlock(continued, gateRestored)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, reviewerSandbox, timeout, waitCommand })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.

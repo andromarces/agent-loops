@@ -1655,17 +1655,69 @@ test("the initial prompt describes the test command only when the run has one", 
   expect(prompt).toContain("A status of timed-out is neither a pass nor a failure.");
 });
 
-// Usefulness: verifies the initial prompt tells the orchestrator about the opt-in reviewer sandbox
-// only for a run that set it, and says the reviewer still never edits, so the prompt never
-// describes a sandbox that the run does not have (issue #421).
-test("the initial prompt describes the reviewer sandbox only when the run opted in", () => {
-  const base = { task: "t", maxSteps: 5 };
-  expect(initialPrompt(base)).toBe(initialPrompt({ ...base, reviewerWorkspaceWrite: false }));
-  expect(initialPrompt(base)).not.toContain("workspace-write");
-  const prompt = initialPrompt({ ...base, reviewerWorkspaceWrite: true });
-  expect(prompt).toContain("workspace-write");
-  expect(prompt).toContain("network access off");
+// Usefulness: verifies the initial prompt states the actual Codex reviewer mode, and no mode for a
+// run that names none (a reviewer that is not Codex), so the prompt never describes a sandbox that
+// the run does not have (ADR 0038).
+test.each([
+  ["none", /no sandbox/, /read-only sandbox|workspace-write/],
+  ["read-only", /read-only sandbox/, /no sandbox|workspace-write/],
+  ["workspace-write", /workspace-write sandbox/, /no sandbox|read-only sandbox/],
+])("the initial prompt states the %s reviewer mode", (reviewerSandbox, has, lacks) => {
+  const prompt = initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox });
+  expect(prompt).toMatch(has);
+  expect(prompt).not.toMatch(lacks);
+  expect(prompt).toContain("Your own turns stay read-only");
   expect(prompt).toContain("halts the run");
+});
+
+test("the initial prompt names no reviewer mode when the run has none", () => {
+  const base = { task: "t", maxSteps: 5 };
+  expect(initialPrompt(base)).toBe(initialPrompt({ ...base, reviewerSandbox: null }));
+  expect(initialPrompt(base)).not.toMatch(/no sandbox|read-only sandbox|workspace-write/);
+});
+
+// Usefulness: verifies the required-check rule for a Codex reviewer per mode (ADR 0038): no sandbox
+// keeps shell network, so a non-waiting orchestrator gets the reviewer rule, a waiting one still
+// waits, and either sandboxed mode, or no mode named, stays on the gate rule.
+test.each([
+  ["codex", "none", "reviewer"],
+  ["copilot", "none", "reviewer"],
+  [null, "none", "reviewer"],
+  ["claude", "none", "wait"],
+  ["agy", "read-only", "wait"],
+  ["opencode", "workspace-write", "wait"],
+  ["codex", "read-only", "gate"],
+  ["codex", "workspace-write", "gate"],
+  ["codex", null, "gate"],
+])(
+  "requiredCheckWait for a %s orchestrator and a codex reviewer in mode %s is %s",
+  (orchestratorKind, reviewerSandbox, expected) => {
+    expect(
+      requiredCheckWait({
+        requireCi: 42,
+        orchestratorKind,
+        reviewerKind: "codex",
+        reviewerSandbox,
+      }),
+    ).toBe(expected);
+  },
+);
+
+// Usefulness: verifies the reviewer rule line for a no-sandbox Codex reviewer says it has no
+// sandbox, and does not repeat the read-only claim of the reviewers that keep one (ADR 0038).
+test("the reviewer-rule line fits a Codex reviewer with no sandbox", () => {
+  const prompt = initialPrompt({
+    task: "t",
+    maxSteps: 5,
+    requireCi: 42,
+    orchestratorKind: "codex",
+    reviewerKind: "codex",
+    reviewerSandbox: "none",
+  });
+  expect(prompt).toContain(
+    "The reviewer of this run is codex, whose turn runs with no sandbox and keeps shell network",
+  );
+  expect(prompt).not.toContain("whose read-only turn keeps shell network");
 });
 
 // Documentation of the opt-in Codex reviewer sandbox (issue #421, ADR 0019). Each test asserts
@@ -1723,10 +1775,10 @@ test.each([
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
-  ["reviewer prompt", async () => reviewerPrompt("x", null, null, true)],
+  ["reviewer prompt", async () => reviewerPrompt("x", null, null, "workspace-write")],
   [
     "orchestrator prompt",
-    async () => initialPrompt({ task: "t", maxSteps: 5, reviewerWorkspaceWrite: true }),
+    async () => initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "workspace-write" }),
   ],
 ])("%s qualifies the sandbox network limit as shell commands only", async (_name, load) => {
   const text = await load();
@@ -1797,9 +1849,11 @@ const gated = (extra) => initialPrompt({ task: "t", maxSteps: 5, requireCi: 42, 
 // orchestrator prompt, for the default run and the opted-in run, for every gate rule, with and
 // without a declared PR, so the prompt never overstates what the Codex sandbox isolates.
 describe.each([
-  ["default", false],
-  ["opted-in", true],
-])("the %s orchestrator prompt qualifies every network denial", (_name, reviewerWorkspaceWrite) => {
+  ["no-mode", null],
+  ["none", "none"],
+  ["read-only", "read-only"],
+  ["workspace-write", "workspace-write"],
+])("the %s orchestrator prompt qualifies every network denial", (_name, reviewerSandbox) => {
   test.each([
     ["codex", "codex", null],
     ["codex", "codex", 42],
@@ -1812,14 +1866,14 @@ describe.each([
     ["claude", "claude", 42],
     [null, null, null],
   ])("%s orchestrator, %s reviewer, pr %s", (orchestratorKind, reviewerKind, pr) => {
-    const prompt = gated({ orchestratorKind, reviewerKind, pr, reviewerWorkspaceWrite });
+    const prompt = gated({ orchestratorKind, reviewerKind, pr, reviewerSandbox });
     expect(unqualifiedDenials(prompt)).toEqual([]);
   });
 
   test("the ungated prompt", () => {
-    expect(
-      unqualifiedDenials(initialPrompt({ task: "t", maxSteps: 5, reviewerWorkspaceWrite })),
-    ).toEqual([]);
+    expect(unqualifiedDenials(initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox }))).toEqual(
+      [],
+    );
   });
 });
 
@@ -1864,9 +1918,11 @@ function denialsWithoutUserRuleException(text) {
 // carry the user-rule exception after a shell network denial. No role then treats a shell network
 // result as impossible (issue #655). The qualification scan above does not check the exception.
 describe.each([
-  ["default", false],
-  ["opted-in", true],
-])("the %s runtime prompts state the user-rule exception", (_name, reviewerWorkspaceWrite) => {
+  ["no-mode", null],
+  ["none", "none"],
+  ["read-only", "read-only"],
+  ["workspace-write", "workspace-write"],
+])("the %s runtime prompts state the user-rule exception", (_name, reviewerSandbox) => {
   test.each([
     ["codex", "codex", null],
     ["codex", "codex", 42],
@@ -1875,15 +1931,13 @@ describe.each([
     ["claude", "codex", null],
     [null, null, null],
   ])("%s orchestrator, %s reviewer, pr %s", (orchestratorKind, reviewerKind, pr) => {
-    const prompt = gated({ orchestratorKind, reviewerKind, pr, reviewerWorkspaceWrite });
+    const prompt = gated({ orchestratorKind, reviewerKind, pr, reviewerSandbox });
     expect(denialsWithoutUserRuleException(prompt)).toEqual([]);
   });
 
   test("the ungated prompt", () => {
     expect(
-      denialsWithoutUserRuleException(
-        initialPrompt({ task: "t", maxSteps: 5, reviewerWorkspaceWrite }),
-      ),
+      denialsWithoutUserRuleException(initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox })),
     ).toEqual([]);
   });
 });
@@ -1891,8 +1945,12 @@ describe.each([
 // Usefulness: verifies that the opted-in reviewer prompt carries the exact user-rule exception
 // text (issue #655).
 test("the opted-in reviewer prompt states the user-rule exception", () => {
-  expect(denialsWithoutUserRuleException(reviewerPrompt("x", null, null, true))).toEqual([]);
-  expect(reviewerPrompt("x", null, null, true).replace(/\s+/g, " ")).toContain(USER_RULE_EXCEPTION);
+  expect(
+    denialsWithoutUserRuleException(reviewerPrompt("x", null, null, "workspace-write")),
+  ).toEqual([]);
+  expect(reviewerPrompt("x", null, null, "workspace-write").replace(/\s+/g, " ")).toContain(
+    USER_RULE_EXCEPTION,
+  );
 });
 
 // Usefulness: verifies that the exception scan flags a denial with no exception or with a contrary
@@ -1922,8 +1980,13 @@ test.each([
   ["docs/parent-guard.md", () => readRepoFile("docs/parent-guard.md")],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
-  ["default reviewer prompt", async () => reviewerPrompt("x", null, null, false)],
-  ["opted-in reviewer prompt", async () => reviewerPrompt("x", null, null, true)],
+  ["no-mode reviewer prompt", async () => reviewerPrompt("x", null, null, null)],
+  ["no-sandbox reviewer prompt", async () => reviewerPrompt("x", null, null, "none")],
+  ["read-only reviewer prompt", async () => reviewerPrompt("x", null, null, "read-only")],
+  [
+    "workspace-write reviewer prompt",
+    async () => reviewerPrompt("x", null, null, "workspace-write"),
+  ],
 ])("%s qualifies every network denial", async (_name, load) => {
   expect(unqualifiedDenials(await load())).toEqual([]);
 });
@@ -1972,4 +2035,41 @@ test("refusalPrompt and repairPrompt render no raw line separator", () => {
       expect(prompt).not.toContain(raw);
     }
   }
+});
+
+// Usefulness: verifies requirement "no surface calls the Codex reviewer read-only or sandboxed by
+// default" (ADR 0038). Each stale phrase named the old default or the old network rule, and was
+// removed on purpose; a restored one fails here. A reword that keeps the meaning passes.
+test.each([
+  ["the user docs", readUserDocs],
+  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  [
+    "the headless orchestrator prompt",
+    async () => initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "none" }),
+  ],
+])("%s does not state the old Codex reviewer default", async (_name, load) => {
+  const text = (await load()).replace(/\s+/g, " ");
+  expect(text).not.toMatch(/reviewer \(read-only\)/);
+  expect(text).not.toMatch(/reviews? the repository in read-only mode/i);
+  expect(text).not.toMatch(/reviewer: Read-only inspector/i);
+  expect(text).not.toMatch(/A Codex reviewer turn runs with `sandbox_mode="read-only"`/);
+  expect(text).not.toMatch(/The default stays `read-only`/);
+  expect(text).not.toMatch(/Codex needs no shell denial, except/);
+  expect(text).not.toMatch(/When both CLIs are `codex`, no turn can read the checks/);
+  expect(text).not.toMatch(/`codex` does not: its sandbox blocks/);
+});
+
+// Usefulness: verifies the user docs and --help state the default and both opt-ins in one place each
+// reader looks, so the new default is not only in the ADR (ADR 0038).
+test.each([
+  ["the user docs", readUserDocs],
+  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+])("%s states the no-sandbox default and the two opt-in modes", async (_name, load) => {
+  const text = (await load()).replace(/\s+/g, " ");
+  expect(text).toMatch(/no sandbox/);
+  expect(text).toContain("--reviewer-sandbox");
+  expect(text).toContain("read-only");
+  expect(text).toContain("workspace-write");
 });

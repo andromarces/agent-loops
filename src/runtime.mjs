@@ -103,8 +103,9 @@ export async function runProbeTurn({
  * `err.testRun`, so a turn that fails after the command ran loses no evidence.
  * `failedTestRun` reads that result from a fatal error. It falls back to a
  * `WeakMap` when the error cannot take the `testRun` property.
- * `reviewerWorkspaceWrite` passes the reviewer-only `sandbox: "workspace-write"` input to a
- * reviewer turn and adds the matching prompt line; no other role receives it (ADR 0019).
+ * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
+ * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
+ * passes none (ADR 0019, ADR 0038).
  * `onSessionAssigned(id)` is awaited by an adapter that pre-assigns a session id, before its CLI
  * starts, and with `null` when the CLI rejected that id. A dispatcher uses it to persist the id
  * ahead of a crash (issue #395).
@@ -123,7 +124,7 @@ export async function runChild(options) {
     stepsUsed = 0,
     pr = null,
     testCmd = null,
-    reviewerWorkspaceWrite = false,
+    reviewerSandbox = null,
     onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
@@ -138,9 +139,9 @@ export async function runChild(options) {
   const carriedReplaced = role.conversationReplaced === true;
   delete role.conversationReplaced;
   let preamblePending = isWorker && carriedReplaced;
-  // The opt-in reaches the reviewer turn only. `readOnly` stays true there, so the mutation check
-  // below still wraps the turn, and the orchestrator path never sets this input (ADR 0019).
-  const sandbox = roleName === "reviewer" && reviewerWorkspaceWrite ? "workspace-write" : null;
+  // The mode reaches the reviewer turn only. `readOnly` stays true there, so the mutation check
+  // below still wraps the turn, and the orchestrator path never sets this input (ADR 0019, 0038).
+  const sandbox = roleName === "reviewer" ? reviewerSandbox : null;
 
   const invokeRole = (finalPrompt) =>
     invoke({
@@ -259,7 +260,7 @@ export async function runChild(options) {
             reviewed = reviewedState(before);
             if (testRun) reportLateChangedPaths(testRun, before);
             prChecks = await readStatus(reviewed);
-            return runFn(reviewerPrompt(prompt, prChecks, testRun, sandbox !== null));
+            return runFn(reviewerPrompt(prompt, prChecks, testRun, sandbox));
           },
           { signal },
         )
@@ -391,10 +392,11 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * turn and supplies the result to the reviewer prompt and the result event as
  * advisory `testRun` evidence; `testCmdTimeout` bounds one run in seconds
  * (ADR 0017).
- * With `reviewerWorkspaceWrite`, a Codex reviewer turn runs in the `workspace-write`
- * sandbox with network off, and the reviewer prompt says so. The orchestrator turns
- * and the worker turns are unchanged, and the mutation check still wraps every
- * reviewer turn (ADR 0019).
+ * `reviewerSandbox` is the mode of a Codex reviewer turn: `none` (the default, which runs
+ * `danger-full-access`), `read-only`, or `workspace-write` with network off. The reviewer and
+ * orchestrator prompts state it. A reviewer that is not Codex has no mode. The orchestrator turns
+ * and the worker turns are unchanged, and the mutation check still wraps every reviewer turn
+ * (ADR 0019, ADR 0038).
  * `onSessionAssigned(roleName, id)` is awaited for the orchestrator, worker, and reviewer when an
  * adapter pre-assigns a session id, before its CLI starts, and with `null` when the CLI rejected
  * the id. It does not change the role state. The caller records the id and its unconfirmed mark
@@ -424,7 +426,7 @@ export async function runLoop(options) {
     requireCi = null,
     testCmd: testCmdText = null,
     testCmdTimeout = null,
-    reviewerWorkspaceWrite = false,
+    reviewerSandbox = "none",
     mode = null,
     continued = false,
     earlierGate = null,
@@ -436,6 +438,8 @@ export async function runLoop(options) {
   } = options;
 
   const { orchestrator, worker, reviewer } = roles;
+  // Only the Codex adapter applies a mode, so any other reviewer has none.
+  const sandboxMode = reviewer?.kind === "codex" ? reviewerSandbox : null;
 
   logInfo(`agent loop started (cwd: ${cwd}, maxSteps: ${maxSteps})`);
 
@@ -496,7 +500,7 @@ export async function runLoop(options) {
     pr,
     requireCi,
     testCmd: testCmdText !== null,
-    reviewerWorkspaceWrite,
+    reviewerSandbox: sandboxMode,
     mode,
     continued,
     gateRestored: restoredGate !== null,
@@ -787,7 +791,7 @@ export async function runLoop(options) {
         pr: pr ?? requireCi,
         // The command text comes from the `--test-cmd` run input only (ADR 0017).
         testCmd: testCmdInput(testCmdText, testCmdTimeout),
-        reviewerWorkspaceWrite,
+        reviewerSandbox: sandboxMode,
         ...(assignedHook ? { onSessionAssigned: assignedHook(roleName) } : {}),
         gh,
         readTimeoutMs,
