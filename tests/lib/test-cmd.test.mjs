@@ -382,27 +382,47 @@ test(
   ABORT_CANCEL_TEST_TIMEOUT_MS,
 );
 
-// Usefulness: verifies an abort that lands while the command still starts is a cancel too, the
-// case that the fixed delay of the original test reached (issue #420, issue #759). The command
-// writes a marker when it ends on its own after 5 s, so a kill that never happens, or that misses
-// the node process, shows as the marker: the run settles only when the command ends, and the
-// command ends only after it wrote the marker. With the kill disabled, the test fails after about
-// 5.8 s (Windows, local). The self-exit is also the leak guard.
+// Usefulness: verifies an abort that lands before the command runs its own code is a cancel too
+// (issue #420, issue #759, issue #770). The old fixed delay reached that case only by chance.
+// The command is `gate && command`, and only the command step writes the marker. The gate exits 0
+// only when the test writes the release file, which this test never does, and its 5 s bound ends it
+// with code 1, so the command step cannot start. The test aborts once the gate recorded its pid. A
+// kill that does not happen lets the bound end the gate, which writes `gate-expired.txt` and fails the test.
 test(
   "an abort signal during the command startup kills the command",
   async () => {
     const cwd = await repo();
     const dir = await mkdtemp(join(tmpdir(), "test-cmd-startup-abort-"));
     dirs.push(dir);
-    const marker = join(dir, "ended-on-its-own.txt");
-    const script = join(dir, "command.js");
+    const gated = join(dir, "gate.pid");
+    const release = join(dir, "gate-release.txt");
+    const expired = join(dir, "gate-expired.txt");
+    const marker = join(dir, "command-ran.txt");
+    const script = join(dir, "steps.js");
     await writeFile(
       script,
-      `setTimeout(() => require("fs").writeFileSync(${JSON.stringify(marker)}, ""), 5000);
+      `const fs = require("fs");
+if (process.argv[2] === "gate") {
+  fs.writeFileSync(${JSON.stringify(gated)}, String(process.pid));
+  const deadline = Date.now() + 5000;
+  setInterval(() => {
+    if (fs.existsSync(${JSON.stringify(release)})) {
+      process.exit(0);
+    }
+    if (Date.now() >= deadline) {
+      fs.writeFileSync(${JSON.stringify(expired)}, "");
+      process.exit(1);
+    }
+  }, 20);
+} else {
+  fs.writeFileSync(${JSON.stringify(marker)}, "");
+}
 `,
     );
-    const error = await abortAfter(`node "${script}"`, cwd, () => delay(300));
+    const command = `node "${script}" gate && node "${script}" command`;
+    const error = await abortAfter(command, cwd, () => waitForPidFiles([gated]));
     expect(error).toMatchObject({ isCanceled: true });
+    await expect(readFile(expired, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   },
   ABORT_CANCEL_TEST_TIMEOUT_MS,
