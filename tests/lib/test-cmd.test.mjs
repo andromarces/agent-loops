@@ -382,26 +382,36 @@ test(
   ABORT_CANCEL_TEST_TIMEOUT_MS,
 );
 
-// Usefulness: verifies an abort that lands while the command still starts is a cancel too, the
-// case that the fixed delay of the original test reached (issue #420, issue #759). The command
-// writes a marker when it ends on its own after 5 s, so a kill that never happens, or that misses
-// the node process, shows as the marker: the run settles only when the command ends, and the
-// command ends only after it wrote the marker. With the kill disabled, the test fails after about
-// 5.8 s (Windows, local). The self-exit is also the leak guard.
+// Usefulness: verifies an abort that lands before the command runs its own code is a cancel too
+// (issue #420, issue #759, issue #770). The old fixed delay reached that case only by chance.
+// The command is two steps, `gate && command`. The command step writes the marker. It cannot
+// start until the gate step exits with code 0. The gate records its pid and then holds for 5 s.
+// The test aborts once the gate recorded its pid, so the abort lands before the command step.
+// A killed gate exits non-zero, so the command step never starts. If the kill does not happen,
+// the gate ends by itself, the command step writes the marker, and the test fails after about 5 s.
+// The 5 s hold only bounds a leak. It orders nothing.
 test(
   "an abort signal during the command startup kills the command",
   async () => {
     const cwd = await repo();
     const dir = await mkdtemp(join(tmpdir(), "test-cmd-startup-abort-"));
     dirs.push(dir);
-    const marker = join(dir, "ended-on-its-own.txt");
-    const script = join(dir, "command.js");
+    const gated = join(dir, "gate.pid");
+    const marker = join(dir, "command-ran.txt");
+    const script = join(dir, "steps.js");
     await writeFile(
       script,
-      `setTimeout(() => require("fs").writeFileSync(${JSON.stringify(marker)}, ""), 5000);
+      `const fs = require("fs");
+if (process.argv[2] === "gate") {
+  fs.writeFileSync(${JSON.stringify(gated)}, String(process.pid));
+  setTimeout(() => {}, 5000);
+} else {
+  fs.writeFileSync(${JSON.stringify(marker)}, "");
+}
 `,
     );
-    const error = await abortAfter(`node "${script}"`, cwd, () => delay(300));
+    const command = `node "${script}" gate && node "${script}" command`;
+    const error = await abortAfter(command, cwd, () => waitForPidFiles([gated]));
     expect(error).toMatchObject({ isCanceled: true });
     await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   },
