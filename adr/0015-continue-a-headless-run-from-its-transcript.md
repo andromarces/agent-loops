@@ -79,7 +79,7 @@ Andro Marces
 - [Issue #362: Continue a headless run with a new step budget and its earlier role sessions](https://github.com/andromarces/agent-loops/issues/362)
 - Implementation: `src/lib/continuation.mjs`, the `continued` input of `runLoop`
   and `initialPrompt`, and `--continue-from` in `src/cli.mjs`; tests in
-  `tests/lib/continuation.test.mjs`, `tests/cli.test.mjs`, and
+  `tests/lib/continuation.test.mjs`, `tests/cli.continue-from.test.mjs`, and
   `tests/runtime*.test.mjs`; documented in [Continue a run](../docs/reference/usage.md#continue-a-run)
 - Superseded by [ADR 0023: Restore the headless gate state on a continued run](0023-restore-the-headless-gate-state-on-a-continued-run.md)
 - [ADR Index](README.md)

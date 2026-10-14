@@ -145,7 +145,7 @@ Andro Marces
 - [Issue #348: Bound the headless required-check wait with the runtime wait](https://github.com/andromarces/agent-loops/issues/348)
 - Implementation: `headlessWaitSeconds`, `waitChecksCommand`, and the `wait` rule in
   `src/prompts/orchestrator.mjs`, the `timeout` input from `src/runtime.mjs`;
-  tests in `tests/prompts/orchestrator.test.mjs` and `tests/runtime*.test.mjs`;
+  tests in `tests/prompts/orchestrator*.test.mjs` and `tests/runtime*.test.mjs`;
   documented in [Headless loop waits](../docs/orchestrator-instructions.md#headless-loop-waits), [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role), and [Denial probe (issue #432)](../docs/reference/reviewer-safety.md#denial-probe-issue-432)
 - [PR #382](https://github.com/andromarces/agent-loops/pull/382)
 - [ADR 0024: Supply the required-check status to the reviewer for every run that names a PR](0024-supply-the-required-check-status-for-a-named-pr.md), which narrows decision 6 and its Consequences statement that only the gate reads the checks
