@@ -1043,6 +1043,12 @@ needed: the subcommand records each dispatched turn itself.
   over a non-terminal run, so `abort` is the only route to a terminal lifecycle
   for such a run. A new init then starts normally and archives the old state
   file. No field has to be hand-corrected.
+- `abort` is not subject to the recorded reviewer sandbox mode check either (ADR 0038). `dispatch`,
+  `--resume-interrupted`, `extend`, and `finish` refuse a state file whose
+  `reviewerSandbox` is present but not `none`, `read-only`, or `workspace-write`. `abort` runs
+  no reviewer turn, so it ends such a run, and it ignores a `--reviewer-sandbox` flag that it
+  cannot compare with the damaged field. Over a valid mode, `abort` still refuses a flag that
+  names another mode.
 - Read `turns` after compaction or restart to rebuild which turns ran, which
   verdicts they returned, and which head each reviewer turn saw.
 - `--transcript <file>` still appends one JSON line per `invocation` and

@@ -652,13 +652,13 @@ function dispatchPayload(roleName, result) {
 /**
  * Runs `fn(state, paths)` under the state lock for a run that is not terminal.
  * Rejects init-flag changes and a terminal lifecycle first. `requireOptions`
- * goes to `requireState`.
+ * goes to `requireState`, and `allowed` to `rejectInitFlagChanges`.
  */
-function withOpenRun(args, requireOptions, fn) {
+function withOpenRun(args, requireOptions, fn, allowed = []) {
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
     const state = requireState(await readState(paths.stateFile), args.cwd, requireOptions);
-    rejectInitFlagChanges(args, state);
+    rejectInitFlagChanges(args, state, allowed);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
     }
@@ -856,17 +856,25 @@ async function acceptGateReason(state, cwd, signal) {
   return null;
 }
 
-/** `abort`: records the reason and ends the run; accepted from any non-terminal lifecycle. */
+/**
+ * `abort`: records the reason and ends the run; accepted from any non-terminal lifecycle. It does
+ * not read a damaged recorded reviewer sandbox mode, because it runs no reviewer turn (ADR 0038).
+ */
 async function abort(args) {
   rejectMisplacedFlags(args, "abort");
 
-  return withOpenRun(args, {}, async (state, paths) => {
-    state.lifecycle = "aborted";
-    state.reason = args.reason;
-    await writeState(paths.stateFile, state);
-    logInfo(`run aborted: ${args.reason}`);
-    return { exitCode: 0, payload: { status: "ok", lifecycle: "aborted" } };
-  });
+  return withOpenRun(
+    args,
+    {},
+    async (state, paths) => {
+      state.lifecycle = "aborted";
+      state.reason = args.reason;
+      await writeState(paths.stateFile, state);
+      logInfo(`run aborted: ${args.reason}`);
+      return { exitCode: 0, payload: { status: "ok", lifecycle: "aborted" } };
+    },
+    ["reviewerSandbox"],
+  );
 }
 
 /**

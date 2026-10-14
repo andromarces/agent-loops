@@ -236,3 +236,54 @@ test("an invalid recorded mode is refused for a reviewer that is not Codex too",
   expect(turn.exitCode).toBe(1);
   expect(turn.payload.error).toContain("State file field reviewerSandbox must be one of");
 });
+
+// `abort` runs no reviewer turn, so it does not read the recorded mode: it stays the only route to a
+// terminal lifecycle for a run whose state file holds a damaged field (ADR 0038, decision 7).
+const abortCall = (repo, extra = []) =>
+  executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "damaged state", ...extra], repo),
+  );
+
+// Usefulness: verifies each invalid recorded value, for a Codex and a non-Codex reviewer, still ends
+// through `abort` with lifecycle `aborted`, with or without a mode flag, so the refusal of the
+// other operations cannot strand a non-terminal run.
+describe("abort over an invalid recorded mode", () => {
+  test.each(INVALID_MODES)("ends a run that records %j", async (value) => {
+    for (const flags of [[], [FLAG, "read-only"], [ALIAS]]) {
+      const { repo, reviewer, agents } = await start();
+      await corrupt(repo, value);
+      const result = await abortCall(repo, flags);
+      expect(result.exitCode).toBe(0);
+      expect(result.payload).toEqual({ status: "ok", lifecycle: "aborted" });
+      expect((await readRepoState(repo)).lifecycle).toBe("aborted");
+      expect(reviewer.recorded).toHaveLength(0);
+      // The damaged field is still refused by the other operations, so no turn runs after the abort.
+      expect((await reviewerTurn(repo, agents)).exitCode).toBe(1);
+      await cleanup();
+    }
+  });
+
+  test("ends the run of a reviewer that is not Codex", async () => {
+    await setup();
+    const repo = await createTempRepo();
+    repos.push(repo);
+    const other = INIT.map((v) => (v === "codex" ? "fake2" : v));
+    await executeRoleCommand(withRepo(dispatchArgv(other, "worker"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+      stdin: stdinPrompt,
+    });
+    await corrupt(repo, null);
+    expect((await abortCall(repo)).exitCode).toBe(0);
+    expect((await readRepoState(repo)).lifecycle).toBe("aborted");
+  });
+});
+
+// Usefulness: verifies abort over a VALID recorded mode still refuses a changed mode flag, as it
+// did before ADR 0038 for the boolean flag, so only a damaged field is tolerated.
+test("abort over a valid recorded mode still refuses a changed mode flag", async () => {
+  const { repo } = await start([FLAG, "workspace-write"]);
+  const refused = await abortCall(repo, [FLAG, "read-only"]);
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("--reviewer-sandbox cannot be changed after init");
+  expect((await abortCall(repo, [FLAG, "workspace-write"])).exitCode).toBe(0);
+});

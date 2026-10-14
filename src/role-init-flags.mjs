@@ -114,8 +114,20 @@ export function rejectInitFlagChanges(args, state, allowed = []) {
   // The mode is fixed at init, so a later call cannot widen or narrow the reviewer sandbox. Omitting
   // the flag is not a change: the stored value governs (ADR 0038). The stored value is read on every
   // later call, so a damaged field is refused here, before any operation acts on the state.
-  const heldSandbox = storedReviewerSandbox(state);
-  if (args.reviewerSandbox !== null && args.reviewerSandbox !== heldSandbox) {
+  // `abort` passes `reviewerSandbox` in `allowed`: it runs no reviewer turn, so a damaged field must
+  // not block the only route to a terminal lifecycle. It then compares the flag only when the field
+  // is valid.
+  let heldSandbox;
+  try {
+    heldSandbox = storedReviewerSandbox(state);
+  } catch (err) {
+    if (!allowed.includes("reviewerSandbox")) throw err;
+  }
+  if (
+    heldSandbox !== undefined &&
+    args.reviewerSandbox !== null &&
+    args.reviewerSandbox !== heldSandbox
+  ) {
     throw new RoleError(
       `--reviewer-sandbox cannot be changed after init (state holds: ${heldSandbox}).`,
     );

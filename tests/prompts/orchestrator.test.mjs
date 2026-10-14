@@ -2056,6 +2056,8 @@ test.each([
   expect(text).not.toMatch(/A Codex reviewer turn runs with `sandbox_mode="read-only"`/);
   expect(text).not.toMatch(/The default stays `read-only`/);
   expect(text).not.toMatch(/Codex needs no shell denial, except/);
+  expect(text).not.toMatch(/When both CLIs are `codex`, no turn can read the checks/);
+  expect(text).not.toMatch(/`codex` does not: its sandbox blocks/);
 });
 
 // Usefulness: verifies the user docs and --help state the default and both opt-ins in one place each
