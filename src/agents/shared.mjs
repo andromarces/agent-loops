@@ -91,6 +91,16 @@ export function resumeMismatchError(agent, idLabel, expected, received) {
 }
 
 /**
+ * Throws `resumeMismatchError` when a resumed turn returned a session id other than the expected one.
+ * A falsy `expected` means a first turn, which has nothing to compare.
+ */
+export function assertResumedSession(agent, idLabel, expected, received) {
+  if (expected && received !== expected) {
+    throw resumeMismatchError(agent, idLabel, expected, received);
+  }
+}
+
+/**
  * Keeps the session id a failed first turn reported, so the next turn resumes that session
  * and its edits instead of starting a new one. An id already on the state is never replaced
  * here, so a failed turn never changes a resumed session.
@@ -153,6 +163,11 @@ export function asSessionId(value) {
  */
 export function lastClosingMessage(messages) {
   return messages.findLast(hasClosingBlockAttempt) ?? messages.at(-1);
+}
+
+/** Returns the trimmed text of `lastClosingMessage(messages)`. */
+export function closingText(messages) {
+  return String(lastClosingMessage(messages)).trim();
 }
 
 /**

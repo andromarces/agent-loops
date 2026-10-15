@@ -7,13 +7,13 @@ import { logWarn } from "../lib/log.mjs";
 import { isUuid } from "../lib/session-record.mjs";
 import {
   asSessionId,
+  assertResumedSession,
   childRan,
+  closingText,
   recordResolvedModel,
   keepFailedSessionId,
-  lastClosingMessage,
   readSessionHead,
   requireHeldUnconfirmedSession,
-  resumeMismatchError,
   setMainLoopUsage,
 } from "./shared.mjs";
 
@@ -156,9 +156,7 @@ export async function runCopilot(state, prompt, options = {}) {
   }
 
   // A resumed id must come back unchanged.
-  if (requestedSessionId && returnedId !== requestedSessionId) {
-    throw resumeMismatchError("Copilot", "session", requestedSessionId, returnedId);
-  }
+  assertResumedSession("Copilot", "session", requestedSessionId, returnedId);
 
   const messages = events
     .filter((event) => event.type === "assistant.message")
@@ -178,7 +176,7 @@ export async function runCopilot(state, prompt, options = {}) {
     logWarn(`Copilot reported session ${returnedId}, not the pre-assigned ${sessionId}`);
   }
 
-  return String(lastClosingMessage(messages)).trim();
+  return closingText(messages);
 }
 
 function findResultEvent(events) {
