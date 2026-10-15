@@ -274,6 +274,14 @@ function lastLabeled(lines, label) {
 // An accept counts only with a Checks line in the closing block, matching the
 // parent rule the prompt states (#217) and the interactive --require-accept gate
 // (issue #218). An accept without a Checks line is treated as not accepted.
+/** The first failing acceptance check, "verdict" or "checks", or null when the review is accepted. */
+export function acceptanceFailure(response) {
+  if (parseVerdict(response) !== "accept") {
+    return "verdict";
+  }
+  return parseReportBlock(response)?.checks ? null : "checks";
+}
+
 export function isAcceptedReview(response) {
-  return parseVerdict(response) === "accept" && Boolean(parseReportBlock(response)?.checks);
+  return acceptanceFailure(response) === null;
 }
