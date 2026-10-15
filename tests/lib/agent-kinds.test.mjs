@@ -18,6 +18,7 @@ test("agentHas reports each capability per agent kind", () => {
   expect(pick("waitsForChecks")).toEqual(["claude", "agy", "opencode"]);
 });
 
+// Requirement: `agentHas` returns false for an unknown kind, an inherited prototype key, and `undefined`; the per-kind test covers only the five known kinds.
 test("agentHas is false for an unknown kind or a prototype key", () => {
   expect(agentHas("nonexistent", "waitsForChecks")).toBe(false);
   expect(agentHas("constructor", "waitsForChecks")).toBe(false);
