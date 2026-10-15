@@ -60,6 +60,19 @@ test("reviewer prompt challenges a spec that weakens a guard and limits approval
   );
 });
 
+// Usefulness: verifies a criterion that needs a check outside the turn is reported as unverified
+// and deferred, and blocks only when the task requires that check to pass in this run, so the
+// reviewer does not reject for a live, device, or manual check it cannot run (issue #838).
+test("reviewer prompt defers a criterion that needs a check the turn cannot run", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "A criterion that needs a check this turn cannot run, such as a live run against a production service, a device, or a manual step, goes in Checks as unverified and in Deferred.",
+  );
+  expect(prompt).toContain(
+    "It is a blocker only when the task states that the check must pass in this run.",
+  );
+});
+
 // Usefulness: verifies the required-check rule is present in a task that names a
 // pull request, so the reviewer reads the check status on the reviewed head
 // instead of learning about a failure only at the finish gate (issue #313).

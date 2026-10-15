@@ -81,6 +81,19 @@ test("initialPrompt states the notes and deferred finish mapping", () => {
   expectRule(prompt, /\bopen\b/i, /unresolved/i, /in-scope/i);
 });
 
+// Usefulness: verifies the headless prompt tells the parent to carry a criterion that the
+// reviewer could not check into deferred, without a further turn unless the task requires
+// the check in this run, so the rule from the reviewer scope reaches the finish (issue #838).
+test("initialPrompt carries an unverified criterion into deferred", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expectRule(prompt, /carry it into deferred/i, /not verified/i);
+  expectRule(
+    prompt,
+    /do not dispatch another turn[^.!?]{0,60}\bcheck\b/i,
+    /must pass in this run/i,
+  );
+});
+
 // Usefulness: verifies the headless parent names the guards and contracts at risk
 // in a reviewer prompt and does not restate the spec as the pass condition,
 // matching the interactive reviewer-prompt rule (issue #228, issue #328).
