@@ -174,7 +174,7 @@ Andro Marces
   - Source: `reportFailure` in `src/entrypoints/copilot.mjs`
   - Source: The error text in `src/lib/error-message.mjs` and `src/lib/log.mjs`
   - Source: `testRunLines` in `src/prompts/reviewer.mjs`
-  - Source: The run and the `testRun` result field in `runChild` in `src/runtime.mjs`
+  - Source: The run and the `testRun` result field in `runChild` in `src/child-turn.mjs`
   - Source: The init field in `src/role.mjs`
   - Source: The flags in `src/cli.mjs` and `src/lib/args.mjs`
   - Test: `tests/lib/test-cmd.test.mjs`
