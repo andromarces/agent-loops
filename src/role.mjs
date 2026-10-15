@@ -18,7 +18,7 @@ import {
   TASK_SOURCE_CONFLICT,
 } from "./lib/args.mjs";
 import { checkCi, missingGateRefusal, unresolvedCompareReason } from "./lib/ci-gate.mjs";
-import { refuseHeldIds, refuseHeldSessions } from "./lib/continuation.mjs";
+import { refuseHeldIds, refuseHeldSessions } from "./lib/command-line.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
 import { isSpawnedByRun } from "./lib/exec.mjs";

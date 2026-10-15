@@ -24,10 +24,10 @@ import {
   gateFromTranscript,
   earlierReviewerSandbox,
   readContinuation,
-  refuseHeldSessions,
   restoreSessions,
   verifyResolvedModels,
 } from "./lib/continuation.mjs";
+import { refuseHeldSessions } from "./lib/command-line.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
