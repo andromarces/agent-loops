@@ -600,3 +600,20 @@ test("OpenCode model variant with effort is rejected", () => {
     ]),
   ).toThrow("already contains a variant");
 });
+
+// Usefulness: acceptance (#816) — a role fault is reported before a --task and --task-file conflict,
+// the order of the headless command, so the shared composition does not reorder the path-only check.
+test("a missing role is reported before the task source conflict", () => {
+  expect(() =>
+    parseArgs([
+      "--orchestrator",
+      "codex",
+      "--reviewer",
+      "agy",
+      "--task",
+      "work",
+      "--task-file",
+      "task.txt",
+    ]),
+  ).toThrow("Missing required --worker.");
+});

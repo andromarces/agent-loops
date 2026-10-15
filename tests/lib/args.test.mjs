@@ -16,7 +16,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { readStdinText, readTaskFile } from "../../src/lib/args.mjs";
+import { initRefusal, readStdinText, readTaskFile } from "../../src/lib/args.mjs";
 
 // Usefulness: acceptance (#490) — a read failure that is `null`, `undefined`, or has a throwing
 // `message` getter still ends in the documented read error, so the catch block adds no second error.
@@ -63,4 +63,66 @@ test("readStdinText refuses a terminal with the message of the caller", async ()
       delete process.stdin.isTTY;
     }
   }
+});
+
+const validInit = {
+  task: "Do it.",
+  testCmd: null,
+  testCmdTimeout: null,
+  reviewerSandbox: null,
+  pr: null,
+  mode: null,
+  worker: "claude",
+  reviewer: "codex",
+  workerModel: null,
+  workerEffort: null,
+  reviewerModel: null,
+  reviewerEffort: null,
+};
+const initConfig = {
+  roles: ["worker", "reviewer"],
+  requiredRoles: ["worker", "reviewer"],
+  isSupportedAgent: (kind) => ["claude", "codex", "opencode"].includes(kind),
+  blankTaskText: "Task needed.",
+  rolesFirst: false,
+  pathRefusal: () => null,
+};
+
+// Usefulness: acceptance (#816) — each single fault yields its one refusal text for both paths, and
+// a valid input yields none, so the shared composition is checked once instead of per path.
+test.each([
+  ["a valid input", {}, null],
+  ["a blank task", { task: "  " }, "Task needed."],
+  ["a blank test command", { testCmd: " " }, "--test-cmd must not be blank."],
+  [
+    "a sandbox on a non-Codex reviewer",
+    { reviewer: "claude", reviewerSandbox: "read-only" },
+    "--reviewer-sandbox requires --reviewer codex.",
+  ],
+  [
+    "a PR in review-only",
+    { mode: "review-only", pr: 5 },
+    "--pr declares PR work, which needs the --require-ci gate; review-only rejects that gate.",
+  ],
+  ["a missing required role", { worker: null }, "Missing required --worker."],
+  ["an unsupported agent", { worker: "nope" }, "Unsupported worker: nope"],
+  [
+    "an OpenCode effort without a model",
+    { worker: "opencode", workerEffort: "high" },
+    "--worker-effort requires --worker-model for opencode.",
+  ],
+])("initRefusal reports %s", (_name, change, expected) => {
+  expect(initRefusal({ ...validInit, ...change }, initConfig)).toBe(expected);
+});
+
+// Usefulness: acceptance (#816) — a role that is optional but supplied with a model or an effort
+// only is refused, and a null `blankTaskText` skips the task check for a task file.
+test("initRefusal refuses an orphan model and skips the task check on request", () => {
+  const optionalWorker = { ...initConfig, requiredRoles: ["reviewer"] };
+  expect(initRefusal({ ...validInit, worker: null, workerModel: "m" }, optionalWorker)).toBe(
+    "--worker-model requires --worker.",
+  );
+  expect(initRefusal({ ...validInit, task: null }, { ...initConfig, blankTaskText: null })).toBe(
+    null,
+  );
 });
