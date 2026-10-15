@@ -506,3 +506,13 @@ test("every reviewer turn routes a full suite through the test slot wrapper of t
     await access(match[2]);
   }
 });
+
+// Usefulness: verifies acceptance #865 — the reviewer is told to remove the temporary files it
+// creates outside the repository and to name any it could not remove, because the mutation check
+// does not see those writes and probe files would otherwise accumulate in the OS temp directory.
+test("reviewer prompt tells the reviewer to remove temporary files it created outside the repository", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove.",
+  );
+});
