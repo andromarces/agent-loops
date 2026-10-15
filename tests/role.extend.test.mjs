@@ -165,6 +165,22 @@ test("extend refuses a terminal run and a path with no run state", async () => {
   expect(none.payload.error).toContain("No run state");
 });
 
+// Usefulness: verifies which refusal a caller sees for a terminal run with another parent session —
+// the parent-session mismatch, not the terminal one — and that the stored id stays out of it
+// (issue #806).
+test("extend reports a parent session mismatch before a terminal lifecycle", async () => {
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+  const repo = await startRun(1, agents);
+  await executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", "--reason", "stop"], repo));
+
+  const result = await executeRoleCommand(
+    withRepo(extendArgv("--parent-session", "child-sess-9", "--max-steps", "9"), repo),
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toBe("--parent-session does not match the run's parent session.");
+  expect((await readRepoState(repo)).maxSteps).toBe(1);
+});
+
 // Usefulness: verifies extend keeps a recovery lifecycle as it is, so raising the
 // budget neither resumes nor clears an interrupted run (issue #361).
 test("extend leaves an interrupted lifecycle unchanged", async () => {

@@ -454,12 +454,11 @@ async function dispatchLocked(
   } catch (err) {
     const canceled = Boolean(readProp(err, "isCanceled"));
     const testRun = failedTestRun(err);
-    const payload = {
-      role: roleName,
+    const payload = dispatchPayload(roleName, {
       status: "error",
       error: readableErrorMessage(err),
-      ...(testRun ? { testRun } : {}),
-    };
+      testRun,
+    });
     // A cancel or a fatal guard error can end the turn after the CLI reported its session, so
     // keep the id for the resume that follows. A null id records a session the fallback cleared.
     recordRoleSession(state.roles[roleName], role);
@@ -682,12 +681,14 @@ function dispatchPayload(roleName, result) {
 /**
  * Runs `fn(state, paths)` under the state lock for a run that is not terminal.
  * Rejects init-flag changes and a terminal lifecycle first. `requireOptions`
- * goes to `requireState`, and `allowed` to `rejectInitFlagChanges`.
+ * goes to `requireState`, and `allowed` to `rejectInitFlagChanges`. `checkState`
+ * runs on the state between those two, so its refusal wins over both.
  */
-function withOpenRun(args, requireOptions, fn, allowed = []) {
+function withOpenRun(args, requireOptions, fn, allowed = [], checkState = () => {}) {
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
     const state = requireState(await readState(paths.stateFile), args.cwd, requireOptions);
+    checkState(state);
     rejectInitFlagChanges(args, state, allowed);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
@@ -975,53 +976,54 @@ async function extend(args) {
     );
   }
 
-  const paths = statePaths({ cwd: args.cwd });
-  return withStateLock(paths.lockFile, async () => {
-    const state = requireState(await readState(paths.stateFile), args.cwd, { needsBudget: true });
-    // The caller must pass the run's stored parent session id, the id the
-    // parent-edit guard matches. The refusal does not name the stored id.
-    // known-limit: the id check does not identify the caller. The spawn-time
-    // run marker refuses a child of this run (executeRoleCommand), but a child
-    // that clears its environment passes both checks.
-    if (args.parentSession !== state.parentSession) {
-      throw new RoleError("--parent-session does not match the run's parent session.");
-    }
-    rejectInitFlagChanges(args, state, ["maxSteps"]);
-    if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
-      throw new RoleError(`Run is already ${state.lifecycle}.`);
-    }
-    if (args.maxSteps <= state.stepsUsed) {
-      throw new RoleError(
-        `--max-steps must be larger than stepsUsed (${state.stepsUsed}), got: ${args.maxSteps}.`,
-      );
-    }
-    if (args.maxSteps <= state.maxSteps) {
-      throw new RoleError(
-        `--max-steps must be larger than the current maxSteps (${state.maxSteps}), got: ${args.maxSteps}.`,
-      );
-    }
-    if (!Array.isArray(state.budgetChanges)) {
-      state.budgetChanges = [];
-    }
-    state.budgetChanges.push({
-      from: state.maxSteps,
-      to: args.maxSteps,
-      stepsUsed: state.stepsUsed,
-      at: new Date().toISOString(),
-    });
-    state.maxSteps = args.maxSteps;
-    await writeState(paths.stateFile, state);
-    logInfo(`step budget raised to ${state.maxSteps} (${state.stepsUsed} steps used)`);
-    return {
-      exitCode: 0,
-      payload: {
-        status: "ok",
-        lifecycle: state.lifecycle,
-        maxSteps: state.maxSteps,
+  return withOpenRun(
+    args,
+    { needsBudget: true },
+    async (state, paths) => {
+      if (args.maxSteps <= state.stepsUsed) {
+        throw new RoleError(
+          `--max-steps must be larger than stepsUsed (${state.stepsUsed}), got: ${args.maxSteps}.`,
+        );
+      }
+      if (args.maxSteps <= state.maxSteps) {
+        throw new RoleError(
+          `--max-steps must be larger than the current maxSteps (${state.maxSteps}), got: ${args.maxSteps}.`,
+        );
+      }
+      if (!Array.isArray(state.budgetChanges)) {
+        state.budgetChanges = [];
+      }
+      state.budgetChanges.push({
+        from: state.maxSteps,
+        to: args.maxSteps,
         stepsUsed: state.stepsUsed,
-      },
-    };
-  });
+        at: new Date().toISOString(),
+      });
+      state.maxSteps = args.maxSteps;
+      await writeState(paths.stateFile, state);
+      logInfo(`step budget raised to ${state.maxSteps} (${state.stepsUsed} steps used)`);
+      return {
+        exitCode: 0,
+        payload: {
+          status: "ok",
+          lifecycle: state.lifecycle,
+          maxSteps: state.maxSteps,
+          stepsUsed: state.stepsUsed,
+        },
+      };
+    },
+    ["maxSteps"],
+    (state) => {
+      // The caller must pass the run's stored parent session id, the id the
+      // parent-edit guard matches. The refusal does not name the stored id.
+      // known-limit: the id check does not identify the caller. The spawn-time
+      // run marker refuses a child of this run (executeRoleCommand), but a child
+      // that clears its environment passes both checks.
+      if (args.parentSession !== state.parentSession) {
+        throw new RoleError("--parent-session does not match the run's parent session.");
+      }
+    },
+  );
 }
 
 /**
