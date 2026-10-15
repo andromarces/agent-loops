@@ -797,3 +797,42 @@ test("opencode plugin command injects the parent session id into the prompt", as
   expect(prompts[0].text).toContain("--parent-session");
   expect(prompts[0].text).toContain("Implement the change.");
 });
+
+/** Runs the plugin command with one task text and returns the prompt text it sends. */
+async function opencodePromptText(text) {
+  const { commands, prompts } = await loadPlugin();
+  const command = commands.find((candidate) => candidate.name === "agent-loop");
+  await command.execute({ sessionID: "ses_opencode_parent", prompt: { text }, delivery: "steer" });
+  return prompts[0].text;
+}
+
+// Usefulness: pins the exact OpenCode prompt text, joined by blank lines, with a task that
+// carries CR/LF kept as given (only the Copilot launcher strips line breaks).
+test("opencode plugin prompt is the instruction sentences joined by blank lines", async () => {
+  expect(await opencodePromptText("Line one.\r\nLine two.")).toBe(
+    "Read `docs/orchestrator-instructions.md` and follow it for this request.\n\n" +
+      "The task and role settings are:\n\n" +
+      "Line one.\r\nLine two.\n\n" +
+      "This OpenCode session id is `ses_opencode_parent`. Pass it as `--parent-session` on the init dispatch call.",
+  );
+});
+
+// Usefulness: verifies quotes and backticks in the task reach the prompt untouched.
+test("opencode plugin prompt keeps quotes in the task unchanged", async () => {
+  const task = `Say "hi" and 'bye' with \`ticks\`.`;
+  expect(await opencodePromptText(task)).toBe(
+    "Read `docs/orchestrator-instructions.md` and follow it for this request.\n\n" +
+      `The task and role settings are:\n\n${task}\n\n` +
+      "This OpenCode session id is `ses_opencode_parent`. Pass it as `--parent-session` on the init dispatch call.",
+  );
+});
+
+// Usefulness: pins the empty-task behavior, which keeps an empty paragraph between the
+// sentences instead of rejecting the command, unlike the Copilot launcher.
+test("opencode plugin prompt keeps an empty task as an empty paragraph", async () => {
+  expect(await opencodePromptText("")).toBe(
+    "Read `docs/orchestrator-instructions.md` and follow it for this request.\n\n" +
+      "The task and role settings are:\n\n\n\n" +
+      "This OpenCode session id is `ses_opencode_parent`. Pass it as `--parent-session` on the init dispatch call.",
+  );
+});

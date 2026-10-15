@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 
 // The launcher runs `copilot`, which is not installed in the test environment. The stand-in runs a
@@ -56,6 +56,53 @@ test("Copilot launcher passes no line breaks in its arguments", () => {
     expect(arg).not.toMatch(/[\r\n]/);
   }
   expect(invocation.args.at(-1)).toContain("Line one. Line two. Line three.");
+});
+
+// The prompt is the last argument. The instructions path is the shipped file inside the
+// directory that --add-dir grants.
+function copilotPrompt(task, sessionId) {
+  const { args } = buildCopilotInvocation(task, sessionId);
+  const instructionsPath = join(
+    args[args.indexOf("--add-dir") + 1],
+    "orchestrator-instructions.md",
+  );
+  return { prompt: args.at(-1), instructionsPath };
+}
+
+// Usefulness: pins the exact Copilot prompt text, so a wording or join change in the shared
+// instruction sentences shows up here, and a CR/LF run in the task collapses to one space.
+test("Copilot launcher prompt is the instruction sentences joined by one space", () => {
+  const { prompt, instructionsPath } = copilotPrompt("Line one.\r\n\nLine two.\n", "session-1");
+
+  expect(prompt).toBe(
+    `Read \`${instructionsPath}\` and follow it for this request. ` +
+      "The task and role settings are: " +
+      "Line one. Line two. " +
+      "This Copilot CLI session id is `session-1`. Pass it as `--parent-session` on the init dispatch call.",
+  );
+});
+
+// Usefulness: verifies quotes and backticks in the task reach the prompt untouched, because only
+// line breaks are normalized for the Windows .cmd shim.
+test("Copilot launcher prompt keeps quotes in the task unchanged", () => {
+  const task = `Say "hi" and 'bye' with \`ticks\`.`;
+  const { prompt, instructionsPath } = copilotPrompt(task, "session-2");
+
+  expect(prompt).toBe(
+    `Read \`${instructionsPath}\` and follow it for this request. ` +
+      `The task and role settings are: ${task} ` +
+      "This Copilot CLI session id is `session-2`. Pass it as `--parent-session` on the init dispatch call.",
+  );
+});
+
+// Usefulness: verifies an empty or blank task builds no prompt, so the launcher never starts a
+// session with nothing to do.
+test("Copilot launcher rejects an empty task", () => {
+  for (const task of ["", "  \r\n ", undefined]) {
+    expect(() => buildCopilotInvocation(task, "session-1")).toThrow(
+      "A task and role settings prompt is required.",
+    );
+  }
 });
 
 // Usefulness: verifies the launcher failure report is built from the exit code, the signal, and the
