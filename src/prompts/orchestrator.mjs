@@ -2,6 +2,7 @@ import { posix, win32 } from "node:path";
 import { escapeLineSeparators } from "./escape.mjs";
 import { SHELL_EXCEPTION, cliCommandForms } from "./report.mjs";
 import { actionFormats, SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
+import { agentHas } from "../lib/agent-kinds.mjs";
 import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
 
@@ -9,23 +10,13 @@ import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.m
 // for interactive parents (#56); this headless prompt states the same rules in
 // JSON-action form, including the completion rule. Keep the two consistent when
 // either changes.
-// CLIs whose read-only turn keeps shell network access, so a reviewer turn on
-// one can read the required checks with `gh pr checks`. A `codex` turn in a sandboxed mode
-// (`read-only` or `workspace-write`) has the network of its shell commands blocked, so it cannot
-// read the checks through one. A `codex` reviewer with no sandbox, the default, keeps network
-// (`isNetworkedReviewer`). An unknown CLI is treated like a sandboxed one, because a wait it cannot
-// perform costs a run.
-const NETWORKED_READ_ONLY_CLIS = new Set(["claude", "agy", "opencode", "copilot"]);
+// The CLI capabilities `networkedReadOnly` and `waitsForChecks` live in `src/lib/agent-kinds.mjs`.
 // A Codex reviewer with no sandbox (ADR 0038) keeps shell network. Under either sandboxed mode, or
-// with no mode named, it stays in the gate class.
+// with no mode named, it stays in the gate class. A `copilot` orchestrator cannot wait and gets the
+// reviewer or gate rule instead.
 const isNetworkedReviewer = (reviewerKind, reviewerSandbox) =>
-  NETWORKED_READ_ONLY_CLIS.has(reviewerKind) ||
+  agentHas(reviewerKind, "networkedReadOnly") ||
   (reviewerKind === "codex" && reviewerSandbox === "none");
-// The subset that can also run `role wait-checks`. A `copilot` turn refuses that
-// command with `Permission denied because no interactive user response was
-// available` while `gh pr checks` runs (#432 probe, #495), so a `copilot`
-// orchestrator cannot wait and gets the reviewer or gate rule instead.
-const WAITING_ORCHESTRATORS = new Set(["claude", "agy", "opencode"]);
 
 /**
  * Reports which required-check read a headless run can perform. The two role
@@ -41,7 +32,7 @@ export function requiredCheckWait({
   reviewerSandbox = null,
 }) {
   if (requireCi === null) return null;
-  if (WAITING_ORCHESTRATORS.has(orchestratorKind)) return "wait";
+  if (agentHas(orchestratorKind, "waitsForChecks")) return "wait";
   return isNetworkedReviewer(reviewerKind, reviewerSandbox) ? "reviewer" : "gate";
 }
 

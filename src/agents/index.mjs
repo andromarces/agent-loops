@@ -4,10 +4,9 @@ import { runAgy } from "./agy.mjs";
 import { runOpenCode } from "./opencode.mjs";
 import { runCopilot } from "./copilot.mjs";
 import { throwIfCanceled } from "./shared.mjs";
+import { normalizeAgent } from "../lib/agent-kinds.mjs";
 
-export function normalizeAgent(kind) {
-  return kind === "antigravity" ? "agy" : kind;
-}
+export { normalizeAgent };
 
 /**
  * Adapter registry. Each adapter implements `run(state, prompt, options) -> string`:
@@ -20,7 +19,7 @@ export function normalizeAgent(kind) {
  * - `conversationReplaced`: a resume ran the turn in a new conversation.
  * - `sessionUnconfirmed`: the session id is not yet confirmed by CLI output.
  * - `shellDenied`: the turn reported a refused shell call.
- * - `resolvedModel`: the model the CLI reported (see `REPORTS_RESOLVED_MODEL`).
+ * - `resolvedModel`: the model the CLI reported (see `reportsResolvedModel` in `src/lib/agent-kinds.mjs`).
  *
  * An adapter throws an error with `sessionMissing` set when a resumed session no longer
  * exists, so the runtime reruns the turn as a first turn. An adapter that pre-assigns a
@@ -52,9 +51,3 @@ export async function runAgent(state, prompt, options = {}, agents = defaultAgen
   throwIfCanceled(options.signal, kind);
   return response;
 }
-
-/**
- * Adapters whose output names the model the CLI resolved, so they set `state.resolvedModel` and
- * `--continue-from` can compare it (ADR 0026). The others report no model.
- */
-export const REPORTS_RESOLVED_MODEL = new Set(["claude", "copilot", "opencode"]);

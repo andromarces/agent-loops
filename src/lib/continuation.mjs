@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { normalizeAgent, REPORTS_RESOLVED_MODEL } from "../agents/index.mjs";
+import { agentHas, normalizeAgent } from "./agent-kinds.mjs";
 import { logInfo, logWarn } from "./log.mjs";
 import { readableErrorText, readProp } from "./error-message.mjs";
 import { REVIEWER_SANDBOX_MODES, ROLE_KINDS, legacyReviewerSandbox } from "./args.mjs";
@@ -259,7 +259,7 @@ export async function verifyResolvedModels(roles, { probe }) {
       continue;
     }
     if (typeof recorded !== "string" || !recorded) {
-      if (REPORTS_RESOLVED_MODEL.has(normalizeAgent(kind))) {
+      if (agentHas(normalizeAgent(kind), "reportsResolvedModel")) {
         logWarn(
           `--continue-from: the default-model check did not run for ${role} (${kind}), because the earlier record has no resolved model.`,
         );

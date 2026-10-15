@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { readableErrorText, readProp } from "./error-message.mjs";
-import { normalizeAgent } from "../agents/index.mjs";
+import { normalizeAgent } from "./agent-kinds.mjs";
 
 function missingValue(flag) {
   return new Error(`Missing value for ${flag}.`);
