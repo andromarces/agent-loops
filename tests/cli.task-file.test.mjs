@@ -87,17 +87,22 @@ test("--task with --task-file fails with a clear error", async () => {
 });
 
 // Usefulness: acceptance (#211) — the empty-task check applies to the file content, from a file and from stdin.
-test("an empty or whitespace-only task file fails with the missing task error", async () => {
-  for (const content of ["", " \n\t\n"]) {
-    const run = await runHeadless(["--task-file", await taskFile(content)]);
-    expect(run.exitCode).toBe(1);
-    expect(run.calls).toBe(0);
-    expect(run.errors).toContain("Missing required --task.");
-  }
-  const run = await runHeadless(["--task-file", "-"], { stdin: async () => "  \n" });
-  expect(run.exitCode).toBe(1);
-  expect(run.calls).toBe(0);
-  expect(run.errors).toContain("Missing required --task.");
+// Each case builds its own temp repo, so each gets its own timeout.
+test.each([
+  ["an empty task file", async () => runHeadless(["--task-file", await taskFile("")])],
+  [
+    "a whitespace-only task file",
+    async () => runHeadless(["--task-file", await taskFile(" \n\t\n")]),
+  ],
+  [
+    "whitespace-only stdin",
+    async () => runHeadless(["--task-file", "-"], { stdin: async () => "  \n" }),
+  ],
+])("%s fails with the missing task error", async (_name, run) => {
+  const result = await run();
+  expect(result.exitCode).toBe(1);
+  expect(result.calls).toBe(0);
+  expect(result.errors).toContain("Missing required --task.");
 });
 
 // Usefulness: an unreadable file reports the path and fails before any run starts.
