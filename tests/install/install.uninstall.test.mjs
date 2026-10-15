@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
-import { deepEqual } from "../../src/install/fsutil.mjs";
+import { deepEqual } from "../../src/install/settings.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { installRoot, manifestPath } from "../../src/install/manifest.mjs";
 import { removePath } from "../runtime-helpers.mjs";

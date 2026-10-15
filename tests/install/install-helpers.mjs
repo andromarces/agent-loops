@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deepEqual } from "../../src/install/fsutil.mjs";
-import { buildTargets } from "../../src/install/harnesses.mjs";
+import { deepEqual } from "../../src/install/settings.mjs";
+import { buildTargets } from "../../src/install/targets.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const homes = [];

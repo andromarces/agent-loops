@@ -2,7 +2,9 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
-import { deepEqual, sha256, writeTextAtomic } from "../../src/install/fsutil.mjs";
+import { writeTextAtomic } from "../../src/install/fsutil.mjs";
+import { deepEqual } from "../../src/install/settings.mjs";
+import { sha256 } from "../../src/lib/hash.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { manifestPath, readManifest } from "../../src/install/manifest.mjs";
 import {

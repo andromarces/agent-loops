@@ -2,7 +2,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vite-plus/test";
-import { processStartTime, withStateLock } from "../../src/lib/state-lock.mjs";
+import { processStartTime } from "../../src/lib/process-identity.mjs";
+import { withStateLock } from "../../src/lib/state-lock.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // The Linux source reads /proc, which does not exist on the other test platforms, so

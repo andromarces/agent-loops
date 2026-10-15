@@ -10,7 +10,8 @@ import {
   statePaths,
   writeSessionEntry,
 } from "../../src/lib/runstate.mjs";
-import { processStartTime, withStateLock } from "../../src/lib/state-lock.mjs";
+import { processStartTime } from "../../src/lib/process-identity.mjs";
+import { withStateLock } from "../../src/lib/state-lock.mjs";
 import { deadPid, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
 
 let dirs = [];

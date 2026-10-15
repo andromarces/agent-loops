@@ -25,13 +25,29 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-      # Trusted publishing needs npm 11.5.1 or later. node-version 24 resolves
-      # to a 24.x release that bundles it. The package still supports Node 22.
+      # Staged publishing needs npm 11.15.0 or later. Node 24.18.0 is the first
+      # 24.x release that bundles it, and a runner can cache an older 24.x, so
+      # the next step checks the version. The package still supports Node 22.
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      - name: Require npm 11.15.0 or later
+        shell: bash
+        run: |
+          npm_version="$(npm --version)"
+          # Fail closed: accept only a complete MAJOR.MINOR.PATCH of digits.
+          if [[ ! "$npm_version" =~ ^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$ ]]; then
+            echo "::error::npm version '$npm_version' is not a stable MAJOR.MINOR.PATCH release. npm stage publish needs 11.15.0 or later."
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          if (( major < 11 || (major == 11 && minor < 15) )); then
+            echo "::error::npm $npm_version is older than 11.15.0, which npm stage publish needs."
+            exit 1
+          fi
       # A release event and a manual dispatch must both run on the release tag.
       # npm records provenance from GITHUB_REF and GITHUB_SHA, so a dispatch on
       # a branch would attest the branch, not the tag.

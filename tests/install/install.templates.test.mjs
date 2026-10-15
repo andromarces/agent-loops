@@ -149,3 +149,23 @@ test.each([
   expect(skill.replace(/\s+/g, " ")).toContain(expected);
   expect(skill).not.toContain("{{HARNESS_CHECK");
 });
+
+// Usefulness: verifies the #808 acceptance — the Codex and Antigravity skills render the session-channel
+// paragraph from one source, so only the variable name differs and the "absent" sentence has one wording.
+test.each([
+  ["codex", "CODEX_THREAD_ID"],
+  ["antigravity", "ANTIGRAVITY_CONVERSATION_ID"],
+])("the %s skill renders the shared session-channel paragraph", async (harness, variable) => {
+  const home = await makeHome();
+  const targets = await targetPaths(harness, home);
+  const skill = targets.files.find((file) => file.path.endsWith("SKILL.md")).content;
+  const expected =
+    `Use the invocation text as the task and role settings. Before the init dispatch call, verify ` +
+    `that the active shell has \`${variable}\`. Do not print its value. In PowerShell, pass ` +
+    `\`$env:${variable}\` as \`--parent-session\`. Set \`$worktree = (Get-Location).Path\` and pass ` +
+    "`--cwd $worktree`. Do not embed `$PWD` in POSIX-style quotes. In POSIX shells, pass " +
+    `\`--cwd "$PWD"\` and \`$${variable}\`. If the variable is absent, report the missing session ` +
+    "channel and do not start the run.";
+  expect(skill.replace(/\s+/g, " ")).toContain(expected);
+  expect(skill).not.toContain("{{SESSION_CHANNEL");
+});

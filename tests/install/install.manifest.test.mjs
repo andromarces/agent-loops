@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { main as cliMain } from "../../src/cli.mjs";
-import { sha256 } from "../../src/install/fsutil.mjs";
+import { sha256 } from "../../src/lib/hash.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { manifestPath } from "../../src/install/manifest.mjs";
 import { restoreAgentLoopHome } from "../runtime-helpers.mjs";

@@ -1,6 +1,5 @@
-// Filesystem and comparison helpers for the user-scope installer (#139).
-// Every write is atomic (temp file plus rename) and every hash is SHA-256 over
-// the UTF-8 bytes, so the manifest can prove equality with what it last wrote.
+// Filesystem helpers for the user-scope installer (#139). Every write is atomic
+// (temp file plus rename).
 import { randomUUID } from "node:crypto";
 import {
   access,
@@ -15,8 +14,6 @@ import {
 } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { renameWithRetry, resolveWriteTarget } from "../lib/atomic-write.mjs";
-
-export { sha256 } from "../lib/hash.mjs";
 
 /**
  * Reads a file as UTF-8; returns null when the path does not exist. With
@@ -166,28 +163,6 @@ export async function pruneEmptyDirs(dirs) {
     }
   }
   return { removed, notDirs };
-}
-
-/** Structural equality for JSON-shaped values. Object key order is irrelevant. */
-export function deepEqual(a, b) {
-  if (a === b) {
-    return true;
-  }
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
-      return false;
-    }
-    return a.every((value, index) => deepEqual(value, b[index]));
-  }
-  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") {
-    return false;
-  }
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) {
-    return false;
-  }
-  return keysA.every((key) => Object.hasOwn(b, key) && deepEqual(a[key], b[key]));
 }
 
 export function backupPathFor(path) {

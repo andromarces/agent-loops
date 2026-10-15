@@ -7,7 +7,7 @@ import { afterEach, expect, test } from "vite-plus/test";
 import { readStatesForSession, statePaths, writeSessionEntry } from "../../src/lib/runstate.mjs";
 import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mjs";
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
-import { buildTargets } from "../../src/install/harnesses.mjs";
+import { buildTargets } from "../../src/install/targets.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
 import { createTempRepo, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
 
@@ -626,12 +626,12 @@ test("Antigravity hook denies guarded tools from the parent and stays silent oth
 // user-scope targets registers the parent and reaches the adapter without a
 // quoted or spaced hook path.
 test("Antigravity templates pass the conversation id and wire the shim", async () => {
-  const skill = await readFile(
-    new URL("../../src/install/templates/antigravity/skills/agent-loop/SKILL.md", import.meta.url),
-    "utf8",
-  );
+  const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const { files } = await buildTargets("antigravity", { home: packageRoot, packageRoot });
+  const skill = files.find((file) => file.path.endsWith("SKILL.md")).content;
   expect(skill).toContain("/agent-loop");
-  expect(skill).toContain("{{AGENT_LOOP_INSTRUCTIONS}}");
+  const instructions = join(packageRoot, "docs", "orchestrator-instructions.md");
+  expect(skill).toContain(`Read \`${instructions.replaceAll("\\", "/")}\``);
   expect(skill).toContain("ANTIGRAVITY_CONVERSATION_ID");
   expect(skill).toContain("--parent-session");
 
