@@ -123,7 +123,7 @@ function closingBlock(response) {
  * `blockers` are required, and a missing or empty one makes the whole block
  * unparseable. `checks`, `notes`, and `deferred` are optional: an absent or
  * empty label maps to null and never makes the block null, so a response in the
- * pre-#214 format stays parseable. A list that directly follows a report label
+ * pre-#214 format stays parseable. A `- ` list that directly follows a report label
  * with an empty value line is that label's value: the markers drop and the items
  * join with "; " (issue #846). Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
@@ -131,7 +131,7 @@ function closingBlock(response) {
  * This covers a label that already holds a value, including the required
  * `blockers`, a list outside any label, a list that a non-list line or a blank
  * line separates from its label, a bullet with no space after its
- * marker (issue #243), and a list under an earlier occurrence that a later
+ * marker even under an empty label (issue #243), a `*` or `+` bullet, an ordered item, an indented bullet, and a list under an earlier occurrence that a later
  * repeat shadows or after the reviewer `Verdict:` line (issue #249), because the
  * scan covers every line, not only the winning last occurrence of each label. A
  * label that indentation or markdown decoration hides also makes the block
@@ -176,18 +176,25 @@ export function parseReportBlock(response) {
 // A report label line with an empty value, for example `Notes:`.
 const EMPTY_LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):\\s*$`, "i");
 
-// The bullet or ordered marker that opens a list line, with the space after it.
-const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s*/;
+// The only list shape that folds under an empty label: a `-` at column 0, then a space and an
+// item. A spaceless bullet, an indented bullet, a `*` or `+` bullet, and an ordered item stay
+// lists that hasDroppedList rejects.
+const FOLDABLE_ITEM = /^-\s+(?=\S)/;
 
 /** True when the line is a list item. A thematic break and an emphasis run are not lists. */
 function isListLine(line) {
   return LIST_LINE.test(line) && !THEMATIC_BREAK.test(line) && !EMPHASIS_LINE.test(line);
 }
 
+/** True when the line is a `- ` item that may fold into an empty label's value. */
+function isFoldableItem(line) {
+  return FOLDABLE_ITEM.test(line) && isListLine(line);
+}
+
 /**
- * Folds an unbroken run of list lines that directly follows a report label with an empty value
+ * Folds an unbroken run of `- ` items that directly follows a report label with an empty value
  * line into that label's value: markers stripped, items joined with "; " (issue #846). Every
- * other list stays in the result for hasDroppedList. Returns null when a later line repeats a
+ * other list shape stays in the result for hasDroppedList. Returns null when a later line repeats a
  * folded label, because the repeat shadows the folded list and it would drop with no `raw`
  * signal.
  * @param {string[]} lines
@@ -199,8 +206,8 @@ function foldEmptyLabelLists(lines) {
   for (let i = 0; i < lines.length; i++) {
     const label = lines[i].match(EMPTY_LABEL_LINE) ? lines[i].trim() : null;
     const items = [];
-    while (label && i + 1 < lines.length && isListLine(lines[i + 1])) {
-      items.push(lines[++i].replace(LIST_MARKER, "").trim());
+    while (label && i + 1 < lines.length && isFoldableItem(lines[i + 1])) {
+      items.push(lines[++i].replace(FOLDABLE_ITEM, "").trim());
     }
     if (items.length === 0) {
       out.push(lines[i]);

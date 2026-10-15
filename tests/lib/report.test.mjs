@@ -1,5 +1,10 @@
 import { expect, test } from "vite-plus/test";
-import { hasClosingBlockAttempt, parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
+import {
+  hasClosingBlockAttempt,
+  isAcceptedReview,
+  parseReportBlock,
+  parseVerdict,
+} from "../../src/lib/report.mjs";
 
 const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
 
@@ -65,9 +70,6 @@ test("parseReportBlock joins a list under an empty label into that label's value
   expect(parseReportBlock(`${REPORT}\nNotes: none\nDeferred:\n- item one`)).toMatchObject({
     notes: "none",
     deferred: "item one",
-  });
-  expect(parseReportBlock(`${REPORT}\nNotes:\n1. item one\n2) item two`)).toMatchObject({
-    notes: "item one; item two",
   });
   expect(
     parseReportBlock(
@@ -180,12 +182,41 @@ test("parseReportBlock returns null when a decorated label shadows a plain one",
   expect(parseReportBlock(`${REPORT}\n**Blockers:** the real blocker`)).toBeNull();
 });
 
-// Usefulness: verifies a bullet with no space after the marker under an empty
-// optional label joins like a spaced bullet, with the marker stripped (issues #243 and #846).
-test("parseReportBlock joins a spaceless bullet under an empty optional label", () => {
-  expect(parseReportBlock(`${REPORT}\nDeferred:\n-a\n-b`)).toMatchObject({ deferred: "a; b" });
-  expect(parseReportBlock(`${REPORT}\nNotes:\n*item`)).toMatchObject({ notes: "item" });
-  expect(parseReportBlock(`${REPORT}\nDeferred:\n1.item`)).toMatchObject({ deferred: "item" });
+// Usefulness: verifies every list shape other than a column-0 `- ` list under an empty label
+// stays unparseable, so a spaceless bullet, a `*` or `+` bullet, an ordered item, and an
+// indented bullet never fold into a label value (issues #243 and #846).
+test("parseReportBlock returns null for a non-`- ` list under an empty label", () => {
+  for (const list of [
+    "-a\n-b",
+    "- a\n-b",
+    "*item",
+    "* item",
+    "+item",
+    "+ item",
+    "1.item",
+    "1. item",
+    "2) item",
+    "  - item",
+    "*file*.mjs",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\nDeferred:\n${list}`)).toBeNull();
+    expect(parseReportBlock(`${REPORT}\nChecks:\n${list}`)).toBeNull();
+  }
+});
+
+// Usefulness: verifies a list under a label that already holds a value, one that a blank line
+// separates from its label, and one under a shadowed, indented, or decorated label stay
+// unparseable, while a `- ` list under an empty required label folds (issue #846).
+test("parseReportBlock returns null for a list under a non-empty or hidden label", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: none\n- item`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: none\n\n- item`)).toBeNull();
+  expect(parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n- item")).toBeNull();
+  expect(parseReportBlock("Conclusion: done\nWhy: ok\nBlockers:\n- item")).toMatchObject({
+    blockers: "item",
+  });
+  expect(parseReportBlock(`${REPORT}\n  Notes:\n- item`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\n**Notes:**\n- item`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- item\nNotes:\n- other`)).toBeNull();
 });
 
 // Usefulness: verifies a non-label line that begins with a word and a colon is
@@ -625,4 +656,14 @@ test("hasClosingBlockAttempt is false for prose and lists with no label", () => 
   ]) {
     expect(hasClosingBlockAttempt(prose), prose).toBe(false);
   }
+});
+
+// Usefulness: verifies a spaceless bullet under an empty Checks line never supplies the Checks
+// text that an accept needs, while a `- ` item does (issues #218 and #846).
+test("isAcceptedReview never accepts from a folded spaceless bullet", () => {
+  const review = (list) => `${REPORT}\nVerdict: accept\nChecks:\n${list}`;
+  expect(isAcceptedReview(review("-item"))).toBe(false);
+  expect(isAcceptedReview(review("*item"))).toBe(false);
+  expect(isAcceptedReview(review("1.item"))).toBe(false);
+  expect(isAcceptedReview(review("- npm test passed"))).toBe(true);
 });
