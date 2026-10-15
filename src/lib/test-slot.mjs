@@ -60,6 +60,10 @@ owner, runs its command at once in the same process group, so a nested call
 cannot deadlock. Any other marker is ignored. SIGINT or SIGTERM ends the
 command's process tree, then frees the slot.
 
+Approved limits (ADR 0039, docs/reference/usage.md#test-slot): a slot directory
+shared between OS users, detached work that outlives the slot release, and on
+POSIX a signal sent only to a nested wrapper, which can leave grandchildren.
+
 Exit codes:
 
   <command's code>     The command ran. A command ended by a signal gives 128 + the signal number.
@@ -147,18 +151,31 @@ async function tryAcquireSlot(root, slots) {
   if (!releaseTable) {
     return null;
   }
+  const errors = [];
   let slot = null;
   try {
     slot = await claimSlot(root, slots);
-  } finally {
+  } catch (err) {
+    errors.push(err);
+  }
+  try {
+    await releaseTable();
+  } catch (err) {
+    errors.push(err);
     // A slot taken under a table lock that fails to release is freed before the error
     // propagates, so the failure never leaks a held slot.
     try {
-      await releaseTable();
-    } catch (err) {
       await slot?.release();
-      throw err;
+    } catch (releaseErr) {
+      errors.push(releaseErr);
     }
+  }
+  if (errors.length > 1) {
+    // Every failure stays in the message, so a later one never hides the cause.
+    throw new AggregateError(errors, errors.map((err) => err?.message ?? String(err)).join("; "));
+  }
+  if (errors.length === 1) {
+    throw errors[0];
   }
   return slot;
 }

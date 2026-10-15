@@ -10,14 +10,18 @@ import { deadPid, processExists, removePath } from "../runtime-helpers.mjs";
 
 // Delays each in-process lock attempt by `ms`, so a test can make one acquisition pass end
 // after the wait bound. With `failTableRelease`, the release of the short acquisition lock
-// removes the lock and then throws. Every spawned wrapper uses the real module.
-const slowLock = vi.hoisted(() => ({ ms: 0, failTableRelease: false }));
+// removes the lock and then throws. With `failSlotLock`, an attempt on a slot file throws.
+// Every spawned wrapper uses the real module.
+const slowLock = vi.hoisted(() => ({ ms: 0, failTableRelease: false, failSlotLock: false }));
 vi.mock("../../src/lib/state-lock.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     tryStateLock: async (lockFile, ...rest) => {
       await new Promise((resolve) => setTimeout(resolve, slowLock.ms));
+      if (slowLock.failSlotLock && !lockFile.endsWith("acquire.lock")) {
+        throw new Error("slot lock failed");
+      }
       const release = await real.tryStateLock(lockFile, ...rest);
       if (release && slowLock.failTableRelease && lockFile.endsWith("acquire.lock")) {
         return async () => {
@@ -45,6 +49,7 @@ const savedEnv = Object.fromEntries(SLOT_ENV.map((name) => [name, process.env[na
 afterEach(async () => {
   slowLock.ms = 0;
   slowLock.failTableRelease = false;
+  slowLock.failSlotLock = false;
   vi.restoreAllMocks();
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) {
@@ -387,4 +392,19 @@ test("a failed acquisition-lock release frees the slot and exits 1", async () =>
   expect(await runTestSlot(["--slots", "1", "--wait", "5", "--", command])).toBe(1);
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
   expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
+}, 30_000);
+
+// Usefulness: issue #847 review — when the slot claim fails and the acquisition-lock release
+// also fails, the wrapper reports both errors, so the release failure never hides the cause.
+test("a failed slot claim and a failed acquisition-lock release are both reported", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  const command = inProcess(ctx, "mark.mjs");
+  slowLock.failSlotLock = true;
+  slowLock.failTableRelease = true;
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  expect(await runTestSlot(["--slots", "1", "--wait", "5", "--", command])).toBe(1);
+  const output = errors.mock.calls.flat().join("\n");
+  expect(output).toContain("slot lock failed");
+  expect(output).toContain("release failed");
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
 }, 30_000);
