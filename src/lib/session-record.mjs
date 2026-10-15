@@ -67,7 +67,11 @@ async function recordKey(transcript) {
 
 /** The path of the record of one transcript file. */
 export async function sessionRecordPath(transcript) {
-  return join(tmpdir(), "agent-loops", "session-records", `${await recordKey(transcript)}.json`);
+  return recordPath(await recordKey(transcript));
+}
+
+function recordPath(key) {
+  return join(tmpdir(), "agent-loops", "session-records", `${key}.json`);
 }
 
 /**
@@ -81,10 +85,11 @@ export async function writeSessionRecord(
   transcript,
   { cwd, runNonce, transcriptSha256, role, sessionId },
 ) {
-  const file = await sessionRecordPath(transcript);
+  const key = await recordKey(transcript);
+  const file = recordPath(key);
   const record = {
     version: 1,
-    transcript: await recordKey(transcript),
+    transcript: key,
     cwd,
     runNonce,
     transcriptSha256,
@@ -140,6 +145,7 @@ export async function readSessionRecord(transcript, { digest, cwd, runNonce }) {
     isUuid(record.runNonce) &&
     record.sessionUnconfirmed === true;
   if (!shaped) return refuse(file, "has an unexpected shape");
+  // Recomputed after the read: a link or directory swap since the path lookup changes the key.
   if (
     record.transcript !== (await recordKey(transcript)) ||
     record.cwd !== cwd ||
