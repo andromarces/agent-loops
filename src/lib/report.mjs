@@ -176,10 +176,11 @@ export function parseReportBlock(response) {
 // A report label line with an empty value, for example `Notes:`.
 const EMPTY_LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):\\s*$`, "i");
 
-// The only list shape that folds under an empty label: a `-` at column 0, then a space and an
-// item. A spaceless bullet, an indented bullet, a `*` or `+` bullet, and an ordered item stay
+// The only list shape that folds under an empty label: a `-` at column 0, exactly one ASCII
+// space (U+0020), then an item. Any other separator (a tab, a nonbreaking space, a second space),
+// a spaceless bullet, an indented bullet, a `*` or `+` bullet, and an ordered item stay
 // lists that hasDroppedList rejects.
-const FOLDABLE_ITEM = /^-\s+(?=\S)/;
+const FOLDABLE_ITEM = /^- (?=\S)/;
 
 /** True when the line is a list item. A thematic break and an emphasis run are not lists. */
 function isListLine(line) {

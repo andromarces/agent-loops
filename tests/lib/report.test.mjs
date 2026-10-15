@@ -198,6 +198,11 @@ test("parseReportBlock returns null for a non-`- ` list under an empty label", (
     "2) item",
     "  - item",
     "*file*.mjs",
+    "-\titem",
+    "- item",
+    "- item",
+    "-  item",
+    "- a\n-\titem",
   ]) {
     expect(parseReportBlock(`${REPORT}\nDeferred:\n${list}`)).toBeNull();
     expect(parseReportBlock(`${REPORT}\nChecks:\n${list}`)).toBeNull();
@@ -665,5 +670,7 @@ test("isAcceptedReview never accepts from a folded spaceless bullet", () => {
   expect(isAcceptedReview(review("-item"))).toBe(false);
   expect(isAcceptedReview(review("*item"))).toBe(false);
   expect(isAcceptedReview(review("1.item"))).toBe(false);
+  expect(isAcceptedReview(review("-\titem"))).toBe(false);
+  expect(isAcceptedReview(review("- item"))).toBe(false);
   expect(isAcceptedReview(review("- npm test passed"))).toBe(true);
 });

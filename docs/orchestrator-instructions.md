@@ -154,13 +154,14 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   on. `report.deferred` holds items found but left out of scope. Both are
   optional: a child that omits the label yields `null` for that field, and the
   block still parses. Each value is one line, the label plain at column 0. A `- `
-  list (a `-` at column 0, a space, then the item) that directly follows a report
+  list (a `-` at column 0, exactly one space U+0020, then the item) that directly follows a report
   label with an empty value line is that label's value: the markers drop and the
   items join into one line with `; ` (issue #846). The run ends at the first line
   that is not a `- ` item, so a blank line or prose between the label and the
   list breaks it. Any other list in the closing block, for example bullets after
   the reviewer `Verdict:` line, a list outside any label, a bullet with no space
-  after the marker (`-item`, `*item`) even under an empty label, a `*` or `+`
+  after the marker (`-item`, `*item`) or a separator other than one space (a tab,
+  a nonbreaking space, two spaces) even under an empty label, a `*` or `+`
   bullet, an ordered item, an indented bullet, or any list under a label that
   already holds a value, makes the block unparseable, so the list surfaces
   through `raw` instead of being dropped. An indented label or a decorated label
