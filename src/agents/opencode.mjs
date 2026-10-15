@@ -6,10 +6,10 @@ import { logDebug, logInfo } from "../lib/log.mjs";
 import { REPORT_LABEL_NAMES, hasClosingBlockAttempt, parseVerdict } from "../lib/report.mjs";
 import {
   asSessionId,
+  assertResumedSession,
   childRan,
   keepFailedSessionId,
   recordResolvedModel,
-  resumeMismatchError,
   setResolvedModel,
   setUsageOrDelete,
   throwIfCanceled,
@@ -79,7 +79,7 @@ export async function runOpenCode(state, prompt, options = {}) {
     // A non-zero exit, a timeout, or a cancel can still carry completed-step usage and the session
     // id. Expose both, then rethrow.
     setUsage(state, events);
-    keepFailedSessionId(state, events.map((event) => event?.sessionID).find(Boolean));
+    keepFailedSessionId(state, firstSessionId(events));
     // The stream carries model output and stderr can carry a secret, and `logDebug` writes to
     // stdout in the loop CLI, where a caller can persist it. The debug line therefore carries the
     // exit code and the byte counts only, and the full text stays on the error for a caller that
@@ -110,15 +110,20 @@ export async function runOpenCode(state, prompt, options = {}) {
   }
   setResolvedModel(state, []);
   setUsage(state, events);
-  keepFailedSessionId(state, events.map((event) => event.sessionID).find(Boolean));
+  keepFailedSessionId(state, firstSessionId(events));
   throwIfCanceled(signal, "opencode");
+}
+
+/** Returns the first truthy `sessionID` of the events, which may hold non-object entries. */
+function firstSessionId(events) {
+  return events.map((event) => event?.sessionID).find(Boolean);
 }
 
 /** Validates the stream of a turn whose child exited 0, records its session, usage, and model, and returns its text. */
 async function settleTurn(state, events, { requestedSessionId, execOptions, startedAt }) {
   // Select the first truthy id, so an empty id is skipped, then require it to be a non-empty
   // string: a later valid id never rescues a truthy invalid or mismatched first one.
-  const sessionId = asSessionId(events.map((event) => event.sessionID).find(Boolean));
+  const sessionId = asSessionId(firstSessionId(events));
 
   // Unresolved until the turn has passed every check below, so a turn that fails one records `null`
   // and never reads the export.
@@ -128,9 +133,7 @@ async function settleTurn(state, events, { requestedSessionId, execOptions, star
     throw new Error("opencode did not return a session ID.");
   }
 
-  if (requestedSessionId && requestedSessionId !== sessionId) {
-    throw resumeMismatchError("opencode", "session", requestedSessionId, sessionId);
-  }
+  assertResumedSession("opencode", "session", requestedSessionId, sessionId);
 
   state.sessionId = sessionId;
 

@@ -2,10 +2,10 @@ import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import {
   asSessionId,
+  assertResumedSession,
+  closingText,
   flagMissingSession,
   keepFailedSessionId,
-  lastClosingMessage,
-  resumeMismatchError,
   setMainLoopUsage,
 } from "./shared.mjs";
 
@@ -71,9 +71,7 @@ export async function runCodex(state, prompt, options = {}) {
     throw new Error("Codex did not return a thread ID.");
   }
 
-  if (state.sessionId && returnedId !== state.sessionId) {
-    throw resumeMismatchError("Codex", "thread", state.sessionId, returnedId);
-  }
+  assertResumedSession("Codex", "thread", state.sessionId, returnedId);
 
   state.sessionId = returnedId;
   setMainLoopUsage(state, events.find((event) => event.type === "turn.completed")?.usage);
@@ -87,5 +85,5 @@ export async function runCodex(state, prompt, options = {}) {
     throw new Error("Codex did not return an agent message.");
   }
 
-  return String(lastClosingMessage(messages)).trim();
+  return closingText(messages);
 }

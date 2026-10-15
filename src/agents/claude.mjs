@@ -8,6 +8,7 @@ import { logWarn } from "../lib/log.mjs";
 import { isUuid } from "../lib/session-record.mjs";
 import {
   asSessionId,
+  assertResumedSession,
   childRan,
   recordResolvedModel,
   failedWithLine,
@@ -15,7 +16,6 @@ import {
   keepFailedSessionId,
   readSessionHead,
   requireHeldUnconfirmedSession,
-  resumeMismatchError,
   setUsageOrDelete,
 } from "./shared.mjs";
 
@@ -197,9 +197,7 @@ export async function runClaude(state, prompt, options = {}) {
   }
 
   // A resumed id must come back unchanged, as in the Codex, Copilot, and opencode adapters.
-  if (requestedSessionId && sessionId !== requestedSessionId) {
-    throw resumeMismatchError("Claude Code", "session", requestedSessionId, sessionId);
-  }
+  assertResumedSession("Claude Code", "session", requestedSessionId, sessionId);
 
   if (preassignedId && sessionId !== preassignedId) {
     logWarn(`Claude Code reported session ${sessionId}, not the pre-assigned ${preassignedId}`);
