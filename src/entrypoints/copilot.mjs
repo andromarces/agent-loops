@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { isEntryPoint } from "../lib/entrypoint.mjs";
 import { readProp, redactedText, UNSERIALIZABLE_MESSAGE } from "../lib/error-message.mjs";
+import { parentInstructionParts } from "../lib/parent-instructions.mjs";
 
 // Resolve the shipped instructions relative to this file, so the launcher works
 // from any directory, not only from a clone of this repository. The file lives
@@ -18,12 +19,12 @@ const INSTRUCTIONS_PATH = join(INSTRUCTIONS_DIR, "orchestrator-instructions.md")
 // it spawns a batch shim through cmd.exe, and npm installs the copilot CLI as a
 // .cmd shim on Windows.
 const INSTRUCTIONS = (sessionId, task) =>
-  [
-    `Read \`${INSTRUCTIONS_PATH}\` and follow it for this request.`,
-    "The task and role settings are:",
+  parentInstructionParts({
+    harnessName: "Copilot CLI",
+    instructionsPath: INSTRUCTIONS_PATH,
+    sessionId,
     task,
-    `This Copilot CLI session id is \`${sessionId}\`. Pass it as \`--parent-session\` on the init dispatch call.`,
-  ]
+  })
     .join(" ")
     .replace(/[\r\n]+/g, " ");
 
