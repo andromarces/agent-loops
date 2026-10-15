@@ -700,8 +700,13 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
     let value;
     try {
       value = JSON.parse(text);
-    } catch {
-      throw new RoleError("finish summary must be a JSON object on stdin.");
+    } catch (error) {
+      // V8 can quote the input in the message (`..., "<text>" is not valid JSON`); drop the quote.
+      const reason = error.message.replace(
+        /(?:,\s)?(?:\.\.\.)?".*"(?:\.\.\.)? is not valid JSON$/s,
+        "",
+      );
+      throw new RoleError(`finish summary must be a JSON object on stdin: ${reason}`);
     }
     // The summary arrives unwrapped, so the marker the headless action carries
     // beside `summary` sits beside the five keys here. The validator drops it

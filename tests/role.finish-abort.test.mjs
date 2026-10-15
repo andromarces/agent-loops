@@ -199,6 +199,32 @@ test("finish from active in review-only mode succeeds with the verdict recorded"
   expect(state.summary.notDone).toContain("verdict: reject");
 });
 
+// Usefulness: verifies #839 — a malformed summary refusal names the parser message
+// so the parent can fix the input, and never echoes the summary text.
+test("finish refusal names the JSON parse error without echoing the summary", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    ...basicDeps(),
+  });
+
+  const finishArgs = withRepo(["finish", "--cwd", "<repo>"], repo);
+  const badEscape = await executeRoleCommand(finishArgs, {
+    stdin: async () => String.raw`{"changed":"C:\x"}`,
+  });
+  expect(badEscape.exitCode).toBe(1);
+  expect(badEscape.payload.error).toContain("finish summary must be a JSON object on stdin: ");
+  expect(badEscape.payload.error).toContain("Bad escaped character");
+
+  const notJson = await executeRoleCommand(finishArgs, {
+    stdin: async () => "secret-token-text",
+  });
+  expect(notJson.exitCode).toBe(1);
+  expect(notJson.payload.error).toContain("finish summary must be a JSON object on stdin: ");
+  expect(notJson.payload.error).not.toContain("secret-token-text");
+});
+
 // Usefulness: verifies acceptance — finish with an invalid summary exits
 // non-zero and leaves lifecycle active.
 test("finish with an invalid summary exits non-zero and keeps lifecycle active", async () => {
