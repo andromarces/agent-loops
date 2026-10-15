@@ -3,13 +3,10 @@
 import { normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
   CHILD_ROLE_KINDS,
-  REVIEW_ONLY_PR_REFUSAL,
   ROLE_FLAG_BY_OPTION,
-  assertOpenCodeOptions,
   REVIEWER_SANDBOX_MODES,
+  initRefusal,
   legacyReviewerSandbox,
-  reviewerSandboxError,
-  testCmdError,
 } from "./lib/args.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { RoleError } from "./role-error.mjs";
@@ -44,8 +41,15 @@ export function storedReviewerSandbox(state) {
 }
 
 export function validateInitFlags(args, agents = {}) {
-  if (args.task === null || String(args.task).trim() === "") {
-    throw new RoleError('Init requires --task, for example --task "Implement the change."');
+  // review-only never dispatches the worker, so --worker is optional there.
+  const refusal = initRefusal(args, {
+    roles: CHILD_ROLE_KINDS,
+    requiredRoles: (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : CHILD_ROLE_KINDS,
+    isSupportedAgent: (kind) => supportedAgents.has(kind) || Boolean(agents[normalizeAgent(kind)]),
+    blankTaskText: 'Init requires --task, for example --task "Implement the change."',
+  });
+  if (refusal) {
+    throw new RoleError(refusal);
   }
   // The parent guard is the hard backstop for the prompt-only parent rule, so an
   // interactive run is never left unguarded by default. The headless `agent-loop`
@@ -54,48 +58,6 @@ export function validateInitFlags(args, agents = {}) {
     throw new RoleError(
       "Init requires --parent-session (the harness session id the parent-edit guard matches).",
     );
-  }
-  const testCmdRefusal = testCmdError(args.testCmd, args.testCmdTimeout);
-  if (testCmdRefusal) {
-    throw new RoleError(testCmdRefusal);
-  }
-  const sandboxRefusal = reviewerSandboxError(
-    args.reviewerSandbox,
-    args.reviewer === null ? null : normalizeAgent(args.reviewer),
-  );
-  if (sandboxRefusal) {
-    throw new RoleError(sandboxRefusal);
-  }
-  // review-only dispatches no worker and rejects --require-ci at finish, so a
-  // declared PR there could never be gated. The run would refuse every finish, so
-  // the declaration is refused at init instead (#302).
-  if (args.pr !== null && (args.mode ?? "work-first") === "review-only") {
-    throw new RoleError(REVIEW_ONLY_PR_REFUSAL);
-  }
-  // review-only never dispatches the worker, so --worker is optional there.
-  const requiredRoles =
-    (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : CHILD_ROLE_KINDS;
-  for (const roleName of requiredRoles) {
-    if (args[roleName] === null) {
-      throw new RoleError(`Missing required --${roleName}.`);
-    }
-  }
-  // Every supplied role is still validated; review-only may omit the worker.
-  // A model or effort without its role kind is an orphan option, not a silent drop.
-  for (const roleName of CHILD_ROLE_KINDS) {
-    const kind = args[roleName];
-    if (kind === null) {
-      for (const flag of [`${roleName}Model`, `${roleName}Effort`]) {
-        if (args[flag] !== null) {
-          throw new RoleError(`${ROLE_FLAG_BY_OPTION[flag]} requires --${roleName}.`);
-        }
-      }
-      continue;
-    }
-    if (!supportedAgents.has(kind) && !agents[normalizeAgent(kind)]) {
-      throw new RoleError(`Unsupported ${roleName}: ${kind}`);
-    }
-    assertOpenCodeOptions(roleName, kind, args[`${roleName}Model`], args[`${roleName}Effort`]);
   }
 }
 

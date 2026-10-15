@@ -8,16 +8,13 @@ import {
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
   REVIEW_ONLY_GATE_REFUSAL,
-  REVIEW_ONLY_PR_REFUSAL,
   ROLE_KINDS as ROLES,
-  assertOpenCodeOptions,
+  initRefusal,
   parseFlags,
   readStdinText,
   readTaskFile,
   roleFlags,
   TASK_SOURCE_CONFLICT,
-  reviewerSandboxError,
-  testCmdError,
 } from "./lib/args.mjs";
 import {
   carryEarlierEvents,
@@ -111,47 +108,27 @@ export function parseArgs(argv) {
     },
   });
 
-  for (const role of ROLES) {
-    if (!options[role]) {
-      throw new Error(`Missing required --${role}.`);
-    }
-    if (!supportedAgents.has(options[role])) {
-      throw new Error(`Unsupported ${role}: ${options[role]}`);
-    }
-  }
-
-  for (const role of ROLES) {
-    assertOpenCodeOptions(role, options[role], options[`${role}Model`], options[`${role}Effort`]);
-  }
   if (options.task !== null && options.taskFile !== null) {
     throw new Error(TASK_SOURCE_CONFLICT);
   }
   // A task file is read in `main`, which then applies the same check.
-  if (options.taskFile === null) {
-    assertTask(options.task);
-  }
-
-  const testCmdRefusal = testCmdError(options.testCmd, options.testCmdTimeout);
-  if (testCmdRefusal) {
-    throw new Error(testCmdRefusal);
-  }
-
-  const sandboxRefusal = reviewerSandboxError(options.reviewerSandbox, options.reviewer);
-  if (sandboxRefusal) {
-    throw new Error(sandboxRefusal);
+  const refusal = initRefusal(options, {
+    roles: ROLES,
+    requiredRoles: ROLES,
+    isSupportedAgent: (kind) => supportedAgents.has(kind),
+    blankTaskText: options.taskFile === null ? MISSING_TASK_TEXT : null,
+  });
+  if (refusal) {
+    throw new Error(refusal);
   }
 
   // A review-only run dispatches no worker, so it gates no PR: neither
   // declaration nor gate nor the accept rule has a finish to apply to. All three
   // arrive on this one command line, so the interactive path's refusals move
-  // here and keep their wording, shared from one constant each (#337).
-  if (options.mode === "review-only") {
-    if (options.pr !== null) {
-      throw new Error(REVIEW_ONLY_PR_REFUSAL);
-    }
-    if (options.requireAccept || options.requireCi !== null) {
-      throw new Error(REVIEW_ONLY_GATE_REFUSAL);
-    }
+  // here and keep their wording, shared from one constant each (#337). The PR
+  // declaration is refused in `initRefusal`.
+  if (options.mode === "review-only" && (options.requireAccept || options.requireCi !== null)) {
+    throw new Error(REVIEW_ONLY_GATE_REFUSAL);
   }
 
   // The headless path takes both flags on one command line, so a gate for another
@@ -167,11 +144,12 @@ export function parseArgs(argv) {
   return options;
 }
 
+const MISSING_TASK_TEXT =
+  'Missing required --task. Provide the task, for example --task "Implement the change."';
+
 function assertTask(task) {
   if (task === null || String(task).trim() === "") {
-    throw new Error(
-      'Missing required --task. Provide the task, for example --task "Implement the change."',
-    );
+    throw new Error(MISSING_TASK_TEXT);
   }
 }
 
