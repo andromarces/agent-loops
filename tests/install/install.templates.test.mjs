@@ -169,3 +169,32 @@ test.each([
   expect(skill.replace(/\s+/g, " ")).toContain(expected);
   expect(skill).not.toContain("{{SESSION_CHANNEL");
 });
+
+// Usefulness: verifies the #840 acceptance — the rendered paragraph boundaries around the session-channel
+// text match origin/main for each harness (Codex splits it in two; Antigravity keeps one), so a wrapping
+// change cannot merge or split paragraphs.
+test.each([
+  ["codex", "CODEX_THREAD_ID", 2],
+  ["antigravity", "ANTIGRAVITY_CONVERSATION_ID", 1],
+])(
+  "the %s skill keeps its session-channel paragraph boundaries",
+  async (harness, variable, count) => {
+    const home = await makeHome();
+    const targets = await targetPaths(harness, home);
+    const skill = targets.files.find((file) => file.path.endsWith("SKILL.md")).content;
+    const paragraphs = skill
+      .split(/\n\s*\n/)
+      .map((paragraph) => paragraph.replace(/\s+/g, " ").trim());
+    const start = paragraphs.findIndex((paragraph) =>
+      paragraph.startsWith("Use the invocation text"),
+    );
+    const end = paragraphs.findIndex((paragraph) => paragraph.endsWith("do not start the run."));
+    expect(start).toBeGreaterThan(0);
+    expect(end - start + 1).toBe(count);
+    if (count === 2) {
+      expect(paragraphs[start].endsWith("Do not print its value.")).toBe(true);
+      expect(paragraphs[end].startsWith("In PowerShell, pass")).toBe(true);
+    }
+    expect(paragraphs[start]).toContain(`\`${variable}\``);
+  },
+);
