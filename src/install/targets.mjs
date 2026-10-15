@@ -1,7 +1,8 @@
-// Harness registry for the installer (#139). Each harness declares the files it
+// Install targets per harness (#139). `buildTargets` declares the files each harness
 // creates and the one settings entry it owns, resolved against the installed
-// package. `src/install/templates/` holds the entry point and guard files, and
-// `claudeEntry` and `codexEntry` build the settings entries.
+// package. `src/install/templates/` holds the entry point and guard files.
+// `claudeEntry` and `codexEntry` build the Claude and Codex settings entries. The
+// Antigravity entry comes from `templates/antigravity/hooks.json`.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -67,33 +68,50 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
   const files = [];
   const settings = [];
   const notes = [];
-  const harnessCheck = await template(templateDir, "harness-check.md");
 
-  // `harness` names the skill harness. Its shared harness-check paragraph renders into
-  // `{{HARNESS_CHECK}}` before the CLI placeholder resolves.
-  const renderSkill = (text, harness) =>
-    (harness
-      ? text.replaceAll(
-          "{{HARNESS_CHECK}}",
-          harnessCheck
-            .replaceAll("{{HARNESS_ID}}", harness)
-            .replaceAll("{{HARNESS_LABEL}}", HARNESS_META[harness].label)
-            .replaceAll("{{SESSION_VAR}}", SESSION_CHANNEL[harness].variable)
-            .replaceAll("{{SESSION_VAR_REASON}}", SESSION_CHANNEL[harness].reason)
-            .trimEnd(),
-        )
-      : text
-    )
+  const renderPaths = (text) =>
+    text
       .replaceAll("{{AGENT_LOOP_INSTRUCTIONS}}", forwardSlashes(instructions))
       .replaceAll("__AGENT_LOOP_CLI__", cli);
 
-  if (harness === "claude") {
-    const skill = await template(templateDir, "claude", "skills", "agent-loop", "SKILL.md");
-    const skillsDir = join(home, ".claude", "skills");
+  // Renders the skill template of the current harness into `<skillsDir>/agent-loop/SKILL.md`.
+  // The shared harness-check and session-channel paragraphs fill `{{HARNESS_CHECK}}` and
+  // `{{SESSION_CHANNEL}}` before the path placeholders resolve. Only a skill harness reads them.
+  const addSkill = async (skillsDir) => {
+    const { variable, reason } = SESSION_CHANNEL[harness];
+    const renderParagraph = (text) =>
+      text
+        .replaceAll("{{HARNESS_ID}}", harness)
+        .replaceAll("{{HARNESS_LABEL}}", HARNESS_META[harness].label)
+        .replaceAll("{{SESSION_VAR}}", variable)
+        .replaceAll("{{SESSION_VAR_REASON}}", reason)
+        .trimEnd();
+    const skill = await template(templateDir, harness, "skills", "agent-loop", "SKILL.md");
+    const harnessCheck = renderParagraph(await template(templateDir, "harness-check.md"));
+    const sessionChannel = skill.includes("{{SESSION_CHANNEL}}")
+      ? renderParagraph(await template(templateDir, "session-channel.md"))
+      : "";
     files.push({
       path: join(skillsDir, "agent-loop", "SKILL.md"),
-      content: renderSkill(skill, harness),
+      content: renderPaths(
+        skill
+          .replaceAll("{{HARNESS_CHECK}}", harnessCheck)
+          .replaceAll("{{SESSION_CHANNEL}}", sessionChannel),
+      ),
     });
+  };
+
+  // Builds the skill note; Claude and Codex differ only in the discovery sentences and harness.
+  const skillNote = (discovery, command, label) =>
+    `${discovery} The skill sets \`metadata.opencode/autoinvoke: false\`, so OpenCode drops it ` +
+    "from the model's skill list and the OpenCode plugin command owns /agent-loop. The skill " +
+    `also runs the installed CLI by absolute path with \`harness-check ${command}\`. It starts ` +
+    `only when the nearest harness above the shell is ${label}. It stops for any other ` +
+    "harness, and when the check cannot run or finds no harness ancestor.";
+
+  if (harness === "claude") {
+    const skillsDir = join(home, ".claude", "skills");
+    await addSkill(skillsDir);
     const entry = claudeEntry(guardPath);
     settings.push({
       path: join(home, ".claude", "settings.json"),
@@ -106,23 +124,16 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     notes.push({
       path: skillsDir,
       dryRun: false,
-      detail:
-        "OpenCode also discovers ~/.claude/skills, so it lists the Claude skill " +
-        "to the model. The skill sets `metadata.opencode/autoinvoke: false`, so " +
-        "OpenCode drops it from the model's skill list and the OpenCode plugin " +
-        "command owns /agent-loop. The skill also runs the installed CLI by absolute " +
-        "path with `harness-check claude`. It starts only when the nearest harness " +
-        "above the shell is Claude Code. It stops for any other harness, and when " +
-        "the check cannot run or finds no harness ancestor.",
+      detail: skillNote(
+        "OpenCode also discovers ~/.claude/skills, so it lists the Claude skill to the model.",
+        "claude",
+        "Claude Code",
+      ),
     });
   } else if (harness === "codex") {
-    const skill = await template(templateDir, "codex", "skills", "agent-loop", "SKILL.md");
     const skillsDir = join(home, ".agents", "skills");
     const hooksFile = join(home, ".codex", "hooks.json");
-    files.push({
-      path: join(skillsDir, "agent-loop", "SKILL.md"),
-      content: renderSkill(skill, harness),
-    });
+    await addSkill(skillsDir);
     files.push({
       path: join(skillsDir, "agent-loop", "agents", "openai.yaml"),
       content: await template(
@@ -158,22 +169,18 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       {
         path: skillsDir,
         dryRun: false,
-        detail:
-          "The Codex skill lives in the shared ~/.agents/skills directory, which " +
-          "GitHub Copilot CLI and OpenCode also discover. The skill sets " +
-          "`metadata.opencode/autoinvoke: false`, so OpenCode drops it from the " +
-          "model's skill list and the OpenCode plugin command owns /agent-loop. " +
-          "The skill also runs the installed CLI by absolute path with " +
-          "`harness-check codex`. It starts only when the nearest harness above the " +
-          "shell is Codex CLI. It stops for any other harness, and when the check " +
-          "cannot run or finds no harness ancestor.",
+        detail: skillNote(
+          "The Codex skill lives in the shared ~/.agents/skills directory, which GitHub Copilot CLI and OpenCode also discover.",
+          "codex",
+          "Codex CLI",
+        ),
       },
     );
   } else if (harness === "opencode") {
     const plugin = await template(templateDir, "opencode", "plugins", "parent-guard.ts");
     files.push({
       path: join(home, ".config", "opencode", "plugins", "parent-guard.ts"),
-      content: renderSkill(plugin)
+      content: renderPaths(plugin)
         .replaceAll(
           "__AGENT_LOOP_PLUGIN_URL__",
           pathToFileURL(join(packageRoot, "src/hook/opencode-plugin.mjs")).href,
@@ -193,11 +200,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       content: `${JSON.stringify(hook, null, 2)}\n`,
     });
   } else if (harness === "antigravity") {
-    const skill = await template(templateDir, "antigravity", "skills", "agent-loop", "SKILL.md");
-    files.push({
-      path: join(home, ".gemini", "antigravity-cli", "skills", "agent-loop", "SKILL.md"),
-      content: renderSkill(skill, harness),
-    });
+    await addSkill(join(home, ".gemini", "antigravity-cli", "skills"));
     const shim = await template(
       templateDir,
       "antigravity",

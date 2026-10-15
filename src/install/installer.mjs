@@ -22,11 +22,11 @@ import {
   pruneEmptyDirs,
   readTextOrNull,
   removeFileQuiet,
-  sha256,
   writeTextAtomic,
 } from "./fsutil.mjs";
+import { sha256 } from "../lib/hash.mjs";
 import { HARNESS_ORDER } from "../lib/harnesses.mjs";
-import { buildTargets } from "./harnesses.mjs";
+import { buildTargets } from "./targets.mjs";
 import { EPHEMERAL_ROOT_MESSAGE, isEphemeralPackageRoot } from "./package-root.mjs";
 import {
   manifestLockFile,

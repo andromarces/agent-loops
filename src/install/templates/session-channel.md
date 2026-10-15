@@ -1,0 +1,7 @@
+Use the invocation text as the task and role settings. Before the init dispatch
+call, verify that the active shell has `{{SESSION_VAR}}`. Do not print its value.
+In PowerShell, pass `$env:{{SESSION_VAR}}` as `--parent-session`. Set
+`$worktree = (Get-Location).Path` and pass `--cwd $worktree`. Do not embed `$PWD`
+in POSIX-style quotes. In POSIX shells, pass `--cwd "$PWD"` and
+`${{SESSION_VAR}}`. If the variable is absent, report the missing session channel
+and do not start the run.
