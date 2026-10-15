@@ -4,6 +4,8 @@
 
 accepted
 
+Partially superseded by [ADR 0040: Run the test command in a test slot and route child full suites through the wrapper](0040-run-the-test-command-in-a-test-slot.md). ADR 0040 runs the command only inside a machine-wide test slot and adds the `slot-timeout` result for a command that did not run. Every other decision of this ADR holds.
+
 ## Date
 
 2026-10-04

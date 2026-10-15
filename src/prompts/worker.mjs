@@ -1,5 +1,5 @@
 import { escapeLineSeparators } from "./escape.mjs";
-import { processRule, reportBlock } from "./report.mjs";
+import { processRule, reportBlock, testSlotRule } from "./report.mjs";
 
 export function workerPrompt(prompt, firstTurn = false) {
   if (!firstTurn) {
@@ -13,6 +13,7 @@ Your role:
 - Implement the requested changes.
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
+- ${testSlotRule()}
 - For PR work, the dispatcher names the PR branch. Commit your change on that
   branch and push it, so the reviewer sees a committed head and the PR head
   matches that commit. A task is PR work when its change is delivered on a pull

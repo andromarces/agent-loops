@@ -398,6 +398,15 @@ the flag is unchanged.
   and `cmd.exe` on Windows. The runtime adds no quoting. It runs with the
   environment of the runtime, so the operator keeps secrets out of the command
   text.
+- The command runs inside a machine-wide test slot (`agent-loop test-slot`, ADR
+  0039, ADR 0040), so runs that share a host do not run their suites beyond the
+  slot count. The slot wait has its own bound, `AGENT_LOOP_TEST_SLOT_WAIT` or
+  1800 seconds, separate from `--test-cmd-timeout`, which starts once the slot is
+  held. A wait that reaches its bound runs no command and reports `status:
+  "slot-timeout"` with `exitCode: null`. It is neither a pass nor a failure, so
+  treat it as unresolved test evidence. A slot that cannot be acquired runs no
+  command and reports `status: "error"`. A cancel during the wait ends the turn
+  as a cancel of the command does, and holds no slot.
 - `--test-cmd-timeout <seconds>` bounds one run and defaults to 600. At the
   bound, and on a cancel, the runtime kills the command and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows. A canceled run reports `status: "canceled"`. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
 - The runtime keeps the last 8 KiB of the output and reports `truncated` when it
@@ -420,6 +429,13 @@ the flag is unchanged.
   in an error still carries it. Compare it with the
   reviewer `Checks` line and act on a disagreement. A turn with no command
   carries no `testRun`.
+- Every worker and reviewer turn states the full-suite rule: run a targeted test
+  file directly, and run a full suite only through the test slot wrapper, or rely
+  on the required CI checks. The rule renders the wrapper command from the Node
+  binary and the CLI script of the run, so it works where `agent-loop` is not on
+  PATH. A run with or without `--test-cmd` gives the same rule, on the headless
+  and the interactive path. Exit code 75 from the wrapper means that the suite
+  did not run, which a child reports as unresolved.
 - A reviewer in a sandboxed mode sees the result of the whole command only. It
   cannot run a targeted test, unless the run set `--reviewer-sandbox
   workspace-write` or runs with no sandbox (next section).

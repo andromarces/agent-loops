@@ -1,10 +1,11 @@
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
 import { readProp } from "./error-message.mjs";
-import { logInfo } from "./log.mjs";
+import { logError, logInfo, logWarn } from "./log.mjs";
 import { redactEnvSecrets } from "./redact.mjs";
 import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
 import { diffSnapshots, snapshot } from "./snapshot.mjs";
+import { holdTestSlot, testSlotOptions } from "./test-slot.mjs";
 
 // ADR 0017. The command is the operator's `--test-cmd`, run by the runtime in
 // the run's work tree before each reviewer turn, outside every CLI sandbox.
@@ -44,16 +45,19 @@ const boundedPaths = (paths) => paths.slice(0, MAX_CHANGED_PATHS).map(redactAndC
 
 // The after-command snapshot of each result, kept off the result so it never reaches an output.
 const finalSnapshots = new WeakMap();
+// Results of a command that never ran, which have no late change to report.
+const notRun = new WeakSet();
 
 /**
  * Reports the paths that differ between the after-command snapshot and the reviewer baseline as
  * `testRun.lateChangedPaths`, at most 20 and redacted like `changedPaths`: a write by a process
  * that the command left behind, made between the two snapshots, which the baseline absorbs. The
  * field is `null` when a second cancel ended the after-command snapshot. A turn that takes no
- * baseline, for example a cancel before it, never calls this, so the field is absent. The report
- * is advisory and never fails the turn.
+ * baseline, for example a cancel before it, never calls this, and a command that never ran
+ * reports none, so the field is absent. The report is advisory and never fails the turn.
  */
 export function reportLateChangedPaths(testRun, baseline) {
+  if (notRun.has(testRun)) return;
   const final = finalSnapshots.get(testRun);
   testRun.lateChangedPaths = final ? boundedPaths(diffSnapshots(final, baseline)) : null;
 }
@@ -94,8 +98,83 @@ function killTree(subprocess) {
   subprocess.kill("SIGKILL");
 }
 
+// The advisory result of a command that the runtime did not start (ADR 0040).
+function notRunResult(command, status, summary, durationMs) {
+  const testRun = {
+    command: redactCommandText(command),
+    status,
+    exitCode: null,
+    timedOut: false,
+    durationMs,
+    summary,
+    outputBytes: 0,
+    truncated: false,
+    tail: "",
+    workTreeChanged: false,
+    changedPaths: [],
+    changedCount: 0,
+    advisory: true,
+  };
+  notRun.add(testRun);
+  return testRun;
+}
+
 /**
- * Runs `command` through the platform shell (`/bin/sh -c` on POSIX, `cmd.exe`
+ * Holds a machine-wide test slot for one run of the command (ADR 0040). The wait has its own
+ * bound, `AGENT_LOOP_TEST_SLOT_WAIT` or 1800 s, before `timeoutSeconds` starts. Returns the slot,
+ * or a result for a command that did not run: `slot-timeout` at the wait bound, and `error` when
+ * the slot cannot be acquired, so the command never runs unthrottled. A cancel during the wait
+ * throws a cancel error that carries a `canceled` result, with no slot held.
+ */
+async function holdSlotFor(command, signal) {
+  const startedAt = Date.now();
+  let options;
+  let slot;
+  try {
+    options = testSlotOptions();
+    slot = await holdTestSlot({ ...options, signal: signal ?? new AbortController().signal });
+  } catch (err) {
+    const reason = redactAndClean(err?.message ?? String(err));
+    logError(`test slot acquisition failed; the test command did not run: ${reason}`);
+    return {
+      testRun: notRunResult(
+        command,
+        "error",
+        `the command did not run, because the test slot could not be acquired: ${reason}`,
+        Date.now() - startedAt,
+      ),
+    };
+  }
+  if (slot !== null) {
+    return { slot };
+  }
+  const durationMs = Date.now() - startedAt;
+  if (signal?.aborted) {
+    const err = new Error("test command canceled");
+    err.isCanceled = true;
+    err.testRun = notRunResult(
+      command,
+      "canceled",
+      "canceled while the command waited for a test slot; the command did not run",
+      durationMs,
+    );
+    throw err;
+  }
+  logWarn(`no test slot won within ${options.waitSeconds}s; the test command did not run`);
+  return {
+    testRun: notRunResult(
+      command,
+      "slot-timeout",
+      `the command did not run, because no test slot was free within ${options.waitSeconds} seconds; this is neither a pass nor a failure`,
+      durationMs,
+    ),
+  };
+}
+
+/**
+ * Runs `command` inside a machine-wide test slot (ADR 0040): a command that cannot win a slot
+ * does not run, and its result is `slot-timeout` or `error` (see `holdSlotFor`). With the slot held,
+ * runs `command` through the platform shell (`/bin/sh -c` on POSIX, `cmd.exe`
  * on Windows) in `cwd`, so the command is written in the syntax of the shell
  * that runs it and the runtime adds no quoting. The command and its child
  * processes are killed when the bound expires, which reports `timed-out` with
@@ -113,7 +192,7 @@ function killTree(subprocess) {
  * result then keeps the status of the command as it completed, and `workTreeChanged` and
  * `changedCount` are `null`, which means not captured.
  * @param {{ command: string, timeoutSeconds?: number, cwd: string, signal?: AbortSignal, forceSignal?: AbortSignal }} options
- * @returns {Promise<object>} the advisory result: `status` is `pass`, `fail`, `timed-out`, `error`, or `canceled` (thrown)
+ * @returns {Promise<object>} the advisory result: `status` is `pass`, `fail`, `timed-out`, `slot-timeout`, `error`, or `canceled` (thrown)
  */
 export async function runTestCmd({
   command,
@@ -122,6 +201,22 @@ export async function runTestCmd({
   signal,
   forceSignal = forceCancelSignal(signal),
 }) {
+  const { slot, testRun: notStarted } = await holdSlotFor(command, signal);
+  if (notStarted) {
+    return notStarted;
+  }
+  try {
+    return await runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, env: slot.env });
+  } finally {
+    // A failed release never replaces the result or the cancel of the command. The slot then stays
+    // held until this process exits, when the stale-owner rules reclaim it.
+    await slot.release().catch((err) => {
+      logError(`test slot release failed: ${redactAndClean(err?.message ?? String(err))}`);
+    });
+  }
+}
+
+async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, env }) {
   const before = await snapshot(cwd, { signal });
   const startedAt = Date.now();
   logInfo(`test command started (bound ${timeoutSeconds}s)`);
@@ -129,6 +224,7 @@ export async function runTestCmd({
   const subprocess = killTreeOnExit(
     execa(command, {
       cwd,
+      env,
       shell: true,
       reject: false,
       stdin: "ignore",

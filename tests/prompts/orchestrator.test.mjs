@@ -817,6 +817,7 @@ test("the initial prompt describes the test command only when the run has one", 
   const prompt = initialPrompt({ ...base, testCmd: true });
   expect(prompt).toContain("This run has a test command (--test-cmd).");
   expect(prompt).toContain("A status of timed-out is neither a pass nor a failure.");
+  expect(prompt).toContain("A status of slot-timeout means that the command did not run");
 });
 
 // Usefulness: verifies the initial prompt states the actual Codex reviewer mode, and no mode for a
