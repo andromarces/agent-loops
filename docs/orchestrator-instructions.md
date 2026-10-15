@@ -705,6 +705,13 @@ Map the child report fields into the finish summary:
   leaves the list when a later worker turn reports it done and a later reviewer
   `accept` covers that state; record it in `changed`. The items that remain at
   `finish` go into `deferred`.
+- A reviewer `accept` can leave a criterion unverified, because the reviewer
+  turn cannot run its check, for example a live run against a production
+  service, a device, or a manual step. Its `Checks` line reports the criterion as
+  unverified, and its `Deferred` line lists it. Carry it into `deferred`, and
+  name the unrun check in `verified` as not verified. Do not dispatch another
+  turn to run that check, unless the task states that the check must pass in
+  this run.
 - Reviewer `Notes` that no later turn addressed go into `open`.
 - Do not send an accepted note to the worker automatically. To act on a note,
   dispatch the worker for that change, then obtain another reviewer `accept` on
