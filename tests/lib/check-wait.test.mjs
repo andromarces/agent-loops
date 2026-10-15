@@ -11,6 +11,8 @@ test("the scripted gh gives no reply to a merged-argument call", async () => {
   expect(reply.status).toBe(1);
   expect(reply.stdout).toBe("");
   expect(reply.stderr).toContain(JSON.stringify(merged));
+  const unfiltered = ["pr", "checks", "42", "--json", "name,state,bucket"];
+  expect((await scriptedGh([{ checks: [] }])(unfiltered, ".")).status).toBe(1);
 });
 
 function check(name, bucket, state) {

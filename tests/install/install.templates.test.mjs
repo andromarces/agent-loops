@@ -72,6 +72,9 @@ test("the Antigravity skill requires the harness-check ancestry gate", async () 
   const home = await makeHome();
   const antigravity = await targetPaths("antigravity", home);
   const skill = antigravity.files.find((file) => file.path.endsWith("SKILL.md")).content;
+  expect(skill).toContain("/agent-loop");
+  const instructions = join(PACKAGE_ROOT, "docs", "orchestrator-instructions.md");
+  expect(skill).toContain(`Read \`${instructions.replaceAll("\\", "/")}\``);
   expect(skill).toContain(gateCommand("antigravity"));
   expect(skill).not.toContain("agent-loop harness-check");
   expect(skill).toContain(`\`agent-loop\` command in the instructions as \`${cliInvocation()}\``);

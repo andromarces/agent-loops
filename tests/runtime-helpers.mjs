@@ -350,17 +350,28 @@ export function scripted(replies) {
   };
 }
 
+// True when `args` is exactly the wait's read, `gh pr checks <pr> --required --json
+// name,state,bucket`, so a missing, extra, or merged argument does not match.
+function isCheckWaitRead(args) {
+  return (
+    args.length === 6 &&
+    startsWithArgs(args, ["pr", "checks"]) &&
+    Number.isInteger(Number(args[2])) &&
+    equalsArgs(args.slice(3), ["--required", "--json", "name,state,bucket"])
+  );
+}
+
 /**
  * A scripted `gh` for the required-check read. Each entry is `{ status, checks,
  * stdout, stderr }` and the last entry repeats, so a wait that polls more times
  * than the script holds still answers. A `stdout` value is used verbatim, which
- * covers a read whose output is not a check list. An unmatched call is an error,
- * so a test never passes on a missing fixture.
+ * covers a read whose output is not a check list. A call that is not the exact
+ * read is an error, so a test never passes on a missing fixture or a wrong argument.
  */
 export function scriptedGh(reads) {
   let n = 0;
   return async (args, cwd) => {
-    if (!startsWithArgs(args, ["pr", "checks"])) {
+    if (!isCheckWaitRead(args)) {
       return {
         status: 1,
         stdout: "",
