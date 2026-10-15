@@ -395,45 +395,7 @@ async function dispatchLocked(
     throw new RoleError("mode review-only rejects --role worker.");
   }
 
-  if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
-    throw new RoleError(`Run is ${state.lifecycle}; no further dispatch is possible.`);
-  }
-
-  if (state.lifecycle === "interrupted") {
-    if (!args.resumeInterrupted) {
-      throw new RoleError(
-        "Previous turn is interrupted. Use abort, or dispatch --resume-interrupted to continue.",
-      );
-    }
-    // A hard kill of the dispatch leaves its claude child running, and the CLI accepts a resume of
-    // that session, so the check comes before the step is charged (#671, ADR 0031).
-    await refuseHeldSessions(
-      { [roleName]: state.roles[roleName] },
-      { signal, flag: "--resume-interrupted", readProcessCommands },
-    );
-    state.resumeDecision = { at: new Date().toISOString() };
-  } else if (state.lifecycle === "dispatched") {
-    // A live lock owner would have thrown in withStateLock, so the previous
-    // turn ended uncertainly. The first call after the crash always marks
-    // `interrupted`, exits non-zero, and spawns no child; a maintainer can
-    // resume from `interrupted` on a later call.
-    state.lifecycle = "interrupted";
-    // The previous call charged a step and recorded no result for it, so the
-    // history is missing that turn. Record it here, marked `interrupted`: no
-    // child ran, so there is no verdict and no reviewed head to record. Role
-    // and time come from that turn's `lastDispatch`, because this call's
-    // `--role` need not be the role that ended uncertainly (#312).
-    recordTurn(
-      state,
-      state.lastDispatch?.role ?? roleName,
-      { status: "interrupted" },
-      state.lastDispatch?.at ?? new Date().toISOString(),
-    );
-    await writeState(paths.stateFile, state);
-    throw new RoleError(
-      "Previous turn ended uncertainly; state marked interrupted. Use abort, or dispatch --resume-interrupted to continue.",
-    );
-  }
+  await recoverLifecycle(state, args, { paths, signal, readProcessCommands });
 
   if (state.stepsUsed >= state.maxSteps) {
     throw new RoleError(`Step budget exhausted (${state.stepsUsed}/${state.maxSteps}).`);
@@ -441,32 +403,14 @@ async function dispatchLocked(
 
   const prompt = await readPrompt(args, stdin);
 
-  let localFiles = null;
-  if (init) {
-    // A hard kill of an earlier run can leave its `claude` child alive and writing to this work
-    // tree, so a live holder of a session that the earlier states recorded refuses the init (ADR 0032).
-    await refuseHeldIds(await readClaudeSessions(paths.stateDir), {
-      readProcessCommands,
-      signal,
-      label: "init",
-    });
-    // Every check and the prompt read passed. The copy comes first, before the
-    // state file exists, so a copy that throws leaves no run to abort, and
-    // before the first child turn and snapshot, so every turn sees the files.
-    if (state.copyLocalFiles) {
-      localFiles = await copyLocalFiles(args.cwd, {}, { signal });
-      if (localFiles) {
-        onEvent({ type: "local-files", ...localFiles });
-      }
-    }
-    // Now archive the old terminal state file, if any, and write the new one.
-    await archiveState(paths, existing);
-    await writeState(paths.stateFile, state);
-    if (args.parentSession) {
-      await writeSessionEntry(paths.sessionEntryFile, paths.stateFile);
-    }
-    logInfo(`initialized run state (mode: ${state.mode}, maxSteps: ${state.maxSteps})`);
-  }
+  const localFiles = init
+    ? await applyInitSideEffects(state, existing, args, {
+        paths,
+        signal,
+        onEvent,
+        readProcessCommands,
+      })
+    : null;
 
   // Charge the step before execution, matching the headless runtime.
   state.stepsUsed += 1;
@@ -543,6 +487,92 @@ async function dispatchLocked(
     exitCode: result.status === "ok" ? 0 : 1,
     payload: withLocalFiles(dispatchPayload(roleName, result), localFiles),
   };
+}
+
+/**
+ * Applies the lifecycle rules of a dispatch to the run state: refuses a terminal run and an
+ * interrupted run without `--resume-interrupted`, records the resume decision, and marks a run
+ * that ended uncertainly `interrupted` (writing the state) before it throws.
+ */
+async function recoverLifecycle(state, args, { paths, signal, readProcessCommands }) {
+  const roleName = args.role;
+  if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
+    throw new RoleError(`Run is ${state.lifecycle}; no further dispatch is possible.`);
+  }
+
+  if (state.lifecycle === "interrupted") {
+    if (!args.resumeInterrupted) {
+      throw new RoleError(
+        "Previous turn is interrupted. Use abort, or dispatch --resume-interrupted to continue.",
+      );
+    }
+    // A hard kill of the dispatch leaves its claude child running, and the CLI accepts a resume of
+    // that session, so the check comes before the step is charged (#671, ADR 0031).
+    await refuseHeldSessions(
+      { [roleName]: state.roles[roleName] },
+      { signal, flag: "--resume-interrupted", readProcessCommands },
+    );
+    state.resumeDecision = { at: new Date().toISOString() };
+  } else if (state.lifecycle === "dispatched") {
+    // A live lock owner would have thrown in withStateLock, so the previous
+    // turn ended uncertainly. The first call after the crash always marks
+    // `interrupted`, exits non-zero, and spawns no child; a maintainer can
+    // resume from `interrupted` on a later call.
+    state.lifecycle = "interrupted";
+    // The previous call charged a step and recorded no result for it, so the
+    // history is missing that turn. Record it here, marked `interrupted`: no
+    // child ran, so there is no verdict and no reviewed head to record. Role
+    // and time come from that turn's `lastDispatch`, because this call's
+    // `--role` need not be the role that ended uncertainly (#312).
+    recordTurn(
+      state,
+      state.lastDispatch?.role ?? roleName,
+      { status: "interrupted" },
+      state.lastDispatch?.at ?? new Date().toISOString(),
+    );
+    await writeState(paths.stateFile, state);
+    throw new RoleError(
+      "Previous turn ended uncertainly; state marked interrupted. Use abort, or dispatch --resume-interrupted to continue.",
+    );
+  }
+}
+
+/**
+ * Runs the side effects of an init dispatch after every check and the prompt read passed:
+ * session holder check, local file copy, archive of the old state, and the first state write.
+ * Returns the local file copy result, or null when none ran.
+ */
+async function applyInitSideEffects(
+  state,
+  existing,
+  args,
+  { paths, signal, onEvent, readProcessCommands },
+) {
+  let localFiles = null;
+  // A hard kill of an earlier run can leave its `claude` child alive and writing to this work
+  // tree, so a live holder of a session that the earlier states recorded refuses the init (ADR 0032).
+  await refuseHeldIds(await readClaudeSessions(paths.stateDir), {
+    readProcessCommands,
+    signal,
+    label: "init",
+  });
+  // Every check and the prompt read passed. The copy comes first, before the
+  // state file exists, so a copy that throws leaves no run to abort, and
+  // before the first child turn and snapshot, so every turn sees the files.
+  if (state.copyLocalFiles) {
+    localFiles = await copyLocalFiles(args.cwd, {}, { signal });
+    if (localFiles) {
+      onEvent({ type: "local-files", ...localFiles });
+    }
+  }
+  // Now archive the old terminal state file, if any, and write the new one.
+  await archiveState(paths, existing);
+  await writeState(paths.stateFile, state);
+  if (args.parentSession) {
+    await writeSessionEntry(paths.sessionEntryFile, paths.stateFile);
+  }
+  logInfo(`initialized run state (mode: ${state.mode}, maxSteps: ${state.maxSteps})`);
+  return localFiles;
 }
 
 /** The unconfirmed mark that goes with `id`: only a non-null id the adapter marked carries it. */
