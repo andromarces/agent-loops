@@ -150,7 +150,7 @@ Andro Marces
 - [Pull Request #487: feat: add an opt-in workspace-write sandbox for the Codex reviewer](https://github.com/andromarces/agent-loops/pull/487)
 - Implementation:
   - Source: The `sandbox` option in `src/agents/codex.mjs`
-  - Source: `reviewerWorkspaceWrite` in `runChild` and `runLoop` in `src/runtime.mjs`
+  - Source: `reviewerWorkspaceWrite` in `runChild` in `src/child-turn.mjs` and `runLoop` in `src/runtime.mjs`
   - Source: `workspaceWriteLine` in `src/prompts/reviewer.mjs`
   - Source: `reviewerSandboxBlock` in `src/prompts/orchestrator.mjs`
   - Source: The init field in `src/role.mjs`
