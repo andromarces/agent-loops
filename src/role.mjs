@@ -277,7 +277,7 @@ async function archiveState(paths, existing) {
 }
 
 async function readPrompt(args, stdin) {
-  const text = args.promptFile ? await readFile(args.promptFile, "utf8") : await stdin(args);
+  const text = args.promptFile ? await readFile(args.promptFile, "utf8") : await stdin();
   if (text.trim() === "") {
     throw new RoleError(
       args.promptFile
@@ -338,7 +338,7 @@ async function dispatch(args, { agents, stdin = readStdin, signal, gh, readProce
         "--task-file - reads stdin, which the prompt also uses. Pass --prompt-file.",
       );
     }
-    args.task = await readTaskFile(args.taskFile, () => stdin(args));
+    args.task = await readTaskFile(args.taskFile, () => stdin());
   }
 
   await assertGitWorkTree(args.cwd, { signal });
@@ -771,7 +771,7 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
       throw new RoleError(REVIEW_ONLY_GATE_REFUSAL);
     }
 
-    const text = await stdin(args);
+    const text = await stdin();
     let value;
     try {
       value = JSON.parse(text);

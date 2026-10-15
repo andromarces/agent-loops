@@ -100,7 +100,6 @@ export function parseArgs(argv) {
           }
           printHelp();
           process.exit(0);
-          return true;
 
         default:
           return false;
