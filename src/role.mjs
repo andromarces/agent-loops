@@ -17,7 +17,7 @@ import {
   roleFlags,
   TASK_SOURCE_CONFLICT,
 } from "./lib/args.mjs";
-import { checkCi } from "./lib/ci-gate.mjs";
+import { checkCi, missingGateRefusal, unresolvedCompareReason } from "./lib/ci-gate.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "./lib/continuation.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
@@ -46,7 +46,7 @@ import {
   storedReviewerSandbox,
   validateInitFlags,
 } from "./role-init-flags.mjs";
-import { missingGateRefusal, runChild, unresolvedCompareReason } from "./runtime.mjs";
+import { runChild } from "./runtime.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
 const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "wait-checks"]);
