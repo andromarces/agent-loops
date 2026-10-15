@@ -666,6 +666,51 @@ function withOpenRun(args, requireOptions, fn, allowed = []) {
   });
 }
 
+// V8 `JSON.parse` message heads that carry no input text, observed on Node 26 (#839).
+const JSON_POSITION_PHRASES = [
+  "Bad escaped character",
+  "Bad control character in string literal",
+  "Bad Unicode escape",
+  "Unterminated string",
+  "Expected property name or '}'",
+  "Expected double-quoted property name",
+  "Expected ',' or '}' after property value",
+  "Expected ',' or ']' after array element",
+  "Expected ':' after property name",
+  "Unexpected non-whitespace character after JSON",
+  "No number after minus sign",
+  "Unterminated fractional number",
+  "Exponent part is missing a number",
+  "Unexpected number",
+];
+const JSON_POSITION_TAIL = /^(?: in JSON)? at position (\d+)(?: \(line (\d+) column (\d+)\))?$/;
+
+/**
+ * Names a `JSON.parse` failure without copying the summary text. The V8 message can quote
+ * the input, so the result is built only from the fixed phrases above plus the numeric
+ * position; any other message yields the generic `not valid JSON`.
+ */
+function describeJsonParseError(error) {
+  const message = String(error?.message);
+  if (message === "Unexpected end of JSON input") {
+    return message;
+  }
+  for (const phrase of JSON_POSITION_PHRASES) {
+    const tail =
+      message.startsWith(phrase) && JSON_POSITION_TAIL.exec(message.slice(phrase.length));
+    if (tail) {
+      return `${phrase} at position ${tail[1]}${tail[2] ? ` (line ${tail[2]} column ${tail[3]})` : ""}`;
+    }
+  }
+  if (message.startsWith("Unexpected token ")) {
+    return "Unexpected token";
+  }
+  const where = /in JSON at position (\d+)(?: \(line (\d+) column (\d+)\))?$/.exec(message);
+  return where
+    ? `not valid JSON at position ${where[1]}${where[2] ? ` (line ${where[2]} column ${where[3]})` : ""}`
+    : "not valid JSON";
+}
+
 /**
  * `finish`: accepts the five-key summary as JSON on stdin, from active only.
  * `--require-accept` and `--require-ci` gate the finish; every applicable
@@ -700,8 +745,10 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
     let value;
     try {
       value = JSON.parse(text);
-    } catch {
-      throw new RoleError("finish summary must be a JSON object on stdin.");
+    } catch (error) {
+      throw new RoleError(
+        `finish summary must be a JSON object on stdin: ${describeJsonParseError(error)}`,
+      );
     }
     // The summary arrives unwrapped, so the marker the headless action carries
     // beside `summary` sits beside the five keys here. The validator drops it

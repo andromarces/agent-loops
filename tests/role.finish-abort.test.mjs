@@ -199,6 +199,64 @@ test("finish from active in review-only mode succeeds with the verdict recorded"
   expect(state.summary.notDone).toContain("verdict: reject");
 });
 
+// Usefulness: verifies #839 — a malformed summary refusal carries a non-empty diagnosis
+// and never echoes any part of the summary text.
+describe("finish refusal for a summary that is not valid JSON", () => {
+  const PREFIX = "finish summary must be a JSON object on stdin: ";
+
+  async function refuse(text) {
+    await setup();
+    const repo = await useCleanRepo();
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+      ...basicDeps(),
+    });
+    const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+      stdin: async () => text,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error.startsWith(PREFIX)).toBe(true);
+    return result.payload.error.slice(PREFIX.length);
+  }
+
+  test("a malformed escape names the parser diagnosis and position without echoing the input", async () => {
+    const diagnosis = await refuse(String.raw`{"changed":"C:\x"}`);
+    expect(diagnosis).toMatch(/^Bad escaped character at position \d+/);
+    expect(diagnosis).not.toContain("changed");
+  });
+
+  test.each([
+    ['{"a":"b', "Unterminated string"],
+    ['{"a":1 "b":2}', "Expected ',' or '}' after property value"],
+    ["[1 2]", "Expected ',' or ']' after array element"],
+    ['{"a":1} x', "Unexpected non-whitespace character after JSON"],
+  ])("%s names the parser diagnosis %s", async (text, phrase) => {
+    expect(await refuse(text)).toMatch(new RegExp(`^${phrase} at position \\d+`));
+  });
+
+  test("an empty summary names the end-of-input diagnosis", async () => {
+    expect(await refuse("")).toBe("Unexpected end of JSON input");
+  });
+
+  test("a bare token is not echoed", async () => {
+    const diagnosis = await refuse("Q");
+    expect(diagnosis.length).toBeGreaterThan(0);
+    expect(diagnosis).not.toContain("Q");
+  });
+
+  test.each(["undefined", "NaN"])("%s still gets a non-empty diagnosis", async (text) => {
+    const diagnosis = await refuse(text);
+    expect(diagnosis.trim().length).toBeGreaterThan(0);
+    expect(diagnosis).not.toContain(text);
+  });
+
+  test("a secret-looking string with a syntax error is not echoed", async () => {
+    const diagnosis = await refuse('{"token":"sk-live-abc123SECRET" oops}');
+    expect(diagnosis.length).toBeGreaterThan(0);
+    expect(diagnosis).not.toContain("sk-live-abc123SECRET");
+    expect(diagnosis).not.toContain("oops");
+  });
+});
+
 // Usefulness: verifies acceptance — finish with an invalid summary exits
 // non-zero and leaves lifecycle active.
 test("finish with an invalid summary exits non-zero and keeps lifecycle active", async () => {
