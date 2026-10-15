@@ -125,13 +125,14 @@ function closingBlock(response) {
  * empty label maps to null and never makes the block null, so a response in the
  * pre-#214 format stays parseable. A `- ` list that directly follows a report label
  * with an empty value line is that label's value: the markers drop and the items
- * join with "; " (issue #846). Any other list line in the block, for example
+ * join with "; " (issue #846). One level of `  - ` sub-items joins into the item above with
+ * ", " (issue #870). Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
  * layer surfaces the dropped list through `raw` (issues #229, #240, and #249).
  * This covers a label that already holds a value, including the required
  * `blockers`, a list outside any label, a list that a non-list line or a blank
  * line separates from its label, a bullet with no space after its
- * marker even under an empty label (issue #243), a `*` or `+` bullet, an ordered item, an indented bullet, and a list under an earlier occurrence that a later
+ * marker even under an empty label (issue #243), a `*` or `+` bullet, an ordered item, an indented bullet that is not one nested level, and a list under an earlier occurrence that a later
  * repeat shadows or after the reviewer `Verdict:` line (issue #249), because the
  * scan covers every line, not only the winning last occurrence of each label. A
  * label that indentation or markdown decoration hides also makes the block
@@ -182,6 +183,11 @@ const EMPTY_LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):\\s*$`
 // lists that hasDroppedList rejects.
 const FOLDABLE_ITEM = /^- (?=\S)/;
 
+// The one nesting level that folds into its parent item: exactly two ASCII spaces, a `-`, exactly
+// one ASCII space, then an item (issue #870). Another indent width, a tab, another marker, and a
+// second nesting level stay lists that hasDroppedList rejects.
+const FOLDABLE_SUBITEM = /^ {2}- (?=\S)/;
+
 /** True when the line is a list item. A thematic break and an emphasis run are not lists. */
 function isListLine(line) {
   return LIST_LINE.test(line) && !THEMATIC_BREAK.test(line) && !EMPHASIS_LINE.test(line);
@@ -192,10 +198,16 @@ function isFoldableItem(line) {
   return FOLDABLE_ITEM.test(line) && isListLine(line);
 }
 
+/** True when the line is a two-space indented `- ` item that may fold into its parent item. */
+function isFoldableSubitem(line) {
+  return FOLDABLE_SUBITEM.test(line) && isListLine(line);
+}
+
 /**
  * Folds an unbroken run of `- ` items that directly follows a report label with an empty value
- * line into that label's value: markers stripped, items joined with "; " (issue #846). Every
- * other list shape stays in the result for hasDroppedList. Returns null when a later line repeats a
+ * line into that label's value: markers stripped, items joined with "; " (issue #846). Each
+ * item absorbs the run of `  - ` sub-items right after it, joined to it with ", " (issue #870).
+ * Every other list shape stays in the result for hasDroppedList. Returns null when a later line repeats a
  * folded label, because the repeat shadows the folded list and it would drop with no `raw`
  * signal.
  * @param {string[]} lines
@@ -208,7 +220,11 @@ function foldEmptyLabelLists(lines) {
     const label = lines[i].match(EMPTY_LABEL_LINE) ? lines[i].trim() : null;
     const items = [];
     while (label && i + 1 < lines.length && isFoldableItem(lines[i + 1])) {
-      items.push(lines[++i].replace(FOLDABLE_ITEM, "").trim());
+      const parts = [lines[++i].replace(FOLDABLE_ITEM, "").trim()];
+      while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1])) {
+        parts.push(lines[++i].replace(FOLDABLE_SUBITEM, "").trim());
+      }
+      items.push(parts.join(", "));
     }
     if (items.length === 0) {
       out.push(lines[i]);

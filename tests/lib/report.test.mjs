@@ -91,6 +91,41 @@ test("parseReportBlock returns null for a list that is not directly under an emp
   expect(parseReportBlock(`${REPORT}\nNotes:\n- item one\nprose\n- item two`)).toBeNull();
 });
 
+// Usefulness: verifies one level of two-space indented `- ` sub-items under a folded item joins
+// into that item with ", ", so a worker that nests a sub-list under a report list still yields a
+// report instead of null (issue #870).
+test("parseReportBlock joins one level of indented sub-items into their parent item", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy:\n- **Config.** a\n- **Unverified.**\n  - **Overrides:** b\n  - **Version:** c\nBlockers: none",
+    ),
+  ).toMatchObject({
+    why: "**Config.** a; **Unverified.**, **Overrides:** b, **Version:** c",
+    blockers: "none",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n  - b`)).toMatchObject({ notes: "a, b" });
+});
+
+// Usefulness: verifies the nesting shapes outside the #870 rule still fail closed: a sub-item
+// with no parent item, a second nesting level, a sub-item with another indent width or marker, a
+// sub-item after a blank line, and a sub-item under a label that already holds a value.
+test("parseReportBlock returns null for a sub-list shape outside one nested level", () => {
+  for (const list of [
+    "  - a",
+    "- a\n    - b",
+    "- a\n  - b\n    - c",
+    "- a\n   - b",
+    "- a\n\t- b",
+    "- a\n  * b",
+    "- a\n  -b",
+    "- a\n  1. b",
+    "- a\n\n  - b",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\nNotes:\n${list}`)).toBeNull();
+  }
+  expect(parseReportBlock(`${REPORT}\nNotes: none\n  - a`)).toBeNull();
+});
+
 // Usefulness: verifies a non-list line after an empty optional label, for
 // example a closing sentence or a lone code fence, does not make the block
 // unparseable; only a list that would be dropped is flagged (issue #229).
