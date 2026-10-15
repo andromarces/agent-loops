@@ -160,7 +160,7 @@ test.each([
     }
     expect(prompt).toContain("Do not write to GitHub or any remote");
     expect(prompt).toContain(
-      "Do not change a tracked file, add a file that Git does not ignore, or change Git state.",
+      "Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state.",
     );
   },
 );

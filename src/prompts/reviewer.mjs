@@ -90,13 +90,13 @@ const remoteWriteRule =
 // reviewer reads it as a ban on the test suite and rejects with no code blocker (issue #837). The
 // runtime mutation check is unchanged: it does not see an ignored or outside-repository write.
 const scratchWriteRule =
-  "A test, build, or probe whose only writes are caches, ignored output, or temporary files outside the repository is allowed: run it, and do not wait for permission.";
+  "A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission.";
 
 // The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
 // that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
 // repository: it names no tool or path, only what the mode allows.
 const noEditLine =
-  "- The rule against file changes holds with the same scope in this mode. The runtime compares the work tree before and after this turn, and a tracked or unignored change halts the run.";
+  "- The rule against file changes holds with the same scope in this mode. The runtime compares the work tree before and after this turn, and a change to a tracked file or to an untracked file that Git does not ignore halts the run.";
 const sandboxNotes = {
   none: [
     "Sandbox note, supplied by the runtime:",
@@ -125,7 +125,7 @@ export function reviewerPrompt(prompt, prChecks = null, testRun = null, sandboxM
   const sandbox = sandboxMode === null ? "" : `\n\n${sandboxNotes[sandboxMode].join("\n")}`;
   return escapeLineSeparators(
     `
-Do not change a tracked file, add a file that Git does not ignore, or change Git state. Review, assess, and verify only. ${scratchWriteRule} Live probes and read-only queries are authorized.
+Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state. Review, assess, and verify only. ${scratchWriteRule} Live probes and read-only queries are authorized.
 ${remoteWriteRule}
 ${processRule}
 

@@ -1,12 +1,13 @@
 import { expect, test } from "vite-plus/test";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 
-// The file-change rule is scoped (issue #837): a tracked file and Git state stay off limits, and a
-// command whose only writes are caches, ignored output, or outside-repository temporary files is allowed.
+// The file-change rule is scoped (issue #837): a tracked file, an unignored untracked file (a cache
+// included), and Git state stay off limits, and a command is allowed when every write goes to an
+// ignored path or to a temporary file outside the repository.
 const FILE_CHANGE_RULE =
-  "Do not change a tracked file, add a file that Git does not ignore, or change Git state.";
+  "Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state.";
 const SCRATCH_WRITE_ALLOWED =
-  "A test, build, or probe whose only writes are caches, ignored output, or temporary files outside the repository is allowed";
+  "A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository";
 
 // Usefulness: verifies every reviewer turn keeps the read-only guard and asks
 // for the closing report block plus the optional checks, notes, and deferred
