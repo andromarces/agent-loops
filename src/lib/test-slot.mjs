@@ -40,8 +40,9 @@ Options:
 
   --slots <n>          Slot count. Defaults to max(1, floor(available CPUs / 8)).
                        Env: AGENT_LOOP_TEST_SLOTS.
-  --wait <seconds>     Longest wait for a slot, more than 0. Defaults to 1800
-                       (30 minutes). Env: AGENT_LOOP_TEST_SLOT_WAIT.
+  --wait <seconds>     Longest wait for a slot. Defaults to 1800 (30 minutes).
+                       0 is one attempt: run if a slot is free now, else exit 75
+                       at once. Env: AGENT_LOOP_TEST_SLOT_WAIT.
   -h, --help           Print this help.
 
 A flag wins over its env, and an env value is read only when its flag is absent.
@@ -79,8 +80,8 @@ function slotCount(value, name) {
 
 function waitSeconds(value, name) {
   const seconds = Number(value);
-  if (value.trim() === "" || !Number.isFinite(seconds) || seconds <= 0) {
-    throw usageError(`${name} must be a number of seconds more than 0, got "${value}".`);
+  if (value.trim() === "" || !Number.isFinite(seconds) || seconds < 0) {
+    throw usageError(`${name} must be a number of seconds of 0 or more, got "${value}".`);
   }
   return seconds;
 }
@@ -146,43 +147,59 @@ async function tryAcquireSlot(root, slots) {
   if (!releaseTable) {
     return null;
   }
+  let slot = null;
   try {
-    const held = new Set();
-    for (const entry of await readdir(root)) {
-      const match = SLOT_FILE.exec(entry);
-      if (match && (await lockHeld(join(root, entry)))) {
-        held.add(Number(match[1]));
-      }
-    }
-    for (let index = 0; held.size < slots; index++) {
-      if (held.has(index)) {
-        continue;
-      }
-      const lockFile = join(root, `slot-${index}.lock`);
-      const release = await tryStateLock(lockFile, {
-        label: `Test slot ${index}`,
-        noun: "test slot",
-      });
-      if (release) {
-        return { index, lockFile, release };
-      }
-      held.add(index);
-    }
-    return null;
+    slot = await claimSlot(root, slots);
   } finally {
-    await releaseTable();
+    // A slot taken under a table lock that fails to release is freed before the error
+    // propagates, so the failure never leaks a held slot.
+    try {
+      await releaseTable();
+    } catch (err) {
+      await slot?.release();
+      throw err;
+    }
   }
+  return slot;
 }
 
-// Polls `tryAcquireSlot` until `waitMs` ends. A slot won after the bound, for example by a pass
-// that a stale reclaim slowed, is freed unused. Returns the slot, or null at the bound or on an
-// abort.
+// Counts the held slot files (`lockHeld`: an unreadable file counts, a stale one does not) and,
+// while fewer than `slots` are held, takes the lowest free index. Runs under the table lock.
+async function claimSlot(root, slots) {
+  const held = new Set();
+  for (const entry of await readdir(root)) {
+    const match = SLOT_FILE.exec(entry);
+    if (match && (await lockHeld(join(root, entry)))) {
+      held.add(Number(match[1]));
+    }
+  }
+  for (let index = 0; held.size < slots; index++) {
+    if (held.has(index)) {
+      continue;
+    }
+    const lockFile = join(root, `slot-${index}.lock`);
+    const release = await tryStateLock(lockFile, {
+      label: `Test slot ${index}`,
+      noun: "test slot",
+    });
+    if (release) {
+      return { index, lockFile, release, nonce: (await readLockOwner(lockFile))?.nonce };
+    }
+    held.add(index);
+  }
+  return null;
+}
+
+// Polls `tryAcquireSlot` until `waitMs` ends. A slot won at or after the bound, for example by a
+// pass that a stale reclaim slowed, is freed unused. A `waitMs` of 0 is one pass with no bound
+// check. Returns the slot, or null at the bound or on an abort. The caller starts the command
+// with no further await, so the bound check is the last step before the start.
 async function acquireSlot({ root, slots, waitMs, signal }) {
   const deadline = Date.now() + waitMs;
   let waiting = false;
   for (;;) {
     const slot = await tryAcquireSlot(root, slots);
-    if (slot && (Date.now() > deadline || signal.aborted)) {
+    if (slot && ((waitMs > 0 && Date.now() >= deadline) || signal.aborted)) {
       await slot.release();
       return null;
     }
@@ -298,12 +315,18 @@ export async function runTestSlot(argv) {
       logWarn(`ignoring ${HELD_ENV}: it names no test slot that a live wrapper holds`);
     }
     const root = slotsRoot();
-    const slot = await acquireSlot({
-      root,
-      slots: options.slots,
-      waitMs: options.waitSeconds * 1000,
-      signal: controller.signal,
-    });
+    let slot;
+    try {
+      slot = await acquireSlot({
+        root,
+        slots: options.slots,
+        waitMs: options.waitSeconds * 1000,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      logError(`test slot acquisition failed; the command did not run: ${err?.message ?? err}`);
+      return 1;
+    }
     if (slot === null) {
       if (received) {
         return signalExit(received);
@@ -313,8 +336,10 @@ export async function runTestSlot(argv) {
     }
     logInfo(`test slot ${slot.index} acquired`);
     try {
-      const { nonce } = (await readLockOwner(slot.lockFile)) ?? {};
-      return await run({ [HELD_ENV]: JSON.stringify({ lock: slot.lockFile, nonce }) }, true);
+      return await run(
+        { [HELD_ENV]: JSON.stringify({ lock: slot.lockFile, nonce: slot.nonce }) },
+        true,
+      );
     } finally {
       await slot.release();
       logInfo(`test slot ${slot.index} released`);

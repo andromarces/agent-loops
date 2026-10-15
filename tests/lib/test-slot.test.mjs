@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,15 +9,23 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { deadPid, processExists, removePath } from "../runtime-helpers.mjs";
 
 // Delays each in-process lock attempt by `ms`, so a test can make one acquisition pass end
-// after the wait bound. Every spawned wrapper uses the real module.
-const slowLock = vi.hoisted(() => ({ ms: 0 }));
+// after the wait bound. With `failTableRelease`, the release of the short acquisition lock
+// removes the lock and then throws. Every spawned wrapper uses the real module.
+const slowLock = vi.hoisted(() => ({ ms: 0, failTableRelease: false }));
 vi.mock("../../src/lib/state-lock.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
-    tryStateLock: async (...args) => {
+    tryStateLock: async (lockFile, ...rest) => {
       await new Promise((resolve) => setTimeout(resolve, slowLock.ms));
-      return real.tryStateLock(...args);
+      const release = await real.tryStateLock(lockFile, ...rest);
+      if (release && slowLock.failTableRelease && lockFile.endsWith("acquire.lock")) {
+        return async () => {
+          await release();
+          throw new Error("release failed");
+        };
+      }
+      return release;
     },
   };
 });
@@ -36,6 +44,8 @@ const dirs = [];
 const savedEnv = Object.fromEntries(SLOT_ENV.map((name) => [name, process.env[name]]));
 afterEach(async () => {
   slowLock.ms = 0;
+  slowLock.failTableRelease = false;
+  vi.restoreAllMocks();
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) {
       delete process.env[name];
@@ -327,3 +337,54 @@ test("a valid flag wins over an invalid environment value", () => {
     /AGENT_LOOP_TEST_SLOT_WAIT/,
   );
 });
+
+// Usefulness: maintainer decision (#847) — `--wait 0` is one attempt: the command runs when a
+// slot is free now, and the wrapper exits 75 at once without running it otherwise.
+test("--wait 0 runs on a free slot and exits 75 on a held one", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  const free = await wrapper(["--slots", "1", "--wait", "0", "--", "node mark.mjs"], ctx).done;
+  expect(free.code).toBe(0);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+  await rm(join(ctx.cwd, "mark"));
+  await holdSlot(ctx.root, liveOwner());
+  const held = await wrapper(["--slots", "1", "--wait", "0", "--", "node mark.mjs"], ctx).done;
+  expect(held.code).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+}, 30_000);
+
+// Usefulness: issue #847 review — a slot file that cannot be read counts as held, so a caller
+// never takes a free index while the unreadable slot may belong to a live holder. A directory
+// at the slot path is unreadable as a file on every platform.
+test("an unreadable slot file counts as held", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  await mkdir(join(ctx.root, "slot-1.lock"), { recursive: true });
+  const result = await wrapper(["--slots", "1", "--wait", "1", "--", "node mark.mjs"], ctx).done;
+  expect(result.code).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+}, 30_000);
+
+// Usefulness: issue #847 review — a slot won exactly at the wait bound does not run the
+// command, so the command starts only strictly before the bound.
+test("a slot won exactly at the wait bound does not run the command", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  const command = inProcess(ctx, "mark.mjs");
+  const start = Date.now();
+  // The first reading sets the bound; every later reading is exactly at it.
+  vi.spyOn(Date, "now")
+    .mockReturnValueOnce(start)
+    .mockReturnValue(start + 1000);
+  expect(await runTestSlot(["--slots", "1", "--wait", "1", "--", command])).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+  expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
+}, 30_000);
+
+// Usefulness: issue #847 review — a failed release of the short acquisition lock frees the
+// slot it took and exits 1 without running the command, so no slot leaks.
+test("a failed acquisition-lock release frees the slot and exits 1", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  const command = inProcess(ctx, "mark.mjs");
+  slowLock.failTableRelease = true;
+  expect(await runTestSlot(["--slots", "1", "--wait", "5", "--", command])).toBe(1);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+  expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
+}, 30_000);

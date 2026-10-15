@@ -65,14 +65,17 @@ export async function tryStateLock(lockFile, { label = "State", noun = "state" }
 }
 
 /**
- * True when `lockFile` would refuse an acquisition: its parsed owner is alive, or it is
- * unparseable and a writer can still own it (see `ownerless`). False for a missing or
- * unreadable file and for a dead owner. Reads only; it never removes a stale lock.
+ * True when `lockFile` would refuse an acquisition: it cannot be read, its parsed owner is
+ * alive, or it is unparseable and a writer can still own it (see `ownerless`). False only for
+ * a missing file and for a stale one (a dead owner, or an unparseable file that `ownerless`
+ * finds stale). Reads only; it never removes a stale lock.
  */
 export async function lockHeld(lockFile) {
-  const text = await readLockText(lockFile);
-  if (text === null) {
-    return false;
+  let text;
+  try {
+    text = await readFile(lockFile, "utf8");
+  } catch (err) {
+    return err?.code !== "ENOENT";
   }
   const owner = parseLockOwner(text);
   return owner ? ownerAlive(owner) : !(await ownerless(lockFile));
