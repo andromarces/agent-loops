@@ -10,7 +10,28 @@
 // a path still finds the old record.
 import { readableErrorText } from "../lib/error-message.mjs";
 import { isJsonObject } from "../lib/json.mjs";
-import { deepEqual } from "./fsutil.mjs";
+
+/** Structural equality for JSON-shaped values. Object key order is irrelevant. */
+export function deepEqual(a, b) {
+  if (a === b) {
+    return true;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+    return a.every((value, index) => deepEqual(value, b[index]));
+  }
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") {
+    return false;
+  }
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) {
+    return false;
+  }
+  return keysA.every((key) => Object.hasOwn(b, key) && deepEqual(a[key], b[key]));
+}
 
 export function parseSettings(text, path) {
   let value;
