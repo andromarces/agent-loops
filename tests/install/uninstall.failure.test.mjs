@@ -3,7 +3,7 @@
 // whole module graph, so this file stays separate from the install.*.test.mjs files, whose
 // cases need the real filesystem (same reason as runstate.link-fallback.test.mjs).
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ import { removeDirQuiet } from "../../src/install/fsutil.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { installRoot, manifestPath, readManifest } from "../../src/install/manifest.mjs";
 import { removePath, restoreAgentLoopHome } from "../runtime-helpers.mjs";
+import { readText } from "./install-helpers.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -60,17 +61,6 @@ afterEach(async () => {
   }
   homes.length = 0;
 });
-
-async function readText(path) {
-  try {
-    return await readFile(path, "utf8");
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
-}
 
 function deepestDir(dirs) {
   return [...dirs].sort((a, b) => b.length - a.length)[0];

@@ -6,30 +6,9 @@ import { executeRoleCommand } from "../src/role.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { cleanup, repos, setup } from "./role-helpers.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo, fakeClock, scriptedGh } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
-
-// Reads `--required` checks: each entry is `{ status, checks }`, and the last
-// entry repeats, so a wait that polls more times than the script holds answers.
-function scriptedGh(reads) {
-  let n = 0;
-  return async () => {
-    const read = reads[Math.min(n++, reads.length - 1)];
-    return { status: read.status, stdout: JSON.stringify(read.checks), stderr: "" };
-  };
-}
-
-// A fake clock, so a wait that runs to its bound finishes the test at once.
-function fakeClock() {
-  const clock = { now: 0 };
-  return {
-    now: () => clock.now,
-    sleep: async (ms) => {
-      clock.now += ms;
-    },
-  };
-}
 
 const PENDING = { status: 8, checks: [{ name: "ci", state: "IN_PROGRESS", bucket: "pending" }] };
 const SETTLED = { status: 0, checks: [{ name: "ci", state: "SUCCESS", bucket: "pass" }] };

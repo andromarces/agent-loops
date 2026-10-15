@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,11 +22,12 @@ vi.mock("execa", async (importOriginal) => {
 import { main, parseArgs } from "../src/cli.mjs";
 import { readProcessCommands } from "../src/lib/process-ancestry.mjs";
 import {
-  cleanRepoGit,
-  createCleanRepoDir,
+  continueAgents,
+  createWithContinueRepo,
   createTempRepo,
   removePath,
   createPsShim,
+  symlinkOrSkip,
   within,
 } from "./runtime-helpers.mjs";
 
@@ -56,25 +57,7 @@ const FINISH = JSON.stringify({
   summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
 });
 
-// Runs `fn(repo, transcriptPath, errorSpy)` with a clean exit-code and error state. The
-// repo is a directory with a `.git` directory and `git` is answered from memory
-// (`cleanRepoGit`), so the test starts no `git` process.
-async function withContinueRepo(fn) {
-  const repo = await createCleanRepoDir();
-  gitDouble.answer = cleanRepoGit;
-  const origExitCode = process.exitCode;
-  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-  try {
-    await fn(repo, join(repo, "run.json"), errorSpy);
-  } finally {
-    process.exitCode = origExitCode;
-    errorSpy.mockRestore();
-    logSpy.mockRestore();
-    gitDouble.answer = null;
-    await removePath(repo);
-  }
-}
+const withContinueRepo = createWithContinueRepo(gitDouble);
 
 // Each fake agent assigns a session id on its first call, as a real adapter does. It records the id
 // that it held when the call arrived.
@@ -1033,3 +1016,45 @@ test("--continue-from rewrites a large written transcript with every earlier eve
     expect(after.events.length).toBeGreaterThan(count + 1);
   });
 });
+
+async function expectEarlierEventsSurvive(ctx, linkRole) {
+  const repo = await createTempRepo();
+  const out = await mkdtemp(join(tmpdir(), "continue-link-"));
+  const origExitCode = process.exitCode;
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const real = join(out, "run.json");
+    const link = join(out, "alias.json");
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--max-steps", "1", "--transcript", real],
+      continueAgents([RUN_WORKER, RUN_WORKER]),
+    );
+    const earlier = JSON.parse(await readFile(real, "utf8")).events;
+    expect(earlier.length).toBeGreaterThan(0);
+    await symlinkOrSkip(ctx, "run.json", link);
+
+    const [from, to] = linkRole === "link" ? [real, link] : [link, real];
+    await main(
+      [...CONTINUE_BASE, "--cwd", repo, "--continue-from", from, "--transcript", to],
+      continueAgents([FINISH]),
+    );
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    const later = JSON.parse(await readFile(real, "utf8")).events;
+    expect(later.length).toBeGreaterThan(earlier.length);
+    expect(later.slice(0, earlier.length)).toEqual(earlier);
+  } finally {
+    process.exitCode = origExitCode;
+    vi.restoreAllMocks();
+    await Promise.all([removePath(repo), removePath(out)]);
+  }
+}
+
+// Usefulness: verifies a --transcript link to the --continue-from file keeps the link, writes the target, and carries the earlier events (#658); the rewrite replaced the link before.
+test("--transcript names a link to the --continue-from file: link kept, earlier events survive", (ctx) =>
+  expectEarlierEventsSurvive(ctx, "link"));
+
+// Usefulness: verifies a --continue-from link to the --transcript file counts as the same file, so the rewrite carries the earlier events instead of dropping them (#658).
+test("--continue-from names a link to the --transcript file: earlier events survive", (ctx) =>
+  expectEarlierEventsSurvive(ctx, "source"));

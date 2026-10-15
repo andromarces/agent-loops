@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vite-plus/test";
 import { statePaths } from "../src/lib/runstate.mjs";
-import { parseRoleArgs } from "../src/role.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
 import { removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
 
 export const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
@@ -52,6 +52,13 @@ export function withRepo(args, repo) {
 }
 
 export const stdinPrompt = async () => "continue working";
+
+/** Dispatches one reviewer turn in `repo`, with the stub prompt on stdin. */
+export const reviewerTurn = (repo, agents, overrides = []) =>
+  executeRoleCommand(withRepo(dispatchArgv(overrides, "reviewer"), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
 
 /** Deps for calls whose child turn is not under assertion. */
 export const basicDeps = () => ({

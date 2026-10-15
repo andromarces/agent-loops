@@ -1,5 +1,4 @@
 import {
-  lstat,
   mkdir,
   mkdtemp,
   readdir,
@@ -15,7 +14,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 import { copyLocalFiles, MAX_WALKED_ENTRIES } from "../../src/lib/local-files.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
-import { createLinkedWorkTree, removePath } from "../runtime-helpers.mjs";
+import { createLinkedWorkTree, exists, removePath } from "../runtime-helpers.mjs";
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const created = [];
@@ -36,12 +35,6 @@ async function createLinked(options) {
   created.push(tree.base);
   return tree;
 }
-
-const exists = (path) =>
-  lstat(path).then(
-    () => true,
-    () => false,
-  );
 
 // Usefulness: verifies an untracked, ignored file and a directory of such files reach
 // the linked work tree with the source bytes.

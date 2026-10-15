@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -540,17 +540,17 @@ test("Copilot hook denies the matching session with its PreToolUse JSON shape", 
   expect(afterAbort.stdout).toBe("");
 });
 
-// Reads the named Antigravity guard group from the shipped template, so the
-// behavioral tests below drive the adapter with the exact tools and command
-// the installer will register.
+const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+
+// Renders the Antigravity targets through the installer, so the behavioral
+// tests below drive the adapter with the exact tools, command, and shim the
+// installer will register.
+async function renderAntigravityTargets() {
+  return buildTargets("antigravity", { home: PACKAGE_ROOT, packageRoot: PACKAGE_ROOT });
+}
+
 async function readAntigravityGuardGroup() {
-  const template = JSON.parse(
-    await readFile(
-      new URL("../../src/install/templates/antigravity/hooks.json", import.meta.url),
-      "utf8",
-    ),
-  );
-  return template["agent-loop-parent-guard"];
+  return (await renderAntigravityTargets()).settings[0].entry;
 }
 
 // Usefulness: verifies the Antigravity hook contract — every tool the template
@@ -621,34 +621,16 @@ test("Antigravity hook denies guarded tools from the parent and stays silent oth
   expect(afterFinish.stdout).toBe("");
 });
 
-// Usefulness: verifies the entry-point and shim templates hand the installer a
-// session-id channel and a runnable guard command, so manual placement at the
-// user-scope targets registers the parent and reaches the adapter without a
-// quoted or spaced hook path.
-test("Antigravity templates pass the conversation id and wire the shim", async () => {
-  const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
-  const { files } = await buildTargets("antigravity", { home: packageRoot, packageRoot });
-  const skill = files.find((file) => file.path.endsWith("SKILL.md")).content;
-  expect(skill).toContain("/agent-loop");
-  const instructions = join(packageRoot, "docs", "orchestrator-instructions.md");
-  expect(skill).toContain(`Read \`${instructions.replaceAll("\\", "/")}\``);
-  expect(skill).toContain("ANTIGRAVITY_CONVERSATION_ID");
-  expect(skill).toContain("--parent-session");
-
+// Usefulness: verifies the installer registers a runnable guard command without a
+// quoted or spaced hook path, so manual placement at the user-scope target reaches
+// the adapter. The skill text and the rendered placeholders are covered by the
+// install template tests.
+test("Antigravity hook entry runs the shim without a quoted path", async () => {
   const group = await readAntigravityGuardGroup();
   const handler = group.PreToolUse[0].hooks[0];
   expect(handler.type).toBe("command");
   expect(handler.command).toBe("node ./agent-loop-antigravity-parent-guard.mjs");
   expect(handler.command).not.toContain('"');
-
-  const shim = await readFile(
-    new URL(
-      "../../src/install/templates/antigravity/agent-loop-antigravity-parent-guard.mjs",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-  expect(shim).toContain("__AGENT_LOOP_GUARD_URL__");
 });
 
 // Usefulness: verifies the shipped shim loads the guard through the rendered
@@ -658,22 +640,20 @@ test("Antigravity templates pass the conversation id and wire the shim", async (
 test("Antigravity shim loads the guard and fails open on a stale URL", async () => {
   await setup();
   await initRunForParent();
-  const template = await readFile(
-    new URL(
-      "../../src/install/templates/antigravity/agent-loop-antigravity-parent-guard.mjs",
-      import.meta.url,
-    ),
-    "utf8",
+  const { files } = await renderAntigravityTargets();
+  const rendered = files.find((file) =>
+    file.path.endsWith("agent-loop-antigravity-parent-guard.mjs"),
   );
   const dir = await mkdtemp(join(runsRoot, "shim-"));
   const guardUrl = new URL("../../src/hook/antigravity-parent-guard.mjs", import.meta.url).href;
+  expect(rendered.content).toContain(guardUrl);
   const payload = JSON.stringify({
     conversationId: "parent-sess-1",
     toolCall: { name: "write_to_file" },
   });
 
   const live = join(dir, "live.mjs");
-  await writeFile(live, template.replace("__AGENT_LOOP_GUARD_URL__", guardUrl));
+  await writeFile(live, rendered.content);
   const denied = await runNodeScript(live, payload);
   expect(denied.code).toBe(0);
   expect(JSON.parse(denied.stdout)).toEqual({
@@ -684,7 +664,7 @@ test("Antigravity shim loads the guard and fails open on a stale URL", async () 
   const stale = join(dir, "stale.mjs");
   await writeFile(
     stale,
-    template.replace("__AGENT_LOOP_GUARD_URL__", "file:///nonexistent/agent-loop-guard.mjs"),
+    rendered.content.replace(guardUrl, "file:///nonexistent/agent-loop-guard.mjs"),
   );
   const staleRun = await runNodeScript(stale, payload);
   expect(staleRun.code).toBe(0);

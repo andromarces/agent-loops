@@ -21,6 +21,20 @@ afterEach(async () => {
   }
 });
 
+/** Copies the package into `store` and links its one runtime dependency beside it. */
+async function populateStore(store) {
+  await mkdir(store, { recursive: true });
+  await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
+  await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
+  await cp(join(REPO_ROOT, "package.json"), join(store, "package.json"));
+  // The one runtime dependency, beside the package the way pnpm places it.
+  await symlink(
+    join(REPO_ROOT, "node_modules", "execa"),
+    join(dirname(dirname(store)), "execa"),
+    LINK_TYPE,
+  );
+}
+
 /**
  * Builds a pnpm global install directory, verified against a real `pnpm add -g`
  * with a temp PNPM_HOME: `<global>/v11/<id>` holds the virtual store, links the
@@ -39,16 +53,7 @@ async function pnpmGlobal(v11, { id, hash, version }) {
     "@andromarces",
     "agent-loops",
   );
-  await mkdir(store, { recursive: true });
-  await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
-  await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
-  await cp(join(REPO_ROOT, "package.json"), join(store, "package.json"));
-  // The one runtime dependency, beside the package the way pnpm places it.
-  await symlink(
-    join(REPO_ROOT, "node_modules", "execa"),
-    join(dirname(dirname(store)), "execa"),
-    LINK_TYPE,
-  );
+  await populateStore(store);
   const linked = join(installDir, "node_modules", "@andromarces", "agent-loops");
   await mkdir(dirname(linked), { recursive: true });
   await symlink(store, linked, LINK_TYPE);
@@ -173,16 +178,7 @@ async function pnpmProject(project, version) {
     "@andromarces",
     "agent-loops",
   );
-  await mkdir(store, { recursive: true });
-  await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
-  await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
-  await cp(join(REPO_ROOT, "package.json"), join(store, "package.json"));
-  // The one runtime dependency, beside the package the way pnpm places it.
-  await symlink(
-    join(REPO_ROOT, "node_modules", "execa"),
-    join(dirname(dirname(store)), "execa"),
-    LINK_TYPE,
-  );
+  await populateStore(store);
   const linked = join(project, "node_modules", "@andromarces", "agent-loops");
   await mkdir(dirname(linked), { recursive: true });
   await symlink(store, linked, LINK_TYPE);
@@ -246,16 +242,7 @@ async function pnpm12Project(pnpmHome, project, { hash, version }) {
     "@andromarces",
     "agent-loops",
   );
-  await mkdir(store, { recursive: true });
-  await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
-  await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
-  await cp(join(REPO_ROOT, "package.json"), join(store, "package.json"));
-  // The one runtime dependency, beside the package the way pnpm places it.
-  await symlink(
-    join(REPO_ROOT, "node_modules", "execa"),
-    join(dirname(dirname(store)), "execa"),
-    LINK_TYPE,
-  );
+  await populateStore(store);
   const linked = join(project, "node_modules", "@andromarces", "agent-loops");
   await mkdir(dirname(linked), { recursive: true });
   await symlink(store, linked, LINK_TYPE);

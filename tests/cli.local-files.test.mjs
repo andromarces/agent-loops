@@ -1,8 +1,8 @@
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
-import { createLinkedWorkTree, removePath } from "./runtime-helpers.mjs";
+import { createLinkedWorkTree, exists, removePath } from "./runtime-helpers.mjs";
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];
@@ -18,12 +18,6 @@ afterEach(async () => {
     await removePath(dir);
   }
 });
-
-const exists = (path) =>
-  lstat(path).then(
-    () => true,
-    () => false,
-  );
 
 // Usefulness: verifies the copy is on by default and the opt-out flag turns it
 // off, and that the boolean flag rejects an inline value like every other one.

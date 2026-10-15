@@ -1,9 +1,8 @@
-import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { withStateLock } from "../../src/lib/state-lock.mjs";
-import { deadPid, removePath } from "../runtime-helpers.mjs";
+import { deadPid, removePath, trackedTempDir } from "../runtime-helpers.mjs";
 
 // The stale-lock race needs a second process to act between the owner read and
 // the removal, which real timing cannot reproduce on demand. `readFile` and
@@ -22,11 +21,7 @@ const { readFile, link } = await import("node:fs/promises");
 
 let dirs = [];
 
-async function tempDir() {
-  const dir = await mkdtemp(join(tmpdir(), "runstate-takeover-"));
-  dirs.push(dir);
-  return dir;
-}
+const tempDir = () => trackedTempDir("runstate-takeover-", dirs);
 
 afterEach(async () => {
   vi.mocked(readFile)

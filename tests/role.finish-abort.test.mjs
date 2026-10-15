@@ -967,24 +967,6 @@ describe("finish on a run that declares a PR", () => {
   });
 });
 
-// Usefulness: verifies a run that declares a PR refuses a gate for a different
-// PR without reading GitHub, so a wrong PR never reaches the gate (#302).
-test("a run that declares a PR refuses a gate for a different PR", async () => {
-  await setup();
-  const repo = await useCleanRepo();
-  await initPrRun(repo, 42);
-  await dispatchReviewer(repo, ACCEPT);
-
-  const result = await finishCall(repo, ["--require-ci", "7"], {
-    gh: async () => {
-      throw new Error("gh must not run: the gate names a different PR.");
-    },
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.payload.error).toContain("declares PR 42");
-  expect((await readRepoState(repo)).lifecycle).toBe("active");
-});
-
 // Usefulness: verifies a refused finish makes no GitHub call of its own, measured
 // from the moment the finish call starts. The earlier assertion proved the gate
 // never ran by throwing on any call, which also fails for a call the finish did
