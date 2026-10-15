@@ -7,6 +7,7 @@ import {
   readRepoState,
   recordingAdapter,
   repos,
+  reviewerTurn,
   setup,
   stdinPrompt,
   withRepo,
@@ -44,12 +45,6 @@ async function start(extra = []) {
   );
   return { repo, worker, reviewer, agents, init };
 }
-
-const reviewerTurn = (repo, agents, overrides = []) =>
-  executeRoleCommand(withRepo(dispatchArgv(overrides, "reviewer"), repo), {
-    agents,
-    stdin: stdinPrompt,
-  });
 
 // Usefulness: verifies a new run with no flag records `none` and passes it to the reviewer turn
 // only, with readOnly kept, so the worker turn and the read-only guard are unchanged (ADR 0038).

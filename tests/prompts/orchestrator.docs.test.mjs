@@ -16,6 +16,8 @@ import {
   DO_NOT_FINISH_AS_VERIFIED,
   BOTH_ACTIONS_ON_UNRESOLVED,
   RECORD_UNDER_NOT_DONE_AND_OPEN,
+  NAMED_TARGET,
+  commitTargets,
   gatedPrompt,
   unqualifiedDenials,
 } from "./orchestrator-helpers.mjs";
@@ -37,17 +39,6 @@ async function readUserDocs() {
   return (await Promise.all(paths.map((path) => readFile(path, "utf8")))).join("\n\n");
 }
 
-// The target of every commit or push instruction in the text: the phrase after the
-// preposition, up to the next clause mark. A commit and a push in one clause each
-// yield a target, so a second target naming another branch is caught.
-const BRANCH_TARGET =
-  /\b(?:commit|push)(?:s|es)?\b[^.;]{0,40}?\b(?:on|onto|to)\s+([^,.;]{1,40}?)(?=\s+(?:and|so|but)\b|[,.;]|$)/gi;
-
-// A target that names a branch instead of pointing at the one the dispatcher
-// supplied. A back-reference is a determiner and the word "branch" and nothing
-// else, so `main` and `the main branch` each name a branch of their own.
-const NAMED_TARGET = /^(?!\s*(?:the|that|this|your|its)\s+branch(?:es)?\s*$)\S/i;
-
 // Asserts no commit or push in the text targets a branch of the rule's own, so a
 // target such as `main` or `origin/main` fails.
 function expectNoNamedBranchTarget(text) {
@@ -56,12 +47,6 @@ function expectNoNamedBranchTarget(text) {
       false,
     );
   }
-}
-
-/** Every commit or push target in the text, whitespace collapsed. */
-function commitTargets(text) {
-  const flat = text.replace(/\s+/g, " ");
-  return [...flat.matchAll(new RegExp(BRANCH_TARGET.source, "gi"))].map((match) => match[1].trim());
 }
 
 // The parent rules that the interactive instructions and the headless prompt share. Each entry is
@@ -393,6 +378,13 @@ const adr19 = "adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md
 
 const readRepoFile = (path) => readFile(join(repoRoot, path), "utf8");
 
+// The `--help` text, read from one CLI process for the whole file.
+let helpText;
+const readHelpText = () =>
+  (helpText ??= execa("node", [join(repoRoot, "src/cli.mjs"), "--help"]).then(
+    (result) => result.stdout,
+  ));
+
 // The five accepted gaps of issue #421, each as the phrases that identify it.
 const SANDBOX_GAPS = [
   ["detection-only enforcement", [/detective/i, /MutationError/, /no revert|does not revert/i]],
@@ -441,7 +433,7 @@ test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
   ["ADR 0019", () => readRepoFile(adr19)],
-  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  ["--help", readHelpText],
   ["reviewer prompt", async () => reviewerPrompt("x", null, null, "workspace-write")],
   [
     "orchestrator prompt",
@@ -486,7 +478,7 @@ test.each([
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
   ["docs/parent-guard.md", () => readRepoFile("docs/parent-guard.md")],
   ["ADR 0019", () => readRepoFile(adr19)],
-  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  ["--help", readHelpText],
   ["no-mode reviewer prompt", async () => reviewerPrompt("x", null, null, null)],
   ["no-sandbox reviewer prompt", async () => reviewerPrompt("x", null, null, "none")],
   ["read-only reviewer prompt", async () => reviewerPrompt("x", null, null, "read-only")],
@@ -504,7 +496,7 @@ test.each([
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
-  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  ["--help", readHelpText],
   [
     "the headless orchestrator prompt",
     async () => initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "none" }),
@@ -526,7 +518,7 @@ test.each([
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
-  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  ["--help", readHelpText],
 ])("%s states the no-sandbox default and the two opt-in modes", async (_name, load) => {
   const text = (await load()).replace(/\s+/g, " ");
   expect(text).toMatch(/no sandbox/);
@@ -557,7 +549,7 @@ test.each([
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
-  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  ["--help", readHelpText],
   [
     "the headless orchestrator prompt",
     async () => initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "none" }),

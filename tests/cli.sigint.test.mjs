@@ -34,7 +34,7 @@ vi.mock("../src/lib/test-cmd.mjs", async (importOriginal) => {
 import { main } from "../src/cli.mjs";
 import {
   cleanRepoGit,
-  createCleanRepoDir,
+  createWithContinueRepo,
   createTempRepo,
   processExists,
   removePath,
@@ -236,25 +236,7 @@ test.skipIf(process.platform === "win32")(
   60_000,
 );
 
-// Runs `fn(repo, transcriptPath, errorSpy)` with a clean exit-code and error state. The
-// repo is a directory with a `.git` directory and `git` is answered from memory
-// (`cleanRepoGit`), so the test starts no `git` process.
-async function withContinueRepo(fn) {
-  const repo = await createCleanRepoDir();
-  gitDouble.answer = cleanRepoGit;
-  const origExitCode = process.exitCode;
-  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-  try {
-    await fn(repo, join(repo, "run.json"), errorSpy);
-  } finally {
-    process.exitCode = origExitCode;
-    errorSpy.mockRestore();
-    logSpy.mockRestore();
-    gitDouble.answer = null;
-    await removePath(repo);
-  }
-}
+const withContinueRepo = createWithContinueRepo(gitDouble);
 
 // Usefulness: verifies SIGINT cancel through cli.mjs sets exitCode 130 and writes transcript.
 test("SIGINT cancel through cli.mjs exits 130 and records transcript", async () => {

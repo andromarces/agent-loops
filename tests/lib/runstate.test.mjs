@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import {
@@ -12,15 +11,11 @@ import {
 } from "../../src/lib/runstate.mjs";
 import { processStartTime } from "../../src/lib/process-identity.mjs";
 import { withStateLock } from "../../src/lib/state-lock.mjs";
-import { deadPid, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
+import { deadPid, removePath, restoreRunsRoot, trackedTempDir } from "../runtime-helpers.mjs";
 
 let dirs = [];
 
-async function tempDir() {
-  const dir = await mkdtemp(join(tmpdir(), "runstate-test-"));
-  dirs.push(dir);
-  return dir;
-}
+const tempDir = () => trackedTempDir("runstate-test-", dirs);
 
 afterEach(async () => {
   for (const dir of dirs) {

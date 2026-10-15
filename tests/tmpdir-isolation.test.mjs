@@ -16,7 +16,7 @@ test(
     try {
       // `killTreeOnExit` ends the tree on Windows when this worker exits before the nested run (issue #612).
       await killTreeOnExit(
-        execa("pnpm", ["exec", "vp", "test", "run", "tests/install/install.lock.test.mjs"], {
+        execa("pnpm", ["exec", "vp", "test", "run", "tests/install/installer.lock.test.mjs"], {
           env: { TMPDIR: osTmp, TEMP: osTmp, TMP: osTmp },
           extendEnv: true,
           // Bound the nested run and end its whole process tree on expiry (as `runGh`).

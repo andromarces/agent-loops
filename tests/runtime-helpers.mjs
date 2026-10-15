@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync, statSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { execa } from "execa";
+import { vi } from "vite-plus/test";
 
 /**
  * True when `args` begins with the elements of `lead`, compared element by
@@ -346,6 +347,47 @@ export function scripted(replies) {
       }
       return reply;
     },
+  };
+}
+
+/**
+ * A scripted `gh` for the required-check read. Each entry is `{ status, checks,
+ * stdout, stderr }` and the last entry repeats, so a wait that polls more times
+ * than the script holds still answers. A `stdout` value is used verbatim, which
+ * covers a read whose output is not a check list. An unmatched call is an error,
+ * so a test never passes on a missing fixture.
+ */
+export function scriptedGh(reads) {
+  let n = 0;
+  return async (args, cwd) => {
+    if (!startsWithArgs(args, ["pr", "checks"])) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: `unmatched gh call: ${JSON.stringify(args)} (${cwd})`,
+      };
+    }
+    const read = reads[Math.min(n++, reads.length - 1)];
+    return {
+      status: read.status,
+      stdout: read.stdout ?? JSON.stringify(read.checks ?? []),
+      stderr: read.stderr ?? "",
+      timedOut: read.timedOut ?? false,
+    };
+  };
+}
+
+// A fake clock: `sleep` advances it by the requested milliseconds, so the wait
+// runs to completion without wall-clock time and the elapsed bound is checkable.
+export function fakeClock() {
+  const clock = { now: 0, slept: 0 };
+  return {
+    now: () => clock.now,
+    sleep: async (ms) => {
+      clock.slept += ms;
+      clock.now += ms;
+    },
+    elapsed: () => clock.now,
   };
 }
 
@@ -796,6 +838,83 @@ export async function createCleanRepoDir() {
   const dir = await mkdtemp(join(tmpdir(), "clean-repo-"));
   await mkdir(join(dir, ".git"));
   return dir;
+}
+
+/** True when `path` exists, a dangling symlink included. */
+export const exists = (path) =>
+  lstat(path).then(
+    () => true,
+    () => false,
+  );
+
+/**
+ * A linked work tree whose main checkout holds an ignored `.env` with `KEY=<secret>`. The tree's
+ * `base` is appended to `bases`, so the caller's `afterEach` removes it.
+ */
+export async function createLinkedWithEnv(secret, bases) {
+  const tree = await createLinkedWorkTree({ ignore: [".env"] });
+  bases.push(tree.base);
+  await writeFile(join(tree.main, ".env"), `KEY=${secret}\n`);
+  return tree;
+}
+
+/**
+ * Agents for a headless `main` run: the orchestrator `codex` answers each call with the next entry
+ * of `replies`, and `claude` and `agy` answer with a fixed text.
+ */
+export function continueAgents(replies) {
+  let call = 0;
+  const child = (text) => ({
+    async run(state) {
+      state.sessionId ??= "s";
+      return text;
+    },
+  });
+  return {
+    codex: {
+      async run(state) {
+        state.sessionId ??= "s";
+        return replies[call++];
+      },
+    },
+    claude: child("worker ok"),
+    agy: child("reviewer ok"),
+  };
+}
+
+/**
+ * Creates a temporary directory named from `prefix` and appends it to `dirs`, so the caller's
+ * `afterEach` removes it with `removePath`.
+ */
+export async function trackedTempDir(prefix, dirs) {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  dirs.push(dir);
+  return dir;
+}
+
+/**
+ * Builds `withContinueRepo(fn)` for a test file whose hoisted `execa` mock reads `gitDouble.answer`.
+ * It runs `fn(repo, transcriptPath, errorSpy)` with a clean exit-code and error state. The repo is
+ * a directory with a `.git` directory and `git` is answered from memory (`cleanRepoGit`), so the
+ * test starts no `git` process. The repo is removed afterwards.
+ */
+export function createWithContinueRepo(gitDouble) {
+  return async function withContinueRepo(fn) {
+    const repo = await createCleanRepoDir();
+    gitDouble.answer = cleanRepoGit;
+    const origExitCode = process.exitCode;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await fn(repo, join(repo, "run.json"), errorSpy);
+    } finally {
+      process.exitCode = origExitCode;
+      errorSpy.mockRestore();
+      logSpy.mockRestore();
+      gitDouble.answer = null;
+      await removePath(repo);
+    }
+  };
 }
 
 /**

@@ -22,8 +22,7 @@ import { execa } from "execa";
 import { main } from "../src/cli.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
 import {
-  cleanRepoGit,
-  createCleanRepoDir,
+  createWithContinueRepo,
   createTempRepo,
   removePath,
   untrackedFilesGit,
@@ -625,25 +624,7 @@ test("role help parses after an operation and rejects an inline value", () => {
   expect(() => parseRoleArgs(["--help=1"])).toThrow("--help does not take a value.");
 });
 
-// Runs `fn(repo, transcriptPath, errorSpy)` with a clean exit-code and error state. The
-// repo is a directory with a `.git` directory and `git` is answered from memory
-// (`cleanRepoGit`), so the test starts no `git` process.
-async function withContinueRepo(fn) {
-  const repo = await createCleanRepoDir();
-  gitDouble.answer = cleanRepoGit;
-  const origExitCode = process.exitCode;
-  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-  try {
-    await fn(repo, join(repo, "run.json"), errorSpy);
-  } finally {
-    process.exitCode = origExitCode;
-    errorSpy.mockRestore();
-    logSpy.mockRestore();
-    gitDouble.answer = null;
-    await removePath(repo);
-  }
-}
+const withContinueRepo = createWithContinueRepo(gitDouble);
 
 // Usefulness: verifies the headless transcript keeps the --test-cmd result and its work
 // tree compare when the run ends on a fatal error, here a reviewer mutation, so the

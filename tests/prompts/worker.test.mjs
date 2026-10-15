@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
 import { workerPrompt } from "../../src/prompts/worker.mjs";
+import { NAMED_TARGET, commitTargets } from "./orchestrator-helpers.mjs";
 
 // A label line at column 0, for example
 // `Checks: the commands that ran and their results, or "none". One line.`
@@ -60,17 +61,6 @@ test("a worker response written to the prompt block parses a Checks value", () =
   expect(report.checks).toBe("pnpm test passed");
 });
 
-// The target of every commit or push instruction in the text: the phrase after
-// the preposition, up to the next clause mark. A commit and a push in one clause
-// each yield a target, so a second target naming another branch is caught.
-const BRANCH_TARGET =
-  /\b(?:commit|push)(?:s|es)?\b[^.;]{0,40}?\b(?:on|onto|to)\s+([^,.;]{1,40}?)(?=\s+(?:and|so|but)\b|[,.;]|$)/gi;
-
-// A target that names a branch instead of pointing at the one the dispatcher
-// supplied. A back-reference is a determiner and the word "branch" and nothing
-// else, so `main` and `the main branch` each name a branch of their own.
-const NAMED_TARGET = /^(?!\s*(?:the|that|this|your|its)\s+branch(?:es)?\s*$)\S/i;
-
 // The commit instruction on the supplied branch, with BRANCH standing in for the
 // branch the task supplied, so the rule may name it or point at it.
 const COMMIT_ON_SUPPLIED_BRANCH =
@@ -94,12 +84,6 @@ function expectBranchTargets(text, branch) {
       `the rule commits on ${target}, not the supplied branch`,
     ).toBe(true);
   }
-}
-
-/** Every commit or push target in the text, whitespace collapsed. */
-function commitTargets(text) {
-  const flat = text.replace(/\s+/g, " ");
-  return [...flat.matchAll(new RegExp(BRANCH_TARGET.source, "gi"))].map((match) => match[1].trim());
 }
 
 // Usefulness: verifies the first worker turn tells the worker to commit and push

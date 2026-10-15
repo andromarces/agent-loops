@@ -1,45 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
-import { startsWithArgs } from "../runtime-helpers.mjs";
-
-// A scripted `gh` for the required-check read. Each entry is `{ status, checks,
-// stdout, stderr }` and the last entry repeats, so a wait that polls more times
-// than the script holds still answers. A `stdout` value is used verbatim, which
-// covers a read whose output is not a check list. An unmatched call is an error,
-// so a test never passes on a missing fixture.
-function scriptedGh(reads) {
-  let n = 0;
-  return async (args, cwd) => {
-    if (!startsWithArgs(args, ["pr", "checks"])) {
-      return {
-        status: 1,
-        stdout: "",
-        stderr: `unmatched gh call: ${JSON.stringify(args)} (${cwd})`,
-      };
-    }
-    const read = reads[Math.min(n++, reads.length - 1)];
-    return {
-      status: read.status,
-      stdout: read.stdout ?? JSON.stringify(read.checks ?? []),
-      stderr: read.stderr ?? "",
-      timedOut: read.timedOut ?? false,
-    };
-  };
-}
-
-// A fake clock: `sleep` advances it by the requested milliseconds, so the wait
-// runs to completion without wall-clock time and the elapsed bound is checkable.
-function fakeClock() {
-  const clock = { now: 0, slept: 0 };
-  return {
-    now: () => clock.now,
-    sleep: async (ms) => {
-      clock.slept += ms;
-      clock.now += ms;
-    },
-    elapsed: () => clock.now,
-  };
-}
+import { fakeClock, scriptedGh } from "../runtime-helpers.mjs";
 
 // Usefulness: verifies the scripted `gh` routes on the argument elements, so a
 // call that merges the arguments into one element gets no reply and its error

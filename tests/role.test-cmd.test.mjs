@@ -14,6 +14,7 @@ import {
   recordingAdapter,
   spyStdoutWrite,
   repos,
+  reviewerTurn,
   setup,
   stdinPrompt,
   withRepo,
@@ -58,12 +59,6 @@ async function start(extra = []) {
   );
   return { repo, reviewer, agents, init };
 }
-
-const reviewerTurn = (repo, agents, overrides = []) =>
-  executeRoleCommand(withRepo(dispatchArgv(overrides, "reviewer"), repo), {
-    agents,
-    stdin: stdinPrompt,
-  });
 
 // Usefulness: verifies the init call records only a digest of the command and
 // its bound, so a later dispatch can check the flag against it and the state file

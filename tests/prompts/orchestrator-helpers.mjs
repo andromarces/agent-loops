@@ -118,3 +118,20 @@ export function unqualifiedDenials(text) {
       NETWORK_DENIAL.test(sentence) && !/shell/i.test(`${sentence} ${sentences[i + 1] ?? ""}`),
   );
 }
+
+// The target of every commit or push instruction in the text: the phrase after the
+// preposition, up to the next clause mark. A commit and a push in one clause each
+// yield a target, so a second target naming another branch is caught.
+const BRANCH_TARGET =
+  /\b(?:commit|push)(?:s|es)?\b[^.;]{0,40}?\b(?:on|onto|to)\s+([^,.;]{1,40}?)(?=\s+(?:and|so|but)\b|[,.;]|$)/gi;
+
+// A target that names a branch instead of pointing at the one the dispatcher
+// supplied. A back-reference is a determiner and the word "branch" and nothing
+// else, so `main` and `the main branch` each name a branch of their own.
+export const NAMED_TARGET = /^(?!\s*(?:the|that|this|your|its)\s+branch(?:es)?\s*$)\S/i;
+
+/** Every commit or push target in the text, whitespace collapsed. */
+export function commitTargets(text) {
+  const flat = text.replace(/\s+/g, " ");
+  return [...flat.matchAll(new RegExp(BRANCH_TARGET.source, "gi"))].map((match) => match[1].trim());
+}

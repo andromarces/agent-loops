@@ -1,10 +1,9 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { writeState } from "../../src/lib/runstate.mjs";
 import { withStateLock } from "../../src/lib/state-lock.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath, trackedTempDir } from "../runtime-helpers.mjs";
 
 // A real partial write is not reproducible on demand, so `writeFile` is stubbed
 // to create the file and then fail, the shape of a write cut short by a full
@@ -41,11 +40,7 @@ function deferred() {
 
 let dirs = [];
 
-async function tempDir() {
-  const dir = await mkdtemp(join(tmpdir(), "runstate-temp-"));
-  dirs.push(dir);
-  return dir;
-}
+const tempDir = () => trackedTempDir("runstate-temp-", dirs);
 
 afterEach(async () => {
   vi.mocked(writeFile)

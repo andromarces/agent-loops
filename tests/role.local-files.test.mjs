@@ -1,4 +1,4 @@
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role.mjs";
@@ -12,24 +12,13 @@ import {
   setup,
   withRepo,
 } from "./role-helpers.mjs";
-import { createLinkedWorkTree, createTempRepo } from "./runtime-helpers.mjs";
+import { createLinkedWithEnv, createTempRepo, exists } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 
-const exists = (path) =>
-  lstat(path).then(
-    () => true,
-    () => false,
-  );
-
-async function linkedWithEnv() {
-  const tree = await createLinkedWorkTree({ ignore: [".env"] });
-  repos.push(tree.base);
-  await writeFile(join(tree.main, ".env"), `KEY=${SECRET}\n`);
-  return tree;
-}
+const linkedWithEnv = () => createLinkedWithEnv(SECRET, repos);
 
 // Usefulness: verifies acceptance 1 — an init on a linked work tree copies the
 // file before the first child turn, and names it, with no content, in the

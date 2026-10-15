@@ -18,7 +18,7 @@ export function prInfo(overrides = {}) {
   };
 }
 
-export const REQUIRED = [
+const REQUIRED = [
   {
     type: "required_status_checks",
     parameters: {

@@ -2,7 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main } from "../src/cli.mjs";
-import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { continueAgents, createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 // A partial mock keeps the real filesystem and fails `rename` on demand. It lives
 // in its own file because the mock applies to the whole module (see
@@ -39,26 +39,6 @@ const FINISH = JSON.stringify({
   summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
 });
 
-function agents(replies) {
-  let call = 0;
-  const child = (text) => ({
-    async run(state) {
-      state.sessionId ??= "s";
-      return text;
-    },
-  });
-  return {
-    codex: {
-      async run(state) {
-        state.sessionId ??= "s";
-        return replies[call++];
-      },
-    },
-    claude: child("worker ok"),
-    agy: child("reviewer ok"),
-  };
-}
-
 let repo;
 const exitCode = process.exitCode;
 afterEach(async () => {
@@ -78,7 +58,7 @@ test("a failed same-path transcript write keeps the earlier transcript whole", a
   const path = join(repo, "run.json");
   await main(
     [...ARGS, "--cwd", repo, "--max-steps", "1", "--transcript", path],
-    agents([WORK, WORK]),
+    continueAgents([WORK, WORK]),
   );
   const before = await readFile(path, "utf8");
   expect(JSON.parse(before).exitCode).toBe(2);
@@ -86,7 +66,7 @@ test("a failed same-path transcript write keeps the earlier transcript whole", a
   control.failRename = true;
   await main(
     [...ARGS, "--cwd", repo, "--continue-from", path, "--transcript", path],
-    agents([FINISH]),
+    continueAgents([FINISH]),
   );
 
   expect(await readFile(path, "utf8")).toBe(before);

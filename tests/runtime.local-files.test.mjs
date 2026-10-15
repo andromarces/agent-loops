@@ -1,8 +1,7 @@
-import { lstat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { runLoop } from "../src/runtime.mjs";
-import { createLinkedWorkTree, removePath, scripted } from "./runtime-helpers.mjs";
+import { createLinkedWithEnv, exists, removePath, scripted } from "./runtime-helpers.mjs";
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const created = [];
@@ -12,12 +11,6 @@ afterEach(async () => {
     await removePath(dir);
   }
 });
-
-const exists = (path) =>
-  lstat(path).then(
-    () => true,
-    () => false,
-  );
 
 const FINISH = JSON.stringify({
   action: "finish",
@@ -49,12 +42,7 @@ async function runIn(linked, extra = {}) {
   return { result, presentAtFirstTurn, events };
 }
 
-async function linkedWithEnv() {
-  const tree = await createLinkedWorkTree({ ignore: [".env"] });
-  created.push(tree.base);
-  await writeFile(join(tree.main, ".env"), `KEY=${SECRET}\n`);
-  return tree;
-}
+const linkedWithEnv = () => createLinkedWithEnv(SECRET, created);
 
 // Usefulness: verifies acceptance 1 on the headless path — the file is in
 // --cwd before the first orchestrator turn, which is the first child spawn and
