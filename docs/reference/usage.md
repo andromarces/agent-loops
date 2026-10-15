@@ -21,7 +21,7 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 ```text
 --orchestrator <agent>        Agent that directs the loop. Required.
 --worker <agent>              Agent that implements changes. Required.
---reviewer <agent>            Agent that reviews the repository (read-only; see --reviewer-sandbox for codex). Required.
+--reviewer <agent>            Agent that reviews the repository (no tracked or unignored change; see --reviewer-sandbox for codex). Required.
 --orchestrator-model <model>  Model passed to the orchestrator CLI. Optional.
 --orchestrator-effort <level> Thinking effort passed to the orchestrator CLI. Optional.
 --worker-model <model>        Model passed to the worker CLI. Optional.

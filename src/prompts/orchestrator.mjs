@@ -443,7 +443,7 @@ ${REMOTE_WRITE_RULE}
 
 You have two child roles:
 - worker: Implements changes, runs checks and tests, and reports findings and progress.
-- reviewer: Inspector. Inspects and assesses the repository state and verifications. The reviewer must not edit files.
+- reviewer: Inspector. Inspects and assesses the repository state and verifications. The reviewer must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed.
 
 You have a maximum step budget of ${maxSteps} steps.
 A step is consumed only when you dispatch a child role (run_worker or run_reviewer).
