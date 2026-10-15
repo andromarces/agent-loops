@@ -456,7 +456,7 @@ test("copilot returns the earlier closing block when the last message holds none
 // Usefulness: verifies a final malformed reject block wins over an earlier accept, so the parent sees it as raw and never an accept (issue #449).
 test("copilot keeps a final unparseable reject block over an earlier accept block", async () => {
   const accept = `${BLOCK}\nVerdict: accept`;
-  const reject = "Conclusion: no.\nWhy: bugs.\nBlockers:\n- one\n- two\nVerdict: reject";
+  const reject = "Conclusion: no.\nWhy: bugs.\nBlockers: see below\n- one\n- two\nVerdict: reject";
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: [
       JSON.stringify({ type: "assistant.message", data: { content: accept } }),

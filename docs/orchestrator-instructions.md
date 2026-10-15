@@ -154,12 +154,17 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   on. `report.deferred` holds items found but left out of scope. Both are
   optional: a child that omits the label yields `null` for that field, and the
   block still parses. Each value is one line, the label plain at column 0. A list
-  anywhere in the closing block, for example bullets under any label, after the
-  reviewer `Verdict:` line, or a bullet with no space after the marker, makes the
-  block unparseable, so the list surfaces through `raw` instead of being dropped.
-  An indented label or a decorated label does the same. This covers a label that
-  already holds a value, including the required `blockers`, and a label
-  occurrence that a later repeat shadows. A non-list line, for example a closing
+  that directly follows a report label with an empty value line is that label's
+  value: the markers drop and the items join into one line with `; ` (issue
+  #846). The run ends at the first line that is not a list item, so a blank line
+  or prose between the label and the list breaks it. Any other list in the
+  closing block, for example bullets after the reviewer `Verdict:` line, a list
+  outside any label, or a bullet with no space after the marker under a label
+  that already holds a value, makes the block unparseable, so the list surfaces
+  through `raw` instead of being dropped. An indented label or a decorated label
+  does the same. This covers a label that already holds a value, including the
+  required `blockers`, and a label occurrence that a later repeat shadows, which
+  also drops a list that the repeat shadows. A non-list line, for example a closing
   sentence, does not make the block unparseable. A `*` line is not always a
   list, and one shape is the case that matters here: a `*` line whose closing
   `*` a letter precedes, where the character right after the close is not a word

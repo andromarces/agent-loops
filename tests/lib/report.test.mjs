@@ -55,13 +55,37 @@ test("parseReportBlock extracts the optional Checks label", () => {
   expect(parseReportBlock(REPORT)).toMatchObject({ checks: null });
 });
 
-// Usefulness: verifies an empty optional label with a list below it does not
-// silently drop the list; the whole block is unparseable, so the dispatch layer
-// falls back to `raw` and the list stays visible (issue #229).
-test("parseReportBlock returns null when an empty optional label has a following list", () => {
-  expect(parseReportBlock(`${REPORT}\nNotes:\n- item one\n- item two`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nNotes: none\nDeferred:\n- item one`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nNotes:\n1. item one`)).toBeNull();
+// Usefulness: verifies a list that directly follows a label with an empty value line is
+// that label's value, joined into one line with "; " and the markers stripped, so a worker
+// that writes bullets under `Notes:` or `Why:` still yields a report (issue #846).
+test("parseReportBlock joins a list under an empty label into that label's value", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- item one\n- item two`)).toMatchObject({
+    notes: "item one; item two",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes: none\nDeferred:\n- item one`)).toMatchObject({
+    notes: "none",
+    deferred: "item one",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n1. item one\n2) item two`)).toMatchObject({
+    notes: "item one; item two",
+  });
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy:\n- **Tests:** pass\n- **Lint:** clean\nBlockers: none",
+    ),
+  ).toMatchObject({ why: "**Tests:** pass; **Lint:** clean", blockers: "none" });
+});
+
+// Usefulness: verifies the list shapes outside the #846 rule still fail closed: a list
+// separated from its empty label, a list that follows a non-list line under the label, a
+// list that a later repeat of the label shadows, a list after an empty Verdict line, and a
+// list that resumes after a non-list line.
+test("parseReportBlock returns null for a list that is not directly under an empty label", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\n\n- item one`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes:\nsome prose\n- item one`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- item one\nNotes: later`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nVerdict:\n- accept`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- item one\nprose\n- item two`)).toBeNull();
 });
 
 // Usefulness: verifies a non-list line after an empty optional label, for
@@ -157,12 +181,11 @@ test("parseReportBlock returns null when a decorated label shadows a plain one",
 });
 
 // Usefulness: verifies a bullet with no space after the marker under an empty
-// optional label is not dropped silently; the whole block is unparseable, so
-// `raw` carries the items (issue #243).
-test("parseReportBlock returns null when a spaceless bullet follows an empty optional label", () => {
-  expect(parseReportBlock(`${REPORT}\nDeferred:\n-a\n-b`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nNotes:\n*item`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nDeferred:\n1.item`)).toBeNull();
+// optional label joins like a spaced bullet, with the marker stripped (issues #243 and #846).
+test("parseReportBlock joins a spaceless bullet under an empty optional label", () => {
+  expect(parseReportBlock(`${REPORT}\nDeferred:\n-a\n-b`)).toMatchObject({ deferred: "a; b" });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n*item`)).toMatchObject({ notes: "item" });
+  expect(parseReportBlock(`${REPORT}\nDeferred:\n1.item`)).toMatchObject({ deferred: "item" });
 });
 
 // Usefulness: verifies a non-label line that begins with a word and a colon is
@@ -309,7 +332,7 @@ test("parseReportBlock keeps a block whose closing sentence opens with emphasis"
 // requires.
 test("parseReportBlock returns null when a spaceless bullet holds a later spaced star", () => {
   for (const line of ["*a * b", "*item with 2 * 3 math", "*item one * item two"]) {
-    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
+    expect(parseReportBlock(`${REPORT}\nNotes: x\n${line}`), line).toBeNull();
   }
 });
 
@@ -319,7 +342,7 @@ test("parseReportBlock returns null when a spaceless bullet holds a later spaced
 // (issue #264). The block is unparseable, so `raw` carries the item.
 test("parseReportBlock returns null when a spaceless bullet holds a later non-letter star", () => {
   for (const line of ["*glob src/*.mjs", "*use 2* 3"]) {
-    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
+    expect(parseReportBlock(`${REPORT}\nNotes: x\n${line}`), line).toBeNull();
   }
 });
 
@@ -330,7 +353,7 @@ test("parseReportBlock returns null when a spaceless bullet holds a later non-le
 // in the companion test.
 test("parseReportBlock returns null when an emphasis run closes after a non-letter", () => {
   for (const line of ["*see step 1* done", "*wow!* nice", "*two words,* rest"]) {
-    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
+    expect(parseReportBlock(`${REPORT}\nNotes: x\n${line}`), line).toBeNull();
   }
 });
 
@@ -342,7 +365,7 @@ test("parseReportBlock returns null when an emphasis run closes after a non-lett
 // (`*Note*: x`, `*emph*.`) stays prose in the companion test.
 test("parseReportBlock returns null when a spaceless bullet closes before a joined word", () => {
   for (const line of ["*file*.mjs", "*glob src/a*.mjs"]) {
-    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
+    expect(parseReportBlock(`${REPORT}\nNotes: x\n${line}`), line).toBeNull();
   }
 });
 
@@ -372,7 +395,7 @@ test("parseReportBlock returns null when an emphasis run is glued to a following
     "*emph*.2",
     "*emph*é",
   ]) {
-    expect(parseReportBlock(`${REPORT}\nNotes:\n${line}`), line).toBeNull();
+    expect(parseReportBlock(`${REPORT}\nNotes: x\n${line}`), line).toBeNull();
   }
 });
 

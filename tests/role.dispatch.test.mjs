@@ -454,8 +454,8 @@ test("reviewer dispatch carries the optional Checks, Notes, and Deferred labels"
 // seam instead of being dropped, so the next turn still sees the text (issues #229, #240, #243, #249).
 test.each([
   {
-    name: "text under an empty optional label",
-    extra: "\nNotes:\n- item one\n- item two",
+    name: "a list that a blank line separates from its empty label",
+    extra: "\nNotes:\n\n- item one\n- item two",
     expected: "item one",
   },
   {
@@ -464,8 +464,8 @@ test.each([
     expected: "migrate the legacy path",
   },
   {
-    name: "a spaceless bullet",
-    extra: "\nDeferred:\n-migrate the legacy path",
+    name: "a spaceless bullet under a label with a value",
+    extra: "\nDeferred: later\n-migrate the legacy path",
     expected: "migrate the legacy path",
   },
   {
@@ -532,7 +532,7 @@ test("worker dispatch carries the whole response in raw when the closing block i
 
   const response = [
     "Conclusion: done",
-    "Notes:",
+    "Notes: see below",
     "- dropped marker ALPHA",
     `Why: ${"x".repeat(2500)}`,
     "Blockers: none",
