@@ -24,7 +24,7 @@ import { readableErrorMessage, redactedText, readProp } from "./lib/error-messag
 import { isSpawnedByRun } from "./lib/exec.mjs";
 import { copyLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
-import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
+import { acceptanceFailure, parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
   cwdHash,
@@ -878,10 +878,11 @@ async function acceptGateReason(state, cwd, signal) {
   if (!last || last.role !== "reviewer" || last.status !== "ok") {
     return "no reviewer turn after the latest worker turn";
   }
-  if (parseVerdict(last.response) !== "accept") {
+  const failure = acceptanceFailure(last.response);
+  if (failure === "verdict") {
     return "the latest reviewer turn did not return Verdict: accept";
   }
-  if (!parseReportBlock(last.response)?.checks) {
+  if (failure === "checks") {
     return "the accepted review has no Checks line";
   }
   if (!last.reviewed) {

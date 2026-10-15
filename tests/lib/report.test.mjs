@@ -1,6 +1,7 @@
 import { expect, test } from "vite-plus/test";
 import {
   hasClosingBlockAttempt,
+  acceptanceFailure,
   isAcceptedReview,
   parseReportBlock,
   parseVerdict,
@@ -673,4 +674,12 @@ test("isAcceptedReview never accepts from a folded spaceless bullet", () => {
   expect(isAcceptedReview(review("-\titem"))).toBe(false);
   expect(isAcceptedReview(review("- item"))).toBe(false);
   expect(isAcceptedReview(review("- npm test passed"))).toBe(true);
+});
+
+// Usefulness: pins the one shared acceptance rule that the accept gate reads to pick its refusal
+// message, so the verdict and Checks checks cannot drift from isAcceptedReview (issue #814).
+test("acceptanceFailure names the failing acceptance check or null", () => {
+  expect(acceptanceFailure(`${REPORT}\nVerdict: reject\nChecks: npm test passed`)).toBe("verdict");
+  expect(acceptanceFailure(`${REPORT}\nVerdict: accept\nChecks:`)).toBe("checks");
+  expect(acceptanceFailure(`${REPORT}\nVerdict: accept\nChecks: npm test passed`)).toBeNull();
 });
