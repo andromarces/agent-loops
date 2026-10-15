@@ -256,16 +256,17 @@ agent-loop test-slot --slots 2 --wait 600 -- "pnpm exec vp test run"
 ```
 
 - **Command.** Exactly one argument after the options, quoted for the calling shell. It runs through the platform shell (`/bin/sh -c`, or `cmd.exe` on Windows) in the current directory, as `--test-cmd` runs its command. stdout and stderr pass through, and stdin is closed. Log lines go to stderr and never hold the command text.
-- **`--slots <n>`.** Slot count. Defaults to `max(1, floor(os.availableParallelism() / 8))`. Env: `AGENT_LOOP_TEST_SLOTS`. The flag wins over the env.
-- **`--wait <seconds>`.** Longest wait for a free slot. Defaults to 1800 (30 minutes). `0` tries once. Env: `AGENT_LOOP_TEST_SLOT_WAIT`.
-- **Slot directory.** `<os tmpdir>/agent-loops/test-slots`, one lock file per slot. Env: `AGENT_LOOP_TEST_SLOTS_ROOT`. A slot whose owner process is gone is reclaimed. Where `os.tmpdir()` is shared between OS users, as `/tmp` on Linux, set the env to a directory per user.
-- **Nested call.** The command runs with `AGENT_LOOP_TEST_SLOT_HELD=1`. A wrapper that starts with it set runs its command at once.
-- **Signals.** SIGINT or SIGTERM ends the process group (POSIX) or process tree (Windows) of the command, then frees the slot. A hard kill of the wrapper leaves the slot to the stale-owner recovery and can leave the command running.
+- **`--slots <n>`.** Slot count. Defaults to `max(1, floor(os.availableParallelism() / 8))`. Env: `AGENT_LOOP_TEST_SLOTS`. A wrapper starts only while fewer than its own N slots are held by live owners, counted under one short lock. Wrappers that pass different N therefore never run more than the largest N among them, and an N=1 wrapper waits until no other holder runs.
+- **`--wait <seconds>`.** Longest wait for a slot, more than 0. Defaults to 1800 (30 minutes). Env: `AGENT_LOOP_TEST_SLOT_WAIT`. A slot won after the bound is freed unused, and the command does not run.
+- **Precedence.** A flag wins over its env, and an env value is read only when its flag is absent. An empty env value counts as unset. An invalid env value is a usage error only when no flag replaces it.
+- **Slot directory.** `<os tmpdir>/agent-loops/test-slots`, one lock file per held slot and one short acquisition lock. Env: `AGENT_LOOP_TEST_SLOTS_ROOT`. A slot whose owner process is gone is reclaimed. Where `os.tmpdir()` is shared between OS users, as `/tmp` on Linux, set the env to a directory per user.
+- **Nested call.** The command runs with `AGENT_LOOP_TEST_SLOT_HELD` set to its slot file and owner nonce. A wrapper that starts with it set runs its command at once, in the same process group, only while that slot is still held by that live owner. Any other marker, for example one exported by hand, is ignored with a warning, and the wrapper waits for a slot.
+- **Signals.** SIGINT or SIGTERM ends the process group (POSIX) or process tree (Windows) of the command, then frees the slot. The outer kill also ends a nested wrapper and its command. A hard kill of the wrapper leaves the slot to the stale-owner recovery and can leave the command running.
 
 | Code         | Meaning                                                                        |
 | ------------ | ------------------------------------------------------------------------------ |
 | command code | The command ran. A command ended by a signal gives 128 plus the signal number. |
 | 64           | Usage error. The command did not run.                                          |
-| 75           | No slot was free within the wait bound. The command did not run.               |
-| 130, 143     | SIGINT or SIGTERM reached the wrapper.                                         |
+| 75           | No slot was won within the wait bound. The command did not run.                |
+| 130, 143     | SIGINT or SIGTERM reached the wrapper, at any nesting level.                   |
 | 1            | Any other wrapper failure, such as a slot directory that cannot be written.    |

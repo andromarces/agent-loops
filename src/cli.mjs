@@ -229,13 +229,14 @@ Subcommands:
   agent-loop uninstall          Remove the installed entry points and guards. Restores
                                 files that install changed.
   agent-loop test-slot          Run one command, quoted as one argument, through the
-                                platform shell only while holding one of N machine-wide
-                                test slots. --slots <n> (env AGENT_LOOP_TEST_SLOTS,
-                                default max(1, floor(CPUs / 8))) and --wait <seconds>
-                                (env AGENT_LOOP_TEST_SLOT_WAIT, default 1800). Exits with
-                                the command's code, 75 when no slot was free within the
-                                wait, 64 on a usage error, 130 or 143 on SIGINT or
-                                SIGTERM. See agent-loop test-slot --help.
+                                platform shell only while fewer than N machine-wide test
+                                slots are held by live owners. --slots <n> (env
+                                AGENT_LOOP_TEST_SLOTS, default max(1, floor(CPUs / 8)))
+                                and --wait <seconds> (env AGENT_LOOP_TEST_SLOT_WAIT,
+                                default 1800); a flag wins over its env. Exits with the
+                                command's code, 75 when no slot was won within the wait,
+                                64 on a usage error, 130 or 143 on SIGINT or SIGTERM.
+                                See agent-loop test-slot --help.
   agent-loop harness-check      Exit 0 only when the nearest harness process above the
                                 shell matches the named harness, 3 when another harness
                                 is nearest, and 1 when the check cannot run or finds no

@@ -64,6 +64,25 @@ export async function tryStateLock(lockFile, { label = "State", noun = "state" }
   return () => rm(lockFile, { force: true });
 }
 
+/**
+ * True when `lockFile` would refuse an acquisition: its parsed owner is alive, or it is
+ * unparseable and a writer can still own it (see `ownerless`). False for a missing or
+ * unreadable file and for a dead owner. Reads only; it never removes a stale lock.
+ */
+export async function lockHeld(lockFile) {
+  const text = await readLockText(lockFile);
+  if (text === null) {
+    return false;
+  }
+  const owner = parseLockOwner(text);
+  return owner ? ownerAlive(owner) : !(await ownerless(lockFile));
+}
+
+/** The parsed owner record of `lockFile`, or null when it is missing or unparseable. */
+export async function readLockOwner(lockFile) {
+  return parseLockOwner(await readLockText(lockFile));
+}
+
 // A refusal because another owner holds the lock, as opposed to a filesystem failure.
 function busyError(message) {
   return Object.assign(new Error(message), { lockBusy: true });

@@ -5,8 +5,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { deadPid, processExists, removePath } from "../runtime-helpers.mjs";
+
+// Delays each in-process lock attempt by `ms`, so a test can make one acquisition pass end
+// after the wait bound. Every spawned wrapper uses the real module.
+const slowLock = vi.hoisted(() => ({ ms: 0 }));
+vi.mock("../../src/lib/state-lock.mjs", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    tryStateLock: async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, slowLock.ms));
+      return real.tryStateLock(...args);
+    },
+  };
+});
+
+import { parseTestSlotArgs, runTestSlot } from "../../src/lib/test-slot.mjs";
 
 const CLI = fileURLToPath(new URL("../../src/cli.mjs", import.meta.url));
 const SLOT_ENV = [
@@ -17,7 +33,16 @@ const SLOT_ENV = [
 ];
 
 const dirs = [];
+const savedEnv = Object.fromEntries(SLOT_ENV.map((name) => [name, process.env[name]]));
 afterEach(async () => {
+  slowLock.ms = 0;
+  for (const [name, value] of Object.entries(savedEnv)) {
+    if (value === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
+  }
   for (const dir of dirs.splice(0)) {
     await removePath(dir);
   }
@@ -55,9 +80,31 @@ function wrapper(args, { cwd, root, env = {} }) {
   return { child, done };
 }
 
-async function holdSlot(root, owner) {
+async function holdSlot(root, owner, index = 0) {
   await mkdir(root, { recursive: true });
-  await writeFile(join(root, "slot-0.lock"), JSON.stringify(owner), "utf8");
+  await writeFile(join(root, `slot-${index}.lock`), JSON.stringify(owner), "utf8");
+}
+
+const liveOwner = (nonce = "live") => ({
+  pid: process.pid,
+  startedAt: new Date().toISOString(),
+  nonce,
+});
+
+const MARK = "import { writeFileSync } from 'node:fs';\nwriteFileSync('mark', 'x');\n";
+const HANG =
+  "import { writeFileSync } from 'node:fs';\n" +
+  "writeFileSync('pid', String(process.pid));\n" +
+  "setTimeout(() => {}, 60_000);\n";
+
+// Points the in-process wrapper at `ctx` and returns a command that runs `script` with
+// `ctx.cwd` as its directory, so the run needs no change of the worker's directory.
+function inProcess(ctx, script) {
+  process.env.AGENT_LOOP_TEST_SLOTS_ROOT = ctx.root;
+  for (const name of SLOT_ENV.slice(1)) {
+    delete process.env[name];
+  }
+  return `node -e "process.chdir(process.argv[1]); import(require('url').pathToFileURL(process.argv[2]).href)" "${ctx.cwd}" "${join(ctx.cwd, script)}"`;
 }
 
 async function waitForFile(path, ms = 10_000) {
@@ -136,7 +183,7 @@ test("a nested wrapper inside a wrapped command runs without waiting", async () 
   const ctx = await setup({
     "mark.mjs": "import { writeFileSync } from 'node:fs';\nwriteFileSync('mark', 'x');\n",
   });
-  const inner = `node "${CLI}" test-slot --slots 1 --wait 0 -- "node mark.mjs"`;
+  const inner = `node "${CLI}" test-slot --slots 1 --wait 1 -- "node mark.mjs"`;
   const { done } = wrapper(["--slots", "1", "--wait", "10", "--", inner], ctx);
   const result = await done;
   expect(result.code).toBe(0);
@@ -181,4 +228,102 @@ test("an invalid --slots value exits 64 without running the command", async () =
   const { done } = wrapper(["--slots", "0", "--", "node mark.mjs"], ctx);
   expect((await done).code).toBe(64);
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+});
+
+// Usefulness: issue #847 contract — a caller starts only while fewer than its own N slots are
+// held by live owners, so an N=1 caller waits while an N=2 caller holds any slot.
+test("a caller with --slots 1 waits while another caller holds any slot", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  await holdSlot(ctx.root, liveOwner(), 1);
+  const one = await wrapper(["--slots", "1", "--wait", "1", "--", "node mark.mjs"], ctx).done;
+  expect(one.code).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+  const two = await wrapper(["--slots", "2", "--wait", "5", "--", "node mark.mjs"], ctx).done;
+  expect(two.code).toBe(0);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+}, 30_000);
+
+// Usefulness: issue #847 review — a nested-call marker that names no slot held by a live
+// owner is ignored, so an exported or leftover marker cannot bypass the throttle.
+test.each([
+  ["a hand-exported marker", () => "1"],
+  [
+    "a marker whose holder exited",
+    (root) => JSON.stringify({ lock: join(root, "slot-0.lock"), nonce: "gone" }),
+  ],
+])("%s does not bypass the slot", async (_name, marker) => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  const dead = { pid: await deadPid(), startedAt: new Date().toISOString(), nonce: "gone" };
+  await holdSlot(ctx.root, dead);
+  await holdSlot(ctx.root, liveOwner(), 1);
+  const result = await wrapper(["--slots", "1", "--wait", "1", "--", "node mark.mjs"], {
+    ...ctx,
+    env: { AGENT_LOOP_TEST_SLOT_HELD: marker(ctx.root) },
+  }).done;
+  expect(result.code).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+});
+
+// Usefulness: issue #847 review — when the outer wrapper ends its command tree, the command
+// of a nested wrapper ends too, so no test process outlives the slot. POSIX only: the
+// defect is a separate process group, and Windows has no catchable outside SIGTERM.
+test.skipIf(process.platform === "win32")(
+  "SIGTERM to the outer wrapper ends the command of a nested wrapper",
+  async () => {
+    const ctx = await setup({ "hang.mjs": HANG });
+    const inner = `node "${CLI}" test-slot --slots 1 --wait 5 -- "node hang.mjs"`;
+    const { child, done } = wrapper(["--slots", "1", "--wait", "10", "--", inner], ctx);
+    await waitForFile(join(ctx.cwd, "pid"));
+    const pid = Number(await readFile(join(ctx.cwd, "pid"), "utf8"));
+    child.kill("SIGTERM");
+    expect((await done).code).toBe(143);
+    const deadline = Date.now() + 5000;
+    while (processExists(pid) && Date.now() < deadline) {
+      await delay(50);
+    }
+    expect(processExists(pid)).toBe(false);
+  },
+  30_000,
+);
+
+// Usefulness: issue #847 review — a nested wrapper that a signal reaches exits with the
+// documented signal code, not the code of the killed command.
+test("a nested wrapper ended by SIGTERM exits 143", async () => {
+  const ctx = await setup({ "hang.mjs": HANG });
+  const command = inProcess(ctx, "hang.mjs");
+  await holdSlot(ctx.root, liveOwner("outer"));
+  process.env.AGENT_LOOP_TEST_SLOT_HELD = JSON.stringify({
+    lock: join(ctx.root, "slot-0.lock"),
+    nonce: "outer",
+  });
+  const run = runTestSlot(["--slots", "1", "--wait", "5", "--", command]);
+  await waitForFile(join(ctx.cwd, "pid"));
+  process.emit("SIGTERM", "SIGTERM");
+  expect(await run).toBe(143);
+}, 30_000);
+
+// Usefulness: issue #847 review — an acquisition that ends after the wait bound never
+// starts the command, so the bound holds even when one pass is slow.
+test("a slot won after the wait bound does not run the command", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  const command = inProcess(ctx, "mark.mjs");
+  slowLock.ms = 1500;
+  expect(await runTestSlot(["--slots", "1", "--wait", "1", "--", command])).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+  expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
+}, 30_000);
+
+// Usefulness: issue #847 review — a valid flag wins over an invalid environment value, and
+// the invalid value is refused only when no flag replaces it.
+test("a valid flag wins over an invalid environment value", () => {
+  const env = { AGENT_LOOP_TEST_SLOTS: "many", AGENT_LOOP_TEST_SLOT_WAIT: "-1" };
+  expect(parseTestSlotArgs(["--slots", "2", "--wait", "5", "--", "x"], env)).toEqual({
+    slots: 2,
+    waitSeconds: 5,
+    command: "x",
+  });
+  expect(() => parseTestSlotArgs(["--wait", "5", "--", "x"], env)).toThrow(/AGENT_LOOP_TEST_SLOTS/);
+  expect(() => parseTestSlotArgs(["--slots", "2", "--", "x"], env)).toThrow(
+    /AGENT_LOOP_TEST_SLOT_WAIT/,
+  );
 });
