@@ -701,12 +701,14 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
     try {
       value = JSON.parse(text);
     } catch (error) {
-      // V8 can quote the input in the message (`..., "<text>" is not valid JSON`); drop the quote.
-      const reason = error.message.replace(
-        /(?:,\s)?(?:\.\.\.)?".*"(?:\.\.\.)? is not valid JSON$/s,
-        "",
+      // Report only the location. The V8 message can quote the input, so it is never forwarded.
+      const where = /in JSON at position (\d+)(?: \(line (\d+) column (\d+)\))?$/.exec(
+        error.message,
       );
-      throw new RoleError(`finish summary must be a JSON object on stdin: ${reason}`);
+      const diagnosis = where
+        ? `not valid JSON at position ${where[1]}${where[2] ? ` (line ${where[2]} column ${where[3]})` : ""}`
+        : "not valid JSON";
+      throw new RoleError(`finish summary must be a JSON object on stdin: ${diagnosis}`);
     }
     // The summary arrives unwrapped, so the marker the headless action carries
     // beside `summary` sits beside the five keys here. The validator drops it

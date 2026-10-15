@@ -199,30 +199,49 @@ test("finish from active in review-only mode succeeds with the verdict recorded"
   expect(state.summary.notDone).toContain("verdict: reject");
 });
 
-// Usefulness: verifies #839 — a malformed summary refusal names the parser message
-// so the parent can fix the input, and never echoes the summary text.
-test("finish refusal names the JSON parse error without echoing the summary", async () => {
-  await setup();
-  const repo = await useCleanRepo();
+// Usefulness: verifies #839 — a malformed summary refusal carries a non-empty diagnosis
+// and never echoes any part of the summary text.
+describe("finish refusal for a summary that is not valid JSON", () => {
+  const PREFIX = "finish summary must be a JSON object on stdin: ";
 
-  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-    ...basicDeps(),
+  async function refuse(text) {
+    await setup();
+    const repo = await useCleanRepo();
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+      ...basicDeps(),
+    });
+    const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+      stdin: async () => text,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error.startsWith(PREFIX)).toBe(true);
+    return result.payload.error.slice(PREFIX.length);
+  }
+
+  test("a malformed escape reports the position without echoing the input", async () => {
+    const diagnosis = await refuse(String.raw`{"changed":"C:\x"}`);
+    expect(diagnosis).toMatch(/at position \d+/);
+    expect(diagnosis).not.toContain("changed");
   });
 
-  const finishArgs = withRepo(["finish", "--cwd", "<repo>"], repo);
-  const badEscape = await executeRoleCommand(finishArgs, {
-    stdin: async () => String.raw`{"changed":"C:\x"}`,
+  test("a bare token is not echoed", async () => {
+    const diagnosis = await refuse("Q");
+    expect(diagnosis.length).toBeGreaterThan(0);
+    expect(diagnosis).not.toContain("Q");
   });
-  expect(badEscape.exitCode).toBe(1);
-  expect(badEscape.payload.error).toContain("finish summary must be a JSON object on stdin: ");
-  expect(badEscape.payload.error).toContain("Bad escaped character");
 
-  const notJson = await executeRoleCommand(finishArgs, {
-    stdin: async () => "secret-token-text",
+  test.each(["undefined", "NaN"])("%s still gets a non-empty diagnosis", async (text) => {
+    const diagnosis = await refuse(text);
+    expect(diagnosis.trim().length).toBeGreaterThan(0);
+    expect(diagnosis).not.toContain(text);
   });
-  expect(notJson.exitCode).toBe(1);
-  expect(notJson.payload.error).toContain("finish summary must be a JSON object on stdin: ");
-  expect(notJson.payload.error).not.toContain("secret-token-text");
+
+  test("a secret-looking string with a syntax error is not echoed", async () => {
+    const diagnosis = await refuse('{"token":"sk-live-abc123SECRET" oops}');
+    expect(diagnosis.length).toBeGreaterThan(0);
+    expect(diagnosis).not.toContain("sk-live-abc123SECRET");
+    expect(diagnosis).not.toContain("oops");
+  });
 });
 
 // Usefulness: verifies acceptance — finish with an invalid summary exits
