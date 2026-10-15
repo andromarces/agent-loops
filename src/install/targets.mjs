@@ -17,8 +17,6 @@ async function template(templateDir, ...segments) {
 }
 
 // The session variable that the shared harness-check paragraph tells a skill not to trust, and why.
-// `layout` sets the words per line of the shared session-channel paragraph, one array per
-// paragraph, so each rendered skill keeps its line breaks.
 const SESSION_CHANNEL = {
   claude: {
     variable: "${CLAUDE_SESSION_ID}",
@@ -27,29 +25,12 @@ const SESSION_CHANNEL = {
   codex: {
     variable: "CODEX_THREAD_ID",
     reason: "a nested harness inherits it",
-    layout: [
-      [14, 13],
-      [7, 10, 11, 10, 7],
-    ],
   },
   antigravity: {
     variable: "ANTIGRAVITY_CONVERSATION_ID",
     reason: "a nested harness inherits it",
-    layout: [[14, 10, 8, 7, 12, 9, 12]],
   },
 };
-
-function wrapWords(text, layout) {
-  const words = text.split(" ");
-  let next = 0;
-  const paragraphs = layout.map((lines) =>
-    lines.map((count) => words.slice(next, (next += count)).join(" ")).join("\n"),
-  );
-  if (next !== words.length) {
-    throw new Error("Session-channel layout does not cover the paragraph");
-  }
-  return paragraphs.join("\n\n");
-}
 
 function claudeEntry(guardPath) {
   return {
@@ -100,7 +81,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
   // The shared harness-check and session-channel paragraphs fill `{{HARNESS_CHECK}}` and
   // `{{SESSION_CHANNEL}}` before the path placeholders resolve. Only a skill harness reads them.
   const addSkill = async (skillsDir) => {
-    const { variable, reason, layout } = SESSION_CHANNEL[harness];
+    const { variable, reason } = SESSION_CHANNEL[harness];
     const renderParagraph = (text) =>
       text
         .replaceAll("{{HARNESS_ID}}", harness)
@@ -111,7 +92,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     const skill = await template(templateDir, harness, "skills", "agent-loop", "SKILL.md");
     const harnessCheck = renderParagraph(await template(templateDir, "harness-check.md"));
     const sessionChannel = skill.includes("{{SESSION_CHANNEL}}")
-      ? wrapWords(renderParagraph(await template(templateDir, "session-channel.md")), layout)
+      ? renderParagraph(await template(templateDir, "session-channel.md"))
       : "";
     files.push({
       path: join(skillsDir, "agent-loop", "SKILL.md"),
