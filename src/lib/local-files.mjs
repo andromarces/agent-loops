@@ -185,21 +185,21 @@ async function readWorkTrees(root, read) {
   return entries;
 }
 
-const isInside = (parent, child) => {
+const isInsideByText = (parent, child) => {
   const rel = relative(parent, child);
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 };
 
 /**
- * Returns the canonical path of the main work tree, or null when there is none for
- * this copy (decision 10 of ADR 0018). The main work tree is the first entry of
+ * Returns `{ main }` with the canonical path of the main work tree, `{ main: null }` when there
+ * is none for this copy, or `{ refused }` with the name of a path that holds a control
+ * character (decision 10 of ADR 0018). The main work tree is the first entry of
  * `git worktree list --porcelain -z`, taken only when all three hold: the entry is
  * not marked `bare`, its path is an existing directory, and its canonical path is
  * neither the common Git directory (`git rev-parse --git-common-dir`) nor inside
  * it. Every other layout has none: a bare repository, a plain separate Git
  * directory, and a submodule, where Git lists the Git directory first. A Git
- * command that fails throws. A path with a control character is refused: the
- * result is `{ refused }` and the caller copies nothing (decision 10).
+ * command that fails throws. The caller copies nothing for `{ refused }`.
  */
 async function findMainWorkTree(root, entries, read) {
   const first = entries[0];
@@ -215,7 +215,7 @@ async function findMainWorkTree(root, entries, read) {
   if (hasControlCharacter(main)) {
     return { refused: "the main work tree path" };
   }
-  return { main: isInside(commonReal, main) ? null : main };
+  return { main: isInsideByText(commonReal, main) ? null : main };
 }
 
 /**
@@ -268,9 +268,10 @@ async function collect(ctx, rel, abs) {
  * tree, as far as the approved limit below allows. The excluded names are matched
  * folded, which can only skip more; paths are compared as canonical strings from
  * `realpath`. Returns `{ copied, skipped }` as sorted root-relative path names, or
- * null when there is no main work tree to copy from (`cwd` is the main work tree,
- * or the main work tree rule of `findMainWorkTree` finds none), where nothing is
- * copied. A Git command that fails while the main work tree is looked up throws,
+ * null, where nothing is copied, when there is no main work tree to copy from (`cwd`
+ * is the main work tree, or the main work tree rule of `findMainWorkTree` finds none)
+ * or when `--cwd`, the work tree path, a registered work tree path, or the common Git
+ * directory or main work tree path holds a control character. A Git command that fails while the main work tree is looked up throws,
  * and fails the init. An untracked file that is not
  * copied is in `skipped`. A listed directory that holds more than
  * `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and none of its files

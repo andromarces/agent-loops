@@ -61,89 +61,53 @@ export async function runProbeTurn({
 export const UNRESOLVED_COMPARE_EXIT = 4;
 
 /**
- * Run the orchestrator loop. Returns `{ exitCode: 0, summary, unresolvedCompare }`
+ * Runs the orchestrator loop. Returns `{ exitCode: 0, summary, unresolvedCompare }`
  * when the orchestrator returns `finish`, or `{ exitCode: 1 | 2, reason }` on
  * `abort`, a refused finish, or a step limit reached with work remaining. Throws
  * on fatal controller errors: orchestrator failure, detected mutation, or cancel.
- * A finish whose action set `unresolvedCompare` emits an `unresolved-compare`
- * event and reports `unresolvedCompare: true`, which the headless CLI maps to
+ * A finish that records `unresolvedCompare` emits an `unresolved-compare` event
+ * and reports `unresolvedCompare: true`, which the headless CLI maps to
  * `UNRESOLVED_COMPARE_EXIT` (#266, #279).
  *
- * With `requireCi`, the shared `checkCi` gate resolves the PR head in the
- * runtime against the last reviewer turn's reviewed state, so a finish no
- * longer depends on the parent reporting the compare. A `gh` failure inside the
- * gate is a refusal rather than a throw, because the headless run has no retry
- * outside it (#293). Every applicable gate is evaluated and every refusal is
- * reported in one prompt, ordered as in the interactive `role finish`: the
- * marker combination, the completion rule, then the gate. The marker is satisfied
- * by editing the finish action, so a finish refused for the marker alone recovers
- * with a re-finish and no child turn, and that re-finish is a repeat refusal if
- * anything else refuses it. Every other refusal needs a child turn to satisfy it,
- * and any child turn separately clears the prior-refusal flag; a second refused
- * finish with no child turn in between ends the run. That turn costs a step, so a
- * finish refused for a pending check consumes step budget to satisfy it, and a
- * worker turn is needed only when the condition is about the change: a worker
- * turn resets the reviewed state to none, and a gate reads that state, which only
- * a reviewer turn establishes. Without the flag the marker stays the only trace,
- * and an omitted marker still reads as a verified finish (#286).
+ * Finish gates: every applicable refusal is reported in one prompt, in the order
+ * of the interactive `role finish`: the unresolved-compare marker, the completion
+ * rule, the declared-PR condition, then the `requireCi` gate. A refused finish
+ * gets a corrective turn. A second refusal with no child turn in between ends the
+ * run. A refusal that a child turn satisfies costs one step. A refusal for the
+ * marker alone recovers with a re-finish and no child turn.
+ * - `requireCi`: `checkCi` resolves the PR head against the last reviewer turn's
+ *   reviewed state. A `gh` failure is a refusal, not a throw. A pass on a base
+ *   branch with no required check emits a `no-required-checks` event (#293, #336).
+ * - `pr`: the run declares its delivery PR, so a finish must pass `requireCi` for
+ *   the same PR. No child turn satisfies a missing or mismatched gate (#302).
+ * - `requireAccept`: a finish needs a later reviewer `verdict: accept` with a
+ *   Checks line after a worker turn, or at least one reviewer report with no
+ *   worker turn. The gate follows turn order only: an edit made outside the loop
+ *   between the accept and the finish is not detected.
  *
- * With `pr`, the run declares that its work is delivered on that pull request,
- * so a finish must end through the `requireCi` gate for the same PR. A missing
- * gate, or a gate naming another PR, refuses the finish and reads as a PR-gate
- * condition, so it is reported with the other refusals in the same order. A
- * declared run refuses the unresolved-compare marker the same way a gated run
- * does, and that refusal is collected with the rest rather than replacing them.
- * The gate flag is a run input, so no child turn satisfies that refusal and its
- * recovery names `abort` as the outcome the orchestrator owns. A run with
- * neither `pr` nor `requireCi` behaves exactly as before (#302). A gate that
- * passes on a base branch with no required check verified the PR head, the clean
- * reviewed tree, and the merge state, and the run emits a `no-required-checks`
- * event, so a finish that verified no check never reads as one whose checks
- * passed (#336).
- *
- * With `mode`, the headless run names its loop policy with the same flag and the
- * same values the interactive path takes, and the prompt states that mode. A
- * `review-only` mode is a run that dispatches no worker, so the CLI refuses
- * `pr`, `requireAccept`, and `requireCi` before the run starts, and the loop
- * refuses a `run_worker` action at runtime, the guard the interactive path
- * applies to `--role worker`. That mode also refuses a `finish` until a reviewer
- * turn has completed, which is the outcome the mode exists to record. The
- * interactive path reaches that state without a rule, because its init dispatch
- * is itself the reviewer turn, so the headless loop supplies the one condition
- * the interactive path gets for free (#337).
- *
- * With `continued`, the run resumes the sessions of an earlier headless run. The
- * completion gate state is reset unless `earlierGate` (see `gateFromTranscript`)
- * is valid and the current work tree has the head and digest of its last
- * reviewer turn (#393). A reset counts the work as unreviewed, so a finish under
- * `requireAccept` needs a reviewer accept in this run (#362). A restore takes
- * `lastReviewed` from the current snapshot, never from the record.
- *
- * With `copyLocalFiles` (default true), the run first copies the untracked, ignored
- * local agent and environment files of the main work tree into a linked `cwd`,
- * before the first turn and the first snapshot, and emits one `local-files`
- * event with the copied and skipped path names (ADR 0018).
- * With `testCmd`, the runtime runs that command in `cwd` before each reviewer
- * turn and supplies the result to the reviewer prompt and the result event as
- * advisory `testRun` evidence; `testCmdTimeout` bounds one run in seconds
- * (ADR 0017).
- * `reviewerSandbox` is the mode of a Codex reviewer turn: `none` (the default, which runs
- * `danger-full-access`), `read-only`, or `workspace-write` with network off. The reviewer and
- * orchestrator prompts state it. A reviewer that is not Codex has no mode. The orchestrator turns
- * and the worker turns are unchanged, and the mutation check still wraps every reviewer turn
- * (ADR 0019, ADR 0038).
- * `onSessionAssigned(roleName, id)` is awaited for the orchestrator, worker, and reviewer when an
- * adapter pre-assigns a session id, before its CLI starts, and with `null` when the CLI rejected
- * the id. It does not change the role state. The caller records the id and its unconfirmed mark
- * (ADR 0016).
- *
- * With `requireAccept`, the runtime refuses a `finish` that a reviewer has not
- * covered: after a worker turn it needs a later reviewer `verdict: accept` with
- * a Checks line, and with no worker turn it needs at least one reviewer report.
- * A refused finish gets one corrective turn; a repeated refusal, or a refusal
- * with no step budget left, ends the run with exit 1. The gate follows turn
- * order only: an edit made outside the loop between the accept and the finish
- * is not detected.
+ * `mode`: the loop policy, with the values of the interactive `--mode`. `review-only`
+ * dispatches no worker, so the CLI refuses `pr`, `requireAccept`, and `requireCi`,
+ * the loop refuses a `run_worker` action, and a `finish` waits for a completed
+ * reviewer turn (#337).
+ * `continued`: the run resumes the sessions of an earlier headless run. The gate
+ * state is restored only when `earlierGate` (see `gateFromTranscript`) is valid and
+ * the work tree has the head and digest of its last reviewer turn. Otherwise it
+ * resets and counts the work as unreviewed. A restore takes `lastReviewed` from the
+ * current snapshot, never from the record (#362, #393).
+ * `copyLocalFiles` (default true): before the first turn and snapshot, copies the
+ * untracked, ignored local files of the main work tree into a linked `cwd` and
+ * emits one `local-files` event with the copied and skipped names (ADR 0018).
+ * `testCmd`: runs in `cwd` before each reviewer turn. The result is advisory
+ * `testRun` evidence in the reviewer prompt and the result event. `testCmdTimeout`
+ * bounds one run in seconds (ADR 0017).
+ * `reviewerSandbox`: the mode of a Codex reviewer turn: `none` (default, runs
+ * `danger-full-access`), `read-only`, or `workspace-write` with network off. A
+ * reviewer that is not Codex has no mode. The mutation check wraps every reviewer
+ * turn (ADR 0019, ADR 0038).
+ * `onSessionAssigned(roleName, id)`: awaited for any role whose adapter pre-assigns
+ * a session id (the Claude adapter), before its CLI starts, and with `null` when
+ * the CLI rejected the id. It does not change the role state. The caller records
+ * the id and its unconfirmed mark (ADR 0016).
  * @param {object} options
  * @returns {Promise<{ exitCode: 0, summary: object, unresolvedCompare: boolean } | { exitCode: 1 | 2, reason: string }>}
  */

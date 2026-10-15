@@ -64,11 +64,11 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
  * passes none (ADR 0019, ADR 0038).
- * `onSessionAssigned(id)` is awaited by an adapter that pre-assigns a session id, before its CLI
- * starts, and with `null` when the CLI rejected that id. A dispatcher uses it to persist the id
- * ahead of a crash (issue #395).
+ * `onSessionAssigned(id)` is awaited by the Claude adapter, which pre-assigns a session id, before
+ * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
+ * dispatcher uses it to persist the id ahead of a crash (issue #395).
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, testRun?: object }>}
+ * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, testRun?: object }>}
  */
 export async function runChild(options) {
   const {

@@ -176,11 +176,10 @@ function isInitCall(args) {
 /**
  * Rejects a non-init call when no state file exists for the work tree.
  *
- * `needsBudget` is set by the operations that read the step budget, so an unsafe
- * stored `maxSteps` is refused before the step-budget guard. `abort` leaves it
- * unset: abort charges no step and reads no budget, and refusing it would block
- * the only route to a terminal lifecycle, because a new init refuses over a
- * non-terminal run (#312).
+ * `needsBudget` refuses an unsafe stored `maxSteps` before the operation runs.
+ * Init over an existing state, `finish`, and `extend` set it. `abort` leaves it
+ * unset: refusing it would block the only route to a terminal lifecycle, because
+ * a new init refuses over a non-terminal run (#312).
  */
 function requireState(state, cwd, { needsBudget = false } = {}) {
   if (!state) {
@@ -743,22 +742,15 @@ function describeJsonParseError(error) {
 }
 
 /**
- * `finish`: accepts the five-key summary as JSON on stdin, from active only.
- * `--require-accept` and `--require-ci` gate the finish; every applicable
- * refusal is collected and reported in one error, in the order the headless list
- * uses, because a finish that breaks two rules must name both. An optional
- * `unresolvedCompare` boolean beside the five
- * keys records an unresolved PR-head compare, which the envelope and the state
- * file then carry, so the finish stays distinct from a verified one (#281). An
- * omitted marker is that same accepted gap the contract documents beside the
- * field, because this subcommand without `--require-ci` never resolves the PR
- * head (#286). The headless loop resolves it under the same flag (#293). A run
- * that declared `--pr <pr>` at init must end through the `--require-ci <pr>`
- * gate: a finish with no gate, or with a gate for another PR, is refused, and so
- * is one that carries the marker (#302). A gate that passes on a base branch
- * with no required check verified the PR head, the clean reviewed tree, and the
- * merge state, so the finish records `noRequiredChecks` in the envelope and the
- * state file (#336).
+ * `finish`: accepts the five-key summary as JSON on stdin, from active only, and
+ * sets the lifecycle to `finished`.
+ * `--require-accept` and `--require-ci` gate the finish. Every applicable refusal
+ * is reported in one error. A run that declared `--pr <pr>` at init must end
+ * through `--require-ci <pr>`.
+ * An optional `unresolvedCompare` boolean beside the five keys, and a gate that
+ * passes with no required check (`noRequiredChecks`), are recorded in the
+ * envelope and the state file. Both keep the finish distinct from a verified
+ * one (ADR 0009, ADR 0012, issues #281, #302, #336).
  */
 async function finish(args, { stdin = readStdin, gh, signal } = {}) {
   rejectMisplacedFlags(args, "finish");
@@ -792,14 +784,9 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
     if (!validated.ok) {
       throw new RoleError(validated.error);
     }
-    // Every applicable refusal is collected and reported in one error, in the
-    // order the headless list uses, minus the `review-only` reviewer-turn
-    // condition this path cannot reach: the marker condition, the completion
-    // rule, then the declared-PR gate condition, then the gate. A finish that
-    // breaks two rules must name both, or the parent spends a `finish` call per
-    // condition. The gate runs only when nothing above refused, so a refused
-    // finish never reads GitHub, which the headless loop cannot promise because
-    // it owns the whole run (#302).
+    // Refusals are collected in the headless order, minus the `review-only`
+    // condition this path cannot reach. The gate runs only when nothing above
+    // refused, so a refused finish never reads GitHub (#302).
     const refusals = [];
     // The headless gate refuses the same combination with the same words, so the
     // message is one function rather than two copies (#293).
