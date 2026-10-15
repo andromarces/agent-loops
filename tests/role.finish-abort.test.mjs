@@ -218,10 +218,23 @@ describe("finish refusal for a summary that is not valid JSON", () => {
     return result.payload.error.slice(PREFIX.length);
   }
 
-  test("a malformed escape reports the position without echoing the input", async () => {
+  test("a malformed escape names the parser diagnosis and position without echoing the input", async () => {
     const diagnosis = await refuse(String.raw`{"changed":"C:\x"}`);
-    expect(diagnosis).toMatch(/at position \d+/);
+    expect(diagnosis).toMatch(/^Bad escaped character at position \d+/);
     expect(diagnosis).not.toContain("changed");
+  });
+
+  test.each([
+    ['{"a":"b', "Unterminated string"],
+    ['{"a":1 "b":2}', "Expected ',' or '}' after property value"],
+    ["[1 2]", "Expected ',' or ']' after array element"],
+    ['{"a":1} x', "Unexpected non-whitespace character after JSON"],
+  ])("%s names the parser diagnosis %s", async (text, phrase) => {
+    expect(await refuse(text)).toMatch(new RegExp(`^${phrase} at position \\d+`));
+  });
+
+  test("an empty summary names the end-of-input diagnosis", async () => {
+    expect(await refuse("")).toBe("Unexpected end of JSON input");
   });
 
   test("a bare token is not echoed", async () => {
