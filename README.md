@@ -4,7 +4,7 @@ Run one coding task as a loop of CLI coding agents.
 
 - An **orchestrator** agent picks the next step.
 - A **worker** agent changes the code and runs the tests.
-- A **reviewer** agent checks the result. It must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed. A read-only sandbox or mode blocks every write on every CLI except Codex, and a Codex reviewer runs with no sandbox by default, so only the mutation check detects an edit.
+- A **reviewer** agent checks the result. It must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed. Every CLI except Codex runs the reviewer with a read-only flag whose effect differs by CLI ([reviewer safety](docs/reference/reviewer-safety.md)), and a Codex reviewer runs with no sandbox by default, so only the mutation check detects an edit.
 - A Node.js runtime enforces the step budget and the timeouts, and detects a change to the work tree during a reviewer or orchestrator turn.
 
 ```text
