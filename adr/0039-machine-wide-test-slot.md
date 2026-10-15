@@ -47,6 +47,7 @@ Andro Marces
 
 ## Links
 
+- [Pull request #849](https://github.com/andromarces/agent-loops/pull/849)
 - [Issue #847](https://github.com/andromarces/agent-loops/issues/847)
 - [Issue #848](https://github.com/andromarces/agent-loops/issues/848)
 - [ADR 0017: Run a test command before each reviewer turn](0017-run-a-test-command-before-each-reviewer-turn.md)
