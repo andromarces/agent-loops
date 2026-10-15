@@ -15,6 +15,9 @@ version. Each section keeps the anchor that it had in the README.
   - [Install](reference/install.md#install)
   - [Upgrade](reference/install.md#upgrade)
   - [Uninstall skips](reference/install.md#uninstall-skips)
+  - [Run without installing](reference/install.md#run-without-installing)
+  - [Install from a Git URL](reference/install.md#install-from-a-git-url)
+  - [The `agent-loop` command](reference/install.md#the-agent-loop-command)
   - [From a clone (development)](reference/install.md#from-a-clone-development)
 - [Headless runs](reference/usage.md)
   - [Usage](reference/usage.md#usage)
@@ -44,7 +47,6 @@ version. Each section keeps the anchor that it had in the README.
   - [Development](reference/development.md#development)
   - [Releasing](reference/development.md#releasing)
   - [Manual smoke test](reference/development.md#manual-smoke-test)
-  - [Future additions](reference/development.md#future-additions)
 
 Other documents:
 

@@ -8,6 +8,10 @@
 
 pnpm is required only for development in a clone, not for a registry install.
 
+The package `engines.node` range
+matches the `vite-plus` range. On a Node version outside it, npm warns, and with
+`engine-strict` set the install fails.
+
 ## Install
 
 Install the CLI globally:
@@ -122,6 +126,8 @@ Not verified:
   "@andromarces/agent-loops" for importer "."` with `Access is denied. (os error 5)`.
   The render on a UNC share stays covered by the fallback test only.
 
+Install the entry points for two harnesses without a prompt, then remove them:
+
 ```bash
 agent-loop install --harness claude,codex --yes
 agent-loop uninstall
@@ -181,7 +187,9 @@ entry, keeps your edits, and leaves the result not byte-identical. The backup at
 `<file>.agent-loops-backup` stays behind, so delete it by hand when you no
 longer need the pre-install copy.
 
-Run it without installing:
+### Run without installing
+
+Run the CLI from the package cache:
 
 ```bash
 npx @andromarces/agent-loops --help
@@ -190,6 +198,8 @@ pnpm dlx @andromarces/agent-loops --help
 
 `--help` writes no config, so it runs from the cache. `install` writes config
 that points at the package, so it refuses from the cache; see [Install](#install).
+
+### Install from a Git URL
 
 Install from a Git URL instead of the registry:
 
@@ -213,9 +223,7 @@ works without `prepare`. To run `prepare`, add
 npm install -g --allow-git=all --allow-scripts=@andromarces/agent-loops github:andromarces/agent-loops
 ```
 
-The package `engines.node` range
-matches the `vite-plus` range. On a Node version outside it, npm warns, and with
-`engine-strict` set the install fails.
+### The `agent-loop` command
 
 The `bin` script keeps its `#!/usr/bin/env node` shebang and executable bit, so macOS and Linux link an executable file. npm generates the `.cmd` and `.ps1` shims on Windows, so `agent-loop` resolves in PowerShell and cmd. An `agent-loops` alias points at the same CLI, so `npx @andromarces/agent-loops` and `pnpm dlx @andromarces/agent-loops` resolve it. The command locates its package files relative to the installed script, not `process.cwd()`, so it works from any directory; `--cwd` selects the work tree.
 

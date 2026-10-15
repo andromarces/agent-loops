@@ -458,11 +458,8 @@ older `--reviewer-workspace-write` stays as an alias of `--reviewer-sandbox
 workspace-write`. The flag needs `--reviewer codex`, and any other reviewer is
 refused at init.
 
-| Mode              | Codex setting                                                                    | Shell network          |
-| ----------------- | -------------------------------------------------------------------------------- | ---------------------- |
-| none (default)    | `sandbox_mode="danger-full-access"`                                              | on                     |
-| `read-only`       | `sandbox_mode="read-only"`                                                       | off for shell commands |
-| `workspace-write` | `sandbox_mode="workspace-write"`, `sandbox_workspace_write.network_access=false` | off for shell commands |
+The mode table is in
+[Codex reviewer sandbox mode](reference/reviewer-safety.md#codex-reviewer-sandbox-mode).
 
 - Only reviewer turns change. Every orchestrator turn keeps `read-only`, every
   worker turn gets no reviewer input, and the other four adapters keep their
@@ -500,33 +497,17 @@ refused at init.
   wait-checks`, whatever the reviewer mode. A sandboxed Codex reviewer with a
   non-waiting orchestrator stays on the gate rule. The `--require-ci` finish gate
   is the only read that enforces.
-- Read the accepted gaps before you rely on it:
-  - The sandbox no longer prevents a reviewer edit with no sandbox, and does not
-    in `workspace-write`. An edit succeeds, and the run then halts with a
-    `MutationError`, exit 1, and the runtime does not revert it.
-  - The snapshot does not see a write to an ignored file (for example `.env` or
-    `node_modules/`), a write outside the repository, a write that the turn
-    restores before it ends, or Git state other than the index and `HEAD`
-    (other refs, the stash, the config). With no sandbox, a write outside the
-    repository is not limited by a sandbox either.
-  - With no sandbox, the shell commands of the turn can reach the network, so a
-    reviewer can run `gh` and `git` and push, merge, review, or comment. The local
-    snapshot does not see a remote write over any channel. The rule against remote
-    writes (issue #422) is advisory and not enforced. In the sandboxed modes, the
-    shell path is closed except under the user-rule exception (issue #640), and
-    the sandbox does not block a channel outside it, for example a GitHub app
-    connector or another model-side tool.
-  - A command that a reviewer starts can write after its parent ends (ADR 0034).
-    With no sandbox, that write is not limited to the work tree.
-  - Reviewed content that holds an instruction can steer a command that writes or
-    sends data, not only one that reads. An operator who needs containment
-    chooses a sandboxed mode, or runs the reviewer in an external sandbox with no
-    credential for the remote.
-  - The unelevated Windows sandbox probably gives no gain in `workspace-write`: it
-    blocks a child spawn with `EPERM`. Not verified for a test runner. The
-    no-sandbox mode is not verified on Windows, macOS, or Linux with a live Codex
-    turn (issues #708, #709). Its behavior under a Codex requirements file that
-    does not allow `danger-full-access` is not verified (issue #710).
+- The mutation check is detection only. With no sandbox, or in `workspace-write`,
+  a reviewer edit succeeds, the run halts with a `MutationError`, exit 1, and the
+  runtime does not revert it. The snapshot does not see a write to an ignored
+  file, a write outside the repository, or a remote write. The rule against
+  remote writes (issue #422) is advisory. An operator who needs containment
+  chooses a sandboxed mode, or runs the reviewer in an external sandbox with no
+  credential for the remote. Read the accepted gaps in
+  [Codex reviewer sandbox mode](reference/reviewer-safety.md#codex-reviewer-sandbox-mode)
+  and
+  [Safety trade-off of the no-sandbox mode](reference/reviewer-safety.md#safety-trade-off-of-the-no-sandbox-mode)
+  before you rely on a mode.
 - A reviewer `Checks` line that shows a local test run is the reviewer's own
   report. Compare it with `testRun` and with the required CI checks.
 
