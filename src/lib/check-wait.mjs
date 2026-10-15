@@ -3,7 +3,7 @@
 // takes no timeout for the watch, and a shell `timeout` exists on neither
 // Windows nor macOS by default. The runtime owns the bound instead (issue #329).
 import { setTimeout as delay } from "node:timers/promises";
-import { runGh } from "./ci-gate.mjs";
+import { ghFailureText, runGh } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
 
 /** Default wait bound, in seconds. Short enough to fit a harness command timeout. */
@@ -111,7 +111,7 @@ function readOutcome(pr, { status, stdout, stderr, timedOut = false }) {
       parsed = null;
     }
     if (!Array.isArray(parsed)) {
-      throw new Error(`${label} could not be read: ${stderr.trim() || `exit ${status}`}`);
+      throw new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
     }
     const items = parsed.map(readItem);
     const bad = items.findIndex((item) => item === null);
@@ -136,7 +136,7 @@ function readOutcome(pr, { status, stdout, stderr, timedOut = false }) {
     return { settled: true, checks };
   }
   if (status !== 0) {
-    throw new Error(`${label} could not be read: ${stderr.trim() || `exit ${status}`}`);
+    throw new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
   }
   return { settled: false, checks };
 }
