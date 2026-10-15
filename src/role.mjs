@@ -46,7 +46,7 @@ import {
   storedReviewerSandbox,
   validateInitFlags,
 } from "./role-init-flags.mjs";
-import { runChild } from "./runtime.mjs";
+import { runChild } from "./child-turn.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
 const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "wait-checks"]);

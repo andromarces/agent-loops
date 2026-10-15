@@ -5,7 +5,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { runClaude } from "../../src/agents/claude.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
-import { runChild } from "../../src/runtime.mjs";
+import { runChild } from "../../src/child-turn.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
