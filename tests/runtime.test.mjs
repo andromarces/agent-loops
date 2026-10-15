@@ -19,7 +19,8 @@ vi.mock("execa", async (importOriginal) => {
 
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
-import { runChild, runLoop } from "../src/runtime.mjs";
+import { runChild } from "../src/child-turn.mjs";
+import { runLoop } from "../src/runtime.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
 import {
   cleanRepoGit,

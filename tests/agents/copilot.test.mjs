@@ -6,7 +6,7 @@ import { runCopilot } from "../../src/agents/copilot.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
-import { runChild } from "../../src/runtime.mjs";
+import { runChild } from "../../src/child-turn.mjs";
 
 vi.mock("../../src/lib/exec.mjs", () => ({
   exec: vi.fn(),
