@@ -47,17 +47,17 @@ export function validateInitFlags(args, agents = {}) {
     requiredRoles: (args.mode ?? "work-first") === "review-only" ? ["reviewer"] : CHILD_ROLE_KINDS,
     isSupportedAgent: (kind) => supportedAgents.has(kind) || Boolean(agents[normalizeAgent(kind)]),
     blankTaskText: 'Init requires --task, for example --task "Implement the change."',
+    rolesFirst: false,
+    // The parent guard is the hard backstop for the prompt-only parent rule, so an
+    // interactive run is never left unguarded by default. The headless `agent-loop`
+    // command (no subcommand) is the explicit unguarded path.
+    pathRefusal: () =>
+      args.parentSession === null
+        ? "Init requires --parent-session (the harness session id the parent-edit guard matches)."
+        : null,
   });
   if (refusal) {
     throw new RoleError(refusal);
-  }
-  // The parent guard is the hard backstop for the prompt-only parent rule, so an
-  // interactive run is never left unguarded by default. The headless `agent-loop`
-  // command (no subcommand) is the explicit unguarded path.
-  if (args.parentSession === null) {
-    throw new RoleError(
-      "Init requires --parent-session (the harness session id the parent-edit guard matches).",
-    );
   }
 }
 

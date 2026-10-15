@@ -108,15 +108,15 @@ export function parseArgs(argv) {
     },
   });
 
-  if (options.task !== null && options.taskFile !== null) {
-    throw new Error(TASK_SOURCE_CONFLICT);
-  }
   // A task file is read in `main`, which then applies the same check.
   const refusal = initRefusal(options, {
     roles: ROLES,
     requiredRoles: ROLES,
     isSupportedAgent: (kind) => supportedAgents.has(kind),
     blankTaskText: options.taskFile === null ? MISSING_TASK_TEXT : null,
+    rolesFirst: true,
+    pathRefusal: () =>
+      options.task !== null && options.taskFile !== null ? TASK_SOURCE_CONFLICT : null,
   });
   if (refusal) {
     throw new Error(refusal);

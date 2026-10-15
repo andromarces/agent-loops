@@ -718,3 +718,30 @@ test("init proceeds when a process only names an earlier session id inside a pat
   const init = initWithTable(repo, [{ pid: 9, command: `tail -f /logs/${HELD_ID}.log` }]);
   expect((await init.run()).exitCode).toBe(0);
 });
+
+// Usefulness: acceptance (#816) — a missing --parent-session is reported before the shared flag
+// checks, the order of role init, so the shared composition does not reorder the path-only check.
+test("init without --parent-session reports it before a blank --test-cmd", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const result = await executeRoleCommand(
+    withRepo(
+      dispatchArgv([
+        "--task",
+        "Task.",
+        "--worker",
+        "fake1",
+        "--reviewer",
+        "fake2",
+        "--test-cmd",
+        " ",
+      ]),
+      repo,
+    ),
+    { ...basicDeps() },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("--parent-session");
+});

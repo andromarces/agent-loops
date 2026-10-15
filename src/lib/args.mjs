@@ -239,64 +239,88 @@ export function openCodeOptionsError(role, kind, model, effort) {
 }
 
 /**
- * The init checks that the headless command and `role` init share, in one order. Each caller
- * throws its own error type for the returned text and keeps the checks that only its path has.
+ * The init checks that the headless command and `role` init share. Each caller throws its own
+ * error type for the returned text. The checks that only one path has run in `pathRefusal`, at
+ * the point where that path ran them: after the first group of shared checks and before the rest.
+ * The headless order is roles, then task and flags. The `role` order is task, then flags and roles.
  * @param {object} args parsed options
  * @param {object} config
  * @param {string[]} config.roles roles whose kind, model, and effort are validated
  * @param {string[]} config.requiredRoles roles that must have a kind
  * @param {(kind: string) => boolean} config.isSupportedAgent
  * @param {string | null} config.blankTaskText refusal for a blank task, or null to skip the check
- * @returns {string | null} the first refusal, or null when every shared check passes
+ * @param {boolean} config.rolesFirst true to run the role checks before the task check
+ * @param {() => string | null} config.pathRefusal checks of one path, run between the two groups
+ * @returns {string | null} the first refusal, or null when every check passes
  */
-export function initRefusal(args, { roles, requiredRoles, isSupportedAgent, blankTaskText }) {
-  if (blankTaskText !== null && (args.task === null || String(args.task).trim() === "")) {
-    return blankTaskText;
-  }
-  const testCmdRefusal = testCmdError(args.testCmd, args.testCmdTimeout);
-  if (testCmdRefusal) {
-    return testCmdRefusal;
-  }
-  const sandboxRefusal = reviewerSandboxError(
-    args.reviewerSandbox,
-    args.reviewer === null ? null : normalizeAgent(args.reviewer),
-  );
-  if (sandboxRefusal) {
-    return sandboxRefusal;
-  }
-  // review-only dispatches no worker and rejects --require-ci at finish, so a
-  // declared PR there could never be gated (#302, #337).
-  if (args.pr !== null && (args.mode ?? "work-first") === "review-only") {
-    return REVIEW_ONLY_PR_REFUSAL;
-  }
-  for (const role of requiredRoles) {
-    if (args[role] === null) {
-      return `Missing required --${role}.`;
+export function initRefusal(
+  args,
+  { roles, requiredRoles, isSupportedAgent, blankTaskText, rolesFirst, pathRefusal },
+) {
+  const taskCheck = () =>
+    blankTaskText !== null && (args.task === null || String(args.task).trim() === "")
+      ? blankTaskText
+      : null;
+  const flagChecks = () => {
+    const testCmdRefusal = testCmdError(args.testCmd, args.testCmdTimeout);
+    if (testCmdRefusal) {
+      return testCmdRefusal;
     }
-  }
-  // Every supplied role is still validated. A model or effort without its
-  // role kind is an orphan option, not a silent drop.
-  for (const role of roles) {
-    const kind = args[role];
-    if (kind === null) {
-      for (const flag of [`${role}Model`, `${role}Effort`]) {
-        if (args[flag] !== null) {
-          return `${ROLE_FLAG_BY_OPTION[flag]} requires --${role}.`;
-        }
-      }
-      continue;
-    }
-    if (!isSupportedAgent(kind)) {
-      return `Unsupported ${role}: ${kind}`;
-    }
-    const openCodeRefusal = openCodeOptionsError(
-      role,
-      kind,
-      args[`${role}Model`],
-      args[`${role}Effort`],
+    const sandboxRefusal = reviewerSandboxError(
+      args.reviewerSandbox,
+      args.reviewer === null ? null : normalizeAgent(args.reviewer),
     );
-    if (openCodeRefusal) {
-      return openCodeRefusal;
+    if (sandboxRefusal) {
+      return sandboxRefusal;
+    }
+    // review-only dispatches no worker and rejects --require-ci at finish, so a
+    // declared PR there could never be gated (#302, #337).
+    if (args.pr !== null && (args.mode ?? "work-first") === "review-only") {
+      return REVIEW_ONLY_PR_REFUSAL;
+    }
+    return null;
+  };
+  const roleChecks = () => {
+    for (const role of requiredRoles) {
+      if (args[role] === null) {
+        return `Missing required --${role}.`;
+      }
+    }
+    // Every supplied role is still validated. A model or effort without its
+    // role kind is an orphan option, not a silent drop.
+    for (const role of roles) {
+      const kind = args[role];
+      if (kind === null) {
+        for (const flag of [`${role}Model`, `${role}Effort`]) {
+          if (args[flag] !== null) {
+            return `${ROLE_FLAG_BY_OPTION[flag]} requires --${role}.`;
+          }
+        }
+        continue;
+      }
+      if (!isSupportedAgent(kind)) {
+        return `Unsupported ${role}: ${kind}`;
+      }
+      const openCodeRefusal = openCodeOptionsError(
+        role,
+        kind,
+        args[`${role}Model`],
+        args[`${role}Effort`],
+      );
+      if (openCodeRefusal) {
+        return openCodeRefusal;
+      }
+    }
+    return null;
+  };
+
+  const [first, rest] = rolesFirst
+    ? [[roleChecks], [taskCheck, flagChecks]]
+    : [[taskCheck], [flagChecks, roleChecks]];
+  for (const check of [...first, pathRefusal, ...rest]) {
+    const refusal = check();
+    if (refusal) {
+      return refusal;
     }
   }
   return null;

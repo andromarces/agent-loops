@@ -84,6 +84,8 @@ const initConfig = {
   requiredRoles: ["worker", "reviewer"],
   isSupportedAgent: (kind) => ["claude", "codex", "opencode"].includes(kind),
   blankTaskText: "Task needed.",
+  rolesFirst: false,
+  pathRefusal: () => null,
 };
 
 // Usefulness: acceptance (#816) — each single fault yields its one refusal text for both paths, and
