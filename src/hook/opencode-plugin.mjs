@@ -22,6 +22,8 @@
 // an out-of-process `AGENT_LOOP_RUNS_ROOT` override (test-only) would desync
 // it from the `agent-loop` CLI that wrote the index.
 
+import { parentInstructionParts } from "../lib/parent-instructions.mjs";
+
 // The permission actions that carry a file edit. A set, not a single constant,
 // so a further edit tool is one entry. A live probe against OpenCode
 // v0.0.0-dev-19933 showed the built-in `edit`, `write`, and `apply_patch` tools
@@ -41,12 +43,12 @@ export function createParentGuardPlugin({ decideParentGuard, instructionsPath })
   const COMMAND_NAME = "agent-loop";
 
   const INSTRUCTIONS = (sessionID, task) =>
-    [
-      `Read \`${instructionsPath}\` and follow it for this request.`,
-      "The task and role settings are:",
+    parentInstructionParts({
+      harnessName: "OpenCode",
+      instructionsPath,
+      sessionId: sessionID,
       task,
-      `This OpenCode session id is \`${sessionID}\`. Pass it as \`--parent-session\` on the init dispatch call.`,
-    ].join("\n\n");
+    }).join("\n\n");
 
   return {
     id: "agent-loop.parent-guard",
