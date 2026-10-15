@@ -630,7 +630,8 @@ test("Antigravity templates pass the conversation id and wire the shim", async (
   const { files } = await buildTargets("antigravity", { home: packageRoot, packageRoot });
   const skill = files.find((file) => file.path.endsWith("SKILL.md")).content;
   expect(skill).toContain("/agent-loop");
-  expect(skill).not.toContain("{{AGENT_LOOP_INSTRUCTIONS}}");
+  const instructions = join(packageRoot, "docs", "orchestrator-instructions.md");
+  expect(skill).toContain(`Read \`${instructions.replaceAll("\\", "/")}\``);
   expect(skill).toContain("ANTIGRAVITY_CONVERSATION_ID");
   expect(skill).toContain("--parent-session");
 
