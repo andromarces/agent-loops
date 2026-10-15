@@ -94,7 +94,7 @@ export function splitInlineFlag(arg) {
 // Both readers accept a safe integer only. Above `Number.MAX_SAFE_INTEGER`, an
 // integer double has no room for `value + 1`, so a step counter built from it
 // stops advancing and `--max-steps` stops bounding anything (#312).
-export function readPositiveInt(flag, value) {
+function readPositiveInt(flag, value) {
   const val = Number(value);
   if (!Number.isSafeInteger(val) || val < 1) {
     throw new Error(`${flag} must be a positive integer.`);
@@ -102,7 +102,7 @@ export function readPositiveInt(flag, value) {
   return val;
 }
 
-export function readNonNegativeInt(flag, value) {
+function readNonNegativeInt(flag, value) {
   const val = Number(value);
   if (!Number.isSafeInteger(val) || val < 0) {
     throw new Error(`${flag} must be a non-negative integer.`);
@@ -115,7 +115,7 @@ export function readNonNegativeInt(flag, value) {
  * state its accepted range where the budget is documented. The value is a step
  * count and a loop bound, so it must stay a safe integer.
  */
-export function readMaxSteps(value) {
+function readMaxSteps(value) {
   return readPositiveInt("--max-steps", value);
 }
 
@@ -136,7 +136,7 @@ export function testCmdError(testCmd, testCmdTimeout) {
 
 // The reviewer sandbox modes of a Codex reviewer (ADR 0038). `none` is the default of a new run
 // and has no flag. The flag names only the two sandboxed modes.
-export const REVIEWER_SANDBOX_FLAG_MODES = ["read-only", "workspace-write"];
+const REVIEWER_SANDBOX_FLAG_MODES = ["read-only", "workspace-write"];
 export const REVIEWER_SANDBOX_MODES = ["none", ...REVIEWER_SANDBOX_FLAG_MODES];
 
 /**
@@ -187,9 +187,9 @@ export const DEFAULT_TIMEOUT = 3600;
 // Loop modes, shared by the headless `--mode` and the role subcommand `--mode`
 // so both paths accept the same values and refuse the same PR flags in
 // review-only (#337).
-export const MODES = new Set(["work-first", "review-first", "review-only"]);
+const MODES = new Set(["work-first", "review-first", "review-only"]);
 
-export function modeError(value) {
+function modeError(value) {
   return `--mode must be one of work-first, review-first, review-only, got: ${value}`;
 }
 

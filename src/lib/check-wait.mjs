@@ -96,11 +96,8 @@ function isFailing(check) {
  *   output is a read error. A list item that is not well formed is unresolved
  *   too, so one unreadable item cannot settle the list as a pass.
  */
-function readOutcome(pr, { status, stdout, stderr, timedOut = false }) {
+function readOutcome(pr, { status, stdout, stderr }) {
   const label = `gh pr checks ${pr} --required`;
-  if (timedOut) {
-    return { settled: false, checks: null };
-  }
   const text = stdout.trim();
   let checks = [];
   if (text !== "") {
@@ -240,7 +237,7 @@ export async function waitChecks({
     // An empty list is not a settled read: `gh pr checks --required` omits a
     // check that has not started, so the last reported states are kept for the
     // envelope while the wait continues.
-    if (outcome.checks !== null && outcome.checks.length > 0) {
+    if (outcome.checks.length > 0) {
       last = outcome.checks;
     }
     if (outcome.settled) {

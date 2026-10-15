@@ -23,13 +23,12 @@ import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrat
  * changes the work tree throws `MutationError`, a failed snapshot throws `SnapshotError`, and
  * `signal` cancels the CLI call. Every error is thrown, never returned as a result, because the
  * caller refuses the continuation on any failure.
- * @param {{ agents?: object, state: object, roleName: string, prompt?: string, cwd: string, timeout?: number | null, signal?: AbortSignal }} options
+ * @param {{ agents?: object, state: object, roleName: string, cwd: string, timeout?: number | null, signal?: AbortSignal }} options
  */
 export async function runProbeTurn({
   agents = defaultAgents,
   state,
   roleName,
-  prompt = "Reply with the single word OK.",
   cwd,
   timeout,
   signal,
@@ -42,7 +41,7 @@ export async function runProbeTurn({
         agents,
         state,
         roleName,
-        prompt,
+        prompt: "Reply with the single word OK.",
         opts: { cwd, readOnly: true, timeout, signal },
         onEvent: () => {},
         stepsUsed: 0,
