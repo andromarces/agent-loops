@@ -25,10 +25,13 @@ const SESSION_CHANNEL = {
   codex: {
     variable: "CODEX_THREAD_ID",
     reason: "a nested harness inherits it",
+    // Codex renders the paragraph as two; Antigravity keeps one.
+    paragraphBreak: "\n\n",
   },
   antigravity: {
     variable: "ANTIGRAVITY_CONVERSATION_ID",
     reason: "a nested harness inherits it",
+    paragraphBreak: "\n",
   },
 };
 
@@ -81,13 +84,14 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
   // The shared harness-check and session-channel paragraphs fill `{{HARNESS_CHECK}}` and
   // `{{SESSION_CHANNEL}}` before the path placeholders resolve. Only a skill harness reads them.
   const addSkill = async (skillsDir) => {
-    const { variable, reason } = SESSION_CHANNEL[harness];
+    const { variable, reason, paragraphBreak } = SESSION_CHANNEL[harness];
     const renderParagraph = (text) =>
       text
         .replaceAll("{{HARNESS_ID}}", harness)
         .replaceAll("{{HARNESS_LABEL}}", HARNESS_META[harness].label)
         .replaceAll("{{SESSION_VAR}}", variable)
         .replaceAll("{{SESSION_VAR_REASON}}", reason)
+        .replaceAll("{{SESSION_BREAK}}", paragraphBreak)
         .trimEnd();
     const skill = await template(templateDir, harness, "skills", "agent-loop", "SKILL.md");
     const harnessCheck = renderParagraph(await template(templateDir, "harness-check.md"));
