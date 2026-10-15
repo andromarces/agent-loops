@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import { expect, test } from "vite-plus/test";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 
@@ -350,6 +351,7 @@ test("the test group states the timed-out and work-tree-change rules", () => {
     changedCount: 5,
   });
   expect(prompt).toContain("A timed-out result is neither a pass nor a failure.");
+  expect(prompt).toContain("A slot-timeout result means that the command did not run");
   expect(prompt).toContain('The command changed the work tree: "a.txt", "b.txt" and 3 more.');
   expect(prompt).toContain("not your mutation");
 });
@@ -398,7 +400,9 @@ test("reviewer prompt carries the sandbox note of its mode only", () => {
     expect(prompt).toContain(FILE_CHANGE_RULE);
     expect(prompt).toContain(SCRATCH_WRITE_ALLOWED);
     expect(prompt).toContain("Do not write to GitHub or any remote");
-    expect(prompt).not.toMatch(/pnpm|npm|yarn|vitest|jest|node_modules|agent-loop/i);
+    // The note alone: the full-suite rule names the CLI path of this run (issue #848).
+    const note = prompt.slice(prompt.indexOf("Sandbox note"), prompt.indexOf("End your response"));
+    expect(note).not.toMatch(/pnpm|npm|yarn|vitest|jest|node_modules|agent-loop/i);
   }
   const on = reviewerPrompt("check the fix", null, null, "workspace-write");
   expect(on).toContain("local binary");
@@ -475,4 +479,17 @@ test("reviewer prompt forbids ending a process by name or command-line match", (
     "Never stop, kill, or signal a process that your own commands did not start, and never select processes by name or by a command-line match.",
   );
   expect(prompt).toContain("End only the exact PIDs your own commands started.");
+});
+
+// Usefulness: verifies requirement "a reviewer runs a full suite only through the test slot" (issue
+// #848): every reviewer turn names the wrapper of this run, so parallel runs on one host do not
+// oversubscribe it, and a turn without a supplied test result carries the rule too.
+test("every reviewer turn routes a full suite through the test slot wrapper of this run", async () => {
+  for (const prompt of [reviewerPrompt("check"), reviewerPrompt("check", null, TEST_RUN, "none")]) {
+    expect(prompt).toContain("Run a targeted test file directly.");
+    const match = prompt.match(/"([^"]+)" "([^"]+)" test-slot -- "<full suite command>"/);
+    expect(match).not.toBeNull();
+    expect(match[1]).toBe(process.execPath.replaceAll("\\", "/"));
+    await access(match[2]);
+  }
 });

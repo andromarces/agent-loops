@@ -34,7 +34,7 @@ The repository already has an exclusive lock file with an owner record and stale
 - The slot directory is not per user, as the runs root is not. Where `os.tmpdir()` is shared between OS users, as `/tmp` on Linux, the first user owns the directory, and another user gets exit 1 unless `AGENT_LOOP_TEST_SLOTS_ROOT` points elsewhere.
 - A wrapper ended by a hard kill (SIGKILL, or `taskkill /F` on Windows) runs no handler. Its slot is reclaimed as stale, and its command tree can keep running outside a slot (ADR 0028). Windows delivers no catchable SIGTERM from another process, so only Ctrl+C (SIGINT) runs the ordered release there.
 - The wait is not fair: a waiting wrapper takes the first slot it finds free.
-- Routing `--test-cmd` and the child prompts through the slot is issue #848.
+- ADR 0040 routes `--test-cmd` and the child prompts through the slot (issue #848).
 
 ## Alternatives
 
@@ -54,6 +54,7 @@ Andro Marces
 - [Pull request #849](https://github.com/andromarces/agent-loops/pull/849)
 - [Issue #847](https://github.com/andromarces/agent-loops/issues/847)
 - [Issue #848](https://github.com/andromarces/agent-loops/issues/848)
+- [ADR 0040: Run the test command in a test slot and route child full suites through the wrapper](0040-run-the-test-command-in-a-test-slot.md)
 - [ADR 0017: Run a test command before each reviewer turn](0017-run-a-test-command-before-each-reviewer-turn.md)
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - [ADR 0028: End the Windows process tree when the runtime exits](0028-end-the-windows-process-tree-when-the-runtime-exits.md)

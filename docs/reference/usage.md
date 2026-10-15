@@ -106,10 +106,14 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
                               and to the orchestrator as testRun beside the reviewer
                               response. This flag is the only source of the command. It
                               runs with the environment of the runtime, so keep secrets out
-                              of the command text. Off by default; a run without it is
-                              unchanged. On `agent-loop role` it is an init flag, and every
-                              reviewer dispatch passes the same value again; a changed or
-                              missing value is refused.
+                              of the command text. It runs inside a machine-wide test slot
+                              (see Test slot); a slot wait that reaches
+                              AGENT_LOOP_TEST_SLOT_WAIT (default 1800 seconds) runs no
+                              command and reports slot-timeout, which is neither a pass nor
+                              a failure. Off by default; a run without it is unchanged. On
+                              `agent-loop role` it is an init flag, and every reviewer
+                              dispatch passes the same value again; a changed or missing
+                              value is refused.
 --test-cmd-timeout <seconds>  Bound on one --test-cmd run. Defaults to 600. At the bound the
                               command's own process group (POSIX) or process tree
                               (Windows) is killed, and the run reports timed-out, which is
@@ -262,6 +266,7 @@ agent-loop test-slot --slots 2 --wait 600 -- "pnpm exec vp test run"
 - **Slot directory.** `<os tmpdir>/agent-loops/test-slots`, one lock file per held slot and one short acquisition lock. Env: `AGENT_LOOP_TEST_SLOTS_ROOT`. A slot whose owner process is gone is reclaimed. A slot file that cannot be read or parsed counts as held until the stale rules prove it stale. Where `os.tmpdir()` is shared between OS users, as `/tmp` on Linux, set the env to a directory per user.
 - **Nested call.** The command runs with `AGENT_LOOP_TEST_SLOT_HELD` set to its slot file and owner nonce. A wrapper that starts with it set runs its command at once, in the same process group, only while that slot is still held by that live owner. Any other marker, for example one exported by hand, is ignored with a warning, and the wrapper waits for a slot.
 - **Signals.** SIGINT or SIGTERM ends the process group (POSIX) or process tree (Windows) of the command, then frees the slot. The outer kill also ends a nested wrapper and its command. A hard kill of the wrapper leaves the slot to the stale-owner recovery and can leave the command running.
+- **Runtime and child turns (ADR 0040).** The runtime runs `--test-cmd` inside a slot through the slot module, with the same count, directory, and wait environment variables. Its wait bound is separate from `--test-cmd-timeout`: at the bound the command does not run and `testRun.status` is `slot-timeout`. Every worker and reviewer turn is told to run a targeted test file directly and a full suite only through this wrapper, with a command that names the Node binary and the CLI script of the run, or to rely on the required CI checks.
 - **Approved limits (ADR 0039).** `agent-loop test-slot --help` names the three limits: the shared slot directory (see Slot directory), detached work, and nested-wrapper signals. On POSIX, a signal sent only to a nested wrapper ends its direct child and can leave grandchildren running; a signal to the outer wrapper ends the whole group. Detached work that a wrapped command starts, for example through `setsid` or a daemon, can outlive the slot release and runs outside any slot, as with the `--test-cmd` orphan limit (ADR 0017).
 
 | Code         | Meaning                                                                                                                                                                                  |

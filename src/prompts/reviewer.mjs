@@ -1,5 +1,5 @@
 import { escapeLineSeparators } from "./escape.mjs";
-import { SHELL_EXCEPTION, processRule, reportBlock } from "./report.mjs";
+import { SHELL_EXCEPTION, processRule, reportBlock, testSlotRule } from "./report.mjs";
 
 // Same closing block as reportBlock, with the verdict line inside it so the
 // model treats it as part of the mandatory block, not an optional extra. The
@@ -55,7 +55,7 @@ function testRunLines(testRun) {
   const lines = [
     "Test command evidence, supplied by the runtime:",
     `- The runtime ran the operator's test command in the work tree before this turn, outside your sandbox: ${testRun.command}. Result: ${testRun.summary}. This is advisory evidence for this turn, not a verdict. Report it in Checks as a result the runtime read, and compare it with anything you ran yourself.`,
-    "- A timed-out result is neither a pass nor a failure. Report it as unresolved in Checks. A failed command is evidence of a failure, so report the failing tests as a blocker only when the output names them.",
+    "- A timed-out result is neither a pass nor a failure. Report it as unresolved in Checks. A slot-timeout result means that the command did not run, because no machine-wide test slot was free: report it as unresolved in Checks too. A failed command is evidence of a failure, so report the failing tests as a blocker only when the output names them.",
   ];
   if (testRun.workTreeChanged) {
     const shown = pathList(testRun.changedPaths);
@@ -128,6 +128,7 @@ export function reviewerPrompt(prompt, prChecks = null, testRun = null, sandboxM
 Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state. Review, assess, and verify only. ${scratchWriteRule} Live probes and read-only queries are authorized.
 ${remoteWriteRule}
 ${processRule}
+${testSlotRule()}
 
 ${reviewerRules}${supplied}${tests}${sandbox}
 

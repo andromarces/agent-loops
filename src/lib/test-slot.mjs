@@ -126,13 +126,26 @@ export function parseTestSlotArgs(argv, env = process.env) {
   if (rest.length !== 1 || rest[0].trim() === "") {
     throw usageError("Pass the command as exactly one argument, quoted for the calling shell.");
   }
+  return { ...testSlotOptions(env, { slots, waitSeconds: wait }), command: rest[0] };
+}
+
+/**
+ * The slot count and wait bound: each flag value that is not null, else its environment value,
+ * else its default. Throws an error with `usage: true` on an invalid environment value that
+ * applies.
+ * @returns {{ slots: number, waitSeconds: number }}
+ */
+export function testSlotOptions(
+  env = process.env,
+  { slots = null, waitSeconds: wait = null } = {},
+) {
   slots ??= env.AGENT_LOOP_TEST_SLOTS
     ? slotCount(env.AGENT_LOOP_TEST_SLOTS, "AGENT_LOOP_TEST_SLOTS")
     : Math.max(1, Math.floor(availableParallelism() / 8));
   wait ??= env.AGENT_LOOP_TEST_SLOT_WAIT
     ? waitSeconds(env.AGENT_LOOP_TEST_SLOT_WAIT, "AGENT_LOOP_TEST_SLOT_WAIT")
     : DEFAULT_WAIT_SECONDS;
-  return { slots, waitSeconds: wait, command: rest[0] };
+  return { slots, waitSeconds: wait };
 }
 
 function slotsRoot() {
@@ -253,6 +266,37 @@ async function heldByParent(marker) {
   }
 }
 
+/**
+ * Holds a test slot for one command (ADR 0039, ADR 0040). Resolves `{ env, nested, release }`:
+ * `env` holds the marker for the command, and `release` frees the slot. A valid parent marker in
+ * `process.env` gives `nested: true`, no `env`, and nothing to free, so the command runs at once
+ * in the slot of the parent. Resolves null at the wait bound or on an abort of `signal`, with no
+ * slot held. Throws when the slot directory cannot be used.
+ */
+export async function holdTestSlot({ slots, waitSeconds, signal }) {
+  const marker = process.env[HELD_ENV];
+  if (marker && (await heldByParent(marker))) {
+    logDebug("a parent wrapper holds a test slot; running the command directly");
+    return { env: undefined, nested: true, release: async () => {} };
+  }
+  if (marker) {
+    logWarn(`ignoring ${HELD_ENV}: it names no test slot that a live wrapper holds`);
+  }
+  const slot = await acquireSlot({ root: slotsRoot(), slots, waitMs: waitSeconds * 1000, signal });
+  if (slot === null) {
+    return null;
+  }
+  logInfo(`test slot ${slot.index} acquired`);
+  return {
+    env: { [HELD_ENV]: JSON.stringify({ lock: slot.lockFile, nonce: slot.nonce }) },
+    nested: false,
+    release: async () => {
+      await slot.release();
+      logInfo(`test slot ${slot.index} released`);
+    },
+  };
+}
+
 const signalExit = (name) => 128 + (constants.signals[name] ?? 0);
 
 // Runs the command with the `--test-cmd` runner semantics: the platform shell, and a tree that
@@ -323,23 +367,9 @@ export async function runTestSlot(argv) {
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
   try {
-    const marker = process.env[HELD_ENV];
-    if (marker && (await heldByParent(marker))) {
-      logDebug("a parent wrapper holds a test slot; running the command directly");
-      return await run(undefined, false);
-    }
-    if (marker) {
-      logWarn(`ignoring ${HELD_ENV}: it names no test slot that a live wrapper holds`);
-    }
-    const root = slotsRoot();
     let slot;
     try {
-      slot = await acquireSlot({
-        root,
-        slots: options.slots,
-        waitMs: options.waitSeconds * 1000,
-        signal: controller.signal,
-      });
+      slot = await holdTestSlot({ ...options, signal: controller.signal });
     } catch (err) {
       logError(`test slot acquisition failed; the command did not run: ${err?.message ?? err}`);
       return 1;
@@ -351,15 +381,10 @@ export async function runTestSlot(argv) {
       logError(`no test slot won within ${options.waitSeconds}s; the command did not run`);
       return TEST_SLOT_TIMEOUT_EXIT;
     }
-    logInfo(`test slot ${slot.index} acquired`);
     try {
-      return await run(
-        { [HELD_ENV]: JSON.stringify({ lock: slot.lockFile, nonce: slot.nonce }) },
-        true,
-      );
+      return await run(slot.env, !slot.nested);
     } finally {
       await slot.release();
-      logInfo(`test slot ${slot.index} released`);
     }
   } finally {
     process.off("SIGINT", onSignal);

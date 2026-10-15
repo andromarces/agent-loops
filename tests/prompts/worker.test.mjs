@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
 import { workerPrompt } from "../../src/prompts/worker.mjs";
@@ -165,4 +166,17 @@ test("first worker turn forbids ending a process by name or command-line match",
     "Never stop, kill, or signal a process that your own commands did not start, and never select processes by name or by a command-line match.",
   );
   expect(prompt).toContain("End only the exact PIDs your own commands started.");
+});
+
+// Usefulness: verifies requirement "a worker runs a full suite only through the test slot" (issue
+// #848): the first turn names the wrapper of this run, built from the Node binary and the CLI
+// script, so the rule works where `agent-loop` is not on PATH.
+test("first worker turn routes a full suite through the test slot wrapper of this run", async () => {
+  const prompt = workerPrompt("do the task", true);
+  expect(prompt).toContain("Run a targeted test file directly.");
+  expect(prompt).toContain("or rely on the required CI checks");
+  const match = prompt.match(/"([^"]+)" "([^"]+)" test-slot -- "<full suite command>"/);
+  expect(match).not.toBeNull();
+  expect(match[1]).toBe(process.execPath.replaceAll("\\", "/"));
+  await access(match[2]);
 });

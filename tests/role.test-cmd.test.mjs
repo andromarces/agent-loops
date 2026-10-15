@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { sha256 } from "../src/lib/hash.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
+import { testSlotRule } from "../src/prompts/report.mjs";
 import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";
 import {
   cleanup,
@@ -552,4 +553,14 @@ test("a thrown object that holds a value with a quote and a backslash is redacte
   } finally {
     delete process.env.SYNTH_PROBE_TOKEN;
   }
+});
+
+// Usefulness: verifies the role path gives the worker and the reviewer the full-suite rule with the
+// test slot wrapper, the same text as the headless path (issue #848).
+test("role worker and reviewer dispatches carry the test slot rule", async () => {
+  const { repo, reviewer, agents } = await start();
+  const turn = await reviewerTurn(repo, agents);
+  expect(turn.exitCode).toBe(0);
+  expect(agents.fake1.recorded[0].prompt).toContain(testSlotRule());
+  expect(reviewer.recorded[0].prompt).toContain(testSlotRule());
 });

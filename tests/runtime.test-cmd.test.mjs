@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import { MutationError } from "../src/lib/snapshot.mjs";
+import { testSlotRule } from "../src/prompts/report.mjs";
 import { reviewerPrompt } from "../src/prompts/reviewer.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
@@ -506,6 +507,36 @@ test("a secret value in the command text is redacted on every headless output pa
     }
   } finally {
     delete process.env.SYNTH_PROBE_TOKEN;
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the headless path gives the worker and the reviewer the full-suite rule with
+// the test slot wrapper, the same text as the role path (issue #848).
+test("headless worker and reviewer turns carry the test slot rule", async () => {
+  const repo = await createTempRepo();
+  try {
+    const work = scripted([REVIEW]);
+    const rev = scripted([REVIEW]);
+    const result = await runLoop({
+      task: "Do the change.",
+      cwd: repo,
+      maxSteps: 5,
+      roles: roles(),
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_worker", prompt: "work" }),
+          JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+          JSON.stringify({ action: "finish", summary: SUMMARY }),
+        ]),
+        work,
+        rev,
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(work.recorded[0].prompt).toContain(testSlotRule());
+    expect(rev.recorded[0].prompt).toContain(testSlotRule());
+  } finally {
     await removePath(repo);
   }
 });
