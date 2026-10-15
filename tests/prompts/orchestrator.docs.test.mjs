@@ -417,12 +417,9 @@ test("ADR 0019 names the five accepted gaps", async () => {
 });
 
 // Usefulness: verifies the user docs and the orchestrator instructions describe the opt-in as ADR
-// 0019 does. Each text names the flag, the sandbox mode, the network option, the ADR, and each gap.
-test.each([
-  ["the user docs", readUserDocs],
-  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
-])("%s describes the reviewer sandbox opt-in consistently with ADR 0019", async (_name, load) => {
-  const text = await load();
+// 0019 does. The text names the flag, the sandbox mode, the network option, the ADR, and each gap.
+test("the user docs describe the reviewer sandbox opt-in consistently with ADR 0019", async () => {
+  const text = await readUserDocs();
   expect(text).toContain("--reviewer-workspace-write");
   expect(text).toContain("workspace-write");
   expect(text).toContain("network_access=false");

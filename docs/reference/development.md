@@ -82,11 +82,3 @@ PowerShell:
 ```
 
 Both blocks stop at the first failed step, so `agent-loop` never runs in an unintended directory. An existing `smoke-repo` directory is a failure: remove it before a rerun. In PowerShell, a backtick must be the last character on its line, with no trailing space.
-
-## Future additions
-
-Features considered for future development once the hybrid loop stabilizes:
-
-- Orchestrator-addressable roles (allowing dynamic registration of additional named specialist roles)
-- Per-role extra CLI arguments and flags
-- A streamed headless transcript
