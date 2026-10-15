@@ -452,7 +452,12 @@ refused at init.
   model-side tools such as Codex `web_search`, or any other channel outside the
   sandbox. With no sandbox, no such rule applies, because no sandbox exists to skip.
 - The reviewer prompt gains one note that states the actual mode. The reviewer
-  still must not change files and must not write to a remote. The headless initial
+  still must not change a tracked file, add a file that Git does not ignore, or
+  change Git state, and must not write to a remote. The file-change rule has the
+  same scope in every mode: a test, build, or probe whose only writes are caches,
+  ignored output, or temporary files outside the repository is allowed, so the
+  reviewer runs the test suite instead of waiting for permission (issue #837).
+  The mutation check is unchanged. The headless initial
   prompt tells the orchestrator the mode, and says that its own turns stay
   read-only. A reviewer that is not Codex has no mode, and its prompts name none.
 - Choose the mode at init, and never change it later. A later call may repeat the

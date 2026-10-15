@@ -1,13 +1,20 @@
 import { expect, test } from "vite-plus/test";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 
+// The file-change rule is scoped (issue #837): a tracked file and Git state stay off limits, and a
+// command whose only writes are caches, ignored output, or outside-repository temporary files is allowed.
+const FILE_CHANGE_RULE =
+  "Do not change a tracked file, add a file that Git does not ignore, or change Git state.";
+const SCRATCH_WRITE_ALLOWED =
+  "A test, build, or probe whose only writes are caches, ignored output, or temporary files outside the repository is allowed";
+
 // Usefulness: verifies every reviewer turn keeps the read-only guard and asks
 // for the closing report block plus the optional checks, notes, and deferred
 // labels, so the orchestrator receives the reviewer's reasoning, reported
 // checks, and out-of-scope items (issue #49, issue #214, issue #217).
 test("reviewer prompt keeps the read-only guard and requires the closing report block", () => {
   const prompt = reviewerPrompt("check the tests");
-  expect(prompt).toContain("Do not implement, fix, edit, or change any file.");
+  expect(prompt).toContain(FILE_CHANGE_RULE);
   expect(prompt).toContain("check the tests");
   expect(prompt).toContain("Conclusion:");
   expect(prompt).toContain("Why:");
@@ -387,7 +394,8 @@ test("reviewer prompt carries the sandbox note of its mode only", () => {
   ]) {
     const prompt = reviewerPrompt("check the fix", null, null, mode);
     expect(prompt).toContain(phrase);
-    expect(prompt).toContain("Do not implement, fix, edit, or change any file.");
+    expect(prompt).toContain(FILE_CHANGE_RULE);
+    expect(prompt).toContain(SCRATCH_WRITE_ALLOWED);
     expect(prompt).toContain("Do not write to GitHub or any remote");
     expect(prompt).not.toMatch(/pnpm|npm|yarn|vitest|jest|node_modules|agent-loop/i);
   }

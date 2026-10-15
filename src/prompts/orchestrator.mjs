@@ -329,7 +329,7 @@ function reviewerSandboxBlock(reviewerSandbox) {
   if (reviewerSandbox === "none") {
     return [
       "",
-      "- This run starts the Codex reviewer with no sandbox. Its shell commands can run the project's tests, write anywhere that the user account can write, and reach the network. The reviewer still must not change files or write to a remote. The runtime compares the work tree around every reviewer turn, and a change halts the run with no revert. That check does not see a write outside the repository, a write to an ignored file, or a remote write.",
+      "- This run starts the Codex reviewer with no sandbox. Its shell commands can run the project's tests, write anywhere that the user account can write, and reach the network. The reviewer still must not change a tracked file, add a file that Git does not ignore, change Git state, or write to a remote. A test run that writes only caches, ignored output, or temporary files outside the repository is allowed. The runtime compares the work tree around every reviewer turn, and a change halts the run with no revert. That check does not see a write outside the repository, a write to an ignored file, or a remote write.",
       "- Your own turns stay read-only, and the mutation check still wraps them.",
     ].join("\n");
   }

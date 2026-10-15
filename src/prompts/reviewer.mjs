@@ -86,15 +86,21 @@ function testRunLines(testRun) {
 const remoteWriteRule =
   "Do not write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A read-only query changes nothing, so it stays allowed.";
 
+// The file-change rule bars a change to the work tree and Git state only. Without this scope a
+// reviewer reads it as a ban on the test suite and rejects with no code blocker (issue #837). The
+// runtime mutation check is unchanged: it does not see an ignored or outside-repository write.
+const scratchWriteRule =
+  "A test, build, or probe whose only writes are caches, ignored output, or temporary files outside the repository is allowed: run it, and do not wait for permission.";
+
 // The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
 // that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
 // repository: it names no tool or path, only what the mode allows.
 const noEditLine =
-  "- The rule against file changes still holds. The runtime compares the work tree before and after this turn, and a change halts the run.";
+  "- The rule against file changes holds with the same scope in this mode. The runtime compares the work tree before and after this turn, and a tracked or unignored change halts the run.";
 const sandboxNotes = {
   none: [
     "Sandbox note, supplied by the runtime:",
-    "- This turn runs with no sandbox. The shell commands that you run can write anywhere that the user account can write, and can reach the network, so you can run the project's tests and read the required checks with gh pr checks.",
+    "- This turn runs with no sandbox. The shell commands that you run can write anywhere that the user account can write, and can reach the network, so you can run the project's tests, within the file-change rule, and read the required checks with gh pr checks.",
     "- Nothing contains a shell command in this turn. The rule against file changes and the rule against remote writes above are the only limits. The runtime does not see a write outside the repository, a write to an ignored file, or a remote write.",
     noEditLine,
   ],
@@ -119,7 +125,7 @@ export function reviewerPrompt(prompt, prChecks = null, testRun = null, sandboxM
   const sandbox = sandboxMode === null ? "" : `\n\n${sandboxNotes[sandboxMode].join("\n")}`;
   return escapeLineSeparators(
     `
-Do not implement, fix, edit, or change any file. Review, assess, and verify only. Live probes and read-only queries are authorized.
+Do not change a tracked file, add a file that Git does not ignore, or change Git state. Review, assess, and verify only. ${scratchWriteRule} Live probes and read-only queries are authorized.
 ${remoteWriteRule}
 ${processRule}
 
