@@ -47,6 +47,7 @@ import {
 } from "./lib/session-record.mjs";
 import { assertGitWorkTree, workTreeRoot } from "./lib/snapshot.mjs";
 import { redactCommandText } from "./lib/test-cmd.mjs";
+import { runTestSlot } from "./lib/test-slot.mjs";
 import { runLoop, runProbeTurn, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
@@ -227,6 +228,14 @@ Subcommands:
                                 scope. Interactive, or --harness <list> --yes.
   agent-loop uninstall          Remove the installed entry points and guards. Restores
                                 files that install changed.
+  agent-loop test-slot          Run one command, quoted as one argument, through the
+                                platform shell only while holding one of N machine-wide
+                                test slots. --slots <n> (env AGENT_LOOP_TEST_SLOTS,
+                                default max(1, floor(CPUs / 8))) and --wait <seconds>
+                                (env AGENT_LOOP_TEST_SLOT_WAIT, default 1800). Exits with
+                                the command's code, 75 when no slot was free within the
+                                wait, 64 on a usage error, 130 or 143 on SIGINT or
+                                SIGTERM. See agent-loop test-slot --help.
   agent-loop harness-check      Exit 0 only when the nearest harness process above the
                                 shell matches the named harness, 3 when another harness
                                 is nearest, and 1 when the check cannot run or finds no
@@ -463,6 +472,11 @@ export async function main(
 
   if (argv[0] === "uninstall") {
     await runUninstallCommand(argv.slice(1));
+    return;
+  }
+
+  if (argv[0] === "test-slot") {
+    process.exitCode = await runTestSlot(argv.slice(1));
     return;
   }
 

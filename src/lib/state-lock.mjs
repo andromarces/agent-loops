@@ -46,6 +46,29 @@ export async function withStateLock(lockFile, fn, { label = "State", noun = "sta
   }
 }
 
+/**
+ * Takes the lock at `lockFile` like `withStateLock`, but returns null instead of
+ * throwing when a live or unidentified owner holds it. Returns the function that
+ * removes the lock. Any other failure, for example an unwritable directory, throws.
+ */
+export async function tryStateLock(lockFile, { label = "State", noun = "state" } = {}) {
+  await mkdir(dirname(lockFile), { recursive: true });
+  try {
+    await acquireLock(lockFile, { label, noun });
+  } catch (err) {
+    if (err?.lockBusy) {
+      return null;
+    }
+    throw err;
+  }
+  return () => rm(lockFile, { force: true });
+}
+
+// A refusal because another owner holds the lock, as opposed to a filesystem failure.
+function busyError(message) {
+  return Object.assign(new Error(message), { lockBusy: true });
+}
+
 // Suffix for lock temp files (the writer marker of `hasLiveWriter`). The token is
 // unique to this process and the counter to this call, so no two writers share a
 // marker path: same-process contenders differ by counter, and a later process
@@ -98,7 +121,7 @@ async function acquireLock(
   const lockText = await readLockText(lockFile);
   const owner = parseLockOwner(lockText);
   if (owner && (await ownerAlive(owner))) {
-    throw new Error(
+    throw busyError(
       `${label} is locked by a live process (pid ${owner.pid}, started ${owner.startedAt ?? "unknown"}).`,
     );
   }
@@ -108,15 +131,15 @@ async function acquireLock(
     // (a removal race) or cannot be read, or the exclusive-create fallback has
     // created it and its writer has not written the content yet (a live marker,
     // or a file younger than the grace window for a writer without a marker).
-    throw new Error(`${label} is locked (the lock file is not readable yet; retry shortly).`);
+    throw busyError(`${label} is locked (the lock file is not readable yet; retry shortly).`);
   }
 
   if (!retry) {
-    throw new Error(`${label} lock could not be acquired after stale removal.`);
+    throw busyError(`${label} lock could not be acquired after stale removal.`);
   }
 
   if (depth >= MAX_CLAIM_DEPTH) {
-    throw new Error(
+    throw busyError(
       `${label} is locked (stale-removal claims from crashed processes are nested too deep).`,
     );
   }

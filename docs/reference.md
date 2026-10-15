@@ -22,6 +22,7 @@ version. Each section keeps the anchor that it had in the README.
   - [Continue a run](reference/usage.md#continue-a-run)
   - [Transcript](reference/usage.md#transcript)
   - [Exit codes](reference/usage.md#exit-codes)
+  - [Test slot](reference/usage.md#test-slot)
 - [Child dispatch](reference/role.md)
   - [Interactive child dispatch: `agent-loop role`](reference/role.md#interactive-child-dispatch-agent-loop-role)
 - [Interactive parent session](reference/harness-entry-points.md)

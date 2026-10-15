@@ -246,3 +246,26 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
 | 2    | Step limit reached (`--max-steps`) with work remaining. `--continue-from` continues that run.                                                                                                                                                                                                                                                                                                                                                            |
 | 4    | Orchestrator returned a `finish` that set `unresolvedCompare: true`. The run is a recorded finish, not a failure: the summary is printed as for exit 0 and the transcript holds no error. The code is what tells an exit-code-only consumer that the PR-head compare was never verified. A consumer that treats any nonzero code as failure must special-case 4, and so must a consumer that reads the transcript `exitCode`.                            |
 | 130  | Interrupted by `Ctrl+C` (active children killed).                                                                                                                                                                                                                                                                                                                                                                                                        |
+
+## Test slot
+
+`agent-loop test-slot` runs one command only while it holds one of N machine-wide test slots, so parallel full-suite runs in different work trees and projects do not oversubscribe the host (ADR 0039).
+
+```bash
+agent-loop test-slot --slots 2 --wait 600 -- "pnpm exec vp test run"
+```
+
+- **Command.** Exactly one argument after the options, quoted for the calling shell. It runs through the platform shell (`/bin/sh -c`, or `cmd.exe` on Windows) in the current directory, as `--test-cmd` runs its command. stdout and stderr pass through, and stdin is closed. Log lines go to stderr and never hold the command text.
+- **`--slots <n>`.** Slot count. Defaults to `max(1, floor(os.availableParallelism() / 8))`. Env: `AGENT_LOOP_TEST_SLOTS`. The flag wins over the env.
+- **`--wait <seconds>`.** Longest wait for a free slot. Defaults to 1800 (30 minutes). `0` tries once. Env: `AGENT_LOOP_TEST_SLOT_WAIT`.
+- **Slot directory.** `<os tmpdir>/agent-loops/test-slots`, one lock file per slot. Env: `AGENT_LOOP_TEST_SLOTS_ROOT`. A slot whose owner process is gone is reclaimed. Where `os.tmpdir()` is shared between OS users, as `/tmp` on Linux, set the env to a directory per user.
+- **Nested call.** The command runs with `AGENT_LOOP_TEST_SLOT_HELD=1`. A wrapper that starts with it set runs its command at once.
+- **Signals.** SIGINT or SIGTERM ends the process group (POSIX) or process tree (Windows) of the command, then frees the slot. A hard kill of the wrapper leaves the slot to the stale-owner recovery and can leave the command running.
+
+| Code         | Meaning                                                                        |
+| ------------ | ------------------------------------------------------------------------------ |
+| command code | The command ran. A command ended by a signal gives 128 plus the signal number. |
+| 64           | Usage error. The command did not run.                                          |
+| 75           | No slot was free within the wait bound. The command did not run.               |
+| 130, 143     | SIGINT or SIGTERM reached the wrapper.                                         |
+| 1            | Any other wrapper failure, such as a slot directory that cannot be written.    |
