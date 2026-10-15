@@ -38,21 +38,19 @@ export class SnapshotError extends Error {
  * `signal` ends the probe too, and the refusal then has `isCanceled` set.
  */
 export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, signal } = {}) {
-  const result = await execBounded("git", ["rev-parse", "--is-inside-work-tree"], {
-    cwd,
+  const createError = (reason) =>
+    new SnapshotError(
+      reason === "canceled"
+        ? `--cwd validation was canceled: ${cwd}`
+        : `--cwd validation did not complete within its bound, so the work tree was not confirmed: ${cwd}`,
+      { isCanceled: reason === "canceled" },
+    );
+  const result = await gitRead(cwd, ["rev-parse", "--is-inside-work-tree"], {
     timeoutMs,
     signal,
+    createError,
   });
 
-  if (result.isCanceled) {
-    throw new SnapshotError(`--cwd validation was canceled: ${cwd}`, { isCanceled: true });
-  }
-
-  if (result.timedOut) {
-    throw new SnapshotError(
-      `--cwd validation did not complete within its bound, so the work tree was not confirmed: ${cwd}`,
-    );
-  }
   if (result.exitCode !== 0 || result.stdout.trim() !== "true") {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
   }
@@ -92,28 +90,51 @@ export async function sha256File(path) {
   }
 }
 
-// Runs one bounded `git` read. A timeout or a cancel throws a `SnapshotError` that names the cause,
-// because the read has no answer to return. Any other exit code is data for the caller.
-async function gitRead(cwd, args, { signal, timeoutMs = GIT_READ_TIMEOUT_MS } = {}) {
-  const result = await execBounded("git", args, { cwd, timeoutMs, signal });
+function snapshotReadError(reason, { args, timeoutMs, result }) {
+  if (reason === "canceled") {
+    return new SnapshotError(`git ${args[0]} was canceled`, { isCanceled: true });
+  }
+  if (reason === "timeout") {
+    return new SnapshotError(`git ${args[0]} timed out after ${timeoutMs} ms`);
+  }
+  return new SnapshotError(
+    `git ${args[0]} failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
+  );
+}
+
+/**
+ * Runs one bounded `git` read. A timeout or a cancel throws, because the read has no answer to
+ * return. Any other exit code is data for the caller, unless `allowExit` lists the accepted exit
+ * codes: then any other code throws too. `createError(reason, { args, timeoutMs, result })` builds
+ * the error for `reason` `"canceled"` (it must set `isCanceled`), `"timeout"`, or `"exit"`; the
+ * default builds a `SnapshotError`. Other options go to `execBounded`.
+ */
+export async function gitRead(
+  cwd,
+  args,
+  {
+    signal,
+    timeoutMs = GIT_READ_TIMEOUT_MS,
+    allowExit,
+    createError = snapshotReadError,
+    ...execOptions
+  } = {},
+) {
+  const result = await execBounded("git", args, { cwd, timeoutMs, signal, ...execOptions });
+  const context = { args, timeoutMs, result };
   if (result.isCanceled) {
-    throw new SnapshotError(`git ${args[0]} was canceled`, { isCanceled: true });
+    throw createError("canceled", context);
   }
   if (result.timedOut) {
-    throw new SnapshotError(`git ${args[0]} timed out after ${timeoutMs} ms`);
+    throw createError("timeout", context);
+  }
+  if (allowExit !== undefined && !allowExit.includes(result.exitCode)) {
+    throw createError("exit", context);
   }
   return result;
 }
 
-async function gitIn(cwd, args, bound) {
-  const result = await gitRead(cwd, args, bound);
-  if (result.exitCode !== 0) {
-    throw new SnapshotError(
-      `git ${args[0]} failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
-    );
-  }
-  return result;
-}
+const gitIn = (cwd, args, bound) => gitRead(cwd, args, { ...bound, allowExit: [0] });
 
 /** The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`. */
 export async function workTreeRoot(cwd, bound) {
