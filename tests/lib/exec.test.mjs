@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExecError, SPAWNED_RUN_ENV, exec } from "../../src/lib/exec.mjs";
 import { setVerbose } from "../../src/lib/log.mjs";
-import { pidAlive } from "../../src/lib/state-lock.mjs";
+import { pidAlive } from "../../src/lib/process-identity.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 afterEach(() => {

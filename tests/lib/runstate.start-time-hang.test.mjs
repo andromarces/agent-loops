@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, test } from "vite-plus/test";
-import { processStartTime } from "../../src/lib/state-lock.mjs";
+import { processStartTime } from "../../src/lib/process-identity.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 // The start-time query runs the real command here: a fake `ps` (`powershell.exe` on
