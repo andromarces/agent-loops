@@ -635,3 +635,47 @@ export async function readRequiredChecks({
     await slugStart?.cancel();
   }
 }
+
+// The marker refusal a gated run gets, kept as a constant so the shared reason
+// function cannot drift apart on the wording.
+const UNRESOLVED_COMPARE_WITH_CI =
+  "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved";
+
+/**
+ * The marker refusal for the run's PR input, or null when the run declares
+ * neither a gate nor a PR, where the marker stays the only record. A declared
+ * PR run needs the gate the same way a gated run does, so it refuses the marker
+ * too and names the gate it must reach instead of a flag it never carried
+ * (#302). The two paths share this function so the wording cannot drift.
+ * @param {object} options
+ * @returns {string | null}
+ */
+export function unresolvedCompareReason({ pr = null, requireCi = null }) {
+  if (requireCi !== null) {
+    return UNRESOLVED_COMPARE_WITH_CI;
+  }
+  if (pr !== null) {
+    return `unresolvedCompare cannot be combined with a run that declares PR ${pr} (--pr): the run must end through the --require-ci ${pr} gate, which resolves that PR head, so that compare is not unresolved`;
+  }
+  return null;
+}
+
+/**
+ * The refusal a `--pr <pr>` declaration gives when the run carries no gate for
+ * that PR, whether the gate is absent or names another pull request. A gate flag
+ * is a run input, so no turn in the run can supply it and the refusal ends the
+ * run; the recovery names `abort` as the only outcome the orchestrator owns.
+ * @param {number} pr the declared PR
+ * @param {number | null} requireCi the gate PR, or null when no gate was passed
+ * @returns {{ reason: string, recovery: string }}
+ */
+export function missingGateRefusal(pr, requireCi) {
+  const state =
+    requireCi === null
+      ? "this run carries no --require-ci gate"
+      : `this run gates PR ${requireCi} instead`;
+  return {
+    reason: `this run declares PR ${pr}, so a finish must end through the --require-ci ${pr} gate, and ${state}`,
+    recovery: `The gate flag is a run input, so no worker or reviewer turn can supply it, and a re-finish repeats this refusal. The only outcome you own is abort with the reason naming the missing --require-ci ${pr} gate, because this run cannot end through finish. A finish that records the unresolved compare is refused with this, because the gate resolves that PR head.`,
+  };
+}
