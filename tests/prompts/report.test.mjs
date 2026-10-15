@@ -1,6 +1,6 @@
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
-import { testSlotRule } from "../../src/prompts/report.mjs";
+import { reportBlock, testSlotRule } from "../../src/prompts/report.mjs";
 
 // The full-suite rule of every worker and reviewer turn (issue #848, ADR 0040).
 
@@ -27,4 +27,14 @@ test("the rendered wrapper runs a suite command in the default shell", async () 
   const run = await execa(command, { shell: true, reject: false, all: true });
   expect(run.exitCode).toBe(0);
   expect(run.all).toMatch(/v\d+\.\d+\.\d+/);
+});
+
+// Usefulness: verifies the closing-block rule tells the child that one level of two-space sub-items
+// folds with a comma and any other nesting blanks the block, the parser contract of issue #870, so
+// the prompt never contradicts the parser.
+test("the closing-block rule states the one-level sub-item fold", () => {
+  expect(reportBlock).toMatch(
+    /sub-items[^.]*two spaces, a hyphen, one space[^.]*folds into that item with a comma/,
+  );
+  expect(reportBlock).toMatch(/Any other list or nesting[^.]*unparseable/);
 });
