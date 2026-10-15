@@ -29,7 +29,7 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
 
 - **Orchestrator**: Evaluates task status, worker findings, or reviewer feedback, and returns a validated JSON action (`run_worker`, `run_reviewer`, `finish`, `abort`). It never edits files or executes subshells directly, with one exception: on a run that ends with `--require-ci`, it may read the pull request check status with `agent-loop role wait-checks`, and that status read is the only command the exception covers.
 - **Worker**: Executes the task, modifies files, and runs validation commands in the target repository.
-- **Reviewer**: Evaluates the repository state and tests. It must not edit files. Its CLI runs read-only, except a Codex reviewer, which runs with no sandbox by default and can opt in to `read-only` or `workspace-write`. The mutation check wraps every reviewer turn.
+- **Reviewer**: Evaluates the repository state and tests. It must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed. Its CLI runs read-only, except a Codex reviewer, which runs with no sandbox by default and can opt in to `read-only` or `workspace-write`. The mutation check wraps every reviewer turn.
 - **Deterministic runtime**:
   - Enforces step limits (`--max-steps`, default 20) and timeout boundaries.
   - Spawns agents, manages persistent sessions, and captures process signals (`Ctrl+C` exits 130).

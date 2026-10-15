@@ -534,3 +534,37 @@ test.each([
   expect(text).toContain("read-only");
   expect(text).toContain("workspace-write");
 });
+
+// Usefulness: verifies requirement "every surface that states the reviewer file-change rule states
+// the scoped rule, not a blanket ban" (issue #837). A reviewer or an operator reading the README,
+// the architecture reference, or the orchestrator role list is then not told that a test run with
+// ignored output is forbidden. A restored blanket phrase fails here.
+const REVIEWER_SCOPE =
+  "must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed";
+
+test.each([
+  ["README.md", () => readRepoFile("README.md")],
+  ["docs/reference/architecture.md", () => readRepoFile("docs/reference/architecture.md")],
+  [
+    "the headless orchestrator prompt",
+    async () => initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "none" }),
+  ],
+])("%s states the scoped reviewer file-change rule", async (_name, load) => {
+  const text = (await load()).replace(/\s+/g, " ");
+  expect(text).toContain(REVIEWER_SCOPE);
+});
+
+test.each([
+  ["the user docs", readUserDocs],
+  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["--help", async () => (await execa("node", [join(repoRoot, "src/cli.mjs"), "--help"])).stdout],
+  [
+    "the headless orchestrator prompt",
+    async () => initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "none" }),
+  ],
+])("%s carries no blanket reviewer file ban", async (_name, load) => {
+  const text = (await load()).replace(/\s+/g, " ");
+  expect(text).not.toMatch(/must not (?:edit|change) (?:any )?files\b/);
+  expect(text).not.toContain("reviewer (must not edit)");
+  expect(text).not.toMatch(/Agent that reviews the repository \(read-only;/);
+});

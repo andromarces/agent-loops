@@ -159,7 +159,9 @@ test.each([
       expect(prompt).not.toMatch(/pnpm|vitest|npm|yarn|node_modules/);
     }
     expect(prompt).toContain("Do not write to GitHub or any remote");
-    expect(prompt).toContain("Do not implement, fix, edit, or change any file.");
+    expect(prompt).toContain(
+      "Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state.",
+    );
   },
 );
 

@@ -326,10 +326,12 @@ function testCmdBlock(testCmd) {
  * applies.
  */
 function reviewerSandboxBlock(reviewerSandbox) {
+  const reviewerFileRule =
+    "The reviewer still must not change a tracked file or an untracked file that Git does not ignore, including a cache file, and must not change Git state or write to a remote. A test run is allowed when every write goes to an ignored path or to a temporary file outside the repository.";
   if (reviewerSandbox === "none") {
     return [
       "",
-      "- This run starts the Codex reviewer with no sandbox. Its shell commands can run the project's tests, write anywhere that the user account can write, and reach the network. The reviewer still must not change files or write to a remote. The runtime compares the work tree around every reviewer turn, and a change halts the run with no revert. That check does not see a write outside the repository, a write to an ignored file, or a remote write.",
+      `- This run starts the Codex reviewer with no sandbox. Its shell commands can run the project's tests, write anywhere that the user account can write, and reach the network. ${reviewerFileRule} The runtime compares the work tree around every reviewer turn, and a change halts the run with no revert. That check does not see a write outside the repository, a write to an ignored file, or a remote write.`,
       "- Your own turns stay read-only, and the mutation check still wraps them.",
     ].join("\n");
   }
@@ -338,7 +340,7 @@ function reviewerSandboxBlock(reviewerSandbox) {
       "",
       "- This run keeps the Codex reviewer in the read-only sandbox. A child process spawn or a test run can fail there, and the shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox.",
       `- ${SHELL_EXCEPTION}`,
-      "- Your own turns stay read-only. The reviewer still must not change files. The runtime compares the work tree around every reviewer turn. A change halts the run with no revert.",
+      `- Your own turns stay read-only. ${reviewerFileRule} The runtime compares the work tree around every reviewer turn. A change halts the run with no revert.`,
     ].join("\n");
   }
   if (reviewerSandbox !== "workspace-write") return "";
@@ -346,7 +348,7 @@ function reviewerSandboxBlock(reviewerSandbox) {
     "",
     "- This run lets the Codex reviewer run targeted tests and probes in the workspace-write sandbox. The shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox.",
     `- ${SHELL_EXCEPTION}`,
-    "- Your own turns stay read-only. The reviewer still must not change files. The runtime compares the work tree around every reviewer turn. A change halts the run with no revert.",
+    `- Your own turns stay read-only. ${reviewerFileRule} The runtime compares the work tree around every reviewer turn. A change halts the run with no revert.`,
   ].join("\n");
 }
 
@@ -441,7 +443,7 @@ ${REMOTE_WRITE_RULE}
 
 You have two child roles:
 - worker: Implements changes, runs checks and tests, and reports findings and progress.
-- reviewer: Inspector. Inspects and assesses the repository state and verifications. The reviewer must not edit files.
+- reviewer: Inspector. Inspects and assesses the repository state and verifications. The reviewer must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed.
 
 You have a maximum step budget of ${maxSteps} steps.
 A step is consumed only when you dispatch a child role (run_worker or run_reviewer).

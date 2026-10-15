@@ -832,6 +832,15 @@ test.each([
   expect(prompt).not.toMatch(lacks);
   expect(prompt).toContain("Your own turns stay read-only");
   expect(prompt).toContain("halts the run");
+  // Usefulness: verifies the file-change scope reads the same in every mode (issue #837), so an
+  // orchestrator never tells a reviewer to skip a test run that writes only ignored output.
+  expect(prompt).toContain(
+    "The reviewer still must not change a tracked file or an untracked file that Git does not ignore, including a cache file, and must not change Git state or write to a remote.",
+  );
+  expect(prompt).toContain(
+    "A test run is allowed when every write goes to an ignored path or to a temporary file outside the repository.",
+  );
+  expect(prompt).not.toContain("must not change files");
 });
 
 test("the initial prompt names no reviewer mode when the run has none", () => {
