@@ -5,7 +5,6 @@
 //
 // The `gh` runner is injected so a caller can run the gate against captured
 // responses. The default runner shells out to the `gh` CLI.
-import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { isJsonObject } from "./json.mjs";
 import {
@@ -16,6 +15,8 @@ import {
   RULESETS,
   earlyMergeRefusal,
   failureOf,
+  MERGE_BLOCKED_REFUSAL,
+  runGh,
   inOrder,
   startRepoSlug,
   prInfo,
@@ -26,24 +27,6 @@ import {
 // A check run passes with one of these conclusions; every other conclusion and
 // every non-completed status fails the gate.
 const PASS_CHECK_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
-
-/**
- * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr, timedOut }`;
- * a non-zero exit is data, not a throw. `timeoutMs` bounds the call and
- * terminates the `gh` child when it expires, so a hung `gh` cannot outlast a
- * caller bound. On POSIX systems the kill is `SIGTERM`, then `SIGKILL` after
- * `forceKillAfterDelay`. On Windows it is `taskkill /T /F` over the process tree.
- * No platform keeps a child the bound has given up on (#329).
- */
-export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
-  const result = await execBounded("gh", args, { cwd, timeoutMs, signal });
-  return {
-    status: result.exitCode,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    timedOut: Boolean(result.timedOut),
-  };
-}
 
 function fail(reason) {
   return { ok: false, reason };
@@ -328,42 +311,76 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   }
 }
 
+// The reads that `judgeCi` and `readRequiredChecks` both start with: the PR, the
+// repository slug, and the required contexts. `refuseInfo(info)` runs right after
+// the PR read and `refuseUnknownRuleset(info)` after the contexts read. A truthy
+// return from either comes back as `{ stop }`, so each caller keeps its own
+// refusal order and wording. Otherwise the result is `{ info, slug, required }`.
+async function readCiPreamble({ gh, cwd, pr, slugRead, refuseInfo, refuseUnknownRuleset }) {
+  const info = await prInfo(gh, pr, cwd);
+  const infoStop = refuseInfo(info);
+  if (infoStop) {
+    return { stop: infoStop };
+  }
+  const slug = await slugRead;
+  const required = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
+  if (required.rulesetState === UNKNOWN) {
+    return { stop: refuseUnknownRuleset(info) };
+  }
+  return { info, slug, required };
+}
+
+// Judges each required context on the commit GitHub evaluates. `strict` is
+// passed to `evaluatedState`.
+async function evaluateRequired(gh, slug, info, cwd, contexts, strict) {
+  const { commit, runs, statuses } = await evaluatedState(gh, slug, info, cwd, strict);
+  const findings = contexts.map((context) => ({
+    context,
+    failure: evaluateContext(context, commit, runs, statuses),
+  }));
+  return { commit, findings };
+}
+
 // The judgment of `checkCi` after its early guards. `slug` is the repository read
 // that started beside the PR read; it is awaited only after the PR refusals.
 async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
-  const info = await prInfo(gh, pr, cwd);
-  const early = earlyMergeRefusal(info.mergeStateStatus);
-  if (early) {
-    return fail(early);
+  const preamble = await readCiPreamble({
+    gh,
+    cwd,
+    pr,
+    slugRead,
+    refuseInfo: (info) => {
+      const early = earlyMergeRefusal(info.mergeStateStatus);
+      if (early) {
+        return fail(early);
+      }
+      if (info.headRefOid !== reviewed.head) {
+        return fail("the PR head differs from the reviewed commit");
+      }
+      return null;
+    },
+    // An unknown ruleset read refuses the finish whatever the rest of the union
+    // holds. Its own reply may carry a required-status rule this caller never saw,
+    // and a non-empty union from another source would otherwise let the per-check
+    // pass judge only the names it saw, so a ruleset-required check could be skipped
+    // (issue #336 review).
+    //
+    // A successful read that found no rule is not in this branch. It contributes no
+    // contexts, and the per-check pass runs on the other sources. Before the gate
+    // classified the read, it did the same for every unreadable ruleset reply. A
+    // classic-only repository whose required checks passed therefore still
+    // finishes. The read is still not a positive absence, so the empty-union
+    // refusal below names it.
+    refuseUnknownRuleset: () =>
+      fail(
+        "the repository rulesets could not be read, so the gate cannot tell which required checks the base branch requires",
+      ),
+  });
+  if (preamble.stop) {
+    return preamble.stop;
   }
-  if (info.headRefOid !== reviewed.head) {
-    return fail("the PR head differs from the reviewed commit");
-  }
-
-  const slug = await slugRead;
-  const {
-    unknown,
-    rulesetState,
-    protectionState,
-    contexts: required,
-  } = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
-  // An unknown ruleset read refuses the finish whatever the rest of the union
-  // holds. Its own reply may carry a required-status rule this caller never saw,
-  // and a non-empty union from another source would otherwise let the per-check
-  // pass judge only the names it saw, so a ruleset-required check could be skipped
-  // (issue #336 review).
-  //
-  // A successful read that found no rule is not in this branch. It contributes no
-  // contexts, and the per-check pass runs on the other sources. Before the gate
-  // classified the read, it did the same for every unreadable ruleset reply. A
-  // classic-only repository whose required checks passed therefore still
-  // finishes. The read is still not a positive absence, so the empty-union
-  // refusal below names it.
-  if (rulesetState === UNKNOWN) {
-    return fail(
-      "the repository rulesets could not be read, so the gate cannot tell which required checks the base branch requires",
-    );
-  }
+  const { info, slug } = preamble;
+  const { unknown, rulesetState, protectionState, contexts: required } = preamble.required;
   // No required check exists only when both sources stated they hold none. A source
   // that settled nothing, and a ruleset read that found no rule, are both named in
   // the refusal, because a parent can only fix a source it can see (issue #336). A
@@ -391,12 +408,10 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
     }
     return { ok: true, commit: info.headRefOid, noRequiredChecks: true };
   }
-  const { commit, runs, statuses } = await evaluatedState(gh, slug, info, cwd);
-  for (const context of required) {
-    const failure = evaluateContext(context, commit, runs, statuses);
-    if (failure) {
-      return fail(failure.reason);
-    }
+  const { commit, findings } = await evaluateRequired(gh, slug, info, cwd, required, false);
+  const first = findings.find(({ failure }) => failure);
+  if (first) {
+    return fail(first.failure.reason);
   }
   // Run this after the per-check pass so a named check refusal keeps its name.
   // `gh pr checks --required` lists only checks that already reported, so on a
@@ -415,9 +430,7 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
   // established-absence pass above refuses on it too, because a branch with no
   // required check can still carry another required rule (#336).
   if (info.mergeStateStatus === "BLOCKED") {
-    return fail(
-      "the PR merge state is blocked (a required check, review, or other required rule is unmet)",
-    );
+    return fail(MERGE_BLOCKED_REFUSAL);
   }
 
   return { ok: true, commit };
@@ -508,40 +521,44 @@ export async function readRequiredChecks({
   let slugStart = null;
   try {
     slugStart = startRepoSlug(call, cwd);
-    const slugRead = slugStart.read;
-    const info = await prInfo(call, pr, cwd);
-    prHead = typeof info.headRefOid === "string" && info.headRefOid !== "" ? info.headRefOid : null;
-    if (prHead === null) {
-      return unresolved(`unread: the PR head for PR ${pr} could not be resolved`);
-    }
-    if (head === null) {
-      return unresolved(
-        `unread: PR ${pr} head ${prHead} cannot be compared with a local reviewed head`,
-        prHead,
-      );
-    }
-    if (prHead !== head) {
-      return unresolved(
-        `unread: PR ${pr} head ${prHead} differs from the local reviewed head ${head}`,
-        prHead,
-      );
-    }
-    const slug = await slugRead;
-    const { unknown, unparsed, namesRead, rulesetState, contexts } = await requiredContexts(
-      call,
-      slug,
-      info.baseRefName,
-      pr,
+    const preamble = await readCiPreamble({
+      gh: call,
       cwd,
-    );
-    // The same refusals the gate makes: a ruleset read that settled nothing may
-    // hide a required check, and an empty union is no status to report.
-    if (rulesetState === UNKNOWN) {
-      return unresolved(
-        `unread: the repository rulesets could not be read for PR ${pr} on PR head ${head}`,
-        head,
-      );
+      pr,
+      slugRead: slugStart.read,
+      refuseInfo: (info) => {
+        prHead =
+          typeof info.headRefOid === "string" && info.headRefOid !== "" ? info.headRefOid : null;
+        if (prHead === null) {
+          return unresolved(`unread: the PR head for PR ${pr} could not be resolved`);
+        }
+        if (head === null) {
+          return unresolved(
+            `unread: PR ${pr} head ${prHead} cannot be compared with a local reviewed head`,
+            prHead,
+          );
+        }
+        if (prHead !== head) {
+          return unresolved(
+            `unread: PR ${pr} head ${prHead} differs from the local reviewed head ${head}`,
+            prHead,
+          );
+        }
+        return null;
+      },
+      // The same refusals the gate makes: a ruleset read that settled nothing may
+      // hide a required check, and an empty union is no status to report.
+      refuseUnknownRuleset: () =>
+        unresolved(
+          `unread: the repository rulesets could not be read for PR ${pr} on PR head ${head}`,
+          head,
+        ),
+    });
+    if (preamble.stop) {
+      return preamble.stop;
     }
+    const { info, slug } = preamble;
+    const { unknown, unparsed, namesRead, contexts } = preamble.required;
     // A successful reply that is not parseable JSON may hide a required context,
     // so it is unresolved whatever the other source names. An unreadable source
     // (a 404 or 403) is not this case: it is a reply the gate also accepts.
@@ -565,11 +582,7 @@ export async function readRequiredChecks({
     }
     // The commit is the gate's own selection, so the read judges the state the
     // gate judges and cannot pass a state the gate refuses.
-    const { commit, runs, statuses } = await evaluatedState(call, slug, info, cwd, true);
-    const findings = contexts.map((context) => ({
-      context,
-      failure: evaluateContext(context, commit, runs, statuses),
-    }));
+    const { commit, findings } = await evaluateRequired(call, slug, info, cwd, contexts, true);
     const label = ({ context }) =>
       context.appId === null ? context.name : `${context.name} (app ${context.appId})`;
     const ofKind = (...kinds) =>
@@ -582,9 +595,7 @@ export async function readRequiredChecks({
     const refusal =
       (clean === true ? null : "the reviewed work tree is not clean") ??
       earlyMergeRefusal(info.mergeStateStatus) ??
-      (info.mergeStateStatus === "BLOCKED"
-        ? "the PR merge state is blocked (a required check, review, or other required rule is unmet)"
-        : null);
+      (info.mergeStateStatus === "BLOCKED" ? MERGE_BLOCKED_REFUSAL : null);
     const on = `on PR head ${head}${commit === head ? "" : ` (evaluated on test merge commit ${commit})`}`;
     if (failing.length > 0) {
       return report(

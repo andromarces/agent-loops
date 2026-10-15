@@ -1,6 +1,7 @@
 // Reads the required-check sources of a base branch (repository rulesets, classic branch
 // protection, and `gh pr checks`) and the pull request state that the CI gate judges (#218, #336).
 // The judgment lives in `ci-gate.mjs`.
+import { execBounded } from "./exec.mjs";
 import { isJsonObject } from "./json.mjs";
 
 // A source the caller cannot read answers 404 or 403, and the message names the
@@ -90,10 +91,37 @@ function isFreePlan403(stderr) {
   return stderr.replace(/\r?\n$/, "") === FREE_PLAN_403;
 }
 
+/**
+ * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr, timedOut }`;
+ * a non-zero exit is data, not a throw. `timeoutMs` bounds the call and
+ * terminates the `gh` child when it expires, so a hung `gh` cannot outlast a
+ * caller bound. On POSIX systems the kill is `SIGTERM`, then `SIGKILL` after
+ * `forceKillAfterDelay`. On Windows it is `taskkill /T /F` over the process tree.
+ * No platform keeps a child the bound has given up on (#329).
+ */
+export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
+  const result = await execBounded("gh", args, { cwd, timeoutMs, signal });
+  return {
+    status: result.exitCode,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    timedOut: Boolean(result.timedOut),
+  };
+}
+
+/** The text a failed `gh` call reports: its trimmed stderr, or its exit status when stderr is empty. */
+export function ghFailureText({ status, stderr }) {
+  return stderr.trim() || `exit ${status}`;
+}
+
+/** The refusal for a pull request whose merge state is `BLOCKED` after the check pass. */
+export const MERGE_BLOCKED_REFUSAL =
+  "the PR merge state is blocked (a required check, review, or other required rule is unmet)";
+
 export async function ghApi(gh, args, cwd) {
   const { status, stdout, stderr } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    throw new Error(`gh api ${args[0]} failed: ${stderr.trim() || `exit ${status}`}`);
+    throw new Error(`gh api ${args[0]} failed: ${ghFailureText({ status, stderr })}`);
   }
   const text = stdout.trim();
   return text === "" ? null : JSON.parse(text);
@@ -154,7 +182,7 @@ async function readRequiredSource(
     if (UNREADABLE.test(stderr) || isFreePlan403(stderr)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    throw new Error(`gh api ${args[0]} failed: ${stderr.trim() || `exit ${status}`}`);
+    throw new Error(`gh api ${args[0]} failed: ${ghFailureText({ status, stderr })}`);
   }
   const text = stdout.trim();
   if (text === "") {
@@ -483,7 +511,7 @@ export async function prInfo(gh, pr, cwd) {
     cwd,
   );
   if (status !== 0) {
-    throw new Error(`gh pr view ${pr} failed: ${stderr.trim() || `exit ${status}`}`);
+    throw new Error(`gh pr view ${pr} failed: ${ghFailureText({ status, stderr })}`);
   }
   return JSON.parse(stdout);
 }
@@ -494,7 +522,7 @@ async function repoSlug(gh, cwd) {
     cwd,
   );
   if (status !== 0 || stdout.trim() === "") {
-    throw new Error(`gh repo view failed: ${stderr.trim() || `exit ${status}`}`);
+    throw new Error(`gh repo view failed: ${ghFailureText({ status, stderr })}`);
   }
   return stdout.trim();
 }
