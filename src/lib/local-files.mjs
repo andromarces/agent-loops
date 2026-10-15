@@ -6,8 +6,8 @@
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { execBounded } from "./exec.mjs";
 import { logInfo, logWarn } from "./log.mjs";
+import { gitRead } from "./snapshot.mjs";
 
 // Paths that can configure a child CLI or a build. A directory is walked, and the
 // three conditions apply to each file inside it.
@@ -49,33 +49,33 @@ const GIT_CONTROL_FILES = new Set([".gitignore", ".gitattributes"]);
 // Milliseconds that one `git` read waits before it ends the child.
 const GIT_READ_TIMEOUT_MS = 60_000;
 
-async function git(cwd, args, options = {}) {
-  // `stripFinalNewline: false` (execa, `lib/io/strip-newline.js`) keeps the output
-  // byte-exact. By default execa removes a final `\n` or `\r\n`, which can be part
-  // of a path.
-  const { allowExit, ...execaOptions } = options;
-  const result = await execBounded("git", args, {
-    cwd,
-    timeoutMs: GIT_READ_TIMEOUT_MS,
-    stripFinalNewline: false,
-    ...execaOptions,
-  });
-  if (result.isCanceled) {
-    throw Object.assign(new Error(`local files: git ${args[0]} was canceled`), {
+function gitReadError(reason, { args, timeoutMs, result }) {
+  if (reason === "canceled") {
+    return Object.assign(new Error(`local files: git ${args[0]} was canceled`), {
       isCanceled: true,
     });
   }
-  if (result.timedOut) {
-    throw new Error(`local files: git ${args[0]} timed out after ${GIT_READ_TIMEOUT_MS} ms`);
+  if (reason === "timeout") {
+    return new Error(`local files: git ${args[0]} timed out after ${timeoutMs} ms`);
   }
-  if (result.exitCode !== 0 && !allowExit?.includes(result.exitCode)) {
-    // `shortMessage` holds the whole command line, so the fallback is the error code.
-    const detail = (result.stderr || result.code || "").trim();
-    throw new Error(
-      `local files: git ${args[0]} failed (exit ${result.exitCode ?? "none"}): ${detail}`,
-    );
-  }
-  return result;
+  // `shortMessage` holds the whole command line, so the fallback is the error code.
+  const detail = (result.stderr || result.code || "").trim();
+  return new Error(
+    `local files: git ${args[0]} failed (exit ${result.exitCode ?? "none"}): ${detail}`,
+  );
+}
+
+function git(cwd, args, { allowExit = [], ...options } = {}) {
+  // `stripFinalNewline: false` (execa, `lib/io/strip-newline.js`) keeps the output
+  // byte-exact. By default execa removes a final `\n` or `\r\n`, which can be part
+  // of a path.
+  return gitRead(cwd, args, {
+    timeoutMs: GIT_READ_TIMEOUT_MS,
+    stripFinalNewline: false,
+    ...options,
+    allowExit: [0, ...allowExit],
+    createError: gitReadError,
+  });
 }
 
 /**
