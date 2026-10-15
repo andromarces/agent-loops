@@ -536,6 +536,8 @@ test("headless worker and reviewer turns carry the test slot rule", async () => 
     expect(result.exitCode).toBe(0);
     expect(work.recorded[0].prompt).toContain(testSlotRule());
     expect(rev.recorded[0].prompt).toContain(testSlotRule());
+    expect(work.recorded[0].prompt).toMatch(/at most 10 test files/);
+    expect(rev.recorded[0].prompt).toMatch(/broader run through the test slot wrapper/);
   } finally {
     await removePath(repo);
   }

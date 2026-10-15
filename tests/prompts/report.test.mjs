@@ -14,6 +14,19 @@ test("an unquotable path leaves only the required CI checks", () => {
   expect(rule).toMatch(/rely on the required CI checks/);
 });
 
+// Usefulness: verifies the rule bounds a direct targeted run and sends a broader run through the
+// wrapper, or to the CI checks when no wrapper renders, so a child cannot start a many-file or
+// whole-directory run outside the machine-wide test slot (issue #872).
+test("the rule bounds a direct targeted run and sends a broader run through the wrapper", () => {
+  const withWrapper = testSlotRule();
+  expect(withWrapper).toMatch(/targeted[^.]*at most 10 test files[^.]*mirror[^.]*changed source/);
+  expect(withWrapper).toMatch(/never a whole directory/);
+  expect(withWrapper).toMatch(/broader run[^.]*through the test slot wrapper, as a full suite/);
+  const withoutWrapper = testSlotRule({ execPath: '/opt/no"de', platform: "linux" });
+  expect(withoutWrapper).toMatch(/at most 10 test files/);
+  expect(withoutWrapper).toMatch(/broader run[^.]*rely on the required CI checks/);
+});
+
 // Usefulness: verifies the rendered wrapper runs a suite command in the default shell of the host
 // (cmd on Windows, sh elsewhere), so a child that follows the rule runs its suite, not an error.
 test("the rendered wrapper runs a suite command in the default shell", async () => {

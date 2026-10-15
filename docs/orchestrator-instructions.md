@@ -445,7 +445,9 @@ the flag is unchanged.
   carries no `testRun`.
 - Every worker and reviewer turn states the full-suite rule: run a targeted test
   file directly, and run a full suite only through the test slot wrapper, or rely
-  on the required CI checks. The rule renders the wrapper command from the Node
+  on the required CI checks. A direct targeted run is at most 10 test files that
+  mirror the changed source files, never a whole directory. Any broader run is a
+  full suite and goes through the wrapper. The rule renders the wrapper command from the Node
   binary and the CLI script of the run, so it works where `agent-loop` is not on
   PATH. A run with or without `--test-cmd` gives the same rule, on the headless
   and the interactive path. Exit code 75 from the wrapper means that the suite
