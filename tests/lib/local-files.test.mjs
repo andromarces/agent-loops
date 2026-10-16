@@ -18,16 +18,13 @@ import { createLinkedWorkTree, exists, removePath } from "../runtime-helpers.mjs
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const created = [];
-// The two entry-bound tests create and later remove 2000 files, which is slow on a
-// loaded Windows host. Each such test and the teardown get this bound, not the default.
-const SLOW_FIXTURE_TIMEOUT_MS = 60_000;
 
 afterEach(async () => {
   vi.restoreAllMocks();
   for (const dir of created.splice(0)) {
     await removePath(dir);
   }
-}, SLOW_FIXTURE_TIMEOUT_MS);
+});
 
 async function git(cwd, ...args) {
   return execa("git", args, { cwd });
@@ -656,62 +653,52 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-// Usefulness: verifies a listed directory that holds more than 2000 entries, counted
-// with nested ones, is skipped as one name with none of its files copied, and it does
-// not use up the bound of the next listed path.
+// Usefulness: verifies the production entry bound is 2000, the value the docs and ADR 0018 state.
+// Not redundant: the bound tests below inject a small bound, so only this one pins the default.
+test("the default entry bound is 2000", () => {
+  expect(MAX_WALKED_ENTRIES).toBe(2000);
+});
+
+// Usefulness: verifies a listed directory that holds more than the bound, counted with
+// nested ones, is skipped as one name with none of its files copied, and it does not use
+// up the bound of the next listed path.
 // Not redundant: it is the test with a directory over the bound, followed by a second
 // listed path that must still copy.
-// Almost all of its time is creating and removing the 2000 files, about 1.2 s on an idle
-// Windows host. The fixture cannot shrink: the bound is the file count.
-test(
-  "skips a listed directory past the entry bound as one name, per directory",
-  async () => {
-    const { main, linked } = await createLinked({ ignore: [".codex/", ".vscode/"] });
-    await mkdir(join(main, ".codex", "sub"), { recursive: true });
-    await writeFile(join(main, ".codex", "first.toml"), "a=1\n");
-    await Promise.all(
-      Array.from({ length: MAX_WALKED_ENTRIES }, (_, i) =>
-        writeFile(join(main, ".codex", "sub", `f${i}`), ""),
-      ),
-    );
-    await mkdir(join(main, ".vscode"));
-    await writeFile(join(main, ".vscode", "tasks.json"), "{}\n");
+// It injects a bound of 3 so the fixture needs 4 files, not over 2000 that are slow to
+// create and remove on windows-latest (#786). The walk is the production one.
+test("skips a listed directory past the entry bound as one name, per directory", async () => {
+  const { main, linked } = await createLinked({ ignore: [".codex/", ".vscode/"] });
+  await mkdir(join(main, ".codex", "sub"), { recursive: true });
+  await writeFile(join(main, ".codex", "first.toml"), "a=1\n");
+  for (let i = 0; i < 3; i++) {
+    await writeFile(join(main, ".codex", "sub", `f${i}`), "");
+  }
+  await mkdir(join(main, ".vscode"));
+  await writeFile(join(main, ".vscode", "tasks.json"), "{}\n");
 
-    const report = await copyLocalFiles(linked);
+  const report = await copyLocalFiles(linked, {}, { maxEntries: 3 });
 
-    expect(report.copied).toEqual([".vscode/tasks.json"]);
-    expect(report.skipped).toEqual([".codex"]);
-    expect(await exists(join(linked, ".codex"))).toBe(false);
-  },
-  SLOW_FIXTURE_TIMEOUT_MS,
-);
+  expect(report.copied).toEqual([".vscode/tasks.json"]);
+  expect(report.skipped).toEqual([".codex"]);
+  expect(await exists(join(linked, ".codex"))).toBe(false);
+});
 
-// Usefulness: verifies a listed directory with exactly 2000 entries is still copied, so
-// the bound means more than 2000.
+// Usefulness: verifies a listed directory with exactly the bound of entries is still
+// copied, so the bound means more than that count.
 // Not redundant: it is the test at the boundary, so a limit that is off by one fails
-// it.
-// The copy checks and copies each of the 2000 files in turn, with about 15 file system
-// calls per file. That takes about 5 s on an idle Windows host and over 15 s while the
-// full suite runs, so this test has its own timeout. The fixture cannot shrink: the
-// bound is the file count.
-test(
-  "copies a listed directory that holds exactly the entry bound",
-  async () => {
-    const { main, linked } = await createLinked({ ignore: [".codex/"] });
-    await mkdir(join(main, ".codex"));
-    await Promise.all(
-      Array.from({ length: MAX_WALKED_ENTRIES }, (_, i) =>
-        writeFile(join(main, ".codex", `f${i}`), ""),
-      ),
-    );
+// it. It injects a bound of 3 for the same reason as the test above.
+test("copies a listed directory that holds exactly the entry bound", async () => {
+  const { main, linked } = await createLinked({ ignore: [".codex/"] });
+  await mkdir(join(main, ".codex"));
+  for (let i = 0; i < 3; i++) {
+    await writeFile(join(main, ".codex", `f${i}`), "");
+  }
 
-    const report = await copyLocalFiles(linked);
+  const report = await copyLocalFiles(linked, {}, { maxEntries: 3 });
 
-    expect(report.copied.length).toBe(MAX_WALKED_ENTRIES);
-    expect(report.skipped).toEqual([]);
-  },
-  SLOW_FIXTURE_TIMEOUT_MS,
-);
+  expect(report.copied).toEqual([".codex/f0", ".codex/f1", ".codex/f2"]);
+  expect(report.skipped).toEqual([]);
+});
 
 // Usefulness: verifies a work tree that Git still lists but whose `.git` entry is gone
 // is never read from.
