@@ -247,3 +247,66 @@ test("a state with no task record or a malformed one reads as unsent and records
   const has = reviewer.recorded.map((call) => call.prompt.includes("Fix the flaky test."));
   expect(has).toEqual([true, true, false, true, false]);
 });
+
+// Usefulness: a reviewer turn that carries the task and runs in a replacement conversation delivers
+// the task to that conversation, so the next turn must not send it again.
+test("two consecutive reviewer replacements deliver the init task once per conversation", async () => {
+  const repo = await startRun();
+  const replaceWith = (id) => (state) => {
+    state.sessionId = id;
+    state.conversationReplaced = true;
+    return `${REPORT}\nVerdict: accept`;
+  };
+  const reviewer = recordingAdapter([
+    `${REPORT}\nVerdict: accept`,
+    replaceWith("replacement-1"),
+    replaceWith("replacement-2"),
+  ]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  for (let turn = 0; turn < 5; turn += 1) {
+    await reviewerTurn(repo, agents);
+  }
+
+  const has = reviewer.recorded.map((call) => call.prompt.includes("Fix the flaky test."));
+  // Turn 3 carries the task into the replacement-1 session and runs in replacement-2.
+  expect(has).toEqual([true, false, true, false, false]);
+});
+
+// Usefulness: the worker follows the same rule as the reviewer. A task-carrying resumed turn that
+// runs in a second replacement delivers the task there, so the preamble-only turn leaves it out.
+test("a worker turn that carries the init task into a replacement conversation does not repeat it", async () => {
+  const repo = await startRun();
+  const controller = new AbortController();
+  const worker = recordingAdapter([
+    REPORT,
+    (state) => {
+      state.sessionId = "replacement-1";
+      state.conversationReplaced = true;
+      controller.abort(); // ends the dispatch before the preamble-only turn
+      return REPORT;
+    },
+    (state) => {
+      state.sessionId = "replacement-2";
+      state.conversationReplaced = true;
+      return REPORT;
+    },
+  ]);
+  const agents = { fake1: worker, fake2: recordingAdapter([]) };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  const canceled = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents,
+    stdin: stdinPrompt,
+    signal: controller.signal,
+  });
+  expect(canceled.exitCode).toBe(130);
+  await workerTurn(repo, agents, ["--resume-interrupted"]);
+  await workerTurn(repo, agents);
+
+  const has = worker.recorded.map((call) => call.prompt.includes("Fix the flaky test."));
+  // Calls: init, replaced turn, task-carrying resume that replaces again, preamble-only, later turn.
+  expect(worker.recorded).toHaveLength(5);
+  expect(has).toEqual([true, false, true, false, false]);
+});

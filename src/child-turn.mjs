@@ -110,9 +110,10 @@ export async function runChild(options) {
     task !== null && (role.sessionId === null || role.taskSentTo !== role.sessionId);
   // The worker task rides in the first-turn preamble. The reviewer prompt carries it on any turn.
   const taskFor = (first) => (taskNeeded() && (!isWorker || first) ? task : null);
-  // A turn that ran in a replaced conversation never held the task, so it records nothing.
+  // The adapter reports the id of the conversation that the turn ran in, a replacement included.
+  // That conversation received the whole prompt, so its id is the one recorded.
   const recordTaskSent = () => {
-    if (role.sessionId !== null && !role.conversationReplaced) role.taskSentTo = role.sessionId;
+    if (role.sessionId !== null) role.taskSentTo = role.sessionId;
   };
   // The mode reaches the reviewer turn only. `readOnly` stays true there, so the mutation check
   // below still wraps the turn, and the orchestrator path never sets this input (ADR 0019, 0038).

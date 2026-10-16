@@ -92,8 +92,10 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
     shows the task when that id differs from the session id it runs in, or when the role has no session id.
   - A role with no session id starts a new conversation. That happens on the first turn and after a first turn
     that failed before its CLI reported a session. It also happens on a rerun after a missing session (below).
-  - A resume that ran in a replaced conversation records nothing. The next turn of a reviewer shows the task. A
-    worker gets it in the preamble-only turn that follows the replacement.
+  - A turn that carries the task records the session id that its CLI returns. That id can name a replacement
+    conversation, which received the whole prompt.
+  - A resumed turn that ran in a replacement conversation carries no task, so it records nothing. The next
+    reviewer turn shows the task. A worker gets it in the preamble-only turn that follows the replacement.
   - A cancel never repeats the task. After a cancel, the next worker turn sends the preamble again, as before.
     It leaves the task out when the record names the session that it resumes.
   - Every adapter (Claude Code, Codex, Copilot, opencode, agy) fails a turn that reports no session id. A
