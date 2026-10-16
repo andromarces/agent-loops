@@ -408,3 +408,15 @@ test("the default wait command names the Node binary and CLI script of this run"
   expect(prompt).not.toMatch(/agent-loop role wait-checks --pr/);
   await access(cli);
 });
+
+// Usefulness: verifies the `--all` fallback wait after a `noRequiredChecks` outcome renders the
+// same per-shell command as the required wait, with the Node binary, the CLI script, and the work
+// tree of the run, and the same bound (ADR 0013, issue #896). A bare `agent-loop role wait-checks
+// --all` is not on the PATH of a headless orchestrator, so it cannot run.
+test("the headless --all wait renders the shell commands of the required wait", () => {
+  const prompt = waitPrompt(100);
+  for (const { command } of WAIT_COMMAND) {
+    expect(prompt).toContain(`${command} --all --pr 42 --timeout 45`);
+  }
+  expect(prompt).not.toContain("agent-loop role wait-checks --all");
+});
