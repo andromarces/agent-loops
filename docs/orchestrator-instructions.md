@@ -217,7 +217,7 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
   `x; Design settled: a` (issue #898). The prose line must not start with whitespace (a nonbreaking or ideographic
   space counts), `*`, `_`, a backtick, `>`, or `#`, must not be a list, and must not hold a report label name or `Verdict`, in
-  any case, followed by optional emphasis marks, whitespace, and a colon, anywhere in the line. So a
+  any case, followed by any run of `*`, `_`, or backtick marks (or none), whitespace (or none), and a colon, anywhere in the line. So a
   `*` line (issue #275), a decorated or malformed label, and a `Verdict` line never introduce the
   list. A prose line directly after the label with no blank line,
   a blank line between the prose and its list, a second prose line before the list, prose after

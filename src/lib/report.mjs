@@ -88,6 +88,14 @@ const LABEL_MENTION = new RegExp(
   "i",
 );
 
+// A label or `Verdict` mention that bars a prose line from introducing a folded list (issue #898).
+// It differs from LABEL_MENTION in one way: any run of emphasis or code marks may follow the name,
+// not at most two. A mark before the name needs no rule, because the match has no lead-in condition.
+const HEADING_LABEL_MENTION = new RegExp(
+  `(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]*\\s*:`,
+  "i",
+);
+
 /**
  * True when the response holds a closing block attempt: any report label name or `Verdict`
  * followed by a colon, anywhere in the text, whether or not the block parses. A response
@@ -229,11 +237,11 @@ function appendToLabel(label, text) {
 /**
  * A plain prose line that may introduce a folded list (issue #898): its first character is not
  * whitespace, `*`, `_`, a backtick, `>`, or `#`, is not a list, and names no report label or
- * `Verdict` followed by a colon anywhere. A malformed or decorated label, a `Verdict` line, and a
+ * `Verdict` followed by any run of marks, optional whitespace, and a colon anywhere. A malformed or decorated label, a `Verdict` line, and a
  * `*` line (issue #275) therefore never supply a field value.
  */
 function isPlainProseLine(line) {
-  return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !LABEL_MENTION.test(line);
+  return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
 }
 
 /**

@@ -856,3 +856,25 @@ test("parseReportBlock returns null for an indented prose line above a list", ()
     expect(isAcceptedReview(response)).toBe(false);
   }
 });
+
+// Usefulness: verifies a label or `Verdict` mention with any run of emphasis marks, leading or
+// trailing, never introduces a folded list, so a triple-mark mention cannot supply Checks and pass
+// acceptance (issue #898 review).
+test("parseReportBlock returns null for a prose line above a list that holds a marked label mention", () => {
+  for (const heading of [
+    "Design ***notes***: apply the change",
+    "Explain ___why___: retain the guard",
+    "Review ***Verdict***: reject",
+    "Review ___Verdict___: reject",
+    "Review ***Verdict: reject",
+    "Review ___Verdict: reject",
+    "Review Verdict***: reject",
+    "Review Checks____: reject",
+    "Review ````Verdict````: reject",
+    "Review ****Checks**** : reject",
+  ]) {
+    const response = `${REPORT}\nChecks:\n\n${heading}\n- item\nVerdict: accept`;
+    expect(parseReportBlock(response)).toBeNull();
+    expect(isAcceptedReview(response)).toBe(false);
+  }
+});
