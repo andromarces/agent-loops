@@ -18,13 +18,16 @@ import { createLinkedWorkTree, exists, removePath } from "../runtime-helpers.mjs
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const created = [];
+// The two entry-bound tests create and later remove 2000 files, which is slow on a
+// loaded Windows host. Each such test and the teardown get this bound, not the default.
+const SLOW_FIXTURE_TIMEOUT_MS = 60_000;
 
 afterEach(async () => {
   vi.restoreAllMocks();
   for (const dir of created.splice(0)) {
     await removePath(dir);
   }
-});
+}, SLOW_FIXTURE_TIMEOUT_MS);
 
 async function git(cwd, ...args) {
   return execa("git", args, { cwd });
@@ -658,24 +661,30 @@ test.skipIf(process.platform === "win32")(
 // not use up the bound of the next listed path.
 // Not redundant: it is the test with a directory over the bound, followed by a second
 // listed path that must still copy.
-test("skips a listed directory past the entry bound as one name, per directory", async () => {
-  const { main, linked } = await createLinked({ ignore: [".codex/", ".vscode/"] });
-  await mkdir(join(main, ".codex", "sub"), { recursive: true });
-  await writeFile(join(main, ".codex", "first.toml"), "a=1\n");
-  await Promise.all(
-    Array.from({ length: MAX_WALKED_ENTRIES }, (_, i) =>
-      writeFile(join(main, ".codex", "sub", `f${i}`), ""),
-    ),
-  );
-  await mkdir(join(main, ".vscode"));
-  await writeFile(join(main, ".vscode", "tasks.json"), "{}\n");
+// Almost all of its time is creating and removing the 2000 files, about 1.2 s on an idle
+// Windows host. The fixture cannot shrink: the bound is the file count.
+test(
+  "skips a listed directory past the entry bound as one name, per directory",
+  async () => {
+    const { main, linked } = await createLinked({ ignore: [".codex/", ".vscode/"] });
+    await mkdir(join(main, ".codex", "sub"), { recursive: true });
+    await writeFile(join(main, ".codex", "first.toml"), "a=1\n");
+    await Promise.all(
+      Array.from({ length: MAX_WALKED_ENTRIES }, (_, i) =>
+        writeFile(join(main, ".codex", "sub", `f${i}`), ""),
+      ),
+    );
+    await mkdir(join(main, ".vscode"));
+    await writeFile(join(main, ".vscode", "tasks.json"), "{}\n");
 
-  const report = await copyLocalFiles(linked);
+    const report = await copyLocalFiles(linked);
 
-  expect(report.copied).toEqual([".vscode/tasks.json"]);
-  expect(report.skipped).toEqual([".codex"]);
-  expect(await exists(join(linked, ".codex"))).toBe(false);
-});
+    expect(report.copied).toEqual([".vscode/tasks.json"]);
+    expect(report.skipped).toEqual([".codex"]);
+    expect(await exists(join(linked, ".codex"))).toBe(false);
+  },
+  SLOW_FIXTURE_TIMEOUT_MS,
+);
 
 // Usefulness: verifies a listed directory with exactly 2000 entries is still copied, so
 // the bound means more than 2000.
@@ -685,20 +694,24 @@ test("skips a listed directory past the entry bound as one name, per directory",
 // calls per file. That takes about 5 s on an idle Windows host and over 15 s while the
 // full suite runs, so this test has its own timeout. The fixture cannot shrink: the
 // bound is the file count.
-test("copies a listed directory that holds exactly the entry bound", async () => {
-  const { main, linked } = await createLinked({ ignore: [".codex/"] });
-  await mkdir(join(main, ".codex"));
-  await Promise.all(
-    Array.from({ length: MAX_WALKED_ENTRIES }, (_, i) =>
-      writeFile(join(main, ".codex", `f${i}`), ""),
-    ),
-  );
+test(
+  "copies a listed directory that holds exactly the entry bound",
+  async () => {
+    const { main, linked } = await createLinked({ ignore: [".codex/"] });
+    await mkdir(join(main, ".codex"));
+    await Promise.all(
+      Array.from({ length: MAX_WALKED_ENTRIES }, (_, i) =>
+        writeFile(join(main, ".codex", `f${i}`), ""),
+      ),
+    );
 
-  const report = await copyLocalFiles(linked);
+    const report = await copyLocalFiles(linked);
 
-  expect(report.copied.length).toBe(MAX_WALKED_ENTRIES);
-  expect(report.skipped).toEqual([]);
-}, 60_000);
+    expect(report.copied.length).toBe(MAX_WALKED_ENTRIES);
+    expect(report.skipped).toEqual([]);
+  },
+  SLOW_FIXTURE_TIMEOUT_MS,
+);
 
 // Usefulness: verifies a work tree that Git still lists but whose `.git` entry is gone
 // is never read from.
