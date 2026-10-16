@@ -280,6 +280,24 @@ test("diffSnapshots detects untracked file addition", async () => {
   }
 });
 
+// Usefulness: verifies acceptance #885 — a write to an ignored path inside the repository is no
+// mutation, so a reviewer can keep probe output under `node_modules/.cache/<name>`.
+test("diffSnapshots reports no change for a write to an ignored path", async () => {
+  const repo = await createTempRepo();
+  try {
+    await writeFile(join(repo, ".gitignore"), "node_modules/\n");
+    await execa("git", ["add", ".gitignore"], { cwd: repo });
+    await execa("git", ["commit", "-m", "ignore node_modules"], { cwd: repo });
+    const s1 = await snapshot(repo);
+    await mkdir(join(repo, "node_modules", ".cache", "probe"), { recursive: true });
+    await writeFile(join(repo, "node_modules", ".cache", "probe", "out.txt"), "probe\n");
+    const s2 = await snapshot(repo);
+    expect(diffSnapshots(s1, s2)).toEqual([]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies diffSnapshots detects deleted file.
 test("diffSnapshots detects file deletion", async () => {
   const repo = await createTempRepo();

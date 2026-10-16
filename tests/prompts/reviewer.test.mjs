@@ -507,6 +507,16 @@ test("every reviewer turn routes a full suite through the test slot wrapper of t
   }
 });
 
+// Usefulness: verifies acceptance #885 — the reviewer is told to try an ignored path inside the
+// repository before a temporary path outside it, because a Codex reviewer often cannot delete an
+// outside folder and leaves it in the OS temp directory.
+test("reviewer prompt orders an ignored path inside the repository before a temporary path outside it", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "Put the output of a test, build, or probe under an ignored path inside the repository first, for example `node_modules/.cache/<name>`. Use a temporary path outside the repository only when no ignored path fits.",
+  );
+});
+
 // Usefulness: verifies acceptance #865 — the reviewer is told to remove the temporary files it
 // creates outside the repository and to name any it could not remove, because the mutation check
 // does not see those writes and probe files would otherwise accumulate in the OS temp directory.
