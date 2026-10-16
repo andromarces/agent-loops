@@ -422,6 +422,15 @@ test("reviewer prompt carries the sandbox note of its mode only", () => {
   expect(on).toContain("outside the work tree");
 });
 
+// Usefulness: verifies the reviewer keeps scratch output on a short path and never points a test
+// runner's temporary directory at a deep one, so a Windows runtime does not hit its path length
+// limit and report false test failures (issue #903).
+test("reviewer prompt keeps scratch output on a short path", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain("Keep the path of that output short");
+  expect(prompt).toContain("do not set TMP, TEMP, or TMPDIR to a deep path");
+});
+
 // Usefulness: verifies the late-write line appears only for a non-empty `lateChangedPaths`, with
 // the advisory framing, so a clean tree and an uncaptured read add no noise (issue #738).
 test("the test group reports a late work tree change only when there is one", () => {
