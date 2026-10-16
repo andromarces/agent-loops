@@ -425,6 +425,7 @@ async function dispatchLocked(
       role,
       roleName,
       prompt,
+      task: state.task ?? null,
       cwd: args.cwd,
       timeout: state.timeout,
       signal,

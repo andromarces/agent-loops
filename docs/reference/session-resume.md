@@ -32,7 +32,7 @@ Issue #675 repeated the kill under `--output-format json` on macOS 27.2 with Cla
 
 The adapter stores the valid id the result carries. When that id differs from the resumed one, with or without the stderr text, the adapter logs a warning. It also marks the state `conversationReplaced`. A resumed turn carries no preamble.
 
-For a worker, the runtime then runs one preamble-only turn in the new conversation, in the same step. It never reruns the task, so its edits are not repeated. Limits: the task prompt reaches the new conversation before the preamble. The preamble-only turn can still write, because a worker turn has no mutation check. A failed preamble turn only warns.
+For a worker, the runtime then runs one preamble-only turn in the new conversation, in the same step. It never reruns the task, so its edits are not repeated. Limits: the task prompt reaches the new conversation before the preamble. The preamble-only turn can still write, because a worker turn has no mutation check. A failed preamble turn only warns. The preamble-only turn carries the `Init task:` block with the preamble. A reviewer has no such turn, so a replaced reviewer conversation does not receive the block.
 
 An orchestrator turn is read-only. The runtime reruns it once with the initial instructions before the same prompt. The earlier orchestrator turns are lost. Each of the two calls has its own mutation check, so an edit that the rerun restores is still detected.
 

@@ -1,7 +1,7 @@
 import { escapeLineSeparators } from "./escape.mjs";
-import { processRule, reportBlock, testSlotRule } from "./report.mjs";
+import { initTaskBlock, processRule, reportBlock, testSlotRule } from "./report.mjs";
 
-export function workerPrompt(prompt, firstTurn = false) {
+export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
     return escapeLineSeparators(prompt);
   }
@@ -29,7 +29,7 @@ Your role:
 
 ${reportBlock}
 
-Instructions:
+${initTaskBlock(task)}Instructions:
 ${prompt}
 `.trim(),
   );

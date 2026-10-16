@@ -366,6 +366,7 @@ export async function runLoop(options) {
         role: targetRole,
         roleName,
         prompt: action.prompt,
+        task,
         cwd,
         timeout,
         signal,
