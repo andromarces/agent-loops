@@ -87,9 +87,12 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
 - The init task (`--task` or `--task-file`) reaches each role once. The first turn of a role shows the task under
   its own `Init task:` label, before `Instructions:`, in the worker preamble and in the reviewer prompt. A later
-  turn of the same role does not repeat it, because the resumed session already holds it. The task is shown again
-  when a turn reruns as a first turn after a missing session (below). A role whose adapter keeps no session id
-  gets the task on every turn.
+  turn of the same role does not repeat it, because the resumed session already holds it. The rule is once per
+  child conversation: the task is shown on every turn that starts a new conversation. A turn starts one when the
+  role has no stored session id, which is the case on the first turn, after a first turn that failed before its
+  CLI reported a session, and on a rerun as a first turn after a missing session (below). Those turns also get
+  the full worker preamble. Every adapter (Claude Code, Codex, Copilot, opencode, agy) fails a turn that reports
+  no session id, so a successful turn always stores one, and no adapter repeats the task after a successful turn.
   The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the dispatch, so
   write it to state the work of that turn. A prompt such as "Carry out the task" now has the task to refer to.
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot

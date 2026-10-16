@@ -100,3 +100,36 @@ for (const role of ["worker", "reviewer"]) {
     expect(prompts[1]).toContain(TASK_BLOCK);
   });
 }
+
+// Usefulness: a role with no stored session id starts a new child conversation, which also gets the
+// full preamble, so the init task belongs in that turn. This pins the once-per-conversation rule for
+// the only way a real adapter reaches it: a first turn that failed before reporting a session.
+for (const role of ["worker", "reviewer"]) {
+  test(`a ${role} turn in a new conversation after a failed first turn shows the init task`, async () => {
+    const repo = await startRun();
+    const prompts = [];
+    const failsOnce = {
+      async run(state, prompt) {
+        prompts.push({ sessionId: state.sessionId, prompt });
+        if (prompts.length === 1) {
+          throw new Error("boom before any session id");
+        }
+        state.sessionId = "sess-new";
+        return REPORT;
+      },
+    };
+    const agents =
+      role === "worker"
+        ? { fake1: failsOnce, fake2: recordingAdapter([]) }
+        : { fake1: recordingAdapter([]), fake2: failsOnce };
+    await workerTurn(repo, agents, INIT_OVERRIDES);
+    if (role === "reviewer") {
+      await reviewerTurn(repo, agents);
+    }
+    await (role === "worker" ? workerTurn(repo, agents) : reviewerTurn(repo, agents));
+
+    expect(prompts.map((p) => p.sessionId)).toEqual([null, null]);
+    expect(prompts[0].prompt).toContain(TASK_BLOCK);
+    expect(prompts[1].prompt).toContain(TASK_BLOCK);
+  });
+}
