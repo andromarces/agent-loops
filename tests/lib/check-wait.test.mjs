@@ -104,6 +104,33 @@ test("waitChecks refuses exit 1 when the base branch has no required check", asy
   ).rejects.toThrow(/gh pr checks 42 --required/);
 });
 
+// Usefulness: verifies the exact `gh` answer for a branch with no required check
+// is its own settled outcome, with no check state, so the parent can tell it from
+// a read error and never reads it as a pass (issue #894).
+test("waitChecks reports a branch with no required check as its own outcome", async () => {
+  const result = await once({
+    status: 1,
+    stdout: "",
+    stderr: "no required checks reported on the 'docs/212-adr-0024-agent-reads' branch\n",
+  });
+  expect(result).toEqual({ timedOut: false, noRequiredChecks: true, checks: [] });
+});
+
+// Usefulness: verifies only the exact `gh` answer is the new outcome: the same
+// words inside a longer error text, or on another exit code, stay unresolved
+// (issue #894).
+test("waitChecks keeps any other exit 1 without a failing check unresolved", async () => {
+  const reads = [
+    { status: 1, stderr: "error: no required checks reported on the 'main' branch, try later" },
+    { status: 2, stderr: "no required checks reported on the 'main' branch" },
+    { status: 1, stderr: "no required checks found on the 'main' branch" },
+    { status: 1, stderr: "" },
+  ];
+  for (const read of reads) {
+    await expect(once({ ...read, stdout: "" })).rejects.toThrow(/gh pr checks 42 --required/);
+  }
+});
+
 // Usefulness: verifies exit 1 as a read error refuses instead of reading as a
 // pass (issue #329).
 test("waitChecks refuses exit 1 when the read itself failed", async () => {

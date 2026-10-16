@@ -3,7 +3,7 @@
 // takes no timeout for the watch, and a shell `timeout` exists on neither
 // Windows nor macOS by default. The runtime owns the bound instead (issue #329).
 import { setTimeout as delay } from "node:timers/promises";
-import { ghFailureText, runGh } from "./ci-required-sources.mjs";
+import { ghFailureText, NO_REQUIRED_CHECKS, runGh } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
 
 /** Default wait bound, in seconds. Short enough to fit a harness command timeout. */
@@ -91,10 +91,13 @@ function isFailing(check) {
  * - A listed failing check is settled, whichever code answered, and the failure
  *   is reported rather than waited out.
  * - A pending code, or a list with no settled check, keeps the wait running.
+ * - Exit 1 with no output and the exact `no required checks reported on the
+ *   '<branch>' branch` stderr is settled as `noRequiredChecks`: the branch has
+ *   no required check to wait for, which is no pass either (#894).
  * - Any other code, with no failing check listed, is unresolved: exit 1 covers
- *   a repository with no required check and a read error, and an unparseable
- *   output is a read error. A list item that is not well formed is unresolved
- *   too, so one unreadable item cannot settle the list as a pass.
+ *   a read error, and an unparseable output is a read error. A list item that is
+ *   not well formed is unresolved too, so one unreadable item cannot settle the
+ *   list as a pass.
  */
 function readOutcome(pr, { status, stdout, stderr }) {
   const label = `gh pr checks ${pr} --required`;
@@ -127,10 +130,13 @@ function readOutcome(pr, { status, stdout, stderr }) {
   }
   // An empty list on exit 0 keeps waiting, because `gh pr checks --required`
   // omits a check that has not started. The same empty list on exit 1 is not
-  // that: exit 1 with no failing check listed covers a repository with no
-  // required check and a read error, so it falls through to the refusal below.
+  // that: exit 1 with no failing check listed is a read error unless `gh` states
+  // the branch has no required check, so it falls through to the refusal below.
   if (status === 0 && checks.length > 0) {
     return { settled: true, checks };
+  }
+  if (status === 1 && text === "" && NO_REQUIRED_CHECKS.test(stderr.trim())) {
+    return { settled: true, checks, noRequiredChecks: true };
   }
   if (status !== 0) {
     throw new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
@@ -198,6 +204,8 @@ async function readWithin(gh, pr, cwd, remainingMs, signal) {
  * carries the last check states. `childExitUnconfirmed` rides on the envelope
  * only when that ceiling expired with the read still unaccounted for, because a
  * child exit the command did not observe is not a claim it may make.
+ * `noRequiredChecks` rides on the envelope only when `gh` states the branch has no
+ * required check: the wait ends at once with no check state, and it is no pass (#894).
  *
  * `deadline` is an absolute time on the `now` clock. A caller passes it to bound
  * the whole command, including the work that runs before the first read; a
@@ -241,7 +249,11 @@ export async function waitChecks({
       last = outcome.checks;
     }
     if (outcome.settled) {
-      return { timedOut: false, checks: outcome.checks };
+      return {
+        timedOut: false,
+        ...(outcome.noRequiredChecks ? { noRequiredChecks: true } : {}),
+        checks: outcome.checks,
+      };
     }
     const left = end - now();
     if (left <= 0) {

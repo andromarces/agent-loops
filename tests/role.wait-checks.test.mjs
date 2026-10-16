@@ -35,6 +35,37 @@ test("wait-checks returns the check envelope and writes no run state", async () 
   await expect(access(statePaths({ cwd: repo }).stateFile)).rejects.toThrow();
 });
 
+// Usefulness: verifies `role wait-checks` on a branch with no required check
+// prints `noRequiredChecks: true` with exit 0 and no `error`, so the parent reads
+// a distinct outcome instead of a generic read error (issue #894).
+test("wait-checks reports a branch with no required check as its own outcome", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "213", "--timeout", "60"]),
+    {
+      gh: scriptedGh([
+        {
+          status: 1,
+          stdout: "",
+          stderr: "no required checks reported on the 'docs/212-adr-0024-agent-reads' branch",
+        },
+      ]),
+      ...fakeClock(),
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({
+    status: "ok",
+    pr: 213,
+    timedOut: false,
+    noRequiredChecks: true,
+    checks: [],
+  });
+});
+
 // Usefulness: verifies a wait that ends on its bound exits 0 and sets
 // `timedOut`, so the parent reads the flag instead of losing the result to a
 // harness command timeout (issue #329).

@@ -541,7 +541,7 @@ async function repoSlug(gh, cwd) {
 // exit, and an error text that merely contains those words are a failed read. The
 // gate ignores `ok`. The status read refuses on it, because the list may name a
 // required check no configuration source did (issue #349).
-const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' branch$/;
+export const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' branch$/;
 
 async function ghRequiredNames(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(

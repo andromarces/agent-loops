@@ -640,13 +640,28 @@ wait.
 
 The `gh pr checks` exit codes decide the outcome, as the reviewer read states:
 exit 0 with no pending check listed is settled, exit 8 is pending, and exit 1 is
-settled only when the output lists a failing required check. Any other exit 1,
-and any output that is not a check list, is unresolved: the command exits 1 with
+settled only when the output lists a failing required check, or when `gh` prints
+exactly `no required checks reported on the '<branch>' branch` and no output.
+That one answer is its own outcome, below. Any other exit 1, and any output that
+is not a check list, is unresolved: the command exits 1 with
 `status: "error"` and records no check state for that wait, so an unresolved
 read never reads as a pass. Every check item is read as a name plus a `state` or
 a `bucket` the CLI knows; an item that carries no readable state is unresolved
 too, so one item the CLI cannot read cannot settle the wait as a pass. Never
 record a check you could not read as passed.
+
+A branch with no required check ends the wait at once with exit 0 and
+`"noRequiredChecks": true`, an empty `checks`, and `"timedOut": false`:
+
+```json
+{ "status": "ok", "pr": 213, "timedOut": false, "noRequiredChecks": true, "checks": [] }
+```
+
+It is not a read error and not a pass, because no check was read. There is
+nothing to wait for, so do not run the wait again. On `noRequiredChecks`,
+dispatch the reviewer, which reads the CI status of the PR head itself, and
+never record the CI status as passed from this envelope. A reviewer that starts before CI completes can report
+the CI status as unresolved. The `--require-ci` gate still decides the finish.
 
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
 failed one. A check that has not started is absent from `checks`, because the
