@@ -94,8 +94,9 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
     that failed before its CLI reported a session. It also happens on a rerun after a missing session (below).
   - A turn that carries the task records the session id that its CLI returns. That id can name a replacement
     conversation, which received the whole prompt.
-  - A resumed turn that ran in a replacement conversation carries no task, so it records nothing. The next
-    reviewer turn shows the task. A worker gets it in the preamble-only turn that follows the replacement.
+  - A resumed turn that ran in a replacement conversation carries no task, so it records nothing. A task-only
+    turn in the same dispatch then delivers it: the preamble-only turn for a worker, and a turn with the
+    `Init task:` block and no review for a reviewer.
   - A cancel never repeats the task. After a cancel, the next worker turn sends the preamble again, as before.
     It leaves the task out when the record names the session that it resumes.
   - Every adapter (Claude Code, Codex, Copilot, opencode, agy) fails a turn that reports no session id. A
@@ -103,9 +104,11 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   - Known limit: a canceled turn that carried the task counts as delivered. The CLI can drop that prompt. That
     conversation then never sees the task.
   - A hard kill of the dispatch records no delivery, so the next turn can send the task again.
-  - Known limit: a resumed reviewer turn can run in a replacement conversation. That turn carries no task. The
-    replacement gets the task only on the next reviewer turn. If the run ends first, it never sees the task.
-    The reviewer preamble differs: it goes out on every reviewer turn, and the init task does not.
+  - The task-only reviewer turn costs one extra child turn in the same dispatch. The verdict of the turn that
+    ran stays the result, so the replacement has the task before that verdict counts toward a finish.
+    Known limit: a failed task-only turn only warns, and the next reviewer turn shows the task. If the run
+    ends first, that conversation never sees it. A cancel in that turn keeps the replacement mark, so the next
+    reviewer turn shows the task.
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot

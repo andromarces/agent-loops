@@ -201,28 +201,40 @@ test("successive cancels in a replacement conversation never resend the init tas
   expect(prompts[4]).not.toContain("Fix the flaky test.");
 });
 
-// Usefulness: a reviewer has no preamble-only turn, so the next reviewer turn is the only way a
-// replaced reviewer conversation can see the task, and it must see it once.
-test("a replaced reviewer conversation gets the init task once", async () => {
+// Usefulness: #890. A replaced reviewer conversation gets the task in the same dispatch, so a run
+// that finishes on that accept never leaves the conversation without it, and a later turn does not repeat it.
+test("a replaced reviewer conversation gets the init task in the same dispatch and once", async () => {
   const repo = await startRun();
   const reviewer = recordingAdapter([
-    `${REPORT}\nVerdict: accept`,
+    `${REPORT}
+Verdict: accept`,
     (state) => {
       state.sessionId = "replacement";
       state.conversationReplaced = true;
-      return `${REPORT}\nVerdict: accept`;
+      return `${REPORT}
+Verdict: accept`;
     },
   ]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
 
   await workerTurn(repo, agents, INIT_OVERRIDES);
-  for (let turn = 0; turn < 4; turn += 1) {
-    await reviewerTurn(repo, agents);
-  }
+  await reviewerTurn(repo, agents);
+  const replaced = await reviewerTurn(repo, agents);
 
-  const has = reviewer.recorded.map((call) => call.prompt.includes("Fix the flaky test."));
-  // Turn 1 is the first conversation, turn 2 resumes it, turn 3 is the first one in the replacement.
-  expect(has).toEqual([true, false, true, false]);
+  expect(replaced.exitCode).toBe(0);
+  expect(replaced.payload.verdict).toBe("accept");
+  const seen = reviewer.recorded.map((call) => [
+    call.incomingSessionId,
+    call.prompt.includes("Fix the flaky test."),
+  ]);
+  expect(seen).toEqual([
+    [null, true],
+    ["sess-1", false],
+    ["replacement", true],
+  ]);
+
+  await reviewerTurn(repo, agents);
+  expect(reviewer.recorded[3].prompt).not.toContain("Fix the flaky test.");
 });
 
 // Usefulness: a state file from before the task record, or one with a bad value, must not crash a
@@ -270,8 +282,8 @@ test("two consecutive reviewer replacements deliver the init task once per conve
   }
 
   const has = reviewer.recorded.map((call) => call.prompt.includes("Fix the flaky test."));
-  // Turn 3 carries the task into the replacement-1 session and runs in replacement-2.
-  expect(has).toEqual([true, false, true, false, false]);
+  // The task-only turn after turn 2 carries the task into replacement-1 and runs in replacement-2.
+  expect(has).toEqual([true, false, true, false, false, false]);
 });
 
 // Usefulness: the worker follows the same rule as the reviewer. A task-carrying resumed turn that

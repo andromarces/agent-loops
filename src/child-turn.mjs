@@ -17,6 +17,10 @@ import { workerPrompt } from "./prompts/worker.mjs";
 const PREAMBLE_ONLY_TASK =
   "No task this turn. Reply with the single word OK and change nothing. The rules above apply to every later turn.";
 
+// Prompt of the task-only reviewer turn that follows a replaced conversation. Its reply is dropped.
+const TASK_ONLY_REVIEW =
+  "No review this turn. Reply with the single word OK, change nothing, and give no verdict. The init task above applies to every later turn.";
+
 /**
  * Every CLI call goes through here. Emits one `invocation` event per call, carrying the
  * usage the adapter exposed on `state.usage`, and clears that field so it never lingers.
@@ -66,7 +70,8 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * passes none (ADR 0019, ADR 0038).
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
  * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
- * conversation that a turn carrying the task ran in.
+ * conversation that a turn carrying the task ran in. A reviewer turn that a CLI runs in a replacement
+ * conversation without the task is followed by a task-only reviewer turn in the same call (issue #890).
  * `onSessionAssigned(id)` is awaited by the Claude adapter, which pre-assigns a session id, before
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
  * dispatcher uses it to persist the id ahead of a crash (issue #395).
@@ -191,6 +196,28 @@ export async function runChild(options) {
         logWarn(
           `worker: the preamble turn in the new conversation failed: ${firstErrorLine(readableErrorText(err))}`,
         );
+      }
+    } else if (role.conversationReplaced && !isWorker) {
+      // A reviewer has no preamble, so the replacement conversation would get the init task only
+      // on the next dispatch, and a run can finish first (issue #890). A task-only turn in the
+      // same dispatch delivers it before the verdict counts. The verdict of the turn that ran stays
+      // the result, so a failed follow-up only warns. A cancel keeps the mark for the next turn.
+      delete role.conversationReplaced;
+      if (taskNeeded()) {
+        preamblePending = true;
+        try {
+          await invokeWithTask(true, (first, turnTask) =>
+            reviewerPrompt(TASK_ONLY_REVIEW, null, null, sandbox, turnTask),
+          );
+          preamblePending = false;
+        } catch (err) {
+          if (readProp(err, "isCanceled")) {
+            throw err;
+          }
+          logWarn(
+            `reviewer: the task turn in the new conversation failed: ${firstErrorLine(readableErrorText(err))}`,
+          );
+        }
       }
     }
     return response;
