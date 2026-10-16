@@ -211,7 +211,17 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   consecutive sub-items under one parent all fold into it, so the lines `- a`,
   two spaces then `- b`, and two spaces then `- c` read `a, b, c` (issue #870).
   The run ends at the first line that is not a `- ` item or such a sub-item, so a blank line or prose between
-  the label and the list breaks it. Any other list in the closing block, for
+  the label and the list breaks it. One shape with prose folds too: a blank line after the label
+  line (or after its folded list), then one prose line, then a `- ` list directly under that line.
+  The prose and its list join the value of the label just above, as `; <prose>: <items>` (the prose
+  loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
+  `x; Design settled: a` (issue #898). The prose line must not start with whitespace (a nonbreaking or ideographic
+  space counts), `*`, `_`, a backtick, `>`, or `#`, must not be a list, and must not hold a report label name or `Verdict`, in
+  any case, followed by any run of `*`, `_`, or backtick marks (or none), whitespace (or none), and a colon, anywhere in the line. So a
+  `*` line (issue #275), a decorated or malformed label, and a `Verdict` line never introduce the
+  list. A prose line directly after the label with no blank line,
+  a blank line between the prose and its list, a second prose line before the list, prose after
+  the reviewer `Verdict:` line, and a later repeat of the label stay unparseable. Any other list in the closing block, for
   example bullets after the reviewer `Verdict:` line, a list outside any label,
   a bullet with no space after the marker (`-item`, `*item`) or a separator
   other than one space (a tab, a nonbreaking space, two spaces) even under an

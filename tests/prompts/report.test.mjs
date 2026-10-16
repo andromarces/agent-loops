@@ -51,3 +51,11 @@ test("the closing-block rule states the one-level sub-item fold", () => {
   );
   expect(reportBlock).toMatch(/Any other list or nesting[^.]*unparseable/);
 });
+
+// Usefulness: verifies the closing-block rule states the heading-and-list fold of issue #898, so the
+// prompt matches the parser contract and the plain-prose limits.
+test("the closing-block rule states the heading and list fold", () => {
+  expect(reportBlock).toMatch(
+    /blank line[^.]*one plain prose line[^.]*list directly under it joins the label above/,
+  );
+});

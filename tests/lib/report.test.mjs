@@ -770,3 +770,111 @@ test("acceptanceFailure names the failing acceptance check or null", () => {
   expect(acceptanceFailure(`${REPORT}\nVerdict: accept\nChecks:`)).toBe("checks");
   expect(acceptanceFailure(`${REPORT}\nVerdict: accept\nChecks: npm test passed`)).toBeNull();
 });
+
+// Usefulness: verifies a prose heading line and the `- ` list directly under it, set apart from the
+// preceding label by a blank line, fold into that label's value, so a worker that writes a
+// sub-heading with a list between two labels still yields a report instead of null (issue #898).
+test("parseReportBlock folds a prose heading and its list into the preceding label", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: tests pass\n\nDesign settled in ADR 0031:\n- **Non-limit failure:** a\n- **Pagination:** b\n\nBlockers: none",
+    ),
+  ).toEqual({
+    conclusion: "done",
+    why: "tests pass; Design settled in ADR 0031: **Non-limit failure:** a; **Pagination:** b",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n\nHeading\n- a\n  - b`)).toMatchObject({
+    notes: "Heading: a, b",
+  });
+});
+
+// Usefulness: verifies the shapes that stay unparseable next to the #898 rule: no blank line before
+// the prose, no prose heading, prose after another prose line, prose after the `Verdict:` line, and
+// a repeat of the label that took the heading list, so no list drops without a `raw` signal.
+test("parseReportBlock returns null for a prose and list shape outside the heading rule", () => {
+  for (const tail of [
+    "Notes: x\nHeading:\n- a",
+    "Notes: x\n\n\n- a",
+    "Notes: x\n\nprose one\nHeading:\n- a",
+    "Verdict: accept\n\nHeading:\n- a",
+    "Notes: x\n\nHeading:\n- a\n\nNotes: later",
+    "Notes: x\n\nHeading:\n\n- a",
+    "Notes: x\n\nHeading:\n* a",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\n${tail}`)).toBeNull();
+  }
+});
+
+// Usefulness: verifies a prose line that starts with `*` (the #275 emphasis shapes and bold) never
+// introduces a folded list, so a `*file*` line with a list under it stays null and no heading text
+// reaches a field such as Checks (issue #898 review).
+test("parseReportBlock returns null for a star prose line above a list", () => {
+  for (const star of ["*file*", "*glob src/a*", "*use a* b", "*glob src/a*, b", "**bold** note"]) {
+    expect(parseReportBlock(`${REPORT}\nChecks:\n\n${star}\n- item\nVerdict: accept`)).toBeNull();
+  }
+});
+
+// Usefulness: verifies a malformed, indented, or decorated `Verdict:` line is never prose that joins
+// a field, so a reject cannot be read as Checks text that passes acceptance (issue #898 review).
+test("parseReportBlock returns null for a malformed Verdict line above a list", () => {
+  for (const verdict of ["**Verdict:** reject", "  Verdict: reject", "Verdict : reject"]) {
+    const response = `${REPORT}\nChecks:\n\n${verdict}\n- item\nVerdict: accept`;
+    expect(parseReportBlock(response)).toBeNull();
+    expect(isAcceptedReview(response)).toBe(false);
+  }
+});
+
+// Usefulness: verifies a heading that starts with a lowercase `s` folds like any other plain
+// heading, so the column-0 check refuses whitespace and marks, not a letter (issue #898 review).
+test("parseReportBlock folds a plain heading that starts with a lowercase s", () => {
+  expect(parseReportBlock(`${REPORT}\nChecks:\n\nsummary\n- item\nVerdict: accept`)).toMatchObject({
+    checks: "summary: item",
+  });
+});
+
+// Usefulness: verifies a heading that starts with any whitespace, or an indented star or marked line,
+// never introduces a folded list, so it cannot supply Checks and pass acceptance (issue #898 review).
+test("parseReportBlock returns null for an indented prose line above a list", () => {
+  for (const heading of [
+    " Heading",
+    "\tHeading",
+    " Heading",
+    "　Heading",
+    " *file*",
+    " **bold** note",
+    " _Heading_",
+    " `Heading`",
+    " > Heading",
+    " # Heading",
+  ]) {
+    const response = `${REPORT}\nChecks:\n\n${heading}\n- item\nVerdict: accept`;
+    expect(parseReportBlock(response)).toBeNull();
+    expect(isAcceptedReview(response)).toBe(false);
+  }
+});
+
+// Usefulness: verifies a label or `Verdict` mention with any run of emphasis marks, leading or
+// trailing, never introduces a folded list, so a triple-mark mention cannot supply Checks and pass
+// acceptance (issue #898 review).
+test("parseReportBlock returns null for a prose line above a list that holds a marked label mention", () => {
+  for (const heading of [
+    "Design ***notes***: apply the change",
+    "Explain ___why___: retain the guard",
+    "Review ***Verdict***: reject",
+    "Review ___Verdict___: reject",
+    "Review ***Verdict: reject",
+    "Review ___Verdict: reject",
+    "Review Verdict***: reject",
+    "Review Checks____: reject",
+    "Review ````Verdict````: reject",
+    "Review ****Checks**** : reject",
+  ]) {
+    const response = `${REPORT}\nChecks:\n\n${heading}\n- item\nVerdict: accept`;
+    expect(parseReportBlock(response)).toBeNull();
+    expect(isAcceptedReview(response)).toBe(false);
+  }
+});
