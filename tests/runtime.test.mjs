@@ -1369,10 +1369,9 @@ test("verbose mode logs snapshot debug lines around reviewer and orchestrator tu
 
 // 25. Usefulness: verifies issue #26 review fix — a mutation event is logged exactly once (at the
 // detection site), not duplicated by the orchestrator failure log.
-test("mutation is logged exactly once", async () => {
+const expectMutationLoggedOnce = async (action) => {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  const runCase = async (action) => {
-    errorSpy.mockClear();
+  try {
     const repo = await createTempRepo();
     try {
       const mutate = async () => {
@@ -1416,8 +1415,13 @@ test("mutation is logged exactly once", async () => {
     }
     const lines = errorSpy.mock.calls.map((call) => call.join(" "));
     expect(lines.filter((line) => line.includes("Mutation detected during"))).toHaveLength(1);
-  };
+  } finally {
+    errorSpy.mockRestore();
+  }
+};
 
-  await runCase("run_reviewer");
-  await runCase("run_worker");
-});
+test("mutation by the reviewer is logged exactly once", () =>
+  expectMutationLoggedOnce("run_reviewer"));
+
+test("mutation by the orchestrator is logged exactly once", () =>
+  expectMutationLoggedOnce("run_worker"));
