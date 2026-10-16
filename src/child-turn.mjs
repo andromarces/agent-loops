@@ -147,12 +147,17 @@ export async function runChild(options) {
   // turn, so a worker gets its preamble again and either role gets the init task again. The rerun belongs to the step already charged for
   // this turn: the failed resume ran no model turn, and the single rerun bounds the extra cost
   // (ADR 0016).
-  const invokeWithTask = async (first, buildPrompt) => {
+  // A turn that fails without a cancel counts as delivered unless `countFailure` is false, which a
+  // caller sets when the turn exists only to deliver the task.
+  const invokeWithTask = async (first, buildPrompt, { countFailure = true } = {}) => {
     const turnTask = taskFor(first);
+    let succeeded = false;
     try {
-      return await invokeRole(buildPrompt(first, turnTask));
+      const response = await invokeRole(buildPrompt(first, turnTask));
+      succeeded = true;
+      return response;
     } finally {
-      if (turnTask !== null) recordTaskSent();
+      if (turnTask !== null && (succeeded || countFailure)) recordTaskSent();
     }
   };
 
@@ -197,30 +202,41 @@ export async function runChild(options) {
           `worker: the preamble turn in the new conversation failed: ${firstErrorLine(readableErrorText(err))}`,
         );
       }
-    } else if (role.conversationReplaced && !isWorker) {
-      // A reviewer has no preamble, so the replacement conversation would get the init task only
-      // on the next dispatch, and a run can finish first (issue #890). A task-only turn in the
-      // same dispatch delivers it before the verdict counts. The verdict of the turn that ran stays
-      // the result, so a failed follow-up only warns. A cancel keeps the mark for the next turn.
-      delete role.conversationReplaced;
-      if (taskNeeded()) {
-        preamblePending = true;
-        try {
-          await invokeWithTask(true, (first, turnTask) =>
-            reviewerPrompt(TASK_ONLY_REVIEW, null, null, sandbox, turnTask),
-          );
-          preamblePending = false;
-        } catch (err) {
-          if (readProp(err, "isCanceled")) {
-            throw err;
-          }
-          logWarn(
-            `reviewer: the task turn in the new conversation failed: ${firstErrorLine(readableErrorText(err))}`,
-          );
-        }
-      }
     }
     return response;
+  };
+
+  // A reviewer has no preamble, so a replacement conversation would get the init task only on the
+  // next dispatch, and a run can finish first (issue #890). A task-only turn delivers it before the
+  // verdict counts. It runs under its own mutation check, so a write in either turn is seen alone.
+  // Only a delivered task is recorded. A failed turn throws, so the verdict of an undelivered
+  // conversation never becomes an ok result. A cancel keeps the replacement mark for the next turn.
+  const sendTaskToReplacement = async () => {
+    if (!taskNeeded()) return;
+    preamblePending = true;
+    try {
+      await withMutationCheck(
+        cwd,
+        roleName,
+        () =>
+          invokeWithTask(
+            true,
+            (first, turnTask) => reviewerPrompt(TASK_ONLY_REVIEW, null, null, sandbox, turnTask),
+            { countFailure: false },
+          ),
+        { signal },
+      );
+    } catch (err) {
+      const name = readProp(err, "name");
+      if (name === "MutationError" || name === "SnapshotError" || readProp(err, "isCanceled")) {
+        throw err;
+      }
+      throw new Error(
+        `the task turn in the new conversation failed: ${firstErrorLine(readableErrorText(err))}`,
+        { cause: err },
+      );
+    }
+    preamblePending = false;
   };
 
   // The worker prompt needs no runtime read, so its builder is fixed here. The
@@ -279,6 +295,9 @@ export async function runChild(options) {
           { signal },
         )
       : await runFn(buildWorkerPrompt);
+    if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
+      await sendTaskToReplacement();
+    }
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
     throwIfCanceled(signal, roleName);

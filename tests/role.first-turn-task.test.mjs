@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
@@ -235,6 +236,90 @@ Verdict: accept`;
 
   await reviewerTurn(repo, agents);
   expect(reviewer.recorded[3].prompt).not.toContain("Fix the flaky test.");
+});
+
+const ACCEPT = `${REPORT}
+Checks: none
+Verdict: accept`;
+const SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
+const finishGated = (repo) =>
+  executeRoleCommand(withRepo(["finish", "--cwd", "<repo>", "--require-accept"], repo), {
+    stdin: async () => JSON.stringify(SUMMARY),
+  });
+const replaceConversation = (reply) => (state) => {
+  state.sessionId = "replacement";
+  state.conversationReplaced = true;
+  return typeof reply === "function" ? reply() : reply;
+};
+
+// Usefulness: #890 acceptance. A run that ends on a reviewer accept in a replacement conversation
+// finishes only after that conversation received the init task.
+test("a run finishes on a reviewer accept in a replacement conversation that has the init task", async () => {
+  const repo = await startRun();
+  const reviewer = recordingAdapter([ACCEPT, replaceConversation(ACCEPT)]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  await reviewerTurn(repo, agents);
+  await reviewerTurn(repo, agents);
+  const finished = await finishGated(repo);
+
+  expect(finished.exitCode).toBe(0);
+  const last = reviewer.recorded.at(-1);
+  expect(last.incomingSessionId).toBe("replacement");
+  expect(last.prompt).toContain(TASK_BLOCK);
+});
+
+// Usefulness: a reviewer write in the replaced turn must halt the run even when the task-only turn
+// restores it, so the follow-up never hides an edit from the read-only check.
+test("a reviewer edit in the replaced turn halts the run even when the task-only turn restores it", async () => {
+  const repo = await startRun();
+  const file = join(repo, "init.txt");
+  const reviewer = recordingAdapter([
+    ACCEPT,
+    replaceConversation(async () => {
+      await writeFile(file, "edited\n");
+      return ACCEPT;
+    }),
+    async () => {
+      await writeFile(file, "hello\n");
+      return "OK";
+    },
+  ]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  await reviewerTurn(repo, agents);
+  const halted = await reviewerTurn(repo, agents);
+
+  expect(halted.exitCode).not.toBe(0);
+  expect((await finishGated(repo)).exitCode).toBe(1);
+});
+
+// Usefulness: a failed task-only turn must not count as delivery or as an accept, so the run cannot
+// finish on a verdict from a conversation without the task, and the next turn sends the task.
+test("a failed task-only turn is no accept and the next reviewer turn sends the init task", async () => {
+  const repo = await startRun();
+  const reviewer = recordingAdapter([
+    ACCEPT,
+    replaceConversation(ACCEPT),
+    () => {
+      throw new Error("task turn failed");
+    },
+  ]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  await reviewerTurn(repo, agents);
+  const failed = await reviewerTurn(repo, agents);
+
+  expect(failed.payload.status).toBe("error");
+  expect((await finishGated(repo)).exitCode).toBe(1);
+
+  await reviewerTurn(repo, agents);
+  const retry = reviewer.recorded.at(-1);
+  expect(retry.incomingSessionId).toBe("replacement");
+  expect(retry.prompt).toContain(TASK_BLOCK);
 });
 
 // Usefulness: a state file from before the task record, or one with a bad value, must not crash a
