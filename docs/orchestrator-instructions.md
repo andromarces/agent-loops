@@ -105,7 +105,7 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   - A hard kill of the dispatch records no delivery, so the next turn can send the task again.
   - Known limit: a resumed reviewer turn can run in a replacement conversation. That turn carries no task. The
     replacement gets the task only on the next reviewer turn. If the run ends first, it never sees the task.
-    The reviewer preamble has the same gap on `main`, because a reviewer has no preamble-only follow-up turn.
+    The reviewer preamble differs: it goes out on every reviewer turn, and the init task does not.
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot
