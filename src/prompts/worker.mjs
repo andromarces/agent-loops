@@ -23,6 +23,7 @@ Your role:
   this run targets the same \`--cwd\`.
 - Report what changed, what was verified, and state any disagreements with evidence.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
+- Before the closing block, remove every temporary file or directory that this turn created outside the work tree, and name in Notes any that you could not remove. A PR body file in the system temporary directory is one example.
 - ${processRule}
 - If a late event arrives after the closing block, end again with the closing block for the whole turn. The parent reads only your last message.
 - You do NOT decide when the loop ends.
