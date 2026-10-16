@@ -1,5 +1,11 @@
 import { escapeLineSeparators } from "./escape.mjs";
-import { SHELL_EXCEPTION, processRule, reportBlock, testSlotRule } from "./report.mjs";
+import {
+  SHELL_EXCEPTION,
+  initTaskBlock,
+  processRule,
+  reportBlock,
+  testSlotRule,
+} from "./report.mjs";
 
 // Same closing block as reportBlock, with the verdict line inside it so the
 // model treats it as part of the mandatory block, not an optional extra. The
@@ -123,7 +129,13 @@ const sandboxNotes = {
   ],
 };
 
-export function reviewerPrompt(prompt, prChecks = null, testRun = null, sandboxMode = null) {
+export function reviewerPrompt(
+  prompt,
+  prChecks = null,
+  testRun = null,
+  sandboxMode = null,
+  task = null,
+) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
   const sandbox = sandboxMode === null ? "" : `\n\n${sandboxNotes[sandboxMode].join("\n")}`;
@@ -138,7 +150,7 @@ ${reviewerRules}${supplied}${tests}${sandbox}
 
 ${reviewerReportBlock}
 
-Instructions:
+${initTaskBlock(task)}Instructions:
 ${prompt}
 `.trim(),
   );

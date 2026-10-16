@@ -129,7 +129,9 @@ test("an absent test command leaves the reviewer prompt and the result unchanged
   const repo = await createTempRepo();
   try {
     const { rev, reviewed } = await reviewOnce(repo, {});
-    expect(rev.recorded[0].prompt).toBe(reviewerPrompt("review"));
+    expect(rev.recorded[0].prompt).toBe(
+      reviewerPrompt("review", null, null, null, "Review the change."),
+    );
     expect(rev.recorded[0].prompt).not.toContain("Test command evidence");
     expect(reviewed.testRun).toBeUndefined();
   } finally {

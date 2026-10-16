@@ -425,6 +425,7 @@ async function dispatchLocked(
       role,
       roleName,
       prompt,
+      task: state.task ?? null,
       cwd: args.cwd,
       timeout: state.timeout,
       signal,
@@ -582,7 +583,8 @@ function pickUnconfirmed(role, id) {
  * Copies the session id of a role copy to the role state. `sessionUnconfirmed` marks an id that
  * no CLI output has confirmed, so recovery verifies it before a resume (issue #395, ADR 0016).
  * `conversationReplaced` is set only by a canceled turn that ran in a replaced conversation, so the
- * next worker turn sends the preamble (ADR 0027, decision 5).
+ * next worker turn sends the preamble (ADR 0027, decision 5). `taskSentTo` is the session id of the
+ * conversation that last carried the init task, so no path needs its own mark for it.
  */
 function recordRoleSession(target, source) {
   target.sessionId = source.sessionId;
@@ -595,6 +597,10 @@ function recordRoleSession(target, source) {
     target.conversationReplaced = true;
   } else {
     delete target.conversationReplaced;
+  }
+  // Absent in the id-only copy that the session hook passes, so only a present value is recorded.
+  if (typeof source.taskSentTo === "string") {
+    target.taskSentTo = source.taskSentTo;
   }
 }
 

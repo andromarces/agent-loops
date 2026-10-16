@@ -67,6 +67,42 @@ test("orchestrator dispatches worker first", async () => {
   }
 });
 
+// Usefulness: #826. The headless worker, like a role worker, gets the run task once, on its first
+// turn, so the two paths keep one prompt contract.
+test("a headless worker sees the run task on its first turn only", async () => {
+  const repo = await createTempRepo();
+  try {
+    const finish = JSON.stringify({
+      action: "finish",
+      summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+    });
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({ action: "run_worker", prompt: "keep going" }),
+      finish,
+    ]);
+    const workerAdapter = scripted(["one", "two"]);
+
+    await runLoop({
+      task: "Task 826",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+    });
+
+    const [first, second] = workerAdapter.recorded.map((call) => call.prompt);
+    expect(first).toContain("Init task:\nTask 826");
+    expect(second).not.toContain("Task 826");
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 2. Usefulness: verifies orchestrator dispatches reviewer first.
 test("orchestrator dispatches reviewer first", async () => {
   const repo = await createTempRepo();

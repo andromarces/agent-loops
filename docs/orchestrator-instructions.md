@@ -85,9 +85,29 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   tree, so a later prompt never goes through a file. A piped `cat <file>` of a
   file that was never written gives an empty stdin, and `dispatch` refuses it:
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
-- The init task (`--task` or `--task-file`) is run configuration. No child receives it. A child sees only the
-  prompt of its dispatch, so every child prompt must carry the task text, or the part of it that the turn needs.
-  A prompt such as "Carry out the task" gives the child no task and still charges a step.
+- The init task (`--task` or `--task-file`) reaches each child conversation once. The first turn of a
+  conversation shows the task under its own `Init task:` label, before `Instructions:`. This holds in the worker
+  preamble and in the reviewer prompt. A later turn of the same conversation does not repeat it.
+  - The role state records `taskSentTo`, the session id of the conversation that last carried the task. A turn
+    shows the task when that id differs from the session id it runs in, or when the role has no session id.
+  - A role with no session id starts a new conversation. That happens on the first turn and after a first turn
+    that failed before its CLI reported a session. It also happens on a rerun after a missing session (below).
+  - A turn that carries the task records the session id that its CLI returns. That id can name a replacement
+    conversation, which received the whole prompt.
+  - A resumed turn that ran in a replacement conversation carries no task, so it records nothing. The next
+    reviewer turn shows the task. A worker gets it in the preamble-only turn that follows the replacement.
+  - A cancel never repeats the task. After a cancel, the next worker turn sends the preamble again, as before.
+    It leaves the task out when the record names the session that it resumes.
+  - Every adapter (Claude Code, Codex, Copilot, opencode, agy) fails a turn that reports no session id. A
+    successful turn therefore always stores one.
+  - Known limit: a canceled turn that carried the task counts as delivered. The CLI can drop that prompt. That
+    conversation then never sees the task.
+  - A hard kill of the dispatch records no delivery, so the next turn can send the task again.
+  - Known limit: a resumed reviewer turn can run in a replacement conversation. That turn carries no task. The
+    replacement gets the task only on the next reviewer turn. If the run ends first, it never sees the task.
+    The reviewer preamble differs: it goes out on every reviewer turn, and the init task does not.
+  - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
+    dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot
   be combined. `--task-file -` reads the task from stdin, which also carries the
   prompt here. Stdin carries only one input, so pass `--prompt-file` for the
@@ -248,8 +268,8 @@ and spawns no child. The envelope carries `status: "error"` with
 A failed first turn keeps the session id its output printed, so the next dispatch
 resumes that session and the edits the failed turn left. When a resume fails
 because the CLI has no such session, the runtime clears the id and reruns the turn
-once as a first turn, with the worker preamble. That rerun is part of the step the
-dispatch already charged: it charges no second step and adds no `turns` entry.
+once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the
+`Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.
 
 When `--cwd` is a linked work tree, the init call copies the untracked local files
 of the main work tree that `--cwd` ignores (agent instructions, harness

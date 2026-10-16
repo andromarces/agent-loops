@@ -116,6 +116,22 @@ test("readContinuation rejects a replaced mark that is not a boolean", async () 
   await expect(readJson(bad)).rejects.toThrow("invalid worker role");
 });
 
+// Usefulness: the task record names a conversation, so a continued run keeps it only with the
+// session id it names and leaves the init task out of that conversation (#826). A bad value is refused.
+test("restoreSessions keeps a task record only for the session id it names", async () => {
+  const next = roles();
+  const earlier = transcript();
+  earlier.roles.worker.taskSentTo = earlier.roles.worker.sessionId;
+  earlier.roles.reviewer.taskSentTo = "another-session";
+  restoreSessions(next, earlier, CWD);
+  expect(next.worker.taskSentTo).toBe(earlier.roles.worker.sessionId);
+  expect(next.reviewer.taskSentTo).toBeUndefined();
+
+  const bad = transcript();
+  bad.roles.worker.taskSentTo = true;
+  await expect(readJson(bad)).rejects.toThrow("invalid worker role");
+});
+
 // Usefulness: a session id is valid only for the CLI that made it, so a changed
 // role kind is refused, and the refusal names the role and both kinds.
 test("restoreSessions rejects a changed role kind", () => {

@@ -46,7 +46,8 @@ export async function readContinuation(path) {
       (earlier.sessionUnconfirmed !== undefined &&
         typeof earlier.sessionUnconfirmed !== "boolean") ||
       (earlier.conversationReplaced !== undefined &&
-        typeof earlier.conversationReplaced !== "boolean")
+        typeof earlier.conversationReplaced !== "boolean") ||
+      (earlier.taskSentTo !== undefined && typeof earlier.taskSentTo !== "string")
     ) {
       throw new Error(`--continue-from ${path} has an invalid ${role} role.`);
     }
@@ -142,6 +143,13 @@ export function restoreSessions(roles, earlier, cwd) {
     // A canceled turn left a replaced conversation without its preamble, so the new worker turn sends it.
     if (earlier.roles[role].conversationReplaced === true && roles[role].sessionId !== null) {
       roles[role].conversationReplaced = true;
+    }
+    // The task record names a conversation, so it carries over only with the session id it names.
+    if (
+      roles[role].sessionId !== null &&
+      earlier.roles[role].taskSentTo === roles[role].sessionId
+    ) {
+      roles[role].taskSentTo = roles[role].sessionId;
     }
     // A model id or null (unresolved) carries over; an absent or malformed value is "not reported".
     const resolved = earlier.roles[role].resolvedModel;

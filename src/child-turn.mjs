@@ -64,6 +64,9 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
  * passes none (ADR 0019, ADR 0038).
+ * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
+ * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
+ * conversation that a turn carrying the task ran in.
  * `onSessionAssigned(id)` is awaited by the Claude adapter, which pre-assigns a session id, before
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
  * dispatcher uses it to persist the id ahead of a crash (issue #395).
@@ -76,6 +79,7 @@ export async function runChild(options) {
     role,
     roleName,
     prompt,
+    task = null,
     cwd,
     timeout,
     signal,
@@ -97,6 +101,20 @@ export async function runChild(options) {
   const carriedReplaced = role.conversationReplaced === true;
   delete role.conversationReplaced;
   let preamblePending = isWorker && carriedReplaced;
+  const firstTurn = role.sessionId === null || carriedReplaced;
+  // The init task goes to each conversation once. `taskSentTo` names the conversation that a turn
+  // carrying the task ran in, so one comparison with the current session id answers every path:
+  // a first turn, a rerun, a resume after a cancel, and a replacement all read it the same way. A
+  // canceled turn counts as delivered, so a dropped prompt leaves that conversation without the task.
+  const taskNeeded = () =>
+    task !== null && (role.sessionId === null || role.taskSentTo !== role.sessionId);
+  // The worker task rides in the first-turn preamble. The reviewer prompt carries it on any turn.
+  const taskFor = (first) => (taskNeeded() && (!isWorker || first) ? task : null);
+  // The adapter reports the id of the conversation that the turn ran in, a replacement included.
+  // That conversation received the whole prompt, so its id is the one recorded.
+  const recordTaskSent = () => {
+    if (role.sessionId !== null) role.taskSentTo = role.sessionId;
+  };
   // The mode reaches the reviewer turn only. `readOnly` stays true there, so the mutation check
   // below still wraps the turn, and the orchestrator path never sets this input (ADR 0019, 0038).
   const sandbox = roleName === "reviewer" ? reviewerSandbox : null;
@@ -121,13 +139,22 @@ export async function runChild(options) {
 
   // A resume that fails because the CLI has no such session leaves the stored id useless, and
   // every later turn would fail the same way. Clear the id and rerun the turn once as a first
-  // turn, so a worker gets its preamble again. The rerun belongs to the step already charged for
+  // turn, so a worker gets its preamble again and either role gets the init task again. The rerun belongs to the step already charged for
   // this turn: the failed resume ran no model turn, and the single rerun bounds the extra cost
   // (ADR 0016).
-  const runTurn = async (finalPrompt) => {
+  const invokeWithTask = async (first, buildPrompt) => {
+    const turnTask = taskFor(first);
+    try {
+      return await invokeRole(buildPrompt(first, turnTask));
+    } finally {
+      if (turnTask !== null) recordTaskSent();
+    }
+  };
+
+  const runTurn = async (buildPrompt) => {
     const resumedId = role.sessionId;
     try {
-      return await invokeRole(finalPrompt);
+      return await invokeWithTask(firstTurn, buildPrompt);
     } catch (err) {
       if (!resumedId || !readProp(err, "sessionMissing")) {
         throw err;
@@ -135,7 +162,7 @@ export async function runChild(options) {
       logWarn(`${roleName}: session ${resumedId} is missing; rerunning the turn as a first turn`);
       role.sessionId = null;
       delete role.sessionUnconfirmed;
-      return invokeRole(isWorker ? workerPrompt(prompt, true) : finalPrompt);
+      return invokeWithTask(true, buildPrompt);
     }
   };
 
@@ -146,14 +173,16 @@ export async function runChild(options) {
   // The mark is cleared on every exit of `runChild` except a cancel that leaves the replaced
   // conversation without its preamble, so a step that throws after the adapter succeeded, such as
   // an event handler, leaves no stale mark for a later turn.
-  const runFn = async (finalPrompt) => {
-    const response = await runTurn(finalPrompt);
+  const runFn = async (buildPrompt) => {
+    const response = await runTurn(buildPrompt);
     preamblePending = false;
     if (role.conversationReplaced && isWorker) {
       delete role.conversationReplaced;
       preamblePending = true;
       try {
-        await invokeRole(workerPrompt(PREAMBLE_ONLY_TASK, true));
+        await invokeWithTask(true, (first, turnTask) =>
+          workerPrompt(PREAMBLE_ONLY_TASK, first, turnTask),
+        );
         preamblePending = false;
       } catch (err) {
         if (readProp(err, "isCanceled")) {
@@ -167,12 +196,10 @@ export async function runChild(options) {
     return response;
   };
 
-  // The worker prompt needs no runtime read, so it is built once here. The
+  // The worker prompt needs no runtime read, so its builder is fixed here. The
   // reviewer prompt is built inside the mutation check, where the pre-turn
   // snapshot gives the local head the status read compares against (#320).
-  const workerFinalPrompt = isWorker
-    ? workerPrompt(prompt, role.sessionId === null || carriedReplaced)
-    : null;
+  const buildWorkerPrompt = (first, turnTask) => workerPrompt(prompt, first, turnTask);
 
   /**
    * Reads the required-check status a PR-bearing run supplies to the reviewer,
@@ -218,11 +245,13 @@ export async function runChild(options) {
             reviewed = reviewedState(before);
             if (testRun) reportLateChangedPaths(testRun, before);
             prChecks = await readStatus(reviewed);
-            return runFn(reviewerPrompt(prompt, prChecks, testRun, sandbox));
+            return runFn((first, turnTask) =>
+              reviewerPrompt(prompt, prChecks, testRun, sandbox, turnTask),
+            );
           },
           { signal },
         )
-      : await runFn(workerFinalPrompt);
+      : await runFn(buildWorkerPrompt);
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
     throwIfCanceled(signal, roleName);
