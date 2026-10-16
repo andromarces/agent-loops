@@ -99,6 +99,10 @@ export async function runChild(options) {
   // prompt carries the preamble, and `preamblePending` keeps the mark if this turn is canceled too.
   const carriedReplaced = role.conversationReplaced === true;
   delete role.conversationReplaced;
+  // A canceled preamble-only turn already carried the init task to the replaced conversation, so the
+  // turn that repeats the preamble leaves the task out and the conversation sees it at most once.
+  const taskAlreadySent = role.taskSentToReplacement === true;
+  delete role.taskSentToReplacement;
   let preamblePending = isWorker && carriedReplaced;
   // A first turn starts a conversation that has not seen the preamble, so it also carries the init
   // task, once. A later turn of the same conversation repeats neither.
@@ -133,7 +137,7 @@ export async function runChild(options) {
   const runTurn = async (buildPrompt) => {
     const resumedId = role.sessionId;
     try {
-      return await invokeRole(buildPrompt(firstTurn));
+      return await invokeRole(buildPrompt(firstTurn, !taskAlreadySent));
     } catch (err) {
       if (!resumedId || !readProp(err, "sessionMissing")) {
         throw err;
@@ -141,7 +145,7 @@ export async function runChild(options) {
       logWarn(`${roleName}: session ${resumedId} is missing; rerunning the turn as a first turn`);
       role.sessionId = null;
       delete role.sessionUnconfirmed;
-      return invokeRole(buildPrompt(true));
+      return invokeRole(buildPrompt(true, true));
     }
   };
 
@@ -158,6 +162,7 @@ export async function runChild(options) {
     if (role.conversationReplaced && isWorker) {
       delete role.conversationReplaced;
       preamblePending = true;
+      if (task !== null) role.taskSentToReplacement = true;
       try {
         await invokeRole(workerPrompt(PREAMBLE_ONLY_TASK, true, task));
         preamblePending = false;
@@ -176,7 +181,8 @@ export async function runChild(options) {
   // The worker prompt needs no runtime read, so its builder is fixed here. The
   // reviewer prompt is built inside the mutation check, where the pre-turn
   // snapshot gives the local head the status read compares against (#320).
-  const buildWorkerPrompt = (first) => workerPrompt(prompt, first, first ? task : null);
+  const buildWorkerPrompt = (first, withTask) =>
+    workerPrompt(prompt, first, first && withTask ? task : null);
 
   /**
    * Reads the required-check status a PR-bearing run supplies to the reviewer,
@@ -222,8 +228,8 @@ export async function runChild(options) {
             reviewed = reviewedState(before);
             if (testRun) reportLateChangedPaths(testRun, before);
             prChecks = await readStatus(reviewed);
-            return runFn((first) =>
-              reviewerPrompt(prompt, prChecks, testRun, sandbox, first ? task : null),
+            return runFn((first, withTask) =>
+              reviewerPrompt(prompt, prChecks, testRun, sandbox, first && withTask ? task : null),
             );
           },
           { signal },
@@ -276,7 +282,10 @@ export async function runChild(options) {
       ...(testRun ? { testRun } : {}),
     };
   } finally {
-    if (!keepReplacedMark) delete role.conversationReplaced;
+    if (!keepReplacedMark) {
+      delete role.conversationReplaced;
+      delete role.taskSentToReplacement;
+    }
     delete role.shellDenied;
   }
 }

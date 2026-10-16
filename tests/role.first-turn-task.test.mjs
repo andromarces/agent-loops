@@ -133,3 +133,36 @@ for (const role of ["worker", "reviewer"]) {
     expect(prompts[1].prompt).toContain(TASK_BLOCK);
   });
 }
+
+// Usefulness: a turn canceled after the preamble-only turn carried the init task keeps the replaced
+// conversation mark, so the resumed turn repeats the preamble (ADR 0027). The task must still reach
+// that conversation once: the repeat would give one child conversation the task twice.
+test("a resumed turn does not resend the init task to a replacement conversation that got it", async () => {
+  const repo = await startRun();
+  const worker = recordingAdapter([
+    REPORT,
+    (state) => {
+      state.sessionId = "replacement";
+      state.conversationReplaced = true;
+      return REPORT;
+    },
+    () => {
+      throw Object.assign(new Error("worker was canceled."), { isCanceled: true });
+    },
+  ]);
+  const agents = { fake1: worker, fake2: recordingAdapter([]) };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  // The replaced turn runs, then the preamble-only turn in the same dispatch is canceled.
+  const canceled = await workerTurn(repo, agents);
+  expect(canceled.exitCode).toBe(130);
+  const resumed = await workerTurn(repo, agents, ["--resume-interrupted"]);
+  expect(resumed.exitCode).toBe(0);
+
+  const prompts = worker.recorded.map((call) => call.prompt);
+  expect(prompts).toHaveLength(4);
+  expect(prompts[2]).toContain(TASK_BLOCK);
+  expect(worker.recorded[3].incomingSessionId).toBe("replacement");
+  expect(prompts[3]).toContain("You are the implementation agent");
+  expect(prompts[3]).not.toContain("Fix the flaky test.");
+});
