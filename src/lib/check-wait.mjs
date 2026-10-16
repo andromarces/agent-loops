@@ -94,14 +94,16 @@ function isFailing(check) {
  *   exit 0 with no settled check keeps it running too.
  * - Exit 1 with no output and the exact `no required checks reported on the
  *   '<branch>' branch` stderr is settled as `noRequiredChecks`: the branch has
- *   no required check to wait for, which is no pass either (#894).
+ *   no required check to wait for, which is no pass either (#894). In the
+ *   all-checks mode that answer does not exist, so every exit 1 with no failing
+ *   check listed is unresolved, whatever its stderr says (#896).
  * - Any other code, with no failing check listed, is unresolved: exit 1 covers
  *   a read error, and an unparseable output is a read error. A list item that is
  *   not well formed is unresolved too, so one unreadable item cannot settle the
  *   list as a pass.
  */
-function readOutcome(pr, { status, stdout, stderr }) {
-  const label = `gh pr checks ${pr} --required`;
+function readOutcome(pr, { status, stdout, stderr }, all) {
+  const label = `gh pr checks ${pr}${all ? "" : " --required"}`;
   const text = stdout.trim();
   let checks = [];
   if (text !== "") {
@@ -139,7 +141,7 @@ function readOutcome(pr, { status, stdout, stderr }) {
   if (status === 0 && checks.length > 0) {
     return { settled: true, checks };
   }
-  if (status === 1 && text === "" && NO_REQUIRED_CHECKS.test(stderr.trim())) {
+  if (!all && status === 1 && text === "" && NO_REQUIRED_CHECKS.test(stderr.trim())) {
     return { settled: true, checks, noRequiredChecks: true };
   }
   if (status !== 0) {
@@ -156,7 +158,7 @@ function readOutcome(pr, { status, stdout, stderr }) {
  * with the read still unaccounted for, which is a claim the command does not
  * make on the parent's behalf (#329).
  */
-async function readWithin(gh, pr, cwd, remainingMs, signal) {
+async function readWithin(gh, pr, cwd, remainingMs, signal, all) {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
@@ -164,7 +166,7 @@ async function readWithin(gh, pr, cwd, remainingMs, signal) {
   let ceiling;
   try {
     const read = gh(
-      ["pr", "checks", String(pr), "--required", "--json", "name,state,bucket"],
+      ["pr", "checks", String(pr), ...(all ? [] : ["--required"]), "--json", "name,state,bucket"],
       cwd,
       { signal: controller.signal, timeoutMs: remainingMs },
     ).then(
@@ -210,11 +212,13 @@ async function readWithin(gh, pr, cwd, remainingMs, signal) {
  * child exit the command did not observe is not a claim it may make.
  * `noRequiredChecks` rides on the envelope only when `gh` states the branch has no
  * required check: the wait ends at once with no check state, and it is no pass (#894).
+ * `all` waits on every check of the PR head instead of the required ones, for a
+ * branch with no required check; it keeps the exit-code rules above (#896).
  *
  * `deadline` is an absolute time on the `now` clock. A caller passes it to bound
  * the whole command, including the work that runs before the first read; a
  * caller that passes only `timeoutSeconds` is bounded from this call (#329).
- * @param {{ pr: number, cwd: string, timeoutSeconds?: number, deadline?: number | null,
+ * @param {{ pr: number, cwd: string, timeoutSeconds?: number, deadline?: number | null, all?: boolean,
  *           gh?: Function, now?: Function, sleep?: Function, signal?: AbortSignal | null }} options
  * @returns {Promise<{ timedOut: boolean, checks: Array<{ name: string, state: string|null, bucket: string|null }> }>}
  */
@@ -223,6 +227,7 @@ export async function waitChecks({
   cwd,
   timeoutSeconds = DEFAULT_WAIT_SECONDS,
   deadline = null,
+  all = false,
   gh = runGh,
   now = Date.now,
   sleep = (ms, signal) => delay(ms, signal ? { signal } : undefined),
@@ -235,7 +240,7 @@ export async function waitChecks({
     if (remaining <= 0) {
       return { timedOut: true, checks: last };
     }
-    const result = await readWithin(gh, pr, cwd, remaining, signal);
+    const result = await readWithin(gh, pr, cwd, remaining, signal, all);
     if (result.timedOut) {
       // `childExitUnconfirmed` rides only on the read whose exit the command
       // could not observe, so an absent field is an observed exit.
@@ -245,7 +250,7 @@ export async function waitChecks({
         ...(result.childExitUnconfirmed ? { childExitUnconfirmed: true } : {}),
       };
     }
-    const outcome = readOutcome(pr, result);
+    const outcome = readOutcome(pr, result, all);
     // An empty list is not a settled read: `gh pr checks --required` omits a
     // check that has not started, so the last reported states are kept for the
     // envelope while the wait continues.

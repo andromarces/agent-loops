@@ -296,3 +296,35 @@ test("wait-checks does not refuse a Git work tree whose path contains spaces", a
   expect(result.exitCode).toBe(0);
   expect(result.payload).toMatchObject({ status: "ok", pr: 42, timedOut: false });
 });
+
+// Usefulness: verifies `role wait-checks --all` on a PR whose branch has no required
+// check waits for the listed checks of the head and prints them, so the parent can
+// dispatch the reviewer after CI completes (issue #896).
+test("wait-checks --all waits for the listed checks of the head", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--all", "--cwd", repo, "--pr", "42", "--timeout", "60"]),
+    { gh: scriptedGh([PENDING, SETTLED], { all: true }), ...fakeClock() },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({
+    status: "ok",
+    pr: 42,
+    timedOut: false,
+    checks: SETTLED.checks,
+  });
+});
+
+// Usefulness: verifies `--all` is a wait-checks flag only, so a dispatch or finish
+// that carries it fails loudly instead of ignoring it (issue #896).
+test("--all is refused on an operation other than wait-checks", async () => {
+  const result = await executeRoleCommand(
+    parseRoleArgs(["dispatch", "--role", "worker", "--all", "--cwd", "."]),
+    {},
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toMatch(/--all is only valid for wait-checks/);
+});
