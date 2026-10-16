@@ -653,52 +653,82 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-// Usefulness: verifies a listed directory that holds more than 2000 entries, counted
-// with nested ones, is skipped as one name with none of its files copied, and it does
-// not use up the bound of the next listed path.
+// Usefulness: verifies the injected entry bound rejects a value outside 1 through
+// MAX_WALKED_ENTRIES with a thrown error, so the seam cannot weaken the production bound.
+// Not redundant: no other test passes a bad bound, and a silent fallback would pass the
+// bound tests above.
+test.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, MAX_WALKED_ENTRIES + 1, "3", null])(
+  "rejects an injected entry bound of %s",
+  async (maxEntries) => {
+    await expect(copyLocalFiles(process.cwd(), {}, { maxEntries })).rejects.toThrow(/maxEntries/);
+  },
+);
+
+// Usefulness: verifies an omitted bound is the production one: a listed directory of
+// 2000 entries is copied and a listed directory of 2001 entries is skipped as one name.
+// Not redundant: the bound tests below inject a small bound, so only this one reaches the
+// default through the production call. It needs 4001 real files, and creating them is
+// the bulk file I/O that timed out on windows-latest (#786), so it does not run on Windows.
+// Limit: the default is unchecked on Windows, and a change of the default that Linux and
+// macOS runs do not catch is not caught there.
+test.skipIf(process.platform === "win32")(
+  "applies the production entry bound when no bound is injected",
+  async () => {
+    const { main, linked } = await createLinked({ ignore: [".codex/", ".vscode/"] });
+    await mkdir(join(main, ".codex"));
+    await mkdir(join(main, ".vscode"));
+    const make = (dir, count) =>
+      Promise.all(Array.from({ length: count }, (_, i) => writeFile(join(main, dir, `f${i}`), "")));
+    await make(".codex", MAX_WALKED_ENTRIES);
+    await make(".vscode", MAX_WALKED_ENTRIES + 1);
+
+    const report = await copyLocalFiles(linked);
+
+    expect(report.copied.length).toBe(MAX_WALKED_ENTRIES);
+    expect(report.skipped).toEqual([".vscode"]);
+  },
+);
+
+// Usefulness: verifies a listed directory that holds more than the bound, counted with
+// nested ones, is skipped as one name with none of its files copied, and it does not use
+// up the bound of the next listed path.
 // Not redundant: it is the test with a directory over the bound, followed by a second
 // listed path that must still copy.
+// It injects a bound of 3 so the fixture needs 4 files, not over 2000 that are slow to
+// create and remove on windows-latest (#786). The walk is the production one.
 test("skips a listed directory past the entry bound as one name, per directory", async () => {
   const { main, linked } = await createLinked({ ignore: [".codex/", ".vscode/"] });
   await mkdir(join(main, ".codex", "sub"), { recursive: true });
   await writeFile(join(main, ".codex", "first.toml"), "a=1\n");
-  await Promise.all(
-    Array.from({ length: MAX_WALKED_ENTRIES }, (_, i) =>
-      writeFile(join(main, ".codex", "sub", `f${i}`), ""),
-    ),
-  );
+  for (let i = 0; i < 3; i++) {
+    await writeFile(join(main, ".codex", "sub", `f${i}`), "");
+  }
   await mkdir(join(main, ".vscode"));
   await writeFile(join(main, ".vscode", "tasks.json"), "{}\n");
 
-  const report = await copyLocalFiles(linked);
+  const report = await copyLocalFiles(linked, {}, { maxEntries: 3 });
 
   expect(report.copied).toEqual([".vscode/tasks.json"]);
   expect(report.skipped).toEqual([".codex"]);
   expect(await exists(join(linked, ".codex"))).toBe(false);
 });
 
-// Usefulness: verifies a listed directory with exactly 2000 entries is still copied, so
-// the bound means more than 2000.
+// Usefulness: verifies a listed directory with exactly the bound of entries is still
+// copied, so the bound means more than that count.
 // Not redundant: it is the test at the boundary, so a limit that is off by one fails
-// it.
-// The copy checks and copies each of the 2000 files in turn, with about 15 file system
-// calls per file. That takes about 5 s on an idle Windows host and over 15 s while the
-// full suite runs, so this test has its own timeout. The fixture cannot shrink: the
-// bound is the file count.
+// it. It injects a bound of 3 for the same reason as the test above.
 test("copies a listed directory that holds exactly the entry bound", async () => {
   const { main, linked } = await createLinked({ ignore: [".codex/"] });
   await mkdir(join(main, ".codex"));
-  await Promise.all(
-    Array.from({ length: MAX_WALKED_ENTRIES }, (_, i) =>
-      writeFile(join(main, ".codex", `f${i}`), ""),
-    ),
-  );
+  for (let i = 0; i < 3; i++) {
+    await writeFile(join(main, ".codex", `f${i}`), "");
+  }
 
-  const report = await copyLocalFiles(linked);
+  const report = await copyLocalFiles(linked, {}, { maxEntries: 3 });
 
-  expect(report.copied.length).toBe(MAX_WALKED_ENTRIES);
+  expect(report.copied).toEqual([".codex/f0", ".codex/f1", ".codex/f2"]);
   expect(report.skipped).toEqual([]);
-}, 60_000);
+});
 
 // Usefulness: verifies a work tree that Git still lists but whose `.git` entry is gone
 // is never read from.

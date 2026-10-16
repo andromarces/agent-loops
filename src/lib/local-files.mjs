@@ -284,12 +284,24 @@ async function collect(ctx, rel, abs) {
  * `hooks` is a test seam. `beforeSourceOpen` and `beforeCopy` run with the file's
  * path name just before the source is opened and just before `copyFile`.
  * `signal` ends a running `git` read, and the copy then rejects with `isCanceled` set.
+ * `maxEntries` is a test seam for the bound of one listed directory. It is an integer from 1
+ * through `MAX_WALKED_ENTRIES`, the default. Any other value throws a `RangeError`, so the seam
+ * can lower the bound but never raise it.
  * @param {string} cwd
  * @param {{ beforeSourceOpen?: (rel: string) => Promise<void>, beforeCopy?: (rel: string) => Promise<void> }} [hooks]
- * @param {{ signal?: AbortSignal }} [options]
+ * @param {{ signal?: AbortSignal, maxEntries?: number }} [options]
  * @returns {Promise<{ copied: string[], skipped: string[] } | null>}
  */
-export async function copyLocalFiles(cwd, hooks = {}, { signal } = {}) {
+export async function copyLocalFiles(
+  cwd,
+  hooks = {},
+  { signal, maxEntries = MAX_WALKED_ENTRIES } = {},
+) {
+  if (!Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > MAX_WALKED_ENTRIES) {
+    throw new RangeError(
+      `local files: maxEntries must be an integer from 1 through ${MAX_WALKED_ENTRIES}`,
+    );
+  }
   const read = (dir, args, options) => git(dir, args, { signal, ...options });
   // A path with a control character is not trusted to survive a round trip through
   // Git's output or a path comparison, so the copy refuses it and copies nothing.
@@ -345,7 +357,7 @@ export async function copyLocalFiles(cwd, hooks = {}, { signal } = {}) {
       others: sourceBlocked,
       files: [],
       skipped: new Set(),
-      budget: { left: MAX_WALKED_ENTRIES, exceeded: false },
+      budget: { left: maxEntries, exceeded: false },
     };
     const abs = join(mainReal, rel);
     if (
