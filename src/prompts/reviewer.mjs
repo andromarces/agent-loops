@@ -91,9 +91,10 @@ const remoteWriteRule =
 // reviewer reads it as a ban on the test suite and rejects with no code blocker (issue #837). The
 // runtime mutation check is unchanged: it does not see an ignored or outside-repository write, so
 // the cleanup sentence is the only guard against probe files piling up in the OS temp directory
-// (issue #865).
+// (issue #865). A Codex reviewer often cannot delete that outside folder, so the ignored path inside
+// the repository comes first (issue #885).
 const scratchWriteRule =
-  "A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove.";
+  "A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. Put the output of a test, build, or probe under an ignored path inside the repository first, such as an ignored cache directory. Use a temporary path outside the repository only when no ignored path fits. Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove.";
 
 // The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
 // that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
