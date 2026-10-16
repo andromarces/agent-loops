@@ -131,6 +131,25 @@ test("the parent surfaces state the action for a wait with no required check", a
   }
 });
 
+// Usefulness: verifies both parent surfaces state when the parent runs the `--all` wait: after a
+// `noRequiredChecks` outcome, so the reviewer starts after CI completes (issue #896). A parent that
+// misses it dispatches the reviewer before CI settles, which costs a turn.
+test("the parent surfaces state when to wait on every check of the head", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readFile(instructionsPath, "utf8");
+  for (const text of [prompt, instructions]) {
+    expectRule(text, /noRequiredChecks/, /wait-checks[^.]*--all/i, /never record/i);
+  }
+});
+
 // The surfaces that state the empty-union rule of the gate. The reviewer found them contradicting
 // each other, so one rule is asserted on each. Only an allowlisted reply proves an absence, and a
 // private Free-plan repository must omit `--pr`. Usefulness: verifies every surface states the same

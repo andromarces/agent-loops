@@ -99,6 +99,7 @@ export function parseRoleArgs(argv) {
     requireAccept: false,
     requireCi: null,
     pr: null,
+    all: false,
     testCmd: null,
     testCmdTimeout: null,
     reviewerSandbox: null,
@@ -136,6 +137,10 @@ export function parseRoleArgs(argv) {
 
         case "--resume-interrupted":
           args.resumeInterrupted = true;
+          return true;
+
+        case "--all":
+          args.all = true;
           return true;
 
         case "--no-copy-local-files":
@@ -887,6 +892,9 @@ function rejectMisplacedFlags(args, operation) {
   if (operation === "abort" && args.reason === null) {
     throw new RoleError("abort requires --reason.");
   }
+  if (operation !== "wait-checks" && args.all) {
+    throw new RoleError("--all is only valid for wait-checks.");
+  }
   if (operation !== "finish" && (args.requireAccept || args.requireCi !== null)) {
     throw new RoleError(
       `--require-accept and --require-ci are only valid for finish, not ${operation}.`,
@@ -1024,8 +1032,8 @@ async function extend(args) {
 }
 
 /**
- * `wait-checks`: polls the required checks of `--pr` until none is pending or
- * the bound elapses, then prints the last check states with a `timedOut` flag.
+ * `wait-checks`: polls the required checks of `--pr`, or every check of its head
+ * with `--all`, until none is pending or the bound elapses, then prints the last check states with a `timedOut` flag.
  * It reads status only, so it touches no run state and needs no init, but it
  * applies the same `--cwd` rule as `dispatch`, because the read runs in that
  * work tree. The bound starts at command entry, so validation and every read
@@ -1067,6 +1075,7 @@ async function waitChecksOperation(
     pr: args.pr,
     cwd: args.cwd,
     deadline,
+    all: args.all,
     gh,
     now,
     sleep,

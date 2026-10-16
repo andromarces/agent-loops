@@ -242,8 +242,10 @@ Role operations:
                                 seconds to exit, and an exit the command could
                                 not observe is reported as
                                 childExitUnconfirmed. The total bound is
-                                --timeout plus five seconds. Reads status only,
-                                so it needs no run state and changes nothing.
+                                --timeout plus five seconds. With --all it waits
+                                on every check of the PR head, not only the
+                                required ones. Reads status only, so it needs
+                                no run state and changes nothing.
 
 Role flags:
 
@@ -277,6 +279,8 @@ Role flags:
                                 declared run, so it must omit --pr. Later
                                 calls read it from the state file and reject any
                                 attempt to change it.
+  --all                         wait-checks only: wait on every check of the PR head,
+                                not only the required ones.
   --timeout <seconds>           wait-checks: bound on the wait. Defaults to 300. 0 is
                                 refused, because the wait must stay bounded.
   --require-ci <pr>             finish only: refuse unless the PR head matches the

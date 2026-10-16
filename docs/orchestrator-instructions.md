@@ -658,10 +658,26 @@ A branch with no required check ends the wait at once with exit 0 and
 ```
 
 It is not a read error and not a pass, because no check was read. There is
-nothing to wait for, so do not run the wait again. On `noRequiredChecks`,
-dispatch the reviewer, which reads the CI status of the PR head itself, and
-never record the CI status as passed from this envelope. A reviewer that starts before CI completes can report
-the CI status as unresolved. The `--require-ci` gate still decides the finish.
+nothing required to wait for, so do not run the required wait again. On
+`noRequiredChecks`, run `agent-loop role wait-checks --all` once, then dispatch the
+reviewer, which reads the CI status of the PR head itself, and never record the CI
+status as passed from the `noRequiredChecks` envelope. A reviewer that starts
+before CI completes can report the CI status as unresolved, which the `--all`
+wait avoids. The `--require-ci` gate still decides the finish.
+
+```bash
+agent-loop role wait-checks --all --cwd <dir> --pr <n> --timeout <seconds>
+```
+
+`--all` waits on every check of the PR head, not only the required ones. It reads
+`gh pr checks <pr>` without `--required`, so it keeps the bound and the exit-code
+rules above: exit 0 with no pending check listed is settled, exit 8 is pending, a
+listed failing check is settled, and every other exit 1 is unresolved with
+`status: "error"`. A branch that reports no check at all is also unresolved,
+because the command read none, so it never reads as a pass. A `noRequiredChecks`
+envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`;
+when a required check exists, the required wait stays the one to run. `--all` is
+refused on every other role operation.
 
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
 failed one. A check that has not started is absent from `checks`, because the

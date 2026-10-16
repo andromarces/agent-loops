@@ -277,3 +277,64 @@ test("waitChecks returns within the bound plus the child-exit ceiling", async ()
   expect(signals).toHaveLength(1);
   expect(signals[0].aborted).toBe(true);
 }, 20000);
+
+/** Runs one wait in all-checks mode against scripted reads, on a fake clock. */
+function onceAll(reads, timeoutSeconds = 60) {
+  const clock = fakeClock();
+  return waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds,
+    all: true,
+    gh: scriptedGh(reads, { all: true }),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+}
+
+// Usefulness: verifies the all-checks mode waits on a check that is not required,
+// the case a branch with no required check leaves unwaited, and settles once every
+// listed check passed (issue #896).
+test("waitChecks in all mode waits for every listed check to settle", async () => {
+  const lint = check("lint", "pass", "SUCCESS");
+  expect(
+    await onceAll([
+      { status: 8, checks: [PENDING_ITEM, lint] },
+      { status: 0, checks: [PASSED_ITEM, lint] },
+    ]),
+  ).toEqual({ timedOut: false, checks: [PASSED_ITEM, lint] });
+});
+
+// Usefulness: verifies the all-checks mode keeps the exit-code rules of the
+// required read: exit 8 runs to the bound, a listed failure settles, and an exit 1
+// with no failing check is unresolved, never a pass (issue #896).
+test("waitChecks in all mode keeps the exit-code rules of the required read", async () => {
+  expect(await onceAll([{ status: 8, checks: [PENDING_ITEM] }])).toEqual({
+    timedOut: true,
+    checks: [PENDING_ITEM],
+  });
+  expect(await onceAll([{ status: 1, checks: [FAILED_ITEM] }])).toEqual({
+    timedOut: false,
+    checks: [FAILED_ITEM],
+  });
+  await expect(
+    onceAll([{ status: 1, checks: [PENDING_ITEM], stderr: "could not read the checks" }]),
+  ).rejects.toThrow(/gh pr checks 42/);
+  await expect(
+    onceAll([{ status: 0, checks: [{ name: "ci", state: "MYSTERY", bucket: null }] }]),
+  ).rejects.toThrow(/not well formed/);
+});
+
+// Usefulness: verifies a branch that reports no check at all is unresolved in the
+// all-checks mode, not a pass and not the required read's `noRequiredChecks`
+// outcome, because no check was read (issue #896).
+test("waitChecks in all mode refuses a branch that reports no check", async () => {
+  await expect(
+    onceAll([{ status: 1, stdout: "", stderr: "no checks reported on the 'main' branch" }]),
+  ).rejects.toThrow(/gh pr checks 42/);
+  await expect(
+    onceAll([
+      { status: 1, stdout: "", stderr: "no required checks reported on the 'main' branch" },
+    ]),
+  ).rejects.toThrow(/gh pr checks 42/);
+});
