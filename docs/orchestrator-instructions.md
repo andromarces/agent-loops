@@ -546,7 +546,11 @@ The mode table is in
   waiting for permission (issue #837). The reviewer puts probe and test output
   under an ignored path inside the repository first, such as an ignored cache
   directory. It uses a temporary path outside the repository only when no
-  ignored path fits (issue #885). The prompt names no repository path, because the
+  ignored path fits (issue #885). The reviewer keeps that output path short and
+  does not set `TMP`, `TEMP`, or `TMPDIR` to a deep path for a test runner,
+  because a long temporary path can fail a Windows test runtime with an internal
+  error (issue #903). The worker prompt has no scratch-redirect rule, so it needs
+  no such guidance. The prompt names no repository path, because the
   `workspace-write` prompt must stay free of a repository-specific path. The reviewer removes each temporary
   file or directory that it created outside the repository before the closing
   block, and names any that it could not remove in `Notes` (issue #865). A change to a cache file that Git does not
