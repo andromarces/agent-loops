@@ -232,8 +232,10 @@ function foldEmptyLabelLists(lines) {
       out.push(lines[i]);
       continue;
     }
-    folded.push({ label: label.slice(0, label.indexOf(":")), index: out.length });
-    out.push(`${label}${label.endsWith(":") ? " " : "; "}${items.join("; ")}`);
+    const colon = label.indexOf(":");
+    const hasValue = label.slice(colon + 1).trim() !== "";
+    folded.push({ label: label.slice(0, colon), index: out.length });
+    out.push(`${label}${hasValue ? "; " : " "}${items.join("; ")}`);
   }
   return folded.every(({ label, index }) => lastLabeled(out, label).index === index) ? out : null;
 }

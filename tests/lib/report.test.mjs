@@ -275,6 +275,15 @@ test("parseReportBlock folds a list that directly follows a label value into tha
   });
 });
 
+// Usefulness: verifies a label value that itself ends with a colon still counts as a value, so the
+// list joins it with "; " instead of being read as an empty label's list (issue #879).
+test("parseReportBlock keeps a label value that ends with a colon when a list follows", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: Details:\n- first\n- second\nBlockers: none"),
+  ).toMatchObject({ why: "Details:; first; second" });
+  expect(parseReportBlock(`${REPORT}\nNotes: a: b:\n- c`)).toMatchObject({ notes: "a: b:; c" });
+});
+
 // Usefulness: verifies a folded list under the required Blockers label never reads as `none`, so a
 // worker that lists a blocker under `Blockers: none` is not reported clear (issue #879).
 test("parseReportBlock keeps a list under Blockers visible in the blockers value", () => {
