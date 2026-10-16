@@ -112,6 +112,25 @@ test("the headless prompt states the no-required-check gate outcome", async () =
   expectRule(instructions, /cannot read/i, /refus/i);
 });
 
+// Usefulness: verifies both parent surfaces state the action for the `noRequiredChecks` wait
+// outcome: dispatch the reviewer, wait no more, and never record a pass (issue #894). A parent
+// that misses it reads the outcome as a read error or as a passed check.
+test("the parent surfaces state the action for a wait with no required check", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readFile(instructionsPath, "utf8");
+  for (const text of [prompt, instructions]) {
+    expectRule(text, /noRequiredChecks/, /dispatch the reviewer/i, /never record/i);
+  }
+});
+
 // The surfaces that state the empty-union rule of the gate. The reviewer found them contradicting
 // each other, so one rule is asserted on each. Only an allowlisted reply proves an absence, and a
 // private Free-plan repository must omit `--pr`. Usefulness: verifies every surface states the same
