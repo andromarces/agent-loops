@@ -504,7 +504,7 @@ The mode table is in
   file outside the repository, so the reviewer runs the test suite instead of
   waiting for permission (issue #837). The reviewer puts probe and test output
   under an ignored path inside the repository first, such as an ignored cache
-  directory, and uses a temporary path outside the repository only when no
+  directory. It uses a temporary path outside the repository only when no
   ignored path fits (issue #885). The prompt names no repository path, because the
   `workspace-write` prompt must stay free of a repository-specific path. The reviewer removes each temporary
   file or directory that it created outside the repository before the closing
