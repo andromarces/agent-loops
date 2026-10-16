@@ -155,8 +155,11 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   optional: a child that omits the label yields `null` for that field, and the
   block still parses. Each value is one line, the label plain at column 0. A `- `
   list (a `-` at column 0, exactly one space U+0020, then the item) that directly follows a report
-  label with an empty value line is that label's value: the markers drop and the
-  items join into one line with `; ` (issue #846). One nesting level folds too:
+  label line is that label's value, or joins the value that line already holds:
+  the markers drop and the items join into one line with `; ` (issues #846 and
+  #879). A list under `Blockers: none` therefore reads `none; <item>`, never
+  `none`. The reviewer `Verdict:` line is no report label, so a list after it
+  stays unparseable. One nesting level folds too:
   a sub-item line (exactly two spaces U+0020, a `-`, one space U+0020, then the
   item) directly after a `- ` item joins into that item with `, `, and several
   consecutive sub-items under one parent all fold into it, so the lines `- a`,
@@ -168,11 +171,9 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   other than one space (a tab, a nonbreaking space, two spaces) even under an
   empty label, a `*` or `+` bullet, an ordered item, an indented bullet that is
   not one nested level (no parent item, a second level, another indent width or
-  marker), or any list under a label that
-  already holds a value, makes the block unparseable, so the list surfaces
+  marker), makes the block unparseable, so the list surfaces
   through `raw` instead of being dropped. An indented label or a decorated label
-  does the same. This covers a label that already holds a value, including the
-  required `blockers`, and a label occurrence that a later repeat shadows, which
+  does the same. This covers a label occurrence that a later repeat shadows, which
   also drops a list that the repeat shadows. A non-list line, for example a closing
   sentence, does not make the block unparseable. A `*` line is not always a
   list, and one shape is the case that matters here: a `*` line whose closing

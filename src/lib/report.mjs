@@ -124,13 +124,13 @@ function closingBlock(response) {
  * unparseable. `checks`, `notes`, and `deferred` are optional: an absent or
  * empty label maps to null and never makes the block null, so a response in the
  * pre-#214 format stays parseable. A `- ` list that directly follows a report label
- * with an empty value line is that label's value: the markers drop and the items
- * join with "; " (issue #846). One level of `  - ` sub-items joins into the item above with
+ * line is that label's value, or joins the value the line already holds: the markers drop
+ * and the items join with "; " (issues #846 and #879). The reviewer `Verdict:` line is no
+ * report label, so a list after it stays dropped. One level of `  - ` sub-items joins into the item above with
  * ", " (issue #870). Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
  * layer surfaces the dropped list through `raw` (issues #229, #240, and #249).
- * This covers a label that already holds a value, including the required
- * `blockers`, a list outside any label, a list that a non-list line or a blank
+ * This covers a list outside any label, a list that a non-list line or a blank
  * line separates from its label, a bullet with no space after its
  * marker even under an empty label (issue #243), a `*` or `+` bullet, an ordered item, an indented bullet that is not one nested level, and a list under an earlier occurrence that a later
  * repeat shadows or after the reviewer `Verdict:` line (issue #249), because the
@@ -174,10 +174,11 @@ export function parseReportBlock(response) {
   return report;
 }
 
-// A report label line with an empty value, for example `Notes:`.
-const EMPTY_LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):\\s*$`, "i");
+// A report label line, empty or with a value, for example `Notes:` or `Notes: none`. The reviewer
+// `Verdict:` line is no report label, so a list after it never folds.
+const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 
-// The only list shape that folds under an empty label: a `-` at column 0, exactly one ASCII
+// The only list shape that folds under a label: a `-` at column 0, exactly one ASCII
 // space (U+0020), then an item. Any other separator (a tab, a nonbreaking space, a second space),
 // a spaceless bullet, an indented bullet, a `*` or `+` bullet, and an ordered item stay
 // lists that hasDroppedList rejects.
@@ -204,8 +205,9 @@ function isFoldableSubitem(line) {
 }
 
 /**
- * Folds an unbroken run of `- ` items that directly follows a report label with an empty value
- * line into that label's value: markers stripped, items joined with "; " (issue #846). Each
+ * Folds an unbroken run of `- ` items that directly follows a report label line into that label's
+ * value: markers stripped, items joined with "; ", and joined to a value the label line already
+ * holds with "; " too (issues #846 and #879). Each
  * item absorbs the run of `  - ` sub-items right after it, joined to it with ", " (issue #870).
  * Every other list shape stays in the result for hasDroppedList. Returns null when a later line repeats a
  * folded label, because the repeat shadows the folded list and it would drop with no `raw`
@@ -217,7 +219,7 @@ function foldEmptyLabelLists(lines) {
   const out = [];
   const folded = [];
   for (let i = 0; i < lines.length; i++) {
-    const label = lines[i].match(EMPTY_LABEL_LINE) ? lines[i].trim() : null;
+    const label = LABEL_LINE.test(lines[i]) ? lines[i].trim() : null;
     const items = [];
     while (label && i + 1 < lines.length && isFoldableItem(lines[i + 1])) {
       const parts = [lines[++i].replace(FOLDABLE_ITEM, "").trim()];
@@ -230,8 +232,8 @@ function foldEmptyLabelLists(lines) {
       out.push(lines[i]);
       continue;
     }
-    folded.push({ label: label.slice(0, -1), index: out.length });
-    out.push(`${label} ${items.join("; ")}`);
+    folded.push({ label: label.slice(0, label.indexOf(":")), index: out.length });
+    out.push(`${label}${label.endsWith(":") ? " " : "; "}${items.join("; ")}`);
   }
   return folded.every(({ label, index }) => lastLabeled(out, label).index === index) ? out : null;
 }

@@ -470,7 +470,7 @@ test.each([
   },
   {
     name: "a list under the Blockers label",
-    extra: "\nBlockers: see below\n- real blocker",
+    extra: "\nBlockers: see below\n* real blocker",
     expected: "real blocker",
   },
   {
@@ -533,7 +533,7 @@ test("worker dispatch carries the whole response in raw when the closing block i
   const response = [
     "Conclusion: done",
     "Notes: see below",
-    "- dropped marker ALPHA",
+    "* dropped marker ALPHA",
     `Why: ${"x".repeat(2500)}`,
     "Blockers: none",
   ].join("\n");

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
  * response, so the block carries the reasoning and open items it would otherwise re-derive.
  */
 export const reportBlock = `
-End your response with this block, kept short. Each label takes one line, plain at column 0, so write no list. A list of dash-plus-one-space items (\`- item\`) directly under an empty label joins into that label's value. One level of sub-items under such an item, each a line of two spaces, a hyphen, one space, then the text, folds into that item with a comma. Any other list or nesting, an indented label, or a decorated label makes the whole block unparseable. A line that starts with \`*\` either counts as a list or is dropped from the block, so write none:
+End your response with this block, kept short. Each label takes one line, plain at column 0, so write no list. A list of dash-plus-one-space items (\`- item\`) directly under a label, empty or not, joins into that label's value. One level of sub-items under such an item, each a line of two spaces, a hyphen, one space, then the text, folds into that item with a comma. Any other list or nesting, an indented label, or a decorated label makes the whole block unparseable. A line that starts with \`*\` either counts as a list or is dropped from the block, so write none:
 Conclusion: one or two sentences.
 Why: the decisive evidence behind the conclusion.
 Blockers: anything unresolved that the next turn must know, or "none".
