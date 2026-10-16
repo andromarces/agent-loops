@@ -17,6 +17,10 @@ import { workerPrompt } from "./prompts/worker.mjs";
 const PREAMBLE_ONLY_TASK =
   "No task this turn. Reply with the single word OK and change nothing. The rules above apply to every later turn.";
 
+// Prompt of the task-only reviewer turn that follows a replaced conversation. Its reply is dropped.
+const TASK_ONLY_REVIEW =
+  "No review this turn. Reply with the single word OK, change nothing, and give no verdict. The init task above applies to every later turn.";
+
 /**
  * Every CLI call goes through here. Emits one `invocation` event per call, carrying the
  * usage the adapter exposed on `state.usage`, and clears that field so it never lingers.
@@ -66,7 +70,8 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * passes none (ADR 0019, ADR 0038).
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
  * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
- * conversation that a turn carrying the task ran in.
+ * conversation that a turn carrying the task ran in. A reviewer turn that a CLI runs in a replacement
+ * conversation without the task is followed by a task-only reviewer turn in the same call (issue #890).
  * `onSessionAssigned(id)` is awaited by the Claude adapter, which pre-assigns a session id, before
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
  * dispatcher uses it to persist the id ahead of a crash (issue #395).
@@ -142,12 +147,21 @@ export async function runChild(options) {
   // turn, so a worker gets its preamble again and either role gets the init task again. The rerun belongs to the step already charged for
   // this turn: the failed resume ran no model turn, and the single rerun bounds the extra cost
   // (ADR 0016).
-  const invokeWithTask = async (first, buildPrompt) => {
+  // A canceled turn counts as delivered, because the CLI may have received the prompt (#826). A turn
+  // that fails otherwise counts too, unless `countFailure` is false, which a caller sets when the
+  // turn exists only to deliver the task.
+  const invokeWithTask = async (first, buildPrompt, { countFailure = true } = {}) => {
     const turnTask = taskFor(first);
+    let counted = countFailure;
     try {
-      return await invokeRole(buildPrompt(first, turnTask));
+      const response = await invokeRole(buildPrompt(first, turnTask));
+      counted = true;
+      return response;
+    } catch (err) {
+      if (readProp(err, "isCanceled")) counted = true;
+      throw err;
     } finally {
-      if (turnTask !== null) recordTaskSent();
+      if (turnTask !== null && counted) recordTaskSent();
     }
   };
 
@@ -194,6 +208,47 @@ export async function runChild(options) {
       }
     }
     return response;
+  };
+
+  // A reviewer has no preamble, so a replacement conversation would get the init task only on the
+  // next dispatch, and a run can finish first (issue #890). A task-only turn delivers it before the
+  // verdict counts. It runs under its own mutation check, so a write in either turn is seen alone.
+  // A failed turn records no delivery and throws, so the verdict of an undelivered conversation never
+  // becomes an ok result. A cancel counts as delivered and keeps the replacement mark. A turn that
+  // runs in a third conversation delivers the task there, and the verdict of the conversation that
+  // gave it never counts, because that conversation did not get the task.
+  const sendTaskToReplacement = async () => {
+    if (!taskNeeded()) return;
+    const verdictSession = role.sessionId;
+    preamblePending = true;
+    try {
+      await withMutationCheck(
+        cwd,
+        roleName,
+        () =>
+          invokeWithTask(
+            true,
+            (first, turnTask) => reviewerPrompt(TASK_ONLY_REVIEW, null, null, sandbox, turnTask),
+            { countFailure: false },
+          ),
+        { signal },
+      );
+    } catch (err) {
+      const name = readProp(err, "name");
+      if (name === "MutationError" || name === "SnapshotError" || readProp(err, "isCanceled")) {
+        throw err;
+      }
+      throw new Error(
+        `the task turn in the new conversation failed: ${firstErrorLine(readableErrorText(err))}`,
+        { cause: err },
+      );
+    }
+    preamblePending = false;
+    if (role.sessionId !== verdictSession) {
+      throw new Error(
+        "the task turn ran in another conversation than the review turn, so the review does not count",
+      );
+    }
   };
 
   // The worker prompt needs no runtime read, so its builder is fixed here. The
@@ -252,6 +307,9 @@ export async function runChild(options) {
           { signal },
         )
       : await runFn(buildWorkerPrompt);
+    if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
+      await sendTaskToReplacement();
+    }
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
     throwIfCanceled(signal, roleName);
