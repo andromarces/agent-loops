@@ -770,3 +770,41 @@ test("acceptanceFailure names the failing acceptance check or null", () => {
   expect(acceptanceFailure(`${REPORT}\nVerdict: accept\nChecks:`)).toBe("checks");
   expect(acceptanceFailure(`${REPORT}\nVerdict: accept\nChecks: npm test passed`)).toBeNull();
 });
+
+// Usefulness: verifies a prose heading line and the `- ` list directly under it, set apart from the
+// preceding label by a blank line, fold into that label's value, so a worker that writes a
+// sub-heading with a list between two labels still yields a report instead of null (issue #898).
+test("parseReportBlock folds a prose heading and its list into the preceding label", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: tests pass\n\nDesign settled in ADR 0031:\n- **Non-limit failure:** a\n- **Pagination:** b\n\nBlockers: none",
+    ),
+  ).toEqual({
+    conclusion: "done",
+    why: "tests pass; Design settled in ADR 0031: **Non-limit failure:** a; **Pagination:** b",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n\nHeading\n- a\n  - b`)).toMatchObject({
+    notes: "Heading: a, b",
+  });
+});
+
+// Usefulness: verifies the shapes that stay unparseable next to the #898 rule: no blank line before
+// the prose, no prose heading, prose after another prose line, prose after the `Verdict:` line, and
+// a repeat of the label that took the heading list, so no list drops without a `raw` signal.
+test("parseReportBlock returns null for a prose and list shape outside the heading rule", () => {
+  for (const tail of [
+    "Notes: x\nHeading:\n- a",
+    "Notes: x\n\n\n- a",
+    "Notes: x\n\nprose one\nHeading:\n- a",
+    "Verdict: accept\n\nHeading:\n- a",
+    "Notes: x\n\nHeading:\n- a\n\nNotes: later",
+    "Notes: x\n\nHeading:\n\n- a",
+    "Notes: x\n\nHeading:\n* a",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\n${tail}`)).toBeNull();
+  }
+});

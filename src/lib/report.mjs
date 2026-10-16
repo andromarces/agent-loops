@@ -127,7 +127,9 @@ function closingBlock(response) {
  * line is that label's value, or joins the value the line already holds: the markers drop
  * and the items join with "; " (issues #846 and #879). The reviewer `Verdict:` line is no
  * report label, so a list after it stays dropped. One level of `  - ` sub-items joins into the item above with
- * ", " (issue #870). Any other list line in the block, for example
+ * ", " (issue #870). A prose line with a `- ` list directly under it also folds into the label above
+ * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
+ * Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
  * layer surfaces the dropped list through `raw` (issues #229, #240, and #249).
  * This covers a list outside any label, a list that a non-list line or a blank
@@ -204,14 +206,43 @@ function isFoldableSubitem(line) {
   return FOLDABLE_SUBITEM.test(line) && isListLine(line);
 }
 
+/** The `- ` items that directly follow line `start`, each with its sub-items, and the last line used. */
+function takeItems(lines, start) {
+  let i = start;
+  const items = [];
+  while (i + 1 < lines.length && isFoldableItem(lines[i + 1])) {
+    const parts = [lines[++i].replace(FOLDABLE_ITEM, "").trim()];
+    while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1])) {
+      parts.push(lines[++i].replace(FOLDABLE_SUBITEM, "").trim());
+    }
+    items.push(parts.join(", "));
+  }
+  return { items, end: i };
+}
+
+/** Appends text to a label line's value, joined with "; " when the line already holds a value. */
+function appendToLabel(label, text) {
+  const hasValue = label.slice(label.indexOf(":") + 1).trim() !== "";
+  return `${label}${hasValue ? "; " : " "}${text}`;
+}
+
+/** A prose line: not blank, not a report label, not the `Verdict:` line, and not a list. */
+function isProseLine(line) {
+  return (
+    line.trim() !== "" && !LABEL_LINE.test(line) && !/^Verdict:/i.test(line) && !isListLine(line)
+  );
+}
+
 /**
  * Folds an unbroken run of `- ` items that directly follows a report label line into that label's
  * value: markers stripped, items joined with "; ", and joined to a value the label line already
  * holds with "; " too (issues #846 and #879). Each
  * item absorbs the run of `  - ` sub-items right after it, joined to it with ", " (issue #870).
- * Every other list shape stays in the result for hasDroppedList. Returns null when a later line repeats a
- * folded label, because the repeat shadows the folded list and it would drop with no `raw`
- * signal.
+ * A prose line with a `- ` run directly under it folds into the preceding report label as
+ * `<prose>: <items>` when one or more blank lines separate that prose from the label line (issue
+ * #898). Every other list shape stays in the result for hasDroppedList. Returns null when a later
+ * line repeats a folded label, because the repeat shadows the folded list and it would drop with
+ * no `raw` signal.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
@@ -219,23 +250,27 @@ function foldEmptyLabelLists(lines) {
   const out = [];
   const folded = [];
   for (let i = 0; i < lines.length; i++) {
-    const label = LABEL_LINE.test(lines[i]) ? lines[i].trim() : null;
-    const items = [];
-    while (label && i + 1 < lines.length && isFoldableItem(lines[i + 1])) {
-      const parts = [lines[++i].replace(FOLDABLE_ITEM, "").trim()];
-      while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1])) {
-        parts.push(lines[++i].replace(FOLDABLE_SUBITEM, "").trim());
+    const line = lines[i];
+    if (LABEL_LINE.test(line)) {
+      const { items, end } = takeItems(lines, i);
+      if (items.length > 0) {
+        const label = line.trim();
+        folded.push({ label: label.slice(0, label.indexOf(":")), index: out.length });
+        out.push(appendToLabel(label, items.join("; ")));
+        i = end;
+        continue;
       }
-      items.push(parts.join(", "));
+    } else if (isProseLine(line) && out.length > 0 && out.at(-1).trim() === "") {
+      const at = out.findLastIndex((entry) => entry.trim() !== "");
+      const { items, end } = takeItems(lines, i);
+      if (items.length > 0 && at >= 0 && LABEL_LINE.test(out[at])) {
+        folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
+        out[at] = appendToLabel(out[at], `${line.trim().replace(/:$/, "")}: ${items.join("; ")}`);
+        i = end;
+        continue;
+      }
     }
-    if (items.length === 0) {
-      out.push(lines[i]);
-      continue;
-    }
-    const colon = label.indexOf(":");
-    const hasValue = label.slice(colon + 1).trim() !== "";
-    folded.push({ label: label.slice(0, colon), index: out.length });
-    out.push(`${label}${hasValue ? "; " : " "}${items.join("; ")}`);
+    out.push(line);
   }
   return folded.every(({ label, index }) => lastLabeled(out, label).index === index) ? out : null;
 }
