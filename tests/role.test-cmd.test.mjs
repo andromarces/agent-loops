@@ -558,4 +558,6 @@ test("role worker and reviewer dispatches carry the test slot rule", async () =>
   expect(turn.exitCode).toBe(0);
   expect(agents.fake1.recorded[0].prompt).toContain(testSlotRule());
   expect(reviewer.recorded[0].prompt).toContain(testSlotRule());
+  expect(agents.fake1.recorded[0].prompt).toMatch(/at most 10 test files/);
+  expect(reviewer.recorded[0].prompt).toMatch(/broader run through the test slot wrapper/);
 });

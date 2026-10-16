@@ -12,6 +12,14 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
   `Bash` stays allowed because the parent needs it to run `agent-loop role`;
   a shell-based edit bypasses all guards. Full enforcement needs a harness that
   exposes only orchestration tools.
+- Prompt passing: the guard denies the file-edit tools for every path, including
+  a path outside every work tree, so the parent never stages a file while any run
+  of its session is active. The parent passes every dispatch prompt on stdin from
+  a shell heredoc. An init with `--task-file -` needs a `--prompt-file` staged
+  before the first init of the session. A later init in the session passes
+  `--task` (or a `--task-file <path>` staged earlier) and the prompt on stdin. A shell write remains a bypass, and no
+  instruction relies on it. See
+  [Starting a run](orchestrator-instructions.md#starting-a-run).
 - Subagent containment: Antigravity runs a subagent's tool calls under its own
   `conversationId`, and the hook payload names no parent. While guarded, the
   registered parent is denied on `invoke_subagent` (start a child) and
