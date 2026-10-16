@@ -114,9 +114,10 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   prompt with `--task-file -`. Init refuses `--task-file -` without it.
   Stage that file before the first init call of the session, in the system
   temporary directory outside every work tree. No run of the session is active
-  then, so the parent guard is not engaged. After that init, never write a file:
-  the guard denies the file-edit tools of the parent for every path while any
-  run of the session is active.
+  then, so the parent guard is not engaged. Write the file with the normal
+  file-write tool of the harness. After that init, never write a file: the guard
+  denies the file-edit tools of the parent for every path while any run of the
+  session is active.
 - A later init in the session, while another run is active, writes no file. Pass
   the task with `--task`, or with a `--task-file <path>` that was staged before
   the first init, and pass the prompt on stdin. Never use `--task-file -` there,
@@ -522,9 +523,13 @@ The mode table is in
   a remote. The file-change rule has the same scope in every mode: a test, build,
   or probe is allowed when every write goes to an ignored path or to a temporary
   file outside the repository, so the reviewer runs the test suite instead of
-  waiting for permission (issue #837). The reviewer removes each temporary file
-  or directory that it created outside the repository before the closing block,
-  and names any that it could not remove in `Notes` (issue #865). A change to a cache file that Git does not
+  waiting for permission (issue #837). The reviewer puts probe and test output
+  under an ignored path inside the repository first, such as an ignored cache
+  directory. It uses a temporary path outside the repository only when no
+  ignored path fits (issue #885). The prompt names no repository path, because the
+  `workspace-write` prompt must stay free of a repository-specific path. The reviewer removes each temporary
+  file or directory that it created outside the repository before the closing
+  block, and names any that it could not remove in `Notes` (issue #865). A change to a cache file that Git does not
   ignore is a reviewer mutation. The mutation check is unchanged. The headless initial
   prompt tells the orchestrator the mode, and says that its own turns stay
   read-only. A reviewer that is not Codex has no mode, and its prompts name none.
