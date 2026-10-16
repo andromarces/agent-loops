@@ -78,7 +78,13 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `--<role>-effort` also requires an explicit `--<role>-model`.
 - Always pass `--cwd`. It defaults to the current directory, which for an
   interactive parent is normally not the target work tree.
-- Pass the child prompt on stdin. The exception is an init with `--task-file -`, which takes `--prompt-file`.
+- Pass every child prompt on stdin, from a shell heredoc or an equivalent such as
+  `printf`. The exception is an init with `--task-file -`, which takes
+  `--prompt-file`. While a run is active, the parent guard denies the file-edit
+  tools of the parent for every path, including a scratch path outside the work
+  tree, so a later prompt never goes through a file. A piped `cat <file>` of a
+  file that was never written gives an empty stdin, and `dispatch` refuses it:
+  `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
 - The init task (`--task` or `--task-file`) is run configuration. No child receives it. A child sees only the
   prompt of its dispatch, so every child prompt must carry the task text, or the part of it that the turn needs.
   A prompt such as "Carry out the task" gives the child no task and still charges a step.
@@ -86,6 +92,15 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   be combined. `--task-file -` reads the task from stdin, which also carries the
   prompt here. Stdin carries only one input, so pass `--prompt-file` for the
   prompt with `--task-file -`. Init refuses `--task-file -` without it.
+  Stage that file before the first init call of the session, in the system
+  temporary directory outside every work tree. No run of the session is active
+  then, so the parent guard is not engaged. After that init, never write a file:
+  the guard denies the file-edit tools of the parent for every path while any
+  run of the session is active.
+- A later init in the session, while another run is active, writes no file. Pass
+  the task with `--task`, or with a `--task-file <path>` that was staged before
+  the first init, and pass the prompt on stdin. Never use `--task-file -` there,
+  because it needs a new `--prompt-file`.
 - A parent session can drive several runs at once, one per work tree. Init
   registers each run under the session as its own entry keyed by the work tree,
   so a second run in a different work tree does not replace the first. A new

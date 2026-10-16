@@ -76,7 +76,6 @@ export function readableErrorText(err) {
   return typeof message === "string" ? message : JSON.stringify(message);
 }
 
-/** The first line of an error text, for a one-line log entry. */
 export function firstErrorLine(text) {
   return text.split("\n")[0];
 }

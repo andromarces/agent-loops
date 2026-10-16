@@ -171,7 +171,7 @@ export function closingText(messages) {
 }
 
 /**
- * Sets `state.resolvedModel` to the resolution state of the turn that just succeeded, one of three:
+ * Sets `state.resolvedModel` to the resolution state of a turn that ran, one of three:
  * - a model id: the output named one model, from well-formed, unambiguous evidence (at least one
  *   value, every value a model id, which is a non-empty string with no whitespace or control
  *   character, and all values equal);
@@ -179,9 +179,13 @@ export function closingText(messages) {
  *   model, a value of another type). An earlier model is replaced, because it describes an earlier
  *   turn, and `--continue-from` compares nothing against it;
  * - the field absent, not reported: the adapter never calls this, as for a CLI that reports no model.
- * The record describes the session the role keeps. An adapter calls `recordResolvedModel`, which calls
- * this, for every turn whose child process ran, failed or not, because a turn that ran may have run the
- * session on another model. It does not call it when `childRan` is false.
+ * The record describes the session the role keeps. An adapter sets it for every turn whose child
+ * process ran, failed or not, because a turn that ran may have run the session on another model.
+ * An adapter reaches this in two ways. `recordResolvedModel` calls it with the model values of the
+ * output, or with `[]` when the output cannot be tied to the kept session. The OpenCode adapter
+ * also calls it directly with `[]`, which marks the turn unresolved, on a failed turn, at the start
+ * of its output validation before any check passes, and on a cancel after the child exited. On a
+ * failed turn an adapter skips the call when `childRan` is false.
  * @param {object} state role state; mutated
  * @param {unknown[]} reported the model values the turn output named, malformed ones included
  */
