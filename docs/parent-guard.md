@@ -16,9 +16,11 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
   a path outside every work tree, so the parent never stages a file while any run
   of its session is active. The parent passes every dispatch prompt on stdin from
   a shell heredoc. An init with `--task-file -` needs a `--prompt-file` staged
-  before the first init of the session. A later init in the session passes
-  `--task` (or a `--task-file <path>` staged earlier) and the prompt on stdin. A shell write remains a bypass, and no
-  instruction relies on it. See
+  before the first init of the session. No run is active then, so the guard
+  allows the normal file-write tool of the harness for that file. A later init
+  in the session passes `--task` (or a `--task-file <path>` staged earlier) and
+  the prompt on stdin. A shell write remains a bypass, and no instruction relies
+  on it. See
   [Starting a run](orchestrator-instructions.md#starting-a-run).
 - Subagent containment: Antigravity runs a subagent's tool calls under its own
   `conversationId`, and the hook payload names no parent. While guarded, the
