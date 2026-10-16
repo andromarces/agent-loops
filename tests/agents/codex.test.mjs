@@ -331,7 +331,7 @@ test("codex returns the earlier closing block when the last message holds none",
 // Usefulness: verifies a final malformed reject block wins over an earlier accept, so the parent sees it as raw and never an accept (issue #449).
 test("codex keeps a final unparseable reject block over an earlier accept block", async () => {
   const accept = `${BLOCK}\nVerdict: accept`;
-  const reject = "Conclusion: no.\nWhy: bugs.\nBlockers: see below\n- one\n- two\nVerdict: reject";
+  const reject = "Conclusion: no.\nWhy: bugs.\nBlockers: see below\n* one\n* two\nVerdict: reject";
   const events = [
     { type: "thread.started", thread_id: "th-1" },
     { type: "item.completed", item: { type: "agent_message", text: accept } },

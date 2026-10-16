@@ -245,19 +245,67 @@ test("parseReportBlock returns null for a non-`- ` list under an empty label", (
   }
 });
 
-// Usefulness: verifies a list under a label that already holds a value, one that a blank line
-// separates from its label, and one under a shadowed, indented, or decorated label stay
-// unparseable, while a `- ` list under an empty required label folds (issue #846).
-test("parseReportBlock returns null for a list under a non-empty or hidden label", () => {
-  expect(parseReportBlock(`${REPORT}\nNotes: none\n- item`)).toBeNull();
+// Usefulness: verifies a list that a blank line separates from its label, and one under an
+// indented or decorated label, stays unparseable, while a `- ` list under an empty required
+// label folds (issue #846).
+test("parseReportBlock returns null for a list under a hidden label", () => {
   expect(parseReportBlock(`${REPORT}\nNotes: none\n\n- item`)).toBeNull();
-  expect(parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n- item")).toBeNull();
   expect(parseReportBlock("Conclusion: done\nWhy: ok\nBlockers:\n- item")).toMatchObject({
     blockers: "item",
   });
   expect(parseReportBlock(`${REPORT}\n  Notes:\n- item`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\n**Notes:**\n- item`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\nNotes:\n- item\nNotes:\n- other`)).toBeNull();
+});
+
+// Usefulness: verifies a `- ` list that directly follows a label that already holds a value folds
+// into that value, joined to it and between items with "; ", so the worker shape of issue #879
+// (`Why:` text then bold-label bullets) keeps its parsed fields instead of blanking the report.
+test("parseReportBlock folds a list that directly follows a label value into that value", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: I found three stale claims and updated each one.\n- **Prompt:** a\n- **Reference doc:** b\nBlockers: none",
+    ),
+  ).toMatchObject({
+    why: "I found three stale claims and updated each one.; **Prompt:** a; **Reference doc:** b",
+    blockers: "none",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes: two items\n- a\n  - b\n- c`)).toMatchObject({
+    notes: "two items; a, b; c",
+  });
+});
+
+// Usefulness: verifies a label value that itself ends with a colon still counts as a value, so the
+// list joins it with "; " instead of being read as an empty label's list (issue #879).
+test("parseReportBlock keeps a label value that ends with a colon when a list follows", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: Details:\n- first\n- second\nBlockers: none"),
+  ).toMatchObject({ why: "Details:; first; second" });
+  expect(parseReportBlock(`${REPORT}\nNotes: a: b:\n- c`)).toMatchObject({ notes: "a: b:; c" });
+});
+
+// Usefulness: verifies a folded list under the required Blockers label never reads as `none`, so a
+// worker that lists a blocker under `Blockers: none` is not reported clear (issue #879).
+test("parseReportBlock keeps a list under Blockers visible in the blockers value", () => {
+  const report = parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n- real blocker");
+  expect(report.blockers).toBe("none; real blocker");
+});
+
+// Usefulness: verifies the fold under a label value stays inside the delimiter rule: a list that
+// prose or a blank line separates, a non-`- ` list, a sub-item with no parent item, a list that a
+// later repeat of the label shadows, and a list after the reviewer Verdict line still fail closed.
+test("parseReportBlock returns null for a list after a label value outside the fold rule", () => {
+  for (const tail of [
+    "Notes: a\nprose\n- b",
+    "Notes: a\n-b",
+    "Notes: a\n* b",
+    "Notes: a\n1. b",
+    "Notes: a\n  - b",
+    "Notes: a\n- b\nNotes: later",
+    "Verdict: accept\n- b",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\n${tail}`), tail).toBeNull();
+  }
 });
 
 // Usefulness: verifies a non-label line that begins with a word and a colon is
@@ -288,20 +336,20 @@ test("parseReportBlock keeps the report when only the Verdict label is decorated
   });
 });
 
-// Usefulness: verifies a list under a label that already holds a value is not
+// Usefulness: verifies a non-`- ` list under a label that already holds a value is not
 // dropped silently; the whole block is unparseable, so `raw` carries the list.
 // This covers the required `Blockers` label, which the next turn needs, and the
 // optional `Notes` and `Deferred` labels (issue #240).
 test("parseReportBlock returns null when a value-bearing label has a following list", () => {
-  expect(parseReportBlock(`${REPORT}\nBlockers: see below\n- real blocker`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nNotes: two items\n- a\n- b`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nBlockers: see below\n-real blocker`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: two items\n* a\n* b`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\nDeferred: two items\n1. a`)).toBeNull();
 });
 
 // Usefulness: verifies the list is flagged even when the next label follows it,
 // so a dropped list cannot hide behind an unrelated label (issue #240).
 test("parseReportBlock returns null when a list sits between two labels", () => {
-  expect(parseReportBlock(`${REPORT}\nNotes: two items\n- a\nDeferred: later`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: two items\n* a\nDeferred: later`)).toBeNull();
 });
 
 // Usefulness: verifies a non-list line after a value-bearing label, for example
@@ -319,14 +367,18 @@ test("parseReportBlock keeps a block whose value-bearing label only a non-list l
 });
 
 // Usefulness: verifies the rule applies to every label, not only the optional
-// ones: a list under `Conclusion` or `Why` is surfaced instead of dropped
-// (issue #240). The docs and the prompt state the rule for any label.
-test("parseReportBlock returns null when a list follows Conclusion or Why", () => {
+// ones: a `- ` list under `Conclusion` or `Why` folds into the value, and any other list
+// shape there is surfaced instead of dropped (issues #240 and #879). The docs and the prompt
+// state the rule for any label.
+test("parseReportBlock folds or rejects a list that follows Conclusion or Why", () => {
   expect(
     parseReportBlock("Conclusion: done\n- next step\nWhy: tests pass\nBlockers: none"),
-  ).toBeNull();
+  ).toMatchObject({ conclusion: "done; next step", why: "tests pass" });
   expect(
     parseReportBlock("Conclusion: done\nWhy: tests pass\n- test a\nBlockers: none"),
+  ).toMatchObject({ why: "tests pass; test a" });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: tests pass\n* test a\nBlockers: none"),
   ).toBeNull();
 });
 
