@@ -1371,50 +1371,53 @@ test("verbose mode logs snapshot debug lines around reviewer and orchestrator tu
 // detection site), not duplicated by the orchestrator failure log.
 const expectMutationLoggedOnce = async (action) => {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  const repo = await createTempRepo();
   try {
-    const mutate = async () => {
-      await writeFile(join(repo, "mutated.txt"), "mutated\n");
-      return "done";
-    };
-    const orchReply =
-      action === "run_reviewer"
-        ? [JSON.stringify({ action: "run_reviewer", prompt: "review" })]
-        : [null];
-    const reviewerReply = action === "run_reviewer" ? [mutate] : [];
+    const repo = await createTempRepo();
+    try {
+      const mutate = async () => {
+        await writeFile(join(repo, "mutated.txt"), "mutated\n");
+        return "done";
+      };
+      const orchReply =
+        action === "run_reviewer"
+          ? [JSON.stringify({ action: "run_reviewer", prompt: "review" })]
+          : [null];
+      const reviewerReply = action === "run_reviewer" ? [mutate] : [];
 
-    await expect(
-      runLoop({
-        task: "Task 25",
-        cwd: repo,
-        maxSteps: 5,
-        roles: {
-          orchestrator: { kind: "orch", sessionId: null },
-          worker: { kind: "work", sessionId: null },
-          reviewer: { kind: "rev", sessionId: null },
-        },
-        agents: {
-          // Orchestrator mutation case: orchestrator itself writes a file then dispatches.
-          orch:
-            action === "run_reviewer"
-              ? scripted(orchReply)
-              : scripted([
-                  async () => {
-                    await writeFile(join(repo, "mutated.txt"), "mutated\n");
-                    return JSON.stringify({ action: "run_worker", prompt: "go" });
-                  },
-                ]),
-          work: scripted([]),
-          rev: scripted(reviewerReply),
-        },
-      }),
-    ).rejects.toThrow(MutationError);
+      await expect(
+        runLoop({
+          task: "Task 25",
+          cwd: repo,
+          maxSteps: 5,
+          roles: {
+            orchestrator: { kind: "orch", sessionId: null },
+            worker: { kind: "work", sessionId: null },
+            reviewer: { kind: "rev", sessionId: null },
+          },
+          agents: {
+            // Orchestrator mutation case: orchestrator itself writes a file then dispatches.
+            orch:
+              action === "run_reviewer"
+                ? scripted(orchReply)
+                : scripted([
+                    async () => {
+                      await writeFile(join(repo, "mutated.txt"), "mutated\n");
+                      return JSON.stringify({ action: "run_worker", prompt: "go" });
+                    },
+                  ]),
+            work: scripted([]),
+            rev: scripted(reviewerReply),
+          },
+        }),
+      ).rejects.toThrow(MutationError);
+    } finally {
+      await removePath(repo);
+    }
+    const lines = errorSpy.mock.calls.map((call) => call.join(" "));
+    expect(lines.filter((line) => line.includes("Mutation detected during"))).toHaveLength(1);
   } finally {
-    await removePath(repo);
+    errorSpy.mockRestore();
   }
-  const lines = errorSpy.mock.calls.map((call) => call.join(" "));
-  errorSpy.mockRestore();
-  expect(lines.filter((line) => line.includes("Mutation detected during"))).toHaveLength(1);
 };
 
 test("mutation by the reviewer is logged exactly once", () =>
