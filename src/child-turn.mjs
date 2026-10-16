@@ -147,17 +147,21 @@ export async function runChild(options) {
   // turn, so a worker gets its preamble again and either role gets the init task again. The rerun belongs to the step already charged for
   // this turn: the failed resume ran no model turn, and the single rerun bounds the extra cost
   // (ADR 0016).
-  // A turn that fails without a cancel counts as delivered unless `countFailure` is false, which a
-  // caller sets when the turn exists only to deliver the task.
+  // A canceled turn counts as delivered, because the CLI may have received the prompt (#826). A turn
+  // that fails otherwise counts too, unless `countFailure` is false, which a caller sets when the
+  // turn exists only to deliver the task.
   const invokeWithTask = async (first, buildPrompt, { countFailure = true } = {}) => {
     const turnTask = taskFor(first);
-    let succeeded = false;
+    let counted = countFailure;
     try {
       const response = await invokeRole(buildPrompt(first, turnTask));
-      succeeded = true;
+      counted = true;
       return response;
+    } catch (err) {
+      if (readProp(err, "isCanceled")) counted = true;
+      throw err;
     } finally {
-      if (turnTask !== null && (succeeded || countFailure)) recordTaskSent();
+      if (turnTask !== null && counted) recordTaskSent();
     }
   };
 
@@ -209,10 +213,13 @@ export async function runChild(options) {
   // A reviewer has no preamble, so a replacement conversation would get the init task only on the
   // next dispatch, and a run can finish first (issue #890). A task-only turn delivers it before the
   // verdict counts. It runs under its own mutation check, so a write in either turn is seen alone.
-  // Only a delivered task is recorded. A failed turn throws, so the verdict of an undelivered
-  // conversation never becomes an ok result. A cancel keeps the replacement mark for the next turn.
+  // A failed turn records no delivery and throws, so the verdict of an undelivered conversation never
+  // becomes an ok result. A cancel counts as delivered and keeps the replacement mark. A turn that
+  // runs in a third conversation delivers the task there, and the verdict of the conversation that
+  // gave it never counts, because that conversation did not get the task.
   const sendTaskToReplacement = async () => {
     if (!taskNeeded()) return;
+    const verdictSession = role.sessionId;
     preamblePending = true;
     try {
       await withMutationCheck(
@@ -237,6 +244,11 @@ export async function runChild(options) {
       );
     }
     preamblePending = false;
+    if (role.sessionId !== verdictSession) {
+      throw new Error(
+        "the task turn ran in another conversation than the review turn, so the review does not count",
+      );
+    }
   };
 
   // The worker prompt needs no runtime read, so its builder is fixed here. The

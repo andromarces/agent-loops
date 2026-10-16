@@ -322,6 +322,55 @@ test("a failed task-only turn is no accept and the next reviewer turn sends the 
   expect(retry.prompt).toContain(TASK_BLOCK);
 });
 
+// Usefulness: a verdict counts toward a finish only when the conversation that gave it had the
+// task. A second replacement during the task-only turn leaves the verdict with a conversation
+// that never got the task, while the task is recorded for the new conversation and not repeated.
+test("a verdict from a conversation that the task-only turn replaced never counts and the task is not repeated", async () => {
+  const repo = await startRun();
+  const moveTo = (id, reply) => (state) => {
+    state.sessionId = id;
+    state.conversationReplaced = true;
+    return reply;
+  };
+  const reviewer = recordingAdapter([
+    ACCEPT,
+    moveTo("conversation-a", ACCEPT),
+    moveTo("conversation-b", "OK"),
+    ACCEPT,
+  ]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  await reviewerTurn(repo, agents);
+  const moved = await reviewerTurn(repo, agents);
+
+  expect(moved.payload.status).toBe("error");
+  expect((await finishGated(repo)).exitCode).toBe(1);
+
+  await reviewerTurn(repo, agents);
+  const next = reviewer.recorded.at(-1);
+  expect(next.incomingSessionId).toBe("conversation-b");
+  expect(next.prompt).not.toContain("Fix the flaky test.");
+});
+
+// Usefulness: a canceled task-only turn counts as delivered, as for any turn that carried the task
+// (#826), so the resumed turn never gives the same conversation the task twice.
+test("a cancel in the task-only turn does not make the next reviewer turn resend the init task", async () => {
+  const repo = await startRun();
+  const reviewer = recordingAdapter([ACCEPT, replaceConversation(ACCEPT), cancelTurn, ACCEPT]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  await reviewerTurn(repo, agents);
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(130);
+  expect((await reviewerTurn(repo, agents, ["--resume-interrupted"])).exitCode).toBe(0);
+
+  const prompts = reviewer.recorded.map((call) => call.prompt);
+  expect(prompts[2]).toContain(TASK_BLOCK);
+  expect(reviewer.recorded[3].incomingSessionId).toBe("replacement");
+  expect(prompts[3]).not.toContain("Fix the flaky test.");
+});
+
 // Usefulness: a state file from before the task record, or one with a bad value, must not crash a
 // dispatch. The record then reads as unsent, so the reviewer conversation gets the task once.
 test("a state with no task record or a malformed one reads as unsent and records the delivery", async () => {

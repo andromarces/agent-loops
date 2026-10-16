@@ -107,10 +107,15 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   - The task-only reviewer turn costs one extra child turn in the same dispatch. It runs under its own
     read-only check, apart from the review turn, so a write in either turn halts the run. The replacement has
     the task before the verdict counts toward a finish.
-  - A task-only reviewer turn that fails records no delivery, and the whole reviewer dispatch is an error
-    result with no verdict. `finish --require-accept` then refuses, and the next reviewer turn shows the task.
-    A cancel in that turn also records no delivery and keeps the replacement mark, so the next reviewer turn
-    shows the task.
+  - A task-only reviewer turn that fails, other than by a cancel, records no delivery, and the whole reviewer
+    dispatch is an error result with no verdict. `finish --require-accept` then refuses, and the next reviewer
+    turn shows the task.
+  - A task-only turn that runs in yet another conversation delivers the task there and records that
+    conversation, so the next turn does not repeat it. The dispatch is an error result with no verdict,
+    because the conversation that gave the verdict never had the task.
+  - A cancel in the task-only turn follows the known limit above: it counts as delivered, so the resumed
+    reviewer turn does not repeat the task. The cancel keeps the replacement mark, and the dispatch gives no
+    verdict.
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot
