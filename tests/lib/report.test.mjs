@@ -827,3 +827,32 @@ test("parseReportBlock returns null for a malformed Verdict line above a list", 
     expect(isAcceptedReview(response)).toBe(false);
   }
 });
+
+// Usefulness: verifies a heading that starts with a lowercase `s` folds like any other plain
+// heading, so the column-0 check refuses whitespace and marks, not a letter (issue #898 review).
+test("parseReportBlock folds a plain heading that starts with a lowercase s", () => {
+  expect(parseReportBlock(`${REPORT}\nChecks:\n\nsummary\n- item\nVerdict: accept`)).toMatchObject({
+    checks: "summary: item",
+  });
+});
+
+// Usefulness: verifies a heading that starts with any whitespace, or an indented star or marked line,
+// never introduces a folded list, so it cannot supply Checks and pass acceptance (issue #898 review).
+test("parseReportBlock returns null for an indented prose line above a list", () => {
+  for (const heading of [
+    " Heading",
+    "\tHeading",
+    " Heading",
+    "　Heading",
+    " *file*",
+    " **bold** note",
+    " _Heading_",
+    " `Heading`",
+    " > Heading",
+    " # Heading",
+  ]) {
+    const response = `${REPORT}\nChecks:\n\n${heading}\n- item\nVerdict: accept`;
+    expect(parseReportBlock(response)).toBeNull();
+    expect(isAcceptedReview(response)).toBe(false);
+  }
+});

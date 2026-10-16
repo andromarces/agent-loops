@@ -227,13 +227,13 @@ function appendToLabel(label, text) {
 }
 
 /**
- * A plain prose line that may introduce a folded list (issue #898): it starts at column 0 with no
- * `*`, emphasis, code, quote, or heading mark, is not a list, and names no report label or
+ * A plain prose line that may introduce a folded list (issue #898): its first character is not
+ * whitespace, `*`, `_`, a backtick, `>`, or `#`, is not a list, and names no report label or
  * `Verdict` followed by a colon anywhere. A malformed or decorated label, a `Verdict` line, and a
  * `*` line (issue #275) therefore never supply a field value.
  */
 function isPlainProseLine(line) {
-  return /^[^s*_`>#]/.test(line) && !isListLine(line) && !LABEL_MENTION.test(line);
+  return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !LABEL_MENTION.test(line);
 }
 
 /**
