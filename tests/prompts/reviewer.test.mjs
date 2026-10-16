@@ -513,7 +513,7 @@ test("every reviewer turn routes a full suite through the test slot wrapper of t
 test("reviewer prompt orders an ignored path inside the repository before a temporary path outside it", () => {
   const prompt = reviewerPrompt("check the fix");
   expect(prompt).toContain(
-    "Put the output of a test, build, or probe under an ignored path inside the repository first, for example `node_modules/.cache/<name>`. Use a temporary path outside the repository only when no ignored path fits.",
+    "Put the output of a test, build, or probe under an ignored path inside the repository first, such as an ignored cache directory. Use a temporary path outside the repository only when no ignored path fits.",
   );
 });
 
