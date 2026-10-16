@@ -164,3 +164,13 @@ test("first worker turn routes a full suite through the test slot wrapper of thi
   expect(match[1]).toBe(process.execPath.replaceAll("\\", "/"));
   await access(match[2]);
 });
+
+// Usefulness: verifies acceptance #902 — the worker is told to remove the temporary files it
+// creates outside the work tree and to name any it could not remove, because a PR body file in the
+// system temporary directory outlives the turn and can hold confidential text.
+test("first worker turn tells the worker to remove temporary files it created outside the work tree", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Before the closing block, remove every temporary file or directory that this turn created outside the work tree, and name in Notes any that you could not remove.",
+  );
+});
