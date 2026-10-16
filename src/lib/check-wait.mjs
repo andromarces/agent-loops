@@ -90,7 +90,8 @@ function isFailing(check) {
  *
  * - A listed failing check is settled, whichever code answered, and the failure
  *   is reported rather than waited out.
- * - A pending code, or a list with no settled check, keeps the wait running.
+ * - Exit 8, or exit 0 with a pending check listed, keeps the wait running. An
+ *   exit 0 with no settled check keeps it running too.
  * - Exit 1 with no output and the exact `no required checks reported on the
  *   '<branch>' branch` stderr is settled as `noRequiredChecks`: the branch has
  *   no required check to wait for, which is no pass either (#894).
@@ -125,7 +126,10 @@ function readOutcome(pr, { status, stdout, stderr }) {
   if (checks.some(isFailing)) {
     return { settled: true, checks };
   }
-  if (status === EXIT_PENDING || checks.some(isPending)) {
+  // Only exit 8, or exit 0 with a pending item, keeps the wait running. Exit 1
+  // with a pending list and no failing check is a read error, so it is not waited
+  // out as pending (#894).
+  if (status === EXIT_PENDING || (status === 0 && checks.some(isPending))) {
     return { settled: false, checks };
   }
   // An empty list on exit 0 keeps waiting, because `gh pr checks --required`

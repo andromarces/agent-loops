@@ -66,6 +66,28 @@ test("wait-checks reports a branch with no required check as its own outcome", a
   });
 });
 
+// Usefulness: verifies exit 1 with only pending checks listed is unresolved, not a wait that
+// runs to its bound: only exit 8 means pending, and exit 1 settles only on a listed failing
+// check or the exact no-required-check answer (issue #894).
+test("wait-checks keeps exit 1 with only pending checks unresolved", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "60"]),
+    {
+      gh: scriptedGh([{ status: 1, checks: PENDING.checks, stderr: "could not read the checks" }]),
+      ...fakeClock(),
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.status).toBe("error");
+  expect(result.payload.error).toMatch(/gh pr checks 42 --required could not be read/);
+  expect(result.payload).not.toHaveProperty("checks");
+  expect(result.payload).not.toHaveProperty("timedOut");
+});
+
 // Usefulness: verifies a wait that ends on its bound exits 0 and sets
 // `timedOut`, so the parent reads the flag instead of losing the result to a
 // harness command timeout (issue #329).
