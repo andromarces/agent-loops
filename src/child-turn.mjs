@@ -65,7 +65,8 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
  * passes none (ADR 0019, ADR 0038).
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
- * its own label, and a later turn does not repeat it.
+ * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
+ * conversation that a turn carrying the task ran in.
  * `onSessionAssigned(id)` is awaited by the Claude adapter, which pre-assigns a session id, before
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
  * dispatcher uses it to persist the id ahead of a crash (issue #395).
@@ -99,14 +100,20 @@ export async function runChild(options) {
   // prompt carries the preamble, and `preamblePending` keeps the mark if this turn is canceled too.
   const carriedReplaced = role.conversationReplaced === true;
   delete role.conversationReplaced;
-  // A canceled preamble-only turn already carried the init task to the replaced conversation, so the
-  // turn that repeats the preamble leaves the task out and the conversation sees it at most once.
-  const taskAlreadySent = role.taskSentToReplacement === true;
-  delete role.taskSentToReplacement;
   let preamblePending = isWorker && carriedReplaced;
-  // A first turn starts a conversation that has not seen the preamble, so it also carries the init
-  // task, once. A later turn of the same conversation repeats neither.
   const firstTurn = role.sessionId === null || carriedReplaced;
+  // The init task goes to each conversation once. `taskSentTo` names the conversation that a turn
+  // carrying the task ran in, so one comparison with the current session id answers every path:
+  // a first turn, a rerun, a resume after a cancel, and a replacement all read it the same way. A
+  // canceled turn counts as delivered, so a dropped prompt leaves that conversation without the task.
+  const taskNeeded = () =>
+    task !== null && (role.sessionId === null || role.taskSentTo !== role.sessionId);
+  // The worker task rides in the first-turn preamble. The reviewer prompt carries it on any turn.
+  const taskFor = (first) => (taskNeeded() && (!isWorker || first) ? task : null);
+  // A turn that ran in a replaced conversation never held the task, so it records nothing.
+  const recordTaskSent = () => {
+    if (role.sessionId !== null && !role.conversationReplaced) role.taskSentTo = role.sessionId;
+  };
   // The mode reaches the reviewer turn only. `readOnly` stays true there, so the mutation check
   // below still wraps the turn, and the orchestrator path never sets this input (ADR 0019, 0038).
   const sandbox = roleName === "reviewer" ? reviewerSandbox : null;
@@ -134,10 +141,19 @@ export async function runChild(options) {
   // turn, so a worker gets its preamble again and either role gets the init task again. The rerun belongs to the step already charged for
   // this turn: the failed resume ran no model turn, and the single rerun bounds the extra cost
   // (ADR 0016).
+  const invokeWithTask = async (first, buildPrompt) => {
+    const turnTask = taskFor(first);
+    try {
+      return await invokeRole(buildPrompt(first, turnTask));
+    } finally {
+      if (turnTask !== null) recordTaskSent();
+    }
+  };
+
   const runTurn = async (buildPrompt) => {
     const resumedId = role.sessionId;
     try {
-      return await invokeRole(buildPrompt(firstTurn, !taskAlreadySent));
+      return await invokeWithTask(firstTurn, buildPrompt);
     } catch (err) {
       if (!resumedId || !readProp(err, "sessionMissing")) {
         throw err;
@@ -145,7 +161,7 @@ export async function runChild(options) {
       logWarn(`${roleName}: session ${resumedId} is missing; rerunning the turn as a first turn`);
       role.sessionId = null;
       delete role.sessionUnconfirmed;
-      return invokeRole(buildPrompt(true, true));
+      return invokeWithTask(true, buildPrompt);
     }
   };
 
@@ -162,9 +178,10 @@ export async function runChild(options) {
     if (role.conversationReplaced && isWorker) {
       delete role.conversationReplaced;
       preamblePending = true;
-      if (task !== null) role.taskSentToReplacement = true;
       try {
-        await invokeRole(workerPrompt(PREAMBLE_ONLY_TASK, true, task));
+        await invokeWithTask(true, (first, turnTask) =>
+          workerPrompt(PREAMBLE_ONLY_TASK, first, turnTask),
+        );
         preamblePending = false;
       } catch (err) {
         if (readProp(err, "isCanceled")) {
@@ -181,8 +198,7 @@ export async function runChild(options) {
   // The worker prompt needs no runtime read, so its builder is fixed here. The
   // reviewer prompt is built inside the mutation check, where the pre-turn
   // snapshot gives the local head the status read compares against (#320).
-  const buildWorkerPrompt = (first, withTask) =>
-    workerPrompt(prompt, first, first && withTask ? task : null);
+  const buildWorkerPrompt = (first, turnTask) => workerPrompt(prompt, first, turnTask);
 
   /**
    * Reads the required-check status a PR-bearing run supplies to the reviewer,
@@ -228,8 +244,8 @@ export async function runChild(options) {
             reviewed = reviewedState(before);
             if (testRun) reportLateChangedPaths(testRun, before);
             prChecks = await readStatus(reviewed);
-            return runFn((first, withTask) =>
-              reviewerPrompt(prompt, prChecks, testRun, sandbox, first && withTask ? task : null),
+            return runFn((first, turnTask) =>
+              reviewerPrompt(prompt, prChecks, testRun, sandbox, turnTask),
             );
           },
           { signal },
@@ -282,10 +298,7 @@ export async function runChild(options) {
       ...(testRun ? { testRun } : {}),
     };
   } finally {
-    if (!keepReplacedMark) {
-      delete role.conversationReplaced;
-      delete role.taskSentToReplacement;
-    }
+    if (!keepReplacedMark) delete role.conversationReplaced;
     delete role.shellDenied;
   }
 }

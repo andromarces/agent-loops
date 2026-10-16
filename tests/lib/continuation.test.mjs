@@ -116,19 +116,19 @@ test("readContinuation rejects a replaced mark that is not a boolean", async () 
   await expect(readJson(bad)).rejects.toThrow("invalid worker role");
 });
 
-// Usefulness: the task-sent mark of a canceled preamble turn rides with the replaced mark, so a
-// continued run leaves the init task out of the repeated preamble (#826). A bad value is refused.
-test("restoreSessions keeps the task-sent mark with the replaced mark and readContinuation checks it", async () => {
+// Usefulness: the task record names a conversation, so a continued run keeps it only with the
+// session id it names and leaves the init task out of that conversation (#826). A bad value is refused.
+test("restoreSessions keeps a task record only for the session id it names", async () => {
   const next = roles();
   const earlier = transcript();
-  earlier.roles.worker.conversationReplaced = true;
-  earlier.roles.worker.taskSentToReplacement = true;
+  earlier.roles.worker.taskSentTo = earlier.roles.worker.sessionId;
+  earlier.roles.reviewer.taskSentTo = "another-session";
   restoreSessions(next, earlier, CWD);
-  expect(next.worker.taskSentToReplacement).toBe(true);
-  expect(next.reviewer.taskSentToReplacement).toBeUndefined();
+  expect(next.worker.taskSentTo).toBe(earlier.roles.worker.sessionId);
+  expect(next.reviewer.taskSentTo).toBeUndefined();
 
   const bad = transcript();
-  bad.roles.worker.taskSentToReplacement = "yes";
+  bad.roles.worker.taskSentTo = true;
   await expect(readJson(bad)).rejects.toThrow("invalid worker role");
 });
 

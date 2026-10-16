@@ -85,21 +85,24 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   tree, so a later prompt never goes through a file. A piped `cat <file>` of a
   file that was never written gives an empty stdin, and `dispatch` refuses it:
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
-- The init task (`--task` or `--task-file`) reaches each role once per child conversation. The first turn of a
-  role shows the task under its own `Init task:` label, before `Instructions:`. This holds in the worker preamble
-  and in the reviewer prompt. A later turn of the same role does not repeat it, because the resumed session
-  already holds it.
-  - A turn that starts a new conversation shows the task again. A role with no stored session id starts one.
-    That happens on the first turn and after a first turn that failed before its CLI reported a session. It also
-    happens on a rerun after a missing session (below). Those turns also get the full worker preamble.
+- The init task (`--task` or `--task-file`) reaches each child conversation once. The first turn of a
+  conversation shows the task under its own `Init task:` label, before `Instructions:`. This holds in the worker
+  preamble and in the reviewer prompt. A later turn of the same conversation does not repeat it.
+  - The role state records `taskSentTo`, the session id of the conversation that last carried the task. A turn
+    shows the task when that id differs from the session id it runs in, or when the role has no session id.
+  - A role with no session id starts a new conversation. That happens on the first turn and after a first turn
+    that failed before its CLI reported a session. It also happens on a rerun after a missing session (below).
+  - A resume that ran in a replaced conversation records nothing. The next turn of a reviewer shows the task. A
+    worker gets it in the preamble-only turn that follows the replacement.
+  - A cancel never repeats the task. After a cancel, the next worker turn sends the preamble again, as before.
+    It leaves the task out when the record names the session that it resumes.
   - Every adapter (Claude Code, Codex, Copilot, opencode, agy) fails a turn that reports no session id. A
-    successful turn therefore always stores one, and no adapter repeats the task after a success.
-  - A canceled preamble-only turn can leave the preamble unsure. The next worker turn sends the preamble again.
-    It leaves the task out, because the canceled turn already carried it. A cancel before the preamble-only turn
-    ran carries no task, so the next turn sends the task with the preamble.
+    successful turn therefore always stores one.
+  - Known limit: a canceled turn that carried the task counts as delivered. The CLI can drop that prompt. That
+    conversation then never sees the task.
+  - A hard kill of the dispatch records no delivery, so the next turn can send the task again.
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
-    dispatch, so write it to state the work of that turn. A prompt such as "Carry out the task" now has the
-    task to refer to.
+    dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot
   be combined. `--task-file -` reads the task from stdin, which also carries the
   prompt here. Stdin carries only one input, so pass `--prompt-file` for the

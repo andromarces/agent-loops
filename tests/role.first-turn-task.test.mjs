@@ -1,4 +1,6 @@
+import { readFile, writeFile } from "node:fs/promises";
 import { afterEach, expect, test } from "vite-plus/test";
+import { statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
 import {
   cleanup,
@@ -165,4 +167,83 @@ test("a resumed turn does not resend the init task to a replacement conversation
   expect(worker.recorded[3].incomingSessionId).toBe("replacement");
   expect(prompts[3]).toContain("You are the implementation agent");
   expect(prompts[3]).not.toContain("Fix the flaky test.");
+});
+
+const cancelTurn = () => {
+  throw Object.assign(new Error("worker was canceled."), { isCanceled: true });
+};
+
+// Usefulness: the delivery record must survive every cancel of the replacement path, so a second
+// cancel and the resumes after it never give the replacement conversation the task again.
+test("successive cancels in a replacement conversation never resend the init task", async () => {
+  const repo = await startRun();
+  const worker = recordingAdapter([
+    REPORT,
+    (state) => {
+      state.sessionId = "replacement";
+      state.conversationReplaced = true;
+      return REPORT;
+    },
+    cancelTurn, // the preamble-only turn, which carries the task
+    cancelTurn, // the resumed turn that repeats the preamble
+  ]);
+  const agents = { fake1: worker, fake2: recordingAdapter([]) };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  expect((await workerTurn(repo, agents)).exitCode).toBe(130);
+  expect((await workerTurn(repo, agents, ["--resume-interrupted"])).exitCode).toBe(130);
+  expect((await workerTurn(repo, agents, ["--resume-interrupted"])).exitCode).toBe(0);
+
+  const prompts = worker.recorded.map((call) => call.prompt);
+  expect(prompts).toHaveLength(5);
+  expect(prompts[2]).toContain(TASK_BLOCK);
+  expect(prompts[3]).not.toContain("Fix the flaky test.");
+  expect(prompts[4]).not.toContain("Fix the flaky test.");
+});
+
+// Usefulness: a reviewer has no preamble-only turn, so the next reviewer turn is the only way a
+// replaced reviewer conversation can see the task, and it must see it once.
+test("a replaced reviewer conversation gets the init task once", async () => {
+  const repo = await startRun();
+  const reviewer = recordingAdapter([
+    `${REPORT}\nVerdict: accept`,
+    (state) => {
+      state.sessionId = "replacement";
+      state.conversationReplaced = true;
+      return `${REPORT}\nVerdict: accept`;
+    },
+  ]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  for (let turn = 0; turn < 4; turn += 1) {
+    await reviewerTurn(repo, agents);
+  }
+
+  const has = reviewer.recorded.map((call) => call.prompt.includes("Fix the flaky test."));
+  // Turn 1 is the first conversation, turn 2 resumes it, turn 3 is the first one in the replacement.
+  expect(has).toEqual([true, false, true, false]);
+});
+
+// Usefulness: a state file from before the task record, or one with a bad value, must not crash a
+// dispatch. The record then reads as unsent, so the reviewer conversation gets the task once.
+test("a state with no task record or a malformed one reads as unsent and records the delivery", async () => {
+  const repo = await startRun();
+  const reviewer = recordingAdapter([]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+  await workerTurn(repo, agents, INIT_OVERRIDES);
+  await reviewerTurn(repo, agents);
+
+  const { stateFile } = statePaths({ cwd: repo });
+  for (const value of [undefined, 42]) {
+    const state = JSON.parse(await readFile(stateFile, "utf8"));
+    if (value === undefined) delete state.roles.reviewer.taskSentTo;
+    else state.roles.reviewer.taskSentTo = value;
+    await writeFile(stateFile, JSON.stringify(state));
+    expect((await reviewerTurn(repo, agents)).exitCode).toBe(0);
+    expect((await reviewerTurn(repo, agents)).exitCode).toBe(0);
+  }
+
+  const has = reviewer.recorded.map((call) => call.prompt.includes("Fix the flaky test."));
+  expect(has).toEqual([true, true, false, true, false]);
 });
