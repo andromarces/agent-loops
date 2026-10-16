@@ -72,14 +72,17 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * Finish gates: every applicable refusal is reported in one prompt, in the order
  * of the interactive `role finish`: the unresolved-compare marker, the completion
  * rule, the declared-PR condition, then the `requireCi` gate. A refused finish
- * gets a corrective turn. A second refusal with no child turn in between ends the
- * run. A refusal that a child turn satisfies costs one step. A refusal for the
- * marker alone recovers with a re-finish and no child turn.
+ * gets one corrective turn, which costs a step, unless no step budget is left or
+ * no child turn has run since the previous refusal. Either case ends the run with
+ * exit 1. A refusal for the marker alone recovers with a re-finish and no child
+ * turn. A worker turn resets the reviewed state to none, and only a reviewer turn
+ * establishes it, so after a worker turn the gates need a later reviewer turn.
  * - `requireCi`: `checkCi` resolves the PR head against the last reviewer turn's
  *   reviewed state. A `gh` failure is a refusal, not a throw. A pass on a base
  *   branch with no required check emits a `no-required-checks` event (#293, #336).
  * - `pr`: the run declares its delivery PR, so a finish must pass `requireCi` for
- *   the same PR. No child turn satisfies a missing or mismatched gate (#302).
+ *   the same PR. No child turn satisfies a missing or mismatched gate, so that
+ *   refusal ends the run on a re-finish (#302).
  * - `requireAccept`: a finish needs a later reviewer `verdict: accept` with a
  *   Checks line after a worker turn, or at least one reviewer report with no
  *   worker turn. The gate follows turn order only: an edit made outside the loop
@@ -92,7 +95,8 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * `continued`: the run resumes the sessions of an earlier headless run. The gate
  * state is restored only when `earlierGate` (see `gateFromTranscript`) is valid and
  * the work tree has the head and digest of its last reviewer turn. Otherwise it
- * resets and counts the work as unreviewed. A restore takes `lastReviewed` from the
+ * resets and counts the work as unreviewed, so a finish under `requireAccept`
+ * needs a reviewer accept in this run. A restore takes `lastReviewed` from the
  * current snapshot, never from the record (#362, #393).
  * `copyLocalFiles` (default true): before the first turn and snapshot, copies the
  * untracked, ignored local files of the main work tree into a linked `cwd` and
@@ -102,7 +106,8 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * bounds one run in seconds (ADR 0017).
  * `reviewerSandbox`: the mode of a Codex reviewer turn: `none` (default, runs
  * `danger-full-access`), `read-only`, or `workspace-write` with network off. A
- * reviewer that is not Codex has no mode. The mutation check wraps every reviewer
+ * reviewer that is not Codex has no mode. The reviewer and orchestrator prompts
+ * state it, and worker turns get none. The mutation check wraps every reviewer
  * turn (ADR 0019, ADR 0038).
  * `onSessionAssigned(roleName, id)`: awaited for any role whose adapter pre-assigns
  * a session id (the Claude adapter), before its CLI starts, and with `null` when

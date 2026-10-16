@@ -746,11 +746,15 @@ function describeJsonParseError(error) {
  * sets the lifecycle to `finished`.
  * `--require-accept` and `--require-ci` gate the finish. Every applicable refusal
  * is reported in one error. A run that declared `--pr <pr>` at init must end
- * through `--require-ci <pr>`.
+ * through `--require-ci <pr>`: a finish with no gate or a gate for another PR is
+ * refused. A finish that carries `unresolvedCompare` is refused under
+ * `--require-ci` and for a declared PR, because the gate resolves the compare.
  * An optional `unresolvedCompare` boolean beside the five keys, and a gate that
  * passes with no required check (`noRequiredChecks`), are recorded in the
  * envelope and the state file. Both keep the finish distinct from a verified
- * one (ADR 0009, ADR 0012, issues #281, #302, #336).
+ * one. Without `--require-ci` this subcommand never resolves the PR head, so an
+ * omitted marker is an accepted gap (ADR 0009, ADR 0012, issues #281, #286, #293,
+ * #302, #336).
  */
 async function finish(args, { stdin = readStdin, gh, signal } = {}) {
   rejectMisplacedFlags(args, "finish");

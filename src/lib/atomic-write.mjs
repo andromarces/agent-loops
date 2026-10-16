@@ -91,7 +91,9 @@ export async function resolveWriteTarget(file) {
 // or the new content, never a partial write. Node rename replaces an existing
 // destination on Windows and POSIX. A file symlink keeps its link: the write
 // goes to the final target, with the temp beside it (#658). A failed write or
-// rename removes the temp and rethrows the original error (#353).
+// rename removes the temp on a best-effort basis and rethrows the original error
+// (#353). `removeTemp` retries once on `EPERM`, `EACCES`, and `EBUSY`, and
+// suppresses a cleanup failure that persists, so the temp can remain.
 export async function writeFileAtomic(file, text) {
   const destination = await resolveWriteTarget(file);
   const temp = `${destination}.${process.pid}.${stateTempCounter++}.tmp`;

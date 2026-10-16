@@ -271,9 +271,9 @@ async function collect(ctx, rel, abs) {
  * null, where nothing is copied, when there is no main work tree to copy from (`cwd`
  * is the main work tree, or the main work tree rule of `findMainWorkTree` finds none)
  * or when `--cwd`, the work tree path, a registered work tree path, or the common Git
- * directory or main work tree path holds a control character. A Git command that fails while the main work tree is looked up throws,
- * and fails the init. An untracked file that is not
- * copied is in `skipped`. A listed directory that holds more than
+ * directory or main work tree path holds a control character. A Git command that
+ * fails while the main work tree is looked up throws, and fails the init. An
+ * untracked file that is not copied is in `skipped`. A listed directory that holds more than
  * `MAX_WALKED_ENTRIES` entries is in `skipped` as one name and none of its files
  * is copied. A file whose check fails is in `skipped`.
  *

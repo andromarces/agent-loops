@@ -79,8 +79,9 @@ export function validateAction(value) {
       // `unresolved-compare` transcript event on this field (#266).
       //
       // known-limit: the marker is parent-set. In a run that declares no PR, an
-      // omitted marker reads as a verified finish. `--require-ci <pr>` and
-      // `--pr <pr>` close the gap by gating the finish on the PR head
+      // omitted marker reads as a verified finish: one unverified claim per such
+      // run. `--require-ci <pr>` and `--pr <pr>` close the gap by gating the
+      // finish on the PR head, and both refuse a finish that sets this field
       // (issues #286, #293, #302, #336).
       if (value.unresolvedCompare !== undefined) {
         if (typeof value.unresolvedCompare !== "boolean") {

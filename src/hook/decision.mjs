@@ -1,11 +1,11 @@
 // Decision logic and the shared command-hook flow for the #57 parent guard.
-// `decideParentGuard` denies a tool call from a session only when a readable run entry for
-// the hook session id resolves to a state with `parentSession` equal to that
-// session and a non-terminal lifecycle. The harness matchers and `isGuarded` choose which
-// tools reach it. Every other session, every terminal
-// lifecycle, and every absent or corrupt record allows the call. A session can
-// own several concurrent runs, so every registered entry is checked and one
-// active run denies even when another is terminal. `runParentGuard` drives that
+// `decideParentGuard` denies a tool call from a session only when a readable run
+// entry for the hook session id resolves to a state with `parentSession` equal to
+// that session and a non-terminal lifecycle. The harness matchers and `isGuarded`
+// choose which tools reach it. Every other session, every terminal lifecycle,
+// and every absent or corrupt record allows the call. A session can own several
+// concurrent runs, so every registered entry is checked and one active run
+// denies even when another is terminal. `runParentGuard` drives that
 // decision from the stdin payload for the Claude Code, Codex, Copilot, and
 // Antigravity command hooks, each of which supplies its own input mapping and
 // deny shape. Fail-open by design: the guard is optional defense for the
