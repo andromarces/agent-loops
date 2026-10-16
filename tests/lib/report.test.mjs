@@ -808,3 +808,22 @@ test("parseReportBlock returns null for a prose and list shape outside the headi
     expect(parseReportBlock(`${REPORT}\n${tail}`)).toBeNull();
   }
 });
+
+// Usefulness: verifies a prose line that starts with `*` (the #275 emphasis shapes and bold) never
+// introduces a folded list, so a `*file*` line with a list under it stays null and no heading text
+// reaches a field such as Checks (issue #898 review).
+test("parseReportBlock returns null for a star prose line above a list", () => {
+  for (const star of ["*file*", "*glob src/a*", "*use a* b", "*glob src/a*, b", "**bold** note"]) {
+    expect(parseReportBlock(`${REPORT}\nChecks:\n\n${star}\n- item\nVerdict: accept`)).toBeNull();
+  }
+});
+
+// Usefulness: verifies a malformed, indented, or decorated `Verdict:` line is never prose that joins
+// a field, so a reject cannot be read as Checks text that passes acceptance (issue #898 review).
+test("parseReportBlock returns null for a malformed Verdict line above a list", () => {
+  for (const verdict of ["**Verdict:** reject", "  Verdict: reject", "Verdict : reject"]) {
+    const response = `${REPORT}\nChecks:\n\n${verdict}\n- item\nVerdict: accept`;
+    expect(parseReportBlock(response)).toBeNull();
+    expect(isAcceptedReview(response)).toBe(false);
+  }
+});

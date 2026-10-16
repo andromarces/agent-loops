@@ -226,11 +226,14 @@ function appendToLabel(label, text) {
   return `${label}${hasValue ? "; " : " "}${text}`;
 }
 
-/** A prose line: not blank, not a report label, not the `Verdict:` line, and not a list. */
-function isProseLine(line) {
-  return (
-    line.trim() !== "" && !LABEL_LINE.test(line) && !/^Verdict:/i.test(line) && !isListLine(line)
-  );
+/**
+ * A plain prose line that may introduce a folded list (issue #898): it starts at column 0 with no
+ * `*`, emphasis, code, quote, or heading mark, is not a list, and names no report label or
+ * `Verdict` followed by a colon anywhere. A malformed or decorated label, a `Verdict` line, and a
+ * `*` line (issue #275) therefore never supply a field value.
+ */
+function isPlainProseLine(line) {
+  return /^[^s*_`>#]/.test(line) && !isListLine(line) && !LABEL_MENTION.test(line);
 }
 
 /**
@@ -260,7 +263,7 @@ function foldEmptyLabelLists(lines) {
         i = end;
         continue;
       }
-    } else if (isProseLine(line) && out.length > 0 && out.at(-1).trim() === "") {
+    } else if (isPlainProseLine(line) && out.length > 0 && out.at(-1).trim() === "") {
       const at = out.findLastIndex((entry) => entry.trim() !== "");
       const { items, end } = takeItems(lines, i);
       if (items.length > 0 && at >= 0 && LABEL_LINE.test(out[at])) {

@@ -215,7 +215,10 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   line (or after its folded list), then one prose line, then a `- ` list directly under that line.
   The prose and its list join the value of the label just above, as `; <prose>: <items>` (the prose
   loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
-  `x; Design settled: a` (issue #898). A prose line directly after the label with no blank line,
+  `x; Design settled: a` (issue #898). The prose line starts at column 0 with no `*`, `_`, backtick,
+  `>`, or `#`, is not a list, and holds no report label name or `Verdict` followed by a colon, so a
+  `*` line (issue #275), a decorated or malformed label, and a `Verdict` line never introduce the
+  list. A prose line directly after the label with no blank line,
   a blank line between the prose and its list, a second prose line before the list, prose after
   the reviewer `Verdict:` line, and a later repeat of the label stay unparseable. Any other list in the closing block, for
   example bullets after the reviewer `Verdict:` line, a list outside any label,
