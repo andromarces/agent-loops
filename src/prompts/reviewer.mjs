@@ -99,10 +99,17 @@ const remoteWriteRule =
 // the cleanup sentence is the only guard against probe files piling up in the OS temp directory
 // (issue #865). A Codex reviewer often cannot delete that outside folder, so the ignored path inside
 // the repository comes first (issue #885), and the turn removes that output too, because no runtime
-// step does (issue #906). That path stays short, because a deep redirected
-// temporary path fails the Cloudflare Workers test runtime on Windows (issue #903).
-const scratchWriteRule =
-  "A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. Put the output of a test, build, or probe under an ignored path inside the repository first, such as an ignored cache directory. Use a temporary path outside the repository only when no ignored path fits. Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove. Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, and name in Notes any that you could not remove. Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes.";
+// step does (issue #906). The runtime now creates and removes one scratch folder per turn, so that
+// folder comes first when the turn has one (issue #920). The other sentences stay for output outside
+// it. That path stays short, because a deep redirected temporary path fails the Cloudflare Workers
+// test runtime on Windows (issue #903).
+const scratchPlacement = (scratchDir) =>
+  scratchDir === null
+    ? "Put the output of a test, build, or probe under an ignored path inside the repository first, such as an ignored cache directory. Use a temporary path outside the repository only when no ignored path fits."
+    : `The runtime created the scratch folder ${JSON.stringify(scratchDir)} for this turn. Put the output of a test, build, or probe in that folder first. The runtime removes that folder after this turn. Use another ignored path inside the repository, or a temporary path outside it, only when that folder does not fit.`;
+
+const scratchWriteRule = (scratchDir) =>
+  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove. Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, and name in Notes any that you could not remove. Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes.`;
 
 // The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
 // that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
@@ -137,13 +144,14 @@ export function reviewerPrompt(
   testRun = null,
   sandboxMode = null,
   task = null,
+  scratchDir = null,
 ) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
   const sandbox = sandboxMode === null ? "" : `\n\n${sandboxNotes[sandboxMode].join("\n")}`;
   return escapeLineSeparators(
     `
-Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state. Review, assess, and verify only. ${scratchWriteRule} Live probes and read-only queries are authorized.
+Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state. Review, assess, and verify only. ${scratchWriteRule(scratchDir)} Live probes and read-only queries are authorized.
 ${remoteWriteRule}
 ${processRule}
 ${testSlotRule()}

@@ -545,3 +545,26 @@ test("reviewer prompt tells the reviewer to remove the output it created under a
     "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, and name in Notes any that you could not remove. Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes.",
   );
 });
+
+// Usefulness: verifies acceptance #920 — a supplied scratch folder is named as the first place for
+// probe and test output, ahead of the other ignored paths, and the prompt says the runtime removes it.
+test("reviewer prompt names the runtime scratch folder as the first place for output", () => {
+  const prompt = reviewerPrompt(
+    "check the fix",
+    null,
+    null,
+    null,
+    null,
+    "/work/.agent-loop/rev/ab12cd34",
+  );
+  const named = prompt.indexOf('"/work/.agent-loop/rev/ab12cd34"');
+  expect(named).toBeGreaterThan(-1);
+  expect(prompt).toContain("The runtime removes that folder after this turn.");
+  expect(named).toBeLessThan(prompt.indexOf("Use another ignored path inside the repository"));
+});
+
+// Usefulness: verifies a turn with no scratch folder keeps the earlier wording and names no folder,
+// because a failed creation must not send the reviewer to a path that does not exist.
+test("reviewer prompt without a scratch folder names none", () => {
+  expect(reviewerPrompt("check the fix")).not.toContain("scratch folder");
+});

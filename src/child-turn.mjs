@@ -3,6 +3,7 @@ import { throwIfCanceled } from "./agents/shared.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
+import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import {
   carryTestRun,
@@ -68,6 +69,8 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
  * passes none (ADR 0019, ADR 0038).
+ * A reviewer turn gets one scratch folder, named in its prompt, that the runtime removes after the
+ * post-turn snapshot on every outcome. A failed removal only warns (issue #920).
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
  * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
  * conversation that a turn carrying the task ran in. A reviewer turn that a CLI runs in a replacement
@@ -306,23 +309,33 @@ export async function runChild(options) {
     if (roleName === "reviewer" && testCmd) {
       testRun = await runTestCmd({ ...testCmd, cwd, signal });
     }
-    const response = readOnly
-      ? await withMutationCheck(
-          cwd,
-          roleName,
-          async (before) => {
-            // The reviewed state comes from the runtime snapshot, never from the
-            // child response, so the child cannot misreport it.
-            reviewed = reviewedState(before);
-            if (testRun) reportLateChangedPaths(testRun, before);
-            prChecks = await readStatus(reviewed);
-            return runFn((first, turnTask) =>
-              reviewerPrompt(prompt, prChecks, testRun, sandbox, turnTask),
-            );
-          },
-          { signal },
-        )
-      : await runFn(buildWorkerPrompt);
+    // The scratch folder is created before the baseline snapshot and removed after the post-turn
+    // snapshot, whatever the turn returned. It is ignored, so neither snapshot lists it, and the
+    // removal can neither read as a mutation nor hide one (issue #920).
+    const scratchDir =
+      roleName === "reviewer" ? await createReviewerScratch(cwd, { signal }) : null;
+    let response;
+    try {
+      response = readOnly
+        ? await withMutationCheck(
+            cwd,
+            roleName,
+            async (before) => {
+              // The reviewed state comes from the runtime snapshot, never from the
+              // child response, so the child cannot misreport it.
+              reviewed = reviewedState(before);
+              if (testRun) reportLateChangedPaths(testRun, before);
+              prChecks = await readStatus(reviewed);
+              return runFn((first, turnTask) =>
+                reviewerPrompt(prompt, prChecks, testRun, sandbox, turnTask, scratchDir),
+              );
+            },
+            { signal },
+          )
+        : await runFn(buildWorkerPrompt);
+    } finally {
+      if (scratchDir !== null) await removeReviewerScratch(scratchDir);
+    }
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     const workTree = roleName === "worker" ? await readWorkTree() : null;
