@@ -212,7 +212,8 @@ Subcommands:
                                 slots are held by live owners. --slots <n> (env
                                 AGENT_LOOP_TEST_SLOTS, default max(1, floor(CPUs / 8)))
                                 and --wait <seconds> (env AGENT_LOOP_TEST_SLOT_WAIT,
-                                default 1800); a flag wins over its env. Exits with the
+                                default 1800); a flag wins over its env. --if-held runs
+                                the command directly while no slot is held. Exits with the
                                 command's code, 75 when no slot was won within the wait,
                                 64 on a usage error, 130 or 143 on SIGINT or SIGTERM.
                                 See agent-loop test-slot --help.

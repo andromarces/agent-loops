@@ -335,6 +335,7 @@ test("a valid flag wins over an invalid environment value", () => {
   expect(parseTestSlotArgs(["--slots", "2", "--wait", "5", "--", "x"], env)).toEqual({
     slots: 2,
     waitSeconds: 5,
+    ifHeld: false,
     command: "x",
   });
   expect(() => parseTestSlotArgs(["--wait", "5", "--", "x"], env)).toThrow(/AGENT_LOOP_TEST_SLOTS/);
@@ -407,4 +408,78 @@ test("a failed slot claim and a failed acquisition-lock release are both reporte
   expect(output).toContain("slot lock failed");
   expect(output).toContain("release failed");
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+}, 30_000);
+
+// Usefulness: issue #921 (option 2) — with `--if-held`, a command runs directly while all slots are
+// free and holds no slot, so an edit loop of targeted runs does not wait or take a slot.
+test("--if-held runs the command directly while all slots are free", async () => {
+  const ctx = await setup({
+    "probe.mjs":
+      "import { existsSync, writeFileSync } from 'node:fs';\n" +
+      "writeFileSync('probe', existsSync(process.argv[2]) ? 'slot' : 'direct');\n",
+  });
+  const lock = join(ctx.root, "slot-0.lock");
+  const { done } = wrapper(
+    ["--if-held", "--slots", "1", "--wait", "0", "--", `node probe.mjs "${lock}"`],
+    ctx,
+  );
+  expect((await done).code).toBe(0);
+  expect(await readFile(join(ctx.cwd, "probe"), "utf8")).toBe("direct");
+}, 30_000);
+
+// Usefulness: issue #921 (option 2) — with `--if-held`, a held slot makes the command wait as a
+// slot holder, so a targeted run under load is throttled and exits 75 at the wait bound.
+test("--if-held waits while a slot is held and exits 75 at the bound", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  await holdSlot(ctx.root, liveOwner());
+  const { done } = wrapper(
+    ["--if-held", "--slots", "1", "--wait", "0", "--", "node mark.mjs"],
+    ctx,
+  );
+  expect((await done).code).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+}, 30_000);
+
+// Usefulness: issue #921 (option 2) — any held slot counts, not only a full table, so the check
+// matches the rule "while any slot is held"; the command then runs in a slot once one is free.
+test("--if-held runs in a slot of its own when one is free beside a held slot", async () => {
+  const ctx = await setup({
+    "probe.mjs":
+      "import { existsSync, writeFileSync } from 'node:fs';\n" +
+      "writeFileSync('probe', existsSync(process.argv[2]) ? 'slot' : 'direct');\n",
+  });
+  await holdSlot(ctx.root, liveOwner());
+  const lock = join(ctx.root, "slot-1.lock");
+  const { done } = wrapper(
+    ["--if-held", "--slots", "2", "--wait", "5", "--", `node probe.mjs "${lock}"`],
+    ctx,
+  );
+  expect((await done).code).toBe(0);
+  expect(await readFile(join(ctx.cwd, "probe"), "utf8")).toBe("slot");
+}, 30_000);
+
+// Usefulness: issue #921 (option 2) — a slot left by a dead process is not held, so `--if-held`
+// stays direct and a crashed holder never makes edit loops wait.
+test("--if-held ignores a slot whose owner is gone", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  await holdSlot(ctx.root, {
+    pid: await deadPid(),
+    startedAt: new Date().toISOString(),
+    nonce: "dead",
+  });
+  const { done } = wrapper(
+    ["--if-held", "--slots", "1", "--wait", "0", "--", "node mark.mjs"],
+    ctx,
+  );
+  expect((await done).code).toBe(0);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+}, 30_000);
+
+// Usefulness: issue #921 (option 2) — a missing slot directory means no slot is held, so the
+// first targeted run on a host runs directly instead of failing.
+test("--if-held runs directly when the slot directory does not exist", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  const { done } = wrapper(["--if-held", "--wait", "0", "--", "node mark.mjs"], ctx);
+  expect((await done).code).toBe(0);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
 }, 30_000);

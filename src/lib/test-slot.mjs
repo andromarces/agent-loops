@@ -26,7 +26,7 @@ const SLOT_FILE = /^slot-(\d+)\.lock$/;
 export const TEST_SLOT_HELP = `
 Usage:
 
-  agent-loop test-slot [--slots <n>] [--wait <seconds>] [--] "<command>"
+  agent-loop test-slot [--if-held] [--slots <n>] [--wait <seconds>] [--] "<command>"
 
 Runs <command> only while this process holds one of the machine-wide test slots.
 A wrapper starts only while fewer than its own <n> slots are held by live
@@ -43,6 +43,11 @@ Options:
   --wait <seconds>     Longest wait for a slot. Defaults to 1800 (30 minutes).
                        0 is one attempt: run if a slot is free now, else exit 75
                        at once. Env: AGENT_LOOP_TEST_SLOT_WAIT.
+  --if-held            Run <command> directly, holding no slot, while no slot is
+                       held by a live owner. While any slot is held, wait for a
+                       slot as without the flag. The check is one read with no
+                       lock: a command that starts while all slots are free holds
+                       no slot, so another wrapper can start beside it (ADR 0044).
   -h, --help           Print this help.
 
 A flag wins over its env, and an env value is read only when its flag is absent.
@@ -60,7 +65,7 @@ owner, runs its command at once in the same process group, so a nested call
 cannot deadlock. Any other marker is ignored. SIGINT or SIGTERM ends the
 command's process tree, then frees the slot.
 
-Approved limits (ADR 0039, docs/reference/usage.md#test-slot): a slot directory
+Approved limits (ADR 0039, ADR 0044, docs/reference/usage.md#test-slot): a slot directory
 shared between OS users, detached work that outlives the slot release, and on
 POSIX a signal sent only to a nested wrapper, which can leave grandchildren.
 
@@ -94,16 +99,21 @@ function waitSeconds(value, name) {
  * Parses the `test-slot` argv. A flag wins over its environment value, which is read only when
  * the flag is absent; an empty environment value counts as unset. Throws an error with
  * `usage: true` on an invalid value that applies.
- * @returns {{ help: true } | { slots: number, waitSeconds: number, command: string }}
+ * @returns {{ help: true } | { slots: number, waitSeconds: number, ifHeld: boolean, command: string }}
  */
 export function parseTestSlotArgs(argv, env = process.env) {
   let slots = null;
   let wait = null;
+  let ifHeld = false;
   let rest = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
       return { help: true };
+    }
+    if (arg === "--if-held") {
+      ifHeld = true;
+      continue;
     }
     if (arg === "--slots" || arg === "--wait") {
       const value = argv[++i];
@@ -126,7 +136,7 @@ export function parseTestSlotArgs(argv, env = process.env) {
   if (rest.length !== 1 || rest[0].trim() === "") {
     throw usageError("Pass the command as exactly one argument, quoted for the calling shell.");
   }
-  return { ...testSlotOptions(env, { slots, waitSeconds: wait }), command: rest[0] };
+  return { ...testSlotOptions(env, { slots, waitSeconds: wait }), ifHeld, command: rest[0] };
 }
 
 /**
@@ -252,6 +262,26 @@ async function acquireSlot({ root, slots, waitMs, signal }) {
   }
 }
 
+// True when any slot file under `root` is held by a live owner. A missing directory holds none.
+// Reads only, with no table lock, so a slot taken right after the read is not seen.
+async function anySlotHeld(root) {
+  let entries;
+  try {
+    entries = await readdir(root);
+  } catch (err) {
+    if (err?.code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+  for (const entry of entries) {
+    if (SLOT_FILE.test(entry) && (await lockHeld(join(root, entry)))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // True when `marker` names a slot file that still holds the named nonce and a live owner.
 async function heldByParent(marker) {
   try {
@@ -271,9 +301,11 @@ async function heldByParent(marker) {
  * `env` holds the marker for the command, and `release` frees the slot. A valid parent marker in
  * `process.env` gives `nested: true`, no `env`, and nothing to free, so the command runs at once
  * in the slot of the parent. Resolves null at the wait bound or on an abort of `signal`, with no
- * slot held. Throws when the slot directory cannot be used.
+ * slot held. Throws when the slot directory cannot be used. With `ifHeld` and no slot held by a
+ * live owner, resolves `{ env: undefined, nested: false, release }` with no slot taken, so the
+ * command runs directly (ADR 0044).
  */
-export async function holdTestSlot({ slots, waitSeconds, signal }) {
+export async function holdTestSlot({ slots, waitSeconds, signal, ifHeld = false }) {
   const marker = process.env[HELD_ENV];
   if (marker && (await heldByParent(marker))) {
     logDebug("a parent wrapper holds a test slot; running the command directly");
@@ -281,6 +313,10 @@ export async function holdTestSlot({ slots, waitSeconds, signal }) {
   }
   if (marker) {
     logWarn(`ignoring ${HELD_ENV}: it names no test slot that a live wrapper holds`);
+  }
+  if (ifHeld && !(await anySlotHeld(slotsRoot()))) {
+    logInfo("no test slot is held; running the command directly");
+    return { env: undefined, nested: false, release: async () => {} };
   }
   const slot = await acquireSlot({ root: slotsRoot(), slots, waitMs: waitSeconds * 1000, signal });
   if (slot === null) {

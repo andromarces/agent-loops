@@ -6,6 +6,8 @@ accepted
 
 Partially supersedes [ADR 0017: Run an operator test command before each reviewer turn](0017-run-a-test-command-before-each-reviewer-turn.md). ADR 0017 runs the command before every reviewer turn. This ADR runs it only inside a machine-wide test slot, and adds the `slot-timeout` result for a command that did not run. Every other decision of ADR 0017 holds.
 
+Partially superseded by [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md). ADR 0044 changes the targeted-run part of decision 6: a targeted run goes through the wrapper with `--if-held`.
+
 ## Date
 
 2026-10-15
@@ -46,6 +48,7 @@ Andro Marces
 - [Issue #848](https://github.com/andromarces/agent-loops/issues/848)
 - [ADR 0017: Run an operator test command before each reviewer turn](0017-run-a-test-command-before-each-reviewer-turn.md)
 - [ADR 0039: Gate full-suite test runs with a machine-wide test slot](0039-machine-wide-test-slot.md)
+- Partially superseded by [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md)
 - Implementation:
   - Source: `runTestCmd` in `src/lib/test-cmd.mjs`
   - Source: `holdTestSlot` and `testSlotOptions` in `src/lib/test-slot.mjs`

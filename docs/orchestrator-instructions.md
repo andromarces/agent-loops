@@ -504,11 +504,15 @@ the flag is unchanged.
   in an error still carries it. Compare it with the
   reviewer `Checks` line and act on a disagreement. A turn with no command
   carries no `testRun`.
-- Every worker and reviewer turn states the full-suite rule: run a targeted test
-  file directly, and run a full suite only through the test slot wrapper, or rely
-  on the required CI checks. A direct targeted run is at most 10 test files that
-  mirror the changed source files, never a whole directory. Any broader run is a
-  full suite and goes through the wrapper. The rule renders the wrapper command from the Node
+- Every worker and reviewer turn states the test-run rule (ADR 0044): run a
+  targeted test file through the test slot wrapper with `--if-held`, and run a full
+  suite only through the plain wrapper, or rely on the required CI checks. With
+  `--if-held`, the run stays direct while all slots are free and waits for a slot
+  while any slot is held. A targeted run that starts while all slots are free holds
+  no slot, so a slot holder can start beside it. A targeted run is at most 10 test
+  files that mirror the changed source files, never a whole directory. Any broader
+  run is a full suite and goes through the plain wrapper. A run whose paths cannot
+  be quoted keeps a direct targeted run and the CI checks. The rule renders the wrapper command from the Node
   binary and the CLI script of the run, so it works where `agent-loop` is not on
   PATH. A run with or without `--test-cmd` gives the same rule, on the headless
   and the interactive path. Exit code 75 from the wrapper means that the suite
