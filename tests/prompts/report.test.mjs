@@ -52,6 +52,13 @@ test("the closing-block rule states the one-level sub-item fold", () => {
   expect(reportBlock).toMatch(/Any other list or nesting[^.]*unparseable/);
 });
 
+// Usefulness: verifies the closing-block rule states the ordered-list fold and names the bold
+// heading shape as unparseable (issue #915), so the prompt matches the parser contract.
+test("the closing-block rule states the ordered list fold and forbids bold heading lines", () => {
+  expect(reportBlock).toMatch(/ordered list[^.]*\(`1\. item`\)[^.]*joins into that label's value/);
+  expect(reportBlock).toMatch(/bold heading line[^.]*unparseable/);
+});
+
 // Usefulness: verifies the closing-block rule states the heading-and-list fold of issue #898, so the
 // prompt matches the parser contract and the plain-prose limits.
 test("the closing-block rule states the heading and list fold", () => {

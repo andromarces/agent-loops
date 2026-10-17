@@ -126,6 +126,39 @@ test("parseReportBlock returns null for a sub-list shape outside one nested leve
   expect(parseReportBlock(`${REPORT}\nNotes: none\n  - a`)).toBeNull();
 });
 
+// Usefulness: verifies an ordered list (`N. ` at column 0) directly under a label folds like a
+// dash list, and that its sub-items fold at the column where the item text starts, so a worker that
+// mirrors an ordered list from its parent prompt still yields a report (issue #915).
+test("parseReportBlock folds an ordered list and its aligned sub-items under a label", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy:\n1. **No lint config.** a\n2. **Stale config.** b\nBlockers: none",
+    ),
+  ).toMatchObject({ why: "**No lint config.** a; **Stale config.** b", blockers: "none" });
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy:\n1. **Config-only push:** a\n2. **Ambient config:** b\n   - c\n   - d\nBlockers: none",
+    ),
+  ).toMatchObject({ why: "**Config-only push:** a; **Ambient config:** b, c, d" });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n10. a\n    - b`)).toMatchObject({ notes: "a, b" });
+  expect(parseReportBlock(`${REPORT}\nNotes: a\n1. b`)).toMatchObject({ notes: "a; b" });
+});
+
+// Usefulness: verifies the ordered and bold-heading shapes outside the #915 rule still fail closed
+// (a sub-item at the wrong indent, a `)` marker, a second space after the marker, an ordered list
+// separated from its label, and a bold heading line with a dash list and no label), so `raw`
+// carries the text instead of the parser dropping it.
+test("parseReportBlock returns null for an ordered or heading-list shape outside the fold", () => {
+  for (const list of ["\n1. a\n  - b", "\n1) a", "\n1.  a", "\n\n1. a"]) {
+    expect(parseReportBlock(`${REPORT}\nNotes:${list}`)).toBeNull();
+  }
+  expect(
+    parseReportBlock(
+      "Conclusion: done\n\n**1 and 2: allowlist.**\n- Both phases parse.\n\n**3: failed kill.**\n- After a timeout.\n\nBlockers: none.",
+    ),
+  ).toBeNull();
+});
+
 // Usefulness: verifies a non-list line after an empty optional label, for
 // example a closing sentence or a lone code fence, does not make the block
 // unparseable; only a list that would be dropped is flagged (issue #229).
@@ -230,7 +263,7 @@ test("parseReportBlock returns null for a non-`- ` list under an empty label", (
     "+item",
     "+ item",
     "1.item",
-    "1. item",
+    "1.  item",
     "2) item",
     "  - item",
     "*file*.mjs",
@@ -299,7 +332,7 @@ test("parseReportBlock returns null for a list after a label value outside the f
     "Notes: a\nprose\n- b",
     "Notes: a\n-b",
     "Notes: a\n* b",
-    "Notes: a\n1. b",
+    "Notes: a\n1) b",
     "Notes: a\n  - b",
     "Notes: a\n- b\nNotes: later",
     "Verdict: accept\n- b",
@@ -343,7 +376,7 @@ test("parseReportBlock keeps the report when only the Verdict label is decorated
 test("parseReportBlock returns null when a value-bearing label has a following list", () => {
   expect(parseReportBlock(`${REPORT}\nBlockers: see below\n-real blocker`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\nNotes: two items\n* a\n* b`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nDeferred: two items\n1. a`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nDeferred: two items\n1) a`)).toBeNull();
 });
 
 // Usefulness: verifies the list is flagged even when the next label follows it,
@@ -804,6 +837,8 @@ test("parseReportBlock returns null for a prose and list shape outside the headi
     "Notes: x\n\nHeading:\n- a\n\nNotes: later",
     "Notes: x\n\nHeading:\n\n- a",
     "Notes: x\n\nHeading:\n* a",
+    "Notes: x\n\nHeading:\n1. a",
+    "Checks: x\n\nHeading:\n1. a\n   - b",
   ]) {
     expect(parseReportBlock(`${REPORT}\n${tail}`)).toBeNull();
   }
