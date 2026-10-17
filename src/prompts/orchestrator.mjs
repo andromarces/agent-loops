@@ -459,10 +459,10 @@ ${task}
 
 /**
  * The line that follows a worker result in which the runtime declared the run's PR (ADR 0043).
- * The run has no `--require-ci` gate in that case, so the line states the finish rule.
+ * The runtime gates the finish on that PR in that case, so the line states the finish rule.
  */
 function declaredPrNote(pr) {
-  return `The runtime declared PR #${pr} for this run, because the worker turn opened it from this branch at this head. You did not choose it, and no turn can change it. The runtime now supplies the required-check status for PR #${pr} to every reviewer prompt. This run carries no --require-ci gate, which is a run input that no turn can supply. The runtime therefore refuses every finish, and unresolvedCompare does not change that. The only way to end the run is abort, with the missing --require-ci ${pr} gate named in the reason.`;
+  return `The runtime declared PR #${pr} for this run, because the worker turn opened it from this branch at this head. You did not choose it, and no turn can change it. The runtime now supplies the required-check status for PR #${pr} to every reviewer prompt. The runtime also gates the finish on PR #${pr}, as --require-ci ${pr} does: it refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. A finish with "unresolvedCompare": true is refused, because the gate resolves that compare. Dispatch the reviewer on the current state before you finish, and wait for a pending required check through another reviewer turn.`;
 }
 
 export function resultPrompt({ result, stepsUsed, maxSteps, declaredPr = null }) {

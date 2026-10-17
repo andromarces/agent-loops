@@ -918,7 +918,7 @@ section states.
 A headless run with neither `--pr` nor `--require-ci` has no PR input at start.
 After each worker turn that ends `ok`, the runtime looks for the PR that the
 worker opened. It declares that PR once, and the run then behaves as one that
-passed `--pr` (ADR 0043).
+passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
 
 - The runtime reads Git and GitHub state only. It reads the checked-out branch
   and the URL of the branch remote. It reads the work tree head that it read
@@ -944,10 +944,14 @@ passed `--pr` (ADR 0043).
   rule. Every later reviewer prompt carries the required-check status for that PR.
 - The declaration is one way and happens once. A run with `--pr` or
   `--require-ci` at start never resolves a PR. No later turn changes the PR.
-- A run that declares its PR this way carries no `--require-ci` gate, because
-  that flag is a run input. The declared-run refusal for a missing gate applies.
-  `unresolvedCompare` does not end the run. Only `abort`, with the missing gate
-  named in the reason, ends it.
+- The runtime applies the `--require-ci` gate to the PR that it declared, as if
+  the run had passed `--require-ci <pr>` (ADR 0045). A finish passes only after
+  a reviewer turn on the current state, with the PR head equal to the reviewed
+  commit, a clean reviewed tree, a merge state the gate accepts, and every
+  required check passed. A finish is refused while a required check fails or is
+  pending, and a refusal names the check. A finish with `unresolvedCompare` is
+  refused, because the gate resolves that compare. The missing-gate refusal and
+  the abort-only outcome apply only to `--pr` with no `--require-ci`.
 - `--continue-from` keeps a declared PR. The continued run restores it from the
   `pr-declared` events of the earlier transcript. It emits a `pr-declared` event
   with `restored: true` for every continuation of a declared run, whatever flags
@@ -956,9 +960,10 @@ passed `--pr` (ADR 0043).
   for another PR is refused before any turn. A flag for the same PR is accepted.
 - A continuation refuses `--mode review-only` for a declared PR. It also refuses
   a malformed `pr-declared` record, such as a `pr` that is not a positive integer.
-- To end such a task through a gated finish, start it with `--require-ci <n>` for
-  an existing PR. Or use `agent-loop role` with `role declare-pr`, which takes
-  the gate at `finish`.
+- A continued run applies the same gate to the restored PR. A `--pr` for that PR
+  adds no refusal, because the PR was declared by the runtime.
+- To gate a PR that exists at start, pass `--require-ci <n>`. Or use
+  `agent-loop role` with `role declare-pr`, which takes the gate at `finish`.
 
 ### A task whose worker opens the PR
 
