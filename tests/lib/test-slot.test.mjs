@@ -410,21 +410,24 @@ test("a failed slot claim and a failed acquisition-lock release are both reporte
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
 }, 30_000);
 
-// Usefulness: issue #921 (option 2) — with `--if-held`, a command runs directly while all slots are
-// free and holds no slot, so an edit loop of targeted runs does not wait or take a slot.
-test("--if-held runs the command directly while all slots are free", async () => {
-  const ctx = await setup({
-    "probe.mjs":
-      "import { existsSync, writeFileSync } from 'node:fs';\n" +
-      "writeFileSync('probe', existsSync(process.argv[2]) ? 'slot' : 'direct');\n",
-  });
-  const lock = join(ctx.root, "slot-0.lock");
-  const { done } = wrapper(
-    ["--if-held", "--slots", "1", "--wait", "0", "--", `node probe.mjs "${lock}"`],
-    ctx,
-  );
-  expect((await done).code).toBe(0);
-  expect(await readFile(join(ctx.cwd, "probe"), "utf8")).toBe("direct");
+// A command that writes `started`, then runs until the file `release` exists.
+const GATE = [
+  "import { existsSync, writeFileSync } from 'node:fs';",
+  "writeFileSync('started', 'x');",
+  "const timer = setInterval(() => existsSync('release') && (clearInterval(timer), process.exit(0)), 50);",
+].join(" ");
+
+// Usefulness: issue #921 (option 2) — with `--if-held` and all slots free, the command runs at once
+// and takes no slot: while it runs, a plain wrapper for the only slot still starts at once.
+test("--if-held runs at once while all slots are free and leaves the slot to others", async () => {
+  const ctx = await setup({ "gate.mjs": GATE, "mark.mjs": MARK });
+  const first = wrapper(["--if-held", "--slots", "1", "--wait", "0", "--", "node gate.mjs"], ctx);
+  await waitForFile(join(ctx.cwd, "started"));
+  const other = await wrapper(["--slots", "1", "--wait", "0", "--", "node mark.mjs"], ctx).done;
+  expect(other.code).toBe(0);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+  await writeFile(join(ctx.cwd, "release"), "x", "utf8");
+  expect((await first.done).code).toBe(0);
 }, 30_000);
 
 // Usefulness: issue #921 (option 2) — with `--if-held`, a held slot makes the command wait as a
@@ -440,22 +443,18 @@ test("--if-held waits while a slot is held and exits 75 at the bound", async () 
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
 }, 30_000);
 
-// Usefulness: issue #921 (option 2) — any held slot counts, not only a full table, so the check
-// matches the rule "while any slot is held"; the command then runs in a slot once one is free.
-test("--if-held runs in a slot of its own when one is free beside a held slot", async () => {
-  const ctx = await setup({
-    "probe.mjs":
-      "import { existsSync, writeFileSync } from 'node:fs';\n" +
-      "writeFileSync('probe', existsSync(process.argv[2]) ? 'slot' : 'direct');\n",
-  });
+// Usefulness: issue #921 (option 2) — any held slot counts, not only a full table: with one of two
+// slots held, the command runs in the free slot, so a plain wrapper at once finds no slot (exit 75).
+test("--if-held runs as a slot holder when one of two slots is held", async () => {
+  const ctx = await setup({ "gate.mjs": GATE, "mark.mjs": MARK });
   await holdSlot(ctx.root, liveOwner());
-  const lock = join(ctx.root, "slot-1.lock");
-  const { done } = wrapper(
-    ["--if-held", "--slots", "2", "--wait", "5", "--", `node probe.mjs "${lock}"`],
-    ctx,
-  );
-  expect((await done).code).toBe(0);
-  expect(await readFile(join(ctx.cwd, "probe"), "utf8")).toBe("slot");
+  const first = wrapper(["--if-held", "--slots", "2", "--wait", "5", "--", "node gate.mjs"], ctx);
+  await waitForFile(join(ctx.cwd, "started"));
+  const other = await wrapper(["--slots", "2", "--wait", "0", "--", "node mark.mjs"], ctx).done;
+  expect(other.code).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+  await writeFile(join(ctx.cwd, "release"), "x", "utf8");
+  expect((await first.done).code).toBe(0);
 }, 30_000);
 
 // Usefulness: issue #921 (option 2) — a slot left by a dead process is not held, so `--if-held`

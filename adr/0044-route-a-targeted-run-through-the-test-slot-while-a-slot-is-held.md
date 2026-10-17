@@ -18,7 +18,7 @@ A direct targeted run holds no slot, so its load is not counted (ADR 0040, issue
 
 1. **`--if-held` flag.** `agent-loop test-slot --if-held` runs the command directly, with no slot and no wait, while no slot file under the slot directory is held by a live owner. While any slot is held, it waits for a slot and runs as a slot holder, as without the flag. The check reads the slot files once, with `lockHeld`, and takes no lock. A missing slot directory holds no slot. A stale slot is not held.
 2. **Held means any.** One held slot is enough, whatever `--slots` says, so a targeted run under any load is throttled by the same count and wait bound as a full suite.
-3. **Unchanged.** The wait bound (`--wait`, `AGENT_LOOP_TEST_SLOT_WAIT`, 1800 s default), exit 75 reported as unresolved, the nested marker, and the quoting guard are unchanged. A path that cannot be quoted in every shell leaves a direct targeted run and the required CI checks, as before. The 10-file bound of a targeted run stays.
+3. **Unchanged.** The wait bound (`--wait`, `AGENT_LOOP_TEST_SLOT_WAIT`, 1800 s default), exit 75 reported as unresolved, the nested marker, and the quoting guard are unchanged. A path that cannot be quoted in every shell leaves only the required CI checks, with no test run in the turn, because no wrapper command renders for a targeted run either. The 10-file bound of a targeted run stays.
 4. **Prompt rule.** `testSlotRule` tells each worker and reviewer turn to run a targeted test file through the wrapper with `--if-held`, and a full suite through the plain wrapper. One command form serves both: the turn adds `--if-held` after `test-slot` for a targeted run.
 5. **Documented limit.** A targeted run that starts while all slots are free holds no slot, so a slot holder can start beside it. Closing that gap needs a registration that slot holders count, which this ADR does not add.
 
@@ -46,6 +46,7 @@ Andro Marces
 - [Issue #921](https://github.com/andromarces/agent-loops/issues/921)
 - Partially supersedes [ADR 0040: Run the test command in a test slot and route child full suites through the wrapper](0040-run-the-test-command-in-a-test-slot.md)
 - [ADR 0039: Gate full-suite test runs with a machine-wide test slot](0039-machine-wide-test-slot.md)
+- [PR #928](https://github.com/andromarces/agent-loops/pull/928)
 - Related issues: #848, #872
 - Implementation:
   - Source: `holdTestSlot` and `parseTestSlotArgs` in `src/lib/test-slot.mjs`, `testSlotRule` in `src/prompts/report.mjs`

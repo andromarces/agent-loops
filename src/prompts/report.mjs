@@ -94,13 +94,13 @@ const TARGETED_RUN_BOUND =
  * #921, ADR 0044): a targeted test run of at most 10 files goes through the `test-slot` wrapper
  * of this process with `--if-held`, which runs it directly while all slots are free and waits for
  * a slot while any slot is held. Any broader run is a full suite and runs only through the plain
- * wrapper, or the required CI checks stand in for it. A path that cannot be quoted leaves a direct
- * targeted run and the CI checks.
+ * wrapper, or the required CI checks stand in for it. A path that cannot be quoted leaves only the
+ * CI checks, with no test run in the turn.
  */
 export function testSlotRule(options) {
   const forms = cliCommandForms(() => 'test-slot -- "<full suite command>"', options);
   if (forms === null) {
-    return `Run a targeted test file directly. ${TARGETED_RUN_BOUND} Do not run a broader run or a full test suite in this run: rely on the required CI checks, because this run cannot render a test slot command for its paths.`;
+    return `Do not run a test, a targeted test file included, or a full test suite in this run: rely on the required CI checks, because this run cannot render a test slot command for its paths.`;
   }
   const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
   return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as one quoted argument: ${commands}. For a targeted run, put --if-held after test-slot and the targeted command in the quotes. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure.`;

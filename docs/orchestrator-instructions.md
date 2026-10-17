@@ -512,7 +512,7 @@ the flag is unchanged.
   no slot, so a slot holder can start beside it. A targeted run is at most 10 test
   files that mirror the changed source files, never a whole directory. Any broader
   run is a full suite and goes through the plain wrapper. A run whose paths cannot
-  be quoted keeps a direct targeted run and the CI checks. The rule renders the wrapper command from the Node
+  be quoted leaves only the required CI checks, with no test run in the turn. The rule renders the wrapper command from the Node
   binary and the CLI script of the run, so it works where `agent-loop` is not on
   PATH. A run with or without `--test-cmd` gives the same rule, on the headless
   and the interactive path. Exit code 75 from the wrapper means that the suite
