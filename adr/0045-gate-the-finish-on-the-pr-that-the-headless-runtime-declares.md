@@ -43,6 +43,7 @@ Andro Marces
 - [Issue #924](https://github.com/andromarces/agent-loops/issues/924)
 - Partially supersedes [ADR 0043](0043-let-the-headless-runtime-declare-the-pr-a-worker-opens.md)
 - [Issue #919](https://github.com/andromarces/agent-loops/issues/919)
+- [PR #929](https://github.com/andromarces/agent-loops/pull/929)
 - Implementation:
   - Source: `runLoop` in `src/runtime.mjs`, `declaredPrNote` in `src/prompts/orchestrator.mjs`
   - Tests: `tests/runtime.declare-pr.test.mjs`
