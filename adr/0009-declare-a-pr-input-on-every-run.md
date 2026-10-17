@@ -4,6 +4,8 @@
 
 accepted
 
+Partially superseded by [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md). ADR 0041 lets `role declare-pr` set `pr` once after init on a run that has none, so `--pr` is no longer init-only on the interactive path. Every other decision of this ADR holds.
+
 ## Date
 
 2026-09-28
@@ -174,4 +176,5 @@ Andro Marces
 - [Issue #337: Reject --require-ci and --pr on a review-only headless run](https://github.com/andromarces/agent-loops/issues/337) — the headless `--mode`, the two refusals, and the shared refusal wording in `src/lib/args.mjs`
 - [Issue #286: An omitted unresolvedCompare marker reads as a verified finish](https://github.com/andromarces/agent-loops/issues/286)
 - [PR #293](https://github.com/andromarces/agent-loops/pull/293)
+- Partially superseded by [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md)
 - [ADR Index](README.md)

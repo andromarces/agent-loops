@@ -4,6 +4,8 @@
 
 accepted
 
+Partially supersedes [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md). ADR 0009 fixes `--pr` as an init field that no later call changes. This ADR adds one transition after init, from no PR to a number, through `role declare-pr`. Every other decision of ADR 0009 holds, including the finish rule for a declared PR.
+
 ## Date
 
 2026-10-17
@@ -43,6 +45,8 @@ Andro Marces
 ## Links
 
 - [Issue #916](https://github.com/andromarces/agent-loops/issues/916)
+- [PR #918](https://github.com/andromarces/agent-loops/pull/918)
+- Partially supersedes [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md)
 - Related issues: #286, #301, #302, #320
 - [ADR 0021: Do not let a new session take over a run](0021-no-parent-session-takeover.md)
 - Implementation:
