@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 
 // Answers `git` and `gh` from memory, so the first run declares a PR with no network.
@@ -99,7 +100,11 @@ async function declareThenContinue(repo, transcriptPath, errorSpy) {
   );
   expect(process.exitCode).toBe(2);
   doubles.gh = null;
-  return async (extraArgs, replies = [finish, finish]) => {
+  return async (
+    extraArgs,
+    replies = [finish, finish],
+    { from = transcriptPath, to = from } = {},
+  ) => {
     errorSpy.mockClear();
     const agents = continueAgents(replies);
     const turns = [];
@@ -118,9 +123,9 @@ async function declareThenContinue(repo, transcriptPath, errorSpy) {
         "--max-steps",
         "3",
         "--continue-from",
-        transcriptPath,
+        from,
         "--transcript",
-        transcriptPath,
+        to,
         ...extraArgs,
       ],
       agents,
@@ -187,5 +192,29 @@ test("--continue-from refuses a malformed pr-declared record", async () => {
     expect(process.exitCode).toBe(1);
     expect(error).toContain("pr-declared");
     expect(turns).toEqual([]);
+  });
+});
+
+// Usefulness: verifies a chain of continuations keeps the declared PR whatever flags a link passes.
+// A link with a matching flag writes the declaration into its own transcript, so a later link with
+// no flags still refuses a finish that has no gate, with no transcript edit (issue #919).
+test.each([
+  ["--require-ci", ["--require-ci", "42"]],
+  ["--pr", ["--pr", "42"]],
+])("a chain of continuations keeps the PR through a link with %s", async (_name, flags) => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const cont = await declareThenContinue(repo, transcriptPath, errorSpy);
+    const abort = JSON.stringify({ action: "abort", reason: "stop" });
+    const second = join(repo, "second.json");
+    const third = join(repo, "third.json");
+    await cont(flags, [abort], { from: transcriptPath, to: second });
+    const link = JSON.parse(await readFile(second, "utf8"));
+    expect(link.events.filter((e) => e.type === "pr-declared").map((e) => e.pr)).toEqual([42]);
+
+    const reviewer = JSON.stringify({ action: "run_reviewer", prompt: "r" });
+    const { error } = await cont([], [reviewer, finish, finish], { from: second, to: third });
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toContain("this run declares PR 42");
   });
 });

@@ -212,9 +212,12 @@ export async function runLoop(options) {
   // the PR that the earlier run declared, so the declared-PR finish rule survives `--continue-from`.
   const restoredPr = continued && pr === null && requireCi === null ? earlierPr : null;
   let declaredPr = pr ?? restoredPr;
-  if (restoredPr !== null) {
-    logInfo(`runtime restored PR ${restoredPr}, which the earlier run declared`);
-    onEvent({ type: "pr-declared", pr: restoredPr, stepsUsed: 0, restored: true });
+  // The event is written for every continuation of a declared run, whatever flags it passes. A
+  // flag can only name the declared PR, and a later continuation of this transcript reads the
+  // declaration from the event.
+  if (continued && earlierPr !== null) {
+    logInfo(`runtime kept PR ${earlierPr}, which the earlier run declared`);
+    onEvent({ type: "pr-declared", pr: earlierPr, stepsUsed: 0, restored: true });
   }
 
   // The caller persists a pre-assigned id before the CLI starts, so a parent crash during a first

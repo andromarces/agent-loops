@@ -79,16 +79,17 @@ const isListEntry = (entry) =>
 /**
  * Finds the one open PR whose head branch is the checked-out branch of `cwd`, whose base
  * repository is the repository of the remote of that branch, and whose head commit is `head`, the
- * work tree head that the runtime read after the worker turn. The branch, the remote repository,
- * and the work tree head are read again after the `gh` read and must be unchanged.
+ * work tree head that the runtime read after the worker turn. The work tree head must equal `head`
+ * before the `gh` read and after it. The branch and the remote repository must be unchanged by the
+ * `gh` read.
  * The branch remote is `branch.<branch>.remote`, or `origin` when none is set. `GH_REPO` can point
  * `gh` at another repository, so the base repository comes from the PR URL and is compared with the
  * remote URL, never with another `gh` answer.
  * Every other state leaves the run undeclared: a detached or unreadable branch, a remote that names
  * no GitHub repository, a failed or unparseable `gh` read, any malformed entry, no match, several
  * matches, a PR from a fork, a PR for another base repository, a PR head that differs from `head`,
- * a PR URL that does not end in the PR number, and a branch, remote, or head that changed during
- * the read. The function never throws.
+ * a PR URL that does not end in the PR number, and a head that differs from `head` before or
+ * after the read. A branch or remote that changed during the read does the same. The function never throws.
  * @param {{ cwd: string, head: string | null, gh?: Function, signal?: AbortSignal, timeoutMs?: number }} options
  * @returns {Promise<{ pr: number } | { pr: null, reason: string, quiet?: true }>}
  */
@@ -103,12 +104,16 @@ export async function resolveWorkerPr({
     return { pr: null, reason: "the work tree head is not known" };
   }
   try {
-    const { branch, remote, repo: runRepo } = await readRunState(cwd, signal);
+    const before = await readRunState(cwd, signal);
+    const { branch, remote, repo: runRepo } = before;
     if (branch === null) {
       return { pr: null, reason: "the work tree has no checked-out branch" };
     }
     if (runRepo === null) {
       return { pr: null, reason: `remote ${remote} names no GitHub repository` };
+    }
+    if (before.head !== head) {
+      return { pr: null, reason: "the work tree head changed after the worker turn" };
     }
     const { status, stdout, stderr } = await gh(
       [

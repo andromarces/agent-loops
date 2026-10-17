@@ -43,6 +43,9 @@ const gitState = {
   head: CLEAN_REPO_HEAD,
   branch: CLEAN_REPO_BRANCH,
   remoteUrl: "https://github.com/owner/repo.git",
+  // The head that the first head read of the resolver reports, when the test sets one.
+  preReadHead: null,
+  resolverReads: 0,
 };
 
 // `cleanRepoGit` plus the reads of the PR resolver: the head, which `gitState` can move, the branch
@@ -51,8 +54,11 @@ function declareGit(command, args, options) {
   const ok = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
   switch (JSON.stringify(args)) {
     case '["rev-parse","--verify","-q","HEAD"]':
-      return ok(gitState.head);
+      return ok(
+        gitState.resolverReads === 1 && gitState.preReadHead ? gitState.preReadHead : gitState.head,
+      );
     case '["symbolic-ref","--short","-q","HEAD"]':
+      gitState.resolverReads += 1;
       return ok(gitState.branch);
     case `["config","--get","branch.${CLEAN_REPO_BRANCH}.remote"]`:
       return { exitCode: 1, stdout: "", stderr: "" };
@@ -81,11 +87,14 @@ async function runWorkerPrRun({
   gh,
   orchReplies,
   remoteUrl = "https://github.com/owner/repo.git",
+  preReadHead = null,
   extra = {},
 }) {
   gitState.head = CLEAN_REPO_HEAD;
   gitState.branch = CLEAN_REPO_BRANCH;
   gitState.remoteUrl = remoteUrl;
+  gitState.preReadHead = preReadHead;
+  gitState.resolverReads = 0;
   gitDouble.answer = declareGit;
   const repo = await createCleanRepoDir();
   try {
@@ -298,4 +307,17 @@ test.each([
     gitDouble.answer = null;
     await removePath(repo);
   }
+});
+
+// Usefulness: verifies the work tree head must be the same at the worker snapshot, before the GitHub
+// read, after it, and at the PR head. A head that differs only in the middle of that sequence leaves
+// the run undeclared, because the PR matched a head the work tree did not hold throughout.
+test("a head that differs before the read and returns after it leaves the run undeclared", async () => {
+  const { events } = await runWorkerPrRun({
+    gh: declareGh([MATCH]),
+    orchReplies: [work, finish({ unresolvedCompare: true })],
+    preReadHead: OTHER_HEAD,
+  });
+
+  expect(events.some((e) => e.type === "pr-declared")).toBe(false);
 });
