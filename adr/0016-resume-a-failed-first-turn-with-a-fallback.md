@@ -193,8 +193,20 @@ step budget runs out.
    The adapter does not depend on it.
    Not run: the answer content of a resume after a kill, which the 2.1.295 record did not need for the check.
 
-   Not verified: Linux. Not verified on Windows: a file symlink, a directory symlink,
-   and a drive letter difference for a work tree that no longer exists.
+   Drive letter on a work tree that no longer exists (issue #709). The host was Windows 11 Pro (10.0.26220), Node v26.8.1, Claude Code 2.1.302, and repository head `e1b7f31`.
+   The probe ran in a scratch directory under the temporary directory, with the unchanged adapter.
+   Two first turns ran in one work tree, with the same command as above. One launched with `C:` and one with `c:`.
+   Both exited 0, and the saved `cwd` kept the launch case. The driver then removed the work tree.
+   Through `runClaude` with `sessionUnconfirmed` set and the work tree absent, `realpath` fails and the case is kept as given.
+   A `C:` record with a `C:` work tree and a `c:` record with a `c:` work tree passed the check.
+   A `C:` record with a `c:` work tree and a `c:` record with a `C:` work tree were refused with `sessionMissing`.
+   A reviewer role and a different absent directory were refused.
+   The two passed cases then failed with `claude failed to start`, because the work tree was gone.
+   Result: the check compares the case as given when the work tree is absent. This differs from the existing work tree, where `realpath` removes the difference.
+   No turn can start in an absent work tree, so the refusal has no effect on a run. No bug was opened.
+   The scratch directory was removed.
+
+   Not verified: Linux. Not verified on Windows: a file symlink and a directory symlink.
    Not verified: a Claude Code version other than 2.1.284, 2.1.292, 2.1.295, 2.1.296, and 2.1.302.
    On the interactive dispatch path, the adapter reports the pre-assigned id to the dispatcher
    before it starts the CLI, and the dispatcher writes it to the state file at once. A crash
