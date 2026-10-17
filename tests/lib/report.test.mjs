@@ -837,6 +837,8 @@ test("parseReportBlock returns null for a prose and list shape outside the headi
     "Notes: x\n\nHeading:\n- a\n\nNotes: later",
     "Notes: x\n\nHeading:\n\n- a",
     "Notes: x\n\nHeading:\n* a",
+    "Notes: x\n\nHeading:\n1. a",
+    "Checks: x\n\nHeading:\n1. a\n   - b",
   ]) {
     expect(parseReportBlock(`${REPORT}\n${tail}`)).toBeNull();
   }
