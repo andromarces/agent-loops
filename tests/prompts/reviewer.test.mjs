@@ -535,3 +535,13 @@ test("reviewer prompt tells the reviewer to remove temporary files it created ou
     "Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove.",
   );
 });
+
+// Usefulness: verifies acceptance #906 — the reviewer is told to remove the output it created under
+// an ignored path inside the repository, keep output that a later step needs, and name both kinds in
+// Notes, because no runtime step removes that output and it would stay in the target work tree.
+test("reviewer prompt tells the reviewer to remove the output it created under an ignored path", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, and name in Notes any that you could not remove. Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes.",
+  );
+});
