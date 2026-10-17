@@ -2,11 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
 
 Partially supersedes [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md). ADR 0041 decision 5 leaves the headless loop unchanged. Its alternative 4 rejects a `declare-pr` action for the orchestrator. This ADR keeps that rejection. It adds a runtime-owned declaration for the headless loop. Every other decision of ADR 0041 holds.
 
-Partially superseded by [ADR 0045: Gate the finish of a headless run on the PR that its runtime declares](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md). ADR 0045 replaces decision 5 and the finish consequences. Every other decision holds.
+Superseded by [ADR 0045: Gate the finish of a headless run on the PR that its runtime declares](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md). ADR 0045 replaces decision 5 and the finish consequences. Every other decision remains in force.
 
 ## Date
 

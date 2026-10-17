@@ -2,9 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
 
-Partially superseded by [ADR 0043: Let the headless runtime declare the PR that a worker opens](0043-let-the-headless-runtime-declare-the-pr-a-worker-opens.md). ADR 0043 replaces decision 5 and the last consequence for the headless loop. The orchestrator still never chooses the PR (alternative 4).
+Superseded by [ADR 0043: Let the headless runtime declare the PR that a worker opens](0043-let-the-headless-runtime-declare-the-pr-a-worker-opens.md). ADR 0043 replaces decision 5 and the last consequence for the headless loop. The orchestrator still never chooses the PR (alternative 4). Every other decision remains in force.
 
 Partially supersedes [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md). ADR 0009 fixes `--pr` as an init field that no later call changes. This ADR adds one transition after init, from no PR to a number, through `role declare-pr`. Every other decision of ADR 0009 holds, including the finish rule for a declared PR.
 

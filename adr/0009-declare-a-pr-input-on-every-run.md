@@ -2,9 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
 
-Partially superseded by [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md). ADR 0041 lets `role declare-pr` set `pr` once after init on a run that has none, so `--pr` is no longer init-only on the interactive path. Every other decision of this ADR holds.
+Superseded by [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md). ADR 0041 lets `role declare-pr` set `pr` once after init on a run that has none, so `--pr` is no longer init-only on the interactive path. Every other decision of this ADR remains in force.
 
 ## Date
 

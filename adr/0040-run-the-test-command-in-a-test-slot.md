@@ -2,11 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
 
 Partially supersedes [ADR 0017: Run an operator test command before each reviewer turn](0017-run-a-test-command-before-each-reviewer-turn.md). ADR 0017 runs the command before every reviewer turn. This ADR runs it only inside a machine-wide test slot, and adds the `slot-timeout` result for a command that did not run. Every other decision of ADR 0017 holds.
 
-Partially superseded by [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md). ADR 0044 changes the targeted-run part of decision 6: a targeted run goes through the wrapper with `--if-held`.
+Superseded by [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md). ADR 0044 changes the targeted-run part of decision 6: a targeted run goes through the wrapper with `--if-held`. The other parts of decision 6 (the full-suite routing through the wrapper, the wrapper command forms, and the exit code 75 report) and every other decision remain in force.
 
 ## Date
 
