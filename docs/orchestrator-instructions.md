@@ -200,16 +200,16 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   on. `report.deferred` holds items found but left out of scope. Both are
   optional: a child that omits the label yields `null` for that field, and the
   block still parses. Each value is one line, the label plain at column 0. A `- `
-  list (a `-` at column 0, exactly one space U+0020, then the item) that directly follows a report
+  list or an ordered `N. ` list (a `-` or a number and a period at column 0, exactly one space U+0020, then the item) that directly follows a report
   label line is that label's value, or joins the value that line already holds:
-  the markers drop and the items join into one line with `; ` (issues #846 and
-  #879). A list under `Blockers: none` therefore reads `none; <item>`, never
+  the markers drop and the items join into one line with `; ` (issues #846, #879,
+  and #915). A list under `Blockers: none` therefore reads `none; <item>`, never
   `none`. The reviewer `Verdict:` line is no report label, so a list after it
   stays unparseable. One nesting level folds too:
-  a sub-item line (exactly two spaces U+0020, a `-`, one space U+0020, then the
-  item) directly after a `- ` item joins into that item with `, `, and several
+  a sub-item line (spaces U+0020 up to the column where the parent item text starts, so two after `- ` and three after `1. `, then a `-`, one space U+0020, then the
+  item) directly after a `- ` or `N. ` item joins into that item with `, `, and several
   consecutive sub-items under one parent all fold into it, so the lines `- a`,
-  two spaces then `- b`, and two spaces then `- c` read `a, b, c` (issue #870).
+  two spaces then `- b`, and two spaces then `- c` read `a, b, c` (issues #870 and #915). A sub-item under `1. a` takes three spaces, so `1. a` and `   - b` read `a, b`.
   The run ends at the first line that is not a `- ` item or such a sub-item, so a blank line or prose between
   the label and the list breaks it. One shape with prose folds too: a blank line after the label
   line (or after its folded list), then one prose line, then a `- ` list directly under that line.
@@ -225,7 +225,7 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   example bullets after the reviewer `Verdict:` line, a list outside any label,
   a bullet with no space after the marker (`-item`, `*item`) or a separator
   other than one space (a tab, a nonbreaking space, two spaces) even under an
-  empty label, a `*` or `+` bullet, an ordered item, an indented bullet that is
+  empty label, a `*` or `+` bullet, an `N)` item, an ordered item that a blank line or prose separates from its label, a bold heading line that groups a `- ` list with no label directly above it (the parent prompt may format its own blockers as an ordered list, and a child that mirrors that shape must still put the list under a label), an indented bullet that is
   not one nested level (no parent item, a second level, another indent width or
   marker), makes the block unparseable, so the list surfaces
   through `raw` instead of being dropped. An indented label or a decorated label
