@@ -212,6 +212,11 @@ export async function runLoop(options) {
   // the PR that the earlier run declared, so the declared-PR finish rule survives `--continue-from`.
   const restoredPr = continued && pr === null && requireCi === null ? earlierPr : null;
   let declaredPr = pr ?? restoredPr;
+  // The PR that the finish gate checks: `--require-ci`, or the PR that the runtime declared. A PR
+  // that only `--pr` names has no gate, because that flag is a child-free run input that carries
+  // none. A PR that the runtime resolved is not an operator input and no child chose it, so the
+  // gate applies to it (ADR 0045).
+  let gatedPr = requireCi ?? (continued ? earlierPr : null);
   // The event is written for every continuation of a declared run, whatever flags it passes. A
   // flag can only name the declared PR, and a later continuation of this transcript reads the
   // declaration from the event.
@@ -229,7 +234,7 @@ export async function runLoop(options) {
     maxSteps,
     requireAccept,
     pr: declaredPr,
-    requireCi,
+    requireCi: gatedPr,
     testCmd: testCmdText !== null,
     reviewerSandbox: sandboxMode,
     mode,
@@ -348,7 +353,7 @@ export async function runLoop(options) {
         mode,
         requireAccept,
         pr: declaredPr,
-        requireCi,
+        requireCi: gatedPr,
         gate,
         finishRefused,
         stepsUsed,
@@ -440,6 +445,7 @@ export async function runLoop(options) {
       newlyDeclared = await declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs });
       if (newlyDeclared !== null) {
         declaredPr = newlyDeclared;
+        gatedPr = newlyDeclared;
         onEvent({ type: "pr-declared", pr: declaredPr, stepsUsed });
       }
     }

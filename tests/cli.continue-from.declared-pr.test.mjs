@@ -51,8 +51,8 @@ function git(command, args, options) {
 }
 
 // Usefulness: verifies --continue-from keeps the PR that the runtime declared late in the earlier
-// run. The continued run refuses a finish that has no --require-ci gate for that PR, and it never
-// ends through the unresolvedCompare path (issue #919).
+// run. The continued run applies the gate for that PR, so a finish with no reviewer turn is refused
+// and the run never ends through the unresolvedCompare path (issues #919, #924).
 test("--continue-from keeps a PR that the earlier run declared after a worker turn", async () => {
   await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
     doubles.git = git;
@@ -83,7 +83,9 @@ test("--continue-from keeps a PR that the earlier run declared after a worker tu
     );
 
     expect(process.exitCode).toBe(1);
-    expect(errorSpy.mock.calls.flat().join("\n")).toContain("this run declares PR 42");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "the latest reviewer turn has no reviewed state",
+    );
     const second = JSON.parse(await readFile(transcriptPath, "utf8"));
     expect(second.events.at(-1).type).toBe("gate");
   });
@@ -202,7 +204,7 @@ const CHAIN_TIMEOUT_MS = 30_000;
 
 // Usefulness: verifies a chain of continuations keeps the declared PR whatever flags a link passes.
 // A link with a matching flag writes the declaration into its own transcript, so a later link with
-// no flags still refuses a finish that has no gate, with no transcript edit (issue #919).
+// no flags still gates the finish on that PR, with no transcript edit (issues #919, #924).
 test.each([
   ["--require-ci", ["--require-ci", "42"]],
   ["--pr", ["--pr", "42"]],
@@ -221,7 +223,7 @@ test.each([
       const { error } = await cont([], [finish, finish], { from: second, to: third });
 
       expect(process.exitCode).toBe(1);
-      expect(error).toContain("this run declares PR 42");
+      expect(error).toContain("the latest reviewer turn has no reviewed state");
     });
   },
   CHAIN_TIMEOUT_MS,

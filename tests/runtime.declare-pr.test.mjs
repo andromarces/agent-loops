@@ -21,6 +21,7 @@ import {
   createCleanRepoDir,
   equalsArgs,
   gateRoles,
+  PASSING_RUN,
   prGateGh,
   removePath,
   REVIEW_ACCEPT,
@@ -71,8 +72,8 @@ function declareGit(command, args, options) {
 
 // `gh pr list` for the run branch answers `listReply`; every other read is the shared gate fixture
 // for PR 42. `listReply` is a list of PRs, or a function that throws or returns a gh result.
-function declareGh(listReply, calls = []) {
-  const gate = prGateGh(CLEAN_REPO_HEAD, calls);
+function declareGh(listReply, calls = [], runs = [PASSING_RUN]) {
+  const gate = prGateGh(CLEAN_REPO_HEAD, calls, runs);
   return async (args, cwd, options) => {
     if (equalsArgs(args.slice(0, 5), ["pr", "list", "--head", CLEAN_REPO_BRANCH, "--state"])) {
       calls.push("pr list");
@@ -122,10 +123,11 @@ const work = JSON.stringify({ action: "run_worker", prompt: "work" });
 const review = JSON.stringify({ action: "run_reviewer", prompt: "review" });
 const finish = (extra = {}) => JSON.stringify({ action: "finish", summary: SUMMARY, ...extra });
 
-// Usefulness: verifies issue #919 option 1 end to end. A headless run whose worker opened the PR
+// Usefulness: verifies issue #924 option 1 end to end. A headless run whose worker opened the PR
 // declares it from Git and GitHub state, supplies its check status to the next reviewer prompt,
-// and refuses a finish that has no --require-ci gate for it, including one with unresolvedCompare.
-test("a headless run declares the PR its worker opened, supplies its status, and gates the finish", async () => {
+// refuses the unresolvedCompare marker, and ends through the gate for that PR after a reviewer
+// accept with passing required checks.
+test("a headless run declares the PR its worker opened and finishes through the gate for it", async () => {
   const { result, events, rev, orch } = await runWorkerPrRun({
     gh: declareGh([MATCH]),
     orchReplies: [work, review, finish({ unresolvedCompare: true }), finish()],
@@ -135,13 +137,47 @@ test("a headless run declares the PR its worker opened, supplies its status, and
     { type: "pr-declared", pr: 42, stepsUsed: 1 },
   ]);
   expect(orch.recorded[1].prompt).toContain('"declaredPr": 42');
+  expect(orch.recorded[1].prompt).toContain("--require-ci 42");
+  expect(orch.recorded[1].prompt).not.toContain("refuses every finish");
   const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer");
   expect(reviewed.result.prChecks).toMatchObject({ pr: 42 });
   expect(rev.recorded[0].prompt).toContain("This run read the required checks for PR 42");
-  expect(result.exitCode).toBe(1);
-  expect(result.reason).toContain("this run declares PR 42");
-  expect(result.reason).toContain("this run carries no --require-ci gate");
+  expect(orch.recorded[3].prompt).toContain("unresolvedCompare cannot be combined");
+  expect(result.exitCode).toBe(0);
+  expect(result.unresolvedCompare).toBeFalsy();
   expect(events.some((e) => e.type === "unresolved-compare")).toBe(false);
+});
+
+// Usefulness: verifies the gate for a runtime-declared PR refuses a finish while a required check
+// fails or is pending, so the gated finish is not a finish without a verified PR state.
+test.each([
+  ["fails", { ...PASSING_RUN, conclusion: "failure" }, "failed"],
+  ["is pending", { ...PASSING_RUN, status: "in_progress", conclusion: null }, "is pending"],
+])("a declared PR run refuses the finish while a required check %s", async (_name, run, text) => {
+  const { result, events } = await runWorkerPrRun({
+    gh: declareGh([MATCH], [], [run]),
+    orchReplies: [work, review, finish(), finish()],
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.reason).toContain(`required check "ci (ubuntu-latest)" ${text}`);
+  expect(events.some((e) => e.type === "refusal")).toBe(true);
+});
+
+// Usefulness: verifies a continued run keeps the finish gate for the PR that the earlier run
+// declared, so a continuation ends through the same gate and not through an unreachable refusal.
+test("a continued run gates its finish on the restored declared PR", async () => {
+  const { result, events } = await runWorkerPrRun({
+    gh: declareGh([MATCH]),
+    orchReplies: [finish(), review, finish()],
+    extra: { continued: true, earlierPr: 42 },
+  });
+
+  expect(events.filter((e) => e.type === "pr-declared")).toEqual([
+    { type: "pr-declared", pr: 42, stepsUsed: 0, restored: true },
+  ]);
+  expect(events.find((e) => e.type === "refusal").reason).toContain("has no reviewed state");
+  expect(result.exitCode).toBe(0);
 });
 
 // Usefulness: verifies the runtime declares at most one PR per run, so a later worker turn that
