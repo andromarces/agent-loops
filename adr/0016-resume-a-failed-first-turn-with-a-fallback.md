@@ -156,9 +156,27 @@ step budget runs out.
    Only the symlink differs between D and B or C, so the symlink caused the refusal.
    Every result agrees with the adapter. No bug was opened.
 
+   Ownership check on Claude Code 2.1.302 (issue #710). The host was Windows 11 Pro (10.0.26220), Node v26.8.1, Git 2.55.0, Claude Code 2.1.302, and repository head `21342c8`.
+   The probes repeated the cases of the Windows 2.1.295 record with the unchanged adapter, each in scratch directories under the temporary directory.
+   Each first turn used `claude -p --session-id <id> --model haiku --permission-mode bypassPermissions --output-format json --verbose`, with the marker line appended to the prompt.
+   Every result agrees with the adapter, so no bug was opened.
+   Layout and id casing: the output carried a `session_id` equal to `<id>`, and `projects/<dir>/<id>.jsonl` existed, with `<dir>` the work tree path with each non-alphanumeric character replaced by `-`.
+   The first `user` record had `sessionId` equal to `<id>`, `cwd` as launched, and `message.content` as a string that ends with the marker line.
+   An uppercase `--session-id` kept its case in the output and in the file name, and the adapter refused it with `sessionMissing`. A lowercase id resumed through `runClaude` with the check on.
+   Drive letter: `realpath` of the `C:` and the `c:` form returned the `C:` form. Claude Code recorded `cwd` as launched, `C:...` in one session and `c:...` in another.
+   Through `runClaude`, all four pairs of a `C:` or `c:` work tree and a `C:` or `c:` record passed, and a parent directory and another role were refused with `sessionMissing`.
+   Guard: `O_NOFOLLOW` is `undefined` in Node 26.8.1 on Windows. A directory junction as the project directory reported `isSymbolicLink() === true` and `isDirectory() === false` from `lstat`, and the check refused it.
+   A real directory with a copy of the same session file passed the check, and the CLI then started and exited 1 in that throwaway store.
+   A symlink could not be created (`EPERM`, no symlink privilege), so a file symlink stays unverified.
+   Forced terminate: the child was ended with `taskkill /F /T /PID`, with a `sleep 90` tool call. Stdout was empty in every case.
+   Killed at 0.4, 1, 2, 2.5, and 3 s, no session file existed, the check refused, and `claude -p --resume <id>` exited 1 with the `No conversation found` line of decision 2.
+   Killed at 3.5, 4, 8, 15, and 30 s, a file existed at the kill whose first `user` record carried the marker, and the check passed and `runClaude` resumed the id.
+   The file appears between 3 s and 3.5 s on this host, against 2.5 s to 3 s on 2.1.295. That boundary is host timing, not a contract, and the adapter does not depend on it.
+   Not run: the answer content of a resume after a kill, which the 2.1.295 record did not need for the check.
+
    Not verified: Linux. Not verified on Windows: a file symlink, a directory symlink,
    and a drive letter difference for a work tree that no longer exists.
-   Not verified: a Claude Code version other than 2.1.284, 2.1.292, 2.1.295, and 2.1.296.
+   Not verified: a Claude Code version other than 2.1.284, 2.1.292, 2.1.295, 2.1.296, and 2.1.302.
    On the interactive dispatch path, the adapter reports the pre-assigned id to the dispatcher
    before it starts the CLI, and the dispatcher writes it to the state file at once. A crash
    during the turn then leaves the id, and the turn after `--resume-interrupted` resumes it. A
