@@ -165,6 +165,16 @@ test("first worker turn routes a full suite through the test slot wrapper of thi
   await access(match[2]);
 });
 
+// Usefulness: verifies requirement "a PR-work worker leaves the work tree clean" (issue #910): the
+// worker commits or discards every change before the closing block, so a leftover change is not
+// found only after a reviewer turn.
+test("first worker turn requires a clean work tree for PR work", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "For PR work, before the closing block, `git status --porcelain` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.",
+  );
+});
+
 // Usefulness: verifies acceptance #902 — the worker is told to remove the temporary files it
 // creates outside the work tree and to name any it could not remove, because a PR body file in the
 // system temporary directory outlives the turn and can hold confidential text.

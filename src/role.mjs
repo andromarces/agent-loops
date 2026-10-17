@@ -663,6 +663,11 @@ function dispatchPayload(roleName, result) {
   if (result.shellDenied) {
     payload.shellDenied = true;
   }
+  // The work tree state the runtime read after a worker turn (issue #910). It is not the reviewer
+  // `reviewed` field, which the finish gate reads.
+  if (result.workTree) {
+    payload.workTree = result.workTree;
+  }
   if (roleName === "reviewer") {
     payload.verdict = parseVerdict(result.response);
     if (result.reviewed) {
