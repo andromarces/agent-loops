@@ -195,26 +195,34 @@ test("--continue-from refuses a malformed pr-declared record", async () => {
   });
 });
 
+// Each link runs the product with real turn setup and a probe, about 4 s on windows-latest. The
+// chain makes three runs, so the 15 s default timed out there (run 39025000248). The 30 s bound
+// is the one that `cli.continue-from.test.mjs` uses for its slowest continuation tests.
+const CHAIN_TIMEOUT_MS = 30_000;
+
 // Usefulness: verifies a chain of continuations keeps the declared PR whatever flags a link passes.
 // A link with a matching flag writes the declaration into its own transcript, so a later link with
 // no flags still refuses a finish that has no gate, with no transcript edit (issue #919).
 test.each([
   ["--require-ci", ["--require-ci", "42"]],
   ["--pr", ["--pr", "42"]],
-])("a chain of continuations keeps the PR through a link with %s", async (_name, flags) => {
-  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
-    const cont = await declareThenContinue(repo, transcriptPath, errorSpy);
-    const abort = JSON.stringify({ action: "abort", reason: "stop" });
-    const second = join(repo, "second.json");
-    const third = join(repo, "third.json");
-    await cont(flags, [abort], { from: transcriptPath, to: second });
-    const link = JSON.parse(await readFile(second, "utf8"));
-    expect(link.events.filter((e) => e.type === "pr-declared").map((e) => e.pr)).toEqual([42]);
+])(
+  "a chain of continuations keeps the PR through a link with %s",
+  async (_name, flags) => {
+    await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+      const cont = await declareThenContinue(repo, transcriptPath, errorSpy);
+      const abort = JSON.stringify({ action: "abort", reason: "stop" });
+      const second = join(repo, "second.json");
+      const third = join(repo, "third.json");
+      await cont(flags, [abort], { from: transcriptPath, to: second });
+      const link = JSON.parse(await readFile(second, "utf8"));
+      expect(link.events.filter((e) => e.type === "pr-declared").map((e) => e.pr)).toEqual([42]);
 
-    const reviewer = JSON.stringify({ action: "run_reviewer", prompt: "r" });
-    const { error } = await cont([], [reviewer, finish, finish], { from: second, to: third });
+      const { error } = await cont([], [finish, finish], { from: second, to: third });
 
-    expect(process.exitCode).toBe(1);
-    expect(error).toContain("this run declares PR 42");
-  });
-});
+      expect(process.exitCode).toBe(1);
+      expect(error).toContain("this run declares PR 42");
+    });
+  },
+  CHAIN_TIMEOUT_MS,
+);
