@@ -11,6 +11,7 @@ import {
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
   REVIEW_ONLY_GATE_REFUSAL,
+  REVIEW_ONLY_PR_REFUSAL,
   parseFlags,
   readTaskFile,
   readStdinText,
@@ -49,15 +50,15 @@ import {
 import { runChild } from "./child-turn.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 
-const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "wait-checks"]);
+const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "declare-pr", "wait-checks"]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
-// Operations that end or extend a run. A child process of that run never runs them.
-const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend"]);
+// Operations that end, extend, or set the PR of a run. A child process of that run never runs them.
+const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend", "declare-pr"]);
 
 const ROLE_USAGE = [
-  "Usage: agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]",
+  "Usage: agent-loop role [dispatch|finish|abort|extend|declare-pr|wait-checks] [flags]",
   "",
   "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
   "state file. One JSON object on stdout, except this help; logs on stderr.",
@@ -69,7 +70,7 @@ const ROLE_USAGE = [
 ].join("\n");
 
 /**
- * Parses `agent-loop role [dispatch|finish|abort|extend|wait-checks] [flags]`. Reuses the flag
+ * Parses `agent-loop role [dispatch|finish|abort|extend|declare-pr|wait-checks] [flags]`. Reuses the flag
  * reading rules and OpenCode validation of the headless CLI. Semantics that
  * depend on the state file (init detection, change rejection) are checked at
  * execution time, not parse time.
@@ -980,11 +981,7 @@ async function extend(args) {
   if (args.maxSteps === null) {
     throw new RoleError("extend requires --max-steps <count>.");
   }
-  if (args.parentSession === null) {
-    throw new RoleError(
-      "extend requires --parent-session (the harness session id the run was started with).",
-    );
-  }
+  requireParentSessionFlag(args, "extend");
 
   return withOpenRun(
     args,
@@ -1023,17 +1020,68 @@ async function extend(args) {
       };
     },
     ["maxSteps"],
-    (state) => {
-      // The caller must pass the run's stored parent session id, the id the
-      // parent-edit guard matches. The refusal does not name the stored id.
-      // known-limit: the id check does not identify the caller. The spawn-time
-      // run marker refuses a child of this run (executeRoleCommand), but a child
-      // that clears its environment passes both checks.
-      if (args.parentSession !== state.parentSession) {
-        throw new RoleError("--parent-session does not match the run's parent session.");
-      }
-    },
+    (state) => requireStoredParentSession(args, state),
   );
+}
+
+/**
+ * `declare-pr`: sets `pr` of an active or interrupted run that declared none at init, for a run
+ * whose worker opens the pull request. The change is one way, unset to a number: a run that
+ * already holds a PR refuses it, so the declared PR cannot move. After it the run behaves as
+ * one that passed `--pr` at init: a reviewer turn supplies the required-check status, and a finish
+ * must end through `--require-ci <pr>` (#916). `review-only` refuses it, as it refuses `--pr`.
+ */
+async function declarePr(args) {
+  rejectMisplacedFlags(args, "declare-pr");
+  if (args.pr === null) {
+    throw new RoleError("declare-pr requires --pr <pr>.");
+  }
+  requireParentSessionFlag(args, "declare-pr");
+
+  return withOpenRun(
+    args,
+    {},
+    async (state, paths) => {
+      if (state.mode === "review-only") {
+        throw new RoleError(REVIEW_ONLY_PR_REFUSAL);
+      }
+      if ((state.pr ?? null) !== null) {
+        throw new RoleError(
+          `declare-pr is refused: the run already declares PR ${state.pr}, and the declaration cannot change.`,
+        );
+      }
+      state.pr = args.pr;
+      await writeState(paths.stateFile, state);
+      logInfo(`run declared PR ${state.pr} (${state.stepsUsed} steps used)`);
+      return {
+        exitCode: 0,
+        payload: { status: "ok", lifecycle: state.lifecycle, pr: state.pr },
+      };
+    },
+    ["pr"],
+    (state) => requireStoredParentSession(args, state),
+  );
+}
+
+function requireParentSessionFlag(args, operation) {
+  if (args.parentSession === null) {
+    throw new RoleError(
+      `${operation} requires --parent-session (the harness session id the run was started with).`,
+    );
+  }
+}
+
+/**
+ * The caller must pass the run's stored parent session id, the id the parent-edit guard matches.
+ * The refusal does not name the stored id.
+ * known-limit: the id check does not identify the caller. The spawn-time run marker refuses a
+ * child of this run (executeRoleCommand), but a child that clears its environment passes both
+ * checks.
+ */
+function requireStoredParentSession(args, state) {
+  if (args.parentSession !== state.parentSession) {
+    throw new RoleError("--parent-session does not match the run's parent session.");
+  }
 }
 
 /**
@@ -1138,6 +1186,8 @@ export async function executeRoleCommand(args, deps = {}) {
         return await abort(args);
       case "extend":
         return await extend(args);
+      case "declare-pr":
+        return await declarePr(args);
       case "wait-checks":
         return await waitChecksOperation(args, deps);
       default:
