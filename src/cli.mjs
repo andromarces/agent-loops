@@ -386,8 +386,11 @@ Options:
                                 declared run with no matching gate cannot finish, and no
                                 turn in the run can add the flag. Off by default; a run with
                                 neither --pr nor --require-ci keeps the unresolvedCompare
-                                marker as the only record of an unresolved compare. A
-                                --mode review-only run refuses it outright.
+                                marker as the only record of an unresolved compare, until a
+                                worker turn opens a PR. The runtime then declares that PR
+                                once (ADR 0043). The run then refuses every finish, because
+                                it carries no gate. A --mode review-only run refuses it
+                                outright.
   --require-ci <pr>             Refuse finish until the runtime resolves the PR head from
                                 this pull request: the PR head must match the reviewed commit,
                                 the reviewed tree must be clean, the PR must not be behind its

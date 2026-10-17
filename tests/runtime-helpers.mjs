@@ -809,6 +809,7 @@ export async function expectAbortKillsShim(command, start) {
 // arguments joined into one element, throws. A `cwd` that does not exist fails
 // as execa does with `reject: false`: no exit code, `code: "ENOENT"`, empty output.
 export const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
+export const CLEAN_REPO_BRANCH = "main";
 
 export function cleanRepoGit(command, args, options) {
   assert.equal(command, "git");
@@ -831,6 +832,8 @@ export function cleanRepoGit(command, args, options) {
       return answer(`${options.cwd}\n`);
     case '["rev-parse","--verify","-q","HEAD"]':
       return answer(`${CLEAN_REPO_HEAD}\n`);
+    case '["symbolic-ref","--short","-q","HEAD"]':
+      return answer(`${CLEAN_REPO_BRANCH}\n`);
     case '["status","--porcelain=v1","-z","--untracked-files=all"]':
     case '["ls-files","--stage","-z"]':
       return answer("");

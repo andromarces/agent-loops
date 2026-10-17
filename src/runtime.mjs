@@ -12,6 +12,7 @@ import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { applyResult, freshGate, matchingGate, resetGate } from "./lib/continuation.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
+import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { invoke, runChild } from "./child-turn.mjs";
 import { decide } from "./orchestrator.mjs";
 import { failedTestRun, testCmdInput } from "./lib/test-cmd.mjs";
@@ -192,6 +193,10 @@ export async function runLoop(options) {
   // against the older head (#293).
   let gate = restoredGate ?? (continued ? resetGate() : freshGate());
   let finishRefused = false;
+  // The PR input of the run: `--pr` from the start, or the one PR that the runtime resolves after
+  // a worker turn when the run has neither `--pr` nor `--require-ci` (ADR 0043). It changes once,
+  // from null to a number, and only the runtime sets it.
+  let declaredPr = pr;
 
   // The caller persists a pre-assigned id before the CLI starts, so a parent crash during a first
   // turn leaves it (issue #564). The role state is not touched here: the adapter owns it.
@@ -320,7 +325,7 @@ export async function runLoop(options) {
         action,
         mode,
         requireAccept,
-        pr,
+        pr: declaredPr,
         requireCi,
         gate,
         finishRefused,
@@ -375,7 +380,7 @@ export async function runLoop(options) {
         // the turn and supplies the reviewer with the required-check status (#320,
         // #350). A run with neither reads nothing, and the reviewer keeps its own
         // read. The CLI refuses a `--pr` and a `--require-ci` that name different PRs.
-        pr: pr ?? requireCi,
+        pr: declaredPr ?? requireCi,
         // The command text comes from the `--test-cmd` run input only (ADR 0017).
         testCmd: testCmdInput(testCmdText, testCmdTimeout),
         reviewerSandbox: sandboxMode,
@@ -408,8 +413,41 @@ export async function runLoop(options) {
     gate = applyResult(gate, roleName, result);
     finishRefused = false;
 
-    prompt = resultPrompt({ result, stepsUsed, maxSteps });
+    let newlyDeclared = null;
+    if (isWorkerDispatch && declaredPr === null && requireCi === null) {
+      newlyDeclared = await declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs });
+      if (newlyDeclared !== null) {
+        declaredPr = newlyDeclared;
+        onEvent({ type: "pr-declared", pr: declaredPr, stepsUsed });
+      }
+    }
+
+    prompt = resultPrompt({ result, stepsUsed, maxSteps, declaredPr: newlyDeclared });
   }
+}
+
+/**
+ * Resolves the PR that a worker turn opened, for a run with no PR input (ADR 0043). The head
+ * compared is the work tree head that the runtime read after the turn, never a child report.
+ * Returns the PR number, or null when the run stays undeclared. A refusal to name one PR is
+ * logged as a warning, except for no PR at all, which is the usual state of a task with no PR.
+ * @returns {Promise<number | null>}
+ */
+async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
+  if (result.status !== "ok") return null;
+  const resolved = await resolveWorkerPr({
+    cwd,
+    head: result.workTree?.head ?? null,
+    gh,
+    signal,
+    timeoutMs: readTimeoutMs,
+  });
+  if (resolved.pr === null) {
+    if (!resolved.quiet) logWarn(`no PR declared after the worker turn: ${resolved.reason}`);
+    return null;
+  }
+  logInfo(`runtime declared PR ${resolved.pr} after the worker turn`);
+  return resolved.pr;
 }
 
 /**

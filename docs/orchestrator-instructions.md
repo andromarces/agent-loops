@@ -904,7 +904,39 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the
-gap for a run that states its PR (issue #302).
+gap for a run that states its PR (issue #302). A headless run that takes neither
+`--pr` nor `--require-ci` can also gain its PR from the runtime, as the next
+section states.
+
+### A headless task whose worker opens the PR
+
+A headless run with neither `--pr` nor `--require-ci` has no PR input at start.
+After each worker turn that ends `ok`, the runtime looks for the PR that the
+worker opened. It declares that PR once, and the run then behaves as one that
+passed `--pr` (ADR 0043).
+
+- The runtime reads Git and GitHub state only. It reads the checked-out branch,
+  the work tree head that it read after the turn, and `gh pr list --head
+  <branch> --state open`. A worker report, a task text, and an orchestrator
+  action never choose or change the PR.
+- The runtime declares the PR only when one open PR comes from that branch in
+  this repository. Its head commit must equal the work tree head.
+- These states leave the run undeclared: no match, several matches, a head
+  that differs, a PR from a fork, a detached head, and a failed `gh` read.
+  An unparseable `gh` reply does the same. The runtime logs a warning for each state except no
+  match. The next worker turn tries again.
+- A declaration emits one `pr-declared` event with `pr` and `stepsUsed`. The
+  result prompt of that worker turn carries `declaredPr` and states the finish
+  rule. Every later reviewer prompt carries the required-check status for that PR.
+- The declaration is one way and happens once. A run with `--pr` or
+  `--require-ci` at start never resolves a PR. No later turn changes the PR.
+- A run that declares its PR this way carries no `--require-ci` gate, because
+  that flag is a run input. The declared-run refusal for a missing gate applies.
+  `unresolvedCompare` does not end the run. Only `abort`, with the missing gate
+  named in the reason, ends it.
+- To end such a task through a gated finish, start it with `--require-ci <n>` for
+  an existing PR. Or use `agent-loop role` with `role declare-pr`, which takes
+  the gate at `finish`.
 
 ### A task whose worker opens the PR
 
@@ -929,9 +961,9 @@ GitHub. Declare the PR after the worker opens it:
   marker refuses it, as it refuses `extend`, `finish`, and `abort`. It requires
   `--parent-session` with the stored id, and the id check has the limits that the
   `extend` rules state.
-- The headless loop has no `declare-pr`: it takes `--pr` and `--require-ci` on
-  one command line, before any worker runs. A headless task whose worker opens the
-  PR runs with no declared PR, and its finish keeps the marker rule above.
+- The headless loop has no `declare-pr`, because the orchestrator is a child turn
+  and never chooses the PR. The runtime resolves it instead, as the next
+  section states.
 - Declare the PR before the first reviewer turn that follows the worker turn, so
   that turn already carries the status. A reviewer turn that ran earlier read the
   checks itself.
