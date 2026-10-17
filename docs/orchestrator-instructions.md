@@ -561,7 +561,7 @@ The mode table is in
   ignore is a reviewer mutation. The mutation check is unchanged. The headless initial
   prompt tells the orchestrator the mode, and says that its own turns stay
   read-only. A reviewer that is not Codex has no mode, and its prompts name none.
-- The runtime creates one scratch folder for each reviewer turn at `.agent-loop/rev/<id>` under the work tree root. The prompt names that folder as the first place for probe and test output. The folder holds its own `.gitignore` with `*`, so it needs no rule in the target repository, also in a linked work tree. The runtime removes the folder after the post-turn snapshot, on every turn outcome, and never follows a link or a junction inside it. A failed removal logs a warning and never fails the run (issue #920, ADR 0042).
+- The runtime creates one scratch folder for each reviewer turn at `.agent-loop/rev/<id>` under the work tree root. The prompt names that folder as the first place for probe and test output. The folder holds its own `.gitignore` with `*`, so it needs no rule in the target repository, also in a linked work tree. The runtime removes the folder after the post-turn snapshot, on every turn outcome, and never follows a link or a junction inside it. It refuses and logs a warning when `.agent-loop` or `.agent-loop/rev` is a link. A failed removal logs a warning and never fails the run (issue #920, ADR 0042).
 - Choose the mode at init, and never change it later. A later call may repeat the
   flag or omit it. Any other value is refused, in either direction. A headless
   `--continue-from` run keeps the mode of the earlier run, and a flag that names

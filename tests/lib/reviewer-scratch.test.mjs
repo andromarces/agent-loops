@@ -9,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, sep } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { createReviewerScratch, removeReviewerScratch } from "../../src/lib/reviewer-scratch.mjs";
@@ -153,3 +153,35 @@ test("a failed creation returns null", async () => {
     warn.mockRestore();
   }
 });
+
+// Usefulness: verifies removal refuses, with a warning and no deletion, when `.agent-loop` or
+// `.agent-loop/rev` was replaced by a link or junction to an outside folder, so a reviewer cannot
+// steer the removal onto content outside the scratch folder (acceptance #920).
+for (const parent of [".agent-loop", join(".agent-loop", "rev")]) {
+  test(`removal refuses when ${parent} became a link`, async (ctx) => {
+    const repo = await createTempRepo();
+    const outside = await mkdtemp(join(tmpdir(), "scratch-outside-"));
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const dir = await createReviewerScratch(repo);
+      const real = await realpath(repo);
+      const id = basename(dir);
+      // The outside folder mirrors the layout below the replaced parent, so a removal that
+      // follows the link deletes the sentinel.
+      const mirrored = join(outside, ...dir.slice(join(real, parent).length + 1).split(sep));
+      await mkdir(mirrored, { recursive: true });
+      await writeFile(join(mirrored, "sentinel.txt"), "keep\n");
+      await removePath(join(real, parent));
+      await symlinkOrSkip(ctx, outside, join(real, parent), "junction");
+      expect(id).toBe(basename(mirrored));
+      await expect(removeReviewerScratch(dir)).resolves.toBeUndefined();
+      expect(await readFile(join(mirrored, "sentinel.txt"), "utf8")).toBe("keep\n");
+      expect(await exists(outside)).toBe(true);
+      expect(warn.mock.calls.flat().join("\n")).toContain("link");
+    } finally {
+      warn.mockRestore();
+      await removePath(repo);
+      await removePath(outside);
+    }
+  });
+}

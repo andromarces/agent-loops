@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { logDebug, logWarn } from "./log.mjs";
@@ -31,14 +31,47 @@ export async function createReviewerScratch(cwd, { signal } = {}) {
   }
 }
 
+async function isMissing(path) {
+  try {
+    await lstat(path);
+    return false;
+  } catch (err) {
+    return err.code === "ENOENT";
+  }
+}
+
+// True when `path` is a real directory. A link or junction, a file, and a missing entry are not.
+// `lstat` never follows the entry itself, and Node reports a Windows junction as a symbolic link.
+async function isRealDirectory(path) {
+  try {
+    return (await lstat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Removes a scratch folder and then each empty parent up to the work tree. `fs.rm` removes a
- * symbolic link or a junction as an entry and never follows it, so nothing outside the folder is
- * deleted. A failure warns and never throws, so a refused delete does not fail or halt the run.
- * The caller runs this after the post-turn snapshot, so the removal cannot hide a mutation.
- * known-limit: a parent folder that a reviewer replaced with a link is not checked.
+ * Removes a scratch folder and then each empty parent up to the work tree. It first refuses, with a
+ * warning and no deletion, when `.agent-loop` or `.agent-loop/rev` is not a real directory, because
+ * a path through a link deletes content outside the folder. A missing parent means nothing is
+ * left to remove. A link at the folder itself is unlinked as an entry. `fs.rm` removes a symbolic
+ * link or a junction inside the folder as an entry and never follows it. A failure warns and never
+ * throws, so a refused delete does not fail or halt the run. The caller runs this after the
+ * post-turn snapshot, so the removal cannot hide a mutation.
+ * known-limit: a swap of a parent between the check and `fs.rm` is not prevented, because Node has
+ * no directory-handle delete. The check runs immediately before `fs.rm` to keep that window short.
  */
 export async function removeReviewerScratch(dir) {
+  const rev = dirname(dir);
+  const parent = dirname(rev);
+  for (const component of [parent, rev]) {
+    if (await isRealDirectory(component)) continue;
+    if (await isMissing(component)) return;
+    logWarn(
+      `reviewer scratch folder not removed, ${component} is a link or not a directory: ${dir}`,
+    );
+    return;
+  }
   try {
     await rm(dir, { recursive: true, force: true });
     logDebug(`reviewer scratch folder removed: ${dir}`);
@@ -49,13 +82,11 @@ export async function removeReviewerScratch(dir) {
     return;
   }
   // `rmdir` fails on a folder that still holds an entry, so another turn's folder stays.
-  let parent = dirname(dir);
-  for (let i = 0; i < 2; i++) {
+  for (const emptyParent of [rev, parent]) {
     try {
-      await rmdir(parent);
+      await rmdir(emptyParent);
     } catch {
       return;
     }
-    parent = dirname(parent);
   }
 }
