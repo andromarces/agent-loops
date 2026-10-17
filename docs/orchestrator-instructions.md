@@ -452,7 +452,8 @@ The read follows the PR that the run names before its first turn: `--pr`, or
 `--require-ci <pr>` when the run declares no `--pr`. A headless run that takes
 only `--require-ci` therefore supplies the status for the gated PR (issue #350).
 The interactive path receives `--require-ci` only at `finish`, so only `--pr`
-supplies the status there.
+supplies the status there, declared at init or with `role declare-pr`
+(see Declaring a PR run).
 
 ## The runtime supplies a test command result
 
@@ -885,8 +886,9 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   `finish` is refused the same way. A declared run with no gate can only end
   through `abort` with the missing gate named in the reason.
 - `--pr` is an init field, so a later call that changes it is refused like any
-  other init field. A state file written before this field has no `pr`, and that
-  run keeps the marker-only behavior.
+  other init field. The one exception is `role declare-pr`, below. A state file
+  written before this field has no `pr`, and that run keeps the marker-only
+  behavior.
 - `review-only` refuses `--pr` at init, because that mode rejects `--require-ci`
   at finish and the run would refuse every finish. On the headless path every
   flag arrives on one command line, so `--mode review-only` with `--pr`,
@@ -903,6 +905,41 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the
 gap for a run that states its PR (issue #302).
+
+### A task whose worker opens the PR
+
+The PR does not exist at init when the task is "address issue N through a PR", and
+the parent cannot open it, because the role rules forbid a parent write to
+GitHub. Declare the PR after the worker opens it:
+
+1. Init the run with no `--pr`, and dispatch the worker.
+2. Read the PR number from the worker report.
+3. Run `agent-loop role declare-pr --cwd <dir> --parent-session <id> --pr <n>`.
+   The envelope is `{"status": "ok", "lifecycle": "active", "pr": <n>}`.
+4. From then on, the run is a declared run: every reviewer prompt carries the
+   required-check status, the Waiting for required checks rules apply, and
+   `finish` must end through `--require-ci <n>`.
+
+- The transition is one way, from no PR to a number. `declare-pr` refuses a run
+  that already has a PR, whether set at init or by an earlier `declare-pr`, and
+  refuses a terminal run. It works from `active`, `dispatched`, and
+  `interrupted`, and leaves the lifecycle as it is.
+- `declare-pr` refuses `review-only`, as init refuses `--pr` there.
+- `declare-pr` is a parent operation. A child role never runs it: the spawn-time
+  marker refuses it, as it refuses `extend`, `finish`, and `abort`. It requires
+  `--parent-session` with the stored id, and the id check has the limits that the
+  `extend` rules state.
+- The headless loop has no `declare-pr`: it takes `--pr` and `--require-ci` on
+  one command line, before any worker runs. A headless task whose worker opens the
+  PR runs with no declared PR, and its finish keeps the marker rule above.
+- Declare the PR before the first reviewer turn that follows the worker turn, so
+  that turn already carries the status. A reviewer turn that ran earlier read the
+  checks itself.
+- A repository whose rulesets the gate does not get (#301), for example a private
+  GitHub Free-plan organization repository, refuses every finish of a declared
+  run, so such a run can only end through `abort`. Do not declare the PR there. Finish with the `unresolvedCompare` marker
+  after you compare the PR head with `reviewed.head` yourself, and run
+  `wait-checks` before each reviewer turn.
 
 A marked `role finish` still exits `0`, unlike the headless finish that exits
 `4` for the same marker. The exit code is not the outcome channel of this
@@ -1063,7 +1100,7 @@ and each flag fails with a clear error.
   `agent-loop role extend --cwd "<work tree>" --parent-session "<parent session id>" --max-steps <count>`, then
   dispatch again. Otherwise call `abort` and report the unresolved condition.
   Never raise the budget on your own to avoid a stop the user set. A child
-  role never runs `extend`, `finish`, or `abort`. Each subcommand refuses a
+  role never runs `extend`, `declare-pr`, `finish`, or `abort`. Each subcommand refuses a
   caller whose `AGENT_LOOP_SPAWNED_RUN` list holds the key of the run it acts on. The
   runtime sets the variable, as a comma-separated list of the keys of every
   enclosing run and then the key of the dispatching run, in the environment of every worker and reviewer process, and in no other spawn. The key
@@ -1087,6 +1124,8 @@ and each flag fails with a clear error.
   below. `extend` works from `active`, `dispatched`, and `interrupted`, leaves
   the lifecycle as it is, and refuses a terminal run. An `interrupted` run still
   needs `abort` or `dispatch --resume-interrupted`.
+- `declare-pr` sets the run PR once after init, as the section on declaring a PR
+  run states. The caller must pass the stored `--parent-session` id, as for `extend`.
 - `halted` lifecycle (reviewer mutation or snapshot error): the run is already
   terminal and the subcommand rejects further operations, including `abort`.
   Report the failure and the modified paths from the envelope, then stop.
@@ -1116,7 +1155,7 @@ A run stores the `--parent-session` of the session that started it. The
 parent-edit guard and `extend` match that id, and no later call changes it. After init,
 each subcommand treats `--parent-session` as follows:
 
-- `extend`: required. A missing value or any value other than the stored id is
+- `extend` and `declare-pr`: required. A missing value or any value other than the stored id is
   refused, and the refusal does not name the stored id. The stored id is
   accepted.
 - `dispatch`, `finish`, and `abort`: optional. When omitted, they check nothing
@@ -1128,10 +1167,10 @@ each subcommand treats `--parent-session` as follows:
 
 A run that a new session resumes is therefore unguarded for that session. No
 call moves the stored id to the new session. The new session can run `dispatch`,
-`finish`, and `abort` by omitting `--parent-session`. It can run `extend` only by
-passing the stored id. `extend` compares the id only, so that call succeeds for
+`finish`, and `abort` by omitting `--parent-session`. It can run `extend` and
+`declare-pr` only by passing the stored id. Both compare the id only, so that call succeeds for
 any parent-side caller that holds the id, and it gives no guard coverage. A child
-role never runs `extend`: the spawn-time marker refuses it, and the prompt rule
+role never runs `extend` or `declare-pr`: the spawn-time marker refuses it, and the prompt rule
 backs the marker. To get a guard, call `abort` and start a new run with
 the new session id. A new run starts every role on a new session (ADR 0021).
 

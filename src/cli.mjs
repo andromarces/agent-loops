@@ -234,6 +234,12 @@ Role operations:
                                 stepsUsed and the current budget. The caller
                                 must pass the run's stored --parent-session id; the
                                 check compares that id only.
+  declare-pr                    Set the run PR once, after init, on a non-terminal run
+                                that declared none, for a task whose worker opens the
+                                PR. Needs --pr and the stored --parent-session id.
+                                Refuses a run that already has a PR, a terminal run,
+                                and review-only. The run then ends only through
+                                --require-ci <pr> for that PR.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
                                 timedOut flag. The bound starts at command entry
@@ -252,9 +258,9 @@ Role flags:
   --role worker|reviewer        Role to dispatch. Required for dispatch.
   --cwd <directory>             Target work tree. Must be inside a Git work tree.
                                 Defaults to the current directory.
-  --parent-session <id>         Required on the init call and on extend. The harness
+  --parent-session <id>         Required on the init call, on extend, and on declare-pr. The harness
                                 session id the parent-edit guard matches; later calls
-                                reject a changed value, and extend refuses a mismatch. The headless form (no subcommand) is the explicit
+                                reject a changed value, and extend and declare-pr refuse a mismatch. The headless form (no subcommand) is the explicit
                                 unguarded path.
   --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files
                                 First (init) call only. Later calls read these from the
@@ -266,7 +272,7 @@ Role flags:
   --require-accept              finish only: refuse unless the latest reviewer turn
                                 accepted the current exact state, with a Checks line
                                 (work-first and review-first).
-  --pr <pr>                    init only. Declares the run PR work on this pull
+  --pr <pr>                    init or declare-pr. Declares the run PR work on this pull
                                 request, so a finish must end through the
                                 --require-ci <pr> gate for the same PR. Refuses a
                                 finish with no such gate and a finish that sets
@@ -278,7 +284,8 @@ Role flags:
                                 GitHub Free-plan repository still refuses a
                                 declared run, so it must omit --pr. Later
                                 calls read it from the state file and reject any
-                                attempt to change it.
+                                attempt to change it, except declare-pr on a run
+                                that has none. declare-pr and wait-checks also take it.
   --all                         wait-checks only: wait on every check of the PR head,
                                 not only the required ones.
   --timeout <seconds>           wait-checks: bound on the wait. Defaults to 300. 0 is
