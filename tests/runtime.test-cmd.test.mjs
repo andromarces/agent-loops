@@ -129,8 +129,10 @@ test("an absent test command leaves the reviewer prompt and the result unchanged
   const repo = await createTempRepo();
   try {
     const { rev, reviewed } = await reviewOnce(repo, {});
+    // The runtime scratch folder (issue #920) is the only part of the prompt that varies per turn.
+    const scratchDir = JSON.parse(/scratch folder ("[^"]+")/.exec(rev.recorded[0].prompt)[1]);
     expect(rev.recorded[0].prompt).toBe(
-      reviewerPrompt("review", null, null, null, "Review the change."),
+      reviewerPrompt("review", null, null, null, "Review the change.", scratchDir),
     );
     expect(rev.recorded[0].prompt).not.toContain("Test command evidence");
     expect(reviewed.testRun).toBeUndefined();
