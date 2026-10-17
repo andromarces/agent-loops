@@ -210,9 +210,9 @@ Read the JSON envelope on stdout. Example reviewer envelope:
   item) directly after a `- ` or `N. ` item joins into that item with `, `, and several
   consecutive sub-items under one parent all fold into it, so the lines `- a`,
   two spaces then `- b`, and two spaces then `- c` read `a, b, c` (issues #870 and #915). A sub-item under `1. a` takes three spaces, so `1. a` and `   - b` read `a, b`.
-  The run ends at the first line that is not a `- ` item or such a sub-item, so a blank line or prose between
+  The run ends at the first line that is not a `- ` or `N. ` item or a sub-item of the item above it, so a blank line or prose between
   the label and the list breaks it. One shape with prose folds too: a blank line after the label
-  line (or after its folded list), then one prose line, then a `- ` list directly under that line.
+  line (or after its folded list), then one prose line, then a `- ` list directly under that line (dash items only: an ordered list there stays unparseable).
   The prose and its list join the value of the label just above, as `; <prose>: <items>` (the prose
   loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
   `x; Design settled: a` (issue #898). The prose line must not start with whitespace (a nonbreaking or ideographic
