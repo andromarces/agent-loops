@@ -11,19 +11,21 @@ test("an unquotable path leaves only the required CI checks", () => {
   const rule = testSlotRule({ execPath: '/opt/no"de', platform: "linux" });
   expect(rule).not.toContain("test-slot");
   expect(rule).not.toContain("--if-held");
-  expect(rule).not.toMatch(/Run a targeted test file/);
-  expect(rule).toMatch(/Do not run a test, a targeted test file included/);
+  expect(rule).toContain("Run a targeted test file directly.");
   expect(rule).toMatch(/rely on the required CI checks/);
 });
 
-// Usefulness: verifies the rule bounds a targeted run and sends a broader run through the wrapper,
-// so a child cannot start a many-file or whole-directory run outside the machine-wide test slot
-// (issue #872).
-test("the rule bounds a targeted run and sends a broader run through the wrapper", () => {
+// Usefulness: verifies the rule bounds a direct targeted run and sends a broader run through the
+// wrapper, or to the CI checks when no wrapper renders, so a child cannot start a many-file or
+// whole-directory run outside the machine-wide test slot (issue #872).
+test("the rule bounds a direct targeted run and sends a broader run through the wrapper", () => {
   const withWrapper = testSlotRule();
   expect(withWrapper).toMatch(/targeted[^.]*at most 10 test files[^.]*mirror[^.]*changed source/);
   expect(withWrapper).toMatch(/never a whole directory/);
   expect(withWrapper).toMatch(/broader run[^.]*through the test slot wrapper, as a full suite/);
+  const withoutWrapper = testSlotRule({ execPath: '/opt/no"de', platform: "linux" });
+  expect(withoutWrapper).toMatch(/at most 10 test files/);
+  expect(withoutWrapper).toMatch(/broader run[^.]*rely on the required CI checks/);
 });
 
 // Usefulness: verifies requirement "a targeted run goes through the slot only while a slot is held"
