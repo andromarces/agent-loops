@@ -642,27 +642,53 @@ test.each([
 
 const declared = (pr) => ({ type: "pr-declared", pr, stepsUsed: 1 });
 
+const NO_FLAGS = { pr: null, requireCi: null };
+
 // Usefulness: verifies a continued run recovers the PR that the runtime declared late in the
 // earlier run, so the declared-PR finish rule survives --continue-from (issue #919).
-test("declaredPrFromTranscript returns the PR of the last pr-declared event", () => {
+test("declaredPrFromTranscript returns the PR of the pr-declared events", () => {
   const earlier = {
-    options: { pr: null, requireCi: null },
-    events: [declared(41), { type: "action" }, declared(42), { type: "gate" }],
+    options: NO_FLAGS,
+    events: [declared(42), { type: "action" }, declared(42), { type: "gate" }],
   };
   expect(declaredPrFromTranscript(earlier)).toBe(42);
 });
 
-// Usefulness: verifies the recovery never invents a PR: a run with a PR flag, a malformed event,
-// and no event all give null, which keeps the run undeclared.
+// Usefulness: verifies a transcript that records no declaration gives null, so a run that never
+// declared a PR stays undeclared. A run whose flags name the declared PR keeps it.
 test.each([
-  ["a run that had --pr", { options: { pr: 7, requireCi: 7 }, events: [declared(42)] }],
-  ["a run that had --require-ci", { options: { pr: null, requireCi: 7 }, events: [declared(42)] }],
-  ["a string PR", { options: { pr: null, requireCi: null }, events: [declared("42")] }],
-  ["a zero PR", { options: { pr: null, requireCi: null }, events: [declared(0)] }],
-  ["a fractional PR", { options: { pr: null, requireCi: null }, events: [declared(1.5)] }],
-  ["no pr-declared event", { options: { pr: null, requireCi: null }, events: [{ type: "gate" }] }],
-  ["no events", { options: { pr: null, requireCi: null } }],
+  ["no pr-declared event", { options: NO_FLAGS, events: [{ type: "gate" }] }],
+  ["no events", { options: NO_FLAGS }],
+  ["no options", { events: [{ type: "gate" }] }],
   ["no transcript", null],
 ])("declaredPrFromTranscript returns null for %s", (_label, earlier) => {
   expect(declaredPrFromTranscript(earlier)).toBeNull();
+});
+
+test.each([
+  ["--pr", { pr: 42, requireCi: 42 }],
+  ["--require-ci", { pr: null, requireCi: 42 }],
+])("declaredPrFromTranscript keeps the PR of a run that had %s for it", (_label, options) => {
+  expect(declaredPrFromTranscript({ options, events: [declared(42)] })).toBe(42);
+});
+
+// Usefulness: verifies a malformed or contradictory declaration record is refused, never read as
+// no declaration, because a null here would drop the declared-PR finish rule while the completion
+// replay still accepts the transcript (issue #919).
+test.each([
+  ["a string PR", { options: NO_FLAGS, events: [declared("42")] }],
+  ["a zero PR", { options: NO_FLAGS, events: [declared(0)] }],
+  ["a fractional PR", { options: NO_FLAGS, events: [declared(1.5)] }],
+  ["a missing PR", { options: NO_FLAGS, events: [{ type: "pr-declared" }] }],
+  ["two different PRs", { options: NO_FLAGS, events: [declared(41), declared(42)] }],
+  [
+    "a run that had --pr for another PR",
+    { options: { pr: 7, requireCi: 7 }, events: [declared(42)] },
+  ],
+  [
+    "a run that had --require-ci for another PR",
+    { options: { pr: null, requireCi: 7 }, events: [declared(42)] },
+  ],
+])("declaredPrFromTranscript refuses %s", (_label, earlier) => {
+  expect(() => declaredPrFromTranscript(earlier)).toThrow(/pr-declared|declared/);
 });

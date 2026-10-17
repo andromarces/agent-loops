@@ -10,7 +10,13 @@ import {
 } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
-import { applyResult, freshGate, matchingGate, resetGate } from "./lib/continuation.mjs";
+import {
+  applyResult,
+  freshGate,
+  matchingGate,
+  refuseDeclaredPrConflict,
+  resetGate,
+} from "./lib/continuation.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { invoke, runChild } from "./child-turn.mjs";
@@ -148,6 +154,10 @@ export async function runLoop(options) {
   const { orchestrator, worker, reviewer } = roles;
   // Only the Codex adapter applies a mode, so any other reviewer has none.
   const sandboxMode = reviewer?.kind === "codex" ? reviewerSandbox : null;
+
+  // A continued run keeps the PR that the earlier run declared. The CLI refuses a conflict first,
+  // and this check holds for any other caller, before the first child spawn.
+  refuseDeclaredPrConflict(continued ? earlierPr : null, { pr, requireCi, mode });
 
   logInfo(`agent loop started (cwd: ${cwd}, maxSteps: ${maxSteps})`);
 

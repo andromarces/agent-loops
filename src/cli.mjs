@@ -19,6 +19,7 @@ import {
 import {
   carryEarlierEvents,
   declaredPrFromTranscript,
+  refuseDeclaredPrConflict,
   gateFromTranscript,
   earlierReviewerSandbox,
   readContinuation,
@@ -451,6 +452,9 @@ function formatSummary(summary) {
 async function loadContinuation({ options, roles, events, agents, signal, reviewerSandbox }) {
   try {
     const earlier = await readContinuation(options.continueFrom);
+    // Before any session check or probe turn, so a refusal runs no child.
+    const earlierPr = declaredPrFromTranscript(earlier);
+    refuseDeclaredPrConflict(earlierPr, options);
     // Read for every reviewer kind, so a damaged record is refused, never skipped.
     const held = earlierReviewerSandbox(earlier, options.continueFrom);
     if (reviewerSandbox !== null) {
@@ -475,7 +479,6 @@ async function loadContinuation({ options, roles, events, agents, signal, review
         }),
     });
     const earlierGate = gateFromTranscript(earlier);
-    const earlierPr = declaredPrFromTranscript(earlier);
     // --transcript rewrites its file at exit, so a run that names the file it
     // continues carries the earlier events into the rewrite, then a boundary
     // event that keeps the earlier outcome the rewrite replaces.

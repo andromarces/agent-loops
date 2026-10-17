@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { expect, test, vi } from "vite-plus/test";
 
 // Answers `git` and `gh` from memory, so the first run declares a PR with no network.
@@ -85,5 +85,107 @@ test("--continue-from keeps a PR that the earlier run declared after a worker tu
     expect(errorSpy.mock.calls.flat().join("\n")).toContain("this run declares PR 42");
     const second = JSON.parse(await readFile(transcriptPath, "utf8"));
     expect(second.events.at(-1).type).toBe("gate");
+  });
+});
+
+// Runs the first run, which declares PR 42 after its worker turn, and returns a continuation call.
+// The call counts the turns that the continued run makes, so a refusal can show that none ran.
+async function declareThenContinue(repo, transcriptPath, errorSpy) {
+  doubles.git = git;
+  doubles.gh = () => ({ exitCode: 0, stdout: JSON.stringify([MATCH]), stderr: "" });
+  await main(
+    [...BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
+    continueAgents([work, work]),
+  );
+  expect(process.exitCode).toBe(2);
+  doubles.gh = null;
+  return async (extraArgs, replies = [finish, finish]) => {
+    errorSpy.mockClear();
+    const agents = continueAgents(replies);
+    const turns = [];
+    for (const kind of Object.keys(agents)) {
+      const run = agents[kind].run;
+      agents[kind].run = (...args) => {
+        turns.push(kind);
+        return run(...args);
+      };
+    }
+    await main(
+      [
+        ...BASE,
+        "--cwd",
+        repo,
+        "--max-steps",
+        "3",
+        "--continue-from",
+        transcriptPath,
+        "--transcript",
+        transcriptPath,
+        ...extraArgs,
+      ],
+      agents,
+    );
+    return { turns, error: errorSpy.mock.calls.flat().join("\n") };
+  };
+}
+
+// Usefulness: verifies a continuation flag that names another PR than the declared one is refused
+// before any turn runs, as a changed init field is refused, so no flag replaces the binding.
+test.each([
+  ["--require-ci", ["--require-ci", "7"]],
+  ["--pr", ["--pr", "7"]],
+])("--continue-from refuses %s for another PR than the declared one", async (_name, flags) => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const cont = await declareThenContinue(repo, transcriptPath, errorSpy);
+    const { turns, error } = await cont(flags);
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toContain("PR 42");
+    expect(error).toContain("cannot change");
+    expect(turns).toEqual([]);
+  });
+});
+
+// Usefulness: verifies a flag that names the declared PR is accepted, so an operator can add the
+// gate for the PR that the earlier run declared.
+test("--continue-from accepts --require-ci for the declared PR", async () => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const cont = await declareThenContinue(repo, transcriptPath, errorSpy);
+    const abort = JSON.stringify({ action: "abort", reason: "stop" });
+    const { turns, error } = await cont(["--require-ci", "42"], [abort]);
+
+    expect(error).not.toContain("cannot change");
+    expect(turns).toEqual(["codex"]);
+  });
+});
+
+// Usefulness: verifies a continuation that restores a declared PR refuses `--mode review-only`
+// before any turn runs, because that mode refuses a declared PR at init.
+test("--continue-from refuses --mode review-only for a declared PR", async () => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const cont = await declareThenContinue(repo, transcriptPath, errorSpy);
+    const reviewer = JSON.stringify({ action: "run_reviewer", prompt: "r" });
+    const { turns, error } = await cont(["--mode", "review-only"], [reviewer, finish]);
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toContain("review-only");
+    expect(error).toContain("PR 42");
+    expect(turns).toEqual([]);
+  });
+});
+
+// Usefulness: verifies a malformed declaration record is refused before any turn runs, so an edited
+// transcript cannot drop the declared-PR finish rule while the completion replay stays valid.
+test("--continue-from refuses a malformed pr-declared record", async () => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const cont = await declareThenContinue(repo, transcriptPath, errorSpy);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    transcript.events.find((e) => e.type === "pr-declared").pr = "42";
+    await writeFile(transcriptPath, JSON.stringify(transcript));
+    const { turns, error } = await cont([]);
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toContain("pr-declared");
+    expect(turns).toEqual([]);
   });
 });

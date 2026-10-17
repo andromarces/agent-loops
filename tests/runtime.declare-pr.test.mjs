@@ -39,7 +39,11 @@ const MATCH = {
 
 // The state the `git` double reports. A test changes it to move the head during the GitHub read or
 // to point the run remote at another repository.
-const gitState = { head: CLEAN_REPO_HEAD, remoteUrl: "https://github.com/owner/repo.git" };
+const gitState = {
+  head: CLEAN_REPO_HEAD,
+  branch: CLEAN_REPO_BRANCH,
+  remoteUrl: "https://github.com/owner/repo.git",
+};
 
 // `cleanRepoGit` plus the reads of the PR resolver: the head, which `gitState` can move, the branch
 // remote setting, which the run does not set, and the URL of the `origin` remote.
@@ -48,6 +52,8 @@ function declareGit(command, args, options) {
   switch (JSON.stringify(args)) {
     case '["rev-parse","--verify","-q","HEAD"]':
       return ok(gitState.head);
+    case '["symbolic-ref","--short","-q","HEAD"]':
+      return ok(gitState.branch);
     case `["config","--get","branch.${CLEAN_REPO_BRANCH}.remote"]`:
       return { exitCode: 1, stdout: "", stderr: "" };
     case '["remote","get-url","origin"]':
@@ -78,6 +84,7 @@ async function runWorkerPrRun({
   extra = {},
 }) {
   gitState.head = CLEAN_REPO_HEAD;
+  gitState.branch = CLEAN_REPO_BRANCH;
   gitState.remoteUrl = remoteUrl;
   gitDouble.answer = declareGit;
   const repo = await createCleanRepoDir();
@@ -178,6 +185,31 @@ test.each([
     },
   ],
   [
+    "a branch switch to the same commit during the read",
+    () => {
+      gitState.branch = "other";
+      return [MATCH];
+    },
+  ],
+  [
+    "a remote that moves to another repository during the read",
+    () => {
+      gitState.remoteUrl = "https://github.com/other/repo.git";
+      return [MATCH];
+    },
+  ],
+  [
+    "a PR URL whose number is not a number",
+    () => [{ ...MATCH, url: `${MATCH.url.slice(0, -2)}x` }],
+  ],
+  ["a PR URL with a path after the number", () => [{ ...MATCH, url: `${MATCH.url}/files` }]],
+  ["a PR URL for another number", () => [{ ...MATCH, url: `${MATCH.url.slice(0, -2)}43` }]],
+  [
+    "a reply that fills the list limit",
+    () =>
+      Array.from({ length: 100 }, (_, i) => ({ ...MATCH, number: i + 1, isCrossRepository: true })),
+  ],
+  [
     "a PR whose base repository is not the run repository",
     () => [{ ...MATCH, url: "https://github.com/other/repo/pull/42" }],
   ],
@@ -235,4 +267,35 @@ test.each([
   });
 
   expect(events.filter((e) => e.type === "pr-declared")).toHaveLength(1);
+});
+
+// Usefulness: verifies the runtime itself refuses a continued run whose PR flag or mode conflicts
+// with the restored PR before any turn runs, so a caller other than the CLI cannot replace the
+// binding either.
+test.each([
+  ["--pr for another PR", { pr: 7 }],
+  ["--require-ci for another PR", { requireCi: 7 }],
+  ["mode review-only", { mode: "review-only" }],
+])("a continued run with %s refuses the restored PR before any turn", async (_name, extra) => {
+  const orch = scripted([finish()]);
+  gitDouble.answer = declareGit;
+  const repo = await createCleanRepoDir();
+  try {
+    await expect(
+      runLoop({
+        task: "t",
+        cwd: repo,
+        maxSteps: 3,
+        roles: gateRoles(),
+        agents: { orch, work: scripted([]), rev: scripted([]) },
+        continued: true,
+        earlierPr: 42,
+        ...extra,
+      }),
+    ).rejects.toThrow(/declared PR 42|PR 42/);
+    expect(orch.recorded).toEqual([]);
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
 });

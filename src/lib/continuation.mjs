@@ -344,22 +344,62 @@ export function gateFromTranscript(earlier) {
 
 /**
  * The PR that the runtime declared in the earlier run after a worker turn (ADR 0043), read from
- * the last `pr-declared` event of its transcript. The earlier run must have had no `--pr` and no
- * `--require-ci`, because a run with either never resolves a PR. A malformed event, a non-positive
- * or non-integer PR, and a missing transcript give null. known-limit: the transcript carries no
- * signature, as for `gateFromTranscript`.
+ * its `pr-declared` events. Returns null when the transcript records none. A record that cannot be
+ * trusted throws and never reads as no declaration. A null drops the declared-PR finish rule while
+ * `gateFromTranscript` still accepts the transcript. These records throw: a `pr` that is not a
+ * positive integer, and two events with different PRs. A declared PR that differs from the `--pr`
+ * or `--require-ci` of the earlier run throws too. A run that had either flag for the same PR
+ * keeps it. known-limit: the transcript carries no signature, as for
+ * `gateFromTranscript`, so a removed event is not detected.
  * @param {{ events?: object[], options?: { pr?: number | null, requireCi?: number | null } } | null | undefined} earlier
  * @returns {number | null}
  */
 export function declaredPrFromTranscript(earlier) {
-  try {
-    if ((earlier?.options?.pr ?? null) !== null || (earlier?.options?.requireCi ?? null) !== null) {
-      return null;
+  const prs = new Set();
+  for (const event of earlier?.events ?? []) {
+    if (event?.type !== "pr-declared") continue;
+    if (!Number.isSafeInteger(event.pr) || event.pr <= 0) {
+      throw new Error(
+        `--continue-from has a malformed pr-declared event (pr: ${JSON.stringify(event.pr) ?? "missing"}).`,
+      );
     }
-    const event = earlier?.events?.findLast((entry) => entry?.type === "pr-declared");
-    return Number.isSafeInteger(event?.pr) && event.pr > 0 ? event.pr : null;
-  } catch {
-    return null;
+    prs.add(event.pr);
+  }
+  if (prs.size === 0) return null;
+  const [declared] = prs;
+  const flags = [earlier.options?.pr, earlier.options?.requireCi].filter((n) => n != null);
+  if (prs.size > 1 || flags.some((n) => n !== declared)) {
+    throw new Error(
+      `--continue-from has pr-declared events that disagree with each other or with the --pr and --require-ci of the earlier run (declared: ${[...prs].join(", ")}).`,
+    );
+  }
+  return declared;
+}
+
+/**
+ * Refuses a `--continue-from` flag that changes or conflicts with the declared PR. The declared PR
+ * is an init field of the continued run. A `--pr` or `--require-ci` for another PR is refused, as a
+ * changed init field is. A flag for the same PR is accepted. The `review-only` mode refuses a
+ * declared PR, as it refuses `--pr` at init.
+ * @param {number | null} declaredPr from `declaredPrFromTranscript`
+ * @param {{ pr: number | null, requireCi: number | null, mode: string | null }} options
+ */
+export function refuseDeclaredPrConflict(declaredPr, { pr, requireCi, mode }) {
+  if (declaredPr === null) return;
+  for (const [flag, value] of [
+    ["--pr", pr],
+    ["--require-ci", requireCi],
+  ]) {
+    if (value !== null && value !== declaredPr) {
+      throw new Error(
+        `${flag} ${value} cannot change PR ${declaredPr}, which the earlier run declared. Pass ${flag} ${declaredPr}, or omit the flag.`,
+      );
+    }
+  }
+  if (mode === "review-only") {
+    throw new Error(
+      `--mode review-only cannot continue a run that declared PR ${declaredPr}, because that mode refuses a declared PR.`,
+    );
   }
 }
 
