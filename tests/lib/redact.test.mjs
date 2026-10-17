@@ -332,30 +332,40 @@ test("two variables with the same value give the main output", () => {
 
 // Usefulness: verifies the setup and the marker choice stay near-linear in the number of unique
 // values (issue #521). Many secret-named variables then do not slow every redaction. The check
-// compares the best run time of 2,500 values with that of 40,000 values on a short text. A slow
-// runner does not change the verdict. The size ratio is 16, so linear growth gives about 16
-// (measured 15 to 17) and quadratic growth about 256 (measured 160 to 220). The bound of 64 sits
-// between them.
+// compares the CPU time of one run with 40,000 values with that of 16 runs with 2,500 values on a
+// short text. The size ratio is 16, so the work is equal when growth is linear: the CPU ratio is
+// about 1. Quadratic growth gives about 16. The bound of 4 sits between them. The check counts CPU
+// time, not wall time: parallel load (2 concurrent suites) lengthens the wall time of the long run
+// more than that of the short run and moved a wall-time ratio of 16 to 91 (issue #927). A round
+// that still reads over the bound repeats up to 5 times, and the lowest ratio counts.
 test("the redaction time grows near-linearly with the number of unique values", () => {
-  const run = (count, attempts) => {
+  const text = "a short text with value-7-synthetic-secret and no other value";
+  const envOf = (count) => {
     const env = {};
     for (let i = 0; i < count; i++) {
       env[`VAR_${i}_TOKEN`] = `value-${i}-synthetic-secret`;
     }
-    const text = "a short text with value-7-synthetic-secret and no other value";
-    let best = Infinity;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      const start = performance.now();
-      const out = redactEnvSecrets(text, env);
-      best = Math.min(best, performance.now() - start);
-      expect(out).toBe("a short text with [redacted:VAR_7_TOKEN] and no other value");
-    }
-    return best;
+    return env;
   };
-  run(1000, 2);
-  const small = run(2500, 5);
-  const large = run(40_000, 3);
-  expect(large / small).toBeLessThan(64);
+  const cpuMsOf = (runs, env) => {
+    const before = process.cpuUsage();
+    for (let i = 0; i < runs; i++) {
+      redactEnvSecrets(text, env);
+    }
+    const { user, system } = process.cpuUsage(before);
+    return (user + system) / 1000;
+  };
+  const smallEnv = envOf(2500);
+  const largeEnv = envOf(40_000);
+  expect(redactEnvSecrets(text, largeEnv)).toBe(
+    "a short text with [redacted:VAR_7_TOKEN] and no other value",
+  );
+  cpuMsOf(2, envOf(1000));
+  let lowest = Infinity;
+  for (let round = 0; round < 5 && lowest >= 4; round++) {
+    lowest = Math.min(lowest, cpuMsOf(1, largeEnv) / cpuMsOf(16, smallEnv));
+  }
+  expect(lowest).toBeLessThan(4);
 });
 
 // Usefulness: pins the fourth difference from the main output in ADR 0017: a variable whose name holds the
