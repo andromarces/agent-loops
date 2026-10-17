@@ -373,6 +373,10 @@ test(
 // only when the test writes the release file, which this test never does, and its 5 s bound ends it
 // with code 1, so the command step cannot start. The test aborts once the gate recorded its pid. A
 // kill that does not happen lets the bound end the gate, which writes `gate-expired.txt` and fails the test.
+// Windows check, 2026-10-17, Windows 11 Pro 10.0.26220, Node v26.8.1 (issue #709): with the kill in the
+// abort handler disabled, the test failed at the `gate-expired.txt` line:
+// `promise resolved "''" instead of rejecting`. After the test, no process ran from `steps.js` or from
+// the test directory. The gate had ended itself at its 5 s bound, so the check does not show a leaked gate.
 test(
   "an abort signal during the command startup kills the command",
   async () => {
