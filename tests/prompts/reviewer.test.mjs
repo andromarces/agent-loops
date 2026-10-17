@@ -508,7 +508,7 @@ test("reviewer prompt forbids ending a process by name or command-line match", (
 // oversubscribe it, and a turn without a supplied test result carries the rule too.
 test("every reviewer turn routes a full suite through the test slot wrapper of this run", async () => {
   for (const prompt of [reviewerPrompt("check"), reviewerPrompt("check", null, TEST_RUN, "none")]) {
-    expect(prompt).toContain("Run a targeted test file directly.");
+    expect(prompt).toMatch(/Run a targeted test file through the test slot wrapper with --if-held/);
     const match = prompt.match(/"([^"]+)" "([^"]+)" test-slot -- "<full suite command>"/);
     expect(match).not.toBeNull();
     expect(match[1]).toBe(process.execPath.replaceAll("\\", "/"));

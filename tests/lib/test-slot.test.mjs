@@ -335,6 +335,7 @@ test("a valid flag wins over an invalid environment value", () => {
   expect(parseTestSlotArgs(["--slots", "2", "--wait", "5", "--", "x"], env)).toEqual({
     slots: 2,
     waitSeconds: 5,
+    ifHeld: false,
     command: "x",
   });
   expect(() => parseTestSlotArgs(["--wait", "5", "--", "x"], env)).toThrow(/AGENT_LOOP_TEST_SLOTS/);
@@ -407,4 +408,77 @@ test("a failed slot claim and a failed acquisition-lock release are both reporte
   expect(output).toContain("slot lock failed");
   expect(output).toContain("release failed");
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+}, 30_000);
+
+// A command that writes `started`, then runs until the file `release` exists.
+const GATE = [
+  "import { existsSync, writeFileSync } from 'node:fs';",
+  "writeFileSync('started', 'x');",
+  "const timer = setInterval(() => existsSync('release') && (clearInterval(timer), process.exit(0)), 50);",
+].join(" ");
+
+// Usefulness: issue #921 (option 2) — with `--if-held` and all slots free, the command runs at once
+// and takes no slot: while it runs, a plain wrapper for the only slot still starts at once.
+test("--if-held runs at once while all slots are free and leaves the slot to others", async () => {
+  const ctx = await setup({ "gate.mjs": GATE, "mark.mjs": MARK });
+  const first = wrapper(["--if-held", "--slots", "1", "--wait", "0", "--", "node gate.mjs"], ctx);
+  await waitForFile(join(ctx.cwd, "started"));
+  const other = await wrapper(["--slots", "1", "--wait", "0", "--", "node mark.mjs"], ctx).done;
+  expect(other.code).toBe(0);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+  await writeFile(join(ctx.cwd, "release"), "x", "utf8");
+  expect((await first.done).code).toBe(0);
+}, 30_000);
+
+// Usefulness: issue #921 (option 2) — with `--if-held`, a held slot makes the command wait as a
+// slot holder, so a targeted run under load is throttled and exits 75 at the wait bound.
+test("--if-held waits while a slot is held and exits 75 at the bound", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  await holdSlot(ctx.root, liveOwner());
+  const { done } = wrapper(
+    ["--if-held", "--slots", "1", "--wait", "0", "--", "node mark.mjs"],
+    ctx,
+  );
+  expect((await done).code).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+}, 30_000);
+
+// Usefulness: issue #921 (option 2) — any held slot counts, not only a full table: with one of two
+// slots held, the command runs in the free slot, so a plain wrapper at once finds no slot (exit 75).
+test("--if-held runs as a slot holder when one of two slots is held", async () => {
+  const ctx = await setup({ "gate.mjs": GATE, "mark.mjs": MARK });
+  await holdSlot(ctx.root, liveOwner());
+  const first = wrapper(["--if-held", "--slots", "2", "--wait", "5", "--", "node gate.mjs"], ctx);
+  await waitForFile(join(ctx.cwd, "started"));
+  const other = await wrapper(["--slots", "2", "--wait", "0", "--", "node mark.mjs"], ctx).done;
+  expect(other.code).toBe(75);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+  await writeFile(join(ctx.cwd, "release"), "x", "utf8");
+  expect((await first.done).code).toBe(0);
+}, 30_000);
+
+// Usefulness: issue #921 (option 2) — a slot left by a dead process is not held, so `--if-held`
+// stays direct and a crashed holder never makes edit loops wait.
+test("--if-held ignores a slot whose owner is gone", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  await holdSlot(ctx.root, {
+    pid: await deadPid(),
+    startedAt: new Date().toISOString(),
+    nonce: "dead",
+  });
+  const { done } = wrapper(
+    ["--if-held", "--slots", "1", "--wait", "0", "--", "node mark.mjs"],
+    ctx,
+  );
+  expect((await done).code).toBe(0);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+}, 30_000);
+
+// Usefulness: issue #921 (option 2) — a missing slot directory means no slot is held, so the
+// first targeted run on a host runs directly instead of failing.
+test("--if-held runs directly when the slot directory does not exist", async () => {
+  const ctx = await setup({ "mark.mjs": MARK });
+  const { done } = wrapper(["--if-held", "--wait", "0", "--", "node mark.mjs"], ctx);
+  expect((await done).code).toBe(0);
+  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
 }, 30_000);

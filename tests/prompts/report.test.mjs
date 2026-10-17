@@ -10,6 +10,7 @@ import { reportBlock, testSlotRule } from "../../src/prompts/report.mjs";
 test("an unquotable path leaves only the required CI checks", () => {
   const rule = testSlotRule({ execPath: '/opt/no"de', platform: "linux" });
   expect(rule).not.toContain("test-slot");
+  expect(rule).not.toContain("--if-held");
   expect(rule).toContain("Run a targeted test file directly.");
   expect(rule).toMatch(/rely on the required CI checks/);
 });
@@ -25,6 +26,20 @@ test("the rule bounds a direct targeted run and sends a broader run through the 
   const withoutWrapper = testSlotRule({ execPath: '/opt/no"de', platform: "linux" });
   expect(withoutWrapper).toMatch(/at most 10 test files/);
   expect(withoutWrapper).toMatch(/broader run[^.]*rely on the required CI checks/);
+});
+
+// Usefulness: verifies requirement "a targeted run goes through the slot only while a slot is held"
+// (issue #921, ADR 0044): the rule sends a targeted run through the wrapper with --if-held, keeps
+// a full suite on the plain wrapper, and keeps the 10-file bound and the exit 75 handling.
+test("the rule routes a targeted run through the wrapper with --if-held", () => {
+  const rule = testSlotRule();
+  expect(rule).toMatch(/targeted test file through the test slot wrapper with --if-held/);
+  expect(rule).toMatch(
+    /directly while all slots are free[^.]*waits for a slot while any slot is held/,
+  );
+  expect(rule).toMatch(/at most 10 test files/);
+  expect(rule).toMatch(/full test suite only through the test slot wrapper, which waits/);
+  expect(rule).toMatch(/Exit code 75[^.]*unresolved, not as a pass or a failure/);
 });
 
 // Usefulness: verifies the rendered wrapper runs a suite command in the default shell of the host
