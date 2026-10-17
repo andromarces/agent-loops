@@ -432,6 +432,7 @@ Every child turn reports a Checks line that names the commands that ran and thei
 A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. A task is PR work when its change is delivered on a pull request. For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head. The run supplies the PR number, and the head commit comes from that PR. In a headless run, the task names the PR number. Apply these parent rules:
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
+- A worker result carries workTree, the runtime-owned head and clean state read after the turn. For PR work, when workTree shows clean: false, dispatch a worker to commit or discard the leftover change, not a reviewer.
 - Treat an accept without a Checks line as not accepted.
 - When the PR head cannot be resolved, do not finish as verified. Abort, or record the unresolved compare under notDone and open in the finish summary.
 - When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event and the headless run exits 4 instead of 0, so the recorded finish stays machine-distinct from a verified one. That marker is the only machine-readable record of the compare, and nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.
@@ -463,6 +464,7 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
     status: result.status,
     ...(result.status === "ok" ? { response: result.response } : { error: result.error }),
     ...(result.reviewed ? { reviewed: result.reviewed } : {}),
+    ...(result.workTree ? { workTree: result.workTree } : {}),
     // The status the runtime read for a declared PR, so the orchestrator holds
     // both it and the reviewer `Checks` line in one prompt and can compare them
     // (#320). A result with no read carries no field, so a turn that made no

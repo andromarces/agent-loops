@@ -34,6 +34,7 @@ import {
   setup,
   spyStdoutWrite,
   stdinPrompt,
+  WORKER_REPLY,
   withRepo,
 } from "./role-helpers.mjs";
 import {
@@ -422,6 +423,38 @@ test("reviewer dispatch reports clean: false on an uncommitted work tree", async
   expect(result.exitCode).toBe(0);
   expect(result.payload.reviewed.clean).toBe(false);
   expect(result.payload.reviewed.exact).toBe(true);
+});
+
+// Usefulness: verifies requirement "a worker envelope carries the work tree state from a snapshot
+// taken after the turn" (issue #910): a worker that leaves an uncommitted change shows clean: false
+// before any reviewer runs, and a worker that leaves none shows clean: true at the real head.
+test("worker dispatch reports the work tree state from after the turn", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const dirtyingWorker = recordingAdapter([
+    async (_state, _prompt, options) => {
+      await writeFile(join(options.cwd, "init.txt"), "left uncommitted\n");
+      return WORKER_REPLY;
+    },
+  ]);
+  const agents = { fake1: dirtyingWorker, fake2: recordingAdapter([]) };
+
+  const dirty = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(dirty.payload.workTree).toEqual({ head: (await snapshot(repo)).head, clean: false });
+  expect(dirty.payload.reviewed).toBeUndefined();
+
+  await writeFile(join(repo, "init.txt"), "hello\n");
+  await executeRoleCommand(withRepo(dispatchArgv([], "worker"), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  const state = await readRepoState(repo);
+  expect(state.lastResult.workTree.clean).toBe(true);
+  expect(state.lastResult.workTree.head).toMatch(/^[0-9a-f]{40}$/);
 });
 
 // Usefulness: verifies the dispatch seam carries the optional Checks, Notes,

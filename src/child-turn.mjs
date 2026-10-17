@@ -3,7 +3,7 @@ import { throwIfCanceled } from "./agents/shared.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
-import { reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
+import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import {
   carryTestRun,
   failedTestRun,
@@ -275,6 +275,22 @@ export async function runChild(options) {
     return status;
   };
 
+  /**
+   * Reads the work tree state after a worker turn: the `head` and `clean` of the shared
+   * `reviewedState`, so the worker field and the reviewer `reviewed` field never differ in
+   * meaning. A failed read warns and returns null, because the turn already ran. A cancel throws.
+   */
+  const readWorkTree = async () => {
+    try {
+      const { head, clean } = reviewedState(await snapshot(cwd, { signal }));
+      return { head, clean };
+    } catch (err) {
+      if (readProp(err, "isCanceled")) throw err;
+      logWarn(`worker: the work tree state read failed: ${firstErrorLine(readableErrorText(err))}`);
+      return null;
+    }
+  };
+
   // Declared outside the try so a turn that fails after the command ran still
   // reports what the runtime read and the work tree change it saw (ADR 0017).
   let testRun = null;
@@ -307,6 +323,9 @@ export async function runChild(options) {
           { signal },
         )
       : await runFn(buildWorkerPrompt);
+    // A worker may write, so the state after its turn is what the parent needs before a reviewer
+    // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
+    const workTree = roleName === "worker" ? await readWorkTree() : null;
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
@@ -321,6 +340,7 @@ export async function runChild(options) {
       response,
       ...(shellDenied ? { shellDenied } : {}),
       ...(reviewed ? { reviewed } : {}),
+      ...(workTree ? { workTree } : {}),
       ...(prChecks ? { prChecks } : {}),
       ...(testRun ? { testRun } : {}),
     };

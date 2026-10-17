@@ -70,6 +70,17 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, DO_NOT_FINISH_AS_VERIFIED),
   (text) => expectRule(text, BOTH_ACTIONS_ON_UNRESOLVED),
   (text) => expectRule(text, RECORD_UNDER_NOT_DONE_AND_OPEN),
+  // Issue #910: a PR-work worker envelope with `clean: false` gets a worker correction, never a
+  // reviewer.
+  (text) =>
+    expectRule(
+      text,
+      /workTree/,
+      /clean: false/,
+      /PR work/i,
+      /dispatch (?:a|the) worker/i,
+      /not (?:a|the) reviewer/i,
+    ),
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

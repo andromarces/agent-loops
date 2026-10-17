@@ -262,6 +262,9 @@ Apply these parent rules:
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the
   PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
+- A worker envelope carries `workTree`, the runtime-owned `head` and `clean` state read after
+  the turn. For PR work, when `workTree` shows `clean: false`, dispatch a worker to commit or
+  discard the leftover change, not a reviewer.
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.
