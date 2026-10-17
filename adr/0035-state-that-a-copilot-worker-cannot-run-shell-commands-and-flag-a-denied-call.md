@@ -30,6 +30,20 @@ The issue left three options open: pass a scoped allow flag, document that a Cop
 - A worker prompt that asks for a validation command can still go unmet on Copilot. The parent decides what to do with the flag.
 - The orchestrator already treats `copilot` as unable to run `role wait-checks` for the same reason (`src/prompts/orchestrator.mjs`).
 
+### Scoped allow flag check (issue #710)
+
+The host was Windows 11 Pro (10.0.26220), Node v26.8.1, and GitHub Copilot CLI 1.0.100-1.
+Each probe ran in a scratch directory under the temporary directory, with the prompt on standard input.
+The arguments were the runtime arguments `-s --no-ask-user --output-format json` and a new `--session-id`.
+The prompt asked for one shell command and for only its output.
+
+- Without an allow flag, `node --version` was refused. The `tool.execution_complete` event had `success: false`, and the assistant text repeated `Permission denied because no interactive user response was available`.
+- With `--allow-tool shell(node)`, `node --version` ran. The `tool.execution_complete` event had `success: true` and `shellExecution.exitCode` 0, and the assistant text was `v26.8.1`. Copilot named the tool `powershell` on this host.
+- With the same flag, `git --version` was refused with the same denial text. The scoped form allows only the named command.
+
+Exit code of every Copilot call was 0.
+Decision 1 stays: the flag works, but the runtime cannot know the validation commands of a task.
+
 ## Alternatives
 
 1. **`--allow-all-tools`**: rejected. It lifts every tool prompt, including write and network tools, and the issue asks for no broad flag.
@@ -47,5 +61,5 @@ Andro Marces
 - [Issue #713: A Copilot worker turn is denied shell commands that the worker contract requires](https://github.com/andromarces/agent-loops/issues/713)
 - [ADR 0014: Extend the step budget of a live run](0014-extend-the-step-budget-of-a-live-run.md)
 - Implementation: `runCopilot` in `src/agents/copilot.mjs`, `invoke` and `runChild` in `src/child-turn.mjs`, `dispatchPayload` in `src/role.mjs`, `resultPrompt` in `src/prompts/orchestrator.mjs`, and the worker preamble in `src/prompts/worker.mjs`. The rule is also stated in `docs/orchestrator-instructions.md` and [Supported agents](../docs/reference/architecture.md#supported-agents).
-- Live checks not verified: a scoped allow flag under the runtime arguments, the Copilot event that reports a denial, and a Windows host.
+- Live checks not verified: the Copilot event that reports a denial. The scoped allow flag is recorded under Consequences, on a Windows host.
 - [ADR Index](README.md)
