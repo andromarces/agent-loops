@@ -2,9 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
 
-Partially superseded by [ADR 0032: Detect a live session holder on interactive init, keep the headless gap](0032-detect-a-live-session-holder-on-interactive-init.md): the match rule of decision 1 no longer holds. A process holds a session when its command line passes the id through `--session-id`, `--resume`, or `-r` (as `--flag <id>` or `--flag=<id>`), not when it names the id anywhere. The rule applies to the check of decision 5 as well. The other decisions hold, so this ADR stays `accepted`.
+Superseded by [ADR 0032: Detect a live session holder on interactive init, keep the headless gap](0032-detect-a-live-session-holder-on-interactive-init.md): the match rule of decision 1 no longer holds. A process holds a session when its command line passes the id through `--session-id`, `--resume`, or `-r` (as `--flag <id>` or `--flag=<id>`), not when it names the id anywhere. The rule applies to the check of decision 5 as well. The other decisions remain in force.
 
 Supersedes [ADR 0029: Refuse --continue-from while a live process holds a Claude session](0029-refuse-continue-from-while-a-live-process-holds-a-claude-session.md). ADR 0029 is `superseded` as a whole. This ADR carries every decision of ADR 0029 and changes decision 5.
 

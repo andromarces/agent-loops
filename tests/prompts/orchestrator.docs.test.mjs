@@ -499,7 +499,7 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
   const index = await readRepoFile("adr/README.md");
   expect(adr1).toMatch(/## Status\s+superseded/);
   expect(adr1).toMatch(/Superseded by \[ADR 0019[^\]]*\]\(0019-/);
-  expect(text).toMatch(/## Status\s+accepted/);
+  expect(text).toMatch(/## Status\s+partially-superseded/);
   expect(text).toMatch(/Supersedes \[ADR 0001[^\]]*\]\(0001-hybrid-orchestrator-runtime\.md\)/);
   // The parts of ADR 0001 that still hold.
   expect(text).toMatch(/read-only by default/i);
@@ -512,7 +512,7 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
   const row = (n) => index.split("\n").find((line) => line.includes(`[${n}](`));
   expect(row("0001")).toMatch(/\|\s*superseded\s*\|/);
   expect(row("0001")).toMatch(/ADR 0019/);
-  expect(row("0019")).toMatch(/\|\s*accepted\s*\|/);
+  expect(row("0019")).toMatch(/\|\s*partially-superseded\s*\|/);
   expect(row("0019")).toMatch(/Supersedes ADR 0001/);
 });
 
