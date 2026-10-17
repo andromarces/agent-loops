@@ -10,8 +10,15 @@ import {
 } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
-import { applyResult, freshGate, matchingGate, resetGate } from "./lib/continuation.mjs";
+import {
+  applyResult,
+  freshGate,
+  matchingGate,
+  refuseDeclaredPrConflict,
+  resetGate,
+} from "./lib/continuation.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
+import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { invoke, runChild } from "./child-turn.mjs";
 import { decide } from "./orchestrator.mjs";
 import { failedTestRun, testCmdInput } from "./lib/test-cmd.mjs";
@@ -92,7 +99,9 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * dispatches no worker, so the CLI refuses `pr`, `requireAccept`, and `requireCi`,
  * the loop refuses a `run_worker` action, and a `finish` waits for a completed
  * reviewer turn (#337).
- * `continued`: the run resumes the sessions of an earlier headless run. The gate
+ * `continued`: the run resumes the sessions of an earlier headless run. With neither `pr` nor
+ * `requireCi`, it takes `earlierPr`, the PR that the earlier run declared (see
+ * `declaredPrFromTranscript`), and emits a `pr-declared` event with `restored: true`. The gate
  * state is restored only when `earlierGate` (see `gateFromTranscript`) is valid and
  * the work tree has the head and digest of its last reviewer turn. Otherwise it
  * resets and counts the work as unreviewed, so a finish under `requireAccept`
@@ -134,6 +143,7 @@ export async function runLoop(options) {
     mode = null,
     continued = false,
     earlierGate = null,
+    earlierPr = null,
     copyLocalFiles = true,
     onSessionAssigned,
     gh,
@@ -144,6 +154,10 @@ export async function runLoop(options) {
   const { orchestrator, worker, reviewer } = roles;
   // Only the Codex adapter applies a mode, so any other reviewer has none.
   const sandboxMode = reviewer?.kind === "codex" ? reviewerSandbox : null;
+
+  // A continued run keeps the PR that the earlier run declared. The CLI refuses a conflict first,
+  // and this check holds for any other caller, before the first child spawn.
+  refuseDeclaredPrConflict(continued ? earlierPr : null, { pr, requireCi, mode });
 
   logInfo(`agent loop started (cwd: ${cwd}, maxSteps: ${maxSteps})`);
 
@@ -192,6 +206,19 @@ export async function runLoop(options) {
   // against the older head (#293).
   let gate = restoredGate ?? (continued ? resetGate() : freshGate());
   let finishRefused = false;
+  // The PR input of the run: `--pr` from the start, or the one PR that the runtime resolves after
+  // a worker turn when the run has neither `--pr` nor `--require-ci` (ADR 0043). It changes once,
+  // from null to a number, and only the runtime sets it. A continued run with neither flag takes
+  // the PR that the earlier run declared, so the declared-PR finish rule survives `--continue-from`.
+  const restoredPr = continued && pr === null && requireCi === null ? earlierPr : null;
+  let declaredPr = pr ?? restoredPr;
+  // The event is written for every continuation of a declared run, whatever flags it passes. A
+  // flag can only name the declared PR, and a later continuation of this transcript reads the
+  // declaration from the event.
+  if (continued && earlierPr !== null) {
+    logInfo(`runtime kept PR ${earlierPr}, which the earlier run declared`);
+    onEvent({ type: "pr-declared", pr: earlierPr, stepsUsed: 0, restored: true });
+  }
 
   // The caller persists a pre-assigned id before the CLI starts, so a parent crash during a first
   // turn leaves it (issue #564). The role state is not touched here: the adapter owns it.
@@ -201,7 +228,7 @@ export async function runLoop(options) {
     task,
     maxSteps,
     requireAccept,
-    pr,
+    pr: declaredPr,
     requireCi,
     testCmd: testCmdText !== null,
     reviewerSandbox: sandboxMode,
@@ -320,7 +347,7 @@ export async function runLoop(options) {
         action,
         mode,
         requireAccept,
-        pr,
+        pr: declaredPr,
         requireCi,
         gate,
         finishRefused,
@@ -375,7 +402,7 @@ export async function runLoop(options) {
         // the turn and supplies the reviewer with the required-check status (#320,
         // #350). A run with neither reads nothing, and the reviewer keeps its own
         // read. The CLI refuses a `--pr` and a `--require-ci` that name different PRs.
-        pr: pr ?? requireCi,
+        pr: declaredPr ?? requireCi,
         // The command text comes from the `--test-cmd` run input only (ADR 0017).
         testCmd: testCmdInput(testCmdText, testCmdTimeout),
         reviewerSandbox: sandboxMode,
@@ -408,8 +435,41 @@ export async function runLoop(options) {
     gate = applyResult(gate, roleName, result);
     finishRefused = false;
 
-    prompt = resultPrompt({ result, stepsUsed, maxSteps });
+    let newlyDeclared = null;
+    if (isWorkerDispatch && declaredPr === null && requireCi === null) {
+      newlyDeclared = await declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs });
+      if (newlyDeclared !== null) {
+        declaredPr = newlyDeclared;
+        onEvent({ type: "pr-declared", pr: declaredPr, stepsUsed });
+      }
+    }
+
+    prompt = resultPrompt({ result, stepsUsed, maxSteps, declaredPr: newlyDeclared });
   }
+}
+
+/**
+ * Resolves the PR that a worker turn opened, for a run with no PR input (ADR 0043). The head
+ * compared is the work tree head that the runtime read after the turn, never a child report.
+ * Returns the PR number, or null when the run stays undeclared. A refusal to name one PR is
+ * logged as a warning, except for no PR at all, which is the usual state of a task with no PR.
+ * @returns {Promise<number | null>}
+ */
+async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
+  if (result.status !== "ok") return null;
+  const resolved = await resolveWorkerPr({
+    cwd,
+    head: result.workTree?.head ?? null,
+    gh,
+    signal,
+    timeoutMs: readTimeoutMs,
+  });
+  if (resolved.pr === null) {
+    if (!resolved.quiet) logWarn(`no PR declared after the worker turn: ${resolved.reason}`);
+    return null;
+  }
+  logInfo(`runtime declared PR ${resolved.pr} after the worker turn`);
+  return resolved.pr;
 }
 
 /**

@@ -343,6 +343,67 @@ export function gateFromTranscript(earlier) {
 }
 
 /**
+ * The PR that the runtime declared in the earlier run after a worker turn (ADR 0043), read from
+ * its `pr-declared` events. Returns null when the transcript records none. A record that cannot be
+ * trusted throws and never reads as no declaration. A null drops the declared-PR finish rule while
+ * `gateFromTranscript` still accepts the transcript. These records throw: a `pr` that is not a
+ * positive integer, and two events with different PRs. A declared PR that differs from the `--pr`
+ * or `--require-ci` of the earlier run throws too. A run that had either flag for the same PR
+ * keeps it. known-limit: the transcript carries no signature, as for
+ * `gateFromTranscript`, so a removed event is not detected.
+ * @param {{ events?: object[], options?: { pr?: number | null, requireCi?: number | null } } | null | undefined} earlier
+ * @returns {number | null}
+ */
+export function declaredPrFromTranscript(earlier) {
+  const prs = new Set();
+  for (const event of earlier?.events ?? []) {
+    if (event?.type !== "pr-declared") continue;
+    if (!Number.isSafeInteger(event.pr) || event.pr <= 0) {
+      throw new Error(
+        `--continue-from has a malformed pr-declared event (pr: ${JSON.stringify(event.pr) ?? "missing"}).`,
+      );
+    }
+    prs.add(event.pr);
+  }
+  if (prs.size === 0) return null;
+  const [declared] = prs;
+  const flags = [earlier.options?.pr, earlier.options?.requireCi].filter((n) => n != null);
+  if (prs.size > 1 || flags.some((n) => n !== declared)) {
+    throw new Error(
+      `--continue-from has pr-declared events that disagree with each other or with the --pr and --require-ci of the earlier run (declared: ${[...prs].join(", ")}).`,
+    );
+  }
+  return declared;
+}
+
+/**
+ * Refuses a `--continue-from` flag that changes or conflicts with the declared PR. The declared PR
+ * is an init field of the continued run. A `--pr` or `--require-ci` for another PR is refused, as a
+ * changed init field is. A flag for the same PR is accepted. The `review-only` mode refuses a
+ * declared PR, as it refuses `--pr` at init.
+ * @param {number | null} declaredPr from `declaredPrFromTranscript`
+ * @param {{ pr: number | null, requireCi: number | null, mode: string | null }} options
+ */
+export function refuseDeclaredPrConflict(declaredPr, { pr, requireCi, mode }) {
+  if (declaredPr === null) return;
+  for (const [flag, value] of [
+    ["--pr", pr],
+    ["--require-ci", requireCi],
+  ]) {
+    if (value !== null && value !== declaredPr) {
+      throw new Error(
+        `${flag} ${value} cannot change PR ${declaredPr}, which the earlier run declared. Pass ${flag} ${declaredPr}, or omit the flag.`,
+      );
+    }
+  }
+  if (mode === "review-only") {
+    throw new Error(
+      `--mode review-only cannot continue a run that declared PR ${declaredPr}, because that mode refuses a declared PR.`,
+    );
+  }
+}
+
+/**
  * Returns the gate state to restore, or null to keep the reset. The state
  * restores only when the record is well formed (strict booleans, a Git head or
  * `unborn`, a SHA-256 digest, `exact` true) and the current snapshot is exact with

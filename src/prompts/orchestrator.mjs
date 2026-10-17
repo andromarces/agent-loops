@@ -457,7 +457,15 @@ ${task}
   );
 }
 
-export function resultPrompt({ result, stepsUsed, maxSteps }) {
+/**
+ * The line that follows a worker result in which the runtime declared the run's PR (ADR 0043).
+ * The run has no `--require-ci` gate in that case, so the line states the finish rule.
+ */
+function declaredPrNote(pr) {
+  return `The runtime declared PR #${pr} for this run, because the worker turn opened it from this branch at this head. You did not choose it, and no turn can change it. The runtime now supplies the required-check status for PR #${pr} to every reviewer prompt. This run carries no --require-ci gate, which is a run input that no turn can supply. The runtime therefore refuses every finish, and unresolvedCompare does not change that. The only way to end the run is abort, with the missing --require-ci ${pr} gate named in the reason.`;
+}
+
+export function resultPrompt({ result, stepsUsed, maxSteps, declaredPr = null }) {
   const stepsRemaining = Math.max(0, maxSteps - stepsUsed);
   const payload = {
     role: result.role,
@@ -476,6 +484,7 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
     // A child turn whose adapter saw a refused tool call (ADR 0035), so a headless parent
     // holds what a `role dispatch` envelope carries. A turn with no denial carries no field.
     ...(result.shellDenied ? { shellDenied: true } : {}),
+    ...(declaredPr === null ? {} : { declaredPr }),
     stepsUsed,
     stepsRemaining,
   };
@@ -484,7 +493,7 @@ export function resultPrompt({ result, stepsUsed, maxSteps }) {
     `
 Role execution result:
 ${JSON.stringify(payload, null, 2)}
-
+${declaredPr === null ? "" : `\n${declaredPrNote(declaredPr)}\n`}
 ${NEXT_ACTION_TAIL}
 `.trim(),
   );

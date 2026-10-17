@@ -18,6 +18,8 @@ import {
 } from "./lib/args.mjs";
 import {
   carryEarlierEvents,
+  declaredPrFromTranscript,
+  refuseDeclaredPrConflict,
   gateFromTranscript,
   earlierReviewerSandbox,
   readContinuation,
@@ -386,8 +388,11 @@ Options:
                                 declared run with no matching gate cannot finish, and no
                                 turn in the run can add the flag. Off by default; a run with
                                 neither --pr nor --require-ci keeps the unresolvedCompare
-                                marker as the only record of an unresolved compare. A
-                                --mode review-only run refuses it outright.
+                                marker as the only record of an unresolved compare, until a
+                                worker turn opens a PR. The runtime then declares that PR
+                                once (ADR 0043). The run then refuses every finish, because
+                                it carries no gate. A --mode review-only run refuses it
+                                outright.
   --require-ci <pr>             Refuse finish until the runtime resolves the PR head from
                                 this pull request: the PR head must match the reviewed commit,
                                 the reviewed tree must be clean, the PR must not be behind its
@@ -441,12 +446,15 @@ function formatSummary(summary) {
  * Restores the sessions of a `--continue-from` run onto `roles` and verifies them.
  * A refused continuation writes no transcript: --transcript may name the --continue-from file,
  * and a refusal must not overwrite the sessions it holds.
- * @returns {Promise<{ earlierGate: object | null, reviewerSandbox: string | null } | null>}
+ * @returns {Promise<{ earlierGate: object | null, earlierPr: number | null, reviewerSandbox: string | null } | null>}
  *   `null` after printing the refusal and setting `process.exitCode`.
  */
 async function loadContinuation({ options, roles, events, agents, signal, reviewerSandbox }) {
   try {
     const earlier = await readContinuation(options.continueFrom);
+    // Before any session check or probe turn, so a refusal runs no child.
+    const earlierPr = declaredPrFromTranscript(earlier);
+    refuseDeclaredPrConflict(earlierPr, options);
     // Read for every reviewer kind, so a damaged record is refused, never skipped.
     const held = earlierReviewerSandbox(earlier, options.continueFrom);
     if (reviewerSandbox !== null) {
@@ -477,7 +485,7 @@ async function loadContinuation({ options, roles, events, agents, signal, review
     if (options.transcript && (await sameFile(options.transcript, options.continueFrom))) {
       carryEarlierEvents(events, earlier);
     }
-    return { earlierGate, reviewerSandbox };
+    return { earlierGate, earlierPr, reviewerSandbox };
   } catch (err) {
     console.error(`
 ${redactedText(readProp(err, "message") ?? err)}`);
@@ -749,6 +757,7 @@ export async function main(
   });
   try {
     let earlierGate = null;
+    let earlierPr = null;
     if (options.continueFrom) {
       const continuation = await loadContinuation({
         options,
@@ -759,7 +768,7 @@ export async function main(
         reviewerSandbox,
       });
       if (continuation === null) return;
-      ({ earlierGate, reviewerSandbox } = continuation);
+      ({ earlierGate, earlierPr, reviewerSandbox } = continuation);
     }
     const transcript = createTranscriptWriter({
       options,
@@ -834,6 +843,7 @@ export async function main(
         mode: options.mode,
         continued: Boolean(options.continueFrom),
         earlierGate,
+        earlierPr,
         copyLocalFiles: options.copyLocalFiles,
         // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
         // parent crash. known-limit: a failed write only warns, as at exit, and runs that share
