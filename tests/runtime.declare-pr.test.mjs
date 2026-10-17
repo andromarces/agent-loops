@@ -34,7 +34,28 @@ const MATCH = {
   headRefName: CLEAN_REPO_BRANCH,
   headRefOid: CLEAN_REPO_HEAD,
   isCrossRepository: false,
+  url: "https://github.com/owner/repo/pull/42",
 };
+
+// The state the `git` double reports. A test changes it to move the head during the GitHub read or
+// to point the run remote at another repository.
+const gitState = { head: CLEAN_REPO_HEAD, remoteUrl: "https://github.com/owner/repo.git" };
+
+// `cleanRepoGit` plus the reads of the PR resolver: the head, which `gitState` can move, the branch
+// remote setting, which the run does not set, and the URL of the `origin` remote.
+function declareGit(command, args, options) {
+  const ok = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
+  switch (JSON.stringify(args)) {
+    case '["rev-parse","--verify","-q","HEAD"]':
+      return ok(gitState.head);
+    case `["config","--get","branch.${CLEAN_REPO_BRANCH}.remote"]`:
+      return { exitCode: 1, stdout: "", stderr: "" };
+    case '["remote","get-url","origin"]':
+      return ok(gitState.remoteUrl);
+    default:
+      return cleanRepoGit(command, args, options);
+  }
+}
 
 // `gh pr list` for the run branch answers `listReply`; every other read is the shared gate fixture
 // for PR 42. `listReply` is a list of PRs, or a function that throws or returns a gh result.
@@ -50,8 +71,15 @@ function declareGh(listReply, calls = []) {
   };
 }
 
-async function runWorkerPrRun({ gh, orchReplies, extra = {} }) {
-  gitDouble.answer = cleanRepoGit;
+async function runWorkerPrRun({
+  gh,
+  orchReplies,
+  remoteUrl = "https://github.com/owner/repo.git",
+  extra = {},
+}) {
+  gitState.head = CLEAN_REPO_HEAD;
+  gitState.remoteUrl = remoteUrl;
+  gitDouble.answer = declareGit;
   const repo = await createCleanRepoDir();
   try {
     const rev = scripted([REVIEW_ACCEPT, REVIEW_ACCEPT]);
@@ -138,6 +166,21 @@ test.each([
   ["a PR head that differs from the work tree head", () => [{ ...MATCH, headRefOid: OTHER_HEAD }]],
   ["a PR from a fork", () => [{ ...MATCH, isCrossRepository: true }]],
   ["a PR for another branch", () => [{ ...MATCH, headRefName: "other" }]],
+  ["a malformed entry beside a match", () => [MATCH, {}]],
+  ["a null entry beside a match", () => [MATCH, null]],
+  ["an entry with a non-numeric number beside a match", () => [MATCH, { ...MATCH, number: "43" }]],
+  ["a PR with no url", () => [{ ...MATCH, url: undefined }]],
+  [
+    "a work tree head that changes during the read",
+    () => {
+      gitState.head = OTHER_HEAD;
+      return [MATCH];
+    },
+  ],
+  [
+    "a PR whose base repository is not the run repository",
+    () => [{ ...MATCH, url: "https://github.com/other/repo/pull/42" }],
+  ],
   ["a failed gh read", () => ({ status: 1, stdout: "", stderr: "gh: not logged in" })],
   ["an unparseable reply", () => ({ status: 0, stdout: "not json", stderr: "" })],
   [
@@ -161,4 +204,35 @@ test.each([
   expect(rev.recorded[0].prompt).not.toMatch(/runtime read/);
   expect(result.exitCode).toBe(0);
   expect(result.unresolvedCompare).toBe(true);
+});
+
+// Usefulness: verifies a remote that names another repository, or no GitHub repository, leaves the
+// run undeclared, so a PR in a repository other than the run repository never gates the run.
+test.each([
+  ["a remote that names another repository", "git@github.com:other/repo.git"],
+  ["a remote URL that names no GitHub repository", "/srv/git/repo.git"],
+])("%s leaves the run undeclared", async (_name, remoteUrl) => {
+  const { events } = await runWorkerPrRun({
+    gh: declareGh([MATCH]),
+    orchReplies: [work, finish({ unresolvedCompare: true })],
+    remoteUrl,
+  });
+
+  expect(events.some((e) => e.type === "pr-declared")).toBe(false);
+});
+
+// Usefulness: verifies the base repository check accepts the remote URL forms that GitHub gives, so
+// the check does not turn an SSH or mixed-case remote into an undeclared run.
+test.each([
+  ["scp", "git@github.com:Owner/Repo.git"],
+  ["ssh", "ssh://git@github.com/owner/repo"],
+  ["https with a trailing slash", "https://github.com/owner/repo.git/"],
+])("a PR whose base repository matches a %s remote is declared", async (_name, remoteUrl) => {
+  const { events } = await runWorkerPrRun({
+    gh: declareGh([MATCH]),
+    orchReplies: [work, finish(), finish()],
+    remoteUrl,
+  });
+
+  expect(events.filter((e) => e.type === "pr-declared")).toHaveLength(1);
 });

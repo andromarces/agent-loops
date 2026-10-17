@@ -93,7 +93,9 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * dispatches no worker, so the CLI refuses `pr`, `requireAccept`, and `requireCi`,
  * the loop refuses a `run_worker` action, and a `finish` waits for a completed
  * reviewer turn (#337).
- * `continued`: the run resumes the sessions of an earlier headless run. The gate
+ * `continued`: the run resumes the sessions of an earlier headless run. With neither `pr` nor
+ * `requireCi`, it takes `earlierPr`, the PR that the earlier run declared (see
+ * `declaredPrFromTranscript`), and emits a `pr-declared` event with `restored: true`. The gate
  * state is restored only when `earlierGate` (see `gateFromTranscript`) is valid and
  * the work tree has the head and digest of its last reviewer turn. Otherwise it
  * resets and counts the work as unreviewed, so a finish under `requireAccept`
@@ -135,6 +137,7 @@ export async function runLoop(options) {
     mode = null,
     continued = false,
     earlierGate = null,
+    earlierPr = null,
     copyLocalFiles = true,
     onSessionAssigned,
     gh,
@@ -195,8 +198,14 @@ export async function runLoop(options) {
   let finishRefused = false;
   // The PR input of the run: `--pr` from the start, or the one PR that the runtime resolves after
   // a worker turn when the run has neither `--pr` nor `--require-ci` (ADR 0043). It changes once,
-  // from null to a number, and only the runtime sets it.
-  let declaredPr = pr;
+  // from null to a number, and only the runtime sets it. A continued run with neither flag takes
+  // the PR that the earlier run declared, so the declared-PR finish rule survives `--continue-from`.
+  const restoredPr = continued && pr === null && requireCi === null ? earlierPr : null;
+  let declaredPr = pr ?? restoredPr;
+  if (restoredPr !== null) {
+    logInfo(`runtime restored PR ${restoredPr}, which the earlier run declared`);
+    onEvent({ type: "pr-declared", pr: restoredPr, stepsUsed: 0, restored: true });
+  }
 
   // The caller persists a pre-assigned id before the CLI starts, so a parent crash during a first
   // turn leaves it (issue #564). The role state is not touched here: the adapter owns it.
@@ -206,7 +215,7 @@ export async function runLoop(options) {
     task,
     maxSteps,
     requireAccept,
-    pr,
+    pr: declaredPr,
     requireCi,
     testCmd: testCmdText !== null,
     reviewerSandbox: sandboxMode,

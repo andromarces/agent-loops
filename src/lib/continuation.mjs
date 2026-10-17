@@ -343,6 +343,27 @@ export function gateFromTranscript(earlier) {
 }
 
 /**
+ * The PR that the runtime declared in the earlier run after a worker turn (ADR 0043), read from
+ * the last `pr-declared` event of its transcript. The earlier run must have had no `--pr` and no
+ * `--require-ci`, because a run with either never resolves a PR. A malformed event, a non-positive
+ * or non-integer PR, and a missing transcript give null. known-limit: the transcript carries no
+ * signature, as for `gateFromTranscript`.
+ * @param {{ events?: object[], options?: { pr?: number | null, requireCi?: number | null } } | null | undefined} earlier
+ * @returns {number | null}
+ */
+export function declaredPrFromTranscript(earlier) {
+  try {
+    if ((earlier?.options?.pr ?? null) !== null || (earlier?.options?.requireCi ?? null) !== null) {
+      return null;
+    }
+    const event = earlier?.events?.findLast((entry) => entry?.type === "pr-declared");
+    return Number.isSafeInteger(event?.pr) && event.pr > 0 ? event.pr : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Returns the gate state to restore, or null to keep the reset. The state
  * restores only when the record is well formed (strict booleans, a Git head or
  * `unborn`, a SHA-256 digest, `exact` true) and the current snapshot is exact with

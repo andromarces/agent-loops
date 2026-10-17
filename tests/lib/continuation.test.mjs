@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import {
   carryEarlierEvents,
+  declaredPrFromTranscript,
   gateFromTranscript,
   applyResult,
   freshGate,
@@ -637,4 +638,31 @@ test.each([
     warn.mockRestore();
     info.mockRestore();
   }
+});
+
+const declared = (pr) => ({ type: "pr-declared", pr, stepsUsed: 1 });
+
+// Usefulness: verifies a continued run recovers the PR that the runtime declared late in the
+// earlier run, so the declared-PR finish rule survives --continue-from (issue #919).
+test("declaredPrFromTranscript returns the PR of the last pr-declared event", () => {
+  const earlier = {
+    options: { pr: null, requireCi: null },
+    events: [declared(41), { type: "action" }, declared(42), { type: "gate" }],
+  };
+  expect(declaredPrFromTranscript(earlier)).toBe(42);
+});
+
+// Usefulness: verifies the recovery never invents a PR: a run with a PR flag, a malformed event,
+// and no event all give null, which keeps the run undeclared.
+test.each([
+  ["a run that had --pr", { options: { pr: 7, requireCi: 7 }, events: [declared(42)] }],
+  ["a run that had --require-ci", { options: { pr: null, requireCi: 7 }, events: [declared(42)] }],
+  ["a string PR", { options: { pr: null, requireCi: null }, events: [declared("42")] }],
+  ["a zero PR", { options: { pr: null, requireCi: null }, events: [declared(0)] }],
+  ["a fractional PR", { options: { pr: null, requireCi: null }, events: [declared(1.5)] }],
+  ["no pr-declared event", { options: { pr: null, requireCi: null }, events: [{ type: "gate" }] }],
+  ["no events", { options: { pr: null, requireCi: null } }],
+  ["no transcript", null],
+])("declaredPrFromTranscript returns null for %s", (_label, earlier) => {
+  expect(declaredPrFromTranscript(earlier)).toBeNull();
 });

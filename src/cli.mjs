@@ -18,6 +18,7 @@ import {
 } from "./lib/args.mjs";
 import {
   carryEarlierEvents,
+  declaredPrFromTranscript,
   gateFromTranscript,
   earlierReviewerSandbox,
   readContinuation,
@@ -444,7 +445,7 @@ function formatSummary(summary) {
  * Restores the sessions of a `--continue-from` run onto `roles` and verifies them.
  * A refused continuation writes no transcript: --transcript may name the --continue-from file,
  * and a refusal must not overwrite the sessions it holds.
- * @returns {Promise<{ earlierGate: object | null, reviewerSandbox: string | null } | null>}
+ * @returns {Promise<{ earlierGate: object | null, earlierPr: number | null, reviewerSandbox: string | null } | null>}
  *   `null` after printing the refusal and setting `process.exitCode`.
  */
 async function loadContinuation({ options, roles, events, agents, signal, reviewerSandbox }) {
@@ -474,13 +475,14 @@ async function loadContinuation({ options, roles, events, agents, signal, review
         }),
     });
     const earlierGate = gateFromTranscript(earlier);
+    const earlierPr = declaredPrFromTranscript(earlier);
     // --transcript rewrites its file at exit, so a run that names the file it
     // continues carries the earlier events into the rewrite, then a boundary
     // event that keeps the earlier outcome the rewrite replaces.
     if (options.transcript && (await sameFile(options.transcript, options.continueFrom))) {
       carryEarlierEvents(events, earlier);
     }
-    return { earlierGate, reviewerSandbox };
+    return { earlierGate, earlierPr, reviewerSandbox };
   } catch (err) {
     console.error(`
 ${redactedText(readProp(err, "message") ?? err)}`);
@@ -752,6 +754,7 @@ export async function main(
   });
   try {
     let earlierGate = null;
+    let earlierPr = null;
     if (options.continueFrom) {
       const continuation = await loadContinuation({
         options,
@@ -762,7 +765,7 @@ export async function main(
         reviewerSandbox,
       });
       if (continuation === null) return;
-      ({ earlierGate, reviewerSandbox } = continuation);
+      ({ earlierGate, earlierPr, reviewerSandbox } = continuation);
     }
     const transcript = createTranscriptWriter({
       options,
@@ -837,6 +840,7 @@ export async function main(
         mode: options.mode,
         continued: Boolean(options.continueFrom),
         earlierGate,
+        earlierPr,
         copyLocalFiles: options.copyLocalFiles,
         // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
         // parent crash. known-limit: a failed write only warns, as at exit, and runs that share

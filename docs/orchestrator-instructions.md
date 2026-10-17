@@ -919,11 +919,15 @@ passed `--pr` (ADR 0043).
   the work tree head that it read after the turn, and `gh pr list --head
   <branch> --state open`. A worker report, a task text, and an orchestrator
   action never choose or change the PR.
-- The runtime declares the PR only when one open PR comes from that branch in
-  this repository. Its head commit must equal the work tree head.
+- The runtime declares the PR only when one open PR comes from that branch. Its
+  base repository must be the repository of the branch remote. Its head commit
+  must equal the work tree head, before and after the `gh` read.
+- The branch remote is `branch.<branch>.remote`, or `origin` when none is set.
+  The PR URL gives the base repository, because `GH_REPO` can redirect `gh`.
 - These states leave the run undeclared: no match, several matches, a head
-  that differs, a PR from a fork, a detached head, and a failed `gh` read.
-  An unparseable `gh` reply does the same. The runtime logs a warning for each state except no
+  that differs, a PR from a fork, a PR for another base repository, and a
+  detached head. A head that moves during the read does the same. So do a failed
+  `gh` read, an unparseable reply, and any malformed entry. The runtime logs a warning for each state except no
   match. The next worker turn tries again.
 - A declaration emits one `pr-declared` event with `pr` and `stepsUsed`. The
   result prompt of that worker turn carries `declaredPr` and states the finish
@@ -934,6 +938,9 @@ passed `--pr` (ADR 0043).
   that flag is a run input. The declared-run refusal for a missing gate applies.
   `unresolvedCompare` does not end the run. Only `abort`, with the missing gate
   named in the reason, ends it.
+- `--continue-from` keeps a declared PR. The continued run restores it from the
+  `pr-declared` event of the earlier transcript when it passes neither `--pr` nor
+  `--require-ci`. It then emits a `pr-declared` event with `restored: true`.
 - To end such a task through a gated finish, start it with `--require-ci <n>` for
   an existing PR. Or use `agent-loop role` with `role declare-pr`, which takes
   the gate at `finish`.

@@ -17,11 +17,13 @@ The headless loop takes `--pr` and `--require-ci` on one command line before any
 ## Decision
 
 1. **Option 1 of issue #919.** After each worker turn that ends `ok`, a headless run with no `--pr` and no `--require-ci` resolves the PR. The runtime sets the run PR once. The run then behaves as one that passed `--pr`. The reviewer prompts carry the supplied status, and a finish applies the declared-PR rule.
-2. **Runtime-owned input.** The resolver reads Git and GitHub state only. It reads the checked-out branch, the work tree head that the runtime read after the turn, and `gh pr list --head <branch> --state open`. A worker report, a reviewer report, a task text, and an orchestrator action never choose or change the PR.
-3. **Fail closed.** The runtime declares a PR only when exactly one open PR from that branch exists in this repository. Its head commit must equal the work tree head. These states leave the run undeclared: zero matches, several matches, a different head, a PR from a fork, and a detached head. A failed `gh` read and an unparseable reply do the same. A later worker turn tries again.
+2. **Runtime-owned input.** The resolver reads Git and GitHub state only. It reads the checked-out branch and the URL of the branch remote. It reads the work tree head that the runtime read after the turn. It reads `gh pr list --head <branch> --state open`. A worker report, a reviewer report, a task text, and an orchestrator action never choose or change the PR.
+3. **Fail closed.** The runtime declares a PR only when exactly one open PR from that branch exists. Its base repository must be the repository of the branch remote. Its head commit must equal the work tree head, before and after the `gh` read. These states leave the run undeclared: zero matches, several matches, a different head, and a detached head. A PR from a fork and a PR for another base repository do the same. A work tree head that moves during the read does the same. So do a failed `gh` read, an unparseable reply, and any malformed entry. A later worker turn tries again.
 4. **One way, once.** After a declaration, no later turn resolves or changes the PR. A run with `--pr` or `--require-ci` at start never resolves a PR, so its behavior is unchanged.
 5. **Finish with no gate.** `--require-ci` is a run input that no turn can supply. A run that declares its PR this way has no `--require-ci`. It refuses every finish through the existing declared-PR rule, so it never ends through the `unresolvedCompare` path. The run ends only through `abort` with the missing gate named in the reason.
-6. **Visibility.** The runtime emits one `pr-declared` event with `pr` and `stepsUsed`. The result prompt of that worker turn carries `declaredPr` and states the finish rule, so the orchestrator knows before it plans a finish.
+6. **Base repository.** `GH_REPO` can point `gh` at another repository, so the check never trusts a `gh` answer for the run repository. The PR URL gives the base repository. The `git` remote of the branch gives the run repository: `branch.<branch>.remote`, or `origin` when none is set. Each must name the same GitHub host, owner, and repository, or the run stays undeclared.
+7. **Continuation.** `--continue-from` restores the declared PR from the last `pr-declared` event of the earlier transcript. It restores only when the earlier run had no `--pr` and no `--require-ci`, and the continued run passes neither flag. The continued run emits a `pr-declared` event with `restored: true`, so a later continuation keeps it.
+8. **Visibility.** The runtime emits one `pr-declared` event with `pr` and `stepsUsed`. The result prompt of that worker turn carries `declaredPr` and states the finish rule, so the orchestrator knows before it plans a finish.
 
 ## Consequences
 
@@ -47,9 +49,10 @@ Andro Marces
 
 - [Issue #919](https://github.com/andromarces/agent-loops/issues/919)
 - Partially supersedes [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md)
+- [PR #923](https://github.com/andromarces/agent-loops/pull/923)
 - Related issues: #286, #302, #320
 - Implementation:
-  - Source: `resolveWorkerPr` in `src/lib/worker-pr.mjs`, `runLoop` in `src/runtime.mjs`
-  - Tests: `tests/runtime.declare-pr.test.mjs`
+  - Source: `resolveWorkerPr` in `src/lib/worker-pr.mjs`, `runLoop` in `src/runtime.mjs`, `declaredPrFromTranscript` in `src/lib/continuation.mjs`
+  - Tests: `tests/runtime.declare-pr.test.mjs`, `tests/cli.continue-from.declared-pr.test.mjs`, `tests/lib/continuation.test.mjs`
   - Docs: `docs/orchestrator-instructions.md` (A headless task whose worker opens the PR), `docs/reference/usage.md`
 - [ADR Index](README.md)
