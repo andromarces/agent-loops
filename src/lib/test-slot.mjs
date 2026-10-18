@@ -3,7 +3,7 @@
 // host shares, so parallel full-suite runs do not oversubscribe the host.
 import { execa } from "execa";
 import { readdir } from "node:fs/promises";
-import { availableParallelism, constants, tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { killLiveTrees, killTreeOnExit } from "./exec-tree.mjs";
@@ -14,6 +14,8 @@ import { lockHeld, readLockOwner, tryStateLock } from "./state-lock.mjs";
 export const TEST_SLOT_USAGE_EXIT = 64;
 export const TEST_SLOT_TIMEOUT_EXIT = 75;
 const DEFAULT_WAIT_SECONDS = 1800;
+// One slot on every host: 2 slots on a 16-CPU host gave 15 s test timeouts (ADR 0046).
+const DEFAULT_SLOTS = 1;
 // The command runs with this variable set to `{"lock": <slot file>, "nonce": <owner nonce>}`.
 // A wrapper that starts with it set runs its command directly only while that slot file
 // still holds that nonce and a live owner, so a stale or hand-set marker is ignored.
@@ -38,7 +40,7 @@ stderr pass through, and stdin is closed.
 
 Options:
 
-  --slots <n>          Slot count. Defaults to max(1, floor(available CPUs / 8)).
+  --slots <n>          Slot count. Defaults to 1 (ADR 0046).
                        Env: AGENT_LOOP_TEST_SLOTS.
   --wait <seconds>     Longest wait for a slot. Defaults to 1800 (30 minutes).
                        0 is one attempt: run if a slot is free now, else exit 75
@@ -151,7 +153,7 @@ export function testSlotOptions(
 ) {
   slots ??= env.AGENT_LOOP_TEST_SLOTS
     ? slotCount(env.AGENT_LOOP_TEST_SLOTS, "AGENT_LOOP_TEST_SLOTS")
-    : Math.max(1, Math.floor(availableParallelism() / 8));
+    : DEFAULT_SLOTS;
   wait ??= env.AGENT_LOOP_TEST_SLOT_WAIT
     ? waitSeconds(env.AGENT_LOOP_TEST_SLOT_WAIT, "AGENT_LOOP_TEST_SLOT_WAIT")
     : DEFAULT_WAIT_SECONDS;

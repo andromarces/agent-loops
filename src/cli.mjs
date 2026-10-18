@@ -210,9 +210,9 @@ Subcommands:
   agent-loop test-slot          Run one command, quoted as one argument, through the
                                 platform shell only while fewer than N machine-wide test
                                 slots are held by live owners. --slots <n> (env
-                                AGENT_LOOP_TEST_SLOTS, default max(1, floor(CPUs / 8)))
-                                and --wait <seconds> (env AGENT_LOOP_TEST_SLOT_WAIT,
-                                default 1800); a flag wins over its env. --if-held runs
+                                AGENT_LOOP_TEST_SLOTS, default 1) and --wait <seconds>
+                                (env AGENT_LOOP_TEST_SLOT_WAIT, default 1800); a flag wins
+                                over its env. --if-held runs
                                 the command directly while no slot is held. Exits with the
                                 command's code, 75 when no slot was won within the wait,
                                 64 on a usage error, 130 or 143 on SIGINT or SIGTERM.

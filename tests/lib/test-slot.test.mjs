@@ -34,6 +34,13 @@ vi.mock("../../src/lib/state-lock.mjs", async (importOriginal) => {
   };
 });
 
+// Lets a test set the CPU count that the in-process module reads.
+const hostCpus = vi.hoisted(() => ({ count: null }));
+vi.mock("node:os", async (importOriginal) => {
+  const real = await importOriginal();
+  return { ...real, availableParallelism: () => hostCpus.count ?? real.availableParallelism() };
+});
+
 import { parseTestSlotArgs, runTestSlot } from "../../src/lib/test-slot.mjs";
 
 const CLI = fileURLToPath(new URL("../../src/cli.mjs", import.meta.url));
@@ -47,6 +54,7 @@ const SLOT_ENV = [
 const dirs = [];
 const savedEnv = Object.fromEntries(SLOT_ENV.map((name) => [name, process.env[name]]));
 afterEach(async () => {
+  hostCpus.count = null;
   slowLock.ms = 0;
   slowLock.failTableRelease = false;
   slowLock.failSlotLock = false;
@@ -330,6 +338,14 @@ test("a slot won after the wait bound does not run the command", async () => {
 
 // Usefulness: issue #847 review — a valid flag wins over an invalid environment value, and
 // the invalid value is refused only when no flag replaces it.
+// Verifies the #926 decision: the default is 1 slot on any CPU count, and an override still wins.
+// Not redundant: no other test reads the default.
+test("the default slot count is 1 on a 16-CPU host, and AGENT_LOOP_TEST_SLOTS overrides it", () => {
+  hostCpus.count = 16;
+  expect(parseTestSlotArgs(["--", "x"], {}).slots).toBe(1);
+  expect(parseTestSlotArgs(["--", "x"], { AGENT_LOOP_TEST_SLOTS: "3" }).slots).toBe(3);
+});
+
 test("a valid flag wins over an invalid environment value", () => {
   const env = { AGENT_LOOP_TEST_SLOTS: "many", AGENT_LOOP_TEST_SLOT_WAIT: "-1" };
   expect(parseTestSlotArgs(["--slots", "2", "--wait", "5", "--", "x"], env)).toEqual({
