@@ -475,7 +475,8 @@ the flag is unchanged.
   text.
 - The command runs inside a machine-wide test slot (`agent-loop test-slot`, ADR
   0039, ADR 0040), so runs that share a host do not run their suites beyond the
-  slot count. The slot wait has its own bound, `AGENT_LOOP_TEST_SLOT_WAIT` or
+  slot count. The default is 1 slot on every CPU count (ADR 0046), and
+  `AGENT_LOOP_TEST_SLOTS` overrides it. The slot wait has its own bound, `AGENT_LOOP_TEST_SLOT_WAIT` or
   1800 seconds, separate from `--test-cmd-timeout`, which starts once the slot is
   held. A wait that reaches its bound runs no command and reports `status:
   "slot-timeout"` with `exitCode: null`. It is neither a pass nor a failure, so
