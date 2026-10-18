@@ -23,8 +23,8 @@ import { refuseHeldIds, refuseHeldSessions } from "./lib/command-line.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
 import { isSpawnedByRun } from "./lib/exec.mjs";
-import { copyLocalFiles } from "./lib/local-files.mjs";
-import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
+import { copyLocalFiles, findDifferingLocalFiles } from "./lib/local-files.mjs";
+import { logInfo, logWarn, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { acceptanceFailure, parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
@@ -416,6 +416,7 @@ async function dispatchLocked(
         readProcessCommands,
       })
     : null;
+  const localFilesDiffer = init ? [] : await differingLocalFiles(state, args.cwd, signal);
 
   // Charge the step before execution, matching the headless runtime.
   state.stepsUsed += 1;
@@ -474,7 +475,10 @@ async function dispatchLocked(
     recordTurn(state, roleName, payload, at);
     await writeState(paths.stateFile, state);
     onEvent({ type: "result", role: roleName, result: payload, stepsUsed: state.stepsUsed });
-    return { exitCode: canceled ? 130 : 1, payload: withLocalFiles(payload, localFiles) };
+    return {
+      exitCode: canceled ? 130 : 1,
+      payload: withLocalFiles(payload, localFiles, localFilesDiffer),
+    };
   }
 
   state.lifecycle = "active";
@@ -490,7 +494,7 @@ async function dispatchLocked(
   // non-zero command outcome for the calling parent.
   return {
     exitCode: result.status === "ok" ? 0 : 1,
-    payload: withLocalFiles(dispatchPayload(roleName, result), localFiles),
+    payload: withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
   };
 }
 
@@ -567,6 +571,8 @@ async function applyInitSideEffects(
   if (state.copyLocalFiles) {
     localFiles = await copyLocalFiles(args.cwd, {}, { signal });
     if (localFiles) {
+      // Names only, so a later dispatch can compare each copy with its source.
+      state.localFilesCopied = localFiles.copied;
       onEvent({ type: "local-files", ...localFiles });
     }
   }
@@ -610,9 +616,35 @@ function recordRoleSession(target, source) {
   }
 }
 
-/** Adds the copied and skipped path names of the init copy to the envelope. */
-function withLocalFiles(payload, localFiles) {
-  return localFiles ? { ...payload, localFiles } : payload;
+/**
+ * Names the copied local files that differ from the main work tree now. Read-only: nothing is
+ * replaced. A failed comparison is a warning, not a failed dispatch, but a cancel propagates.
+ */
+async function differingLocalFiles(state, cwd, signal) {
+  if (!state.copyLocalFiles || !state.localFilesCopied?.length) {
+    return [];
+  }
+  try {
+    return await findDifferingLocalFiles(cwd, state.localFilesCopied, { signal });
+  } catch (err) {
+    if (readProp(err, "isCanceled")) {
+      throw err;
+    }
+    logWarn(`local files: the comparison with the main work tree failed (${err.code ?? "error"})`);
+    return [];
+  }
+}
+
+/**
+ * Adds the copied and skipped path names of the init copy to the envelope, and on a later
+ * dispatch the names of copies that differ from the main work tree.
+ */
+function withLocalFiles(payload, localFiles, localFilesDiffer = []) {
+  return {
+    ...payload,
+    ...(localFiles ? { localFiles } : {}),
+    ...(localFilesDiffer.length > 0 ? { localFilesDiffer } : {}),
+  };
 }
 
 /**

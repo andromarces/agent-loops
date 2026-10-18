@@ -22,7 +22,7 @@ agent-loop role dispatch --role reviewer --cwd /path/to/work-tree --prompt-file 
 Operations: `dispatch` (default), `finish`, `abort`, `extend`, `declare-pr`, `wait-checks`.
 
 - The run state lives at a fixed path derived from the resolved `--cwd` (`<os tmpdir>/agent-loops/runs/<sha256 of cwd, shortened>/state.json`, with `state.lock` beside it). There is no `--state` flag; `AGENT_LOOP_RUNS_ROOT` overrides the root for tests only.
-- `--no-copy-local-files` is an init field: it turns off the copy of local files into a linked `--cwd` (see [Local files in a linked work tree](harness-entry-points.md#local-files-in-a-linked-work-tree)). A later call that passes it against a run that copied is refused, like every other init field. The init envelope carries `localFiles: {"copied": [...], "skipped": [...]}` when the copy ran, and no such key otherwise.
+- `--no-copy-local-files` is an init field: it turns off the copy of local files into a linked `--cwd` (see [Local files in a linked work tree](harness-entry-points.md#local-files-in-a-linked-work-tree)). A later call that passes it against a run that copied is refused, like every other init field. The init envelope carries `localFiles: {"copied": [...], "skipped": [...]}` when the copy ran, and no such key otherwise. A later dispatch adds `localFilesDiffer: [...]` when a copied file differs from its source in the main work tree, by name only and never overwriting the copy.
 - The init call requires `--parent-session`: the CLI refuses an init without it,
   and refuses an unexpanded placeholder such as `${CLAUDE_SESSION_ID}` or
   `%CODEX_THREAD_ID%`, before any state is written. A run through `role` is

@@ -4,6 +4,7 @@ import {
   readdir,
   readFile,
   rename,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -12,7 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
-import { copyLocalFiles, MAX_WALKED_ENTRIES } from "../../src/lib/local-files.mjs";
+import {
+  copyLocalFiles,
+  findDifferingLocalFiles,
+  MAX_WALKED_ENTRIES,
+} from "../../src/lib/local-files.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
 import { createLinkedWorkTree, exists, removePath } from "../runtime-helpers.mjs";
 
@@ -1137,5 +1142,160 @@ test.skipIf(process.platform === "win32")(
     const report = await copyLocalFiles(linked);
 
     expect(report).toEqual({ copied: [".claude/a\nb.json"], skipped: [] });
+  },
+);
+
+// Usefulness: verifies a linked parent directory, a junction on Windows or a symlink elsewhere, on
+// the main work tree side is never read through, so equal bytes behind it do not hide a difference.
+// Not redundant: the other comparison tests use real directories only.
+test("a linked parent directory in the main work tree is reported and not read through", async () => {
+  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const outside = join(base, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "settings.json"), "same\n");
+  await symlink(outside, join(main, ".claude"), "junction");
+  await mkdir(join(linked, ".claude"));
+  await writeFile(join(linked, ".claude", "settings.json"), "same\n");
+
+  expect(await findDifferingLocalFiles(linked, [".claude/settings.json"])).toEqual([
+    ".claude/settings.json",
+  ]);
+});
+
+// Usefulness: verifies the same guard on the run work tree side.
+// Not redundant: it covers the second root that the comparison reads from.
+test("a linked parent directory in the run work tree is reported and not read through", async () => {
+  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const outside = join(base, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "settings.json"), "same\n");
+  await mkdir(join(main, ".claude"));
+  await writeFile(join(main, ".claude", "settings.json"), "same\n");
+  await symlink(outside, join(linked, ".claude"), "junction");
+
+  expect(await findDifferingLocalFiles(linked, [".claude/settings.json"])).toEqual([
+    ".claude/settings.json",
+  ]);
+});
+
+// Usefulness: verifies two different files over the 1 MiB cap are reported, because a skipped
+// comparison is not an equal hash.
+// Not redundant: the other comparison tests use small files.
+test("two different files over the size cap are reported as differing", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  const size = 1024 * 1024 + 1;
+  await writeFile(join(main, ".env"), Buffer.alloc(size, "a"));
+  await writeFile(join(linked, ".env"), Buffer.alloc(size, "b"));
+
+  expect(await findDifferingLocalFiles(linked, [".env"])).toEqual([".env"]);
+});
+
+// Usefulness: verifies a name that is missing from both work trees is not reported.
+// Not redundant: it keeps the missing-on-both-sides case apart from a skipped comparison.
+test("a name missing from both work trees is not reported", async () => {
+  const { linked } = await createLinked({ ignore: [".env"] });
+
+  expect(await findDifferingLocalFiles(linked, [".env"])).toEqual([]);
+});
+
+// Usefulness: verifies an ancestor that is swapped for a junction after the checks and before the
+// read is never read through, so equal bytes behind it do not hide a difference.
+// Not redundant: the static linked-ancestor tests link the directory before the comparison starts.
+test("an ancestor swapped for a link before the read is reported and not read through", async () => {
+  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  // The hooks receive canonical paths, which differ from `main` where the temp dir is a link (macOS).
+  const mainReal = await realpath(main);
+  const outside = join(base, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "settings.json"), "same\n");
+  await mkdir(join(main, ".claude"));
+  await writeFile(join(main, ".claude", "settings.json"), "other\n");
+  await mkdir(join(linked, ".claude"));
+  await writeFile(join(linked, ".claude", "settings.json"), "same\n");
+  let swapped = false;
+
+  const differing = await findDifferingLocalFiles(linked, [".claude/settings.json"], {
+    beforeRead: async (path) => {
+      if (!path.startsWith(mainReal) || swapped) {
+        return;
+      }
+      swapped = true;
+      await rename(join(main, ".claude"), join(main, ".claude-real"));
+      await symlink(outside, join(main, ".claude"), "junction");
+    },
+  });
+
+  expect(swapped).toBe(true);
+  expect(differing).toEqual([".claude/settings.json"]);
+});
+
+// Usefulness: verifies a link that is inserted after the ancestor check and left in place is
+// rejected before the file is opened, so no read starts on a path outside its work tree root.
+// Not redundant: the earlier swap test undoes nothing but swaps before the open; this one swaps
+// between the ancestor check and the open and also asserts that the open stage is never reached.
+test("a link inserted after the ancestor check is rejected before any read starts", async () => {
+  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  // The hooks receive canonical paths, which differ from `main` where the temp dir is a link (macOS).
+  const mainReal = await realpath(main);
+  const outside = join(base, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "settings.json"), "same\n");
+  await mkdir(join(main, ".claude"));
+  await writeFile(join(main, ".claude", "settings.json"), "other\n");
+  await mkdir(join(linked, ".claude"));
+  await writeFile(join(linked, ".claude", "settings.json"), "same\n");
+  let swapped = false;
+  const opened = [];
+
+  const differing = await findDifferingLocalFiles(linked, [".claude/settings.json"], {
+    afterAncestorCheck: async (path) => {
+      if (!path.startsWith(mainReal) || swapped) {
+        return;
+      }
+      swapped = true;
+      await rename(join(main, ".claude"), join(main, ".claude-real"));
+      await symlink(outside, join(main, ".claude"), "junction");
+    },
+    beforeRead: async (path) => {
+      opened.push(path);
+    },
+  });
+
+  expect(swapped).toBe(true);
+  expect(differing).toEqual([".claude/settings.json"]);
+  expect(opened.filter((path) => path.startsWith(mainReal))).toEqual([]);
+});
+
+// Usefulness: verifies a file that disappears from both work trees after the first probe is
+// reported as not comparable, not as missing from both sides.
+// Not redundant: the missing-from-both test removes the file before the comparison starts.
+test("a file that disappears after the first probe is reported, not treated as missing", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+
+  const differing = await findDifferingLocalFiles(linked, [".env"], {
+    beforeRead: async (path) => {
+      await rm(path);
+    },
+  });
+
+  expect(differing).toEqual([".env"]);
+});
+
+// Usefulness: verifies an unchanged file is not reported when `--cwd` is reached through a link to
+// its parent directory, the shape of `/var` and `/private/var` on macOS.
+// Not redundant: the other comparison tests use the canonical temp path. Not run on Windows, which
+// needs a privilege for a directory symlink.
+test.skipIf(process.platform === "win32")(
+  "an unchanged file is not reported when --cwd is reached through a linked parent directory",
+  async () => {
+    const { main, linked, base } = await createLinked({ ignore: [".env"] });
+    await writeFile(join(main, ".env"), "same\n");
+    await writeFile(join(linked, ".env"), "same\n");
+    const alias = join(base, "alias");
+    await symlink(base, alias);
+
+    expect(await findDifferingLocalFiles(join(alias, "linked"), [".env"])).toEqual([]);
   },
 );

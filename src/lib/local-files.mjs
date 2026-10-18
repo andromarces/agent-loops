@@ -3,6 +3,7 @@
 // `copyFile` and `COPYFILE_EXCL`, so an existing file is never replaced or
 // deleted. The module never prints, logs, or returns file content: every report
 // is a path name.
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -219,6 +220,45 @@ async function findMainWorkTree(root, entries, read) {
 }
 
 /**
+ * Resolves the work trees of a copy or a comparison: returns `{ entries, mainReal, rootReal }`
+ * (the registered work trees, and the canonical paths of the main and the linked work tree), or
+ * null, with the reason logged, when nothing can be read from or written to: a path holds a
+ * control character, there is no main work tree for this copy, or `cwd` is the main work tree.
+ */
+async function locateWorkTrees(cwd, read) {
+  // A path with a control character is not trusted to survive a round trip through
+  // Git's output or a path comparison, so the copy refuses it and copies nothing.
+  const refuse = (what) => {
+    logInfo(`local files: ${what} holds a control character, so nothing is copied`);
+    return null;
+  };
+  if (hasControlCharacter(cwd)) {
+    return refuse("--cwd");
+  }
+  const top = stripLf((await read(cwd, ["rev-parse", "--show-toplevel"])).stdout);
+  if (hasControlCharacter(top)) {
+    return refuse("the work tree path");
+  }
+  // The operator's own `--cwd` names the work tree when Git names the same
+  // directory, so a Git echo of the path is not what the later commands run in.
+  const root = (await realpath(cwd)) === (await realpath(top)) ? cwd : top;
+  const entries = await readWorkTrees(root, read);
+  if (entries.some((entry) => hasControlCharacter(entry.path))) {
+    return refuse("a registered work tree path");
+  }
+  const found = await findMainWorkTree(root, entries, read);
+  if (found.refused !== undefined) {
+    return refuse(found.refused);
+  }
+  if (found.main === null) {
+    logInfo("local files: no main work tree found, so nothing is copied");
+    return null;
+  }
+  const rootReal = await realpath(root);
+  return found.main === rootReal ? null : { entries, mainReal: found.main, rootReal };
+}
+
+/**
  * Collects the candidate files of one listed path into `ctx.files` as
  * `{ rel, src, canon }`: `canon` is the canonical path of the file, which the copy
  * compares with the path it resolves again just before it reads. No symlink is followed: a symlink entry is skipped by name, and
@@ -303,40 +343,11 @@ export async function copyLocalFiles(
     );
   }
   const read = (dir, args, options) => git(dir, args, { signal, ...options });
-  // A path with a control character is not trusted to survive a round trip through
-  // Git's output or a path comparison, so the copy refuses it and copies nothing.
-  const refuse = (what) => {
-    logInfo(`local files: ${what} holds a control character, so nothing is copied`);
-    return null;
-  };
-  if (hasControlCharacter(cwd)) {
-    return refuse("--cwd");
-  }
-  const top = stripLf((await read(cwd, ["rev-parse", "--show-toplevel"])).stdout);
-  if (hasControlCharacter(top)) {
-    return refuse("the work tree path");
-  }
-  // The operator's own `--cwd` names the work tree when Git names the same
-  // directory, so a Git echo of the path is not what the later commands run in.
-  const root = (await realpath(cwd)) === (await realpath(top)) ? cwd : top;
-  const entries = await readWorkTrees(root, read);
-  if (entries.some((entry) => hasControlCharacter(entry.path))) {
-    return refuse("a registered work tree path");
-  }
-  const found = await findMainWorkTree(root, entries, read);
-  if (found.refused !== undefined) {
-    return refuse(found.refused);
-  }
-  const mainReal = found.main;
-  if (mainReal === null) {
-    logInfo("local files: no main work tree found, so nothing is copied");
+  const located = await locateWorkTrees(cwd, read);
+  if (located === null) {
     return null;
   }
-  const rootReal = await realpath(root);
-
-  if (mainReal === rootReal) {
-    return null;
-  }
+  const { entries, mainReal, rootReal } = located;
   // A registered work tree is never read from (inside the main work tree) and
   // never written into (inside the linked work tree), whether or not its `.git`
   // entry is still there.
@@ -491,4 +502,133 @@ async function copyOne({ rel, src, canon }, rootReal, blocked, hooks) {
   } finally {
     await source?.close();
   }
+}
+
+const MISSING = Symbol("missing");
+const NOT_COMPARABLE = Symbol("not comparable");
+
+/**
+ * Returns the SHA-256 of the regular file `rel` under `base` (a canonical path), `MISSING` when
+ * the first probe finds no file, or `NOT_COMPARABLE` when it cannot be compared: a link on the
+ * final entry or on any ancestor below `base`, a non-regular file, a file over the size cap, a
+ * path that does not resolve to `base` plus `rel`, or a file that changed or vanished after the
+ * first probe. The caller never counts `NOT_COMPARABLE` as equal, even when both sides return it.
+ *
+ * Order, so that no read starts on a path that is not proven inside `base`:
+ * 1. Resolve the canonical path and `lstat` the file. An absence here is the only `MISSING`.
+ * 2. Require the canonical path to equal `base` plus `rel`, then check the ancestors, then
+ *    resolve the path again and require the same canonical path.
+ * 3. Open the file. `O_NOFOLLOW` is 0 on Windows, so the identity checks carry the guard: the
+ *    open handle must be the regular file with the `dev` and `ino` of the first `lstat`, and the
+ *    path must still resolve to the same canonical path.
+ * 4. Read from the handle only, then check the ancestors and the canonical path again.
+ * Any mismatch, and any error after step 1, is `NOT_COMPARABLE`.
+ * known-limit: a swap that is made and undone between two checks, or a swap of an ancestor for a
+ * link to a directory that holds a hard link to the same file, is not detected. A swap that stays
+ * in place is caught before the read. The swap needs local write access to the work trees. Node
+ * has no descriptor-relative open.
+ */
+async function sha256Of(base, rel, { beforeRead, afterAncestorCheck } = {}) {
+  const path = join(base, rel);
+  let canon;
+  let named;
+  try {
+    canon = await realpath(path);
+    named = await lstat(path, { bigint: true });
+  } catch (err) {
+    if (err.code === "ENOENT" || err.code === "ENOTDIR") {
+      return MISSING;
+    }
+    throw err;
+  }
+  let handle = null;
+  try {
+    if (
+      canon !== path ||
+      !named.isFile() ||
+      named.size > BigInt(MAX_FILE_BYTES) ||
+      (await hasBlockedAncestor(base, rel, new Set()))
+    ) {
+      return NOT_COMPARABLE;
+    }
+    await afterAncestorCheck?.(path);
+    if ((await realpath(path)) !== canon) {
+      return NOT_COMPARABLE;
+    }
+    await beforeRead?.(path);
+    handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat({ bigint: true });
+    if (
+      !opened.isFile() ||
+      opened.size > BigInt(MAX_FILE_BYTES) ||
+      !sameFile(opened, named) ||
+      !(await namesFile(path, canon, opened))
+    ) {
+      return NOT_COMPARABLE;
+    }
+    const hash = createHash("sha256")
+      .update(await handle.readFile())
+      .digest("hex");
+    if (
+      (await hasBlockedAncestor(base, rel, new Set())) ||
+      !(await namesFile(path, canon, opened))
+    ) {
+      return NOT_COMPARABLE;
+    }
+    return hash;
+  } catch (err) {
+    // A file that vanished, a link met by `O_NOFOLLOW`, or a path that cannot be opened after the
+    // first probe is not comparable, never "missing": an absence after the probe is not proven.
+    if (["ENOENT", "ENOTDIR", "ELOOP", "EACCES", "EPERM"].includes(err.code)) {
+      return NOT_COMPARABLE;
+    }
+    throw err;
+  } finally {
+    await handle?.close();
+  }
+}
+
+/**
+ * Names the copied local files whose content differs from the file of the same name in the main
+ * work tree, so a parent can see a stale copy. `names` is the `copied` list of the init copy.
+ * Content is compared by SHA-256 and is never returned or logged. Nothing is written: a copy that
+ * a turn changed is reported like one that the main work tree outgrew. A name that is not a plain
+ * relative path, a link on the file or on any directory above it (in either work tree), a file
+ * over 1 MiB (even when both sides are over), and a file missing from one side count as differing,
+ * and no link is read through. Only a name that is missing from both sides is not reported.
+ * Returns sorted path names, or an empty list when there is no main work tree.
+ * @param {string} cwd
+ * @param {string[]} names
+ * `afterAncestorCheck` and `beforeRead` are test seams that run with the absolute path after the
+ * ancestor check and just before the file is opened.
+ * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
+ * @returns {Promise<string[]>}
+ */
+export async function findDifferingLocalFiles(cwd, names, { signal, ...hooks } = {}) {
+  const located = await locateWorkTrees(cwd, (dir, args, options) =>
+    git(dir, args, { signal, ...options }),
+  );
+  if (located === null) {
+    return [];
+  }
+  const differing = [];
+  for (const rel of names) {
+    if (
+      typeof rel !== "string" ||
+      rel === "" ||
+      isAbsolute(rel) ||
+      rel.split("/").some((part) => part === ".." || part === "")
+    ) {
+      differing.push(String(rel));
+      continue;
+    }
+    const [source, copy] = await Promise.all([
+      sha256Of(located.mainReal, rel, hooks),
+      sha256Of(located.rootReal, rel, hooks),
+    ]);
+    if (source === NOT_COMPARABLE || copy === NOT_COMPARABLE || source !== copy) {
+      differing.push(rel);
+    }
+  }
+  return differing.sort();
 }

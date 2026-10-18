@@ -307,6 +307,14 @@ The copy duplicates secrets such as `.env` into the run work tree, so remove tha
 work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
 the copy off. It is an init field, so a later call cannot change it.
 
+The copy runs once. A later dispatch never replaces or refreshes a copied file, but it
+compares each copied file with its source in the main work tree by hash and reports the
+names that differ as `localFilesDiffer: [...]` in the envelope. The key is absent when no
+copy differs. A copy differs when the main work tree changed the file after init, or when a
+turn changed the copy: the report does not tell which. When the key appears, check whether
+the main work tree holds a newer rule file, such as `AGENTS.md`, and tell the child to refresh
+that file by hand when it holds no turn edit. Never read, print, or quote the file to decide.
+
 A refused `--cwd` is not the parent's to repair: end the run, name the path and
 the refusal in the reason, and leave the work tree to a maintainer, who decides
 whether to recreate it and start a new run.

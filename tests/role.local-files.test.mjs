@@ -151,3 +151,66 @@ test("a refused init copies nothing", async () => {
   expect(result.exitCode).toBe(1);
   expect(await exists(join(linked, ".env"))).toBe(false);
 });
+
+const dispatchAgain = (linked) =>
+  executeRoleCommand(withRepo(dispatchArgv([]), linked), basicDeps());
+
+// Usefulness: verifies acceptance 2 — a local file that changed in the main work tree after init
+// is named in the next dispatch envelope, with no content.
+// Not redundant: no other test dispatches a second time after the main copy changed.
+test("a later dispatch names a local file that changed in the main work tree", async () => {
+  await setup();
+  const { main, linked } = await linkedWithEnv();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
+  await writeFile(join(main, ".env"), "KEY=CHANGED-VALUE-MUST-NOT-APPEAR\n");
+
+  const result = await dispatchAgain(linked);
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.localFilesDiffer).toEqual([".env"]);
+  expect(JSON.stringify(result.payload)).not.toContain("CHANGED-VALUE-MUST-NOT-APPEAR");
+});
+
+// Usefulness: verifies the envelope stays unchanged while every copy still equals its source.
+// Not redundant: it is the no-difference case of the test above.
+test("a later dispatch reports nothing while the copies equal their sources", async () => {
+  await setup();
+  const { linked } = await linkedWithEnv();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
+
+  const result = await dispatchAgain(linked);
+
+  expect(result.payload).not.toHaveProperty("localFilesDiffer");
+});
+
+// Usefulness: verifies acceptance 3 — a copy that a turn changed is never overwritten, even when
+// the main work tree changed too.
+// Not redundant: it reads the copy after the dispatch that reported the difference.
+test("a later dispatch never overwrites a copied file that a turn changed", async () => {
+  await setup();
+  const { main, linked } = await linkedWithEnv();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
+  await writeFile(join(linked, ".env"), "KEY=TURN-EDIT\n");
+  await writeFile(join(main, ".env"), "KEY=MAIN-EDIT\n");
+
+  const result = await dispatchAgain(linked);
+
+  expect(result.payload.localFilesDiffer).toEqual([".env"]);
+  expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=TURN-EDIT\n");
+});
+
+// Usefulness: verifies a run that opted out of the copy never compares or reports files.
+// Not redundant: it guards the opt-out path of the later-dispatch check.
+test("a later dispatch of an opted-out run reports nothing", async () => {
+  await setup();
+  const { main, linked } = await linkedWithEnv();
+  await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--no-copy-local-files"]), linked),
+    basicDeps(),
+  );
+  await writeFile(join(main, ".env"), "KEY=CHANGED\n");
+
+  const result = await dispatchAgain(linked);
+
+  expect(result.payload).not.toHaveProperty("localFilesDiffer");
+});
