@@ -510,27 +510,62 @@ const NOT_COMPARABLE = Symbol("not comparable");
 /**
  * Returns the SHA-256 of the regular file `rel` under `base`, `MISSING` when it does not exist, or
  * `NOT_COMPARABLE` when it cannot be compared: a link on the final entry or on any ancestor below
- * `base`, a non-regular file, or a file over the size cap. The caller never counts
- * `NOT_COMPARABLE` as equal, even when both sides return it.
+ * `base`, a non-regular file, a file over the size cap, or a file that changed identity while it
+ * was read. The caller never counts `NOT_COMPARABLE` as equal, even when both sides return it.
+ *
+ * Race guard, the same identity checks as `copyOne`, with the read taken from the open handle:
+ * the path is resolved and `lstat`ed first; the file is opened without following a final link; the
+ * open handle must be the regular file with the `dev` and `ino` of that `lstat` and the path must
+ * still resolve to the same canonical path; the bytes are read from the handle only; then the
+ * ancestors and the canonical path are checked again. Any mismatch is `NOT_COMPARABLE`.
+ * known-limit: a swap that is undone before the second check, or a swap of an ancestor for a
+ * link to a directory that holds a hard link to the same file, is not detected. The swap needs
+ * local write access to the work trees. Node has no descriptor-relative open.
  */
-async function sha256Of(base, rel) {
+async function sha256Of(base, rel, beforeRead) {
+  const path = join(base, rel);
+  let handle = null;
   try {
     if (await hasBlockedAncestor(base, rel, new Set())) {
       return NOT_COMPARABLE;
     }
-    const path = join(base, rel);
-    const stat = await lstat(path);
-    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
+    const canon = await realpath(path);
+    const named = await lstat(path, { bigint: true });
+    if (!named.isFile() || named.size > BigInt(MAX_FILE_BYTES)) {
       return NOT_COMPARABLE;
     }
-    return createHash("sha256")
-      .update(await readFile(path))
+    await beforeRead?.(path);
+    handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat({ bigint: true });
+    if (
+      !opened.isFile() ||
+      opened.size > BigInt(MAX_FILE_BYTES) ||
+      !(await namesFile(path, canon, opened)) ||
+      !sameFile(opened, named)
+    ) {
+      return NOT_COMPARABLE;
+    }
+    const hash = createHash("sha256")
+      .update(await handle.readFile())
       .digest("hex");
+    if (
+      (await hasBlockedAncestor(base, rel, new Set())) ||
+      !(await namesFile(path, canon, opened))
+    ) {
+      return NOT_COMPARABLE;
+    }
+    return hash;
   } catch (err) {
     if (err.code === "ENOENT" || err.code === "ENOTDIR") {
       return MISSING;
     }
+    // A link met by `O_NOFOLLOW` or a path that cannot be opened is not comparable, not a failure.
+    if (err.code === "ELOOP" || err.code === "EACCES" || err.code === "EPERM") {
+      return NOT_COMPARABLE;
+    }
     throw err;
+  } finally {
+    await handle?.close();
   }
 }
 
@@ -545,10 +580,11 @@ async function sha256Of(base, rel) {
  * Returns sorted path names, or an empty list when there is no main work tree.
  * @param {string} cwd
  * @param {string[]} names
- * @param {{ signal?: AbortSignal }} [options]
+ * `beforeRead` is a test seam that runs with the absolute path just before the file is opened.
+ * @param {{ signal?: AbortSignal, beforeRead?: (path: string) => Promise<void> }} [options]
  * @returns {Promise<string[]>}
  */
-export async function findDifferingLocalFiles(cwd, names, { signal } = {}) {
+export async function findDifferingLocalFiles(cwd, names, { signal, beforeRead } = {}) {
   const located = await locateWorkTrees(cwd, (dir, args, options) =>
     git(dir, args, { signal, ...options }),
   );
@@ -567,8 +603,8 @@ export async function findDifferingLocalFiles(cwd, names, { signal } = {}) {
       continue;
     }
     const [source, copy] = await Promise.all([
-      sha256Of(located.mainReal, rel),
-      sha256Of(located.rootReal, rel),
+      sha256Of(located.mainReal, rel, beforeRead),
+      sha256Of(located.rootReal, rel, beforeRead),
     ]);
     if (source === NOT_COMPARABLE || copy === NOT_COMPARABLE || source !== copy) {
       differing.push(rel);

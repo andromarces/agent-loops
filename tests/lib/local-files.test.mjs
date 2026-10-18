@@ -1196,3 +1196,32 @@ test("a name missing from both work trees is not reported", async () => {
 
   expect(await findDifferingLocalFiles(linked, [".env"])).toEqual([]);
 });
+
+// Usefulness: verifies an ancestor that is swapped for a junction after the checks and before the
+// read is never read through, so equal bytes behind it do not hide a difference.
+// Not redundant: the static linked-ancestor tests link the directory before the comparison starts.
+test("an ancestor swapped for a link before the read is reported and not read through", async () => {
+  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const outside = join(base, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "settings.json"), "same\n");
+  await mkdir(join(main, ".claude"));
+  await writeFile(join(main, ".claude", "settings.json"), "other\n");
+  await mkdir(join(linked, ".claude"));
+  await writeFile(join(linked, ".claude", "settings.json"), "same\n");
+  let swapped = false;
+
+  const differing = await findDifferingLocalFiles(linked, [".claude/settings.json"], {
+    beforeRead: async (path) => {
+      if (!path.startsWith(main) || swapped) {
+        return;
+      }
+      swapped = true;
+      await rename(join(main, ".claude"), join(main, ".claude-real"));
+      await symlink(outside, join(main, ".claude"), "junction");
+    },
+  });
+
+  expect(swapped).toBe(true);
+  expect(differing).toEqual([".claude/settings.json"]);
+});
