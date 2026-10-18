@@ -516,7 +516,10 @@ the flag is unchanged.
   binary and the CLI script of the run, so it works where `agent-loop` is not on
   PATH. A run with or without `--test-cmd` gives the same rule, on the headless
   and the interactive path. Exit code 75 from the wrapper means that the suite
-  did not run, which a child reports as unresolved.
+  did not run, which a child reports as unresolved. The rule also bars a CPU or
+  memory load generator, a busy loop, and a detached or background process that
+  can outlive the turn (issue #934). The required CI checks are the evidence under
+  load.
 - A reviewer in a sandboxed mode sees the result of the whole command only. It
   cannot run a targeted test, unless the run set `--reviewer-sandbox
   workspace-write` or runs with no sandbox (next section).
