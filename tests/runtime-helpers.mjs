@@ -1177,3 +1177,26 @@ export async function withGitHangingAfter(passes, run) {
     await removePath(dir);
   }
 }
+
+/**
+ * Tracks the bodies of tests that change process-wide state (a `console.error` spy,
+ * `process.exitCode`). Vitest lets a body that passed its timeout keep running, so its late
+ * cleanup can land inside the next test. `run(body)` registers a body, and `settled()` resolves
+ * when every registered body has ended, whether it fulfilled or rejected. Call `settled()` from a
+ * `beforeEach` hook, so no test starts while an earlier body still runs.
+ */
+export function createBodyBarrier() {
+  const running = new Set();
+  return {
+    run(body) {
+      const promise = (async () => body())();
+      const forget = () => running.delete(promise);
+      running.add(promise);
+      promise.then(forget, forget);
+      return promise;
+    },
+    async settled() {
+      while (running.size > 0) await Promise.allSettled([...running]);
+    },
+  };
+}

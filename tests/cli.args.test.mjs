@@ -1,7 +1,15 @@
 import { tmpdir } from "node:os";
-import { expect, test, vi } from "vite-plus/test";
+import { beforeEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
-import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { createBodyBarrier, createTempRepo, removePath } from "./runtime-helpers.mjs";
+
+// Tests that spy on console.error and read process.exitCode run through the barrier. A body that
+// passes its timeout under load keeps running, and its late cleanup would clear the spy calls and
+// exit code of the next test (issue #935). Waiting here, not in each test, bounds that for all of
+// them. The wait outlasts testTimeout, so a body that ends late still ends before the next test.
+const bodyBarrier = createBodyBarrier();
+beforeEach(() => bodyBarrier.settled(), 60_000);
+const spyTest = (name, body) => test(name, () => bodyBarrier.run(body));
 
 // Usefulness: verifies missing required --orchestrator flag throws error.
 test("missing --orchestrator fails", () => {
@@ -288,7 +296,7 @@ test("--pr with --require-ci for another pull request is a usage error", () => {
 // before any child turn runs, with the interactive wordings. The two paths state one rule for a
 // mode that can never reach a gate. The check is the command outcome: exit 1, the refusal on
 // stderr, and no child CLI call (issue #337).
-test("a review-only run refuses the PR flags before any child turn", async () => {
+spyTest("a review-only run refuses the PR flags before any child turn", async () => {
   const refusals = [
     [["--pr", "42"], "--pr declares PR work, which needs the --require-ci gate"],
     [
@@ -343,7 +351,7 @@ test("a review-only run refuses the PR flags before any child turn", async () =>
 // review-only run refuses. A run with no --mode takes them too, because only review-only rejects a
 // gate. The check is the command outcome: the run starts, so the orchestrator CLI is called and no
 // usage error is printed (issue #337).
-test("the other modes and a mode-free run still take the PR flags", async () => {
+spyTest("the other modes and a mode-free run still take the PR flags", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   // One repo serves every run, and no run here changes it. Creating a repo spawns six `git`
@@ -397,7 +405,7 @@ test("the other modes and a mode-free run still take the PR flags", async () => 
 // and refuses any other. A caller learns the mode names from one list on both paths. The check is
 // the command outcome: a known value starts the run, and an unknown one exits 1 with the message
 // (issue #337).
-test("--mode takes the interactive mode values", async () => {
+spyTest("--mode takes the interactive mode values", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   // One repo serves every run: see the PR flags test above.
@@ -450,7 +458,7 @@ test("--mode takes the interactive mode values", async () => {
 // flag on this path does, such as --task. The flag adds no new rule. The check is the command
 // outcome: the last value decides. Review-only last refuses the PR flag, and work-first last
 // accepts it (issue #337).
-test("a repeated --mode takes the last value", async () => {
+spyTest("a repeated --mode takes the last value", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
