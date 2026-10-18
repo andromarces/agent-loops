@@ -1,7 +1,7 @@
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 import { sha256 } from "../src/lib/hash.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { testSlotRule } from "../src/prompts/report.mjs";
@@ -20,6 +20,10 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { createBarrierTest } from "./barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 afterEach(cleanup);
 

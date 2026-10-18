@@ -11,13 +11,17 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
 import { runClaude } from "../src/agents/claude.mjs";
 import { main } from "../src/cli.mjs";
 import { exec } from "../src/lib/exec.mjs";
 import { readContinuation } from "../src/lib/continuation.mjs";
 import { sessionRecordPath } from "../src/lib/session-record.mjs";
 import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { createBarrierTest } from "./barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 vi.mock("../src/lib/exec.mjs", async (importOriginal) => ({
   ...(await importOriginal()),

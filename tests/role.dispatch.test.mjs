@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `gitWhileDotGitExists` in runtime-helpers.mjs); every other test reaches the real `execa`.
@@ -45,6 +45,10 @@ import {
   prGateGh,
   removePath,
 } from "./runtime-helpers.mjs";
+import { createBarrierTest } from "./barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 // A directory that `gitWhileDotGitExists` treats as a work tree. Callers remove it
 // with `removePath`.

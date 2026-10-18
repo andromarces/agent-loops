@@ -1,9 +1,13 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 import { main } from "../src/cli.mjs";
 import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { createBarrierTest } from "./barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 // Headless behavior of the Codex reviewer sandbox mode (issue #776, ADR 0038). The reviewer is a
 // recording fake that stands for Codex by its kind, so the assertions read the mode input it got.

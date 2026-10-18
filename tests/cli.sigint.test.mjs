@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { expect, test, vi } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see `withContinueRepo`). Every other
 // test, and every other command, reaches the real `execa`.
@@ -40,6 +40,10 @@ import {
   removePath,
   within,
 } from "./runtime-helpers.mjs";
+import { createBarrierTest } from "./barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const ARGS = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];
