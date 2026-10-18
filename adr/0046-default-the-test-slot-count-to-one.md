@@ -45,6 +45,7 @@ Andro Marces
 ## Links
 
 - [Issue #926](https://github.com/andromarces/agent-loops/issues/926)
+- [PR #938](https://github.com/andromarces/agent-loops/pull/938)
 - [Issue #921](https://github.com/andromarces/agent-loops/issues/921)
 - Partially supersedes [ADR 0039](0039-machine-wide-test-slot.md)
 - [ADR 0044](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md)
