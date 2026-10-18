@@ -15,7 +15,12 @@ import { createBodyBarrier } from "./runtime-helpers.mjs";
  */
 export function createBarrierTest() {
   const barrier = createBodyBarrier();
-  beforeEach(() => barrier.settled(), 60_000);
+  let lateCleanupDone = false;
+  let doneWhenTestStarted = false;
+  beforeEach(async () => {
+    await barrier.settled();
+    doneWhenTestStarted = lateCleanupDone;
+  }, 60_000);
   const guard = (args) =>
     args.map((arg) => (typeof arg === "function" ? (...a) => barrier.run(() => arg(...a)) : arg));
   const guarded = (name, ...rest) => test(name, ...guard(rest));
@@ -28,7 +33,6 @@ export function createBarrierTest() {
     (name, ...rest) =>
       test.skipIf(condition)(name, ...guard(rest));
 
-  let lateCleanupDone = false;
   // Usefulness: sets up the leak that the next test checks, a body that outlives its own timeout.
   // `fails` expects the timeout, so only an unexpected pass or error shows in the report.
   test.fails(
@@ -42,9 +46,10 @@ export function createBarrierTest() {
     ]),
   );
   // Usefulness: verifies that this file starts a test only after an earlier timed-out body ended,
-  // so its late cleanup cannot change the spy calls or the exit code that the test reads.
+  // so its late cleanup cannot change the spy calls or the exit code that the test reads. The hook
+  // records the state as the wait returns, so a slow hook of the file cannot hide a missing wait.
   guarded("a test starts after an earlier timed-out body has ended", () => {
-    expect(lateCleanupDone).toBe(true);
+    expect(doneWhenTestStarted).toBe(true);
   });
   return guarded;
 }
