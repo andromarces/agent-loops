@@ -5,7 +5,7 @@
 // is a path name.
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, open, readdir, readFile, realpath } from "node:fs/promises";
+import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { logInfo, logWarn } from "./log.mjs";
 import { gitRead } from "./snapshot.mjs";
