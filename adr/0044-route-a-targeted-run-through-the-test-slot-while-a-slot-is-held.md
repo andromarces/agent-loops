@@ -21,6 +21,7 @@ A direct targeted run holds no slot, so its load is not counted (ADR 0040, issue
 3. **Unchanged.** The wait bound (`--wait`, `AGENT_LOOP_TEST_SLOT_WAIT`, 1800 s default), exit 75 reported as unresolved, the nested marker, and the quoting guard are unchanged. A path that cannot be quoted in every shell keeps a direct targeted run of at most 10 files, and a broader run relies on the required CI checks, as before. The 10-file bound of a targeted run stays.
 4. **Prompt rule.** `testSlotRule` tells each worker and reviewer turn to run a targeted test file through the wrapper with `--if-held`, and a full suite through the plain wrapper. One command form serves both: the turn adds `--if-held` after `test-slot` for a targeted run.
 5. **Documented limit.** A targeted run that starts while all slots are free holds no slot, so a slot holder can start beside it. Closing that gap needs a registration that slot holders count, which this ADR does not add.
+6. **No load generator, no process that outlives the turn (issue #934).** The same rule text bars a CPU or memory load generator, a busy loop, and a detached or background process that can outlive the turn, and names the required CI checks as the evidence under load. The rule adds a bar and changes no earlier decision, so it stays in this ADR. The cause was a #927 worker that started 64 busy loops per run from a script with no trap. An interrupted run left the loops running, all 16 CPUs stayed at 100 %, and the editor of the maintainer crashed. The runtime cannot clean up after this, because the crash also ended the `role dispatch` process.
 
 ## Consequences
 
@@ -28,6 +29,7 @@ A direct targeted run holds no slot, so its load is not counted (ADR 0040, issue
 - While all slots are free, an edit loop has no wait and no slot.
 - A targeted run that holds a slot can delay a full suite of another run.
 - The limit of decision 5 stays: the check is a snapshot, so a targeted run and a slot holder can overlap.
+- A worker or reviewer cannot test timing under synthetic load. The required CI checks give that evidence.
 - The runtime `--test-cmd` is unchanged. It already runs in a slot.
 
 ## Alternatives
@@ -47,7 +49,8 @@ Andro Marces
 - Partially supersedes [ADR 0040: Run the test command in a test slot and route child full suites through the wrapper](0040-run-the-test-command-in-a-test-slot.md)
 - [ADR 0039: Gate full-suite test runs with a machine-wide test slot](0039-machine-wide-test-slot.md)
 - [PR #928](https://github.com/andromarces/agent-loops/pull/928)
-- Related issues: #848, #872
+- [PR #939](https://github.com/andromarces/agent-loops/pull/939)
+- Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934)
 - Implementation:
   - Source: `holdTestSlot` and `parseTestSlotArgs` in `src/lib/test-slot.mjs`, `testSlotRule` in `src/prompts/report.mjs`
   - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/report.test.mjs`

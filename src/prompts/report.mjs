@@ -86,6 +86,9 @@ export function cliCommandForms(
   ];
 }
 
+const NO_LOAD_GENERATORS =
+  "Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn. Use the required CI checks as the evidence under load.";
+
 const TARGETED_RUN_BOUND =
   "A targeted run is at most 10 test files that mirror the changed source files, never a whole directory.";
 
@@ -95,15 +98,16 @@ const TARGETED_RUN_BOUND =
  * of this process with `--if-held`, which runs it directly while all slots are free and waits for
  * a slot while any slot is held. Any broader run is a full suite and runs only through the plain
  * wrapper, or the required CI checks stand in for it. A path that cannot be quoted leaves a direct
- * targeted run, and a broader run relies on the CI checks.
+ * targeted run, and a broader run relies on the CI checks. The rule also bars a load generator and
+ * a process that outlives the turn (issue #934).
  */
 export function testSlotRule(options) {
   const forms = cliCommandForms(() => 'test-slot -- "<full suite command>"', options);
   if (forms === null) {
-    return `Run a targeted test file directly. ${TARGETED_RUN_BOUND} Do not run a broader run or a full test suite in this run: rely on the required CI checks, because this run cannot render a test slot command for its paths.`;
+    return `Run a targeted test file directly. ${TARGETED_RUN_BOUND} Do not run a broader run or a full test suite in this run: rely on the required CI checks, because this run cannot render a test slot command for its paths. ${NO_LOAD_GENERATORS}`;
   }
   const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
-  return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as one quoted argument: ${commands}. For a targeted run, put --if-held after test-slot and the targeted command in the quotes. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure.`;
+  return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as one quoted argument: ${commands}. For a targeted run, put --if-held after test-slot and the targeted command in the quotes. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure. ${NO_LOAD_GENERATORS}`;
 }
 
 /**

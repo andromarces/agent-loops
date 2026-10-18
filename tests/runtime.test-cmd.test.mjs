@@ -542,6 +542,11 @@ test("headless worker and reviewer turns carry the test slot rule", async () => 
     expect(rev.recorded[0].prompt).toContain(testSlotRule());
     expect(work.recorded[0].prompt).toMatch(/at most 10 test files/);
     expect(rev.recorded[0].prompt).toMatch(/broader run through the test slot wrapper/);
+    for (const prompt of [work.recorded[0].prompt, rev.recorded[0].prompt]) {
+      expect(prompt).toMatch(
+        /Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn/,
+      );
+    }
   } finally {
     await removePath(repo);
   }

@@ -165,6 +165,14 @@ test("first worker turn routes a full suite through the test slot wrapper of thi
   await access(match[2]);
 });
 
+// Usefulness: verifies requirement "a worker starts no load generator or process that outlives the turn" (issue #934): an unguarded busy-loop script left 64 loops running after an interrupt.
+test("first worker turn bars load generators and processes that outlive the turn", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn. Use the required CI checks as the evidence under load.",
+  );
+});
+
 // Usefulness: verifies requirement "a PR-work worker leaves the work tree clean" (issue #910): the
 // worker commits or discards every change before the closing block, so a leftover change is not
 // found only after a reviewer turn.
