@@ -3,8 +3,9 @@
 // `copyFile` and `COPYFILE_EXCL`, so an existing file is never replaced or
 // deleted. The module never prints, logs, or returns file content: every report
 // is a path name.
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
+import { copyFile, lstat, mkdir, open, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { logInfo, logWarn } from "./log.mjs";
 import { gitRead } from "./snapshot.mjs";
@@ -219,6 +220,45 @@ async function findMainWorkTree(root, entries, read) {
 }
 
 /**
+ * Resolves the work trees of a copy or a comparison: returns `{ entries, mainReal, rootReal }`
+ * (the registered work trees, and the canonical paths of the main and the linked work tree), or
+ * null, with the reason logged, when nothing can be read from or written to: a path holds a
+ * control character, there is no main work tree for this copy, or `cwd` is the main work tree.
+ */
+async function locateWorkTrees(cwd, read) {
+  // A path with a control character is not trusted to survive a round trip through
+  // Git's output or a path comparison, so the copy refuses it and copies nothing.
+  const refuse = (what) => {
+    logInfo(`local files: ${what} holds a control character, so nothing is copied`);
+    return null;
+  };
+  if (hasControlCharacter(cwd)) {
+    return refuse("--cwd");
+  }
+  const top = stripLf((await read(cwd, ["rev-parse", "--show-toplevel"])).stdout);
+  if (hasControlCharacter(top)) {
+    return refuse("the work tree path");
+  }
+  // The operator's own `--cwd` names the work tree when Git names the same
+  // directory, so a Git echo of the path is not what the later commands run in.
+  const root = (await realpath(cwd)) === (await realpath(top)) ? cwd : top;
+  const entries = await readWorkTrees(root, read);
+  if (entries.some((entry) => hasControlCharacter(entry.path))) {
+    return refuse("a registered work tree path");
+  }
+  const found = await findMainWorkTree(root, entries, read);
+  if (found.refused !== undefined) {
+    return refuse(found.refused);
+  }
+  if (found.main === null) {
+    logInfo("local files: no main work tree found, so nothing is copied");
+    return null;
+  }
+  const rootReal = await realpath(root);
+  return found.main === rootReal ? null : { entries, mainReal: found.main, rootReal };
+}
+
+/**
  * Collects the candidate files of one listed path into `ctx.files` as
  * `{ rel, src, canon }`: `canon` is the canonical path of the file, which the copy
  * compares with the path it resolves again just before it reads. No symlink is followed: a symlink entry is skipped by name, and
@@ -303,40 +343,11 @@ export async function copyLocalFiles(
     );
   }
   const read = (dir, args, options) => git(dir, args, { signal, ...options });
-  // A path with a control character is not trusted to survive a round trip through
-  // Git's output or a path comparison, so the copy refuses it and copies nothing.
-  const refuse = (what) => {
-    logInfo(`local files: ${what} holds a control character, so nothing is copied`);
-    return null;
-  };
-  if (hasControlCharacter(cwd)) {
-    return refuse("--cwd");
-  }
-  const top = stripLf((await read(cwd, ["rev-parse", "--show-toplevel"])).stdout);
-  if (hasControlCharacter(top)) {
-    return refuse("the work tree path");
-  }
-  // The operator's own `--cwd` names the work tree when Git names the same
-  // directory, so a Git echo of the path is not what the later commands run in.
-  const root = (await realpath(cwd)) === (await realpath(top)) ? cwd : top;
-  const entries = await readWorkTrees(root, read);
-  if (entries.some((entry) => hasControlCharacter(entry.path))) {
-    return refuse("a registered work tree path");
-  }
-  const found = await findMainWorkTree(root, entries, read);
-  if (found.refused !== undefined) {
-    return refuse(found.refused);
-  }
-  const mainReal = found.main;
-  if (mainReal === null) {
-    logInfo("local files: no main work tree found, so nothing is copied");
+  const located = await locateWorkTrees(cwd, read);
+  if (located === null) {
     return null;
   }
-  const rootReal = await realpath(root);
-
-  if (mainReal === rootReal) {
-    return null;
-  }
+  const { entries, mainReal, rootReal } = located;
   // A registered work tree is never read from (inside the main work tree) and
   // never written into (inside the linked work tree), whether or not its `.git`
   // entry is still there.
@@ -491,4 +502,63 @@ async function copyOne({ rel, src, canon }, rootReal, blocked, hooks) {
   } finally {
     await source?.close();
   }
+}
+
+async function sha256OrNull(path) {
+  try {
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
+      return null;
+    }
+    return createHash("sha256")
+      .update(await readFile(path))
+      .digest("hex");
+  } catch (err) {
+    if (err.code === "ENOENT" || err.code === "ENOTDIR") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Names the copied local files whose content differs from the file of the same name in the main
+ * work tree, so a parent can see a stale copy. `names` is the `copied` list of the init copy.
+ * Content is compared by SHA-256 and is never returned or logged. Nothing is written: a copy that
+ * a turn changed is reported like one that the main work tree outgrew. A name that is not a plain
+ * relative path, a symlink, a file over 1 MiB, and a file missing from either side count as
+ * differing, except a name that is missing from both. Returns sorted path names, or an empty list
+ * when there is no main work tree.
+ * @param {string} cwd
+ * @param {string[]} names
+ * @param {{ signal?: AbortSignal }} [options]
+ * @returns {Promise<string[]>}
+ */
+export async function findDifferingLocalFiles(cwd, names, { signal } = {}) {
+  const located = await locateWorkTrees(cwd, (dir, args, options) =>
+    git(dir, args, { signal, ...options }),
+  );
+  if (located === null) {
+    return [];
+  }
+  const differing = [];
+  for (const rel of names) {
+    if (
+      typeof rel !== "string" ||
+      rel === "" ||
+      isAbsolute(rel) ||
+      rel.split("/").some((part) => part === ".." || part === "")
+    ) {
+      differing.push(String(rel));
+      continue;
+    }
+    const [source, copy] = await Promise.all([
+      sha256OrNull(join(located.mainReal, rel)),
+      sha256OrNull(join(located.rootReal, rel)),
+    ]);
+    if (source !== copy) {
+      differing.push(rel);
+    }
+  }
+  return differing.sort();
 }
