@@ -1,12 +1,16 @@
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 import { main as cliMain } from "../../src/cli.mjs";
 import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install/commands.mjs";
 import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
 import { restoreAgentLoopHome } from "../runtime-helpers.mjs";
 import { makeHome, cleanupHomes } from "./install-helpers.mjs";
+import { createBarrierTest } from "../barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 // The interactive prompt reads its answer from this stub instead of a terminal.
 const prompt = vi.hoisted(() => ({ answer: "" }));

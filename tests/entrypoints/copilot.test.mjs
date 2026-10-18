@@ -1,5 +1,5 @@
 import { isAbsolute, join } from "node:path";
-import { expect, test, vi } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
 
 // The launcher runs `copilot`, which is not installed in the test environment. The stand-in runs a
 // real child with the same arguments, so execa builds its real failure message from the real command
@@ -17,6 +17,10 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import { buildCopilotInvocation, main, reportFailure } from "../../src/entrypoints/copilot.mjs";
+import { createBarrierTest } from "../barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 // Usefulness: verifies the Copilot launcher carries one session id into both
 // the CLI session and the first prompt's --parent-session instruction, grants

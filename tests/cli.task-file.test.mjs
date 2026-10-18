@@ -1,9 +1,13 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
 import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { createBarrierTest } from "./barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy"];
 const created = [];
