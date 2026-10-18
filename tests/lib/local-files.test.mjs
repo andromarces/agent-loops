@@ -12,7 +12,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
-import { copyLocalFiles, MAX_WALKED_ENTRIES } from "../../src/lib/local-files.mjs";
+import {
+  copyLocalFiles,
+  findDifferingLocalFiles,
+  MAX_WALKED_ENTRIES,
+} from "../../src/lib/local-files.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
 import { createLinkedWorkTree, exists, removePath } from "../runtime-helpers.mjs";
 
@@ -1139,3 +1143,56 @@ test.skipIf(process.platform === "win32")(
     expect(report).toEqual({ copied: [".claude/a\nb.json"], skipped: [] });
   },
 );
+
+// Usefulness: verifies a linked parent directory, a junction on Windows or a symlink elsewhere, on
+// the main work tree side is never read through, so equal bytes behind it do not hide a difference.
+// Not redundant: the other comparison tests use real directories only.
+test("a linked parent directory in the main work tree is reported and not read through", async () => {
+  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const outside = join(base, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "settings.json"), "same\n");
+  await symlink(outside, join(main, ".claude"), "junction");
+  await mkdir(join(linked, ".claude"));
+  await writeFile(join(linked, ".claude", "settings.json"), "same\n");
+
+  expect(await findDifferingLocalFiles(linked, [".claude/settings.json"])).toEqual([
+    ".claude/settings.json",
+  ]);
+});
+
+// Usefulness: verifies the same guard on the run work tree side.
+// Not redundant: it covers the second root that the comparison reads from.
+test("a linked parent directory in the run work tree is reported and not read through", async () => {
+  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const outside = join(base, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "settings.json"), "same\n");
+  await mkdir(join(main, ".claude"));
+  await writeFile(join(main, ".claude", "settings.json"), "same\n");
+  await symlink(outside, join(linked, ".claude"), "junction");
+
+  expect(await findDifferingLocalFiles(linked, [".claude/settings.json"])).toEqual([
+    ".claude/settings.json",
+  ]);
+});
+
+// Usefulness: verifies two different files over the 1 MiB cap are reported, because a skipped
+// comparison is not an equal hash.
+// Not redundant: the other comparison tests use small files.
+test("two different files over the size cap are reported as differing", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  const size = 1024 * 1024 + 1;
+  await writeFile(join(main, ".env"), Buffer.alloc(size, "a"));
+  await writeFile(join(linked, ".env"), Buffer.alloc(size, "b"));
+
+  expect(await findDifferingLocalFiles(linked, [".env"])).toEqual([".env"]);
+});
+
+// Usefulness: verifies a name that is missing from both work trees is not reported.
+// Not redundant: it keeps the missing-on-both-sides case apart from a skipped comparison.
+test("a name missing from both work trees is not reported", async () => {
+  const { linked } = await createLinked({ ignore: [".env"] });
+
+  expect(await findDifferingLocalFiles(linked, [".env"])).toEqual([]);
+});

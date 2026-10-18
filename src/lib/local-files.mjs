@@ -504,18 +504,31 @@ async function copyOne({ rel, src, canon }, rootReal, blocked, hooks) {
   }
 }
 
-async function sha256OrNull(path) {
+const MISSING = Symbol("missing");
+const NOT_COMPARABLE = Symbol("not comparable");
+
+/**
+ * Returns the SHA-256 of the regular file `rel` under `base`, `MISSING` when it does not exist, or
+ * `NOT_COMPARABLE` when it cannot be compared: a link on the final entry or on any ancestor below
+ * `base`, a non-regular file, or a file over the size cap. The caller never counts
+ * `NOT_COMPARABLE` as equal, even when both sides return it.
+ */
+async function sha256Of(base, rel) {
   try {
+    if (await hasBlockedAncestor(base, rel, new Set())) {
+      return NOT_COMPARABLE;
+    }
+    const path = join(base, rel);
     const stat = await lstat(path);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
-      return null;
+      return NOT_COMPARABLE;
     }
     return createHash("sha256")
       .update(await readFile(path))
       .digest("hex");
   } catch (err) {
     if (err.code === "ENOENT" || err.code === "ENOTDIR") {
-      return null;
+      return MISSING;
     }
     throw err;
   }
@@ -526,9 +539,10 @@ async function sha256OrNull(path) {
  * work tree, so a parent can see a stale copy. `names` is the `copied` list of the init copy.
  * Content is compared by SHA-256 and is never returned or logged. Nothing is written: a copy that
  * a turn changed is reported like one that the main work tree outgrew. A name that is not a plain
- * relative path, a symlink, a file over 1 MiB, and a file missing from either side count as
- * differing, except a name that is missing from both. Returns sorted path names, or an empty list
- * when there is no main work tree.
+ * relative path, a link on the file or on any directory above it (in either work tree), a file
+ * over 1 MiB (even when both sides are over), and a file missing from one side count as differing,
+ * and no link is read through. Only a name that is missing from both sides is not reported.
+ * Returns sorted path names, or an empty list when there is no main work tree.
  * @param {string} cwd
  * @param {string[]} names
  * @param {{ signal?: AbortSignal }} [options]
@@ -553,10 +567,10 @@ export async function findDifferingLocalFiles(cwd, names, { signal } = {}) {
       continue;
     }
     const [source, copy] = await Promise.all([
-      sha256OrNull(join(located.mainReal, rel)),
-      sha256OrNull(join(located.rootReal, rel)),
+      sha256Of(located.mainReal, rel),
+      sha256Of(located.rootReal, rel),
     ]);
-    if (source !== copy) {
+    if (source === NOT_COMPARABLE || copy === NOT_COMPARABLE || source !== copy) {
       differing.push(rel);
     }
   }
