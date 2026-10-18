@@ -146,7 +146,9 @@ function readOutcome(pr, { status, stdout, stderr }, all) {
   // An empty list on exit 0 keeps waiting, because `gh pr checks --required`
   // omits a check that has not started. The same empty list on exit 1 is not
   // that: exit 1 with no failing check listed is a read error unless `gh` states
-  // the branch has no required check, so it falls through to the refusal below.
+  // the branch has no required check, or, in the required read, that no check has
+  // reported on the PR head yet (#941). Any other exit 1 falls through to the
+  // refusal below.
   if (status === 0 && checks.length > 0) {
     return { settled: true, checks };
   }
