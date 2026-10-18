@@ -4,6 +4,7 @@ import {
   readdir,
   readFile,
   rename,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -1202,6 +1203,8 @@ test("a name missing from both work trees is not reported", async () => {
 // Not redundant: the static linked-ancestor tests link the directory before the comparison starts.
 test("an ancestor swapped for a link before the read is reported and not read through", async () => {
   const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  // The hooks receive canonical paths, which differ from `main` where the temp dir is a link (macOS).
+  const mainReal = await realpath(main);
   const outside = join(base, "outside");
   await mkdir(outside);
   await writeFile(join(outside, "settings.json"), "same\n");
@@ -1213,7 +1216,7 @@ test("an ancestor swapped for a link before the read is reported and not read th
 
   const differing = await findDifferingLocalFiles(linked, [".claude/settings.json"], {
     beforeRead: async (path) => {
-      if (!path.startsWith(main) || swapped) {
+      if (!path.startsWith(mainReal) || swapped) {
         return;
       }
       swapped = true;
@@ -1232,6 +1235,8 @@ test("an ancestor swapped for a link before the read is reported and not read th
 // between the ancestor check and the open and also asserts that the open stage is never reached.
 test("a link inserted after the ancestor check is rejected before any read starts", async () => {
   const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  // The hooks receive canonical paths, which differ from `main` where the temp dir is a link (macOS).
+  const mainReal = await realpath(main);
   const outside = join(base, "outside");
   await mkdir(outside);
   await writeFile(join(outside, "settings.json"), "same\n");
@@ -1244,7 +1249,7 @@ test("a link inserted after the ancestor check is rejected before any read start
 
   const differing = await findDifferingLocalFiles(linked, [".claude/settings.json"], {
     afterAncestorCheck: async (path) => {
-      if (!path.startsWith(main) || swapped) {
+      if (!path.startsWith(mainReal) || swapped) {
         return;
       }
       swapped = true;
@@ -1258,7 +1263,7 @@ test("a link inserted after the ancestor check is rejected before any read start
 
   expect(swapped).toBe(true);
   expect(differing).toEqual([".claude/settings.json"]);
-  expect(opened.filter((path) => path.startsWith(main))).toEqual([]);
+  expect(opened.filter((path) => path.startsWith(mainReal))).toEqual([]);
 });
 
 // Usefulness: verifies a file that disappears from both work trees after the first probe is
@@ -1277,3 +1282,20 @@ test("a file that disappears after the first probe is reported, not treated as m
 
   expect(differing).toEqual([".env"]);
 });
+
+// Usefulness: verifies an unchanged file is not reported when `--cwd` is reached through a link to
+// its parent directory, the shape of `/var` and `/private/var` on macOS.
+// Not redundant: the other comparison tests use the canonical temp path. Not run on Windows, which
+// needs a privilege for a directory symlink.
+test.skipIf(process.platform === "win32")(
+  "an unchanged file is not reported when --cwd is reached through a linked parent directory",
+  async () => {
+    const { main, linked, base } = await createLinked({ ignore: [".env"] });
+    await writeFile(join(main, ".env"), "same\n");
+    await writeFile(join(linked, ".env"), "same\n");
+    const alias = join(base, "alias");
+    await symlink(base, alias);
+
+    expect(await findDifferingLocalFiles(join(alias, "linked"), [".env"])).toEqual([]);
+  },
+);
