@@ -393,10 +393,9 @@ test("the other modes and a mode-free run still take the PR flags", async () => 
   }
 });
 
-// Usefulness: verifies the headless --mode accepts the same three values as the interactive path
-// and refuses any other. A caller learns the mode names from one list on both paths. The check is
-// the command outcome: a known value starts the run, and an unknown one exits 1 with the message
-// (issue #337).
+// Usefulness: verifies the headless --mode accepts the same three values as the interactive path.
+// A caller learns the mode names from one list on both paths. The check is the command outcome: a
+// known value starts the run (issue #337). The refusal of an unknown value is the next test.
 test("--mode takes the interactive mode values", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -431,8 +430,23 @@ test("--mode takes the interactive mode values", async () => {
         process.exitCode = origExitCode;
       }
     }
+  } finally {
+    process.exitCode = origExitCode;
+    errorSpy.mockRestore();
+    await removePath(repo);
+  }
+});
 
-    await main([...BASE, "--mode", "nope", "--cwd", repo]);
+// Usefulness: verifies the headless --mode refuses any value outside the three interactive ones with
+// exit 1 and the message (issue #337). The test has no repo and no wait between the spy and the
+// assertion: the refusal comes from argument parsing, so the spy cannot be detached mid-test by the
+// late cleanup of an earlier test that timed out under load (issue #935).
+test("--mode refuses an unknown value with exit 1 and the message", async () => {
+  const origExitCode = process.exitCode;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  try {
+    await main([...BASE, "--mode", "nope"]);
     expect(process.exitCode).toBe(1);
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining(
@@ -442,7 +456,6 @@ test("--mode takes the interactive mode values", async () => {
   } finally {
     process.exitCode = origExitCode;
     errorSpy.mockRestore();
-    await removePath(repo);
   }
 });
 
