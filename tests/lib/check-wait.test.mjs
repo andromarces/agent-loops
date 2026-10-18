@@ -369,16 +369,49 @@ test("waitChecks in all mode keeps the exit-code rules of the required read", as
   ).rejects.toThrow(/not well formed/);
 });
 
-// Usefulness: verifies a branch that reports no check at all is unresolved in the
-// all-checks mode, not a pass and not the required read's `noRequiredChecks`
-// outcome, because no check was read (issue #896).
-test("waitChecks in all mode refuses a branch that reports no check", async () => {
-  await expect(
-    onceAll([{ status: 1, stdout: "", stderr: "no checks reported on the 'main' branch" }]),
-  ).rejects.toThrow(/gh pr checks 42/);
-  await expect(
-    onceAll([
-      { status: 1, stdout: "", stderr: "no required checks reported on the 'main' branch" },
-    ]),
-  ).rejects.toThrow(/gh pr checks 42/);
+// Usefulness: verifies an all-checks wait that starts before any check reports
+// keeps waiting on the exact `gh` reply and settles on a later check list, so a
+// parent that runs `--all` right after a push does not get an error (issue #950).
+test("waitChecks in all mode keeps waiting while no check has reported", async () => {
+  const clock = fakeClock();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 300,
+    all: true,
+    gh: scriptedGh(
+      [
+        { status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch\n" },
+        { status: 8, checks: [PENDING_ITEM] },
+        { status: 0, checks: [PASSED_ITEM] },
+      ],
+      { all: true },
+    ),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result).toEqual({ timedOut: false, checks: [PASSED_ITEM] });
+  expect(clock.elapsed()).toBeGreaterThan(0);
+});
+
+// Usefulness: verifies an all-checks wait that reaches its bound with only that
+// reply reports `timedOut: true` and an empty `checks`, never a pass or a
+// `noRequiredChecks` outcome (issue #950).
+test("waitChecks in all mode reports a timeout with no checks when none ever reported", async () => {
+  expect(
+    await onceAll([{ status: 1, stdout: "", stderr: "no checks reported on the 'main' branch" }]),
+  ).toEqual({ timedOut: true, checks: [] });
+});
+
+// Usefulness: verifies the all-checks mode has no required-check answer, and a
+// near-match of the no-checks reply stays unresolved there (issues #896, #950).
+test("waitChecks in all mode refuses the required-check answer and near-matches", async () => {
+  const reads = [
+    { status: 1, stderr: "no required checks reported on the 'main' branch" },
+    { status: 1, stderr: "error: no checks reported on the 'main' branch, try later" },
+    { status: 2, stderr: "no checks reported on the 'main' branch" },
+  ];
+  for (const read of reads) {
+    await expect(onceAll([{ ...read, stdout: "" }])).rejects.toThrow(/gh pr checks 42/);
+  }
 });

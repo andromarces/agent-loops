@@ -712,8 +712,13 @@ agent-loop role wait-checks --all --cwd <dir> --pr <n> --timeout <seconds>
 `gh pr checks <pr>` without `--required`, so it keeps the bound and the exit-code
 rules above: exit 0 with no pending check listed is settled, exit 8 is pending, a
 listed failing check is settled, and every other exit 1 is unresolved with
-`status: "error"`. A branch that reports no check at all is also unresolved,
-because the command read none, so it never reads as a pass. A `noRequiredChecks`
+`status: "error"`. Exit 1 with no output and exactly `no checks reported on the
+'<branch>' branch` is the exception, as in the required wait: no check has
+reported yet, so the wait continues. At the bound with only that reply, `--all`
+returns `timedOut: true` and an empty `checks`, which is never a pass. A
+repository with no CI workflow therefore waits the full `--timeout` before it
+returns. Exit 1 with `no required checks reported on the '<branch>' branch` stays
+unresolved, because `--all` has no required-check answer. A `noRequiredChecks`
 envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`;
 when a required check exists, the required wait stays the one to run. `--all` is
 refused on every other role operation.

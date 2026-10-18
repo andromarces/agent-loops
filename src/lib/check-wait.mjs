@@ -18,9 +18,9 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
 
-// The exact `gh pr checks --required` reply on a PR head that no check has
-// reported on yet, as right after a push. It is an empty list, not a read error
-// (#941).
+// The exact `gh pr checks` reply on a PR head that no check has reported on yet,
+// as right after a push. It is an empty list, not a read error, in the required
+// and the all-checks read alike (#941, #950).
 const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
 
 // The `gh pr checks` exit codes, as `docs/orchestrator-instructions.md` states
@@ -100,12 +100,12 @@ function isFailing(check) {
  * - Exit 1 with no output and the exact `no required checks reported on the
  *   '<branch>' branch` stderr is settled as `noRequiredChecks`: the branch has
  *   no required check to wait for, which is no pass either (#894). In the
- *   all-checks mode that answer does not exist, so every exit 1 with no failing
- *   check listed is unresolved, whatever its stderr says (#896).
+ *   all-checks mode that answer does not exist, so that stderr is unresolved
+ *   there, like every other exit 1 with no failing check listed (#896).
  * - Exit 1 with no output and the exact `no checks reported on the '<branch>'
  *   branch` stderr is an empty list that is not settled, so the wait continues:
- *   no check has reported on the PR head yet (#941). It applies to the required
- *   read only; the all-checks read keeps it unresolved (#896).
+ *   no check has reported on the PR head yet (#941). The all-checks read applies
+ *   the same rule (#950).
  * - Any other code, with no failing check listed, is unresolved: exit 1 covers
  *   a read error, and an unparseable output is a read error. A list item that is
  *   not well formed is unresolved too, so one unreadable item cannot settle the
@@ -146,16 +146,15 @@ function readOutcome(pr, { status, stdout, stderr }, all) {
   // An empty list on exit 0 keeps waiting, because `gh pr checks --required`
   // omits a check that has not started. The same empty list on exit 1 is not
   // that: exit 1 with no failing check listed is a read error unless `gh` states
-  // the branch has no required check, or, in the required read, that no check has
-  // reported on the PR head yet (#941). Any other exit 1 falls through to the
-  // refusal below.
+  // the branch has no required check, or that no check has reported on the PR
+  // head yet (#941, #950). Any other exit 1 falls through to the refusal below.
   if (status === 0 && checks.length > 0) {
     return { settled: true, checks };
   }
   if (!all && status === 1 && text === "" && NO_REQUIRED_CHECKS.test(stderr.trim())) {
     return { settled: true, checks, noRequiredChecks: true };
   }
-  if (!all && status === 1 && text === "" && NO_CHECKS_YET.test(stderr.trim())) {
+  if (status === 1 && text === "" && NO_CHECKS_YET.test(stderr.trim())) {
     return { settled: false, checks };
   }
   if (status !== 0) {
@@ -227,7 +226,8 @@ async function readWithin(gh, pr, cwd, remainingMs, signal, all) {
  * `noRequiredChecks` rides on the envelope only when `gh` states the branch has no
  * required check: the wait ends at once with no check state, and it is no pass (#894).
  * `all` waits on every check of the PR head instead of the required ones, for a
- * branch with no required check; it keeps the exit-code rules above (#896).
+ * branch with no required check; it keeps the exit-code rules above, including
+ * the wait on the no-checks-yet reply, except `noRequiredChecks` (#896, #950).
  *
  * `deadline` is an absolute time on the `now` clock. A caller passes it to bound
  * the whole command, including the work that runs before the first read; a
