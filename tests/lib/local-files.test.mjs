@@ -1225,3 +1225,55 @@ test("an ancestor swapped for a link before the read is reported and not read th
   expect(swapped).toBe(true);
   expect(differing).toEqual([".claude/settings.json"]);
 });
+
+// Usefulness: verifies a link that is inserted after the ancestor check and left in place is
+// rejected before the file is opened, so no read starts on a path outside its work tree root.
+// Not redundant: the earlier swap test undoes nothing but swaps before the open; this one swaps
+// between the ancestor check and the open and also asserts that the open stage is never reached.
+test("a link inserted after the ancestor check is rejected before any read starts", async () => {
+  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const outside = join(base, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "settings.json"), "same\n");
+  await mkdir(join(main, ".claude"));
+  await writeFile(join(main, ".claude", "settings.json"), "other\n");
+  await mkdir(join(linked, ".claude"));
+  await writeFile(join(linked, ".claude", "settings.json"), "same\n");
+  let swapped = false;
+  const opened = [];
+
+  const differing = await findDifferingLocalFiles(linked, [".claude/settings.json"], {
+    afterAncestorCheck: async (path) => {
+      if (!path.startsWith(main) || swapped) {
+        return;
+      }
+      swapped = true;
+      await rename(join(main, ".claude"), join(main, ".claude-real"));
+      await symlink(outside, join(main, ".claude"), "junction");
+    },
+    beforeRead: async (path) => {
+      opened.push(path);
+    },
+  });
+
+  expect(swapped).toBe(true);
+  expect(differing).toEqual([".claude/settings.json"]);
+  expect(opened.filter((path) => path.startsWith(main))).toEqual([]);
+});
+
+// Usefulness: verifies a file that disappears from both work trees after the first probe is
+// reported as not comparable, not as missing from both sides.
+// Not redundant: the missing-from-both test removes the file before the comparison starts.
+test("a file that disappears after the first probe is reported, not treated as missing", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+
+  const differing = await findDifferingLocalFiles(linked, [".env"], {
+    beforeRead: async (path) => {
+      await rm(path);
+    },
+  });
+
+  expect(differing).toEqual([".env"]);
+});
