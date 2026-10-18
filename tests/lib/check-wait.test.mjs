@@ -131,6 +131,50 @@ test("waitChecks keeps any other exit 1 without a failing check unresolved", asy
   }
 });
 
+// Usefulness: verifies a wait that starts before any check reports on a new PR
+// head keeps waiting on the exact `gh` reply and settles on a later check list,
+// instead of ending as a read error (issue #941).
+test("waitChecks keeps waiting while no check has reported on the PR head", async () => {
+  const clock = fakeClock();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 300,
+    gh: scriptedGh([
+      { status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch\n" },
+      { status: 8, checks: [PENDING_ITEM] },
+      { status: 0, checks: [PASSED_ITEM] },
+    ]),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result).toEqual({ timedOut: false, checks: [PASSED_ITEM] });
+  expect(clock.elapsed()).toBeGreaterThan(0);
+});
+
+// Usefulness: verifies a wait that reaches its bound with only that reply reports
+// `timedOut: true` and an empty `checks`, so it never reads as a pass (issue #941).
+test("waitChecks reports a timeout with no checks when none ever reported", async () => {
+  const result = await once(
+    { status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch" },
+    60,
+  );
+  expect(result).toEqual({ timedOut: true, checks: [] });
+});
+
+// Usefulness: verifies only the exact reply keeps the wait running: the same words
+// inside a longer error text, or on another exit code, stay unresolved (issue #941).
+test("waitChecks keeps any other near-match of the no-checks reply unresolved", async () => {
+  const reads = [
+    { status: 1, stderr: "error: no checks reported on the 'main' branch, try later" },
+    { status: 2, stderr: "no checks reported on the 'main' branch" },
+    { status: 1, stderr: "no checks found on the 'main' branch" },
+  ];
+  for (const read of reads) {
+    await expect(once({ ...read, stdout: "" })).rejects.toThrow(/gh pr checks 42 --required/);
+  }
+});
+
 // Usefulness: verifies exit 1 as a read error refuses instead of reading as a
 // pass (issue #329).
 test("waitChecks refuses exit 1 when the read itself failed", async () => {
