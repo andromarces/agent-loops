@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { execa } from "execa";
-import { expect, test, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import { pidAlive } from "../src/lib/process-identity.mjs";
 import {
   BOUND_KILL_TEST_TIMEOUT_MS,
   cleanRepoGit,
+  createBodyBarrier,
   createPsShim,
   deadPid,
   endOwnedProcess,
@@ -446,3 +447,24 @@ test.skipIf(process.platform === "win32")(
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
+
+describe("createBodyBarrier", () => {
+  const barrier = createBodyBarrier();
+  let lateCleanupDone = false;
+  beforeEach(() => barrier.settled());
+
+  // Usefulness: sets up the leak that the next test checks, a body that outlives its own timeout.
+  // `fails` expects the timeout, so only an unexpected pass or error shows in the report.
+  test.fails("a body past its timeout keeps running", { timeout: 20 }, () =>
+    barrier.run(async () => {
+      await delay(200);
+      lateCleanupDone = true;
+    }),
+  );
+
+  // Usefulness: verifies that a test starts only after an earlier timed-out body ended, so its late
+  // cleanup cannot change the spy calls or the exit code that this test reads (issue #935).
+  test("a test starts after an earlier timed-out body has ended", () => {
+    expect(lateCleanupDone).toBe(true);
+  });
+});
