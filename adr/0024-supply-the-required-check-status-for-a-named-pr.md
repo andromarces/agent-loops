@@ -5,7 +5,9 @@
 accepted
 
 Supersedes [ADR 0011: Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md). The decisions of ADR 0011 that still hold are restated below. One changes: a headless run that takes only `--require-ci <pr>` now reads and supplies the status, where ADR 0011 keyed the read on `--pr` alone.
-Partially supersedes [ADR 0013: Bound the headless required-check wait with the runtime wait](0013-bound-the-headless-required-check-wait.md). This ADR narrows decision 6 of ADR 0013 (item 15). ADR 0013 stays `accepted`.
+Partially supersedes [ADR 0013: Bound the headless required-check wait with the runtime wait](0013-bound-the-headless-required-check-wait.md). This ADR narrows decision 6 of ADR 0013 (item 15). ADR 0013 is `partially-superseded`: its other decisions remain in force.
+
+Note, 2026-10-18 (issue #932): the Decision section says that ADR 0013 stays `accepted`. That sentence predates the `partially-superseded` status of ADR 0013 and is kept unchanged. Read it as: ADR 0013 stays in force in the parts that this ADR does not narrow.
 
 ## Date
 

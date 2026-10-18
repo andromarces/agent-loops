@@ -4,7 +4,7 @@
 
 accepted
 
-Partially supersedes [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md) (decision 2). ADR 0027 stays `accepted`, because its other decisions hold. Both ADRs record the partial supersession.
+Partially supersedes [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md) (decision 2). ADR 0027 is `partially-superseded`, because only decision 2 is replaced and its other decisions hold. Both ADRs record the partial supersession.
 
 ## Date
 

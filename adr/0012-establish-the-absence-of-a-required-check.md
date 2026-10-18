@@ -396,7 +396,7 @@ Andro Marces
   contributes no contexts and does not refuse the normal path, but is not a
   positive absence, so the relaxed path keeps the empty-union refusal.
 - [ADR 0009: Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md)
-  stays `accepted`: its decision stands, and the ceiling this ADR lifts was a
+  is not superseded by this ADR: its decision stands, and the ceiling this ADR lifts was a
   Consequence that ADR 0009 deferred to #295 and #301.
 - [Issue #301: A private Free-plan repository cannot have a required check](https://github.com/andromarces/agent-loops/issues/301)
 - [Issue #295: A fine-grained PAT without Administration cannot read classic protection](https://github.com/andromarces/agent-loops/issues/295)
