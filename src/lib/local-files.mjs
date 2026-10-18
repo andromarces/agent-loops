@@ -523,10 +523,9 @@ const NOT_COMPARABLE = Symbol("not comparable");
  *    path must still resolve to the same canonical path.
  * 4. Read from the handle only, then check the ancestors and the canonical path again.
  * Any mismatch, and any error after step 1, is `NOT_COMPARABLE`.
- * known-limit: a swap that is made and undone between two checks, or a swap of an ancestor for a
- * link to a directory that holds a hard link to the same file, is not detected. A swap that stays
- * in place is caught before the read. The swap needs local write access to the work trees. Node
- * has no descriptor-relative open.
+ * known-limit: a swap that is made and undone between two checks is not detected. A swap that
+ * stays in place is caught before the read. The swap needs local write access to the work trees.
+ * Node has no descriptor-relative open.
  */
 async function sha256Of(base, rel, { beforeRead, afterAncestorCheck } = {}) {
   const path = join(base, rel);

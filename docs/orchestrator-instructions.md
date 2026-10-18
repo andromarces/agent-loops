@@ -677,7 +677,11 @@ The `gh pr checks` exit codes decide the outcome, as the reviewer read states:
 exit 0 with no pending check listed is settled, exit 8 is pending, and exit 1 is
 settled only when the output lists a failing required check, or when `gh` prints
 exactly `no required checks reported on the '<branch>' branch` and no output.
-That one answer is its own outcome, below. Any other exit 1, and any output that
+That one answer is its own outcome, below. Exit 1 with no output and exactly
+`no checks reported on the '<branch>' branch` is an empty list: no check has
+reported on the PR head yet, as right after a push. The wait continues. If the
+bound arrives with only that reply, the wait returns `timedOut: true` and an
+empty `checks`, which is never a pass. Any other exit 1, and any output that
 is not a check list, is unresolved: the command exits 1 with
 `status: "error"` and records no check state for that wait, so an unresolved
 read never reads as a pass. Every check item is read as a name plus a `state` or
