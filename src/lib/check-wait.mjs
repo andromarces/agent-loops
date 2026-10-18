@@ -18,6 +18,11 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
 
+// The exact `gh pr checks --required` reply on a PR head that no check has
+// reported on yet, as right after a push. It is an empty list, not a read error
+// (#941).
+const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
+
 // The `gh pr checks` exit codes, as `docs/orchestrator-instructions.md` states
 // them for the reviewer read: 8 is a pending check, and 1 covers a failing check,
 // a repository with no required check, and a read error. An exit 1 is therefore
@@ -97,6 +102,10 @@ function isFailing(check) {
  *   no required check to wait for, which is no pass either (#894). In the
  *   all-checks mode that answer does not exist, so every exit 1 with no failing
  *   check listed is unresolved, whatever its stderr says (#896).
+ * - Exit 1 with no output and the exact `no checks reported on the '<branch>'
+ *   branch` stderr is an empty list that is not settled, so the wait continues:
+ *   no check has reported on the PR head yet (#941). It applies to the required
+ *   read only; the all-checks read keeps it unresolved (#896).
  * - Any other code, with no failing check listed, is unresolved: exit 1 covers
  *   a read error, and an unparseable output is a read error. A list item that is
  *   not well formed is unresolved too, so one unreadable item cannot settle the
@@ -143,6 +152,9 @@ function readOutcome(pr, { status, stdout, stderr }, all) {
   }
   if (!all && status === 1 && text === "" && NO_REQUIRED_CHECKS.test(stderr.trim())) {
     return { settled: true, checks, noRequiredChecks: true };
+  }
+  if (!all && status === 1 && text === "" && NO_CHECKS_YET.test(stderr.trim())) {
+    return { settled: false, checks };
   }
   if (status !== 0) {
     throw new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
