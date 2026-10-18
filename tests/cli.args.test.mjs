@@ -6,10 +6,11 @@ import { createBodyBarrier, createTempRepo, removePath } from "./runtime-helpers
 // Tests that spy on console.error and read process.exitCode run through the barrier. A body that
 // passes its timeout under load keeps running, and its late cleanup would clear the spy calls and
 // exit code of the next test (issue #935). Waiting here, not in each test, bounds that for all of
-// them. The wait outlasts testTimeout, so a body that ends late still ends before the next test.
+// them. The wait outlasts testTimeout, so a body that ends late still ends before the next test. A
+// body that never ends costs one wait, then every later test fails at once naming it.
 const bodyBarrier = createBodyBarrier();
 beforeEach(() => bodyBarrier.settled(), 60_000);
-const spyTest = (name, body) => test(name, () => bodyBarrier.run(body));
+const spyTest = (name, body) => test(name, () => bodyBarrier.run(body, name));
 
 // Usefulness: verifies missing required --orchestrator flag throws error.
 test("missing --orchestrator fails", () => {
