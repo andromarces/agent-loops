@@ -49,6 +49,7 @@ Andro Marces
 - Partially supersedes [ADR 0040: Run the test command in a test slot and route child full suites through the wrapper](0040-run-the-test-command-in-a-test-slot.md)
 - [ADR 0039: Gate full-suite test runs with a machine-wide test slot](0039-machine-wide-test-slot.md)
 - [PR #928](https://github.com/andromarces/agent-loops/pull/928)
+- [PR #939](https://github.com/andromarces/agent-loops/pull/939)
 - Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934)
 - Implementation:
   - Source: `holdTestSlot` and `parseTestSlotArgs` in `src/lib/test-slot.mjs`, `testSlotRule` in `src/prompts/report.mjs`
