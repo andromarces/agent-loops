@@ -516,6 +516,15 @@ test("every reviewer turn routes a full suite through the test slot wrapper of t
   }
 });
 
+// Usefulness: verifies requirement "a reviewer starts no load generator or process that outlives the turn" (issue #934): a probe under load can leave busy loops running after an interrupt.
+test("every reviewer turn bars load generators and processes that outlive the turn", () => {
+  for (const prompt of [reviewerPrompt("check"), reviewerPrompt("check", null, TEST_RUN, "none")]) {
+    expect(prompt.replace(/\s+/g, " ")).toContain(
+      "Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn. Use the required CI checks as the evidence under load.",
+    );
+  }
+});
+
 // Usefulness: verifies acceptance #885 — the reviewer is told to try an ignored path inside the
 // repository before a temporary path outside it, because a Codex reviewer often cannot delete an
 // outside folder and leaves it in the OS temp directory.

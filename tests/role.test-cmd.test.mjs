@@ -561,3 +561,15 @@ test("role worker and reviewer dispatches carry the test slot rule", async () =>
   expect(agents.fake1.recorded[0].prompt).toMatch(/at most 10 test files/);
   expect(reviewer.recorded[0].prompt).toMatch(/broader run through the test slot wrapper/);
 });
+
+// Usefulness: verifies the interactive role path bars load generators for the worker and the reviewer (issue #934), a path the prompt-builder tests do not reach.
+test("role worker and reviewer dispatches bar load generators and processes that outlive the turn", async () => {
+  const { repo, reviewer, agents } = await start();
+  const turn = await reviewerTurn(repo, agents);
+  expect(turn.exitCode).toBe(0);
+  for (const prompt of [agents.fake1.recorded[0].prompt, reviewer.recorded[0].prompt]) {
+    expect(prompt).toMatch(
+      /Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn/,
+    );
+  }
+});
