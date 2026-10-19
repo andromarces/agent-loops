@@ -8,7 +8,9 @@ import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
 import { runChild } from "../../src/child-turn.mjs";
 
-vi.mock("../../src/lib/exec.mjs", () => ({
+// Only `exec` is replaced: the work tree read after a worker turn runs through `execBounded`.
+vi.mock("../../src/lib/exec.mjs", async (importOriginal) => ({
+  ...(await importOriginal()),
   exec: vi.fn(),
 }));
 
