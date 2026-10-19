@@ -89,7 +89,7 @@ function git(cwd, args, { allowExit = [], ...options } = {}) {
  * Folds a file name to the form that the strictest file system reads it as:
  * lower case, no stream suffix (`name:stream`), and no trailing dots or spaces.
  * Only the excluded names (`.git`, `.claude/worktrees`, `.gitignore`,
- * `.gitattributes`) are compared this way. A folded match includes the exact
+ * `.gitattributes`, and any `*.lock` under `.claude`) are compared this way. A folded match includes the exact
  * match, so folding can only skip more files, never read or write more. A path is
  * never folded: paths are compared as the canonical strings that `realpath`
  * returns.
