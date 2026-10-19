@@ -70,8 +70,10 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   --max-steps <count>
 ```
 
-- The first role matches the mode: `worker` in `work-first` and `review-first`,
-  `reviewer` in `review-only`.
+- The first role matches the mode: `worker` in `work-first`, `reviewer` in
+  `review-first` and `review-only`. The subcommand refuses only `--role worker`
+  in `review-only`; it accepts either role at a `review-first` init, so the Loop
+  policy section sets the order.
 - `--worker` is required in `work-first` and `review-first` and optional in
   `review-only`, which never dispatches the worker. `--worker-model` and
   `--worker-effort` are always optional, and require `--worker`. An OpenCode
