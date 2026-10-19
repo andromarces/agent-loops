@@ -3,6 +3,7 @@
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, parse, relative, resolve } from "node:path";
+import { inheritedTmpdirs } from "../lib/inherited-tmpdir.mjs";
 
 // `npx` installs the package under `<npm-cache>/_npx/<hash>/node_modules` and
 // `pnpm dlx` under `<pnpm-home>/dlx/<hash>/<work>/node_modules`. `bunx` installs
@@ -42,9 +43,13 @@ function withRealpath(root) {
   }
 }
 
-/** The temporary roots: yarn dlx uses `os.tmpdir()`, bunx also uses `/tmp`. */
+/**
+ * The temporary roots: yarn dlx uses `os.tmpdir()`, bunx also uses `/tmp`. A Codex turn replaces
+ * `os.tmpdir()` with a private directory, so the temporary directories that the turn inherited
+ * count too (issue #955).
+ */
 function temporaryRoots() {
-  const yarn = withRealpath(tmpdir());
+  const yarn = [tmpdir(), ...inheritedTmpdirs()].flatMap(withRealpath);
   return { yarn, bunx: [...yarn, ...withRealpath("/tmp")] };
 }
 

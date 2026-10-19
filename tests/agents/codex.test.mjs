@@ -11,7 +11,9 @@ import { slotsRoot } from "../../src/lib/test-slot.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { exists, removePath, symlinkOrSkip } from "../runtime-helpers.mjs";
 
-vi.mock("../../src/lib/exec.mjs", () => ({
+// Only `exec` is replaced: the turn directory removal runs its helper through `execBounded`.
+vi.mock("../../src/lib/exec.mjs", async (importActual) => ({
+  ...(await importActual()),
   exec: vi.fn(),
 }));
 
@@ -708,4 +710,45 @@ test("a user root override wins in the child of a codex turn", async () => {
     slots: join(mine, "slots"),
     records: join(mine, "records"),
   });
+});
+
+const CLASSIFY_ROOTS = (layouts) => `
+const { isEphemeralPackageRoot } = await import(${JSON.stringify(
+  new URL("../../src/install/package-root.mjs", import.meta.url).href,
+)});
+console.log(JSON.stringify(${JSON.stringify(layouts)}.map((root) => isEphemeralPackageRoot(root))));`;
+
+// Usefulness: verifies the installer refusal of an ephemeral package-runner root holds inside a
+// Codex turn, so the private temporary directory cannot turn an inherited `yarn dlx` launcher
+// into an accepted install source.
+test("a child of a codex turn classifies package-runner roots as the parent does", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-tmp-"));
+  try {
+    const layouts = [
+      join(root, "xfs-abc123", "dlx-4242", "node_modules", "pkg"),
+      join(root, "bunx-501-pkg@1.0.0", "node_modules", "pkg"),
+      join(root, "_npx", "0123456789abcdef", "node_modules", "pkg"),
+      join(root, "stable", "node_modules", "pkg"),
+    ];
+    let childAnswer;
+    fakeCodex(async (_home, env) => {
+      const { stdout } = await execa(
+        process.execPath,
+        ["--input-type=module", "-e", CLASSIFY_ROOTS(layouts)],
+        { env },
+      );
+      childAnswer = JSON.parse(stdout);
+      return { stdout: OK_EVENTS, stderr: "" };
+    });
+    const { isEphemeralPackageRoot } = await import("../../src/install/package-root.mjs");
+    const parentAnswer = await withInheritedTmp(root, async () => {
+      const answer = layouts.map((layout) => isEphemeralPackageRoot(layout));
+      await runTurn();
+      return answer;
+    });
+    expect(parentAnswer).toEqual([true, true, true, false]);
+    expect(childAnswer).toEqual(parentAnswer);
+  } finally {
+    await removePath(root);
+  }
 });

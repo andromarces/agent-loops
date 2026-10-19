@@ -5,42 +5,19 @@ import { basename, join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import { removePath } from "../runtime-helpers.mjs";
 
-// `swap` runs once, at the first filesystem or process call after `withTurnTmpdir` ran its
-// callback. It stands for a swap after the removal validated its path and before it deletes.
+// `swap` runs once, right before the removal helper starts. It stands for a swap after the runtime
+// validated its path and before the removal acts.
 const hook = vi.hoisted(() => ({ swap: null }));
-const fire = () => {
-  const swap = hook.swap;
-  hook.swap = null;
-  swap?.();
-};
 
-vi.mock("node:fs/promises", async (importActual) => {
-  const actual = await importActual();
-  const wrap =
-    (name) =>
-    async (...args) => {
-      const result = await actual[name](...args);
-      fire();
-      return result;
-    };
-  return {
-    ...actual,
-    default: actual,
-    lstat: wrap("lstat"),
-    realpath: wrap("realpath"),
-    rm: wrap("rm"),
-    unlink: wrap("unlink"),
-    rmdir: wrap("rmdir"),
-  };
-});
-
-vi.mock("node:child_process", async (importActual) => {
+vi.mock("../../src/lib/exec.mjs", async (importActual) => {
   const actual = await importActual();
   return {
     ...actual,
-    execFile: (...args) => {
-      fire();
-      return actual.execFile(...args);
+    execBounded: (...args) => {
+      const swap = hook.swap;
+      hook.swap = null;
+      swap?.();
+      return actual.execBounded(...args);
     },
   };
 });

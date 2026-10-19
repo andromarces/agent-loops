@@ -68,7 +68,7 @@ part was observed. The `<package>.zip\node_modules\<package>` suffix was not
 observed on Windows. Yarn 1.22.22 on macOS has no `dlx` command. On macOS, its
 `create` command installed a probe package into the stable global directory.
 Linux (#707) and a `%TEMP%` that is an 8.3 short path or a junction (#709) are
-not verified. `uninstall` reads only the manifest and the harness files, so it
+not verified. Inside a Codex turn, `install` also checks the temporary directories that the turn inherited, listed in `AGENT_LOOP_INHERITED_TMPDIR`, so the refusal holds there too. `uninstall` reads only the manifest and the harness files, so it
 still removes them after the package is gone.
 
 A pnpm install resolves the package into a version-named virtual store entry, so
