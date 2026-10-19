@@ -7,10 +7,22 @@ import { exec } from "../../src/lib/exec.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
 import { runChild } from "../../src/child-turn.mjs";
+import { cleanRepoGit } from "../runtime-helpers.mjs";
 
-vi.mock("../../src/lib/exec.mjs", () => ({
-  exec: vi.fn(),
-}));
+// `exec` is replaced. The work tree read after a worker turn runs `git` through `execBounded`,
+// which answers a clean repository so the tests start no process and the read succeeds.
+vi.mock("../../src/lib/exec.mjs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    exec: vi.fn(),
+    execBounded: vi.fn(async (command, args, options) =>
+      command === "git"
+        ? cleanRepoGit(command, args, { ...options, cwd: tmpdir() })
+        : actual.execBounded(command, args, options),
+    ),
+  };
+});
 
 // Usefulness: verifies Copilot requests JSON output and reads the assistant message from the stream.
 test("copilot sends --output-format json and returns assistant text", async () => {
