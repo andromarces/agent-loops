@@ -84,7 +84,9 @@ files is a new runtime contract, and it handles files that can hold secrets.
    A case or Windows alias such as `.GITIGNORE`, `.GitAttributes`, `.gitignore.`,
    or `.Claude/Worktrees` therefore matches its plain name. A path is never
    folded: paths are compared as the canonical strings that `fs.promises.realpath`
-   returns.
+   returns. A `*.lock` file under `.claude/` (Claude Code runtime state, such as
+   `scheduled_tasks.lock`) is skipped and named, because a copy would claim a lock
+   that no process in `--cwd` holds (issue #964).
 8. **Size cap.** A file over 1 MiB is skipped and named. Each listed directory has
    its own bound of 2000 entries, counting every entry read under it, nested
    directories included. A listed directory that holds more than 2000 entries is
