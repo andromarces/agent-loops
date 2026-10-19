@@ -67,12 +67,13 @@ Result: only the `-c sandbox_mode="danger-full-access"` form is accepted by both
 - The user execpolicy exception of ADR 0019 does not apply with no sandbox, because no sandbox exists to skip. It still applies to both sandboxed modes.
 - A headless `--continue-from` run that names another mode than the earlier run is refused. Before this change, the flag was not compared.
 - Documentation of the three modes lives in `docs/reference/reviewer-safety.md`, `docs/reference/usage.md`, `docs/reference/role.md`, and `docs/orchestrator-instructions.md`.
+- Verified on macOS 27.2 (Darwin 27.2.0, arm64) for issue #708, which also satisfies issue #707 (probe on 2026-10-19). A direct `codex exec` turn ran in a disposable work tree of this repository. It used the adapter arguments for a new reviewer turn: `-c sandbox_mode="danger-full-access"`, `--json`, and `-m gpt-6.1-sol`. The turn read `codex-cli 0.164.0-alpha.3` and Node `v26.12.0`.
+- In that turn, `node src/cli.mjs test-slot -- "pnpm test"` exited 0 with 120 test files passed and 1 skipped. The tests were 2593 passed, 20 expected fail, and 16 skipped. `gh pr checks 956 --required` exited 0 with the three required `ci` checks passing. `node --version` and `codex --version` exited 0, and the `codex exec` process exited 0. The probe ran no `role` turn, so the reviewer prompt and the mutation check were not exercised.
 
 ### Pending verification
 
 These live checks are not done. Each result goes into this ADR when its issue records it.
 
-- Issue #708 (macOS, also satisfies issue #707 for Linux): a live Codex reviewer turn with no sandbox runs the full test suite and `gh pr checks <pr> --required`. Record the codex-cli and Node versions, the exit codes, and the test counts.
 - Issue #709 (Windows): the same check. Record the same fields.
 - Issue #710 (live runs): a Codex reviewer turn with no sandbox under a Codex requirements file that does not allow `danger-full-access`. Record the codex-cli version, the exit code, and the mode that the turn ran in.
 
