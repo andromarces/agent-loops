@@ -67,13 +67,15 @@ Result: only the `-c sandbox_mode="danger-full-access"` form is accepted by both
 - The user execpolicy exception of ADR 0019 does not apply with no sandbox, because no sandbox exists to skip. It still applies to both sandboxed modes.
 - A headless `--continue-from` run that names another mode than the earlier run is refused. Before this change, the flag was not compared.
 - Documentation of the three modes lives in `docs/reference/reviewer-safety.md`, `docs/reference/usage.md`, `docs/reference/role.md`, and `docs/orchestrator-instructions.md`.
-- Verified on macOS 27.2 (Darwin 27.2.0, arm64) for issue #708, which also satisfies issue #707 (probe on 2026-10-19). A direct `codex exec` turn ran in a disposable work tree of this repository. It used the adapter arguments for a new reviewer turn: `-c sandbox_mode="danger-full-access"`, `--json`, and `-m gpt-6.1-sol`. The turn read `codex-cli 0.164.0-alpha.3` and Node `v26.12.0`.
-- In that turn, `node src/cli.mjs test-slot -- "pnpm test"` exited 0 with 120 test files passed and 1 skipped. The tests were 2593 passed, 20 expected fail, and 16 skipped. `gh pr checks 956 --required` exited 0 with the three required `ci` checks passing. `node --version` and `codex --version` exited 0, and the `codex exec` process exited 0. The probe ran no `role` turn, so the reviewer prompt and the mutation check were not exercised.
 
 ### Pending verification
 
 These live checks are not done. Each result goes into this ADR when its issue records it.
 
+- Issue #708 (macOS, also satisfies issue #707 for Linux): a live Codex reviewer turn with no sandbox runs the full test suite and `gh pr checks <pr> --required`. Record the codex-cli and Node versions, the exit codes, and the test counts.
+  - Result on macOS 27.2 (Darwin 27.2.0, arm64), probe on 2026-10-19: a nested `agent-loop role` run with `--mode review-only`, `--reviewer codex`, `--reviewer-model gpt-6.1-sol`, `--reviewer-effort high`, and no `--reviewer-sandbox` flag. The saved state file holds `reviewerSandbox: "none"`. The one reviewer turn ended with status `ok` and verdict `accept`. The `reviewed` fields were `head` d659dc7, `clean` true, and `exact` true. The run ended with `finish`, and the state file holds lifecycle `finished`.
+  - The reviewer report in `Checks`, as the reviewer wrote it: `node --version` exit 0, v26.12.0, and `codex --version` exit 0, codex-cli 0.164.0-alpha.3. The plain test-slot wrapper over `pnpm test` exit 0, with 120 test files passed and 1 skipped. Tests: 2593 passed, 20 expected fail, and 16 skipped. `gh pr checks 956 --required` exit 0.
+  - Separate direct probe on the same day, not a `role` run: a `codex exec` turn with `-c sandbox_mode="danger-full-access"` and `-m gpt-6.1-sol` ran the same commands. Each exited 0, with the same test counts. This probe ran no reviewer prompt and no mutation check.
 - Issue #709 (Windows): the same check. Record the same fields.
 - Issue #710 (live runs): a Codex reviewer turn with no sandbox under a Codex requirements file that does not allow `danger-full-access`. Record the codex-cli version, the exit code, and the mode that the turn ran in.
 
