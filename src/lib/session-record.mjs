@@ -70,8 +70,17 @@ export async function sessionRecordPath(transcript) {
   return recordPath(await recordKey(transcript));
 }
 
+/**
+ * The directory of all session records: `AGENT_LOOP_SESSION_RECORDS_ROOT`, else
+ * `<os tmpdir>/agent-loops/session-records`.
+ */
+export function sessionRecordsRoot() {
+  const override = process.env.AGENT_LOOP_SESSION_RECORDS_ROOT;
+  return override ? resolve(override) : join(tmpdir(), "agent-loops", "session-records");
+}
+
 function recordPath(key) {
-  return join(tmpdir(), "agent-loops", "session-records", `${key}.json`);
+  return join(sessionRecordsRoot(), `${key}.json`);
 }
 
 /**

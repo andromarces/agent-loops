@@ -1,9 +1,13 @@
 import { mkdir, mkdtemp, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { runCodex } from "../../src/agents/codex.mjs";
 import { exec } from "../../src/lib/exec.mjs";
+import { stateRoot } from "../../src/lib/runstate.mjs";
+import { sessionRecordsRoot } from "../../src/lib/session-record.mjs";
+import { slotsRoot } from "../../src/lib/test-slot.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { exists, removePath, symlinkOrSkip } from "../runtime-helpers.mjs";
 
@@ -45,7 +49,14 @@ test("codex sends correct argv for initial turn with readOnly", async () => {
       "-c",
       "model_reasoning_effort=low",
     ],
-    expect.objectContaining({ cwd: "/dir", input: "prompt text" }),
+    {
+      cwd: "/dir",
+      input: "prompt text",
+      timeout: undefined,
+      signal: undefined,
+      role: undefined,
+      env: expect.objectContaining({ TMPDIR: expect.any(String) }),
+    },
   );
 });
 
@@ -73,7 +84,14 @@ test("codex resumes session with readOnly", async () => {
   expect(exec).toHaveBeenCalledWith(
     "codex",
     ["exec", "resume", "th-1", "-c", 'sandbox_mode="read-only"', "--json", "-"],
-    expect.objectContaining({ cwd: "/dir", input: "resume prompt" }),
+    {
+      cwd: "/dir",
+      input: "resume prompt",
+      timeout: undefined,
+      signal: undefined,
+      role: undefined,
+      env: expect.objectContaining({ TMPDIR: expect.any(String) }),
+    },
   );
 });
 
@@ -494,7 +512,7 @@ function fakeCodex(after) {
     seen.home = home;
     await mkdir(join(home, ".tmpAbC123"));
     await mkdir(join(home, ".tmpXyZ789"));
-    return after ? after(home) : { stdout: OK_EVENTS, stderr: "" };
+    return after ? after(home, env) : { stdout: OK_EVENTS, stderr: "" };
   });
   return seen;
 }
@@ -620,4 +638,74 @@ test("a codex turn never follows a link at a parent of the private directory", a
   } finally {
     await removePath(base);
   }
+});
+
+const ROOT_OVERRIDES = [
+  "AGENT_LOOP_RUNS_ROOT",
+  "AGENT_LOOP_TEST_SLOTS_ROOT",
+  "AGENT_LOOP_SESSION_RECORDS_ROOT",
+];
+const LIB = (name) => new URL(`../../src/lib/${name}`, import.meta.url).href;
+const RESOLVE_ROOTS = `
+const [{ stateRoot }, { slotsRoot }, { sessionRecordsRoot }] = await Promise.all([
+  import(${JSON.stringify(LIB("runstate.mjs"))}),
+  import(${JSON.stringify(LIB("test-slot.mjs"))}),
+  import(${JSON.stringify(LIB("session-record.mjs"))}),
+]);
+console.log(JSON.stringify({ runs: stateRoot(), slots: slotsRoot(), records: sessionRecordsRoot() }));`;
+
+// Runs the three machine-wide root lookups in a child that gets the environment of a Codex turn.
+async function rootsSeenByChild(overrides = {}) {
+  const root = await mkdtemp(join(tmpdir(), "codex-tmp-"));
+  const saved = ROOT_OVERRIDES.map((name) => process.env[name]);
+  try {
+    for (const name of ROOT_OVERRIDES) delete process.env[name];
+    Object.assign(process.env, overrides);
+    let childRoots;
+    fakeCodex(async (_home, env) => {
+      const { stdout } = await execa(
+        process.execPath,
+        ["--input-type=module", "-e", RESOLVE_ROOTS],
+        {
+          env,
+        },
+      );
+      childRoots = JSON.parse(stdout);
+      return { stdout: OK_EVENTS, stderr: "" };
+    });
+    const parentRoots = await withInheritedTmp(root, async () => {
+      const parent = { runs: stateRoot(), slots: slotsRoot(), records: sessionRecordsRoot() };
+      await runTurn();
+      return parent;
+    });
+    return { parentRoots, childRoots };
+  } finally {
+    ROOT_OVERRIDES.forEach((name, i) => {
+      if (saved[i] === undefined) delete process.env[name];
+      else process.env[name] = saved[i];
+    });
+    await removePath(root);
+  }
+}
+
+// Usefulness: verifies a child of a Codex turn shares the test-slot directory, the runs root, and
+// the session records with its parent, so the private temporary directory splits no host state.
+test("a child of a codex turn resolves the same machine-wide roots as the parent", async () => {
+  const { parentRoots, childRoots } = await rootsSeenByChild();
+  expect(childRoots).toEqual(parentRoots);
+});
+
+// Usefulness: verifies a user value of a root override still wins in the child of a Codex turn.
+test("a user root override wins in the child of a codex turn", async () => {
+  const mine = join(tmpdir(), "my-roots");
+  const { childRoots } = await rootsSeenByChild({
+    AGENT_LOOP_RUNS_ROOT: join(mine, "runs"),
+    AGENT_LOOP_TEST_SLOTS_ROOT: join(mine, "slots"),
+    AGENT_LOOP_SESSION_RECORDS_ROOT: join(mine, "records"),
+  });
+  expect(childRoots).toEqual({
+    runs: join(mine, "runs"),
+    slots: join(mine, "slots"),
+    records: join(mine, "records"),
+  });
 });

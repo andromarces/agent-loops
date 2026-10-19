@@ -160,7 +160,8 @@ export function testSlotOptions(
   return { slots, waitSeconds: wait };
 }
 
-function slotsRoot() {
+/** The slot directory: `AGENT_LOOP_TEST_SLOTS_ROOT`, else `<os tmpdir>/agent-loops/test-slots`. */
+export function slotsRoot() {
   const override = process.env.AGENT_LOOP_TEST_SLOTS_ROOT;
   return override ? resolve(override) : join(tmpdir(), "agent-loops", "test-slots");
 }

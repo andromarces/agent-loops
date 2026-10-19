@@ -56,7 +56,8 @@ export function statePaths({ cwd, parentSession } = {}) {
   return paths;
 }
 
-function stateRoot() {
+/** The directory of all run state: `AGENT_LOOP_RUNS_ROOT`, else `<os tmpdir>/agent-loops/runs`. */
+export function stateRoot() {
   const override = process.env.AGENT_LOOP_RUNS_ROOT;
   return override ? resolve(override) : join(tmpdir(), "agent-loops", "runs");
 }
