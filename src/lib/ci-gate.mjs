@@ -199,19 +199,28 @@ export function latestBy(entries, fields) {
   return latest;
 }
 
+/**
+ * The check runs and commit statuses that can satisfy a required context. A commit status
+ * carries no app, so it can never satisfy an app-qualified context.
+ */
+export function matchingEntries({ name, appId }, runs, statuses) {
+  return {
+    runs: runs.filter((run) => run.name === name && (appId === null || run.app?.id === appId)),
+    statuses: appId === null ? statuses.filter((status) => status.context === name) : [],
+  };
+}
+
 // Null when the required context passes, or `{ kind, reason }` where `kind` is
 // `missing`, `pending`, or `failing` and `reason` names the condition. An app-qualified context is satisfied only by a check run from that
 // app; an unqualified context is satisfied by a check run or a commit status
 // with the name, and both types must pass when both carry an unqualified name.
-function evaluateContext({ name, appId }, commit, runs, statuses) {
+export function evaluateContext({ name, appId }, commit, runs, statuses) {
   const label = appId === null ? `"${name}"` : `"${name}" (app ${appId})`;
-  const matchingRuns = runs.filter(
-    (run) => run.name === name && (appId === null || run.app?.id === appId),
+  const { runs: matchingRuns, statuses: matchingStatuses } = matchingEntries(
+    { name, appId },
+    runs,
+    statuses,
   );
-  // A commit status carries no app, so it can never satisfy an app-qualified
-  // context.
-  const matchingStatuses =
-    appId === null ? statuses.filter((status) => status.context === name) : [];
 
   if (matchingRuns.length === 0 && matchingStatuses.length === 0) {
     return { kind: "missing", reason: `required check ${label} is missing on ${commit}` };

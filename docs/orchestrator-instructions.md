@@ -662,13 +662,26 @@ and names no commit, so a wait that starts before GitHub moves the PR head to a 
 commit, as right after a worker push or `gh pr update-branch`, or that sees the head
 move away and back, can read the passing checks of another commit from it. The wait
 therefore never takes a check state from `gh pr checks`. Each poll reads the PR head
-`<sha>`, runs `gh pr checks` for its exit-code outcome and for the names of the
-required checks, and then reads every state from the check runs and commit statuses of
-`<sha>` itself, every page, by SHA. The latest entry for a name decides. The required
-wait judges the names that `gh pr checks --required` lists, and a listed name with no
-entry on `<sha>` is pending. The `--all` wait judges every entry of `<sha>`. So
-`checks` always describe `head` and no other commit, even when the PR head moves
-during the wait.
+`<sha>`, runs `gh pr checks` for its exit-code outcome, and then reads every state
+from the check runs and commit statuses of `<sha>` itself, every page, by SHA. The
+required wait judges each required context as the `--require-ci` gate does: the
+contexts come from the repository rulesets (`integration_id`), classic branch
+protection (`app_id`), and the names that `gh pr checks --required` lists, an
+app-qualified context is satisfied only by a check run of that app, and the latest
+matching entry decides. A context with no entry on `<sha>` is pending. The `--all`
+wait judges the latest check run of each name and app, and the latest commit status
+of each context of `<sha>`. So `checks` always describe `head` and no other commit,
+even when the PR head moves during the wait.
+
+The states of `<sha>` only make the outcome stricter. A failing state settles the
+wait, as it does from `gh pr checks`. A pass needs both: the `gh pr checks` outcome
+must be a pass, and so must every state of `<sha>`. A `gh pr checks` outcome that is
+pending (exit 8), that reports no check yet, or that lists a failing check keeps the
+wait running while `<sha>` shows a pass, and it ends at the bound with
+`timedOut: true`, never a pass. A commit read that fails, or whose reply cannot be
+parsed or ordered, exits 1 with `status: "error"`. A ruleset or protection source that
+the credential cannot read adds no app qualifier, so a context from it is judged by
+name, and a required check that no read of the PR lists yet is absent, as before.
 
 The PR head is the one read at the start of the poll, so the PR can have moved on by
 the time the wait returns, and a required check that no read of the PR lists yet is
@@ -748,7 +761,7 @@ agent-loop role wait-checks --all --cwd <dir> --pr <n> --head <sha> --timeout <s
 
 `--all` waits on every check of the commit `head` names, not only the required
 ones. It runs `gh pr checks <pr>` without `--required`, so it keeps the bound and
-the exit-code rules above: exit 0 with no pending check listed is settled, exit 8 is pending, a
+the exit-code rules above, and the states of the commit only make them stricter: exit 0 with no pending check listed is settled, exit 8 is pending, a
 listed failing check is settled, and every other exit 1 is unresolved with
 `status: "error"`. Exit 1 with no output and exactly `no checks reported on the
 '<branch>' branch` is the exception, as in the required wait: no check has

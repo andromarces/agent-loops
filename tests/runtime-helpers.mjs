@@ -370,20 +370,20 @@ export const HEAD_A = "a".repeat(40);
 /** A second head, for a test whose PR head moves. */
 export const HEAD_B = "b".repeat(40);
 
-// True when `args` is exactly the wait's head read, `gh pr view <pr> --json headRefOid`.
+// True when `args` is exactly the wait's head read, `gh pr view <pr> --json headRefOid,baseRefName`.
 function isHeadRead(args) {
   return (
     args.length === 5 &&
     startsWithArgs(args, ["pr", "view"]) &&
     Number.isInteger(Number(args[2])) &&
-    equalsArgs(args.slice(3), ["--json", "headRefOid"])
+    equalsArgs(args.slice(3), ["--json", "headRefOid,baseRefName"])
   );
 }
 
 function headReply(head) {
   return {
     status: 0,
-    stdout: JSON.stringify({ headRefOid: head }),
+    stdout: JSON.stringify({ headRefOid: head, baseRefName: "main" }),
     stderr: "",
     timedOut: false,
   };
@@ -404,15 +404,16 @@ const CONCLUSION_OF_BUCKET = {
 };
 
 // The check run of the REST check-runs reply that a `{ name, state, bucket }` check item stands for.
-function runOfItem({ name, state, bucket }, index) {
+function runOfItem({ name, state, bucket, appId, startedAt }, index) {
   const pending = bucket === "pending" || state in RUN_STATUS_OF_STATE;
   return {
     id: index + 1,
     name,
     status: pending ? (RUN_STATUS_OF_STATE[state] ?? "in_progress") : "completed",
     conclusion: pending ? null : (state?.toLowerCase() ?? CONCLUSION_OF_BUCKET[bucket]),
-    started_at: "2026-01-01T00:00:00Z",
-    completed_at: pending ? null : "2026-01-01T00:01:00Z",
+    started_at: startedAt ?? "2026-01-01T00:00:00Z",
+    completed_at: pending ? null : (startedAt ?? "2026-01-01T00:01:00Z"),
+    ...(appId === undefined ? {} : { app: { id: appId } }),
   };
 }
 
@@ -439,19 +440,58 @@ const ok = (stdout) => ({ status: 0, stdout, stderr: "", timedOut: false });
  * The check runs of a commit read by SHA come from `commits[sha]`, a list of
  * `{ name, state, bucket }` items; a commit the map does not hold answers with the items of
  * the latest `pr checks` read, so a test that scripts only `reads` sees one consistent source.
- * A call that is none of these is an error, so a test never passes on a missing fixture or a
+ * `required` lists the `{ name, appId }` contexts the base-branch ruleset requires. A call that is none of these is an error, so a test never passes on a missing fixture or a
  * wrong argument.
  */
-export function scriptedGh(reads, { all = false, heads = [HEAD_A], commits = {} } = {}) {
+export function scriptedGh(
+  reads,
+  { all = false, heads = [HEAD_A], commits = {}, required = [] } = {},
+) {
   let n = 0;
   let h = 0;
   let current = [];
+  let lastRead = null;
   return async (args, cwd) => {
     if (isHeadRead(args)) {
       return headReply(heads[Math.min(h++, heads.length - 1)]);
     }
     if (args[0] === "repo" && args[1] === "view") {
       return ok("owner/repo");
+    }
+    if (args[0] === "api" && args[1] === "repos/owner/repo/rules/branches/main") {
+      return ok(
+        JSON.stringify([
+          required.length === 0
+            ? []
+            : [
+                {
+                  type: "required_status_checks",
+                  parameters: {
+                    required_status_checks: required.map(({ name, appId }) => ({
+                      context: name,
+                      integration_id: appId,
+                    })),
+                  },
+                },
+              ],
+        ]),
+      );
+    }
+    if (args[0] === "api" && args[1] === "repos/owner/repo/branches/main/protection") {
+      return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
+    }
+    if (
+      args.length === 6 &&
+      startsWithArgs(args, ["pr", "checks"]) &&
+      equalsArgs(args.slice(3), ["--required", "--json", "name"])
+    ) {
+      // The required-names read of the gate: the names of the latest `pr checks` read.
+      return {
+        status: lastRead.status,
+        stdout: lastRead.stdout ?? JSON.stringify(current.map(({ name }) => ({ name }))),
+        stderr: lastRead.stderr ?? "",
+        timedOut: false,
+      };
     }
     const api = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/(check-runs|status)$/.exec(
       args[0] === "api" ? args[1] : "",
@@ -473,6 +513,7 @@ export function scriptedGh(reads, { all = false, heads = [HEAD_A], commits = {} 
     }
     const read = reads[Math.min(n++, reads.length - 1)];
     current = readItems(read);
+    lastRead = read;
     return {
       status: read.status,
       stdout: read.stdout ?? JSON.stringify(read.checks ?? []),

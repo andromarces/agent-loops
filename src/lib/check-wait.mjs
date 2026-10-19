@@ -3,8 +3,20 @@
 // takes no timeout for the watch, and a shell `timeout` exists on neither
 // Windows nor macOS by default. The runtime owns the bound instead (issue #329).
 import { setTimeout as delay } from "node:timers/promises";
-import { checkRuns, commitStatuses, latestBy } from "./ci-gate.mjs";
-import { ghFailureText, NO_REQUIRED_CHECKS, runGh } from "./ci-required-sources.mjs";
+import {
+  checkRuns,
+  commitStatuses,
+  evaluateContext,
+  latestBy,
+  matchingEntries,
+} from "./ci-gate.mjs";
+import {
+  failureOf,
+  ghFailureText,
+  NO_REQUIRED_CHECKS,
+  requiredContexts,
+  runGh,
+} from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
 
 /** Default wait bound, in seconds. Short enough to fit a harness command timeout. */
@@ -173,8 +185,9 @@ export function isFullSha(value) {
 }
 
 /**
- * The PR head a `gh pr view --json headRefOid` read reports, lowercase. Throws when the
- * read failed or names no full SHA, so an unreadable head is unresolved, never a pass.
+ * The PR head `{ head, base }` that a `gh pr view --json headRefOid,baseRefName` read reports, the
+ * head lowercase. Throws when the read failed or names no full SHA or base branch, so an
+ * unreadable head is unresolved, never a pass.
  */
 function readHead(pr, { status, stdout, stderr }) {
   const label = `gh pr view ${pr}`;
@@ -188,37 +201,24 @@ function readHead(pr, { status, stdout, stderr }) {
     // Left null: the read is refused below.
   }
   const head = isJsonObject(parsed) ? parsed.headRefOid : undefined;
+  const base = isJsonObject(parsed) ? parsed.baseRefName : undefined;
   if (typeof head !== "string" || !FULL_SHA.test(head.toLowerCase())) {
     throw new Error(`${label} returned no full head SHA; the read is unresolved.`);
   }
-  return head.toLowerCase();
+  if (typeof base !== "string" || base === "") {
+    throw new Error(`${label} returned no base branch; the read is unresolved.`);
+  }
+  return { head: head.toLowerCase(), base };
 }
 
 // The check items of one commit, read by SHA. `gh pr checks` queries by PR identity and
 // names no commit, so it cannot say which head its states describe (#961). The check runs
-// and commit statuses of the commit come from `commits/{sha}`, and the latest entry for a
-// name decides, as it does for the `--require-ci` gate.
+// and commit statuses of the commit come from `commits/{sha}`. A required context is judged
+// by the gate's own matching and verdict (`matchingEntries`, `evaluateContext`), so an
+// app-qualified context is satisfied only by a run of that app, and the latest entry among
+// the matching ones decides.
 const RUN_BUCKETS = { success: "pass", neutral: "pass", skipped: "skipping", cancelled: "cancel" };
 const STATUS_BUCKETS = { success: "pass", pending: "pending" };
-
-function groupBy(entries, key) {
-  const groups = new Map();
-  for (const entry of entries) {
-    groups.set(entry[key], [...(groups.get(entry[key]) ?? []), entry]);
-  }
-  return groups;
-}
-
-/** The latest entry of each name group. Throws when a group cannot be ordered, so the read is unresolved. */
-function latestOfEach(entries, key, fields, what) {
-  return [...groupBy(entries, key)].map(([name, group]) => {
-    const latest = latestBy(group, fields);
-    if (latest === null) {
-      throw new Error(`the ${what} named "${name}" cannot be ordered; the read is unresolved.`);
-    }
-    return latest;
-  });
-}
 
 function runItem(run) {
   const completed = run.status === "completed";
@@ -237,28 +237,73 @@ function statusItem(status) {
   };
 }
 
-/**
- * The items of a commit read: every check run and commit status when `names` is null,
- * otherwise those named. A name with no entry on the commit has not reported on it, so it
- * is a pending item. Every item describes `commit` and no other.
- */
-function commitItems({ runs, statuses }, names) {
-  const latestRuns = latestOfEach(runs, "name", ["started_at", "completed_at"], "check runs");
-  const latestStatuses = latestOfEach(
-    statuses,
-    "context",
-    ["updated_at", "created_at"],
-    "commit statuses",
-  );
-  if (names === null) {
-    return [...latestRuns.map(runItem), ...latestStatuses.map(statusItem)];
+/** The latest entry of each group, keyed by `keyOf`. Throws when a group cannot be ordered, so the read is unresolved. */
+function latestOfEach(entries, keyOf, fields, what) {
+  const groups = new Map();
+  for (const entry of entries) {
+    groups.set(keyOf(entry), [...(groups.get(keyOf(entry)) ?? []), entry]);
   }
-  return [...new Set(names)].flatMap((name) => {
-    const found = [
-      ...latestRuns.filter((run) => run.name === name).map(runItem),
-      ...latestStatuses.filter((status) => status.context === name).map(statusItem),
+  return [...groups].map(([key, group]) => {
+    const latest = latestBy(group, fields);
+    if (latest === null) {
+      throw new Error(`the ${what} named "${key}" cannot be ordered; the read is unresolved.`);
+    }
+    return latest;
+  });
+}
+
+/**
+ * The items of the `--all` wait: the latest check run of each name and app, and the latest
+ * commit status of each context. An app is a part of the key, so a newer run of one app
+ * never masks another app's failing run of the same name.
+ */
+function allItems({ runs, statuses }) {
+  return [
+    ...latestOfEach(
+      runs,
+      (run) => `${run.name} (app ${run.app?.id ?? "none"})`,
+      ["started_at", "completed_at"],
+      "check runs",
+    ).map(runItem),
+    ...latestOfEach(
+      statuses,
+      (status) => status.context,
+      ["updated_at", "created_at"],
+      "commit statuses",
+    ).map(statusItem),
+  ];
+}
+
+/**
+ * The items of the required wait: one verdict per required context, as the gate judges it.
+ * A passing context shows its latest matching entries. A failing or pending one shows a
+ * matching entry in that state, or a synthetic item when only the verdict says so, and a
+ * context with no matching entry has not reported on the commit, so it is pending.
+ */
+function requiredItems({ runs, statuses }, contexts, commit) {
+  return contexts.flatMap((context) => {
+    const verdict = evaluateContext(context, commit, runs, statuses);
+    const matching = matchingEntries(context, runs, statuses);
+    const entries = [...matching.runs.map(runItem), ...matching.statuses.map(statusItem)];
+    if (verdict === null) {
+      return [
+        ...(matching.runs.length > 0
+          ? [runItem(latestBy(matching.runs, ["started_at", "completed_at"]))]
+          : []),
+        ...(matching.statuses.length > 0
+          ? [statusItem(latestBy(matching.statuses, ["updated_at", "created_at"]))]
+          : []),
+      ];
+    }
+    const failing = verdict.kind === "failing";
+    const shown = entries.find((item) => (failing ? isFailing(item) : isPending(item)));
+    return [
+      shown ?? {
+        name: context.name,
+        state: failing ? "FAILURE" : "PENDING",
+        bucket: failing ? "fail" : "pending",
+      },
     ];
-    return found.length > 0 ? found : [{ name, state: "PENDING", bucket: "pending" }];
   });
 }
 
@@ -340,17 +385,21 @@ async function readWithin(gh, argv, cwd, remainingMs, signal) {
  *
  * `gh pr checks` names no commit, because it queries by PR identity, so the check states
  * never come from it. Each poll reads the PR head `sha` (`gh pr view`), runs `gh pr checks`
- * for its exit-code outcome and for the names of the required checks, and then takes every
- * state from the check runs and commit statuses of `sha` itself (`commits/{sha}`, every page).
- * The envelope's `head` is that `sha`, so `checks` describe it and no other commit, even when
- * the PR head moves during the wait. The required wait judges the names that `gh pr checks
- * --required` lists, with a name that has no entry on `sha` pending. The `--all` wait judges
- * every entry of `sha`. A check that is required but that no read of the PR lists yet is
- * absent, as before. With `head`, a poll whose PR head is another commit reads no checks and
- * the wait continues, so the passing checks of the previous head never settle it. The PR head
- * is the one read at the start of the poll, so the PR can have moved on by the time the wait
- * returns. `head` is null when no read completed, such as a wait that reached the bound before
- * the PR head reached `head` (#961).
+ * for its exit-code outcome, and then takes every state from the check runs and commit
+ * statuses of `sha` itself (`commits/{sha}`, every page). The envelope's `head` is that `sha`,
+ * so `checks` describe it and no other commit, even when the PR head moves during the wait.
+ * The required wait judges each required context as the `--require-ci` gate does: the
+ * contexts come from `requiredContexts`, matching and verdict come from the gate, an
+ * app-qualified context is satisfied only by a run of that app, and a context with no entry
+ * on `sha` is pending. The `--all` wait judges the latest run of each name and app and the
+ * latest status of each context. The states of `sha` only make the outcome stricter: a
+ * failing state settles the wait, and a pass needs both the `gh pr checks` outcome and every
+ * state of `sha` to pass. A source the credential cannot read adds no app qualifier, and a
+ * check that is required but that no read of the PR lists yet is absent, as before. With
+ * `head`, a poll whose PR head is another commit reads no checks and the wait continues. The
+ * PR head is the one read at the start of the poll, so the PR can have moved on by the time
+ * the wait returns. `head` is null when no read completed, such as a wait that reached the
+ * bound before the PR head reached `head` (#961).
  *
  * `deadline` is an absolute time on the `now` clock. A caller passes it to bound
  * the whole command, including the work that runs before the first read; a
@@ -383,7 +432,7 @@ export async function waitChecks({
     "--json",
     "name,state,bucket",
   ];
-  const headArgv = ["pr", "view", String(pr), "--json", "headRefOid"];
+  const headArgv = ["pr", "view", String(pr), "--json", "headRefOid,baseRefName"];
   let last = [];
   let lastHead = null;
   let slug = null;
@@ -448,25 +497,50 @@ export async function waitChecks({
     }
     return true;
   };
+  // The contexts the required wait judges: every source of the gate, so an app-qualified
+  // context keeps its app, plus the names `gh pr checks --required` listed.
+  const contextsOf = async (base, listed) => {
+    const required = await requiredContexts((argv) => bounded(argv), slug, base, pr, cwd);
+    if (required.unparsed.length > 0) {
+      throw new Error(
+        `${required.unparsed.join(" and ")} returned a reply that could not be parsed; the read is unresolved.`,
+      );
+    }
+    const contexts = [...required.contexts];
+    for (const { name } of listed.checks) {
+      if (!contexts.some((context) => context.name === name)) {
+        contexts.push({ name, appId: null });
+      }
+    }
+    return contexts;
+  };
   try {
     for (;;) {
-      const sha = readHead(pr, await bounded(headArgv));
+      const { head: sha, base } = readHead(pr, await bounded(headArgv));
       if (head === null || sha === head) {
         const listed = readOutcome(pr, await bounded(checksArgv), all);
         let outcome = listed;
         // A branch with no required check names no state to read, so it carries no commit read.
         // An empty required list names nothing to read, so the wait continues.
         if (!listed.noRequiredChecks && (all || listed.checks.length > 0)) {
-          const items = commitItems(
-            await readCommit(sha),
-            all ? null : listed.checks.map(({ name }) => name),
-          );
-          outcome = readOutcome(
+          const entries = await readCommit(sha);
+          const items = all
+            ? allItems(entries)
+            : requiredItems(entries, await contextsOf(base, listed), sha);
+          const read = readOutcome(
             pr,
             asRead(items),
             all,
             `the check runs and commit statuses of ${sha}`,
           );
+          // The commit states only make the outcome stricter. A failing state settles the
+          // wait, as it does from `gh pr checks`. A pass needs both the PR outcome and the
+          // commit states to pass, so a pending or not yet reported PR answer keeps waiting.
+          const prPassed = listed.settled && !listed.checks.some(isFailing);
+          outcome = {
+            settled: read.settled && (items.some(isFailing) || prPassed),
+            checks: read.checks,
+          };
         }
         // A new head drops the kept checks, so the envelope never pairs them with it.
         if (sha !== lastHead) {
@@ -492,7 +566,8 @@ export async function waitChecks({
         return timeout();
       }
     }
-  } catch (err) {
+  } catch (raw) {
+    const err = failureOf(raw);
     if (err instanceof BoundReached) {
       return timeout(err.result);
     }
