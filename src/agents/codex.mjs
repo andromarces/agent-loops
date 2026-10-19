@@ -1,5 +1,6 @@
 import { parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import { withTurnTmpdir } from "../lib/turn-tmpdir.mjs";
 import {
   asSessionId,
   assertResumedSession,
@@ -52,7 +53,11 @@ export async function runCodex(state, prompt, options = {}) {
   const requestedSessionId = state.sessionId;
   let stdout;
   try {
-    ({ stdout } = await exec("codex", args, { cwd, input: prompt, timeout, signal, role }));
+    // The CLI creates two empty `.tmp*` directories in its temporary directory on every turn, so it
+    // gets a private one that the runtime removes (issue #955).
+    ({ stdout } = await withTurnTmpdir((env) =>
+      exec("codex", args, { cwd, input: prompt, timeout, signal, role, ...(env && { env }) }),
+    ));
   } catch (err) {
     // A failed first turn still emits `thread.started` before the failure. Keep that id, then rethrow.
     const started = parseJsonLines(err?.stdout ?? "").find(
