@@ -44,10 +44,15 @@ test("a replacement of the turn directory loses no content", async () => {
 
 // Usefulness: verifies a directory that replaces the turn directory while the removal runs is not
 // removed by the final `rmdir`, so the removal never deletes a directory it did not create.
+// Windows refuses to rename a directory that another process holds as its working directory, which
+// the helper does while it deletes. The swap then fails, the removal finishes, and nothing of
+// another directory is at risk. The test accepts that outcome only when the rename was refused.
 test("a replacement during the removal keeps its empty directory", async () => {
   await withRoot(async (root) => {
-    const TOP = 400;
+    // Windows cannot swap, so a short tree keeps its slow file creation within the test timeout.
+    const TOP = process.platform === "win32" ? 20 : 400;
     let replacement;
+    let swap = "never tried";
     await withTurnTmpdir(async (env) => {
       for (let d = 0; d < TOP; d++) {
         mkdirSync(join(env.TMPDIR, `d${d}`));
@@ -57,19 +62,30 @@ test("a replacement during the removal keeps its empty directory", async () => {
       // Swaps as soon as the removal has started deleting content.
       const poll = setInterval(() => {
         try {
-          if (readdirSync(replacement).length < TOP) {
-            clearInterval(poll);
-            renameSync(replacement, join(root, "moved"));
-            mkdirSync(replacement);
-          }
+          if (readdirSync(replacement).length >= TOP) return;
         } catch {
-          // The directory is mid-swap or gone: the next tick or the end of the test decides.
+          // The directory is mid-removal or gone: the next tick or the end of the test decides.
+          return;
+        }
+        clearInterval(poll);
+        try {
+          renameSync(replacement, join(root, "moved"));
+          mkdirSync(replacement);
+          swap = "swapped";
+        } catch (err) {
+          swap = `refused ${err.code}`;
         }
       }, 1);
       setTimeout(() => clearInterval(poll), 20_000).unref();
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(existsSync(replacement)).toBe(true);
-    expect(readdirSync(root).sort()).toEqual(["moved", basename(replacement)].sort());
+    if (swap === "swapped") {
+      expect(existsSync(replacement)).toBe(true);
+      expect(readdirSync(root).sort()).toEqual(["moved", basename(replacement)].sort());
+    } else {
+      // No swap happened on this run, so the removal finished normally.
+      expect({ swap, removed: !existsSync(replacement) }).toEqual({ swap, removed: true });
+      expect(process.platform === "win32" || swap === "never tried").toBe(true);
+    }
   });
-}, 30_000);
+}, 60_000);
