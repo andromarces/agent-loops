@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0048: Bind the wait-checks states to the PR head commit](0048-bind-the-wait-checks-states-to-the-pr-head-commit.md): decision 2 (the envelope, which now names `head` and carries `prFailures`), decision 8 (the `gh pr checks` outcome no longer decides alone, because every state is read for the head commit by SHA), and decision 12 (a listed name with no entry on the commit is pending) are replaced. The other decisions remain in force: the operation, the bound and its default, the child-exit ceiling, work-tree validation inside the bound, the item validation, the status-only rule, the `--cwd` rule, and the instruction wording.
 
 ## Date
 

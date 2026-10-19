@@ -393,10 +393,11 @@ async function readWithin(gh, argv, cwd, remainingMs, signal) {
  * contexts come from `requiredContexts`, matching and verdict come from the gate, an
  * app-qualified context is satisfied only by a run of that app, and a context with no entry
  * on `sha` is pending. The `--all` wait judges the latest run of each name and app and the
- * latest status of each context. The states of `sha` only make the outcome stricter: a failure
- * that `gh pr checks` lists settles the wait and is reported as listed when `sha` does not show
- * it, a failing state of `sha` settles it too, and a pass needs both the `gh pr checks` outcome
- * and every state of `sha` to pass. A required context that cannot be resolved (a source that
+ * latest status of each context. The states of `sha` only make the outcome stricter: a failing
+ * state of `sha` settles the wait, and a pass needs both the `gh pr checks` outcome and every
+ * state of `sha` to pass. A failure that `gh pr checks` lists settles the wait too, but it is
+ * PR-level evidence that no commit pins, so it is reported in `prFailures`, apart from `checks`,
+ * which holds only states read for `head`, and it survives the bound. A required context that cannot be resolved (a source that
  * cannot be read or parsed, or a failed read of the names) is an error, because no pass can
  * follow it. A check that is required but that no read of the PR lists yet is absent, as
  * before. With
@@ -410,7 +411,7 @@ async function readWithin(gh, argv, cwd, remainingMs, signal) {
  * caller that passes only `timeoutSeconds` is bounded from this call (#329).
  * @param {{ pr: number, cwd: string, timeoutSeconds?: number, deadline?: number | null, all?: boolean,
  *           head?: string | null, gh?: Function, now?: Function, sleep?: Function, signal?: AbortSignal | null }} options
- * @returns {Promise<{ timedOut: boolean, head: string | null, checks: Array<{ name: string, state: string|null, bucket: string|null }> }>}
+ * @returns {Promise<{ timedOut: boolean, head: string | null, checks: Array<{ name: string, state: string|null, bucket: string|null }>, prFailures?: Array<{ name: string, state: string|null, bucket: string|null }> }>}
  */
 export async function waitChecks({
   pr,
@@ -445,10 +446,14 @@ export async function waitChecks({
   // Set by every read of the wait whose child exit was not observed, including a sibling
   // read that the first failure of a group left running to the ceiling.
   let unconfirmed = false;
+  // The failures that `gh pr checks` listed in the current poll. They are PR-level evidence,
+  // not pinned to a commit, so they ride apart from `checks`, which holds states read for `head`.
+  let prFailures = [];
   const timeout = (result = {}) => ({
     timedOut: true,
     head: lastHead,
     checks: last,
+    ...(prFailures.length > 0 ? { prFailures } : {}),
     ...(unconfirmed || result.childExitUnconfirmed ? { childExitUnconfirmed: true } : {}),
   });
   // One bounded read, so the commit reads share the deadline of the checks read. A group of
@@ -538,14 +543,15 @@ export async function waitChecks({
   };
   try {
     for (;;) {
+      prFailures = [];
       const { head: sha, base } = readHead(pr, await bounded(headArgv));
       if (head === null || sha === head) {
         const listed = readOutcome(pr, await bounded(checksArgv), all);
+        prFailures = listed.checks.filter(isFailing);
         let outcome = listed;
         // A branch with no required check names no state to read, so it carries no commit read.
         // An empty required list names nothing to read, so the wait continues.
         if (!listed.noRequiredChecks && (all || listed.checks.length > 0)) {
-          const listedFailing = listed.checks.filter(isFailing);
           let items = null;
           try {
             const entries = await readCommit(sha);
@@ -556,12 +562,13 @@ export async function waitChecks({
             // A failure that `gh pr checks` lists settles the wait, so a commit or source read
             // that fails never delays it. The bound and every other failure still end it.
             const err = failureOf(raw);
-            if (err instanceof BoundReached || listedFailing.length === 0) {
+            if (err instanceof BoundReached || prFailures.length === 0) {
               throw err;
             }
           }
           if (items === null) {
-            outcome = { settled: true, checks: listed.checks };
+            // No state was read for `sha`, so the result names no head and holds no check.
+            outcome = { settled: true, checks: [], unread: true };
           } else {
             const read = readOutcome(
               pr,
@@ -570,27 +577,18 @@ export async function waitChecks({
               `the check runs and commit statuses of ${sha}`,
             );
             // The commit states only make the outcome stricter. A failing state, or a failure
-            // that `gh pr checks` lists, settles the wait, and the listed failure is reported as
-            // listed when the commit does not show it. A pass needs both the PR outcome and the
-            // commit states to pass, so a pending or not yet reported PR answer keeps waiting.
-            const shown = new Set(items.filter(isFailing).map(({ name }) => name));
-            const hidden = listedFailing.filter(({ name }) => !shown.has(name));
+            // that `gh pr checks` lists, settles the wait, and a listed failure is reported in
+            // `prFailures`, never in `checks`. A pass needs both the PR outcome and the commit
+            // states to pass, so a pending or not yet reported PR answer keeps waiting.
             outcome = {
               settled:
-                listedFailing.length > 0 ||
-                items.some(isFailing) ||
-                (read.settled && listed.settled),
-              checks: [
-                ...read.checks.filter(
-                  ({ name }) => !hidden.some((failure) => failure.name === name),
-                ),
-                ...hidden,
-              ],
+                prFailures.length > 0 || items.some(isFailing) || (read.settled && listed.settled),
+              checks: read.checks,
             };
           }
         }
         // A new head drops the kept checks, so the envelope never pairs them with it.
-        if (sha !== lastHead) {
+        if (!outcome.unread && sha !== lastHead) {
           last = [];
           lastHead = sha;
         }
@@ -604,8 +602,9 @@ export async function waitChecks({
           return {
             timedOut: false,
             ...(outcome.noRequiredChecks ? { noRequiredChecks: true } : {}),
-            head: sha,
+            head: outcome.unread ? null : sha,
             checks: outcome.checks,
+            ...(prFailures.length > 0 ? { prFailures } : {}),
           };
         }
       }
@@ -617,6 +616,10 @@ export async function waitChecks({
     const err = failureOf(raw);
     if (err instanceof BoundReached) {
       return timeout(err.result);
+    }
+    // An error envelope carries the unconfirmed exit too: a child may still run.
+    if (unconfirmed && err instanceof Error) {
+      err.childExitUnconfirmed = true;
     }
     throw err;
   }

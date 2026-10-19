@@ -673,23 +673,44 @@ wait judges the latest check run of each name and app, and the latest commit sta
 of each context of `<sha>`. So `checks` always describe `head` and no other commit,
 even when the PR head moves during the wait.
 
-The states of `<sha>` only make the outcome stricter. A failure that `gh pr checks`
-lists settles the wait whatever `<sha>` shows, and it is reported as listed when `<sha>`
-does not show it, because the commit states never delay or hide a failure. A failing
-state of `<sha>` settles it too. A pass needs both: the `gh pr checks` outcome must be
-a pass, and so must every state of `<sha>`. A `gh pr checks` outcome that is pending
-(exit 8) or that reports no check yet keeps the wait running while `<sha>` shows a
-pass, and it ends at the bound with `timedOut: true`, never a pass.
+The states of `<sha>` only make the outcome stricter. A failing state of `<sha>`
+settles the wait. A pass needs both: the `gh pr checks` outcome must be a pass, and so
+must every state of `<sha>`. A `gh pr checks` outcome that is pending (exit 8) or that
+reports no check yet keeps the wait running while `<sha>` shows a pass, and it ends at
+the bound with `timedOut: true`, never a pass.
+
+A failure that `gh pr checks` lists settles the wait whatever `<sha>` shows. That
+evidence is PR-level and is not pinned to `<sha>`, so it never goes into `checks`. It
+is reported in `prFailures`, a field that appears only when `gh pr checks` listed a
+failure in the poll that ended the wait. `checks` holds only states read for `head`.
+Never record a pass from an envelope that carries `prFailures`: the failure may belong
+to a commit other than `head`, and the parent decides what it means.
+
+```json
+{
+  "status": "ok",
+  "pr": 42,
+  "timedOut": false,
+  "head": "0123456789abcdef0123456789abcdef01234567",
+  "checks": [{ "name": "ci", "state": "SUCCESS", "bucket": "pass" }],
+  "prFailures": [{ "name": "ci", "state": "FAILURE", "bucket": "fail" }]
+}
+```
+
+`prFailures` survives a bound that a later read reaches (`timedOut: true`) and a commit
+or source read that fails. In the second case `head` is `null` and `checks` is empty,
+because no state was read for a commit.
 
 The required wait refuses a required context it cannot resolve. A ruleset or protection
 source with no usable reply (a 403 or 404 for a caller without admin rights, for example), a
 source reply that is not valid JSON, and a failed read of the required names each exit 1
 with `status: "error"` before any state is judged, because such a
 source can hold a required check or an app qualifier that the wait never saw. A listed
-failure still settles the wait in that case. The `--all` wait reads no source. A commit
-read that fails, or whose reply cannot be parsed or ordered, is an error too.
-`childExitUnconfirmed: true` covers every `gh` child of the poll, including a source read
-that the first failure of the poll left running to the ceiling. A required check that no
+failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
+source. A commit read that fails, or whose reply cannot be parsed or ordered, is an error
+too. `childExitUnconfirmed: true` covers every `gh` child of the poll, including a source
+read that the first failure of the poll left running to the ceiling, and it rides on an
+error envelope too. A required check that no
 read of the PR lists yet is absent, as before.
 
 The PR head is the one read at the start of the poll, so the PR can have moved on by

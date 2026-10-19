@@ -9,7 +9,16 @@ export function errorResult(err) {
     return { exitCode: 130, payload: { status: "error", error: "Interrupted by SIGINT" } };
   }
   try {
-    return { exitCode: 1, payload: { status: "error", error: errorMessage(err) } };
+    // A wait that failed with a `gh` child whose exit it never observed says so, so the parent
+    // settles that process before it starts another wait.
+    return {
+      exitCode: 1,
+      payload: {
+        status: "error",
+        error: errorMessage(err),
+        ...(readProp(err, "childExitUnconfirmed") === true ? { childExitUnconfirmed: true } : {}),
+      },
+    };
   } catch (formatErr) {
     // Reading the message threw. Keep one envelope, and keep a cancel as exit 130.
     const canceled = Boolean(readProp(formatErr, "isCanceled"));

@@ -254,7 +254,10 @@ Role operations:
                                 --timeout plus five seconds. With --all it waits
                                 on every check of the PR head, not only the
                                 required ones. Check states are read from the
-                                commit by SHA; head names that commit.
+                                commit by SHA; head names that commit. A failure
+                                that gh pr checks lists settles the wait and is
+                                reported in prFailures, apart from checks, because
+                                it is not pinned to head.
                                 --head <sha> keeps the wait going until the PR
                                 head is that commit.
                                 Reads status only, so it needs

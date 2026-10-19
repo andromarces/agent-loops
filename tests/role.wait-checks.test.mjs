@@ -420,3 +420,30 @@ test("--head is refused on an operation other than wait-checks", async () => {
   expect(result.exitCode).toBe(1);
   expect(result.payload.error).toMatch(/--head is only valid for wait-checks/);
 });
+
+// Usefulness: verifies the error envelope of `role wait-checks` carries `childExitUnconfirmed`
+// when a sibling read of the failed poll stays unconfirmed, so the parent settles the `gh`
+// process before another wait (issue #961).
+test("wait-checks marks an error envelope with an unconfirmed child", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const inner = scriptedGh([SETTLED], { commits: { [HEAD_A]: SETTLED.checks } });
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
+    {
+      gh: (args, cwd, options) => {
+        if (args[0] === "api" && args[1].includes("/rules/branches/")) {
+          return Promise.resolve({ status: 1, stdout: "", stderr: "gh: Server Error (HTTP 500)" });
+        }
+        if (args[0] === "api" && args[1].includes("/protection")) {
+          return new Promise(() => {});
+        }
+        return inner(args, cwd, options);
+      },
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({ status: "error", childExitUnconfirmed: true });
+}, 20000);
