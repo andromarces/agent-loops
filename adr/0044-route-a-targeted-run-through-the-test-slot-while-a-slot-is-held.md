@@ -31,6 +31,8 @@ A direct targeted run holds no slot, so its load is not counted (ADR 0040, issue
 - The limit of decision 5 stays: the check is a snapshot, so a targeted run and a slot holder can overlap.
 - A worker or reviewer cannot test timing under synthetic load. The required CI checks give that evidence.
 - The runtime `--test-cmd` is unchanged. It already runs in a slot.
+- Verified on macOS 27.2 (Darwin 27.2.0, arm64) and Node v26.12.0, on the direct path with all slots free (issue #708, probe on 2026-10-19). The slot directory held no slot file before each run. A command that wrote one line to each stream and exited 7 gave wrapper exit 7. The stdout line reached the wrapper stdout. The stderr line reached the wrapper stderr, between the wrapper log lines.
+- Signals, same probe: the command started a `sleep 600` child. One `SIGINT` and one `SIGTERM`, each sent to the wrapper PID only, gave wrapper exit 130 and 143. The process table listed the wrapper, a command shell, and the `sleep` before each signal. None of the three PIDs was alive after the wrapper ended. The slot directory held no slot file during or after each run. The wrapper log named the end of the command as `signal SIGKILL`.
 
 ## Alternatives
 
