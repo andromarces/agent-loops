@@ -1,6 +1,6 @@
 import { lstat, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { execBounded } from "./exec.mjs";
@@ -47,7 +47,7 @@ export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS } 
   for (const [name, resolveRoot] of ROOT_PINS) {
     if (!process.env[name]) pins[name] = resolveRoot();
   }
-  const inherited = [tmpdir(), ...inheritedTmpdirs()].join(delimiter);
+  const inherited = JSON.stringify([tmpdir(), ...inheritedTmpdirs()]);
   try {
     created = await createTurnTmpdir();
     logDebug(`turn temporary directory created: ${created.dir}`);

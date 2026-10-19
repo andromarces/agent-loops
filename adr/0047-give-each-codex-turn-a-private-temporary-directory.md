@@ -12,24 +12,25 @@ accepted
 
 The Codex CLI leaves two empty `.tmpXXXXXX` directories in its temporary directory on every `exec` turn (issue #955). A probe with `codex exec` showed them in the `danger-full-access` and `read-only` modes. They pile up in the OS temporary directory.
 
-Several parts of the runtime key machine-wide state on `os.tmpdir()`: the runs root, the test-slot directory, the session records, and the installer check of a package-runner root. A new temporary directory for the child must not split that state.
+Several parts of the runtime key machine-wide state on `os.tmpdir()`. These are the runs root, the test-slot directory, the session records, and the installer check of a package-runner root. A new temporary directory for the child must not split that state.
 
 ## Decision
 
-1. **Private directory.** Every Codex turn (worker, reviewer, orchestrator) runs with `TMPDIR`, `TEMP`, and `TMP` set to `al-XXXXXX`, which `mkdtemp` creates under the inherited temporary directory. The name stays short (issue #903). A failed creation warns, and the turn uses the inherited directory.
-2. **Host state stays shared.** The runtime pins `AGENT_LOOP_RUNS_ROOT`, `AGENT_LOOP_TEST_SLOTS_ROOT`, and `AGENT_LOOP_SESSION_RECORDS_ROOT` for the child to the paths that the parent resolves. A value that the user set wins. Session records had no override, so this ADR adds `AGENT_LOOP_SESSION_RECORDS_ROOT`.
-3. **Installer check.** The runtime lists the inherited temporary directories in `AGENT_LOOP_INHERITED_TMPDIR`. The installer check of a yarn dlx or bunx root compares against `os.tmpdir()` and that list, so the refusal holds inside a turn.
+1. **Private directory.** Every Codex turn (worker, reviewer, orchestrator) runs with `TMPDIR`, `TEMP`, and `TMP` set to `al-XXXXXX`. `mkdtemp` creates it under the inherited temporary directory. The name stays short (issue #903). A failed creation warns, and the turn uses the inherited directory.
+2. **Host state stays shared.** The runtime pins `AGENT_LOOP_RUNS_ROOT`, `AGENT_LOOP_TEST_SLOTS_ROOT`, and `AGENT_LOOP_SESSION_RECORDS_ROOT` for the child. Each gets the path that the parent resolves. A value that the user set wins. Session records had no override, so this ADR adds `AGENT_LOOP_SESSION_RECORDS_ROOT`.
+3. **Installer check.** The runtime lists the inherited temporary directories in `AGENT_LOOP_INHERITED_TMPDIR`, as a JSON array of paths. JSON cannot split a path that holds the platform list delimiter. The installer check of a yarn dlx or bunx root compares against `os.tmpdir()` and that list. The refusal holds inside a turn, nested turns included.
 4. **Identity.** The runtime records the device and inode of the directory when it creates it.
-5. **Removal.** After the turn, on every outcome, a helper process (`src/lib/turn-tmpdir-remove.mjs`) removes the directory. It holds the parent, and then the directory, as its working directory. It acts on a path only when the device and inode match the recorded ones, at the start, at the chdir, and before the final `rmdir`. Any other directory is refused and nothing is deleted.
-6. **Bound.** `execBounded` ends the helper at 30 s, by SIGTERM and then SIGKILL, or `taskkill` on Windows. `killTreeOnExit` registers it for the end of the process. A refused, failed, timed-out, or killed helper warns and never fails the turn.
+5. **Removal.** After the turn, on every outcome, a helper process (`src/lib/turn-tmpdir-remove.mjs`) removes the directory. It holds the parent, and then the directory, as its working directory. It acts on a path only when the device and inode match the recorded ones. It checks at the start, at the chdir, and before the final `rmdir`. It refuses any other directory and deletes nothing.
+6. **Bound.** `execBounded` ends the helper at 30 s, by SIGTERM and then SIGKILL, or `taskkill` on Windows. `killTreeOnExit` registers it for the end of the process. A refused, failed, timed-out, or killed helper warns. It never fails the turn.
+7. **Approved limit (repository owner, 2026-10-19, issue #955): two ownership windows.** It narrows decision 5, which acts only on the directory that the runtime created. A same-user swap can still land in two windows. The first lies between `mkdtemp` and the identity read. The second lies between the final identity check and the `rmdir`. The second window loses at most an empty replacement directory. The runtime adds no more machinery for them, because Node cannot close them portably.
 
 ## Consequences
 
-- A Codex turn leaves no entry in the inherited temporary directory, and a concurrent process never loses one.
-- A command that the child runs sees the private directory as its temporary directory, and the runtime removes what it wrote there.
+- A Codex turn leaves no entry in the inherited temporary directory. A concurrent process never loses one.
+- A command that the child runs sees the private directory as its temporary directory. The runtime removes what it wrote there.
 - A directory nested below the target can still be swapped during the delete, because Node has no directory-handle delete.
-- A replacement that appears between the final identity check and the `rmdir` loses at most an empty directory, because `rmdir` fails on a directory that holds an entry and Node cannot name the directory by handle.
-- A replacement that appears between `mkdtemp` and the identity read is recorded as the directory. The name is random, and Node cannot create a directory and read its identity in one call.
+- A replacement between the final identity check and the `rmdir` loses at most an empty directory. `rmdir` fails on a directory that holds an entry, and Node cannot name the directory by handle.
+- A replacement between `mkdtemp` and the identity read is recorded as the directory. The name is random, and Node cannot create a directory and read its identity in one call.
 - The identity check relies on the device and inode that the platform reports. It is not verified on Windows (issue #709). A mismatch refuses and leaves the directory in place.
 - A removal that the helper refuses or cannot finish leaves the directory and logs a `warn` line.
 

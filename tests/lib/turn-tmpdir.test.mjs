@@ -79,13 +79,18 @@ test("a replacement during the removal keeps its empty directory", async () => {
       setTimeout(() => clearInterval(poll), 20_000).unref();
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
+    if (process.platform === "win32") {
+      // The rename can be refused, and a tree this short can be gone before the first poll.
+      expect(swap === "swapped" || swap.startsWith("refused") || swap === "never tried").toBe(true);
+    } else {
+      expect(swap).toBe("swapped");
+    }
     if (swap === "swapped") {
       expect(existsSync(replacement)).toBe(true);
       expect(readdirSync(root).sort()).toEqual(["moved", basename(replacement)].sort());
     } else {
       // No swap happened on this run, so the removal finished normally.
-      expect({ swap, removed: !existsSync(replacement) }).toEqual({ swap, removed: true });
-      expect(process.platform === "win32" || swap === "never tried").toBe(true);
+      expect(existsSync(replacement)).toBe(false);
     }
   });
 }, 60_000);

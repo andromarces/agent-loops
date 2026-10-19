@@ -2,7 +2,9 @@ import { expect, test, vi } from "vite-plus/test";
 import { defaultAgents, runAgent } from "../../src/agents/index.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 
-vi.mock("../../src/lib/exec.mjs", () => ({
+// Only `exec` is replaced: the Codex turn directory removal runs its helper through `execBounded`.
+vi.mock("../../src/lib/exec.mjs", async (importOriginal) => ({
+  ...(await importOriginal()),
   exec: vi.fn(),
 }));
 

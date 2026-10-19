@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { runCodex } from "../../src/agents/codex.mjs";
@@ -749,6 +749,47 @@ test("a child of a codex turn classifies package-runner roots as the parent does
     expect(parentAnswer).toEqual([true, true, true, false]);
     expect(childAnswer).toEqual(parentAnswer);
   } finally {
+    await removePath(root);
+  }
+});
+
+// Usefulness: verifies the installer refusal holds when an inherited temporary directory holds the
+// platform list delimiter, in a child turn and in a turn nested inside it, so the inherited list
+// cannot split a valid path and accept an inherited launcher.
+test("a delimiter in an inherited temporary path keeps the installer refusal in nested turns", async () => {
+  const root = await mkdtemp(join(tmpdir(), `codex${delimiter}tmp-`));
+  const saved = Object.fromEntries(
+    ["TMPDIR", "TEMP", "TMP", "AGENT_LOOP_INHERITED_TMPDIR"].map((n) => [n, process.env[n]]),
+  );
+  try {
+    const layout = (base) => join(base, "xfs-abc123", "dlx-4242", "node_modules", "pkg");
+    const classify = async (env, layouts) =>
+      JSON.parse(
+        (
+          await execa(process.execPath, ["--input-type=module", "-e", CLASSIFY_ROOTS(layouts)], {
+            env,
+          })
+        ).stdout,
+      );
+    const answers = {};
+    fakeCodex(async (home, env) => {
+      answers.outer = await classify(env, [layout(root)]);
+      // The nested turn runs in a process that inherited the environment of the outer turn.
+      Object.assign(process.env, env);
+      fakeCodex(async (_nestedHome, nestedEnv) => {
+        answers.nested = await classify(nestedEnv, [layout(root), layout(home)]);
+        return { stdout: OK_EVENTS, stderr: "" };
+      });
+      await runTurn();
+      return { stdout: OK_EVENTS, stderr: "" };
+    });
+    await withInheritedTmp(root, () => runTurn());
+    expect(answers).toEqual({ outer: [true], nested: [true, true] });
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     await removePath(root);
   }
 });
