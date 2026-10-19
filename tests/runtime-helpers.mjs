@@ -365,16 +365,55 @@ function isCheckWaitRead(args, all) {
   );
 }
 
+/** The PR head a scripted `gh` reports when a test scripts no other. */
+export const HEAD_A = "a".repeat(40);
+/** A second head, for a test whose PR head moves. */
+export const HEAD_B = "b".repeat(40);
+
+// True when `args` is exactly the wait's head read, `gh pr view <pr> --json headRefOid`.
+function isHeadRead(args) {
+  return (
+    args.length === 5 &&
+    startsWithArgs(args, ["pr", "view"]) &&
+    Number.isInteger(Number(args[2])) &&
+    equalsArgs(args.slice(3), ["--json", "headRefOid"])
+  );
+}
+
+function headReply(head) {
+  return {
+    status: 0,
+    stdout: JSON.stringify({ headRefOid: head }),
+    stderr: "",
+    timedOut: false,
+  };
+}
+
+/**
+ * Wraps a custom `gh` so the wait's head read answers `head` and every other call
+ * reaches `gh`. For a test that scripts the check read by hand.
+ */
+export function withHead(gh, head = HEAD_A) {
+  return async (args, cwd, options) =>
+    isHeadRead(args) ? headReply(head) : gh(args, cwd, options);
+}
+
 /**
  * A scripted `gh` for the required-check read. Each entry is `{ status, checks,
  * stdout, stderr }` and the last entry repeats, so a wait that polls more times
  * than the script holds still answers. A `stdout` value is used verbatim, which
  * covers a read whose output is not a check list. A call that is not the exact
  * read is an error, so a test never passes on a missing fixture or a wrong argument.
+ * The head read, `gh pr view <pr> --json headRefOid`, answers the next entry of
+ * `heads`, and the last one repeats.
  */
-export function scriptedGh(reads, { all = false } = {}) {
+export function scriptedGh(reads, { all = false, heads = [HEAD_A] } = {}) {
   let n = 0;
+  let h = 0;
   return async (args, cwd) => {
+    if (isHeadRead(args)) {
+      return headReply(heads[Math.min(h++, heads.length - 1)]);
+    }
     if (!isCheckWaitRead(args, all)) {
       return {
         status: 1,

@@ -163,6 +163,36 @@ function readOutcome(pr, { status, stdout, stderr }, all) {
   return { settled: false, checks };
 }
 
+// A full object name, so two heads compare by equality. `gh` reports SHA-1 and SHA-256 names.
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/** Whether `value` is a full commit SHA, the form a `--head` and a read head carry. */
+export function isFullSha(value) {
+  return typeof value === "string" && FULL_SHA.test(value);
+}
+
+/**
+ * The PR head a `gh pr view --json headRefOid` read reports, lowercase. Throws when the
+ * read failed or names no full SHA, so an unreadable head is unresolved, never a pass.
+ */
+function readHead(pr, { status, stdout, stderr }) {
+  const label = `gh pr view ${pr}`;
+  if (status !== 0) {
+    throw new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
+  }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    // Left null: the read is refused below.
+  }
+  const head = isJsonObject(parsed) ? parsed.headRefOid : undefined;
+  if (typeof head !== "string" || !FULL_SHA.test(head.toLowerCase())) {
+    throw new Error(`${label} returned no full head SHA; the read is unresolved.`);
+  }
+  return head.toLowerCase();
+}
+
 /**
  * Runs one read bounded by `remainingMs` and signals `gh` to stop when the bound
  * elapses. A read the bound beat is then given `CHILD_EXIT_CEILING_MS` to exit,
@@ -171,18 +201,14 @@ function readOutcome(pr, { status, stdout, stderr }, all) {
  * with the read still unaccounted for, which is a claim the command does not
  * make on the parent's behalf (#329).
  */
-async function readWithin(gh, pr, cwd, remainingMs, signal, all) {
+async function readWithin(gh, argv, cwd, remainingMs, signal) {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
   let timer;
   let ceiling;
   try {
-    const read = gh(
-      ["pr", "checks", String(pr), ...(all ? [] : ["--required"]), "--json", "name,state,bucket"],
-      cwd,
-      { signal: controller.signal, timeoutMs: remainingMs },
-    ).then(
+    const read = gh(argv, cwd, { signal: controller.signal, timeoutMs: remainingMs }).then(
       (value) => ({ value }),
       (error) => ({ error }),
     );
@@ -229,12 +255,21 @@ async function readWithin(gh, pr, cwd, remainingMs, signal, all) {
  * branch with no required check; it keeps the exit-code rules above, including
  * the wait on the no-checks-yet reply, except `noRequiredChecks` (#896, #950).
  *
+ * `gh pr checks` names no commit, so each poll reads the PR head, then the checks,
+ * then the PR head again. A read whose two heads differ is discarded, so one result
+ * never mixes two heads. With `head`, a poll whose PR head is another commit reads no
+ * checks and the wait continues, so the passing checks of the previous head never
+ * settle it. The envelope's `head` names the commit its `checks` describe, and is
+ * null when no read completed on a stable head, such as a wait that reached the bound
+ * before the PR head reached `head`. A head that moves away and back between the two
+ * head reads is not seen (#961).
+ *
  * `deadline` is an absolute time on the `now` clock. A caller passes it to bound
  * the whole command, including the work that runs before the first read; a
  * caller that passes only `timeoutSeconds` is bounded from this call (#329).
  * @param {{ pr: number, cwd: string, timeoutSeconds?: number, deadline?: number | null, all?: boolean,
- *           gh?: Function, now?: Function, sleep?: Function, signal?: AbortSignal | null }} options
- * @returns {Promise<{ timedOut: boolean, checks: Array<{ name: string, state: string|null, bucket: string|null }> }>}
+ *           head?: string | null, gh?: Function, now?: Function, sleep?: Function, signal?: AbortSignal | null }} options
+ * @returns {Promise<{ timedOut: boolean, head: string | null, checks: Array<{ name: string, state: string|null, bucket: string|null }> }>}
  */
 export async function waitChecks({
   pr,
@@ -242,45 +277,40 @@ export async function waitChecks({
   timeoutSeconds = DEFAULT_WAIT_SECONDS,
   deadline = null,
   all = false,
+  head = null,
   gh = runGh,
   now = Date.now,
   sleep = (ms, signal) => delay(ms, signal ? { signal } : undefined),
   signal = null,
 }) {
+  if (head !== null && !isFullSha(head)) {
+    throw new Error("head must be a full lowercase commit SHA.");
+  }
   const end = deadline ?? now() + timeoutSeconds * 1000;
+  const checksArgv = [
+    "pr",
+    "checks",
+    String(pr),
+    ...(all ? [] : ["--required"]),
+    "--json",
+    "name,state,bucket",
+  ];
+  const headArgv = ["pr", "view", String(pr), "--json", "headRefOid"];
   let last = [];
-  for (;;) {
-    const remaining = end - now();
-    if (remaining <= 0) {
-      return { timedOut: true, checks: last };
-    }
-    const result = await readWithin(gh, pr, cwd, remaining, signal, all);
-    if (result.timedOut) {
-      // `childExitUnconfirmed` rides only on the read whose exit the command
-      // could not observe, so an absent field is an observed exit.
-      return {
-        timedOut: true,
-        checks: last,
-        ...(result.childExitUnconfirmed ? { childExitUnconfirmed: true } : {}),
-      };
-    }
-    const outcome = readOutcome(pr, result, all);
-    // An empty list is not a settled read: `gh pr checks --required` omits a
-    // check that has not started, so the last reported states are kept for the
-    // envelope while the wait continues.
-    if (outcome.checks.length > 0) {
-      last = outcome.checks;
-    }
-    if (outcome.settled) {
-      return {
-        timedOut: false,
-        ...(outcome.noRequiredChecks ? { noRequiredChecks: true } : {}),
-        checks: outcome.checks,
-      };
-    }
+  let lastHead = null;
+  // `childExitUnconfirmed` rides only on the read whose exit the command could
+  // not observe, so an absent field is an observed exit.
+  const timeout = (result = {}) => ({
+    timedOut: true,
+    head: lastHead,
+    checks: last,
+    ...(result.childExitUnconfirmed ? { childExitUnconfirmed: true } : {}),
+  });
+  // False when the bound is spent, so the caller reports it instead of sleeping.
+  const pause = async () => {
     const left = end - now();
     if (left <= 0) {
-      return { timedOut: true, checks: last };
+      return false;
     }
     try {
       await sleep(Math.min(POLL_INTERVAL_MS, left), signal);
@@ -293,6 +323,62 @@ export async function waitChecks({
         throw canceled;
       }
       throw err;
+    }
+    return true;
+  };
+  for (;;) {
+    if (end - now() <= 0) {
+      return timeout();
+    }
+    const first = await readWithin(gh, headArgv, cwd, end - now(), signal);
+    if (first.timedOut) {
+      return timeout(first);
+    }
+    const before = readHead(pr, first);
+    if (head !== null && before !== head) {
+      if (!(await pause())) {
+        return timeout();
+      }
+      continue;
+    }
+    if (end - now() <= 0) {
+      return timeout();
+    }
+    const result = await readWithin(gh, checksArgv, cwd, end - now(), signal);
+    if (result.timedOut) {
+      return timeout(result);
+    }
+    const outcome = readOutcome(pr, result, all);
+    if (end - now() <= 0) {
+      return timeout();
+    }
+    const second = await readWithin(gh, headArgv, cwd, end - now(), signal);
+    if (second.timedOut) {
+      return timeout(second);
+    }
+    if (readHead(pr, second) === before) {
+      // A new head drops the kept checks, so the envelope never pairs them with it.
+      if (before !== lastHead) {
+        last = [];
+        lastHead = before;
+      }
+      // An empty list is not a settled read: `gh pr checks --required` omits a
+      // check that has not started, so the last reported states are kept for the
+      // envelope while the wait continues.
+      if (outcome.checks.length > 0) {
+        last = outcome.checks;
+      }
+      if (outcome.settled) {
+        return {
+          timedOut: false,
+          ...(outcome.noRequiredChecks ? { noRequiredChecks: true } : {}),
+          head: before,
+          checks: outcome.checks,
+        };
+      }
+    }
+    if (!(await pause())) {
+      return timeout();
     }
   }
 }

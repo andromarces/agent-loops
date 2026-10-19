@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
-import { fakeClock, scriptedGh } from "../runtime-helpers.mjs";
+import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "../runtime-helpers.mjs";
 
 // Usefulness: verifies the scripted `gh` routes on the argument elements, so a
 // call that merges the arguments into one element gets no reply and its error
@@ -57,7 +57,7 @@ test("waitChecks returns the check states and no timeout once nothing is pending
     now: clock.now,
     sleep: clock.sleep,
   });
-  expect(result).toEqual({ timedOut: false, checks: [PASSED_ITEM] });
+  expect(result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
   expect(clock.elapsed()).toBeLessThan(300_000);
 });
 
@@ -68,6 +68,7 @@ test("waitChecks settles on exit 0 with every required check passed", async () =
     await once({ status: 0, checks: [PASSED_ITEM, check("lint", "pass", "SUCCESS")] }),
   ).toEqual({
     timedOut: false,
+    head: HEAD_A,
     checks: [PASSED_ITEM, check("lint", "pass", "SUCCESS")],
   });
 });
@@ -77,6 +78,7 @@ test("waitChecks settles on exit 0 with every required check passed", async () =
 test("waitChecks keeps waiting on exit 8 and reports the bound", async () => {
   expect(await once({ status: 8, checks: [PENDING_ITEM] })).toEqual({
     timedOut: true,
+    head: HEAD_A,
     checks: [PENDING_ITEM],
   });
 });
@@ -87,6 +89,7 @@ test("waitChecks keeps waiting on exit 8 and reports the bound", async () => {
 test("waitChecks settles on exit 1 when a failing required check is listed", async () => {
   expect(await once({ status: 1, checks: [FAILED_ITEM] })).toEqual({
     timedOut: false,
+    head: HEAD_A,
     checks: [FAILED_ITEM],
   });
 });
@@ -113,7 +116,7 @@ test("waitChecks reports a branch with no required check as its own outcome", as
     stdout: "",
     stderr: "no required checks reported on the 'docs/212-adr-0024-agent-reads' branch\n",
   });
-  expect(result).toEqual({ timedOut: false, noRequiredChecks: true, checks: [] });
+  expect(result).toEqual({ timedOut: false, head: HEAD_A, noRequiredChecks: true, checks: [] });
 });
 
 // Usefulness: verifies only the exact `gh` answer is the new outcome: the same
@@ -148,7 +151,7 @@ test("waitChecks keeps waiting while no check has reported on the PR head", asyn
     now: clock.now,
     sleep: clock.sleep,
   });
-  expect(result).toEqual({ timedOut: false, checks: [PASSED_ITEM] });
+  expect(result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
   expect(clock.elapsed()).toBeGreaterThan(0);
 });
 
@@ -159,7 +162,7 @@ test("waitChecks reports a timeout with no checks when none ever reported", asyn
     { status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch" },
     60,
   );
-  expect(result).toEqual({ timedOut: true, checks: [] });
+  expect(result).toEqual({ timedOut: true, head: HEAD_A, checks: [] });
 });
 
 // Usefulness: verifies only the exact reply keeps the wait running: the same words
@@ -232,7 +235,7 @@ test("waitChecks reports the bound as reached when a required check is still pen
     now: clock.now,
     sleep: clock.sleep,
   });
-  expect(result).toEqual({ timedOut: true, checks: [PENDING_ITEM] });
+  expect(result).toEqual({ timedOut: true, head: HEAD_A, checks: [PENDING_ITEM] });
   // The wait never runs past the bound it was given.
   expect(clock.elapsed()).toBeGreaterThanOrEqual(60_000);
   expect(clock.elapsed()).toBeLessThan(120_000);
@@ -255,7 +258,7 @@ test("waitChecks performs no read when the caller deadline has passed", async ()
     now: () => 1000,
     sleep: clock.sleep,
   });
-  expect(result).toEqual({ timedOut: true, checks: [] });
+  expect(result).toEqual({ timedOut: true, head: null, checks: [] });
   expect(reads).toBe(0);
 });
 
@@ -270,7 +273,7 @@ test("waitChecks reports an unconfirmed child exit when the ceiling expires", as
     // Never settles, so the exit of this read is never observed.
     gh: () => new Promise(() => {}),
   });
-  expect(result).toEqual({ timedOut: true, checks: [], childExitUnconfirmed: true });
+  expect(result).toEqual({ timedOut: true, head: null, checks: [], childExitUnconfirmed: true });
 }, 20000);
 
 // Usefulness: verifies a read abandoned on the bound is not reported before the
@@ -346,7 +349,7 @@ test("waitChecks in all mode waits for every listed check to settle", async () =
       { status: 8, checks: [PENDING_ITEM, lint] },
       { status: 0, checks: [PASSED_ITEM, lint] },
     ]),
-  ).toEqual({ timedOut: false, checks: [PASSED_ITEM, lint] });
+  ).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM, lint] });
 });
 
 // Usefulness: verifies the all-checks mode keeps the exit-code rules of the
@@ -355,10 +358,12 @@ test("waitChecks in all mode waits for every listed check to settle", async () =
 test("waitChecks in all mode keeps the exit-code rules of the required read", async () => {
   expect(await onceAll([{ status: 8, checks: [PENDING_ITEM] }])).toEqual({
     timedOut: true,
+    head: HEAD_A,
     checks: [PENDING_ITEM],
   });
   expect(await onceAll([{ status: 1, checks: [FAILED_ITEM] }])).toEqual({
     timedOut: false,
+    head: HEAD_A,
     checks: [FAILED_ITEM],
   });
   await expect(
@@ -390,7 +395,7 @@ test("waitChecks in all mode keeps waiting while no check has reported", async (
     now: clock.now,
     sleep: clock.sleep,
   });
-  expect(result).toEqual({ timedOut: false, checks: [PASSED_ITEM] });
+  expect(result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
   expect(clock.elapsed()).toBeGreaterThan(0);
 });
 
@@ -400,7 +405,7 @@ test("waitChecks in all mode keeps waiting while no check has reported", async (
 test("waitChecks in all mode reports a timeout with no checks when none ever reported", async () => {
   expect(
     await onceAll([{ status: 1, stdout: "", stderr: "no checks reported on the 'main' branch" }]),
-  ).toEqual({ timedOut: true, checks: [] });
+  ).toEqual({ timedOut: true, head: HEAD_A, checks: [] });
 });
 
 // Usefulness: verifies the all-checks mode has no required-check answer, and a
@@ -414,4 +419,104 @@ test("waitChecks in all mode refuses the required-check answer and near-matches"
   for (const read of reads) {
     await expect(onceAll([{ ...read, stdout: "" }])).rejects.toThrow(/gh pr checks 42/);
   }
+});
+
+/** Runs one wait on a fake clock against scripted reads and PR heads. */
+function pinned({ reads, heads, head, timeoutSeconds = 60, all = false }) {
+  const clock = fakeClock();
+  return waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds,
+    all,
+    head,
+    gh: scriptedGh(reads, { all, heads }),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+}
+
+// Usefulness: verifies the envelope names the PR head that its checks describe,
+// so a parent can compare it with the commit it expects (issue #961).
+test("waitChecks names the head that the settled checks describe", async () => {
+  expect(await pinned({ reads: [{ status: 0, checks: [PASSED_ITEM] }], heads: [HEAD_B] })).toEqual({
+    timedOut: false,
+    head: HEAD_B,
+    checks: [PASSED_ITEM],
+  });
+});
+
+// Usefulness: verifies a wait that expects a head keeps waiting while the PR head
+// is another commit, so the passing checks of the previous head never settle it
+// (issue #961).
+test("waitChecks keeps waiting while the PR head is not the expected head", async () => {
+  // Reads on the old head would pass; the first two polls must not take them.
+  const reads = [{ status: 8, checks: [PENDING_ITEM] }];
+  const result = await pinned({ reads, heads: [HEAD_A, HEAD_A, HEAD_B, HEAD_B], head: HEAD_B });
+  expect(result).toEqual({ timedOut: true, head: HEAD_B, checks: [PENDING_ITEM] });
+});
+
+// Usefulness: verifies a read on the expected head settles the wait, as the issue
+// asks (issue #961).
+test("waitChecks settles once the PR head reaches the expected head", async () => {
+  expect(
+    await pinned({
+      reads: [{ status: 0, checks: [PASSED_ITEM] }],
+      heads: [HEAD_A, HEAD_B, HEAD_B],
+      head: HEAD_B,
+    }),
+  ).toEqual({ timedOut: false, head: HEAD_B, checks: [PASSED_ITEM] });
+});
+
+// Usefulness: verifies a wait that reaches its bound before the PR head reaches
+// the expected head returns `timedOut: true`, no head, and no checks, never a pass
+// (issue #961).
+test("waitChecks times out without a pass when the PR head never reaches the expected head", async () => {
+  expect(
+    await pinned({ reads: [{ status: 0, checks: [PASSED_ITEM] }], heads: [HEAD_A], head: HEAD_B }),
+  ).toEqual({ timedOut: true, head: null, checks: [] });
+});
+
+// Usefulness: verifies a head that changes while the checks are read discards that
+// read, so one result never mixes two heads, and the wait settles on a later read
+// that is stable (issue #961).
+test("waitChecks discards a read whose PR head changed during the read", async () => {
+  // Poll 1 reads head A, then the checks, then head B: the read is discarded.
+  // Poll 2 reads head B before and after the checks of B.
+  const stale = check("stale", "pass", "SUCCESS");
+  const result = await pinned({
+    reads: [
+      { status: 0, checks: [stale] },
+      { status: 0, checks: [PASSED_ITEM] },
+    ],
+    heads: [HEAD_A, HEAD_B, HEAD_B, HEAD_B],
+  });
+  expect(result).toEqual({ timedOut: false, head: HEAD_B, checks: [PASSED_ITEM] });
+});
+
+// Usefulness: verifies the last checks kept for a timeout envelope are never the
+// checks of a head the envelope does not name (issue #961).
+test("waitChecks drops the kept checks of an earlier head when the head moves", async () => {
+  const result = await pinned({
+    reads: [
+      { status: 8, checks: [PENDING_ITEM] },
+      { status: 0, checks: [] },
+    ],
+    heads: [HEAD_A, HEAD_A, HEAD_B, HEAD_B],
+  });
+  expect(result.timedOut).toBe(true);
+  expect(result.head).toBe(HEAD_B);
+  expect(result.checks).toEqual([]);
+});
+
+// Usefulness: verifies an unreadable head is unresolved, never a pass (issue #961).
+test("waitChecks refuses a head read it cannot parse", async () => {
+  const gh = async (args) =>
+    args[1] === "view"
+      ? { status: 0, stdout: JSON.stringify({ headRefOid: "not-a-sha" }), stderr: "" }
+      : { status: 0, stdout: JSON.stringify([PASSED_ITEM]), stderr: "" };
+  const clock = fakeClock();
+  await expect(
+    waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 60, gh, now: clock.now, sleep: clock.sleep }),
+  ).rejects.toThrow(/gh pr view 42/);
 });

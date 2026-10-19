@@ -640,7 +640,7 @@ runtime owns the bound, because `gh pr checks --watch` takes no timeout and a
 shell `timeout` exists on neither Windows nor macOS by default:
 
 ```bash
-agent-loop role wait-checks --cwd <dir> --pr <n> --timeout <seconds>
+agent-loop role wait-checks --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
 ```
 
 The command returns inside its own bound, before the command timeout your harness
@@ -652,9 +652,27 @@ be inside a Git work tree, as it is for `dispatch`, because the read runs there:
   "status": "ok",
   "pr": 42,
   "timedOut": false,
+  "head": "0123456789abcdef0123456789abcdef01234567",
   "checks": [{ "name": "ci", "state": "SUCCESS", "bucket": "pass" }]
 }
 ```
+
+`head` names the PR head commit that `checks` describe. `gh pr checks` names no
+commit, so a wait that starts before GitHub moves the PR head to a new commit,
+as right after a worker push or `gh pr update-branch`, can read the passing
+checks of the previous head. Each poll therefore reads the PR head, then the
+checks, then the PR head again, and discards a read whose two heads differ, so
+one result never mixes two heads. A head that moves away and back between the two
+head reads is not seen.
+
+Pass `--head <sha>` with the commit you expect, for example `workTree.head` of
+the worker envelope. It takes a full lowercase commit SHA, 40 or 64 hex digits,
+and refuses an abbreviation. While the PR head is another commit, the wait reads
+no checks and continues. A wait that reaches the bound before the PR head reaches
+`--head` returns `timedOut: true`, `head: null`, and an empty `checks`, which is
+never a pass. Without `--head`, the wait settles on whatever the PR head is, so
+compare `head` with the commit you expect before you record the checks as passed.
+`head` is `null` only when no read completed on a stable head.
 
 `--timeout` is in seconds and defaults to 300. Set it below the command timeout
 your harness applies when that timeout is smaller. `--timeout 0` is refused.
@@ -697,7 +715,14 @@ A branch with no required check ends the wait at once with exit 0 and
 `"noRequiredChecks": true`, an empty `checks`, and `"timedOut": false`:
 
 ```json
-{ "status": "ok", "pr": 213, "timedOut": false, "noRequiredChecks": true, "checks": [] }
+{
+  "status": "ok",
+  "pr": 213,
+  "timedOut": false,
+  "noRequiredChecks": true,
+  "head": "0123456789abcdef0123456789abcdef01234567",
+  "checks": []
+}
 ```
 
 It is not a read error and not a pass, because no check was read. There is
@@ -709,7 +734,7 @@ before CI completes can report the CI status as unresolved, which the `--all`
 wait avoids. The `--require-ci` gate still decides the finish.
 
 ```bash
-agent-loop role wait-checks --all --cwd <dir> --pr <n> --timeout <seconds>
+agent-loop role wait-checks --all --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
 ```
 
 `--all` waits on every check of the PR head, not only the required ones. It reads
@@ -725,7 +750,8 @@ returns. Exit 1 with `no required checks reported on the '<branch>' branch` stay
 unresolved, because `--all` has no required-check answer. A `noRequiredChecks`
 envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`;
 when a required check exists, the required wait stays the one to run. `--all` is
-refused on every other role operation.
+refused on every other role operation, and so is `--head`. `--all` takes `--head`
+as the required wait does.
 
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
 failed one. A check that has not started is absent from `checks`, because the
