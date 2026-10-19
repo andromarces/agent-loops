@@ -3,7 +3,7 @@
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, parse, relative, resolve } from "node:path";
-import { inheritedTmpdirs } from "../lib/inherited-tmpdir.mjs";
+import { INHERITED_TMPDIR_ENV, readInheritedTmpdirs } from "../lib/inherited-tmpdir.mjs";
 
 // `npx` installs the package under `<npm-cache>/_npx/<hash>/node_modules` and
 // `pnpm dlx` under `<pnpm-home>/dlx/<hash>/<work>/node_modules`. `bunx` installs
@@ -49,8 +49,10 @@ function withRealpath(root) {
  * count too (issue #955).
  */
 function temporaryRoots() {
-  const yarn = [tmpdir(), ...inheritedTmpdirs()].flatMap(withRealpath);
-  return { yarn, bunx: [...yarn, ...withRealpath("/tmp")] };
+  const { valid, paths } = readInheritedTmpdirs();
+  const yarn = [tmpdir(), ...paths].flatMap(withRealpath);
+  // An invalid list hides the ancestors, so `invalid` makes the check refuse every root.
+  return { yarn, bunx: [...yarn, ...withRealpath("/tmp")], invalid: !valid };
 }
 
 /**
@@ -108,14 +110,35 @@ function isTempRunnerRoot(packageRoot, platform, tempRoots) {
  * temporary layout. On Windows every match compares case-insensitively.
  * @param {string} packageRoot
  * @param {NodeJS.Platform} [platform]
- * @param {{ bunx: string[], yarn: string[] }} [tempRoots] Temporary roots to compare against, for tests.
+ * @param {{ bunx: string[], yarn: string[], invalid?: boolean }} [tempRoots] Temporary roots to compare against, for tests. `invalid` refuses every root.
  */
 export function isEphemeralPackageRoot(
   packageRoot,
   platform = process.platform,
   tempRoots = temporaryRoots(),
 ) {
-  return isCacheRoot(packageRoot, platform) || isTempRunnerRoot(packageRoot, platform, tempRoots);
+  return (
+    tempRoots.invalid === true ||
+    isCacheRoot(packageRoot, platform) ||
+    isTempRunnerRoot(packageRoot, platform, tempRoots)
+  );
+}
+
+export const INHERITED_TMPDIR_INVALID_MESSAGE =
+  `Refusing to install: ${INHERITED_TMPDIR_ENV} is set but is not a JSON array of absolute ` +
+  "paths, so the installer cannot tell whether this package root is a temporary one. " +
+  "Unset it, then run install again.";
+
+/**
+ * The reason that `install` refuses `packageRoot`, or null. An invalid
+ * `AGENT_LOOP_INHERITED_TMPDIR` refuses every root.
+ */
+export function installRefusal(packageRoot) {
+  const tempRoots = temporaryRoots();
+  if (tempRoots.invalid) return INHERITED_TMPDIR_INVALID_MESSAGE;
+  return isEphemeralPackageRoot(packageRoot, process.platform, tempRoots)
+    ? EPHEMERAL_ROOT_MESSAGE
+    : null;
 }
 
 // pnpm resolves a global package into a version-named virtual store entry

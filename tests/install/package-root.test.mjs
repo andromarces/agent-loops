@@ -6,7 +6,11 @@ import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { afterEach, expect, test } from "vite-plus/test";
 import { install } from "../../src/install/installer.mjs";
-import { stablePackageRoot } from "../../src/install/package-root.mjs";
+import {
+  INHERITED_TMPDIR_INVALID_MESSAGE,
+  installRefusal,
+  stablePackageRoot,
+} from "../../src/install/package-root.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -610,4 +614,32 @@ test("--version prints the package version from an installed layout", async () =
   const { version } = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
   const { stdout } = await execa(process.execPath, [join(linked, "src", "cli.mjs"), "--version"]);
   expect(stdout).toBe(version);
+});
+
+// Usefulness: verifies `install` fails closed on an inherited-list value that is present but not a
+// list of absolute paths, and keeps accepting a stable root for an absent or valid value.
+test.each([
+  ["", true],
+  ["{oops", true],
+  ['"text"', true],
+  ["[1]", true],
+  ['["relative"]', true],
+  ["[]", false],
+  [undefined, false],
+])("install refuses a stable root for the inherited list %j: %s", async (value, refused) => {
+  const saved = process.env.AGENT_LOOP_INHERITED_TMPDIR;
+  const stable = join(REPO_ROOT, "node_modules", "pkg");
+  try {
+    if (value === undefined) delete process.env.AGENT_LOOP_INHERITED_TMPDIR;
+    else process.env.AGENT_LOOP_INHERITED_TMPDIR = value;
+    expect(installRefusal(stable)).toBe(refused ? INHERITED_TMPDIR_INVALID_MESSAGE : null);
+    if (refused) {
+      await expect(install({ packageRoot: stable, dryRun: true })).rejects.toThrow(
+        INHERITED_TMPDIR_INVALID_MESSAGE,
+      );
+    }
+  } finally {
+    if (saved === undefined) delete process.env.AGENT_LOOP_INHERITED_TMPDIR;
+    else process.env.AGENT_LOOP_INHERITED_TMPDIR = saved;
+  }
 });

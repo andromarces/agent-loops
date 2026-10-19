@@ -27,7 +27,7 @@ import {
 import { sha256 } from "../lib/hash.mjs";
 import { HARNESS_ORDER } from "../lib/harnesses.mjs";
 import { buildTargets } from "./targets.mjs";
-import { EPHEMERAL_ROOT_MESSAGE, isEphemeralPackageRoot } from "./package-root.mjs";
+import { installRefusal } from "./package-root.mjs";
 import {
   manifestLockFile,
   manifestPath,
@@ -281,9 +281,8 @@ function keepPriorRecords(records, targets, priorRecords) {
  */
 export async function install(options = {}) {
   const home = options.home ?? resolveHome();
-  if (typeof options.packageRoot === "string" && isEphemeralPackageRoot(options.packageRoot)) {
-    throw new Error(EPHEMERAL_ROOT_MESSAGE);
-  }
+  const refusal = typeof options.packageRoot === "string" && installRefusal(options.packageRoot);
+  if (refusal) throw new Error(refusal);
   if (options.dryRun) {
     return runInstall(options);
   }

@@ -73,7 +73,8 @@ observed on Windows. Yarn 1.22.22 on macOS has no `dlx` command. On macOS, its
 Linux (#707) and a `%TEMP%` that is an 8.3 short path or a junction (#709) are
 not verified. Inside a Codex turn, `install` also checks the temporary
 directories that the turn inherited. `AGENT_LOOP_INHERITED_TMPDIR` lists them as
-a JSON array, so the refusal holds there too. `uninstall` reads only the
+a JSON array of absolute paths, so the refusal holds there too. A value that is
+present but is not such a list makes `install` refuse every root. `uninstall` reads only the
 manifest and the harness files, so it still removes them after the package is
 gone.
 
