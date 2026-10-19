@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, expect, test } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
@@ -301,6 +301,35 @@ test("a bunx or yarn dlx layout directly under a temporary root is refused", () 
       expect(isEphemeralPackageRoot(join(root, ...layout)), join(root, ...layout)).toBe(true);
     }
   }
+});
+
+// Usefulness: verifies #962 — a package root reached through a link into a temporary root is refused like its canonical spelling, so a symlinked `/var` against `/private/var` cannot hide a layout.
+test("a runner layout reached through a link to a temporary root is refused", async () => {
+  const base = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-alias-")));
+  trackHome(base);
+  const realTemp = join(base, "real");
+  const linkTemp = join(base, "link");
+  await mkdir(realTemp);
+  await symlink(realTemp, linkTemp, process.platform === "win32" ? "junction" : "dir");
+  const temp = { bunx: [realTemp], yarn: [realTemp] };
+  for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
+    await mkdir(join(realTemp, ...layout), { recursive: true });
+    const viaLink = join(linkTemp, ...layout);
+    expect(isEphemeralPackageRoot(join(realTemp, ...layout), process.platform, temp)).toBe(true);
+    expect(isEphemeralPackageRoot(viaLink, process.platform, temp), viaLink).toBe(true);
+  }
+});
+
+// Usefulness: verifies #962 — a `..` segment in the package root is resolved before the match, so it neither hides a temporary layout nor makes a stable layout look temporary.
+test("a package root with a .. segment is compared by its canonical path", () => {
+  const temp = { bunx: [tmpdir()], yarn: [tmpdir()] };
+  const raw = (...segments) => segments.join(sep);
+  for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
+    const hidden = raw(tmpdir(), "elsewhere", "..", ...layout);
+    expect(isEphemeralPackageRoot(hidden, process.platform, temp), hidden).toBe(true);
+  }
+  const climbed = raw(tmpdir(), ...BUNX_LAYOUT.slice(0, 3), "..", "..", "stable", "pkg");
+  expect(isEphemeralPackageRoot(climbed, process.platform, temp), climbed).toBe(false);
 });
 
 // Usefulness: verifies #207 does not over-match — a complete bunx or yarn dlx layout under a stable parent is still accepted.
