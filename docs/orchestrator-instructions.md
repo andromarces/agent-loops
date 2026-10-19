@@ -640,7 +640,7 @@ runtime owns the bound, because `gh pr checks --watch` takes no timeout and a
 shell `timeout` exists on neither Windows nor macOS by default:
 
 ```bash
-agent-loop role wait-checks --cwd <dir> --pr <n> --timeout <seconds>
+agent-loop role wait-checks --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
 ```
 
 The command returns inside its own bound, before the command timeout your harness
@@ -652,9 +652,78 @@ be inside a Git work tree, as it is for `dispatch`, because the read runs there:
   "status": "ok",
   "pr": 42,
   "timedOut": false,
+  "head": "0123456789abcdef0123456789abcdef01234567",
   "checks": [{ "name": "ci", "state": "SUCCESS", "bucket": "pass" }]
 }
 ```
+
+`head` names the commit that `checks` describe. `gh pr checks` queries by PR identity
+and names no commit, so a wait that starts before GitHub moves the PR head to a new
+commit, as right after a worker push or `gh pr update-branch`, or that sees the head
+move away and back, can read the passing checks of another commit from it. The wait
+therefore never takes a check state from `gh pr checks`. Each poll reads the PR head
+`<sha>`, runs `gh pr checks` for its exit-code outcome, and then reads every state
+from the check runs and commit statuses of `<sha>` itself, every page, by SHA. The
+required wait judges each required context as the `--require-ci` gate does: the
+contexts come from the repository rulesets (`integration_id`), classic branch
+protection (`app_id`), and the names that `gh pr checks --required` lists, an
+app-qualified context is satisfied only by a check run of that app, and the latest
+matching entry decides. A context with no entry on `<sha>` is pending. The `--all`
+wait judges the latest check run of each name and app, and the latest commit status
+of each context of `<sha>`. So `checks` always describe `head` and no other commit,
+even when the PR head moves during the wait.
+
+The states of `<sha>` only make the outcome stricter. A failing state of `<sha>`
+settles the wait. A pass needs both: the `gh pr checks` outcome must be a pass, and so
+must every state of `<sha>`. A `gh pr checks` outcome that is pending (exit 8) or that
+reports no check yet keeps the wait running while `<sha>` shows a pass, and it ends at
+the bound with `timedOut: true`, never a pass.
+
+A failure that `gh pr checks` lists settles the wait whatever `<sha>` shows. That
+evidence is PR-level and is not pinned to `<sha>`, so it never goes into `checks`. It
+is reported in `prFailures`, a field that appears only when `gh pr checks` listed a
+failure in the poll that ended the wait. `checks` holds only states read for `head`.
+Never record a pass from an envelope that carries `prFailures`: the failure may belong
+to a commit other than `head`, and the parent decides what it means.
+
+```json
+{
+  "status": "ok",
+  "pr": 42,
+  "timedOut": false,
+  "head": "0123456789abcdef0123456789abcdef01234567",
+  "checks": [{ "name": "ci", "state": "SUCCESS", "bucket": "pass" }],
+  "prFailures": [{ "name": "ci", "state": "FAILURE", "bucket": "fail" }]
+}
+```
+
+`prFailures` survives a bound that a later read reaches (`timedOut: true`) and a commit
+or source read that fails. In the second case `head` is `null` and `checks` is empty,
+because no state was read for a commit.
+
+The required wait refuses a required context it cannot resolve. A ruleset or protection
+source with no usable reply (a 403 or 404 for a caller without admin rights, for example), a
+source reply that is not valid JSON, and a failed read of the required names each exit 1
+with `status: "error"` before any state is judged, because such a
+source can hold a required check or an app qualifier that the wait never saw. A listed
+failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
+source. A commit read that fails, or whose reply cannot be parsed or ordered, is an error
+too. `childExitUnconfirmed: true` covers every `gh` child of the poll, including a source
+read that the first failure of the poll left running to the ceiling, and it rides on every
+envelope, settled, timed out, or error. A required check that no
+read of the PR lists yet is absent, as before.
+
+The PR head is the one read at the start of the poll, so the PR can have moved on by
+the time the wait returns. Compare `head` with the commit you expect before you record the
+checks as passed.
+
+Pass `--head <sha>` with the commit you expect, for example `workTree.head` of
+the worker envelope. It takes a full lowercase commit SHA, 40 or 64 hex digits,
+and refuses an abbreviation. While the PR head is another commit, the wait reads
+no checks and continues. A wait that reaches the bound before the PR head reaches
+`--head` returns `timedOut: true`, `head: null`, and an empty `checks`, which is
+never a pass. Without `--head`, the wait settles on whatever the PR head is when a
+poll starts. `head` is `null` only when no read completed.
 
 `--timeout` is in seconds and defaults to 300. Set it below the command timeout
 your harness applies when that timeout is smaller. `--timeout 0` is refused.
@@ -697,7 +766,14 @@ A branch with no required check ends the wait at once with exit 0 and
 `"noRequiredChecks": true`, an empty `checks`, and `"timedOut": false`:
 
 ```json
-{ "status": "ok", "pr": 213, "timedOut": false, "noRequiredChecks": true, "checks": [] }
+{
+  "status": "ok",
+  "pr": 213,
+  "timedOut": false,
+  "noRequiredChecks": true,
+  "head": "0123456789abcdef0123456789abcdef01234567",
+  "checks": []
+}
 ```
 
 It is not a read error and not a pass, because no check was read. There is
@@ -709,12 +785,12 @@ before CI completes can report the CI status as unresolved, which the `--all`
 wait avoids. The `--require-ci` gate still decides the finish.
 
 ```bash
-agent-loop role wait-checks --all --cwd <dir> --pr <n> --timeout <seconds>
+agent-loop role wait-checks --all --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
 ```
 
-`--all` waits on every check of the PR head, not only the required ones. It reads
-`gh pr checks <pr>` without `--required`, so it keeps the bound and the exit-code
-rules above: exit 0 with no pending check listed is settled, exit 8 is pending, a
+`--all` waits on every check of the commit `head` names, not only the required
+ones. It runs `gh pr checks <pr>` without `--required`, so it keeps the bound and
+the exit-code rules above, and the states of the commit only make them stricter: exit 0 with no pending check listed is settled, exit 8 is pending, a
 listed failing check is settled, and every other exit 1 is unresolved with
 `status: "error"`. Exit 1 with no output and exactly `no checks reported on the
 '<branch>' branch` is the exception, as in the required wait: no check has
@@ -725,7 +801,8 @@ returns. Exit 1 with `no required checks reported on the '<branch>' branch` stay
 unresolved, because `--all` has no required-check answer. A `noRequiredChecks`
 envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`;
 when a required check exists, the required wait stays the one to run. `--all` is
-refused on every other role operation.
+refused on every other role operation, and so is `--head`. `--all` takes `--head`
+as the required wait does.
 
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
 failed one. A check that has not started is absent from `checks`, because the

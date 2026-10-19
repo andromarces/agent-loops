@@ -253,7 +253,14 @@ Role operations:
                                 childExitUnconfirmed. The total bound is
                                 --timeout plus five seconds. With --all it waits
                                 on every check of the PR head, not only the
-                                required ones. Reads status only, so it needs
+                                required ones. Check states are read from the
+                                commit by SHA; head names that commit. A failure
+                                that gh pr checks lists settles the wait and is
+                                reported in prFailures, apart from checks, because
+                                it is not pinned to head.
+                                --head <sha> keeps the wait going until the PR
+                                head is that commit.
+                                Reads status only, so it needs
                                 no run state and changes nothing.
 
 Role flags:
@@ -291,6 +298,10 @@ Role flags:
                                 that has none. declare-pr and wait-checks also take it.
   --all                         wait-checks only: wait on every check of the PR head,
                                 not only the required ones.
+  --head <sha>                  wait-checks only: a full lowercase commit SHA. The wait
+                                reads no checks until the PR head is that commit, and
+                                a wait that reaches the bound first returns
+                                timedOut: true with head null and no checks.
   --timeout <seconds>           wait-checks: bound on the wait. Defaults to 300. 0 is
                                 refused, because the wait must stay bounded.
   --require-ci <pr>             finish only: refuse unless the PR head matches the

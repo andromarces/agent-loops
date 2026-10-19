@@ -69,7 +69,7 @@ const isOrderable = (entry, fields) =>
   fields.every((field) => entry[field] == null || !Number.isNaN(Date.parse(entry[field])));
 
 /** The check runs of `sha`, every page. `strict` makes a malformed reply throw. */
-async function checkRuns(gh, slug, sha, cwd, strict = false) {
+export async function checkRuns(gh, slug, sha, cwd, strict = false) {
   const pages = await ghApi(
     gh,
     [`repos/${slug}/commits/${sha}/check-runs`, "--paginate", "--slurp"],
@@ -98,7 +98,7 @@ async function checkRuns(gh, slug, sha, cwd, strict = false) {
 }
 
 /** The commit statuses of `sha`, every page. `strict` makes a malformed reply throw. */
-async function commitStatuses(gh, slug, sha, cwd, strict = false) {
+export async function commitStatuses(gh, slug, sha, cwd, strict = false) {
   const pages = await ghApi(
     gh,
     [`repos/${slug}/commits/${sha}/status`, "--paginate", "--slurp"],
@@ -179,7 +179,7 @@ function compareTime(a, b) {
 // single entry needs no order and is returned as is. GitHub evaluates the latest
 // run for a name; an earlier failing run that a later run replaces does not fail
 // the gate.
-function latestBy(entries, fields) {
+export function latestBy(entries, fields) {
   if (entries.length === 1) {
     return entries[0];
   }
@@ -199,19 +199,28 @@ function latestBy(entries, fields) {
   return latest;
 }
 
+/**
+ * The check runs and commit statuses that can satisfy a required context. A commit status
+ * carries no app, so it can never satisfy an app-qualified context.
+ */
+export function matchingEntries({ name, appId }, runs, statuses) {
+  return {
+    runs: runs.filter((run) => run.name === name && (appId === null || run.app?.id === appId)),
+    statuses: appId === null ? statuses.filter((status) => status.context === name) : [],
+  };
+}
+
 // Null when the required context passes, or `{ kind, reason }` where `kind` is
 // `missing`, `pending`, or `failing` and `reason` names the condition. An app-qualified context is satisfied only by a check run from that
 // app; an unqualified context is satisfied by a check run or a commit status
 // with the name, and both types must pass when both carry an unqualified name.
-function evaluateContext({ name, appId }, commit, runs, statuses) {
+export function evaluateContext({ name, appId }, commit, runs, statuses) {
   const label = appId === null ? `"${name}"` : `"${name}" (app ${appId})`;
-  const matchingRuns = runs.filter(
-    (run) => run.name === name && (appId === null || run.app?.id === appId),
+  const { runs: matchingRuns, statuses: matchingStatuses } = matchingEntries(
+    { name, appId },
+    runs,
+    statuses,
   );
-  // A commit status carries no app, so it can never satisfy an app-qualified
-  // context.
-  const matchingStatuses =
-    appId === null ? statuses.filter((status) => status.context === name) : [];
 
   if (matchingRuns.length === 0 && matchingStatuses.length === 0) {
     return { kind: "missing", reason: `required check ${label} is missing on ${commit}` };
@@ -437,6 +446,39 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
 }
 
 /**
+ * Why the required contexts that `requiredContexts` resolved cannot be judged, or null when
+ * they can. The status read and the check wait share it, so one rule decides it.
+ *
+ * - A successful reply that is not parseable JSON may hide a required context, so it is
+ *   unresolved whatever the other source names. An unreadable source (a 404 or 403) is not
+ *   this case: it is a reply the gate also accepts.
+ * - A failed read of the required names may have dropped a required check no other source
+ *   names, so it is unresolved whatever the rest of the union holds.
+ * - An empty union is no status to report.
+ * @param {{ unknown: string[], unparsed: string[], namesRead: boolean, contexts: object[] }} required
+ * @param {number} pr
+ * @param {string} [where] text that ends the two reply-failure reasons, for example the PR head
+ * @returns {string | null}
+ */
+export function requiredResolutionRefusal(
+  { unknown, unparsed, namesRead, contexts },
+  pr,
+  where = "",
+) {
+  if (unparsed.length > 0) {
+    return `${unparsed.join(" and ")} returned a reply that could not be parsed for PR ${pr}${where}`;
+  }
+  if (!namesRead) {
+    return `the required check names for PR ${pr} could not be read${where}`;
+  }
+  if (contexts.length === 0) {
+    const sources = unknown.length > 0 ? ` (${unknown.join(" and ")} settled nothing)` : "";
+    return `no required checks were found for PR ${pr}${sources}`;
+  }
+  return null;
+}
+
+/**
  * The default bound on a status read. The read sits in front of a child turn
  * that has its own much longer `--timeout`, so it needs its own bound: a `gh`
  * that hangs must not hold the dispatch open (#320).
@@ -558,27 +600,10 @@ export async function readRequiredChecks({
       return preamble.stop;
     }
     const { info, slug } = preamble;
-    const { unknown, unparsed, namesRead, contexts } = preamble.required;
-    // A successful reply that is not parseable JSON may hide a required context,
-    // so it is unresolved whatever the other source names. An unreadable source
-    // (a 404 or 403) is not this case: it is a reply the gate also accepts.
-    if (unparsed.length > 0) {
-      return unresolved(
-        `unread: ${unparsed.join(" and ")} returned a reply that could not be parsed for PR ${pr} on PR head ${head}`,
-        head,
-      );
-    }
-    // A failed read of the required names may have dropped a required check no
-    // other source names, so it is unresolved whatever the rest of the union holds.
-    if (!namesRead) {
-      return unresolved(
-        `unread: the required check names for PR ${pr} could not be read on PR head ${head}`,
-        head,
-      );
-    }
-    if (contexts.length === 0) {
-      const sources = unknown.length > 0 ? ` (${unknown.join(" and ")} settled nothing)` : "";
-      return unresolved(`unread: no required checks were found for PR ${pr}${sources}`, head);
+    const { contexts } = preamble.required;
+    const sourceRefusal = requiredResolutionRefusal(preamble.required, pr, ` on PR head ${head}`);
+    if (sourceRefusal) {
+      return unresolved(`unread: ${sourceRefusal}`, head);
     }
     // The commit is the gate's own selection, so the read judges the state the
     // gate judges and cannot pass a state the gate refuses.

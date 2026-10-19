@@ -20,7 +20,7 @@ import {
 } from "./lib/args.mjs";
 import { checkCi, missingGateRefusal, unresolvedCompareReason } from "./lib/ci-gate.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "./lib/command-line.mjs";
-import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
+import { DEFAULT_WAIT_SECONDS, isFullSha, waitChecks } from "./lib/check-wait.mjs";
 import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
 import { isSpawnedByRun } from "./lib/exec.mjs";
 import { copyLocalFiles, findDifferingLocalFiles } from "./lib/local-files.mjs";
@@ -101,6 +101,7 @@ export function parseRoleArgs(argv) {
     requireCi: null,
     pr: null,
     all: false,
+    head: null,
     testCmd: null,
     testCmdTimeout: null,
     reviewerSandbox: null,
@@ -142,6 +143,15 @@ export function parseRoleArgs(argv) {
 
         case "--all":
           args.all = true;
+          return true;
+
+        case "--head":
+          args.head = readInline(arg);
+          if (!isFullSha(args.head)) {
+            throw new RoleError(
+              `--head must be a full lowercase commit SHA of 40 or 64 hex digits, got: ${args.head}`,
+            );
+          }
           return true;
 
         case "--no-copy-local-files":
@@ -933,6 +943,9 @@ function rejectMisplacedFlags(args, operation) {
   if (operation !== "wait-checks" && args.all) {
     throw new RoleError("--all is only valid for wait-checks.");
   }
+  if (operation !== "wait-checks" && args.head !== null) {
+    throw new RoleError("--head is only valid for wait-checks.");
+  }
   if (operation !== "finish" && (args.requireAccept || args.requireCi !== null)) {
     throw new RoleError(
       `--require-accept and --require-ci are only valid for finish, not ${operation}.`,
@@ -1119,6 +1132,8 @@ function requireStoredParentSession(args, state) {
 /**
  * `wait-checks`: polls the required checks of `--pr`, or every check of its head
  * with `--all`, until none is pending or the bound elapses, then prints the last check states with a `timedOut` flag.
+ * `--head <sha>` keeps the wait going until the PR head is that commit. The check states are read
+ * from the commit by SHA, and the result names that commit in `head` (#961).
  * It reads status only, so it touches no run state and needs no init, but it
  * applies the same `--cwd` rule as `dispatch`, because the read runs in that
  * work tree. The bound starts at command entry, so validation and every read
@@ -1161,6 +1176,7 @@ async function waitChecksOperation(
     cwd: args.cwd,
     deadline,
     all: args.all,
+    head: args.head,
     gh,
     now,
     sleep,

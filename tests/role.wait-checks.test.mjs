@@ -6,7 +6,7 @@ import { executeRoleCommand } from "../src/role.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { cleanup, repos, setup } from "./role-helpers.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import { createTempRepo, fakeClock, scriptedGh } from "./runtime-helpers.mjs";
+import { createTempRepo, fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -30,6 +30,7 @@ test("wait-checks returns the check envelope and writes no run state", async () 
     status: "ok",
     pr: 42,
     timedOut: false,
+    head: HEAD_A,
     checks: SETTLED.checks,
   });
   await expect(access(statePaths({ cwd: repo }).stateFile)).rejects.toThrow();
@@ -61,6 +62,7 @@ test("wait-checks reports a branch with no required check as its own outcome", a
     status: "ok",
     pr: 213,
     timedOut: false,
+    head: HEAD_A,
     noRequiredChecks: true,
     checks: [],
   });
@@ -101,7 +103,13 @@ test("wait-checks reports the bound as reached when a required check is still pe
     { gh: scriptedGh([PENDING]), ...fakeClock() },
   );
   expect(result.exitCode).toBe(0);
-  expect(result.payload).toEqual({ status: "ok", pr: 42, timedOut: true, checks: PENDING.checks });
+  expect(result.payload).toEqual({
+    status: "ok",
+    pr: 42,
+    timedOut: true,
+    head: HEAD_A,
+    checks: PENDING.checks,
+  });
 });
 
 // Usefulness: verifies `--timeout 0` is refused, because the wait the issue adds
@@ -146,6 +154,7 @@ test("wait-checks spends work-tree validation inside the bound", async () => {
   repos.push(repo);
   const clock = { now: 0 };
   const bounds = [];
+  const reads = scriptedGh([SETTLED]);
 
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
@@ -155,9 +164,9 @@ test("wait-checks spends work-tree validation inside the bound", async () => {
       assertWorkTree: async () => {
         clock.now += 400;
       },
-      gh: async (args, cwd, { timeoutMs } = {}) => {
+      gh: (args, cwd, { timeoutMs } = {}) => {
         bounds.push(timeoutMs);
-        return { status: 0, stdout: JSON.stringify(SETTLED.checks), stderr: "" };
+        return reads(args, cwd);
       },
     },
   );
@@ -166,10 +175,12 @@ test("wait-checks spends work-tree validation inside the bound", async () => {
     status: "ok",
     pr: 42,
     timedOut: false,
+    head: HEAD_A,
     checks: SETTLED.checks,
   });
-  // 1000ms of bound minus the 400ms validation, not a fresh 1000ms.
-  expect(bounds).toEqual([600]);
+  // 1000ms of bound minus the 400ms validation, not a fresh 1000ms, on every read.
+  expect(bounds.length).toBeGreaterThan(0);
+  expect(new Set(bounds)).toEqual(new Set([600]));
 });
 
 // Usefulness: verifies the cancel signal of the command reaches the work-tree validation, so a
@@ -217,7 +228,7 @@ test("wait-checks reports the bound when validation left none for the wait", asy
     },
   );
   expect(result.exitCode).toBe(0);
-  expect(result.payload).toEqual({ status: "ok", pr: 42, timedOut: true, checks: [] });
+  expect(result.payload).toEqual({ status: "ok", pr: 42, timedOut: true, head: null, checks: [] });
   expect(read).toBe(false);
 });
 
@@ -314,6 +325,7 @@ test("wait-checks --all waits for the listed checks of the head", async () => {
     status: "ok",
     pr: 42,
     timedOut: false,
+    head: HEAD_A,
     checks: SETTLED.checks,
   });
 });
@@ -328,3 +340,110 @@ test("--all is refused on an operation other than wait-checks", async () => {
   expect(result.exitCode).toBe(1);
   expect(result.payload.error).toMatch(/--all is only valid for wait-checks/);
 });
+
+// Usefulness: verifies `role wait-checks --head <sha>` keeps waiting while the PR head
+// is another commit and names the expected head in the envelope once it settles, so a
+// parent that passes the worker `workTree.head` never reads the checks of the previous
+// head (issue #961).
+test("wait-checks --head waits for the PR head and names it in the envelope", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const result = await executeRoleCommand(
+    parseRoleArgs([
+      "wait-checks",
+      "--cwd",
+      repo,
+      "--pr",
+      "42",
+      "--head",
+      HEAD_B,
+      "--timeout",
+      "60",
+    ]),
+    { gh: scriptedGh([SETTLED], { heads: [HEAD_A, HEAD_B, HEAD_B] }), ...fakeClock() },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({
+    status: "ok",
+    pr: 42,
+    timedOut: false,
+    head: HEAD_B,
+    checks: SETTLED.checks,
+  });
+});
+
+// Usefulness: verifies a `--head` wait that reaches its bound before the PR head moves
+// reports `timedOut: true` with no head and no checks, never a pass (issue #961).
+test("wait-checks --head reports the bound when the PR head never reaches it", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const result = await executeRoleCommand(
+    parseRoleArgs([
+      "wait-checks",
+      "--cwd",
+      repo,
+      "--pr",
+      "42",
+      "--head",
+      HEAD_B,
+      "--timeout",
+      "30",
+    ]),
+    { gh: scriptedGh([SETTLED], { heads: [HEAD_A] }), ...fakeClock() },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({ status: "ok", pr: 42, timedOut: true, head: null, checks: [] });
+});
+
+// Usefulness: verifies `--head` takes only a full commit SHA and only `wait-checks`, so an
+// abbreviation that equals no head cannot make a wait that never settles (issue #961).
+test("--head refuses an abbreviation and any operation but wait-checks", () => {
+  expect(() => parseRoleArgs(["wait-checks", "--pr", "42", "--head", "abc123"])).toThrow(
+    /--head must be a full lowercase commit SHA/,
+  );
+  expect(() =>
+    parseRoleArgs(["wait-checks", "--pr", "42", "--head", HEAD_A.toUpperCase()]),
+  ).toThrow(/--head must be a full lowercase commit SHA/);
+});
+
+// Usefulness: verifies `--head` is refused on an operation other than wait-checks, so a
+// dispatch that carries it fails loudly instead of ignoring it (issue #961).
+test("--head is refused on an operation other than wait-checks", async () => {
+  const result = await executeRoleCommand(
+    parseRoleArgs(["dispatch", "--role", "worker", "--head", HEAD_A, "--cwd", "."]),
+    {},
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toMatch(/--head is only valid for wait-checks/);
+});
+
+// Usefulness: verifies the error envelope of `role wait-checks` carries `childExitUnconfirmed`
+// when a sibling read of the failed poll stays unconfirmed, so the parent settles the `gh`
+// process before another wait (issue #961).
+test("wait-checks marks an error envelope with an unconfirmed child", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const inner = scriptedGh([SETTLED], { commits: { [HEAD_A]: SETTLED.checks } });
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
+    {
+      gh: (args, cwd, options) => {
+        if (args[0] === "api" && args[1].includes("/rules/branches/")) {
+          return Promise.resolve({ status: 1, stdout: "", stderr: "gh: Server Error (HTTP 500)" });
+        }
+        if (args[0] === "api" && args[1].includes("/protection")) {
+          return new Promise(() => {});
+        }
+        return inner(args, cwd, options);
+      },
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({ status: "error", childExitUnconfirmed: true });
+}, 20000);
