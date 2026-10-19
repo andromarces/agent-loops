@@ -49,8 +49,8 @@ files is a new runtime contract, and it handles files that can hold secrets.
    copied and is reported as skipped. A file that already exists in `--cwd`, a
    file whose target path sits under a symlinked directory, a registered work
    tree, or a directory that holds a `.git` entry in `--cwd`, a file over the size
-   cap, a `.gitignore` or `.gitattributes`, and a file whose copy failed are
-   reported as skipped. A path that is tracked in the main work tree or absent
+   cap, a `.gitignore` or `.gitattributes`, a `*.lock` file under `.claude/`, and
+   a file whose copy failed are reported as skipped. A path that is tracked in the main work tree or absent
    from it is not a local file and is not reported.
 5. **No overwrite.** The copy uses `fs.copyFile` with `COPYFILE_EXCL`. The exclusive
    create refuses an existing file and never deletes it, and the code removes
@@ -78,13 +78,15 @@ files is a new runtime contract, and it handles files that can hold secrets.
    ignore rules or line endings in `--cwd`: it can un-ignore a file that was
    copied, so that the snapshot lists it and the run's `clean` flag and digest
    change. Only the excluded names (`.git`, `.claude/worktrees`, `.gitignore`,
-   `.gitattributes`) are compared by folding: lower case, without a stream suffix
+   `.gitattributes`, `.claude/**/*.lock`) are compared by folding: lower case, without a stream suffix
    (`name:stream`), and without trailing dots or spaces. A folded match includes
    the exact match, so folding can only skip more files, never read or write more.
    A case or Windows alias such as `.GITIGNORE`, `.GitAttributes`, `.gitignore.`,
-   or `.Claude/Worktrees` therefore matches its plain name. A path is never
+   `.Claude/Worktrees`, or `.CLAUDE/sub/x.LOCK` therefore matches its plain name. A path is never
    folded: paths are compared as the canonical strings that `fs.promises.realpath`
-   returns.
+   returns. A `*.lock` file under `.claude/` (Claude Code runtime state, such as
+   `scheduled_tasks.lock`) is skipped and named, because a copy would claim a lock
+   that no process in `--cwd` holds (issue #964).
 8. **Size cap.** A file over 1 MiB is skipped and named. Each listed directory has
    its own bound of 2000 entries, counting every entry read under it, nested
    directories included. A listed directory that holds more than 2000 entries is

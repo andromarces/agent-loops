@@ -167,6 +167,26 @@ test("never copies anything under .claude/worktrees", async () => {
   expect(await exists(join(linked, ".claude", "worktrees"))).toBe(false);
 });
 
+// Usefulness: verifies a Claude Code runtime lock file is never copied, is named in
+// `skipped`, and leaves the other files under `.claude/` copied (issue #964).
+// Not redundant: no other test covers a name that is skipped for its suffix under a listed
+// directory, or a lock file outside `.claude/`.
+test("skips a lock file under .claude and names it, but copies the other files", async () => {
+  const { main, linked } = await createLinked({ ignore: [".claude/", ".vscode/"] });
+  await mkdir(join(main, ".claude", "sub"), { recursive: true });
+  await mkdir(join(main, ".vscode"), { recursive: true });
+  await writeFile(join(main, ".claude", "scheduled_tasks.lock"), '{"pid":1}\n');
+  await writeFile(join(main, ".claude", "sub", "Other.LOCK"), "x\n");
+  await writeFile(join(main, ".claude", "settings.local.json"), "{}\n");
+  await writeFile(join(main, ".vscode", "tool.lock"), "x\n");
+
+  const report = await copyLocalFiles(linked);
+
+  expect(report.copied).toEqual([".claude/settings.local.json", ".vscode/tool.lock"]);
+  expect(report.skipped).toEqual([".claude/scheduled_tasks.lock", ".claude/sub/Other.LOCK"]);
+  expect(await exists(join(linked, ".claude", "scheduled_tasks.lock"))).toBe(false);
+});
+
 // Usefulness: verifies a nested work tree whose `.git` file is present is never walked.
 // Not redundant: the nested work tree here is registered and has its `.git` file. The
 // next tests remove the `.git` entry, or use a repository that is not registered.

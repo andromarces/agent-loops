@@ -32,6 +32,12 @@ const LOCAL_FILE_PATHS = [
 // `git worktree list` and from a nested `.git` entry.
 const CLAUDE_WORKTREES = [".claude", "worktrees"];
 
+// Claude Code names the holder of a lock in a `*.lock` file under `.claude/`, such as
+// `scheduled_tasks.lock`. A copy would claim a lock that no process of the linked work
+// tree holds, so the file is skipped and named (issue #964).
+const isClaudeLockFile = (rel) =>
+  foldName(rel.split("/")[0]) === ".claude" && foldName(basename(rel)).endsWith(".lock");
+
 // A configuration file is small. A larger file is a cache, a log, or a session
 // store, so it is skipped and named instead of duplicated into every run.
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -83,7 +89,7 @@ function git(cwd, args, { allowExit = [], ...options } = {}) {
  * Folds a file name to the form that the strictest file system reads it as:
  * lower case, no stream suffix (`name:stream`), and no trailing dots or spaces.
  * Only the excluded names (`.git`, `.claude/worktrees`, `.gitignore`,
- * `.gitattributes`) are compared this way. A folded match includes the exact
+ * `.gitattributes`, and any `*.lock` under `.claude`) are compared this way. A folded match includes the exact
  * match, so folding can only skip more files, never read or write more. A path is
  * never folded: paths are compared as the canonical strings that `realpath`
  * returns.
@@ -304,7 +310,7 @@ async function collect(ctx, rel, abs) {
  * check-ignore` in the linked work tree names it ignored. It never overwrites a
  * file of the linked work tree. Its checks refuse a symlink, `.git`, a registered
  * work tree, a directory that holds a `.git` entry, a `.gitignore` or
- * `.gitattributes`, and a target under a symlinked directory of the linked work
+ * `.gitattributes`, a `*.lock` file under `.claude/`, and a target under a symlinked directory of the linked work
  * tree, as far as the approved limit below allows. The excluded names are matched
  * folded, which can only skip more; paths are compared as canonical strings from
  * `realpath`. Returns `{ copied, skipped }` as sorted root-relative path names, or
@@ -410,6 +416,7 @@ export async function copyLocalFiles(
     // beyond a symlink or inside a nested repository.
     if (
       GIT_CONTROL_FILES.has(foldName(basename(file.rel))) ||
+      isClaudeLockFile(file.rel) ||
       (await lstatOrNull(join(rootReal, file.rel))) !== null ||
       (await hasBlockedAncestor(rootReal, file.rel, targetBlocked))
     ) {
