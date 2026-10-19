@@ -69,7 +69,7 @@ const isOrderable = (entry, fields) =>
   fields.every((field) => entry[field] == null || !Number.isNaN(Date.parse(entry[field])));
 
 /** The check runs of `sha`, every page. `strict` makes a malformed reply throw. */
-async function checkRuns(gh, slug, sha, cwd, strict = false) {
+export async function checkRuns(gh, slug, sha, cwd, strict = false) {
   const pages = await ghApi(
     gh,
     [`repos/${slug}/commits/${sha}/check-runs`, "--paginate", "--slurp"],
@@ -98,7 +98,7 @@ async function checkRuns(gh, slug, sha, cwd, strict = false) {
 }
 
 /** The commit statuses of `sha`, every page. `strict` makes a malformed reply throw. */
-async function commitStatuses(gh, slug, sha, cwd, strict = false) {
+export async function commitStatuses(gh, slug, sha, cwd, strict = false) {
   const pages = await ghApi(
     gh,
     [`repos/${slug}/commits/${sha}/status`, "--paginate", "--slurp"],
@@ -179,7 +179,7 @@ function compareTime(a, b) {
 // single entry needs no order and is returned as is. GitHub evaluates the latest
 // run for a name; an earlier failing run that a later run replaces does not fail
 // the gate.
-function latestBy(entries, fields) {
+export function latestBy(entries, fields) {
   if (entries.length === 1) {
     return entries[0];
   }

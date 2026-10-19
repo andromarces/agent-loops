@@ -657,22 +657,31 @@ be inside a Git work tree, as it is for `dispatch`, because the read runs there:
 }
 ```
 
-`head` names the PR head commit that `checks` describe. `gh pr checks` names no
-commit, so a wait that starts before GitHub moves the PR head to a new commit,
-as right after a worker push or `gh pr update-branch`, can read the passing
-checks of the previous head. Each poll therefore reads the PR head, then the
-checks, then the PR head again, and discards a read whose two heads differ, so
-one result never mixes two heads. A head that moves away and back between the two
-head reads is not seen.
+`head` names the commit that `checks` describe. `gh pr checks` queries by PR identity
+and names no commit, so a wait that starts before GitHub moves the PR head to a new
+commit, as right after a worker push or `gh pr update-branch`, or that sees the head
+move away and back, can read the passing checks of another commit from it. The wait
+therefore never takes a check state from `gh pr checks`. Each poll reads the PR head
+`<sha>`, runs `gh pr checks` for its exit-code outcome and for the names of the
+required checks, and then reads every state from the check runs and commit statuses of
+`<sha>` itself, every page, by SHA. The latest entry for a name decides. The required
+wait judges the names that `gh pr checks --required` lists, and a listed name with no
+entry on `<sha>` is pending. The `--all` wait judges every entry of `<sha>`. So
+`checks` always describe `head` and no other commit, even when the PR head moves
+during the wait.
+
+The PR head is the one read at the start of the poll, so the PR can have moved on by
+the time the wait returns, and a required check that no read of the PR lists yet is
+absent, as before. Compare `head` with the commit you expect before you record the
+checks as passed.
 
 Pass `--head <sha>` with the commit you expect, for example `workTree.head` of
 the worker envelope. It takes a full lowercase commit SHA, 40 or 64 hex digits,
 and refuses an abbreviation. While the PR head is another commit, the wait reads
 no checks and continues. A wait that reaches the bound before the PR head reaches
 `--head` returns `timedOut: true`, `head: null`, and an empty `checks`, which is
-never a pass. Without `--head`, the wait settles on whatever the PR head is, so
-compare `head` with the commit you expect before you record the checks as passed.
-`head` is `null` only when no read completed on a stable head.
+never a pass. Without `--head`, the wait settles on whatever the PR head is when a
+poll starts. `head` is `null` only when no read completed.
 
 `--timeout` is in seconds and defaults to 300. Set it below the command timeout
 your harness applies when that timeout is smaller. `--timeout 0` is refused.
@@ -737,9 +746,9 @@ wait avoids. The `--require-ci` gate still decides the finish.
 agent-loop role wait-checks --all --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
 ```
 
-`--all` waits on every check of the PR head, not only the required ones. It reads
-`gh pr checks <pr>` without `--required`, so it keeps the bound and the exit-code
-rules above: exit 0 with no pending check listed is settled, exit 8 is pending, a
+`--all` waits on every check of the commit `head` names, not only the required
+ones. It runs `gh pr checks <pr>` without `--required`, so it keeps the bound and
+the exit-code rules above: exit 0 with no pending check listed is settled, exit 8 is pending, a
 listed failing check is settled, and every other exit 1 is unresolved with
 `status: "error"`. Exit 1 with no output and exactly `no checks reported on the
 '<branch>' branch` is the exception, as in the required wait: no check has

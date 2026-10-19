@@ -6,14 +6,7 @@ import { executeRoleCommand } from "../src/role.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { cleanup, repos, setup } from "./role-helpers.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import {
-  createTempRepo,
-  fakeClock,
-  HEAD_A,
-  HEAD_B,
-  scriptedGh,
-  withHead,
-} from "./runtime-helpers.mjs";
+import { createTempRepo, fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -161,6 +154,7 @@ test("wait-checks spends work-tree validation inside the bound", async () => {
   repos.push(repo);
   const clock = { now: 0 };
   const bounds = [];
+  const reads = scriptedGh([SETTLED]);
 
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
@@ -170,10 +164,10 @@ test("wait-checks spends work-tree validation inside the bound", async () => {
       assertWorkTree: async () => {
         clock.now += 400;
       },
-      gh: withHead(async (args, cwd, { timeoutMs } = {}) => {
+      gh: (args, cwd, { timeoutMs } = {}) => {
         bounds.push(timeoutMs);
-        return { status: 0, stdout: JSON.stringify(SETTLED.checks), stderr: "" };
-      }),
+        return reads(args, cwd);
+      },
     },
   );
   expect(result.exitCode).toBe(0);
@@ -184,8 +178,9 @@ test("wait-checks spends work-tree validation inside the bound", async () => {
     head: HEAD_A,
     checks: SETTLED.checks,
   });
-  // 1000ms of bound minus the 400ms validation, not a fresh 1000ms.
-  expect(bounds).toEqual([600]);
+  // 1000ms of bound minus the 400ms validation, not a fresh 1000ms, on every read.
+  expect(bounds.length).toBeGreaterThan(0);
+  expect(new Set(bounds)).toEqual(new Set([600]));
 });
 
 // Usefulness: verifies the cancel signal of the command reaches the work-tree validation, so a

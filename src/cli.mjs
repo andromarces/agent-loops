@@ -253,9 +253,10 @@ Role operations:
                                 childExitUnconfirmed. The total bound is
                                 --timeout plus five seconds. With --all it waits
                                 on every check of the PR head, not only the
-                                required ones. The result names the PR head its
-                                checks describe in head; --head <sha> keeps the
-                                wait going until the PR head is that commit.
+                                required ones. Check states are read from the
+                                commit by SHA; head names that commit.
+                                --head <sha> keeps the wait going until the PR
+                                head is that commit.
                                 Reads status only, so it needs
                                 no run state and changes nothing.
 

@@ -422,7 +422,7 @@ test("waitChecks in all mode refuses the required-check answer and near-matches"
 });
 
 /** Runs one wait on a fake clock against scripted reads and PR heads. */
-function pinned({ reads, heads, head, timeoutSeconds = 60, all = false }) {
+function pinned({ reads, heads, head, timeoutSeconds = 60, all = false, commits }) {
   const clock = fakeClock();
   return waitChecks({
     pr: 42,
@@ -430,7 +430,7 @@ function pinned({ reads, heads, head, timeoutSeconds = 60, all = false }) {
     timeoutSeconds,
     all,
     head,
-    gh: scriptedGh(reads, { all, heads }),
+    gh: scriptedGh(reads, { all, heads, commits }),
     now: clock.now,
     sleep: clock.sleep,
   });
@@ -477,21 +477,96 @@ test("waitChecks times out without a pass when the PR head never reaches the exp
   ).toEqual({ timedOut: true, head: null, checks: [] });
 });
 
-// Usefulness: verifies a head that changes while the checks are read discards that
-// read, so one result never mixes two heads, and the wait settles on a later read
-// that is stable (issue #961).
-test("waitChecks discards a read whose PR head changed during the read", async () => {
-  // Poll 1 reads head A, then the checks, then head B: the read is discarded.
-  // Poll 2 reads head B before and after the checks of B.
-  const stale = check("stale", "pass", "SUCCESS");
+// Usefulness: verifies the wait takes check states from the commit it names, by SHA, and
+// not from `gh pr checks`, which queries by PR identity. A PR head that moved away and
+// returned, or a stale view, leaves `gh pr checks` answering with another commit's passing
+// checks, and those never settle a wait on a commit whose own check still runs, in the
+// required and the all-checks mode (issue #961).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode never settles on the checks of another commit", async (_mode, all) => {
   const result = await pinned({
-    reads: [
-      { status: 0, checks: [stale] },
-      { status: 0, checks: [PASSED_ITEM] },
-    ],
-    heads: [HEAD_A, HEAD_B, HEAD_B, HEAD_B],
+    // `gh pr checks` reports the other commit's passing check.
+    reads: [{ status: 0, checks: [PASSED_ITEM] }],
+    heads: [HEAD_A],
+    head: HEAD_A,
+    all,
+    commits: { [HEAD_A]: [PENDING_ITEM], [HEAD_B]: [PASSED_ITEM] },
   });
-  expect(result).toEqual({ timedOut: false, head: HEAD_B, checks: [PASSED_ITEM] });
+  expect(result).toEqual({ timedOut: true, head: HEAD_A, checks: [PENDING_ITEM] });
+});
+
+// Usefulness: verifies the states of the named commit decide the outcome in both
+// directions: its passing checks settle the wait when `gh pr checks` still lists a pending
+// check of another commit, and its failing check settles it when `gh pr checks` lists a
+// pass (issue #961).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode reports the states of the named commit", async (_mode, all) => {
+  expect(
+    await pinned({
+      reads: [{ status: 8, checks: [PENDING_ITEM] }],
+      heads: [HEAD_A],
+      head: HEAD_A,
+      all,
+      commits: { [HEAD_A]: [PASSED_ITEM] },
+    }),
+  ).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+  expect(
+    await pinned({
+      reads: [{ status: 0, checks: [PASSED_ITEM] }],
+      heads: [HEAD_A],
+      head: HEAD_A,
+      all,
+      commits: { [HEAD_A]: [FAILED_ITEM] },
+    }),
+  ).toEqual({ timedOut: false, head: HEAD_A, checks: [FAILED_ITEM] });
+});
+
+// Usefulness: verifies a required check that `gh pr checks` lists but that has no entry on the
+// named commit has not reported there, so it is pending and never a pass (issue #961).
+test("waitChecks reads a required check with no entry on the commit as pending", async () => {
+  expect(
+    await pinned({
+      reads: [{ status: 0, checks: [PASSED_ITEM] }],
+      heads: [HEAD_A],
+      head: HEAD_A,
+      commits: { [HEAD_A]: [] },
+    }),
+  ).toEqual({
+    timedOut: true,
+    head: HEAD_A,
+    checks: [{ name: "ci", state: "PENDING", bucket: "pending" }],
+  });
+});
+
+// Usefulness: verifies the all-checks wait judges every check of the named commit, including
+// one that `gh pr checks` does not list, so a pending check of the commit holds the wait
+// (issue #961).
+test("waitChecks in all mode judges a check of the commit that gh does not list", async () => {
+  const lint = check("lint", "pending", "IN_PROGRESS");
+  expect(
+    await pinned({
+      reads: [{ status: 0, checks: [PASSED_ITEM] }],
+      heads: [HEAD_A],
+      head: HEAD_A,
+      all: true,
+      commits: { [HEAD_A]: [PASSED_ITEM, lint] },
+    }),
+  ).toEqual({ timedOut: true, head: HEAD_A, checks: [PASSED_ITEM, lint] });
+});
+
+// Usefulness: verifies a commit read that fails is unresolved, never a pass (issue #961).
+test("waitChecks refuses a commit read that fails", async () => {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }]);
+  const gh = async (args, cwd, options) =>
+    args[0] === "api" ? { status: 1, stdout: "", stderr: "boom" } : inner(args, cwd, options);
+  const clock = fakeClock();
+  await expect(
+    waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 60, gh, now: clock.now, sleep: clock.sleep }),
+  ).rejects.toThrow(/gh api repos\/owner\/repo\/commits\/.+ failed: boom/);
 });
 
 // Usefulness: verifies the last checks kept for a timeout envelope are never the

@@ -389,30 +389,80 @@ function headReply(head) {
   };
 }
 
-/**
- * Wraps a custom `gh` so the wait's head read answers `head` and every other call
- * reaches `gh`. For a test that scripts the check read by hand.
- */
-export function withHead(gh, head = HEAD_A) {
-  return async (args, cwd, options) =>
-    isHeadRead(args) ? headReply(head) : gh(args, cwd, options);
+const RUN_STATUS_OF_STATE = {
+  PENDING: "pending",
+  QUEUED: "queued",
+  IN_PROGRESS: "in_progress",
+  WAITING: "waiting",
+  REQUESTED: "requested",
+};
+const CONCLUSION_OF_BUCKET = {
+  pass: "success",
+  fail: "failure",
+  cancel: "cancelled",
+  skipping: "skipped",
+};
+
+// The check run of the REST check-runs reply that a `{ name, state, bucket }` check item stands for.
+function runOfItem({ name, state, bucket }, index) {
+  const pending = bucket === "pending" || state in RUN_STATUS_OF_STATE;
+  return {
+    id: index + 1,
+    name,
+    status: pending ? (RUN_STATUS_OF_STATE[state] ?? "in_progress") : "completed",
+    conclusion: pending ? null : (state?.toLowerCase() ?? CONCLUSION_OF_BUCKET[bucket]),
+    started_at: "2026-01-01T00:00:00Z",
+    completed_at: pending ? null : "2026-01-01T00:01:00Z",
+  };
 }
 
+function readItems(read) {
+  if (read.stdout === undefined) {
+    return read.checks ?? [];
+  }
+  try {
+    const parsed = JSON.parse(read.stdout);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+const ok = (stdout) => ({ status: 0, stdout, stderr: "", timedOut: false });
+
 /**
- * A scripted `gh` for the required-check read. Each entry is `{ status, checks,
- * stdout, stderr }` and the last entry repeats, so a wait that polls more times
- * than the script holds still answers. A `stdout` value is used verbatim, which
- * covers a read whose output is not a check list. A call that is not the exact
- * read is an error, so a test never passes on a missing fixture or a wrong argument.
- * The head read, `gh pr view <pr> --json headRefOid`, answers the next entry of
- * `heads`, and the last one repeats.
+ * A scripted `gh` for the check wait. Each entry of `reads` is `{ status, checks,
+ * stdout, stderr }` and answers `gh pr checks`; the last entry repeats, so a wait that
+ * polls more times than the script holds still answers. A `stdout` value is used verbatim,
+ * which covers a read whose output is not a check list. The head read, `gh pr view <pr>
+ * --json headRefOid`, answers the next entry of `heads`, and the last one repeats.
+ * The check runs of a commit read by SHA come from `commits[sha]`, a list of
+ * `{ name, state, bucket }` items; a commit the map does not hold answers with the items of
+ * the latest `pr checks` read, so a test that scripts only `reads` sees one consistent source.
+ * A call that is none of these is an error, so a test never passes on a missing fixture or a
+ * wrong argument.
  */
-export function scriptedGh(reads, { all = false, heads = [HEAD_A] } = {}) {
+export function scriptedGh(reads, { all = false, heads = [HEAD_A], commits = {} } = {}) {
   let n = 0;
   let h = 0;
+  let current = [];
   return async (args, cwd) => {
     if (isHeadRead(args)) {
       return headReply(heads[Math.min(h++, heads.length - 1)]);
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      return ok("owner/repo");
+    }
+    const api = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/(check-runs|status)$/.exec(
+      args[0] === "api" ? args[1] : "",
+    );
+    if (api) {
+      const items = commits[api[1]] ?? current;
+      return ok(
+        JSON.stringify(
+          api[2] === "check-runs" ? [{ check_runs: items.map(runOfItem) }] : [{ statuses: [] }],
+        ),
+      );
     }
     if (!isCheckWaitRead(args, all)) {
       return {
@@ -422,6 +472,7 @@ export function scriptedGh(reads, { all = false, heads = [HEAD_A] } = {}) {
       };
     }
     const read = reads[Math.min(n++, reads.length - 1)];
+    current = readItems(read);
     return {
       status: read.status,
       stdout: read.stdout ?? JSON.stringify(read.checks ?? []),

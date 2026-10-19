@@ -1132,8 +1132,8 @@ function requireStoredParentSession(args, state) {
 /**
  * `wait-checks`: polls the required checks of `--pr`, or every check of its head
  * with `--all`, until none is pending or the bound elapses, then prints the last check states with a `timedOut` flag.
- * `--head <sha>` keeps the wait going until the PR head is that commit, and the result names
- * the head its checks describe (#961).
+ * `--head <sha>` keeps the wait going until the PR head is that commit. The check states are read
+ * from the commit by SHA, and the result names that commit in `head` (#961).
  * It reads status only, so it touches no run state and needs no init, but it
  * applies the same `--cwd` rule as `dispatch`, because the read runs in that
  * work tree. The bound starts at command entry, so validation and every read

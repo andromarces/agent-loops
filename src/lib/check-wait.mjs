@@ -3,6 +3,7 @@
 // takes no timeout for the watch, and a shell `timeout` exists on neither
 // Windows nor macOS by default. The runtime owns the bound instead (issue #329).
 import { setTimeout as delay } from "node:timers/promises";
+import { checkRuns, commitStatuses, latestBy } from "./ci-gate.mjs";
 import { ghFailureText, NO_REQUIRED_CHECKS, runGh } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
 
@@ -111,8 +112,8 @@ function isFailing(check) {
  *   not well formed is unresolved too, so one unreadable item cannot settle the
  *   list as a pass.
  */
-function readOutcome(pr, { status, stdout, stderr }, all) {
-  const label = `gh pr checks ${pr}${all ? "" : " --required"}`;
+function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
+  const label = source ?? `gh pr checks ${pr}${all ? "" : " --required"}`;
   const text = stdout.trim();
   let checks = [];
   if (text !== "") {
@@ -193,6 +194,88 @@ function readHead(pr, { status, stdout, stderr }) {
   return head.toLowerCase();
 }
 
+// The check items of one commit, read by SHA. `gh pr checks` queries by PR identity and
+// names no commit, so it cannot say which head its states describe (#961). The check runs
+// and commit statuses of the commit come from `commits/{sha}`, and the latest entry for a
+// name decides, as it does for the `--require-ci` gate.
+const RUN_BUCKETS = { success: "pass", neutral: "pass", skipped: "skipping", cancelled: "cancel" };
+const STATUS_BUCKETS = { success: "pass", pending: "pending" };
+
+function groupBy(entries, key) {
+  const groups = new Map();
+  for (const entry of entries) {
+    groups.set(entry[key], [...(groups.get(entry[key]) ?? []), entry]);
+  }
+  return groups;
+}
+
+/** The latest entry of each name group. Throws when a group cannot be ordered, so the read is unresolved. */
+function latestOfEach(entries, key, fields, what) {
+  return [...groupBy(entries, key)].map(([name, group]) => {
+    const latest = latestBy(group, fields);
+    if (latest === null) {
+      throw new Error(`the ${what} named "${name}" cannot be ordered; the read is unresolved.`);
+    }
+    return latest;
+  });
+}
+
+function runItem(run) {
+  const completed = run.status === "completed";
+  return {
+    name: run.name,
+    state: (completed ? run.conclusion : run.status).toUpperCase(),
+    bucket: completed ? (RUN_BUCKETS[run.conclusion] ?? "fail") : "pending",
+  };
+}
+
+function statusItem(status) {
+  return {
+    name: status.context,
+    state: status.state.toUpperCase(),
+    bucket: STATUS_BUCKETS[status.state] ?? "fail",
+  };
+}
+
+/**
+ * The items of a commit read: every check run and commit status when `names` is null,
+ * otherwise those named. A name with no entry on the commit has not reported on it, so it
+ * is a pending item. Every item describes `commit` and no other.
+ */
+function commitItems({ runs, statuses }, names) {
+  const latestRuns = latestOfEach(runs, "name", ["started_at", "completed_at"], "check runs");
+  const latestStatuses = latestOfEach(
+    statuses,
+    "context",
+    ["updated_at", "created_at"],
+    "commit statuses",
+  );
+  if (names === null) {
+    return [...latestRuns.map(runItem), ...latestStatuses.map(statusItem)];
+  }
+  return [...new Set(names)].flatMap((name) => {
+    const found = [
+      ...latestRuns.filter((run) => run.name === name).map(runItem),
+      ...latestStatuses.filter((status) => status.context === name).map(statusItem),
+    ];
+    return found.length > 0 ? found : [{ name, state: "PENDING", bucket: "pending" }];
+  });
+}
+
+/** The `gh pr checks` reply shape for `items`, so one outcome rule set judges both sources. */
+function asRead(items) {
+  const status = items.some(isFailing) ? 1 : items.some(isPending) ? 8 : 0;
+  return { status, stdout: JSON.stringify(items), stderr: "" };
+}
+
+/** A read the wait bound ended; carries the read result for `childExitUnconfirmed`. */
+class BoundReached extends Error {
+  constructor(result) {
+    super("the wait bound was reached");
+    this.result = result;
+  }
+}
+
 /**
  * Runs one read bounded by `remainingMs` and signals `gh` to stop when the bound
  * elapses. A read the bound beat is then given `CHILD_EXIT_CEILING_MS` to exit,
@@ -255,14 +338,19 @@ async function readWithin(gh, argv, cwd, remainingMs, signal) {
  * branch with no required check; it keeps the exit-code rules above, including
  * the wait on the no-checks-yet reply, except `noRequiredChecks` (#896, #950).
  *
- * `gh pr checks` names no commit, so each poll reads the PR head, then the checks,
- * then the PR head again. A read whose two heads differ is discarded, so one result
- * never mixes two heads. With `head`, a poll whose PR head is another commit reads no
- * checks and the wait continues, so the passing checks of the previous head never
- * settle it. The envelope's `head` names the commit its `checks` describe, and is
- * null when no read completed on a stable head, such as a wait that reached the bound
- * before the PR head reached `head`. A head that moves away and back between the two
- * head reads is not seen (#961).
+ * `gh pr checks` names no commit, because it queries by PR identity, so the check states
+ * never come from it. Each poll reads the PR head `sha` (`gh pr view`), runs `gh pr checks`
+ * for its exit-code outcome and for the names of the required checks, and then takes every
+ * state from the check runs and commit statuses of `sha` itself (`commits/{sha}`, every page).
+ * The envelope's `head` is that `sha`, so `checks` describe it and no other commit, even when
+ * the PR head moves during the wait. The required wait judges the names that `gh pr checks
+ * --required` lists, with a name that has no entry on `sha` pending. The `--all` wait judges
+ * every entry of `sha`. A check that is required but that no read of the PR lists yet is
+ * absent, as before. With `head`, a poll whose PR head is another commit reads no checks and
+ * the wait continues, so the passing checks of the previous head never settle it. The PR head
+ * is the one read at the start of the poll, so the PR can have moved on by the time the wait
+ * returns. `head` is null when no read completed, such as a wait that reached the bound before
+ * the PR head reached `head` (#961).
  *
  * `deadline` is an absolute time on the `now` clock. A caller passes it to bound
  * the whole command, including the work that runs before the first read; a
@@ -298,6 +386,7 @@ export async function waitChecks({
   const headArgv = ["pr", "view", String(pr), "--json", "headRefOid"];
   let last = [];
   let lastHead = null;
+  let slug = null;
   // `childExitUnconfirmed` rides only on the read whose exit the command could
   // not observe, so an absent field is an observed exit.
   const timeout = (result = {}) => ({
@@ -306,6 +395,39 @@ export async function waitChecks({
     checks: last,
     ...(result.childExitUnconfirmed ? { childExitUnconfirmed: true } : {}),
   });
+  // One bounded read, so the commit reads share the deadline of the checks read.
+  const bounded = async (argv) => {
+    const remaining = end - now();
+    if (remaining <= 0) {
+      throw new BoundReached({});
+    }
+    const result = await readWithin(gh, argv, cwd, remaining, signal);
+    if (result.timedOut) {
+      throw new BoundReached(result);
+    }
+    return result;
+  };
+  const readCommit = async (sha) => {
+    if (slug === null) {
+      const read = await bounded([
+        "repo",
+        "view",
+        "--json",
+        "nameWithOwner",
+        "-q",
+        ".nameWithOwner",
+      ]);
+      slug = read.stdout.trim();
+      if (read.status !== 0 || slug === "") {
+        slug = null;
+        throw new Error(`gh repo view could not be read: ${ghFailureText(read)}`);
+      }
+    }
+    const read = (argv, cwdArg) => bounded(argv, cwdArg);
+    const runs = await checkRuns(read, slug, sha, cwd, true);
+    const statuses = await commitStatuses(read, slug, sha, cwd, true);
+    return { runs, statuses };
+  };
   // False when the bound is spent, so the caller reports it instead of sleeping.
   const pause = async () => {
     const left = end - now();
@@ -326,59 +448,54 @@ export async function waitChecks({
     }
     return true;
   };
-  for (;;) {
-    if (end - now() <= 0) {
-      return timeout();
-    }
-    const first = await readWithin(gh, headArgv, cwd, end - now(), signal);
-    if (first.timedOut) {
-      return timeout(first);
-    }
-    const before = readHead(pr, first);
-    if (head !== null && before !== head) {
+  try {
+    for (;;) {
+      const sha = readHead(pr, await bounded(headArgv));
+      if (head === null || sha === head) {
+        const listed = readOutcome(pr, await bounded(checksArgv), all);
+        let outcome = listed;
+        // A branch with no required check names no state to read, so it carries no commit read.
+        // An empty required list names nothing to read, so the wait continues.
+        if (!listed.noRequiredChecks && (all || listed.checks.length > 0)) {
+          const items = commitItems(
+            await readCommit(sha),
+            all ? null : listed.checks.map(({ name }) => name),
+          );
+          outcome = readOutcome(
+            pr,
+            asRead(items),
+            all,
+            `the check runs and commit statuses of ${sha}`,
+          );
+        }
+        // A new head drops the kept checks, so the envelope never pairs them with it.
+        if (sha !== lastHead) {
+          last = [];
+          lastHead = sha;
+        }
+        // An empty list is not a settled read: `gh pr checks --required` omits a
+        // check that has not started, so the last reported states are kept for the
+        // envelope while the wait continues.
+        if (outcome.checks.length > 0) {
+          last = outcome.checks;
+        }
+        if (outcome.settled) {
+          return {
+            timedOut: false,
+            ...(outcome.noRequiredChecks ? { noRequiredChecks: true } : {}),
+            head: sha,
+            checks: outcome.checks,
+          };
+        }
+      }
       if (!(await pause())) {
         return timeout();
       }
-      continue;
     }
-    if (end - now() <= 0) {
-      return timeout();
+  } catch (err) {
+    if (err instanceof BoundReached) {
+      return timeout(err.result);
     }
-    const result = await readWithin(gh, checksArgv, cwd, end - now(), signal);
-    if (result.timedOut) {
-      return timeout(result);
-    }
-    const outcome = readOutcome(pr, result, all);
-    if (end - now() <= 0) {
-      return timeout();
-    }
-    const second = await readWithin(gh, headArgv, cwd, end - now(), signal);
-    if (second.timedOut) {
-      return timeout(second);
-    }
-    if (readHead(pr, second) === before) {
-      // A new head drops the kept checks, so the envelope never pairs them with it.
-      if (before !== lastHead) {
-        last = [];
-        lastHead = before;
-      }
-      // An empty list is not a settled read: `gh pr checks --required` omits a
-      // check that has not started, so the last reported states are kept for the
-      // envelope while the wait continues.
-      if (outcome.checks.length > 0) {
-        last = outcome.checks;
-      }
-      if (outcome.settled) {
-        return {
-          timedOut: false,
-          ...(outcome.noRequiredChecks ? { noRequiredChecks: true } : {}),
-          head: before,
-          checks: outcome.checks,
-        };
-      }
-    }
-    if (!(await pause())) {
-      return timeout();
-    }
+    throw err;
   }
 }
