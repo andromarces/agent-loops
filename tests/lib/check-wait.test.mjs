@@ -837,3 +837,28 @@ test("waitChecks marks an error with the unconfirmed child of a sibling read", a
     childExitUnconfirmed: true,
   });
 }, 20000);
+
+// Usefulness: verifies a settled result carries `childExitUnconfirmed` when a sibling read of an
+// earlier step in the poll stayed unconfirmed past the ceiling, so no envelope that settles hides
+// a `gh` child that may still run (issue #961).
+test("waitChecks marks a settled result with an unconfirmed sibling child", async () => {
+  const inner = scriptedGh([{ status: 1, checks: [FAILED_ITEM] }], {
+    commits: { [HEAD_A]: [PASSED_ITEM] },
+  });
+  const gh = (args, cwd, options = {}) => {
+    if (args[0] === "api" && args[1].includes("/rules/branches/")) {
+      return Promise.resolve({ status: 1, stdout: "", stderr: "gh: Server Error (HTTP 500)" });
+    }
+    if (args[0] === "api" && args[1].includes("/protection")) {
+      return new Promise(() => {});
+    }
+    return inner(args, cwd, options);
+  };
+  expect(await waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, gh })).toEqual({
+    timedOut: false,
+    head: null,
+    checks: [],
+    prFailures: [FAILED_ITEM],
+    childExitUnconfirmed: true,
+  });
+}, 20000);

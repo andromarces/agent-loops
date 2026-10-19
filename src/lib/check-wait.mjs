@@ -449,13 +449,15 @@ export async function waitChecks({
   // The failures that `gh pr checks` listed in the current poll. They are PR-level evidence,
   // not pinned to a commit, so they ride apart from `checks`, which holds states read for `head`.
   let prFailures = [];
-  const timeout = (result = {}) => ({
+  const timeout = () => ({
     timedOut: true,
     head: lastHead,
     checks: last,
     ...(prFailures.length > 0 ? { prFailures } : {}),
-    ...(unconfirmed || result.childExitUnconfirmed ? { childExitUnconfirmed: true } : {}),
   });
+  // The one place that adds `childExitUnconfirmed`: every envelope the wait returns, settled or
+  // timed out, passes through it, and an error carries the flag in the catch below.
+  const seal = (envelope) => (unconfirmed ? { ...envelope, childExitUnconfirmed: true } : envelope);
   // One bounded read, so the commit reads share the deadline of the checks read. A group of
   // reads passes its own signal, which stops the siblings of a failed read.
   const bounded = async (argv, _cwd, options = {}) => {
@@ -541,7 +543,7 @@ export async function waitChecks({
     }
     return contexts;
   };
-  try {
+  const poll = async () => {
     for (;;) {
       prFailures = [];
       const { head: sha, base } = readHead(pr, await bounded(headArgv));
@@ -612,10 +614,14 @@ export async function waitChecks({
         return timeout();
       }
     }
+  };
+  try {
+    return seal(await poll());
   } catch (raw) {
     const err = failureOf(raw);
     if (err instanceof BoundReached) {
-      return timeout(err.result);
+      unconfirmed ||= Boolean(err.result.childExitUnconfirmed);
+      return seal(timeout());
     }
     // An error envelope carries the unconfirmed exit too: a child may still run.
     if (unconfirmed && err instanceof Error) {

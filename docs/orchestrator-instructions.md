@@ -709,8 +709,8 @@ source can hold a required check or an app qualifier that the wait never saw. A 
 failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
 source. A commit read that fails, or whose reply cannot be parsed or ordered, is an error
 too. `childExitUnconfirmed: true` covers every `gh` child of the poll, including a source
-read that the first failure of the poll left running to the ceiling, and it rides on an
-error envelope too. A required check that no
+read that the first failure of the poll left running to the ceiling, and it rides on every
+envelope, settled, timed out, or error. A required check that no
 read of the PR lists yet is absent, as before.
 
 The PR head is the one read at the start of the poll, so the PR can have moved on by
