@@ -430,6 +430,7 @@ function pinned({
   all = false,
   commits,
   requiredContexts,
+  ...sources
 }) {
   const clock = fakeClock();
   return waitChecks({
@@ -438,7 +439,7 @@ function pinned({
     timeoutSeconds,
     all,
     head,
-    gh: scriptedGh(reads, { all, heads, commits, required: requiredContexts }),
+    gh: scriptedGh(reads, { all, heads, commits, required: requiredContexts, ...sources }),
     now: clock.now,
     sleep: clock.sleep,
   });
@@ -565,20 +566,24 @@ test("waitChecks in all mode keeps waiting on the no-checks-reported reply", asy
   ).toEqual({ timedOut: true, head: HEAD_A, checks: [PASSED_ITEM] });
 });
 
-// Usefulness: verifies a failing PR outcome with a passing commit is no pass either: the wait
-// keeps running instead of settling on checks that all pass (issue #961).
+// Usefulness: verifies a failure that `gh pr checks` lists settles the wait whatever the named
+// commit shows, a pass, a pending check, or no entry, and is reported as listed, so the commit
+// states never delay or hide it, in both modes (issue #961).
 test.each([
   ["required", false],
   ["all", true],
-])("waitChecks %s mode never passes while the PR outcome fails", async (_mode, all) => {
-  const result = await pinned({
-    reads: [{ status: 1, checks: [FAILED_ITEM] }],
-    heads: [HEAD_A],
-    head: HEAD_A,
-    all,
-    commits: { [HEAD_A]: [PASSED_ITEM] },
-  });
-  expect(result).toEqual({ timedOut: true, head: HEAD_A, checks: [PASSED_ITEM] });
+])("waitChecks %s mode settles on a failure that gh pr checks lists", async (_mode, all) => {
+  for (const commit of [[PASSED_ITEM], [PENDING_ITEM], []]) {
+    expect(
+      await pinned({
+        reads: [{ status: 1, checks: [FAILED_ITEM] }],
+        heads: [HEAD_A],
+        head: HEAD_A,
+        all,
+        commits: { [HEAD_A]: commit },
+      }),
+    ).toEqual({ timedOut: false, head: HEAD_A, checks: [FAILED_ITEM] });
+  }
 });
 
 // Usefulness: verifies an app-qualified required context is satisfied only by a run of that
@@ -674,4 +679,93 @@ test("waitChecks refuses a head read it cannot parse", async () => {
   await expect(
     waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 60, gh, now: clock.now, sleep: clock.sleep }),
   ).rejects.toThrow(/gh pr view 42/);
+});
+
+const FORBIDDEN = {
+  status: 1,
+  stdout: "",
+  stderr: "gh: Resource not accessible by integration (HTTP 403)",
+};
+const NOT_FOUND = { status: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" };
+
+// Usefulness: verifies a required-check source that cannot be resolved never yields a pass:
+// an unreadable ruleset or protection source, a reply that cannot be parsed, and a failed
+// read of the required names each end the required wait with an error before any state is
+// judged (issue #961).
+test.each([
+  ["an unreadable ruleset source", { rules: FORBIDDEN }, /repository rulesets/],
+  ["an unreadable protection source", { protection: NOT_FOUND }, /classic branch protection/],
+  [
+    "a ruleset reply that cannot be parsed",
+    { rules: { status: 0, stdout: "not json", stderr: "" } },
+    /repository rulesets/,
+  ],
+  [
+    "a failed read of the required names",
+    { names: { status: 1, stdout: "", stderr: "boom" } },
+    /required check names/,
+  ],
+])("waitChecks refuses %s", async (_name, sources, message) => {
+  await expect(
+    pinned({
+      reads: [{ status: 0, checks: [PASSED_ITEM] }],
+      heads: [HEAD_A],
+      commits: { [HEAD_A]: [PASSED_ITEM] },
+      ...sources,
+    }),
+  ).rejects.toThrow(message);
+});
+
+// Usefulness: verifies the all-checks wait reads no required-check source, so an unreadable
+// source cannot stop it (issue #961).
+test("waitChecks in all mode does not read the required-check sources", async () => {
+  expect(
+    await pinned({
+      reads: [{ status: 0, checks: [PASSED_ITEM] }],
+      heads: [HEAD_A],
+      all: true,
+      commits: { [HEAD_A]: [PASSED_ITEM] },
+      rules: FORBIDDEN,
+      protection: NOT_FOUND,
+    }),
+  ).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+});
+
+// Usefulness: verifies every unconfirmed child of a poll sets `childExitUnconfirmed`, not
+// only the read that failed first: the ruleset read exits on the bound while the sibling
+// protection read never does (issue #961).
+test("waitChecks reports an unconfirmed child of a sibling source read", async () => {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
+    commits: { [HEAD_A]: [PASSED_ITEM] },
+  });
+  const gh = (args, cwd, options = {}) => {
+    if (args[0] === "api" && args[1].includes("/rules/branches/")) {
+      // Exits once the bound stops it.
+      return new Promise((resolve) => {
+        options.signal.addEventListener("abort", () =>
+          resolve({ status: 1, stdout: "", stderr: "stopped" }),
+        );
+      });
+    }
+    if (args[0] === "api" && args[1].includes("/protection")) {
+      // Never exits, as a hung child does.
+      return new Promise(() => {});
+    }
+    return inner(args, cwd, options);
+  };
+  const result = await waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, gh });
+  expect(result).toMatchObject({ timedOut: true, childExitUnconfirmed: true });
+}, 20000);
+
+// Usefulness: verifies an unresolved required-check source never delays a failure that
+// `gh pr checks` lists: the wait settles on the listed failure instead of an error (issue #961).
+test("waitChecks settles on a listed failure although a source cannot be read", async () => {
+  expect(
+    await pinned({
+      reads: [{ status: 1, checks: [FAILED_ITEM] }],
+      heads: [HEAD_A],
+      commits: { [HEAD_A]: [PASSED_ITEM] },
+      protection: NOT_FOUND,
+    }),
+  ).toEqual({ timedOut: false, head: HEAD_A, checks: [FAILED_ITEM] });
 });

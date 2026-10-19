@@ -440,12 +440,12 @@ const ok = (stdout) => ({ status: 0, stdout, stderr: "", timedOut: false });
  * The check runs of a commit read by SHA come from `commits[sha]`, a list of
  * `{ name, state, bucket }` items; a commit the map does not hold answers with the items of
  * the latest `pr checks` read, so a test that scripts only `reads` sees one consistent source.
- * `required` lists the `{ name, appId }` contexts the base-branch ruleset requires. A call that is none of these is an error, so a test never passes on a missing fixture or a
+ * `required` lists the `{ name, appId }` contexts the base-branch ruleset requires; `rules`, `protection`, and `names` replace the reply of the ruleset read, the classic-protection read, and the required-names read. A call that is none of these is an error, so a test never passes on a missing fixture or a
  * wrong argument.
  */
 export function scriptedGh(
   reads,
-  { all = false, heads = [HEAD_A], commits = {}, required = [] } = {},
+  { all = false, heads = [HEAD_A], commits = {}, required = [], rules, protection, names } = {},
 ) {
   let n = 0;
   let h = 0;
@@ -457,6 +457,19 @@ export function scriptedGh(
     }
     if (args[0] === "repo" && args[1] === "view") {
       return ok("owner/repo");
+    }
+    if (args[0] === "api" && args[1] === "repos/owner/repo/rules/branches/main" && rules) {
+      return rules;
+    }
+    if (
+      args[0] === "api" &&
+      args[1] === "repos/owner/repo/branches/main/protection" &&
+      protection
+    ) {
+      return protection;
+    }
+    if (args.includes("--required") && args.at(-1) === "name" && names) {
+      return names;
     }
     if (args[0] === "api" && args[1] === "repos/owner/repo/rules/branches/main") {
       return ok(

@@ -9,6 +9,7 @@ import {
   evaluateContext,
   latestBy,
   matchingEntries,
+  requiredResolutionRefusal,
 } from "./ci-gate.mjs";
 import {
   failureOf,
@@ -392,10 +393,13 @@ async function readWithin(gh, argv, cwd, remainingMs, signal) {
  * contexts come from `requiredContexts`, matching and verdict come from the gate, an
  * app-qualified context is satisfied only by a run of that app, and a context with no entry
  * on `sha` is pending. The `--all` wait judges the latest run of each name and app and the
- * latest status of each context. The states of `sha` only make the outcome stricter: a
- * failing state settles the wait, and a pass needs both the `gh pr checks` outcome and every
- * state of `sha` to pass. A source the credential cannot read adds no app qualifier, and a
- * check that is required but that no read of the PR lists yet is absent, as before. With
+ * latest status of each context. The states of `sha` only make the outcome stricter: a failure
+ * that `gh pr checks` lists settles the wait and is reported as listed when `sha` does not show
+ * it, a failing state of `sha` settles it too, and a pass needs both the `gh pr checks` outcome
+ * and every state of `sha` to pass. A required context that cannot be resolved (a source that
+ * cannot be read or parsed, or a failed read of the names) is an error, because no pass can
+ * follow it. A check that is required but that no read of the PR lists yet is absent, as
+ * before. With
  * `head`, a poll whose PR head is another commit reads no checks and the wait continues. The
  * PR head is the one read at the start of the poll, so the PR can have moved on by the time
  * the wait returns. `head` is null when no read completed, such as a wait that reached the
@@ -438,20 +442,32 @@ export async function waitChecks({
   let slug = null;
   // `childExitUnconfirmed` rides only on the read whose exit the command could
   // not observe, so an absent field is an observed exit.
+  // Set by every read of the wait whose child exit was not observed, including a sibling
+  // read that the first failure of a group left running to the ceiling.
+  let unconfirmed = false;
   const timeout = (result = {}) => ({
     timedOut: true,
     head: lastHead,
     checks: last,
-    ...(result.childExitUnconfirmed ? { childExitUnconfirmed: true } : {}),
+    ...(unconfirmed || result.childExitUnconfirmed ? { childExitUnconfirmed: true } : {}),
   });
-  // One bounded read, so the commit reads share the deadline of the checks read.
-  const bounded = async (argv) => {
+  // One bounded read, so the commit reads share the deadline of the checks read. A group of
+  // reads passes its own signal, which stops the siblings of a failed read.
+  const bounded = async (argv, _cwd, options = {}) => {
     const remaining = end - now();
     if (remaining <= 0) {
       throw new BoundReached({});
     }
-    const result = await readWithin(gh, argv, cwd, remaining, signal);
+    const stop = [signal, options.signal].filter(Boolean);
+    const result = await readWithin(
+      gh,
+      argv,
+      cwd,
+      remaining,
+      stop.length > 1 ? AbortSignal.any(stop) : (stop[0] ?? null),
+    );
     if (result.timedOut) {
+      unconfirmed ||= Boolean(result.childExitUnconfirmed);
       throw new BoundReached(result);
     }
     return result;
@@ -500,10 +516,16 @@ export async function waitChecks({
   // The contexts the required wait judges: every source of the gate, so an app-qualified
   // context keeps its app, plus the names `gh pr checks --required` listed.
   const contextsOf = async (base, listed) => {
-    const required = await requiredContexts((argv) => bounded(argv), slug, base, pr, cwd);
-    if (required.unparsed.length > 0) {
+    const required = await requiredContexts(bounded, slug, base, pr, cwd);
+    // The gate's own refusals, and any source that settled nothing: such a source may hold a
+    // required check or an app qualifier that this read never saw, so no pass can follow.
+    const refusal = requiredResolutionRefusal(required, pr);
+    if (refusal) {
+      throw new Error(`${refusal}; the read is unresolved.`);
+    }
+    if (required.unknown.length > 0) {
       throw new Error(
-        `${required.unparsed.join(" and ")} returned a reply that could not be parsed; the read is unresolved.`,
+        `${required.unknown.join(" and ")} could not be read, so the required checks of PR ${pr} and their apps are unresolved.`,
       );
     }
     const contexts = [...required.contexts];
@@ -523,24 +545,49 @@ export async function waitChecks({
         // A branch with no required check names no state to read, so it carries no commit read.
         // An empty required list names nothing to read, so the wait continues.
         if (!listed.noRequiredChecks && (all || listed.checks.length > 0)) {
-          const entries = await readCommit(sha);
-          const items = all
-            ? allItems(entries)
-            : requiredItems(entries, await contextsOf(base, listed), sha);
-          const read = readOutcome(
-            pr,
-            asRead(items),
-            all,
-            `the check runs and commit statuses of ${sha}`,
-          );
-          // The commit states only make the outcome stricter. A failing state settles the
-          // wait, as it does from `gh pr checks`. A pass needs both the PR outcome and the
-          // commit states to pass, so a pending or not yet reported PR answer keeps waiting.
-          const prPassed = listed.settled && !listed.checks.some(isFailing);
-          outcome = {
-            settled: read.settled && (items.some(isFailing) || prPassed),
-            checks: read.checks,
-          };
+          const listedFailing = listed.checks.filter(isFailing);
+          let items = null;
+          try {
+            const entries = await readCommit(sha);
+            items = all
+              ? allItems(entries)
+              : requiredItems(entries, await contextsOf(base, listed), sha);
+          } catch (raw) {
+            // A failure that `gh pr checks` lists settles the wait, so a commit or source read
+            // that fails never delays it. The bound and every other failure still end it.
+            const err = failureOf(raw);
+            if (err instanceof BoundReached || listedFailing.length === 0) {
+              throw err;
+            }
+          }
+          if (items === null) {
+            outcome = { settled: true, checks: listed.checks };
+          } else {
+            const read = readOutcome(
+              pr,
+              asRead(items),
+              all,
+              `the check runs and commit statuses of ${sha}`,
+            );
+            // The commit states only make the outcome stricter. A failing state, or a failure
+            // that `gh pr checks` lists, settles the wait, and the listed failure is reported as
+            // listed when the commit does not show it. A pass needs both the PR outcome and the
+            // commit states to pass, so a pending or not yet reported PR answer keeps waiting.
+            const shown = new Set(items.filter(isFailing).map(({ name }) => name));
+            const hidden = listedFailing.filter(({ name }) => !shown.has(name));
+            outcome = {
+              settled:
+                listedFailing.length > 0 ||
+                items.some(isFailing) ||
+                (read.settled && listed.settled),
+              checks: [
+                ...read.checks.filter(
+                  ({ name }) => !hidden.some((failure) => failure.name === name),
+                ),
+                ...hidden,
+              ],
+            };
+          }
         }
         // A new head drops the kept checks, so the envelope never pairs them with it.
         if (sha !== lastHead) {

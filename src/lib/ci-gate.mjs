@@ -446,6 +446,39 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
 }
 
 /**
+ * Why the required contexts that `requiredContexts` resolved cannot be judged, or null when
+ * they can. The status read and the check wait share it, so one rule decides it.
+ *
+ * - A successful reply that is not parseable JSON may hide a required context, so it is
+ *   unresolved whatever the other source names. An unreadable source (a 404 or 403) is not
+ *   this case: it is a reply the gate also accepts.
+ * - A failed read of the required names may have dropped a required check no other source
+ *   names, so it is unresolved whatever the rest of the union holds.
+ * - An empty union is no status to report.
+ * @param {{ unknown: string[], unparsed: string[], namesRead: boolean, contexts: object[] }} required
+ * @param {number} pr
+ * @param {string} [where] text that ends the two reply-failure reasons, for example the PR head
+ * @returns {string | null}
+ */
+export function requiredResolutionRefusal(
+  { unknown, unparsed, namesRead, contexts },
+  pr,
+  where = "",
+) {
+  if (unparsed.length > 0) {
+    return `${unparsed.join(" and ")} returned a reply that could not be parsed for PR ${pr}${where}`;
+  }
+  if (!namesRead) {
+    return `the required check names for PR ${pr} could not be read${where}`;
+  }
+  if (contexts.length === 0) {
+    const sources = unknown.length > 0 ? ` (${unknown.join(" and ")} settled nothing)` : "";
+    return `no required checks were found for PR ${pr}${sources}`;
+  }
+  return null;
+}
+
+/**
  * The default bound on a status read. The read sits in front of a child turn
  * that has its own much longer `--timeout`, so it needs its own bound: a `gh`
  * that hangs must not hold the dispatch open (#320).
@@ -567,27 +600,10 @@ export async function readRequiredChecks({
       return preamble.stop;
     }
     const { info, slug } = preamble;
-    const { unknown, unparsed, namesRead, contexts } = preamble.required;
-    // A successful reply that is not parseable JSON may hide a required context,
-    // so it is unresolved whatever the other source names. An unreadable source
-    // (a 404 or 403) is not this case: it is a reply the gate also accepts.
-    if (unparsed.length > 0) {
-      return unresolved(
-        `unread: ${unparsed.join(" and ")} returned a reply that could not be parsed for PR ${pr} on PR head ${head}`,
-        head,
-      );
-    }
-    // A failed read of the required names may have dropped a required check no
-    // other source names, so it is unresolved whatever the rest of the union holds.
-    if (!namesRead) {
-      return unresolved(
-        `unread: the required check names for PR ${pr} could not be read on PR head ${head}`,
-        head,
-      );
-    }
-    if (contexts.length === 0) {
-      const sources = unknown.length > 0 ? ` (${unknown.join(" and ")} settled nothing)` : "";
-      return unresolved(`unread: no required checks were found for PR ${pr}${sources}`, head);
+    const { contexts } = preamble.required;
+    const sourceRefusal = requiredResolutionRefusal(preamble.required, pr, ` on PR head ${head}`);
+    if (sourceRefusal) {
+      return unresolved(`unread: ${sourceRefusal}`, head);
     }
     // The commit is the gate's own selection, so the read judges the state the
     // gate judges and cannot pass a state the gate refuses.
