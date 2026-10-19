@@ -39,7 +39,8 @@ const splitPath = (path) => path.split(/[\\/]+/).filter(Boolean);
  * The canonical spelling of `path`: the realpath of its deepest existing ancestor joined to the
  * rest, normalized, so a link such as macOS `/var` resolves to `/private/var` and a `..`
  * segment is resolved even when the path does not exist (#962). A path for another platform
- * is only normalized.
+ * is only normalized. Returns `null` when a realpath fails for a reason other than a missing
+ * path, such as EACCES or ELOOP, so the caller can fail closed.
  */
 function canonicalPath(path, platform = process.platform) {
   const pathApi = platform === "win32" ? win32 : posix;
@@ -48,14 +49,25 @@ function canonicalPath(path, platform = process.platform) {
   for (let dir = normalized, tail = ""; ;) {
     try {
       return pathApi.join(realpathSync(dir), tail);
-    } catch {
-      // A missing or unreadable ancestor has no link to resolve; try its parent.
+    } catch (error) {
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return null;
     }
     const parent = pathApi.dirname(dir);
     if (parent === dir) return normalized;
     tail = pathApi.join(pathApi.basename(dir), tail);
     dir = parent;
   }
+}
+
+/**
+ * The spellings to match: the normalized path, which is what the installer renders into entry
+ * points, and its canonical path. A package junction inside a runner layout matches by its own
+ * spelling even when its target is stable. `null` when the canonical path cannot be resolved.
+ */
+function spellings(path, platform) {
+  const canonical = canonicalPath(path, platform);
+  if (canonical === null) return null;
+  return [...new Set([(platform === "win32" ? win32 : posix).normalize(path), canonical])];
 }
 
 /**
@@ -124,6 +136,7 @@ function isTempRunnerRoot(packageRoot, platform, tempRoots) {
  * True when the package root resolves inside an npx, pnpm dlx, yarn dlx, or bunx
  * temporary layout. On Windows every match compares case-insensitively.
  * @param {string} packageRoot
+ * A path that cannot be canonicalized (a realpath error other than a missing path) is refused.
  * @param {NodeJS.Platform} [platform]
  * @param {{ bunx: string[], yarn: string[], invalid?: boolean }} [tempRoots] Temporary roots to compare against, for tests. `invalid` refuses every root.
  */
@@ -133,13 +146,15 @@ export function isEphemeralPackageRoot(
   tempRoots = temporaryRoots(),
 ) {
   if (tempRoots.invalid === true) return true;
-  const canonical = canonicalPath(packageRoot, platform);
-  return (
-    isCacheRoot(canonical, platform) ||
-    isTempRunnerRoot(canonical, platform, {
-      bunx: tempRoots.bunx.map((root) => canonicalPath(root, platform)),
-      yarn: tempRoots.yarn.map((root) => canonicalPath(root, platform)),
-    })
+  const packageSpellings = spellings(packageRoot, platform);
+  const bunx = tempRoots.bunx.map((root) => spellings(root, platform));
+  const yarn = tempRoots.yarn.map((root) => spellings(root, platform));
+  // A path that cannot be canonicalized cannot be ruled out, so the check refuses it.
+  if (packageSpellings === null || bunx.includes(null) || yarn.includes(null)) return true;
+  return packageSpellings.some(
+    (spelling) =>
+      isCacheRoot(spelling, platform) ||
+      isTempRunnerRoot(spelling, platform, { bunx: bunx.flat(), yarn: yarn.flat() }),
   );
 }
 
