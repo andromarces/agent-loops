@@ -420,3 +420,14 @@ test("the headless --all wait renders the shell commands of the required wait", 
   }
   expect(prompt).not.toContain("agent-loop role wait-checks --all");
 });
+
+// Usefulness: verifies the `noRequiredChecks` rule states its outcome once and then the `--all`
+// instruction in one sentence (issue #974). A repeated clause or a doubled colon makes the rule
+// that a headless orchestrator reads after every wait malformed.
+test("the headless noRequiredChecks rule states its outcome once, before the --all instruction", () => {
+  const prompt = waitPrompt(100);
+  const start = prompt.indexOf('"noRequiredChecks": true means');
+  const rule = prompt.slice(start, prompt.indexOf("run the same command once with --all", start));
+  expect(rule.match(/it is no pass/g)).toHaveLength(1);
+  expect(rule).toMatch(/it is no pass: $/);
+});
