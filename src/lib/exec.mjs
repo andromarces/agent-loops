@@ -1,6 +1,7 @@
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
 import { logDebug, logInfo } from "./log.mjs";
+import { rootPins } from "./root-pins.mjs";
 import { cwdHash } from "./runstate.mjs";
 
 /**
@@ -84,6 +85,7 @@ export async function exec(command, args = [], options = {}) {
   const marked = MARKED_ROLES.has(role);
   if (env || marked) {
     execaOptions.env = {
+      ...(marked && rootPins()),
       ...env,
       ...(marked && { [SPAWNED_RUN_ENV]: markerFor(cwdHash(cwd ?? process.cwd())) }),
     };

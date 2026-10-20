@@ -1,0 +1,44 @@
+# 0049. Pin the machine-wide roots for every child turn
+
+## Status
+
+accepted
+
+Partially supersedes [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md). This ADR replaces decision 2 (host state stays shared), which pinned the roots for a Codex child only. Every other decision of ADR 0047 holds.
+
+## Date
+
+2026-10-20
+
+## Context
+
+The runs root, the test-slot directory, and the session-record directory default to paths under `os.tmpdir()`. A child turn that sets `TMP`, `TEMP`, or `TMPDIR` before it runs `agent-loop test-slot` moves them, so its suite takes a slot that no other run counts. The machine-wide slot limit of ADR 0039, ADR 0040, and ADR 0046 then does not hold. The guidance for a short Windows temporary path (issue #903) leads a child to set such an override. An interactive Claude Code worker did so on 2026-10-20 (issue #970). Only a Codex child had the pins.
+
+## Decision
+
+1. **Every worker and reviewer spawn is pinned.** `exec` adds `AGENT_LOOP_RUNS_ROOT`, `AGENT_LOOP_TEST_SLOTS_ROOT`, and `AGENT_LOOP_SESSION_RECORDS_ROOT` to the environment of a spawn with the role `worker` or `reviewer`. This covers every adapter (Claude Code, Codex, Copilot, OpenCode, and agy).
+2. **One resolver.** `rootPins` in `src/lib/root-pins.mjs` resolves the three paths in the parent process. `exec` and the Codex private temporary directory both use it.
+3. **User value wins.** A root that the user set is not replaced, and an explicit `env` option of the caller wins over a pin.
+4. **Codex unchanged.** A Codex turn keeps its private temporary directory and its removal behavior (ADR 0047, decisions 1 and 3 to 7).
+
+## Consequences
+
+- A child command that moves `TMP`, `TEMP`, and `TMPDIR` still takes its slot in the slot directory of the parent.
+- A spawn with another role, or none, gets no pin and inherits the environment as before.
+
+## Alternatives
+
+1. **Render the wrapper command with an explicit `AGENT_LOOP_TEST_SLOTS_ROOT`.** Not taken. It covers the slot directory only, not the runs root or the session-record directory.
+2. **Pin inside each adapter.** Not taken. Five call sites repeat one rule, and a new adapter can miss it.
+
+## Authors
+
+Andro Marces
+
+## Links
+
+- [Issue #970](https://github.com/andromarces/agent-loops/issues/970)
+- Implementation: `rootPins` in `src/lib/root-pins.mjs`, `exec` in `src/lib/exec.mjs`, `withTurnTmpdir` in `src/lib/turn-tmpdir.mjs`; tests in `tests/lib/exec.test.mjs`; documented in `docs/orchestrator-instructions.md` and `docs/reference/architecture.md`
+- [ADR 0039: Machine-wide test slot](0039-machine-wide-test-slot.md)
+- [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md)
+- [ADR Index](README.md)

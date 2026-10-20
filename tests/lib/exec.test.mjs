@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { ExecError, SPAWNED_RUN_ENV, exec } from "../../src/lib/exec.mjs";
 import { setVerbose } from "../../src/lib/log.mjs";
 import { pidAlive } from "../../src/lib/process-identity.mjs";
+import { sessionRecordsRoot } from "../../src/lib/session-record.mjs";
+import { stateRoot } from "../../src/lib/runstate.mjs";
+import { slotsRoot } from "../../src/lib/test-slot.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 afterEach(() => {
@@ -293,4 +296,52 @@ test("exec logs a debug failure line with duration and cause when the command th
   const errLines = errorSpy.mock.calls.map((call) => call.join(" "));
   expect(outLines.some((line) => line.includes("debug:"))).toBe(false);
   expect(errLines.some((line) => line.includes("debug:"))).toBe(false);
+});
+
+const ROOT_ENV = [
+  "AGENT_LOOP_RUNS_ROOT",
+  "AGENT_LOOP_TEST_SLOTS_ROOT",
+  "AGENT_LOOP_SESSION_RECORDS_ROOT",
+];
+const PRINT_ROOTS = `console.log(JSON.stringify(${JSON.stringify(ROOT_ENV)}.map((name) => process.env[name] || null)))`;
+const rootsOf = async (options) =>
+  JSON.parse((await exec(process.execPath, ["-e", PRINT_ROOTS], options)).stdout);
+
+// Usefulness: verifies a worker or reviewer child gets the three machine-wide roots that the parent resolves, so no adapter leaves them to a child `TMP` override (issue #970); other spawns stay unpinned.
+test("exec pins the machine-wide roots for a worker or reviewer spawn only", async () => {
+  for (const name of ROOT_ENV) vi.stubEnv(name, "");
+  const parent = [stateRoot(), slotsRoot(), sessionRecordsRoot()];
+  expect(await rootsOf({ role: "worker", cwd: tmpdir() })).toEqual(parent);
+  expect(await rootsOf({ role: "reviewer", cwd: tmpdir() })).toEqual(parent);
+  expect(await rootsOf({ role: "orchestrator", cwd: tmpdir() })).toEqual([null, null, null]);
+  expect(await rootsOf({ cwd: tmpdir() })).toEqual([null, null, null]);
+});
+
+// Usefulness: verifies a user-set root wins over the parent resolved path in a worker child.
+test("exec keeps a user-set root for a worker spawn", async () => {
+  for (const name of ROOT_ENV) vi.stubEnv(name, "");
+  vi.stubEnv("AGENT_LOOP_TEST_SLOTS_ROOT", join(tmpdir(), "mine"));
+  const [runs, slots] = await rootsOf({ role: "worker", cwd: tmpdir() });
+  expect(slots).toBe(join(tmpdir(), "mine"));
+  expect(runs).toBe(stateRoot());
+});
+
+// Usefulness: verifies a worker child that moves TMP, TEMP, and TMPDIR still resolves the slot directory of the parent.
+test("a worker child that overrides TMP resolves the parent slot directory", async () => {
+  vi.stubEnv("AGENT_LOOP_TEST_SLOTS_ROOT", "");
+  const other = await mkdtemp(join(tmpdir(), "other-tmp-"));
+  try {
+    const script = `
+const slots = ${JSON.stringify(new URL("../../src/lib/test-slot.mjs", import.meta.url).href)};
+for (const name of ["TMP", "TEMP", "TMPDIR"]) process.env[name] = ${JSON.stringify(other)};
+const { slotsRoot } = await import(slots);
+console.log(slotsRoot());`;
+    const { stdout } = await exec(process.execPath, ["--input-type=module", "-e", script], {
+      role: "worker",
+      cwd: tmpdir(),
+    });
+    expect(stdout.trim()).toBe(slotsRoot());
+  } finally {
+    await removePath(other);
+  }
 });

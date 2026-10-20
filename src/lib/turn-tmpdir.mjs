@@ -6,9 +6,7 @@ import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { execBounded } from "./exec.mjs";
 import { INHERITED_TMPDIR_ENV, inheritedTmpdirsForChild } from "./inherited-tmpdir.mjs";
 import { logDebug, logWarn } from "./log.mjs";
-import { stateRoot } from "./runstate.mjs";
-import { sessionRecordsRoot } from "./session-record.mjs";
-import { slotsRoot } from "./test-slot.mjs";
+import { rootPins } from "./root-pins.mjs";
 
 const REMOVER = fileURLToPath(new URL("./turn-tmpdir-remove.mjs", import.meta.url));
 const REMOVER_REFUSED = 3;
@@ -18,14 +16,6 @@ const REMOVAL_BOUND_MS = 30_000;
 
 // Short on purpose: a deep path fails some runtimes on Windows (issue #903).
 const PREFIX = "al-";
-
-// Each machine-wide root defaults to a path under `os.tmpdir()`, so the child needs the value that
-// the parent resolves. A value that the user already set is kept.
-const ROOT_PINS = [
-  ["AGENT_LOOP_RUNS_ROOT", stateRoot],
-  ["AGENT_LOOP_TEST_SLOTS_ROOT", slotsRoot],
-  ["AGENT_LOOP_SESSION_RECORDS_ROOT", sessionRecordsRoot],
-];
 
 /**
  * Runs `run(env)` with a private temporary directory for one child turn and removes it afterward
@@ -43,10 +33,7 @@ const ROOT_PINS = [
  */
 export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS } = {}) {
   let created = null;
-  const pins = {};
-  for (const [name, resolveRoot] of ROOT_PINS) {
-    if (!process.env[name]) pins[name] = resolveRoot();
-  }
+  const pins = rootPins();
   const inherited = inheritedTmpdirsForChild(tmpdir());
   try {
     created = await createTurnTmpdir();
