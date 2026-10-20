@@ -78,21 +78,36 @@ Accepted gaps of the two sandboxed modes, as ADR 0019 states them (the no-sandbo
 - Reviewed content that holds an instruction can steer a shell command that writes outside the work tree or sends data over the network.
 - An operator who needs containment passes `--reviewer-sandbox read-only` or `workspace-write`, or runs the reviewer in an external sandbox with no credential for the remote.
 
-#### Codex shell commands do not receive `GH_TOKEN` or `GITHUB_TOKEN`
+#### Reviewer shell commands can lose `GH_TOKEN` and `GITHUB_TOKEN`
 
-The cause is in Codex, not in this repository. The runtime passes the full environment to `codex` (`src/lib/exec.mjs` merges the turn environment with `process.env`), and Codex removes exactly these two names before it starts a shell command. The `shell_environment_policy` settings `inherit = "all"` and `ignore_default_excludes = true` do not restore them, and neither does `shell_environment_policy.set.GH_TOKEN`.
+On Windows, a shell startup file can remove both names. Codex and this repository do not remove them.
 
-Direct probe (issue #971): on 2026-10-20, a `codex exec` run on Windows 11 with codex-cli 0.164.0-alpha.6 and `-c sandbox_mode="danger-full-access"` ran from a shell that held dummy values for each name. The user config set `inherit = "all"` and `ignore_default_excludes = true`. The shell command reported presence only:
+Mechanism (issue #971): Codex starts each shell command as `pwsh -Command ...`. That PowerShell loads the user profile. A profile that sets or clears `GH_TOKEN` and `GITHUB_TOKEN` at startup replaces the inherited values. Then `gh` falls back to the account in `hosts.yml` or the `gh` keyring.
 
-- Absent: `GH_TOKEN`, `GITHUB_TOKEN`. Both stayed absent with `-c shell_environment_policy.set.GH_TOKEN="<value>"`.
-- Present: `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GITHUB_PAT`, `GH_HOST`, `COPILOT_GITHUB_TOKEN`, `OPENAI_API_KEY`, a custom `*_TOKEN` name, and a custom name with no token word.
+Ruled out:
 
-A `gh` command in a Codex reviewer shell therefore falls back to the account in `hosts.yml` or the `gh` keyring. Not probed: macOS and Linux, other Codex versions, and which Codex source line removes the names.
+- The runtime. `src/lib/exec.mjs` merges the turn environment with `process.env`, and `codex` receives both names.
+- The Codex environment policy. The Codex source of `populate_env` and `NON_INHERITABLE_ENV_VARS` (tag `rust-v0.164.0-alpha.6`) does not list either name.
+- The user Codex config. `--ignore-user-config` changed nothing.
+- The Codex credential broker. `network_proxy` and `credential_masking` are off, and the broker is off by default.
+
+Direct probes, presence only, dummy values, on 2026-10-20 (Windows 11, codex-cli 0.164.0-alpha.6, `-c sandbox_mode="danger-full-access"`):
+
+- With the profile loaded, a Codex shell command reported both names absent. A direct `pwsh -Command` from a neutral directory also reported both absent.
+- With `PROFILE_SKIP_STARTUP=1` in the launching shell, a profile that honors it skipped its startup actions. The Codex shell command then reported both names present.
+- With the profile loaded, these names stayed present: `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GITHUB_PAT`, `GH_HOST`, `COPILOT_GITHUB_TOKEN`, `OPENAI_API_KEY`, and custom names.
+- With `shell_environment_policy.inherit = "none"`, the set values of both names reached the shell. The profile failed early there, because `USERPROFILE` was absent. That explanation is inferred.
+- `shell_environment_policy.set` could not restore either name while the profile ran.
+
+Check a machine: run `pwsh -Command '[bool]$env:GH_TOKEN'` with a dummy `GH_TOKEN` set. The result `False` means the profile removes the name.
 
 Workarounds:
 
+- Change the profile so it keeps an inherited `GH_TOKEN` and `GITHUB_TOKEN`, or skips its startup in an agent turn.
 - Store the account in the `gh` keyring (`gh auth login`), so the fallback can read the repository.
-- Export the token to Codex under another name, for example `AGENT_GH_TOKEN`. The probe shows that name reaches the shell. Then set it in the command: `$env:GH_TOKEN = $env:AGENT_GH_TOKEN; gh ...`. The runtime does not do this. The re-export step was not run with `gh`.
+- Pass the token under another name, for example `AGENT_GH_TOKEN`, then set it in the command: `$env:GH_TOKEN = $env:AGENT_GH_TOKEN; gh ...`. The probes show that another name reaches the shell. The `gh` call with the re-exported name was not run.
+
+Not probed: macOS and Linux, and other Codex versions.
 
 #### Codex read-only child-spawn limit
 
