@@ -345,3 +345,12 @@ console.log(slotsRoot());`;
     await removePath(other);
   }
 });
+
+// Usefulness: verifies an empty root value counts as unset and is replaced, because the root readers fall back to the `os.tmpdir()` default for it and a kept empty value would let a child `TMP` override move the root.
+test("exec replaces an empty root value for a worker spawn", async () => {
+  for (const name of ROOT_ENV) vi.stubEnv(name, "");
+  const parent = [stateRoot(), slotsRoot(), sessionRecordsRoot()];
+  const seen = await rootsOf({ role: "worker", cwd: tmpdir(), env: {} });
+  expect(seen).toEqual(parent);
+  expect(seen.every(Boolean)).toBe(true);
+});
