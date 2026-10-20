@@ -78,6 +78,34 @@ Accepted gaps of the two sandboxed modes, as ADR 0019 states them (the no-sandbo
 - Reviewed content that holds an instruction can steer a shell command that writes outside the work tree or sends data over the network.
 - An operator who needs containment passes `--reviewer-sandbox read-only` or `workspace-write`, or runs the reviewer in an external sandbox with no credential for the remote.
 
+#### Reviewer shell commands can lose `GH_TOKEN` and `GITHUB_TOKEN`
+
+On Windows, a PowerShell profile can remove both names. Codex and this repository do not remove them.
+
+Mechanism (issue #971): Codex runs a shell command through PowerShell. It adds `-NoProfile` only when the command does not use a login shell (`codex-rs/core/src/shell.rs`, tag `rust-v0.164.0-alpha.6`). Otherwise the user profile loads. A profile that sets or clears `GH_TOKEN` and `GITHUB_TOKEN` replaces the inherited values. Then `gh` falls back to the account in `hosts.yml` or the `gh` keyring.
+
+Ruled out, by source at the same tag:
+
+- The runtime. `src/lib/exec.mjs` merges the turn environment with `process.env`, and `codex` receives both names.
+- The Codex environment policy. `populate_env` and `NON_INHERITABLE_ENV_VARS` do not list either name.
+- The Codex credential broker. It is off unless the `network_proxy` feature enables it.
+
+Check for a profile effect:
+
+1. Set a dummy `GH_TOKEN` in the launching shell. Never use a real token.
+2. Run `pwsh -Command '[bool]$env:GH_TOKEN'`. The result `False` means the profile removes the name.
+3. Run `pwsh -NoProfile -Command '[bool]$env:GH_TOKEN'`. The result `True` confirms the profile as the cause.
+4. Read the profile for code that sets, clears, or removes `GH_TOKEN` and `GITHUB_TOKEN`.
+
+Avoid the effect:
+
+- Set `allow_login_shell = false` in the Codex `config.toml`. Codex then starts PowerShell with `-NoProfile`. Without a login shell, the model cannot request one.
+- Change the profile so it keeps an inherited `GH_TOKEN` and `GITHUB_TOKEN`.
+- Store the account in the `gh` keyring (`gh auth login`), so the fallback can read the repository.
+- Pass the token under another name, for example `AGENT_GH_TOKEN`, then set it in the command: `$env:GH_TOKEN = $env:AGENT_GH_TOKEN; gh ...`. A profile that clears only the two standard names leaves it alone.
+
+Not verified: macOS and Linux shells, other Codex versions, and a profile that clears other names.
+
 #### Codex read-only child-spawn limit
 
 This limit applies to a Codex reviewer in the `read-only` mode, and to Codex orchestrator turns. A reviewer with no sandbox is not limited this way.
