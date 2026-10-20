@@ -78,6 +78,22 @@ Accepted gaps of the two sandboxed modes, as ADR 0019 states them (the no-sandbo
 - Reviewed content that holds an instruction can steer a shell command that writes outside the work tree or sends data over the network.
 - An operator who needs containment passes `--reviewer-sandbox read-only` or `workspace-write`, or runs the reviewer in an external sandbox with no credential for the remote.
 
+#### Codex shell commands do not receive `GH_TOKEN` or `GITHUB_TOKEN`
+
+The cause is in Codex, not in this repository. The runtime passes the full environment to `codex` (`src/lib/exec.mjs` merges the turn environment with `process.env`), and Codex removes exactly these two names before it starts a shell command. The `shell_environment_policy` settings `inherit = "all"` and `ignore_default_excludes = true` do not restore them, and neither does `shell_environment_policy.set.GH_TOKEN`.
+
+Direct probe (issue #971): on 2026-10-20, a `codex exec` run on Windows 11 with codex-cli 0.164.0-alpha.6 and `-c sandbox_mode="danger-full-access"` ran from a shell that held dummy values for each name. The user config set `inherit = "all"` and `ignore_default_excludes = true`. The shell command reported presence only:
+
+- Absent: `GH_TOKEN`, `GITHUB_TOKEN`. Both stayed absent with `-c shell_environment_policy.set.GH_TOKEN="<value>"`.
+- Present: `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GITHUB_PAT`, `GH_HOST`, `COPILOT_GITHUB_TOKEN`, `OPENAI_API_KEY`, a custom `*_TOKEN` name, and a custom name with no token word.
+
+A `gh` command in a Codex reviewer shell therefore falls back to the account in `hosts.yml` or the `gh` keyring. Not probed: macOS and Linux, other Codex versions, and which Codex source line removes the names.
+
+Workarounds:
+
+- Store the account in the `gh` keyring (`gh auth login`), so the fallback can read the repository.
+- Export the token to Codex under another name, for example `AGENT_GH_TOKEN`. The probe shows that name reaches the shell. Then set it in the command: `$env:GH_TOKEN = $env:AGENT_GH_TOKEN; gh ...`. The runtime does not do this. The re-export step was not run with `gh`.
+
 #### Codex read-only child-spawn limit
 
 This limit applies to a Codex reviewer in the `read-only` mode, and to Codex orchestrator turns. A reviewer with no sandbox is not limited this way.
