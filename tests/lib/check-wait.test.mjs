@@ -930,3 +930,33 @@ test("waitChecks in all mode settles on a failing check while an expected check 
     ).timedOut,
   ).toBe(false);
 });
+
+// Usefulness: verifies an expected name is matched against check runs only, so a successful
+// commit status with the same name is not a check run on the head and the wait times out,
+// never a pass (issue #978).
+test("waitChecks in all mode does not match an expected name to a commit status", async () => {
+  const clock = fakeClock();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    all: true,
+    expect: ["deploy"],
+    gh: scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
+      all: true,
+      statuses: [
+        {
+          id: 1,
+          context: "deploy",
+          state: "success",
+          created_at: "2026-10-21T00:00:00Z",
+          updated_at: "2026-10-21T00:00:00Z",
+        },
+      ],
+    }),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result.timedOut).toBe(true);
+  expect(result.awaiting).toEqual(["deploy"]);
+});

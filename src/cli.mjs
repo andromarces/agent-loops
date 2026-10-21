@@ -300,7 +300,9 @@ Role flags:
                                 not only the required ones.
   --expect <check name>         wait-checks only, with --all, repeatable: the wait
                                 does not settle as a pass until each named check has
-                                a run on the PR head. A check that never registers
+                                a check run on the PR head, matched by exact name
+                                (trimmed, case-sensitive, any app); a commit status
+                                never matches. A check that never registers
                                 ends the wait at the bound with timedOut: true and
                                 the name in awaiting. A failing check still settles.
   --head <sha>                  wait-checks only: a full lowercase commit SHA. The wait

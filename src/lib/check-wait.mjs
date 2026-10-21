@@ -383,7 +383,8 @@ async function readWithin(gh, argv, cwd, remainingMs, signal) {
  * `all` waits on every check of the PR head instead of the required ones, for a
  * branch with no required check; it keeps the exit-code rules above, including
  * the wait on the no-checks-yet reply, except `noRequiredChecks` (#896, #950).
- * `expect` names checks that the `--all` wait must see on `sha` before a pass: a third-party app can
+ * `expect` names check runs that the `--all` wait must see on `sha` before a pass, matched by exact
+ * name against the check runs only, whichever app made them, never against commit statuses: a third-party app can
  * register a check run after the first ones passed, so a pass without it is not evidence. A
  * missing expected name keeps the wait running to the bound, where `awaiting` lists it. A failing
  * check still settles the wait (#978).
@@ -563,8 +564,10 @@ export async function waitChecks({
         // An empty required list names nothing to read, so the wait continues.
         if (!listed.noRequiredChecks && (all || listed.checks.length > 0)) {
           let items = null;
+          let runNames = [];
           try {
             const entries = await readCommit(sha);
+            runNames = entries.runs.map((run) => run.name);
             items = all
               ? allItems(entries)
               : requiredItems(entries, await contextsOf(base, listed), sha);
@@ -590,7 +593,8 @@ export async function waitChecks({
             // that `gh pr checks` lists, settles the wait, and a listed failure is reported in
             // `prFailures`, never in `checks`. A pass needs both the PR outcome and the commit
             // states to pass, so a pending or not yet reported PR answer keeps waiting.
-            awaiting = expect.filter((name) => !items.some((item) => item.name === name));
+            // An expected name needs a check run: a commit status of that name is no run on `sha`.
+            awaiting = expect.filter((name) => !runNames.includes(name));
             outcome = {
               settled:
                 prFailures.length > 0 ||
