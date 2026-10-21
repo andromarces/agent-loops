@@ -338,8 +338,8 @@ async function ownWorkTree(cwd, read) {
  * Refuses, before any copy, an operator path that cannot be copied as an ignored local path. Each
  * path in `extra` (already normalized) must meet all of these in the source work tree `mainReal`:
  * 1. It holds no file that Git tracks. Names are compared folded (`foldName`), so a case alias of a
- *    tracked name is refused on any file system, at the cost of a false refusal when a repository
- *    tracks two names that differ only in case.
+ *    tracked name is refused on any file system, at the cost of a false refusal on a case-sensitive
+ *    file system for a path whose folded name matches a tracked name that it does not alias.
  * 2. No level of it is a symlink or a junction, and the existing path resolves, by `realpath`, to
  *    the source work tree plus the path as written. That refuses a link out of the tree, a case or
  *    short-name alias, a registered work tree, and a directory that holds a `.git` entry.
