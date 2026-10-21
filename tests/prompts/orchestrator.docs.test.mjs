@@ -7,7 +7,6 @@ import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import { initialPrompt } from "../../src/prompts/orchestrator.mjs";
 import {
   expectRule,
-  expectRefusedCwdRule,
   expectReviewerGateRule,
   COMPARE_BEFORE_FINISH,
   RESOLVE_PR_HEAD,
@@ -368,6 +367,50 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   }
 });
 
+// The refused-`--cwd` rule block of each parent text, pinned whole (whitespace-normalized) between
+// the sentence before it and the next section. The pin is deliberately brittle: any added, removed,
+// or reworded sentence inside the block, including a prose instruction that tells the parent to
+// repair or recreate the work tree in any wording, fails until this test is edited on purpose
+// (#991). Prose outside the block is not scanned, so unrelated text is free to change.
+const LINE_CONTINUATION = String.fromCharCode(92);
+const REFUSED_CWD_BLOCKS = {
+  instructions: {
+    after: "Never read, print, or quote the file to decide.",
+    before: " ## Reviewer prompts",
+    block: [
+      ...REFUSED_CWD_RULE,
+      [
+        "```bash agent-loop role abort --cwd",
+        '"<work tree>"',
+        LINE_CONTINUATION,
+        "--reason",
+        '"<work tree>: --cwd must be inside a Git work tree"',
+        "```",
+      ].join(" "),
+      "`abort` reads only the state file, so it ends the run over a work tree that is gone or is not a Git work tree, and it writes nothing inside that path. It needs a non-terminal run at that path: a path with no run state is refused with `No run state for <path>`, and a terminal run is refused with `Run is already <lifecycle>.`, so neither is a command to run there. A maintainer who recreates the work tree starts a new run there: a run over an aborted work tree is not resumed, and the state file names the work tree, not the work in it.",
+      "The headless loop states the same rule and cannot act on it: `agent-loop` snapshots its `--cwd` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure before the orchestrator can act, and the run keeps no state file. A headless worker turn gets the ownership rule from the same file, because `runChild` builds the worker prompt there for both paths.",
+    ].join(" "),
+  },
+  prompt: {
+    after: "open holds unresolved in-scope findings.",
+    before: " `dispatch --resume-interrupted`",
+    block: [
+      ...REFUSED_CWD_RULE,
+      "A headless run cannot act on a refused `--cwd`: the runtime snapshots its `--cwd` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure, and no turn of yours runs after it. A maintainer decides whether to recreate the work tree and start a new run.",
+    ].join(" "),
+  },
+};
+
+/** Asserts the text holds the pinned refused-`--cwd` block exactly, between its two boundaries. */
+function expectRefusedCwdBlock(text, { after, before, block }) {
+  const start = text.indexOf(after);
+  expect(start, "the sentence before the refused --cwd block is missing").toBeGreaterThanOrEqual(0);
+  const from = start + after.length;
+  const stop = text.indexOf(before, from);
+  expect(stop, "the section end after the refused --cwd block is missing").toBeGreaterThan(from);
+  expect(text.slice(from, stop).trim()).toBe(block);
+}
+
 /** The interactive instructions and the headless prompt, whitespace collapsed. */
 async function readParentTexts() {
   const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
@@ -375,56 +418,61 @@ async function readParentTexts() {
   return { instructions, prompt };
 }
 
-// Usefulness: verifies both parent texts state that the parent does not repair or recreate a refused
-// work tree and leaves it to a maintainer, with no other instruction that tells the parent to
-// (#991). The rule sentence pin above misses an added sentence, and the `git worktree` ban misses
-// prose.
-test("refused --cwd text states the parent leaves the work tree to a maintainer", async () => {
-  const { instructions, prompt } = await readParentTexts();
-  expectRefusedCwdRule(instructions);
-  expectRefusedCwdRule(prompt);
+// Usefulness: verifies both parent texts keep the refused-`--cwd` rule block as pinned, so the
+// parent is never told to repair or recreate the work tree (#991). The rule sentence pin above
+// misses an added sentence, and the `git worktree` ban misses prose.
+test("refused --cwd rule block is unchanged in the instructions and the headless prompt", async () => {
+  const texts = await readParentTexts();
+  for (const [name, pin] of Object.entries(REFUSED_CWD_BLOCKS)) {
+    expectRefusedCwdBlock(texts[name], pin);
+  }
 });
 
-// Usefulness: verifies the guard above fails when the rule is removed, negated, or contradicted by
-// an added instruction anywhere in either text, and passes safe rewording (#991).
-test("refused --cwd guard fails on a reversed rule and passes safe rewording", async () => {
-  const { instructions, prompt } = await readParentTexts();
-  const rule = REFUSED_CWD_RULE[0];
+// Usefulness: verifies the pin fails on an instruction that tells the parent to recover the work
+// tree, wherever it sits in the block and whatever verb or clause shape it uses, and passes on
+// unrelated prose elsewhere in the text (#991).
+test("refused --cwd pin fails on a recovery instruction and ignores unrelated prose", async () => {
+  const texts = await readParentTexts();
+  const [rule] = REFUSED_CWD_RULE;
+  const [, second] = REFUSED_CWD_RULE;
   const unsafe = {
-    "a removed rule": (text) => text.replace(rule, ""),
+    "an earlier maintainer mention": (text) =>
+      text.replace(
+        second,
+        `${second} A maintainer may be busy, so the parent recreates the work tree.`,
+      ),
+    "an unrelated negation": (text) =>
+      text.replace(
+        second,
+        `${second} Do not wait; the parent repairs the work tree and dispatches again.`,
+      ),
+    "a verb outside any list": (text) =>
+      text.replace(rule, `Regenerate the checkout at the refused path. ${rule}`),
+    "an instruction after the block": (text) =>
+      text.replace(
+        "A maintainer decides whether to recreate the work tree and start a new run.",
+        "A maintainer decides whether to recreate the work tree and start a new run. Restore the Git metadata of the path before you abort.",
+      ),
     "a negation dropped": (text) =>
       text.replace("is not the parent's to repair", "is the parent's to repair"),
-    "a maintainer dropped": (text) =>
-      text.replace("leave the work tree to a maintainer", "leave the work tree as it is"),
-    "a regenerate instruction before the rule": (text) =>
-      `Regenerate the checkout at the refused path, then retry. ${text}`,
-    "a restore instruction after the rule": (text) =>
-      `${text} Restore the Git metadata of the path before you abort.`,
-    "a repair command in the middle": (text) =>
-      text.replace(rule, `${rule} Run \`git worktree repair\` at the path.`),
-    "a create instruction for a gone path": (text) =>
-      text.replace(rule, `${rule} If the path is gone, create a new work tree there yourself.`),
-    "an instruction that follows a negation": (text) =>
-      text.replace(rule, `${rule} Do not abort, recreate the work tree.`),
+    "a removed rule": (text) => text.replace(rule, ""),
   };
   for (const [name, mutate] of Object.entries(unsafe)) {
-    for (const text of [instructions, prompt]) {
-      expect(() => expectRefusedCwdRule(mutate(text)), name).toThrow();
+    for (const [key, pin] of Object.entries(REFUSED_CWD_BLOCKS)) {
+      const mutated = mutate(texts[key]);
+      // A mutation that does not apply to a text is not a case for it.
+      if (mutated === texts[key]) continue;
+      expect(() => expectRefusedCwdBlock(mutated, pin), `${name} in ${key}`).toThrow();
     }
   }
-  const safe = {
-    "a reworded rule": (text) =>
-      text.replace(
-        rule,
-        "The parent never repairs a refused `--cwd`: end the run, name the path and the refusal in the reason, and leave the work tree to a maintainer, who may rebuild it and start a new run.",
-      ),
-    "an added maintainer sentence": (text) =>
-      `${text} A maintainer can restore the work tree by hand.`,
-  };
-  for (const [name, mutate] of Object.entries(safe)) {
-    for (const text of [instructions, prompt]) {
-      expect(() => expectRefusedCwdRule(mutate(text)), name).not.toThrow();
-    }
+  const unrelated = [
+    "After compaction, restore the session from the state file.",
+    "The module imports the helper from the path `src/lib/helper.mjs`.",
+  ].join(" ");
+  for (const [key, pin] of Object.entries(REFUSED_CWD_BLOCKS)) {
+    expect(() =>
+      expectRefusedCwdBlock(`${unrelated} ${texts[key]} ${unrelated}`, pin),
+    ).not.toThrow();
   }
 });
 
