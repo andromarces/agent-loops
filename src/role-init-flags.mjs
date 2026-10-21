@@ -9,6 +9,7 @@ import {
   legacyReviewerSandbox,
 } from "./lib/args.mjs";
 import { sha256 } from "./lib/hash.mjs";
+import { normalizeLocalPath } from "./lib/local-files.mjs";
 import { RoleError } from "./role-error.mjs";
 
 const INIT_FIELDS = [
@@ -40,7 +41,25 @@ export function storedReviewerSandbox(state) {
   return recorded ?? legacyReviewerSandbox(state.reviewerWorkspaceWrite);
 }
 
+/**
+ * The `--copy-local-path` values of `args` as sorted, unique, root-relative paths.
+ * @throws {RoleError} for a path that `normalizeLocalPath` refuses
+ */
+export function normalizedLocalPaths(args) {
+  try {
+    return [...new Set(args.copyLocalPaths.map(normalizeLocalPath))].sort();
+  } catch (err) {
+    throw new RoleError(err.message);
+  }
+}
+
 export function validateInitFlags(args, agents = {}) {
+  if (args.copyLocalPaths.length > 0) {
+    normalizedLocalPaths(args);
+    if (args.noCopyLocalFiles) {
+      throw new RoleError("--copy-local-path cannot be combined with --no-copy-local-files.");
+    }
+  }
   // review-only never dispatches the worker, so --worker is optional there.
   const refusal = initRefusal(args, {
     roles: CHILD_ROLE_KINDS,
@@ -117,6 +136,16 @@ export function rejectInitFlagChanges(args, state, allowed = []) {
     throw new RoleError(
       `--no-copy-local-files cannot be changed after init (state holds: ${JSON.stringify(state.copyLocalFiles ?? null)}).`,
     );
+  }
+  // The paths are fixed at init, like the opt-out. A later call that names any must name the
+  // stored set.
+  if (args.copyLocalPaths.length > 0) {
+    const held = state.copyLocalPaths ?? [];
+    if (JSON.stringify(normalizedLocalPaths(args)) !== JSON.stringify(held)) {
+      throw new RoleError(
+        `--copy-local-path cannot be changed after init (state holds: ${JSON.stringify(held)}).`,
+      );
+    }
   }
   for (const roleName of CHILD_ROLE_KINDS) {
     for (const [flag, path] of [

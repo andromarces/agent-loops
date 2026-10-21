@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0050: Let an operator add ignored paths to the local-file copy](0050-let-an-operator-add-ignored-paths-to-the-local-file-copy.md): the sentence of decision 12 "The state file holds the boolean, not the names." no longer holds, because the run state also holds the operator paths of `--copy-local-path`. Every other decision of this ADR remains in force.
 
 ## Date
 

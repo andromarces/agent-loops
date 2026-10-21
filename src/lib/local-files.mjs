@@ -265,6 +265,170 @@ async function locateWorkTrees(cwd, read) {
 }
 
 /**
+ * Normalizes one operator path (`--copy-local-path`) to a root-relative path with `/`
+ * separators. The path must name something inside the main work tree: an empty, absolute,
+ * drive-qualified, or control-character path is refused, and so is any `.` or `..` segment,
+ * `.git`, a checkout under `.claude/worktrees`, and a segment that holds `:` (a drive or a stream
+ * name) or ends in a dot or a space (Windows reads it as another name). A trailing separator is
+ * dropped.
+ * @param {string} raw
+ * @returns {string}
+ * @throws {Error} with a message that starts `--copy-local-path`
+ */
+export function normalizeLocalPath(raw) {
+  const refuse = (why) => new Error(`--copy-local-path ${JSON.stringify(raw)} is refused: ${why}`);
+  if (typeof raw !== "string" || raw === "") {
+    throw refuse("the path is empty");
+  }
+  if (hasControlCharacter(raw)) {
+    throw refuse("the path holds a control character");
+  }
+  if (isAbsolute(raw) || /^([a-zA-Z]:|[\\/])/.test(raw)) {
+    throw refuse("the path must be relative to the main work tree");
+  }
+  const parts = raw.replace(/[\\/]+$/, "").split(/[\\/]/);
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw refuse("the path must stay inside the main work tree");
+  }
+  if (parts.some((part) => part.includes(":") || /[. ]$/.test(part))) {
+    throw refuse("a segment holds a colon or ends in a dot or a space");
+  }
+  const rel = parts.join("/");
+  if (isExcludedRel(rel)) {
+    throw refuse("the path holds repository state or a checkout");
+  }
+  return rel;
+}
+
+/**
+ * The registered work trees that a read must never enter (`sourceBlocked`, inside the main work
+ * tree) and a write must never enter (`targetBlocked`, inside the linked work tree), whether or not
+ * their `.git` entry is still there.
+ */
+async function blockedTrees(entries, mainReal, rootReal) {
+  const trees = await Promise.all(
+    entries.map((entry) => realpath(entry.path).catch(() => resolve(entry.path))),
+  );
+  const sourceBlocked = new Set(trees);
+  sourceBlocked.delete(mainReal);
+  const targetBlocked = new Set([mainReal, ...trees]);
+  targetBlocked.delete(rootReal);
+  return { sourceBlocked, targetBlocked };
+}
+
+/**
+ * The work tree of `cwd` as both the source and the target of an operator path check, for a `cwd`
+ * that has no main work tree to copy from (the main work tree itself, a bare layout, or a path with a
+ * control character). Fails closed: a top-level path with a control character is refused, because a
+ * path that Git could print cut short is not checked.
+ */
+async function ownWorkTree(cwd, read) {
+  const top = stripLf((await read(cwd, ["rev-parse", "--show-toplevel"])).stdout);
+  if (hasControlCharacter(cwd) || hasControlCharacter(top)) {
+    throw new Error(
+      "--copy-local-path cannot be checked: the work tree path holds a control character",
+    );
+  }
+  const real = await realpath(top);
+  const entries = await readWorkTrees(top, read);
+  return { entries, mainReal: real, rootReal: real };
+}
+
+/**
+ * Refuses, before any copy, an operator path that cannot be copied as an ignored local path. Each
+ * path in `extra` (already normalized) must meet all of these in the source work tree `mainReal`:
+ * 1. It holds no file that Git tracks. Names are compared folded (`foldName`), so a case alias of a
+ *    tracked name is refused on any file system, at the cost of a false refusal when a repository
+ *    tracks two names that differ only in case.
+ * 2. No level of it is a symlink or a junction, and the existing path resolves, by `realpath`, to
+ *    the source work tree plus the path as written. That refuses a link out of the tree, a case or
+ *    short-name alias, a registered work tree, and a directory that holds a `.git` entry.
+ * 3. Every file under it that would be copied is ignored in `rootReal`, the work tree that
+ *    receives it. A listed directory past the entry bound is skipped whole by the copy and is not
+ *    checked.
+ * A path that does not exist passes: nothing is copied for it.
+ * @throws {Error} that names the path and starts with `--copy-local-path`
+ */
+async function refuseUnsafeLocalPaths(tree, extra, read, maxEntries) {
+  const { entries, mainReal, rootReal } = tree;
+  const { sourceBlocked, targetBlocked } = await blockedTrees(entries, mainReal, rootReal);
+  const trackedNames = (await read(mainReal, ["ls-files", "-z"])).stdout
+    .split("\0")
+    .filter(Boolean);
+  for (const rel of extra) {
+    const refuse = (why) =>
+      new Error(`--copy-local-path ${JSON.stringify(rel)} is refused: ${why}`);
+    const parts = rel.split("/");
+    const folded = parts.map(foldName).join("/");
+    if (
+      trackedNames.some(
+        (name) => name.split("/").slice(0, parts.length).map(foldName).join("/") === folded,
+      )
+    ) {
+      throw refuse("it holds a tracked file");
+    }
+    let current = mainReal;
+    for (const part of parts) {
+      current = join(current, part);
+      const stat = await lstatOrNull(current);
+      if (stat === null) {
+        break;
+      }
+      if (stat.isSymbolicLink()) {
+        throw refuse("it passes through a symlink or a junction");
+      }
+    }
+    const abs = join(mainReal, ...parts);
+    if ((await lstatOrNull(abs)) === null) {
+      continue;
+    }
+    const canon = await realpath(abs);
+    if (
+      canon !== abs ||
+      sourceBlocked.has(canon) ||
+      (await lstatOrNull(join(abs, ".git"))) !== null ||
+      (await hasBlockedAncestor(mainReal, rel, sourceBlocked))
+    ) {
+      throw refuse("it does not resolve to a plain path inside the main work tree");
+    }
+    const ctx = {
+      others: sourceBlocked,
+      files: [],
+      skipped: new Set(),
+      budget: { left: maxEntries, exceeded: false },
+    };
+    await collect(ctx, rel, abs);
+    if (ctx.budget.exceeded) {
+      continue;
+    }
+    const names = [];
+    for (const { rel: name } of ctx.files) {
+      // The copy never copies these, so they need no ignore rule; a target that sits beyond a link
+      // or a work tree is skipped by the copy, and `git check-ignore` refuses such a path.
+      if (
+        !GIT_CONTROL_FILES.has(foldName(basename(name))) &&
+        !isClaudeLockFile(name) &&
+        !(await hasBlockedAncestor(rootReal, name, targetBlocked))
+      ) {
+        names.push(name);
+      }
+    }
+    if (names.length === 0) {
+      continue;
+    }
+    const result = await read(rootReal, ["check-ignore", "-z", "--stdin"], {
+      input: `${names.join("\0")}\0`,
+      allowExit: [1],
+    });
+    const ignored = new Set(result.stdout.split("\0").filter(Boolean));
+    const open = names.find((name) => !ignored.has(name));
+    if (open !== undefined) {
+      throw refuse(`${JSON.stringify(open)} is not ignored in the work tree`);
+    }
+  }
+}
+
+/**
  * Collects the candidate files of one listed path into `ctx.files` as
  * `{ rel, src, canon }`: `canon` is the canonical path of the file, which the copy
  * compares with the path it resolves again just before it reads. No symlink is followed: a symlink entry is skipped by name, and
@@ -327,6 +491,12 @@ async function collect(ctx, rel, abs) {
  * or link swapped between a check and the `copyFile` call can redirect that read
  * or write. A swap needs local write access to the work trees during init.
  *
+ * `extraPaths` (the operator's `--copy-local-path` values) are copied like the listed paths and
+ * obey every rule above. Each must pass `normalizeLocalPath` and the checks of
+ * `refuseUnsafeLocalPaths` (no tracked file, no link at any level, only ignored files). A refusal
+ * throws before any copy, also when `cwd` is the main work tree and nothing would be copied, so the
+ * init fails with no run left to abort.
+ *
  * `hooks` is a test seam. `beforeSourceOpen` and `beforeCopy` run with the file's
  * path name just before the source is opened and just before `copyFile`.
  * `signal` ends a running `git` read, and the copy then rejects with `isCanceled` set.
@@ -335,39 +505,42 @@ async function collect(ctx, rel, abs) {
  * can lower the bound but never raise it.
  * @param {string} cwd
  * @param {{ beforeSourceOpen?: (rel: string) => Promise<void>, beforeCopy?: (rel: string) => Promise<void> }} [hooks]
- * @param {{ signal?: AbortSignal, maxEntries?: number }} [options]
+ * @param {{ signal?: AbortSignal, maxEntries?: number, extraPaths?: string[] }} [options]
  * @returns {Promise<{ copied: string[], skipped: string[] } | null>}
  */
 export async function copyLocalFiles(
   cwd,
   hooks = {},
-  { signal, maxEntries = MAX_WALKED_ENTRIES } = {},
+  { signal, maxEntries = MAX_WALKED_ENTRIES, extraPaths = [] } = {},
 ) {
   if (!Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > MAX_WALKED_ENTRIES) {
     throw new RangeError(
       `local files: maxEntries must be an integer from 1 through ${MAX_WALKED_ENTRIES}`,
     );
   }
+  const extra = [...new Set(extraPaths.map(normalizeLocalPath))];
   const read = (dir, args, options) => git(dir, args, { signal, ...options });
   const located = await locateWorkTrees(cwd, read);
+  // The operator paths are checked before anything is copied, and also when nothing is, so a
+  // refused path fails the init for a `--cwd` that is the main work tree too.
+  if (extra.length > 0) {
+    await refuseUnsafeLocalPaths(
+      located ?? (await ownWorkTree(cwd, read)),
+      extra,
+      read,
+      maxEntries,
+    );
+  }
   if (located === null) {
     return null;
   }
   const { entries, mainReal, rootReal } = located;
-  // A registered work tree is never read from (inside the main work tree) and
-  // never written into (inside the linked work tree), whether or not its `.git`
-  // entry is still there.
-  const trees = await Promise.all(
-    entries.map((entry) => realpath(entry.path).catch(() => resolve(entry.path))),
-  );
-  const sourceBlocked = new Set(trees);
-  sourceBlocked.delete(mainReal);
-  const targetBlocked = new Set([mainReal, ...trees]);
-  targetBlocked.delete(rootReal);
+  const listed = [...new Set([...LOCAL_FILE_PATHS, ...extra])];
+  const { sourceBlocked, targetBlocked } = await blockedTrees(entries, mainReal, rootReal);
 
   const skipped = new Set();
   const files = [];
-  for (const rel of LOCAL_FILE_PATHS) {
+  for (const rel of listed) {
     // One bound and one result list per listed path, so a path past its bound is
     // dropped whole and never starves the next listed path.
     const ctx = {
@@ -399,7 +572,7 @@ export async function copyLocalFiles(
   // A tracked file is tracked under any spelling that reaches it, so the tracked
   // names under the listed paths are also compared by canonical path: on a
   // case-insensitive file system `.claude/config` is the tracked `.Claude/config`.
-  const listedRoots = new Set(LOCAL_FILE_PATHS.map((path) => foldName(path.split("/")[0])));
+  const listedRoots = new Set(listed.map((path) => foldName(path.split("/")[0])));
   const tracked = new Set(trackedNames);
   const trackedCanon = new Set();
   for (const name of trackedNames) {
