@@ -119,6 +119,19 @@ test("first worker turn keeps the closing block as the last message", () => {
   );
 });
 
+// Usefulness: verifies requirement "a worker states each result the parent needs inside the closing
+// block" (issue #976): the parent reads only the block, so a pointer to text above it loses the
+// result. The reviewer has the same rule for blockers (issue #434).
+test("first worker turn requires each result inside the closing block", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line.",
+  );
+  expect(prompt).toContain(
+    'Never refer to text outside the block, for example "the decisions above", because the parent reads only the block.',
+  );
+});
+
 // Usefulness: verifies later worker turns stay raw; the session already holds the instructions.
 test("later worker turns pass the prompt through unchanged", () => {
   expect(workerPrompt("next step", false)).toBe("next step");

@@ -23,6 +23,7 @@ Your role:
   switch it, and leave it in place after the push, because every later turn of
   this run targets the same \`--cwd\`.
 - Report what changed, what was verified, and state any disagreements with evidence.
+- State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. Never refer to text outside the block, for example "the decisions above", because the parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
 - Before the closing block, remove every temporary file or directory that this turn created outside the work tree, and name in Notes any that you could not remove. A PR body file in the system temporary directory is one example.
 - ${processRule}
