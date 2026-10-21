@@ -101,6 +101,7 @@ export function parseRoleArgs(argv) {
     requireCi: null,
     pr: null,
     all: false,
+    expect: [],
     head: null,
     testCmd: null,
     testCmdTimeout: null,
@@ -144,6 +145,15 @@ export function parseRoleArgs(argv) {
         case "--all":
           args.all = true;
           return true;
+
+        case "--expect": {
+          const name = readInline(arg).trim();
+          if (name === "") {
+            throw new RoleError("--expect needs a non-empty check name.");
+          }
+          args.expect.push(name);
+          return true;
+        }
 
         case "--head":
           args.head = readInline(arg);
@@ -943,6 +953,14 @@ function rejectMisplacedFlags(args, operation) {
   if (operation !== "wait-checks" && args.all) {
     throw new RoleError("--all is only valid for wait-checks.");
   }
+  if (operation !== "wait-checks" && args.expect.length > 0) {
+    throw new RoleError("--expect is only valid for wait-checks.");
+  }
+  if (operation === "wait-checks" && args.expect.length > 0 && !args.all) {
+    throw new RoleError(
+      "--expect needs --all: the required wait already waits on each required check.",
+    );
+  }
   if (operation !== "wait-checks" && args.head !== null) {
     throw new RoleError("--head is only valid for wait-checks.");
   }
@@ -1132,6 +1150,8 @@ function requireStoredParentSession(args, state) {
 /**
  * `wait-checks`: polls the required checks of `--pr`, or every check of its head
  * with `--all`, until none is pending or the bound elapses, then prints the last check states with a `timedOut` flag.
+ * `--expect <name>` (repeatable, with `--all`) keeps the wait going until each named check has a run
+ * on the head, so a check that registers late is not missed (#978).
  * `--head <sha>` keeps the wait going until the PR head is that commit. The check states are read
  * from the commit by SHA, and the result names that commit in `head` (#961).
  * It reads status only, so it touches no run state and needs no init, but it
@@ -1176,6 +1196,7 @@ async function waitChecksOperation(
     cwd: args.cwd,
     deadline,
     all: args.all,
+    expect: args.expect,
     head: args.head,
     gh,
     now,

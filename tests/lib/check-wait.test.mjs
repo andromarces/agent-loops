@@ -862,3 +862,71 @@ test("waitChecks marks a settled result with an unconfirmed sibling child", asyn
     childExitUnconfirmed: true,
   });
 }, 20000);
+
+// Usefulness: verifies an expected check that registers after an earlier check passed keeps the
+// all-checks wait running, and that the wait settles once that check has a run on the head, so a
+// late third-party check is never missed (issue #978).
+test("waitChecks in all mode waits for an expected check that registers late", async () => {
+  const deploy = check("deploy", "pass", "SUCCESS");
+  const clock = fakeClock();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 300,
+    all: true,
+    expect: ["deploy"],
+    gh: scriptedGh(
+      [
+        { status: 0, checks: [PASSED_ITEM] },
+        { status: 0, checks: [PASSED_ITEM] },
+        { status: 0, checks: [PASSED_ITEM, deploy] },
+      ],
+      { all: true },
+    ),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM, deploy] });
+  expect(clock.elapsed()).toBeGreaterThan(0);
+});
+
+// Usefulness: verifies an expected check that never registers ends the wait at the bound with
+// `timedOut: true`, never as a pass, and names the check still awaited (issue #978).
+test("waitChecks in all mode times out when an expected check never registers", async () => {
+  const clock = fakeClock();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    all: true,
+    expect: ["deploy"],
+    gh: scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], { all: true }),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result).toEqual({
+    timedOut: true,
+    head: HEAD_A,
+    checks: [PASSED_ITEM],
+    awaiting: ["deploy"],
+  });
+});
+
+// Usefulness: verifies a failing check still settles the wait while an expected check is absent,
+// so a failure is reported at once instead of waited out (issue #978).
+test("waitChecks in all mode settles on a failing check while an expected check is absent", async () => {
+  expect(
+    (
+      await waitChecks({
+        pr: 42,
+        cwd: ".",
+        timeoutSeconds: 60,
+        all: true,
+        expect: ["deploy"],
+        gh: scriptedGh([{ status: 1, checks: [FAILED_ITEM] }], { all: true }),
+        now: fakeClock().now,
+        sleep: fakeClock().sleep,
+      })
+    ).timedOut,
+  ).toBe(false);
+});

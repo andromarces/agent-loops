@@ -447,3 +447,26 @@ test("wait-checks marks an error envelope with an unconfirmed child", async () =
   expect(result.exitCode).toBe(1);
   expect(result.payload).toMatchObject({ status: "error", childExitUnconfirmed: true });
 }, 20000);
+
+// Usefulness: verifies `--expect` parses as a repeatable flag and is refused without `--all`
+// and on every other operation, so the option never silently does nothing (issue #978).
+test("wait-checks takes a repeatable --expect only with --all", async () => {
+  expect(
+    parseRoleArgs(["wait-checks", "--pr", "1", "--all", "--expect", "a", "--expect", "b"]).expect,
+  ).toEqual(["a", "b"]);
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const noAll = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "1", "--expect", "a"]),
+    { gh: scriptedGh([SETTLED]), ...fakeClock() },
+  );
+  expect(noAll.exitCode).toBe(1);
+  expect(noAll.payload.error).toMatch(/--expect needs --all/);
+  const misplaced = await executeRoleCommand(
+    parseRoleArgs(["finish", "--cwd", repo, "--expect", "a"]),
+    {},
+  );
+  expect(misplaced.exitCode).toBe(1);
+  expect(misplaced.payload.error).toMatch(/--expect is only valid for wait-checks/);
+});

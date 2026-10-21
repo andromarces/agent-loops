@@ -298,6 +298,11 @@ Role flags:
                                 that has none. declare-pr and wait-checks also take it.
   --all                         wait-checks only: wait on every check of the PR head,
                                 not only the required ones.
+  --expect <check name>         wait-checks only, with --all, repeatable: the wait
+                                does not settle as a pass until each named check has
+                                a run on the PR head. A check that never registers
+                                ends the wait at the bound with timedOut: true and
+                                the name in awaiting. A failing check still settles.
   --head <sha>                  wait-checks only: a full lowercase commit SHA. The wait
                                 reads no checks until the PR head is that commit, and
                                 a wait that reaches the bound first returns
