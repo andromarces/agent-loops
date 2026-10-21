@@ -18,18 +18,28 @@ const HOOKS_PATH_ITEM = "core.hooksPath";
  * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string> }>}
  */
 export async function readSharedGit(cwd, bound) {
+  const read = (args) => gitRead(cwd, args, { ...bound, allowExit: [0], createError: readFailure });
   const [commonResult, listResult] = await Promise.all([
-    gitRead(cwd, ["rev-parse", "--git-common-dir"], bound),
-    gitRead(cwd, ["config", "-z", "--list", "--show-scope"], { ...bound, allowExit: [0] }),
+    read(["rev-parse", "--git-common-dir"]),
+    read(["config", "-z", "--list", "--show-scope"]),
   ]);
-  if (commonResult.exitCode !== 0) {
-    throw new SnapshotError(`the shared Git directory could not be read: ${cwd}`);
-  }
   const commonDir = commonResult.stdout.trim();
   const commonPath = isAbsolute(commonDir) ? commonDir : join(cwd, commonDir);
   const { hooksPath, remotes } = readConfigState(listResult.stdout);
 
   return { hooksPath, hooks: await readHooks(join(commonPath, "hooks")), remotes };
+}
+
+// Names the failed `git` operation and the exit code only: git stderr can carry a config value,
+// for example the path of an `include.path` entry, and the error reaches the log.
+function readFailure(reason, { args, timeoutMs, result }) {
+  if (reason === "canceled") {
+    return new SnapshotError(`git ${args[0]} was canceled`, { isCanceled: true });
+  }
+  if (reason === "timeout") {
+    return new SnapshotError(`git ${args[0]} timed out after ${timeoutMs} ms`);
+  }
+  return new SnapshotError(`git ${args[0]} failed (exit ${result.exitCode})`);
 }
 
 // With `-z` and `--show-scope`, each entry is `<scope>NUL<key>LF<value>NUL`, and a key with no
@@ -55,7 +65,8 @@ function readConfigState(listing) {
   return {
     hooksPath: sha256(JSON.stringify(hooksPath)),
     remotes: Object.fromEntries(
-      [...remotes].map(([name, list]) => [name, sha256(JSON.stringify(list.sort()))]),
+      // The list keeps git's order: the first URL of a remote is the one `git remote get-url` returns.
+      [...remotes].map(([name, list]) => [name, sha256(JSON.stringify(list))]),
     ),
   };
 }
@@ -67,9 +78,12 @@ async function readHooks(hooksDir) {
     names = await readdir(hooksDir);
   } catch (err) {
     if (err.code === "ENOENT" || err.code === "ENOTDIR") return {};
-    throw new SnapshotError(`the hooks directory could not be read: ${err.code ?? err.message}`, {
-      cause: err,
-    });
+    throw new SnapshotError(
+      `the hooks directory could not be read: ${err.code ?? "unknown error"}`,
+      {
+        cause: err,
+      },
+    );
   }
   const hooks = {};
   for (const name of names.filter((n) => !n.endsWith(".sample")).sort()) {

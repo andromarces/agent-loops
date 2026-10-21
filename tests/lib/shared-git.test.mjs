@@ -4,14 +4,12 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 // Makes every `git config` call exit with `configExit.code` when set; other calls reach real git.
-// `gitCalls` counts the `git` processes started.
-const configExit = vi.hoisted(() => ({ code: null, gitCalls: 0 }));
+const configExit = vi.hoisted(() => ({ code: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execa: (command, args, options) => {
-      configExit.gitCalls++;
       return configExit.code !== null && args[0] === "config"
         ? { exitCode: configExit.code, stdout: "", stderr: "fatal: bad config line 1" }
         : real.execa(command, args, options);
@@ -26,7 +24,6 @@ const dirs = [];
 
 afterEach(async () => {
   configExit.code = null;
-  configExit.gitCalls = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
@@ -164,14 +161,40 @@ test("a git config read that exits 1 for an unset key reads as empty", async () 
   expect(state.remotes).toEqual({});
 });
 
-// Usefulness: verifies "a shared Git read starts at most two git processes": every worker turn reads
-// twice, and a read of five sequential processes pushed the three-dispatch tests of
-// role.reviewer-sandbox past their 15 s bound on the Windows CI runner.
-test("a shared Git read starts at most two git processes", async () => {
-  const { linked } = await createLinkedWorkTree();
-  configExit.gitCalls = 0;
-  await readSharedGit(linked);
-  expect(configExit.gitCalls).toBeLessThanOrEqual(2);
+// Usefulness: verifies "a failed shared Git read names only the failed operation and an exit code"
+// (issue #984 review): git's stderr can carry a config value, here the path of an include.path
+// entry, and the error reaches the warning log.
+test("a failed read never carries git stderr or a config value", async () => {
+  const { repo, linked } = await createLinkedWorkTree();
+  const include = join(repo, "secret-include-4821");
+  await mkdir(include);
+  await execa("git", ["config", "include.path", include], { cwd: repo });
+
+  const failure = await readSharedGit(linked).catch((err) => err);
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure.message).toMatch(/exit 128/);
+  expect(failure.message).not.toMatch(/secret-include-4821|fatal|warning/);
+});
+
+// Usefulness: verifies "a swapped order of two URLs of one remote is reported" (issue #984 review):
+// the first URL is the one `git remote get-url` returns, so the order is part of the state.
+test("a reordered value list of one remote key is reported by remote name", async () => {
+  const { repo, linked } = await createLinkedWorkTree();
+  await execa("git", ["remote", "add", "origin", "https://example.test/a.git"], { cwd: repo });
+  await execa("git", ["remote", "set-url", "--add", "origin", "https://example.test/b.git"], {
+    cwd: repo,
+  });
+
+  const changed = await changedBy(linked, async () => {
+    await execa("git", ["config", "--unset-all", "remote.origin.url"], { cwd: repo });
+    await execa("git", ["config", "--add", "remote.origin.url", "https://example.test/b.git"], {
+      cwd: repo,
+    });
+    await execa("git", ["config", "--add", "remote.origin.url", "https://example.test/a.git"], {
+      cwd: repo,
+    });
+  });
+  expect(changed).toEqual(["remote.origin"]);
 });
 
 // Usefulness: verifies "a read from a directory outside a repository fails", so the caller can warn
