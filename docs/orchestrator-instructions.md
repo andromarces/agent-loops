@@ -284,6 +284,18 @@ for the whole run, and never tell a worker to remove it: a worker turn pushes it
 branch and stops there, because every later dispatch of that run targets the same
 `--cwd`.
 
+Create the work tree with no upstream, so a plain `git push` of a worker cannot
+reach the default branch:
+
+```bash
+git worktree add --no-track -b <branch> <work tree> origin/<default>
+```
+
+Plain `git worktree add -b <branch> <path> origin/<default>` sets the upstream of
+the branch to `origin/<default>` when `branch.autoSetupMerge` is at its default.
+The worker sets the upstream to its own remote branch on the first push, with
+`git push -u origin <branch>`.
+
 `dispatch` checks the work tree before it reads the run state, charges a step, or
 spawns a child, so a refused `--cwd` leaves the run as it was: the init call
 writes no state file, and a later dispatch charges no step, changes no lifecycle,

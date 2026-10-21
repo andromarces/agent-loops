@@ -343,16 +343,23 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
     expect(instructions).toContain(rule);
     expect(prompt).toContain(rule);
   }
-  // Neither text keeps the repair procedure or the unrecoverable claim.
-  for (const gone of [
-    "git worktree add",
-    "git worktree prune",
-    "not recoverable",
-    "unrecoverable",
-  ]) {
+  // Neither text keeps the repair procedure or the unrecoverable claim. The instructions may hold
+  // the creation command of "Work tree ownership" (#985), so the headless prompt alone bars it.
+  expect(prompt).not.toContain("git worktree add");
+  for (const gone of ["git worktree prune", "not recoverable", "unrecoverable"]) {
     expect(instructions).not.toContain(gone);
     expect(prompt).not.toContain(gone);
   }
+});
+
+// Usefulness: verifies the work tree creation command sets no upstream (#985), so a plain
+// `git push` of a worker cannot reach the default branch. No other test reads this section.
+test("instructions create the run work tree without an upstream and set it on the first push", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expect(instructions).toContain(
+    "git worktree add --no-track -b <branch> <work tree> origin/<default>",
+  );
+  expect(instructions).toContain("git push -u origin <branch>");
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
