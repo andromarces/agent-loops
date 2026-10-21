@@ -31,7 +31,7 @@ An operator path is input from outside the fixed list, so it reaches paths that 
 
 - A child gets the ignored reference data that the task names, without a network fetch.
 - A path that is not ignored fails the init instead of being skipped by name. The operator adds an ignore rule or drops the path.
-- A repository that tracks two names that differ only in case gets a false refusal for either name. Such a repository cannot be checked out on Windows or macOS by default.
+- The folded compare refuses a path when its folded segments equal the folded leading segments of any one tracked name. On a case-sensitive file system, that also refuses a path that is not a case alias of a tracked path. One tracked name is enough: with `Specs/a.md` tracked, an ignored, untracked `specs` directory is refused. The operator renames the path or the tracked name.
 - The operator path is the operator's own input and is stored in the state file. It is never file content.
 - A link inside a listed directory is still skipped by name, as in ADR 0018. Only a link on the path itself is refused.
 - The checks read the work tree at init. A swap between a check and the copy is the approved limit of ADR 0018.
