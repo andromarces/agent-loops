@@ -178,6 +178,9 @@ test("the parent surfaces name --expect for a check that registers late", async 
   for (const text of [prompt, instructions]) {
     expectRule(text, /--expect/, /--all/, /late/i);
     expectRule(text, /awaiting/, /never a pass/i);
+    // Exact name matching, and a commit status never satisfies a name (issue #978).
+    expectRule(text, /check run/i, /exact/i, /trimmed/i, /case-sensitiv/i, /any app/i);
+    expectRule(text, /commit status/i, /never match/i);
   }
 });
 
