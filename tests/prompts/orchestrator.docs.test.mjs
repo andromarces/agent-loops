@@ -27,6 +27,10 @@ const instructionsPath = join(
   "../../docs/orchestrator-instructions.md",
 );
 
+/** The only work tree command of the instructions: the creation step that sets no upstream (#985). */
+const WORK_TREE_CREATE_COMMAND =
+  "git worktree add --no-track -b <branch> <work tree> origin/<default>";
+
 /** The user docs as one text: the reference topic files, the reference index, then the README. */
 async function readUserDocs() {
   const docs = join(dirname(instructionsPath), "reference");
@@ -343,16 +347,26 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
     expect(instructions).toContain(rule);
     expect(prompt).toContain(rule);
   }
-  // Neither text keeps the repair procedure or the unrecoverable claim.
-  for (const gone of [
-    "git worktree add",
-    "git worktree prune",
-    "not recoverable",
-    "unrecoverable",
-  ]) {
+  // Neither text keeps the repair procedure or the unrecoverable claim. The one `git worktree`
+  // command the instructions may hold is the single creation command of "Work tree ownership"
+  // (#985): with that command removed, no `git worktree` call is left to add, repair, or recreate.
+  expect(instructions.split(WORK_TREE_CREATE_COMMAND)).toHaveLength(2);
+  expect(instructions.replace(WORK_TREE_CREATE_COMMAND, "")).not.toContain("git worktree");
+  expect(prompt).not.toContain("git worktree");
+  for (const gone of ["not recoverable", "unrecoverable"]) {
     expect(instructions).not.toContain(gone);
     expect(prompt).not.toContain(gone);
   }
+});
+
+// Usefulness: verifies the work tree creation command sets no upstream (#985), so a plain
+// `git push` of a worker cannot reach the default branch. No other test reads this section.
+test("instructions create the run work tree without an upstream and set it on the first push", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expect(instructions).toContain(
+    "git worktree add --no-track -b <branch> <work tree> origin/<default>",
+  );
+  expect(instructions).toContain("git push -u origin <branch>");
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
