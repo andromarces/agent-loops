@@ -25,3 +25,18 @@ export function rootPins() {
   }
   return pins;
 }
+
+const NPM_LOG_SETTINGS = ["logs_dir", "logs_max"].flatMap((key) => [
+  `npm_config_${key}`,
+  `NPM_CONFIG_${key.toUpperCase()}`,
+]);
+
+/**
+ * The environment entry that stops npm from writing debug logs in a child turn (issue #995). npm
+ * writes them to its cache, outside the work tree and the turn temporary directory, and the cleanup
+ * rule of a turn cannot remove them. `npm_config_logs_max=0` writes none for the run. A non-empty
+ * `logs_dir` or `logs_max` that the user set, in either case, leaves the entry out.
+ */
+export function npmLogPins() {
+  return NPM_LOG_SETTINGS.some((name) => process.env[name]) ? {} : { npm_config_logs_max: "0" };
+}

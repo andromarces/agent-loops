@@ -354,3 +354,30 @@ test("exec replaces an empty root value for a worker spawn", async () => {
   expect(seen).toEqual(parent);
   expect(seen.every(Boolean)).toBe(true);
 });
+
+const NPM_LOG_ENV = ["npm_config_logs_dir", "npm_config_logs_max"];
+const PRINT_NPM_LOG = `console.log(JSON.stringify(${JSON.stringify(NPM_LOG_ENV)}.map((name) => process.env[name] || null)))`;
+const npmLogOf = async (options) =>
+  JSON.parse((await exec(process.execPath, ["-e", PRINT_NPM_LOG], options)).stdout);
+
+// Usefulness: verifies a worker or reviewer child writes no npm debug log outside its own directories, so the cleanup rule has no log to delete (issue #995); other spawns stay unchanged.
+test("exec turns npm debug logs off for a worker or reviewer spawn only", async () => {
+  for (const name of NPM_LOG_ENV) vi.stubEnv(name, "");
+  expect(await npmLogOf({ role: "worker", cwd: tmpdir() })).toEqual([null, "0"]);
+  expect(await npmLogOf({ role: "reviewer", cwd: tmpdir() })).toEqual([null, "0"]);
+  expect(await npmLogOf({ role: "orchestrator", cwd: tmpdir() })).toEqual([null, null]);
+  expect(await npmLogOf({ cwd: tmpdir() })).toEqual([null, null]);
+});
+
+// Usefulness: verifies a user-set log directory or maximum is kept, and that a user-set directory is not switched off by the added maximum.
+test("exec keeps a user-set npm log directory or maximum for a worker spawn", async () => {
+  for (const name of NPM_LOG_ENV) vi.stubEnv(name, "");
+  vi.stubEnv("npm_config_logs_dir", join(tmpdir(), "npm-logs"));
+  expect(await npmLogOf({ role: "worker", cwd: tmpdir() })).toEqual([
+    join(tmpdir(), "npm-logs"),
+    null,
+  ]);
+  vi.stubEnv("npm_config_logs_dir", "");
+  vi.stubEnv("npm_config_logs_max", "5");
+  expect(await npmLogOf({ role: "reviewer", cwd: tmpdir() })).toEqual([null, "5"]);
+});
