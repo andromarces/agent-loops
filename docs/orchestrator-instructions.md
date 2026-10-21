@@ -291,8 +291,8 @@ reach the default branch:
 git worktree add --no-track -b <branch> <work tree> origin/<default>
 ```
 
-Plain `git worktree add -b <branch> <path> origin/<default>` sets the upstream of
-the branch to `origin/<default>` when `branch.autoSetupMerge` is at its default.
+Without `--no-track`, the new branch gets the upstream `origin/<default>` when
+`branch.autoSetupMerge` is at its default.
 The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
 
