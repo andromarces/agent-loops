@@ -71,6 +71,14 @@ function readConfigState(listing) {
   };
 }
 
+// A Node file system error message carries the path, and a hook path or a symlink target can carry
+// a secret, so a hook failure names the operation and the error code only and keeps no `cause`.
+function hookFailure(operation, err) {
+  const code =
+    typeof err?.code === "string" && /^[A-Z0-9_]+$/.test(err.code) ? err.code : "unknown";
+  return new SnapshotError(`${operation} failed (${code})`);
+}
+
 // A `.sample` file is the template `git init` writes, never an active hook.
 async function readHooks(hooksDir) {
   let names;
@@ -78,16 +86,15 @@ async function readHooks(hooksDir) {
     names = await readdir(hooksDir);
   } catch (err) {
     if (err.code === "ENOENT" || err.code === "ENOTDIR") return {};
-    throw new SnapshotError(
-      `the hooks directory could not be read: ${err.code ?? "unknown error"}`,
-      {
-        cause: err,
-      },
-    );
+    throw hookFailure("the hooks directory read", err);
   }
   const hooks = {};
   for (const name of names.filter((n) => !n.endsWith(".sample")).sort()) {
-    hooks[name] = await sha256File(join(hooksDir, name));
+    try {
+      hooks[name] = await sha256File(join(hooksDir, name));
+    } catch (err) {
+      throw hookFailure("a hook file read", err);
+    }
   }
   return hooks;
 }

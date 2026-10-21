@@ -1,8 +1,40 @@
+import { inspect } from "node:util";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
+// Makes the named `node:fs/promises` function throw an error whose message and path carry
+// `FS_MARKER`, as a Node file system error carries the path, while `fsFailure.operation` is set.
+const FS_MARKER = "secret-hook-marker-7731";
+const fsFailure = vi.hoisted(() => ({ operation: null }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = await importOriginal();
+  const failing =
+    (operation) =>
+    async (path, ...rest) => {
+      if (fsFailure.operation === operation) {
+        const failedPath = `/${"secret-hook-marker-7731"}/${operation}`;
+        throw Object.assign(new Error(`EACCES: permission denied, ${operation} '${failedPath}'`), {
+          code: "EACCES",
+          path: failedPath,
+          syscall: operation,
+        });
+      }
+      return real[operation](path, ...rest);
+    };
+  return {
+    ...real,
+    readdir: failing("readdir"),
+    // A symlink needs a privilege on Windows, so a `readlink` failure reports every entry as one.
+    lstat: (...args) =>
+      fsFailure.operation === "readlink"
+        ? { isSymbolicLink: () => true }
+        : failing("lstat")(...args),
+    readFile: failing("readFile"),
+    readlink: failing("readlink"),
+  };
+});
 // Makes every `git config` call exit with `configExit.code` when set; other calls reach real git.
 const configExit = vi.hoisted(() => ({ code: null }));
 vi.mock("execa", async (importOriginal) => {
@@ -17,6 +49,7 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
+import { firstErrorLine, readableErrorText } from "../../src/lib/error-message.mjs";
 import { diffSharedGit, readSharedGit } from "../../src/lib/shared-git.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
 
@@ -24,6 +57,7 @@ const dirs = [];
 
 afterEach(async () => {
   configExit.code = null;
+  fsFailure.operation = null;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
@@ -196,6 +230,33 @@ test("a reordered value list of one remote key is reported by remote name", asyn
   });
   expect(changed).toEqual(["remote.origin"]);
 });
+
+// Usefulness: verifies "a failed hook read names only the operation and the error code" (issue #984
+// review): a Node file system error carries the path, and a hook path or a symlink target can carry
+// a secret. The marker must stay out of the thrown error, its cause chain, and the text that the
+// worker-turn warning is built from.
+test.each(["readdir", "lstat", "readFile", "readlink"])(
+  "a failed %s of the hooks directory never exposes the path",
+  async (operation) => {
+    const { repo, linked } = await createLinkedWorkTree();
+    const hooks = join(repo, ".git", "hooks");
+    await mkdir(hooks, { recursive: true });
+    await writeFile(join(hooks, "pre-push"), "#!/bin/sh\nexit 0\n");
+    fsFailure.operation = operation;
+
+    const failure = await readSharedGit(linked).catch((err) => err);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toMatch(new RegExp(`EACCES`));
+    const exposed = [
+      inspect(failure, { depth: null, showHidden: true }),
+      JSON.stringify(failure, Object.getOwnPropertyNames(failure)),
+      firstErrorLine(readableErrorText(failure)),
+      String(failure.cause ?? ""),
+    ].join("\n");
+    expect(exposed).not.toContain(FS_MARKER);
+    expect(failure.cause).toBeUndefined();
+  },
+);
 
 // Usefulness: verifies "a read from a directory outside a repository fails", so the caller can warn
 // and omit the field instead of reporting an empty, unchanged state.
