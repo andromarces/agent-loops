@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
+import { execa } from "execa";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `gitWhileDotGitExists` in runtime-helpers.mjs); every other test reaches the real `execa`.
@@ -459,6 +460,120 @@ test("worker dispatch reports the work tree state from after the turn", async ()
   const state = await readRepoState(repo);
   expect(state.lastResult.workTree.clean).toBe(true);
   expect(state.lastResult.workTree.head).toMatch(/^[0-9a-f]{40}$/);
+});
+
+// Usefulness: verifies requirement "a worker turn that changes shared Git state reports the item
+// names beside workTree, and a turn that changes none carries no field" (issue #984). The
+// work tree snapshot alone shows clean: true for a hook or remote change made from a linked work tree.
+test("worker dispatch reports shared Git state changed outside the work tree", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const parent = await mkdtemp(join(tmpdir(), "role-dispatch-linked-"));
+  const linked = join(parent, "linked");
+  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
+  try {
+    const sharedChangingWorker = recordingAdapter([
+      async (_state, _prompt, options) => {
+        await execa("git", ["remote", "add", "origin", "https://user:token-9@example.test/a.git"], {
+          cwd: options.cwd,
+        });
+        await execa("git", ["config", "core.hooksPath", "private-hooks"], { cwd: options.cwd });
+        return WORKER_REPLY;
+      },
+    ]);
+    const agents = { fake1: sharedChangingWorker, fake2: recordingAdapter([]) };
+
+    const changed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(changed.payload.workTree.clean).toBe(true);
+    expect(changed.payload.sharedGitChanged).toEqual(["core.hooksPath", "remote.origin"]);
+    expect(JSON.stringify(changed.payload)).not.toMatch(/token-9|private-hooks/);
+    expect((await readRepoState(linked)).lastResult.sharedGitChanged).toEqual([
+      "core.hooksPath",
+      "remote.origin",
+    ]);
+
+    const unchanged = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(unchanged.payload.workTree).toBeDefined();
+    expect(unchanged.payload).not.toHaveProperty("sharedGitChanged");
+  } finally {
+    await removePath(parent);
+  }
+});
+
+// Runs `body(linked, repo)` with a linked work tree of a fresh repository. The worker adapters of
+// the shared Git tests act on the linked work tree.
+async function withLinkedWorkTree(body) {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const parent = await mkdtemp(join(tmpdir(), "role-dispatch-linked-"));
+  const linked = join(parent, "linked");
+  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
+  try {
+    await body(linked, repo);
+  } finally {
+    await removePath(parent);
+  }
+}
+
+// Usefulness: verifies requirement "a worker turn that fails after it changed shared Git state
+// still reports the item names" (issue #984): the failed turn is the one that most needs the report.
+test("a failed worker turn still reports the shared Git state it changed", async () => {
+  await withLinkedWorkTree(async (linked) => {
+    const failingWorker = recordingAdapter([
+      async (_state, _prompt, options) => {
+        await execa("git", ["remote", "add", "origin", "https://user:token-9@example.test/a.git"], {
+          cwd: options.cwd,
+        });
+        throw new Error("adapter failed after the change");
+      },
+    ]);
+    const agents = { fake1: failingWorker, fake2: recordingAdapter([]) };
+
+    const failed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(failed.payload).toMatchObject({ role: "worker", status: "error" });
+    expect(failed.payload.sharedGitChanged).toEqual(["remote.origin"]);
+    expect(JSON.stringify(failed.payload)).not.toContain("token-9");
+    expect((await readRepoState(linked)).lastResult.sharedGitChanged).toEqual(["remote.origin"]);
+  });
+});
+
+// Usefulness: verifies requirement "an unreadable shared Git state omits the field instead of
+// reporting a false change" (issue #984): a post-turn `git config` read that exits unexpectedly
+// would otherwise read as every remote removed and core.hooksPath unset.
+test("a worker turn whose post-turn shared Git read fails reports no shared Git change", async () => {
+  await withLinkedWorkTree(async (linked, repo) => {
+    await execa("git", ["remote", "add", "origin", "https://example.test/a.git"], { cwd: repo });
+    await execa("git", ["config", "core.hooksPath", "hooks-a"], { cwd: repo });
+    const { execa: realExeca } = await vi.importActual("execa");
+    const breakingWorker = recordingAdapter([
+      async () => {
+        gitDouble.answer = (command, args, options) =>
+          args[0] === "config"
+            ? { exitCode: 128, stdout: "", stderr: "fatal: bad config line 1" }
+            : realExeca(command, args, options);
+        return WORKER_REPLY;
+      },
+    ]);
+    const agents = { fake1: breakingWorker, fake2: recordingAdapter([]) };
+
+    const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(result.payload.status).toBe("ok");
+    expect(result.payload).not.toHaveProperty("sharedGitChanged");
+  });
 });
 
 // Usefulness: verifies the dispatch seam carries the optional Checks, Notes,

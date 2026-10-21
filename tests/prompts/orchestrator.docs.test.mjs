@@ -85,6 +85,14 @@ const SHARED_PARENT_RULES = [
       /dispatch (?:a|the) worker/i,
       /not (?:a|the) reviewer/i,
     ),
+  // Issue #984: a change to shared Git state from a linked work tree is reported by item name, and
+  // the parent reports it.
+  (text) =>
+    expectRule(text, /sharedGitChanged/, /core\.hooksPath/, /hooks\//, /remote/i, /outside/i),
+  (text) => expectRule(text, /never a value/i, /URL/),
+  (text) => expectRule(text, /main work tree/i, /linked work tree/i),
+  (text) => expectRule(text, /Report it/i, /finish summary/i),
+  (text) => expectRule(text, /failed worker turn/i, /field too/i),
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

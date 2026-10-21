@@ -720,6 +720,7 @@ function dispatchPayload(roleName, result) {
       role: roleName,
       status: "error",
       error: result.error,
+      ...(result.sharedGitChanged ? { sharedGitChanged: result.sharedGitChanged } : {}),
       ...(result.testRun ? { testRun: result.testRun } : {}),
     };
   }
@@ -732,6 +733,10 @@ function dispatchPayload(roleName, result) {
   // `reviewed` field, which the finish gate reads.
   if (result.workTree) {
     payload.workTree = result.workTree;
+  }
+  // Names of the shared Git items the worker turn changed outside the work tree (issue #984).
+  if (result.sharedGitChanged) {
+    payload.sharedGitChanged = result.sharedGitChanged;
   }
   if (roleName === "reviewer") {
     payload.verdict = parseVerdict(result.response);
