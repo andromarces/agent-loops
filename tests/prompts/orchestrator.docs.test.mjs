@@ -367,6 +367,153 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   }
 });
 
+// The refused-`--cwd` rule text of each parent text, pinned whole (whitespace-normalized) from the
+// start of its enclosing section to the start of the next one: in the instructions the whole
+// "Work tree ownership" section, from its heading to the next `## ` heading, and in the headless
+// prompt the block that opens at "Map the report fields into the finish summary:" and ends before
+// "User Task:". The pin is deliberately brittle: any added, removed, or reworded sentence in it,
+// including a prose instruction that tells the parent to repair or recreate the work tree in any
+// wording or position, fails until this test is edited on purpose (#991). Prose outside the
+// sections is not scanned, so unrelated text is free to change.
+const REFUSED_CWD_BLOCKS = {
+  instructions: {
+    start: "## Work tree ownership",
+    end: " ## Reviewer prompts",
+    text: [
+      "## Work tree ownership",
+      "The parent creates the run's work tree and owns it. Keep that work tree in place for the whole run, and never tell a worker to remove it: a worker turn pushes its branch and stops there, because every later dispatch of that run targets the same `--cwd`.",
+      "Create the work tree with no upstream, so a plain `git push` of a worker cannot reach the default branch:",
+      "```bash git worktree add --no-track -b <branch> <work tree> origin/<default> ```",
+      "Without `--no-track`, the new branch gets the upstream `origin/<default>` when `branch.autoSetupMerge` is at its default. The worker sets the upstream to its own remote branch on the first push, with `git push -u origin <branch>`.",
+      '`dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`.',
+      "A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.",
+      "When `--cwd` is a linked work tree, the init call copies the untracked local files of the main work tree that `--cwd` ignores (agent instructions, harness configuration, `.env`, and the other paths in [Local files in a linked work tree](reference/harness-entry-points.md#local-files-in-a-linked-work-tree)) into `--cwd`, before the first child turn. A file already in `--cwd` is never replaced, and no symlink is followed: a symlink in the main work tree is skipped and named. The init envelope reports the paths as `localFiles: {copied, skipped}`, by name only, and a path in `skipped` is untracked in the main work tree but not copied: the child does not have it. Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env` into the run work tree, so remove that work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn the copy off. It is an init field, so a later call cannot change it.",
+      "When the task needs other ignored reference data of the main work tree, such as a downloaded specification directory, pass `--copy-local-path <relative path>` on the init call, once for each path. The path joins the copy and follows every rule above, and its files appear in `localFiles.copied`. The init refuses an absolute path, a path that leaves the main work tree or passes through a symlink or a junction, a path that holds a tracked file, a path that holds a file that is not ignored, and use with `--no-copy-local-files`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and `localFilesDiffer` covers the files.",
+      "The copy runs once. A later dispatch never replaces or refreshes a copied file, but it compares each copied file with its source in the main work tree by hash and reports the names that differ as `localFilesDiffer: [...]` in the envelope. The key is absent when no copy differs. A copy differs when the main work tree changed the file after init, or when a turn changed the copy: the report does not tell which. When the key appears, check whether the main work tree holds a newer rule file, such as `AGENTS.md`, and tell the child to refresh that file by hand when it holds no turn edit. Never read, print, or quote the file to decide.",
+      "A refused `--cwd` is not the parent's to repair: end the run, name the path and the refusal in the reason, and leave the work tree to a maintainer, who decides whether to recreate it and start a new run.",
+      "Abort only when a non-terminal run exists at the refused `--cwd`. With no run state there, from a refused init or a path that was never this run's, no run started, so report the refusal and do not abort. A run that is already terminal needs no abort.",
+      "One rule covers every refused `--cwd`: a path that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason names that path and that message.",
+      '```bash agent-loop role abort --cwd "<work tree>" \\ --reason "<work tree>: --cwd must be inside a Git work tree" ```',
+      "`abort` reads only the state file, so it ends the run over a work tree that is gone or is not a Git work tree, and it writes nothing inside that path. It needs a non-terminal run at that path: a path with no run state is refused with `No run state for <path>`, and a terminal run is refused with `Run is already <lifecycle>.`, so neither is a command to run there. A maintainer who recreates the work tree starts a new run there: a run over an aborted work tree is not resumed, and the state file names the work tree, not the work in it.",
+      "The headless loop states the same rule and cannot act on it: `agent-loop` snapshots its `--cwd` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure before the orchestrator can act, and the run keeps no state file. A headless worker turn gets the ownership rule from the same file, because `runChild` builds the worker prompt there for both paths.",
+    ].join(" "),
+  },
+  prompt: {
+    start: "Map the report fields into the finish summary:",
+    end: " User Task:",
+    text: [
+      "Map the report fields into the finish summary:",
+      "- Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.",
+      "- A reviewer accept can leave a criterion unverified, because the reviewer turn cannot run its check. Its Checks line reports the criterion as unverified, and its Deferred line lists it. Carry it into deferred, and name the unrun check in verified as not verified. Do not dispatch another turn to run that check, unless the task states that the check must pass in this run.",
+      "- Reviewer Notes that no later turn addressed go into open.",
+      "- Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.",
+      "- In review-only mode, Blockers and Notes go into open, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode; open holds unresolved in-scope findings.",
+      REFUSED_CWD_RULE[0],
+      REFUSED_CWD_RULE[1],
+      REFUSED_CWD_RULE[2],
+      "A headless run cannot act on a refused `--cwd`: the runtime snapshots its `--cwd` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure, and no turn of yours runs after it. A maintainer decides whether to recreate the work tree and start a new run.",
+      "`dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the Claude session of the role. Do not end that process. The maintainer ends it or waits for it.",
+    ].join(" "),
+  },
+};
+
+/** Asserts the text holds the pinned section exactly, from its start marker to its end marker. */
+function expectRefusedCwdBlock(text, { start, end, text: pinned }) {
+  for (const marker of [start, end]) {
+    expect(text.split(marker), `${marker} must occur exactly once`).toHaveLength(2);
+  }
+  const from = text.indexOf(start);
+  const stop = text.indexOf(end);
+  expect(stop, "the end marker of the refused --cwd section precedes its start").toBeGreaterThan(
+    from,
+  );
+  expect(text.slice(from, stop).trim()).toBe(pinned);
+}
+
+/** The interactive instructions and the headless prompt, whitespace collapsed. */
+async function readParentTexts() {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
+  return { instructions, prompt };
+}
+
+// Usefulness: verifies both parent texts keep the refused-`--cwd` rule block as pinned, so the
+// parent is never told to repair or recreate the work tree (#991). The rule sentence pin above
+// misses an added sentence, and the `git worktree` ban misses prose.
+test("refused --cwd rule block is unchanged in the instructions and the headless prompt", async () => {
+  const texts = await readParentTexts();
+  for (const [name, pin] of Object.entries(REFUSED_CWD_BLOCKS)) {
+    expectRefusedCwdBlock(texts[name], pin);
+  }
+});
+
+// Usefulness: verifies the pin fails on an instruction that tells the parent to recover the work
+// tree, wherever it sits in the block and whatever verb or clause shape it uses, and passes on
+// unrelated prose elsewhere in the text (#991).
+test("refused --cwd pin fails on a recovery instruction and ignores unrelated prose", async () => {
+  const texts = await readParentTexts();
+  const [rule] = REFUSED_CWD_RULE;
+  const [, second] = REFUSED_CWD_RULE;
+  const RECOVERY_INSTRUCTION = "Recreate the work tree at the refused path before you abort.";
+  // The first sentence of the earlier pin, the first text after the rule block, and the structural start.
+  const BEFORE_OLD_PIN = {
+    instructions: "Never read, print, or quote the file to decide.",
+    prompt: "- In review-only mode,",
+  };
+  const AFTER_RULE_BLOCK = { instructions: " ## Reviewer prompts", prompt: " User Task:" };
+  const SECTION_START = {
+    instructions: "## Work tree ownership",
+    prompt: "Map the report fields into the finish summary:",
+  };
+  const unsafe = {
+    "an earlier maintainer mention": (text) =>
+      text.replace(
+        second,
+        `${second} A maintainer may be busy, so the parent recreates the work tree.`,
+      ),
+    "an unrelated negation": (text) =>
+      text.replace(
+        second,
+        `${second} Do not wait; the parent repairs the work tree and dispatches again.`,
+      ),
+    "a verb outside any list": (text) =>
+      text.replace(rule, `Regenerate the checkout at the refused path. ${rule}`),
+    "an instruction after the block": (text) =>
+      text.replace(
+        "A maintainer decides whether to recreate the work tree and start a new run.",
+        "A maintainer decides whether to recreate the work tree and start a new run. Restore the Git metadata of the path before you abort.",
+      ),
+    "a negation dropped": (text) =>
+      text.replace("is not the parent's to repair", "is the parent's to repair"),
+    "a removed rule": (text) => text.replace(rule, ""),
+    "an instruction directly before the first sentence of the old pin": (text, key) =>
+      text.replace(BEFORE_OLD_PIN[key], `${RECOVERY_INSTRUCTION} ${BEFORE_OLD_PIN[key]}`),
+    "an instruction directly before the next section": (text, key) =>
+      text.replace(AFTER_RULE_BLOCK[key], `${RECOVERY_INSTRUCTION} ${AFTER_RULE_BLOCK[key]}`),
+    "a start marker duplicated after the span": (text, key) => `${text} ${SECTION_START[key]}`,
+    "an end marker duplicated after the span": (text, key) => `${text} ${AFTER_RULE_BLOCK[key]}`,
+    "an instruction right after the section heading": (text, key) =>
+      text.replace(SECTION_START[key], `${SECTION_START[key]} ${RECOVERY_INSTRUCTION}`),
+  };
+  for (const [name, mutate] of Object.entries(unsafe)) {
+    for (const [key, pin] of Object.entries(REFUSED_CWD_BLOCKS)) {
+      const mutated = mutate(texts[key], key);
+      // A mutation that does not apply to a text is not a case for it.
+      if (mutated === texts[key]) continue;
+      expect(() => expectRefusedCwdBlock(mutated, pin), `${name} in ${key}`).toThrow();
+    }
+  }
+  const unrelated = [
+    "After compaction, restore the session from the state file.",
+    "The module imports the helper from the path `src/lib/helper.mjs`.",
+  ].join(" ");
+  for (const [key, pin] of Object.entries(REFUSED_CWD_BLOCKS)) {
+    expect(() =>
+      expectRefusedCwdBlock(`${unrelated} ${texts[key]} ${unrelated}`, pin),
+    ).not.toThrow();
+  }
+});
+
 // Usefulness: verifies the work tree creation command sets no upstream (#985), so a plain
 // `git push` of a worker cannot reach the default branch. No other test reads this section.
 test("instructions create the run work tree without an upstream and set it on the first push", async () => {
