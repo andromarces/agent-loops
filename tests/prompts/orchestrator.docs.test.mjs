@@ -378,7 +378,7 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
 const REFUSED_CWD_BLOCKS = {
   instructions: {
     start: "## Work tree ownership",
-    end: " ## ",
+    end: " ## Reviewer prompts",
     text: [
       "## Work tree ownership",
       "The parent creates the run's work tree and owns it. Keep that work tree in place for the whole run, and never tell a worker to remove it: a worker turn pushes its branch and stops there, because every later dispatch of that run targets the same `--cwd`.",
@@ -417,12 +417,16 @@ const REFUSED_CWD_BLOCKS = {
   },
 };
 
-/** Asserts the text holds the pinned section exactly, from its start marker to the next one. */
+/** Asserts the text holds the pinned section exactly, from its start marker to its end marker. */
 function expectRefusedCwdBlock(text, { start, end, text: pinned }) {
+  for (const marker of [start, end]) {
+    expect(text.split(marker), `${marker} must occur exactly once`).toHaveLength(2);
+  }
   const from = text.indexOf(start);
-  expect(from, "the start of the refused --cwd section is missing").toBeGreaterThanOrEqual(0);
-  const stop = text.indexOf(end, from + start.length);
-  expect(stop, "the end of the refused --cwd section is missing").toBeGreaterThan(from);
+  const stop = text.indexOf(end);
+  expect(stop, "the end marker of the refused --cwd section precedes its start").toBeGreaterThan(
+    from,
+  );
   expect(text.slice(from, stop).trim()).toBe(pinned);
 }
 
@@ -486,6 +490,8 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
       text.replace(BEFORE_OLD_PIN[key], `${RECOVERY_INSTRUCTION} ${BEFORE_OLD_PIN[key]}`),
     "an instruction directly before the next section": (text, key) =>
       text.replace(AFTER_RULE_BLOCK[key], `${RECOVERY_INSTRUCTION} ${AFTER_RULE_BLOCK[key]}`),
+    "a start marker duplicated after the span": (text, key) => `${text} ${SECTION_START[key]}`,
+    "an end marker duplicated after the span": (text, key) => `${text} ${AFTER_RULE_BLOCK[key]}`,
     "an instruction right after the section heading": (text, key) =>
       text.replace(SECTION_START[key], `${SECTION_START[key]} ${RECOVERY_INSTRUCTION}`),
   };
