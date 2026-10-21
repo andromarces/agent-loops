@@ -272,7 +272,7 @@ Role flags:
                                 session id the parent-edit guard matches; later calls
                                 reject a changed value, and extend and declare-pr refuse a mismatch. The headless form (no subcommand) is the explicit
                                 unguarded path.
-  --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files
+  --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files / --copy-local-path
                                 First (init) call only. Later calls read these from the
                                 state file and reject any attempt to change them.
                                 Only extend takes --max-steps after init.
@@ -386,6 +386,12 @@ Options:
                                 .env, .envrc, and the other paths in the reference docs) before the
                                 first turn, never overwriting a file and never following a symlink.
                                 The transcript names the copied and skipped paths and never a content.
+  --copy-local-path <path>      role init only. Repeatable. Add one ignored path of the main work tree to
+                                the local-file copy, for example a downloaded specification directory.
+                                The path is relative to the main work tree. An absolute path, a path that
+                                leaves it, a path that holds a tracked file, and use with
+                                --no-copy-local-files are refused. Every copy rule applies. The init
+                                envelope lists the copied files in localFiles.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   --require-accept              Refuse finish until a reviewer turn reports on the state, and
                                 after a worker turn that reviewer turn accepts with a Checks

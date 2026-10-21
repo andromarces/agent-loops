@@ -265,6 +265,37 @@ async function locateWorkTrees(cwd, read) {
 }
 
 /**
+ * Normalizes one operator path (`--copy-local-path`) to a root-relative path with `/`
+ * separators. The path must name something inside the main work tree: an empty, absolute,
+ * drive-qualified, or control-character path is refused, and so is any `.` or `..` segment,
+ * `.git`, or a checkout under `.claude/worktrees`. A trailing separator is dropped.
+ * @param {string} raw
+ * @returns {string}
+ * @throws {Error} with a message that starts `--copy-local-path`
+ */
+export function normalizeLocalPath(raw) {
+  const refuse = (why) => new Error(`--copy-local-path ${JSON.stringify(raw)} is refused: ${why}`);
+  if (typeof raw !== "string" || raw === "") {
+    throw refuse("the path is empty");
+  }
+  if (hasControlCharacter(raw)) {
+    throw refuse("the path holds a control character");
+  }
+  if (isAbsolute(raw) || /^([a-zA-Z]:|[\\/])/.test(raw)) {
+    throw refuse("the path must be relative to the main work tree");
+  }
+  const parts = raw.replace(/[\\/]+$/, "").split(/[\\/]/);
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw refuse("the path must stay inside the main work tree");
+  }
+  const rel = parts.join("/");
+  if (isExcludedRel(rel)) {
+    throw refuse("the path holds repository state or a checkout");
+  }
+  return rel;
+}
+
+/**
  * Collects the candidate files of one listed path into `ctx.files` as
  * `{ rel, src, canon }`: `canon` is the canonical path of the file, which the copy
  * compares with the path it resolves again just before it reads. No symlink is followed: a symlink entry is skipped by name, and
@@ -327,6 +358,11 @@ async function collect(ctx, rel, abs) {
  * or link swapped between a check and the `copyFile` call can redirect that read
  * or write. A swap needs local write access to the work trees during init.
  *
+ * `extraPaths` (the operator's `--copy-local-path` values) are copied like the listed paths and
+ * obey every rule above. Each must pass `normalizeLocalPath`, and one that holds a file tracked in
+ * the main work tree is refused. Either refusal throws before any copy, so the init fails with no
+ * run left to abort.
+ *
  * `hooks` is a test seam. `beforeSourceOpen` and `beforeCopy` run with the file's
  * path name just before the source is opened and just before `copyFile`.
  * `signal` ends a running `git` read, and the copy then rejects with `isCanceled` set.
@@ -335,25 +371,35 @@ async function collect(ctx, rel, abs) {
  * can lower the bound but never raise it.
  * @param {string} cwd
  * @param {{ beforeSourceOpen?: (rel: string) => Promise<void>, beforeCopy?: (rel: string) => Promise<void> }} [hooks]
- * @param {{ signal?: AbortSignal, maxEntries?: number }} [options]
+ * @param {{ signal?: AbortSignal, maxEntries?: number, extraPaths?: string[] }} [options]
  * @returns {Promise<{ copied: string[], skipped: string[] } | null>}
  */
 export async function copyLocalFiles(
   cwd,
   hooks = {},
-  { signal, maxEntries = MAX_WALKED_ENTRIES } = {},
+  { signal, maxEntries = MAX_WALKED_ENTRIES, extraPaths = [] } = {},
 ) {
   if (!Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > MAX_WALKED_ENTRIES) {
     throw new RangeError(
       `local files: maxEntries must be an integer from 1 through ${MAX_WALKED_ENTRIES}`,
     );
   }
+  const extra = extraPaths.map(normalizeLocalPath);
   const read = (dir, args, options) => git(dir, args, { signal, ...options });
   const located = await locateWorkTrees(cwd, read);
   if (located === null) {
     return null;
   }
   const { entries, mainReal, rootReal } = located;
+  for (const rel of extra) {
+    const held = await read(mainReal, ["ls-files", "-z", "--", `:(literal)${rel}`]);
+    if (held.stdout !== "") {
+      throw new Error(
+        `--copy-local-path ${JSON.stringify(rel)} is refused: it holds a tracked file`,
+      );
+    }
+  }
+  const listed = [...new Set([...LOCAL_FILE_PATHS, ...extra])];
   // A registered work tree is never read from (inside the main work tree) and
   // never written into (inside the linked work tree), whether or not its `.git`
   // entry is still there.
@@ -367,7 +413,7 @@ export async function copyLocalFiles(
 
   const skipped = new Set();
   const files = [];
-  for (const rel of LOCAL_FILE_PATHS) {
+  for (const rel of listed) {
     // One bound and one result list per listed path, so a path past its bound is
     // dropped whole and never starves the next listed path.
     const ctx = {
@@ -399,7 +445,7 @@ export async function copyLocalFiles(
   // A tracked file is tracked under any spelling that reaches it, so the tracked
   // names under the listed paths are also compared by canonical path: on a
   // case-insensitive file system `.claude/config` is the tracked `.Claude/config`.
-  const listedRoots = new Set(LOCAL_FILE_PATHS.map((path) => foldName(path.split("/")[0])));
+  const listedRoots = new Set(listed.map((path) => foldName(path.split("/")[0])));
   const tracked = new Set(trackedNames);
   const trackedCanon = new Set();
   for (const name of trackedNames) {

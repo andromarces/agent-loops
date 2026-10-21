@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role.mjs";
@@ -12,7 +12,12 @@ import {
   setup,
   withRepo,
 } from "./role-helpers.mjs";
-import { createLinkedWithEnv, createTempRepo, exists } from "./runtime-helpers.mjs";
+import {
+  createLinkedWithEnv,
+  createLinkedWorkTree,
+  createTempRepo,
+  exists,
+} from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -213,4 +218,86 @@ test("a later dispatch of an opted-out run reports nothing", async () => {
   const result = await dispatchAgain(linked);
 
   expect(result.payload).not.toHaveProperty("localFilesDiffer");
+});
+
+// Usefulness: verifies acceptance 1 of issue #980 through the role init — the flag copies the
+// ignored directory before the first turn, lists it in `localFiles.copied`, and stores the path
+// so a later dispatch reports a changed copy in `localFilesDiffer`.
+// Not redundant: the lib tests call the copy directly; this one runs the flag, the state, and the later dispatch.
+test("--copy-local-path copies an ignored directory and later dispatches compare it", async () => {
+  await setup();
+  const { base, main, linked } = await createLinkedWorkTree({ ignore: ["specs/"] });
+  repos.push(base);
+  await mkdir(join(main, "specs"), { recursive: true });
+  await writeFile(join(main, "specs", "api.json"), "{}\n");
+
+  const init = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--copy-local-path", "specs"]), linked),
+    basicDeps(),
+  );
+
+  expect(init.exitCode).toBe(0);
+  expect(init.payload.localFiles.copied).toEqual(["specs/api.json"]);
+  expect((await readRepoState(linked)).copyLocalPaths).toEqual(["specs"]);
+
+  await writeFile(join(main, "specs", "api.json"), '{"v":2}\n');
+  const later = await executeRoleCommand(
+    withRepo(dispatchArgv(["--copy-local-path", "specs"]), linked),
+    basicDeps(),
+  );
+
+  expect(later.exitCode).toBe(0);
+  expect(later.payload.localFilesDiffer).toEqual(["specs/api.json"]);
+});
+
+// Usefulness: verifies acceptance 2 of issue #980 — a tracked, absolute, or outside path is
+// refused at init and no run state is written.
+// Not redundant: it covers the refusal on the role path, including the error envelope.
+test.each([["init.txt"], ["../outside"]])(
+  "--copy-local-path %s is refused at init and leaves no run",
+  async (path) => {
+    await setup();
+    const { linked } = await linkedWithEnv();
+
+    const result = await executeRoleCommand(
+      withRepo(dispatchArgv([...INIT_OVERRIDES, "--copy-local-path", path]), linked),
+      basicDeps(),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain("--copy-local-path");
+    await expect(readRepoState(linked)).rejects.toThrow();
+  },
+);
+
+// Usefulness: verifies the extra paths are an init field — a later call that names other paths
+// is refused, and the flag cannot join the opt-out.
+// Not redundant: it covers the change refusal and the conflict, which the copy test does not.
+test("--copy-local-path is fixed at init and conflicts with --no-copy-local-files", async () => {
+  await setup();
+  const { base, main, linked } = await createLinkedWorkTree({ ignore: ["specs/"] });
+  repos.push(base);
+  await mkdir(join(main, "specs"), { recursive: true });
+  await writeFile(join(main, "specs", "api.json"), "{}\n");
+  const conflict = await executeRoleCommand(
+    withRepo(
+      dispatchArgv([...INIT_OVERRIDES, "--copy-local-path", "specs", "--no-copy-local-files"]),
+      linked,
+    ),
+    basicDeps(),
+  );
+  expect(conflict.exitCode).toBe(1);
+  expect(conflict.payload.error).toContain("--no-copy-local-files");
+
+  await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--copy-local-path", "specs"]), linked),
+    basicDeps(),
+  );
+  const changed = await executeRoleCommand(
+    withRepo(dispatchArgv(["--copy-local-path", "other"]), linked),
+    basicDeps(),
+  );
+
+  expect(changed.exitCode).toBe(1);
+  expect(changed.payload.error).toContain("--copy-local-path cannot be changed after init");
 });

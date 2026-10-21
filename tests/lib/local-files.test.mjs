@@ -1319,3 +1319,67 @@ test.skipIf(process.platform === "win32")(
     expect(await findDifferingLocalFiles(join(alias, "linked"), [".env"])).toEqual([]);
   },
 );
+
+// Usefulness: verifies acceptance 1 of issue #980 — an operator path outside the fixed list is
+// copied like a listed one and named in `copied`.
+// Not redundant: every other copy test uses the fixed list. This one passes `extraPaths`.
+test("copies an operator-named ignored directory and names its files", async () => {
+  const { main, linked } = await createLinked({ ignore: ["specs/"] });
+  await mkdir(join(main, "specs", "api"), { recursive: true });
+  await writeFile(join(main, "specs", "api", "openapi.json"), "{}\n");
+
+  const report = await copyLocalFiles(linked, {}, { extraPaths: ["specs"] });
+
+  expect(report.copied).toEqual(["specs/api/openapi.json"]);
+  expect(await readFile(join(linked, "specs", "api", "openapi.json"), "utf8")).toBe("{}\n");
+});
+
+// Usefulness: verifies the existing rules still bind an operator path: no replacement, and
+// the entry bound skips the directory whole.
+// Not redundant: it proves the operator path shares the listed-path limits, not a bypass.
+test("an operator path never replaces a file and keeps the entry bound", async () => {
+  const { main, linked } = await createLinked({ ignore: ["specs/", "big/"] });
+  await mkdir(join(main, "specs"), { recursive: true });
+  await writeFile(join(main, "specs", "a.json"), "main\n");
+  await mkdir(join(main, "big"), { recursive: true });
+  await writeFile(join(main, "big", "1"), "1\n");
+  await writeFile(join(main, "big", "2"), "2\n");
+  await mkdir(join(linked, "specs"), { recursive: true });
+  await writeFile(join(linked, "specs", "a.json"), "linked\n");
+
+  const report = await copyLocalFiles(linked, {}, { extraPaths: ["specs", "big"], maxEntries: 1 });
+
+  expect(await readFile(join(linked, "specs", "a.json"), "utf8")).toBe("linked\n");
+  expect(report.copied).toEqual([]);
+  expect(report.skipped).toEqual(["big", "specs/a.json"]);
+});
+
+// Usefulness: verifies acceptance 2 of issue #980 — a tracked path is refused.
+// Not redundant: the fixed list drops a tracked file silently; an operator path must fail loudly.
+test("refuses an operator path that holds a tracked file", async () => {
+  const { main, linked } = await createLinked({ ignore: [] });
+  await mkdir(join(main, "docs"), { recursive: true });
+  await writeFile(join(main, "docs", "a.md"), "x\n");
+  await git(main, "add", "docs/a.md");
+  await git(main, "commit", "-m", "docs");
+
+  await expect(copyLocalFiles(linked, {}, { extraPaths: ["docs"] })).rejects.toThrow(/tracked/);
+  await expect(copyLocalFiles(linked, {}, { extraPaths: ["init.txt"] })).rejects.toThrow(/tracked/);
+});
+
+// Usefulness: verifies acceptance 2 of issue #980 — an absolute path or a path that leaves the
+// main work tree is refused before any copy.
+// Not redundant: it covers the path-shape refusals that no copy test reaches.
+test.each([
+  ["an absolute path", process.platform === "win32" ? "C:\\secret" : "/etc"],
+  ["a parent segment", "../outside"],
+  ["a nested parent segment", "specs/../../outside"],
+  ["a git directory", ".git"],
+  ["an empty path", ""],
+])("refuses %s as an operator path", async (_name, path) => {
+  const { linked } = await createLinked({ ignore: [] });
+
+  await expect(copyLocalFiles(linked, {}, { extraPaths: [path] })).rejects.toThrow(
+    /--copy-local-path/,
+  );
+});

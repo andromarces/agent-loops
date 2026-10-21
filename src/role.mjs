@@ -43,6 +43,7 @@ import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, failedTestRun, testCmdInput } from ".
 import { RoleError } from "./role-error.mjs";
 import { printEnvelope, errorResult, writeAllSync } from "./role-envelope.mjs";
 import {
+  normalizedLocalPaths,
   rejectInitFlagChanges,
   storedReviewerSandbox,
   validateInitFlags,
@@ -96,6 +97,7 @@ export function parseRoleArgs(argv) {
     transcript: null,
     resumeInterrupted: false,
     noCopyLocalFiles: false,
+    copyLocalPaths: [],
     reason: null,
     requireAccept: false,
     requireCi: null,
@@ -156,6 +158,10 @@ export function parseRoleArgs(argv) {
 
         case "--no-copy-local-files":
           args.noCopyLocalFiles = true;
+          return true;
+
+        case "--copy-local-path":
+          args.copyLocalPaths.push(readInline(arg));
           return true;
 
         case "--reason":
@@ -237,6 +243,8 @@ function initialState(args) {
     lifecycle: "active",
     pr: args.pr,
     copyLocalFiles: !args.noCopyLocalFiles,
+    // Operator paths that join the copy, kept so the run records what it asked for.
+    ...(args.copyLocalPaths.length > 0 ? { copyLocalPaths: normalizedLocalPaths(args) } : {}),
     // The mode of a Codex reviewer, `none` by default. A reviewer that is not Codex has none, so its
     // state keeps the earlier shape (ADR 0038).
     ...(args.reviewer !== null && normalizeAgent(args.reviewer) === "codex"
@@ -579,7 +587,11 @@ async function applyInitSideEffects(
   // state file exists, so a copy that throws leaves no run to abort, and
   // before the first child turn and snapshot, so every turn sees the files.
   if (state.copyLocalFiles) {
-    localFiles = await copyLocalFiles(args.cwd, {}, { signal });
+    localFiles = await copyLocalFiles(
+      args.cwd,
+      {},
+      { signal, extraPaths: state.copyLocalPaths ?? [] },
+    );
     if (localFiles) {
       // Names only, so a later dispatch can compare each copy with its source.
       state.localFilesCopied = localFiles.copied;
