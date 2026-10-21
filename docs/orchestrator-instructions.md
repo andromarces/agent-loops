@@ -790,7 +790,23 @@ agent-loop role wait-checks --all --cwd <dir> --pr <n> --head <sha> --timeout <s
 ```
 
 `--all` waits on every check of the commit `head` names, not only the required
-ones. It runs `gh pr checks <pr>` without `--required`, so it keeps the bound and
+ones. A check that a third-party app registers late is absent until it starts, so
+an `--all` pass can come before it. For a late check that you know by name, such as
+a deployment check, add `--expect "<check name>"` to `--all` once per name:
+
+```bash
+agent-loop role wait-checks --all --expect "<check name>" --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
+```
+
+The wait does not pass until each named check has a check run on `head`. A name
+matches the name of a check run exactly: it is trimmed, case-sensitive, and any
+app qualifies. A commit status of that name never matches, though commit statuses
+still count in the overall pass evaluation. An empty name is refused, and a
+repeated name is accepted. A name that
+never registers ends the wait at the bound with `timedOut: true` and the name in
+`awaiting`, which is never a pass. A failing check still settles the wait at
+once. `--expect` needs `--all` and is refused on every other operation.
+It runs `gh pr checks <pr>` without `--required`, so it keeps the bound and
 the exit-code rules above, and the states of the commit only make them stricter: exit 0 with no pending check listed is settled, exit 8 is pending, a
 listed failing check is settled, and every other exit 1 is unresolved with
 `status: "error"`. Exit 1 with no output and exactly `no checks reported on the

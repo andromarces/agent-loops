@@ -161,6 +161,29 @@ test("the parent surfaces state when to wait on every check of the head", async 
   }
 });
 
+// Usefulness: verifies both parent surfaces name `--expect` in the `noRequiredChecks` flow, so a
+// parent passes the name of a check that a third-party app registers late instead of reading an
+// early pass as evidence (issue #978).
+test("the parent surfaces name --expect for a check that registers late", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readFile(instructionsPath, "utf8");
+  for (const text of [prompt, instructions]) {
+    expectRule(text, /--expect/, /--all/, /late/i);
+    expectRule(text, /awaiting/, /never a pass/i);
+    // Exact name matching, and a commit status never satisfies a name (issue #978).
+    expectRule(text, /check run/i, /exact/i, /trimmed/i, /case-sensitiv/i, /any app/i);
+    expectRule(text, /commit status/i, /never match/i);
+  }
+});
+
 // The surfaces that state the empty-union rule of the gate. The reviewer found them contradicting
 // each other, so one rule is asserted on each. Only an allowlisted reply proves an absence, and a
 // private Free-plan repository must omit `--pr`. Usefulness: verifies every surface states the same
