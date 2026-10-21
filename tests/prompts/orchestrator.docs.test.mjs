@@ -367,6 +367,62 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   }
 });
 
+/**
+ * The refused-`--cwd` section of a parent text, from its first sentence to the next section.
+ * @param {string} text Whitespace-normalized instructions or headless prompt.
+ * @param {string} end Text that starts whatever follows the section.
+ */
+function refusedCwdSection(text, end) {
+  const start = text.indexOf(REFUSED_CWD_RULE[0]);
+  expect(start, "the refused --cwd rule is missing").toBeGreaterThanOrEqual(0);
+  const stop = text.indexOf(end, start);
+  expect(stop, `the section end ${end} is missing`).toBeGreaterThan(start);
+  return text.slice(start, stop);
+}
+
+// The only sentences of the section that name a repair or recreate act. Each one gives the act to a
+// maintainer or denies it to the parent.
+const MAINTAINER_ACT_SENTENCES = [
+  REFUSED_CWD_RULE[0],
+  "A maintainer who recreates the work tree starts a new run there: a run over an aborted work tree is not resumed, and the state file names the work tree, not the work in it.",
+  "A maintainer decides whether to recreate the work tree and start a new run.",
+];
+const WORK_TREE_ACT =
+  /\b(?:re-?creat|repair|rebuild|re-?build|restor|re-?init|re-?clon|re-?add|recover|fix)\w*/i;
+
+/** Sentences of the section that name a repair or recreate act and are not a maintainer sentence. */
+function parentWorkTreeActs(section) {
+  return section
+    .split(/(?<=\.)\s+(?=[A-Z`])/)
+    .filter((sentence) => WORK_TREE_ACT.test(sentence))
+    .filter((sentence) => !MAINTAINER_ACT_SENTENCES.includes(sentence));
+}
+
+// Usefulness: verifies the refused-`--cwd` guard rejects prose that tells the parent to recreate or
+// repair the work tree without a `git worktree` command (#991). The rule sentence guard cannot
+// catch an added sentence, and the `git worktree` ban cannot catch prose.
+test("refused --cwd text never tells the parent to recreate or repair the work tree", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
+  const texts = [
+    [instructions, "## Reviewer prompts"],
+    [prompt, "User Task:"],
+  ];
+  const mutations = [
+    "Recreate the work tree at the refused path, then retry the call.",
+    "Repair the work tree by restoring its Git metadata before you abort.",
+    "If the path is gone, rebuild the checkout there and start a new run yourself.",
+  ];
+  for (const [text, end] of texts) {
+    const section = refusedCwdSection(text, end);
+    expect(parentWorkTreeActs(section)).toEqual([]);
+    for (const mutation of mutations) {
+      const mutated = section.replace(REFUSED_CWD_RULE[1], `${REFUSED_CWD_RULE[1]} ${mutation}`);
+      expect(parentWorkTreeActs(mutated)).toEqual([mutation]);
+    }
+  }
+});
+
 // Usefulness: verifies the work tree creation command sets no upstream (#985), so a plain
 // `git push` of a worker cannot reach the default branch. No other test reads this section.
 test("instructions create the run work tree without an upstream and set it on the first push", async () => {
