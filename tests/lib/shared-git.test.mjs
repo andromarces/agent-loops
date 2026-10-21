@@ -1,14 +1,28 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
+// Makes every `git config` call exit with `configExit.code` when set; other calls reach real git.
+const configExit = vi.hoisted(() => ({ code: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      configExit.code !== null && args[0] === "config"
+        ? { exitCode: configExit.code, stdout: "", stderr: "fatal: bad config line 1" }
+        : real.execa(command, args, options),
+  };
+});
+
 import { diffSharedGit, readSharedGit } from "../../src/lib/shared-git.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
 
 const dirs = [];
 
 afterEach(async () => {
+  configExit.code = null;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
@@ -105,6 +119,45 @@ test("an added, retargeted, and removed remote is reported by name without its U
 
   expect(diffSharedGit(before, after)).toEqual(["remote.extra", "remote.gone", "remote.origin"]);
   expect(JSON.stringify(after)).not.toContain("token-9");
+});
+
+// Usefulness: verifies "a change to the local core.hooksPath is reported even when a worktree
+// config overrides it" (issue #984 review): the effective value is the override, so a read of the
+// effective value alone hides the change. Both the main and a linked work tree read it.
+for (const place of ["main", "linked"]) {
+  test(`a local core.hooksPath change under a worktree override is reported from the ${place} work tree`, async () => {
+    const { repo, linked } = await createLinkedWorkTree();
+    const cwd = place === "main" ? repo : linked;
+    await execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repo });
+    await execa("git", ["config", "--local", "core.hooksPath", "local-a"], { cwd });
+    await execa("git", ["config", "--worktree", "core.hooksPath", "worktree-a"], { cwd });
+
+    const changed = await changedBy(cwd, () =>
+      execa("git", ["config", "--local", "core.hooksPath", "local-b"], { cwd }),
+    );
+    expect(changed).toEqual(["core.hooksPath"]);
+
+    const worktreeChanged = await changedBy(cwd, () =>
+      execa("git", ["config", "--worktree", "core.hooksPath", "worktree-b"], { cwd }),
+    );
+    expect(worktreeChanged).toEqual(["core.hooksPath"]);
+  });
+}
+
+// Usefulness: verifies "an unexpected `git config` exit is a read failure, not an empty state"
+// (issue #984 review): an empty state read before or after a turn would report a false change.
+test("a git config read that exits unexpectedly rejects", async () => {
+  const { linked } = await createLinkedWorkTree();
+  configExit.code = 128;
+  await expect(readSharedGit(linked)).rejects.toThrow(/config/);
+});
+
+// Usefulness: verifies "exit 1 from `git config` is the documented unset value, not a failure", so
+// a repository with no hooksPath and no remote still reads.
+test("a git config read that exits 1 for an unset key reads as empty", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const state = await readSharedGit(linked);
+  expect(state.remotes).toEqual({});
 });
 
 // Usefulness: verifies "a read from a directory outside a repository fails", so the caller can warn

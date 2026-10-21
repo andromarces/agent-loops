@@ -9,9 +9,11 @@ const HOOKS_PATH_ITEM = "core.hooksPath";
 /**
  * Reads the Git state that every work tree of a repository shares and that a turn can change from
  * a linked work tree: `core.hooksPath`, the hook files in the common `hooks/` directory, and the
- * configured remotes. The result holds digests only, so a config value or a URL never leaves this
- * function. `bound` takes `signal` and `timeoutMs`, as for `snapshot`.
- * @returns {Promise<{ hooksPath: string | null, hooks: Record<string, string | null>, remotes: Record<string, string> }>}
+ * configured remotes. `core.hooksPath` is read in the local and the worktree scope. The result holds
+ * digests only, so a config value or a URL never leaves this function. An unexpected `git` exit
+ * throws a `SnapshotError`, because an empty state would read as a change. `bound` takes `signal`
+ * and `timeoutMs`, as for `snapshot`.
+ * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string> }>}
  */
 export async function readSharedGit(cwd, bound) {
   const commonResult = await gitRead(cwd, ["rev-parse", "--git-common-dir"], bound);
@@ -21,12 +23,27 @@ export async function readSharedGit(cwd, bound) {
   const commonDir = commonResult.stdout.trim();
   const commonPath = isAbsolute(commonDir) ? commonDir : join(cwd, commonDir);
 
-  // Exit 1 means the key is unset.
-  const hooksResult = await gitRead(cwd, ["config", "--get", HOOKS_PATH_ITEM], bound);
-  const hooksPath = hooksResult.exitCode === 0 ? sha256(hooksResult.stdout) : null;
+  // A worktree-scope value overrides the local one, so each scope is read on its own: the
+  // effective value would hide a change to the other scope.
+  // The worktree scope exists only under `extensions.worktreeConfig`; git refuses `--worktree`
+  // in a repository with several work trees otherwise.
+  const readConfig = (args) => gitRead(cwd, ["config", ...args], { ...bound, allowExit: [0, 1] });
+  const extension = await readConfig([
+    "--local",
+    "--type=bool",
+    "--get",
+    "extensions.worktreeConfig",
+  ]);
+  const scopeFlags = extension.stdout.trim() === "true" ? ["--local", "--worktree"] : ["--local"];
+  const scopes = [];
+  for (const scope of scopeFlags) {
+    // Exit 1 means the key is unset in that scope; any other exit throws.
+    const result = await readConfig([scope, "--get", HOOKS_PATH_ITEM]);
+    scopes.push(result.exitCode === 0 ? result.stdout : null);
+  }
 
   return {
-    hooksPath,
+    hooksPath: sha256(JSON.stringify(scopes)),
     hooks: await readHooks(join(commonPath, "hooks")),
     remotes: await readRemotes(cwd, bound),
   };
@@ -52,9 +69,12 @@ async function readHooks(hooksDir) {
 
 // One digest per remote name over all its `remote.<name>.*` entries.
 async function readRemotes(cwd, bound) {
-  const result = await gitRead(cwd, ["config", "-z", "--get-regexp", "^remote\\."], bound);
-  // Exit 1 means no remote entry.
-  if (result.exitCode !== 0) return {};
+  // Exit 1 means no remote entry; any other exit throws.
+  const result = await gitRead(cwd, ["config", "-z", "--get-regexp", "^remote\\."], {
+    ...bound,
+    allowExit: [0, 1],
+  });
+  if (result.exitCode === 1) return {};
   const entries = new Map();
   for (const record of result.stdout.split("\0").filter(Boolean)) {
     const newline = record.indexOf("\n");

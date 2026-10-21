@@ -88,6 +88,7 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /never a value/i, /URL/),
   (text) => expectRule(text, /main work tree/i, /linked work tree/i),
   (text) => expectRule(text, /Report it/i, /finish summary/i),
+  (text) => expectRule(text, /failed worker turn/i, /field too/i),
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

@@ -271,8 +271,8 @@ Apply these parent rules:
   the work tree: `core.hooksPath`, a file in the common `hooks/` directory, or a remote. The field
   names the items, such as `core.hooksPath`, `hooks/pre-push`, and `remote.origin`, and never a
   value or a URL. A change there affects the main work tree and every other linked work tree, and
-  `workTree` does not show it. Report it in the finish summary under `open`. A turn that changed
-  none carries no field.
+  `workTree` does not show it. Report it in the finish summary under `open`. A failed worker turn
+  carries the field too. A turn that changed none carries no field.
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.

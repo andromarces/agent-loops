@@ -313,9 +313,21 @@ export async function runChild(options) {
   };
 
   // Declared outside the try so a turn that fails after the command ran still
-  // reports what the runtime read and the work tree change it saw (ADR 0017).
+  // reports what the runtime read and the work tree change it saw (ADR 0017), and so a failed
+  // worker turn still compares the shared Git state it may have changed (issue #984).
   let testRun = null;
   let keepReplacedMark = false;
+  let sharedBefore = null;
+
+  /** Names of the shared Git items that differ from the pre-turn read, or [] when none or unread. */
+  const readSharedGitChanged = async () => {
+    const after = sharedBefore ? await readShared() : null;
+    const changed = after ? diffSharedGit(sharedBefore, after) : [];
+    if (changed.length > 0) {
+      logWarn(`worker: shared Git state changed: ${changed.join(", ")}`);
+    }
+    return changed;
+  };
   try {
     let reviewed = null;
     let prChecks = null;
@@ -334,7 +346,7 @@ export async function runChild(options) {
       roleName === "reviewer" ? await createReviewerScratch(cwd, { signal }) : null;
     // A linked work tree shares config, hooks, and remotes with the main work tree, which the work
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
-    const sharedBefore = roleName === "worker" ? await readShared() : null;
+    sharedBefore = roleName === "worker" ? await readShared() : null;
     let response;
     try {
       response = readOnly
@@ -360,11 +372,7 @@ export async function runChild(options) {
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     const workTree = roleName === "worker" ? await readWorkTree() : null;
-    const sharedAfter = sharedBefore ? await readShared() : null;
-    const sharedGitChanged = sharedAfter ? diffSharedGit(sharedBefore, sharedAfter) : [];
-    if (sharedGitChanged.length > 0) {
-      logWarn(`worker: shared Git state changed: ${sharedGitChanged.join(", ")}`);
-    }
+    const sharedGitChanged = await readSharedGitChanged();
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
@@ -410,10 +418,13 @@ export async function runChild(options) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
     }
     logWarn(timedOut ? errorMessage : `${roleName}: ${firstErrorLine(errorMessage)}`);
+    // The failed turn may have changed the shared state before it failed.
+    const sharedGitChanged = await readSharedGitChanged();
     return {
       role: roleName,
       status: "error",
       error: errorMessage,
+      ...(sharedGitChanged.length > 0 ? { sharedGitChanged } : {}),
       ...(testRun ? { testRun } : {}),
     };
   } finally {
