@@ -576,6 +576,45 @@ test("a worker turn whose post-turn shared Git read fails reports no shared Git 
   });
 });
 
+// Usefulness: verifies requirement "a failed shared Git read warns without the Git stderr or a
+// hook path, and leaves the envelope and the state file free of both" (issue #992): the unit tests
+// cover the thrown error, and only a dispatch covers the warning that the worker turn writes.
+test("a failed shared Git read warns without a marker and reports no shared Git change", async () => {
+  const marker = "secret-marker-9402";
+  await withLinkedWorkTree(async (linked, repo) => {
+    await execa("git", ["config", "core.hooksPath", `/${marker}/hooks`], { cwd: repo });
+    const { execa: realExeca } = await vi.importActual("execa");
+    const breakingWorker = recordingAdapter([
+      async () => {
+        gitDouble.answer = (command, args, options) =>
+          args[0] === "config"
+            ? { exitCode: 128, stdout: "", stderr: `fatal: bad config line in /${marker}/hooks` }
+            : realExeca(command, args, options);
+        return WORKER_REPLY;
+      },
+    ]);
+    const agents = { fake1: breakingWorker, fake2: recordingAdapter([]) };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+        agents,
+        stdin: stdinPrompt,
+      });
+      const warnings = errorSpy.mock.calls.map((call) => call.join(" "));
+      expect(warnings.some((line) => line.includes("shared Git state read failed"))).toBe(true);
+      expect(warnings.join("\n")).not.toContain(marker);
+      expect(result.payload.status).toBe("ok");
+      expect(result.payload).not.toHaveProperty("sharedGitChanged");
+      expect(JSON.stringify(result.payload)).not.toContain(marker);
+      const { lastResult } = await readRepoState(linked);
+      expect(lastResult).not.toHaveProperty("sharedGitChanged");
+      expect(JSON.stringify(lastResult)).not.toContain(marker);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
 // Usefulness: verifies the dispatch seam carries the optional Checks, Notes,
 // and Deferred labels from a reviewer turn into the envelope (issue #214,
 // issue #217).
