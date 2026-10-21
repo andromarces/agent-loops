@@ -357,11 +357,9 @@ test("exec replaces an empty root value for a worker spawn", async () => {
 
 const NPM_LOG_NAME = /^npm_config_logs[_-](dir|max)$/i;
 const PRINT_NPM_LOG = `console.log(JSON.stringify(Object.entries(process.env).filter(([name]) => ${NPM_LOG_NAME}.test(name)).map(([name, value]) => [name.toLowerCase(), value])))`;
-// The npm log settings that the child sees, names lower-cased and repeats dropped.
-const npmLogOf = async (options) => {
-  const seen = JSON.parse((await exec(process.execPath, ["-e", PRINT_NPM_LOG], options)).stdout);
-  return [...new Set(seen.map((entry) => JSON.stringify(entry)))].map((entry) => JSON.parse(entry));
-};
+// The npm log settings that the child sees, one entry per spelling, names lower-cased.
+const npmLogOf = async (options) =>
+  JSON.parse((await exec(process.execPath, ["-e", PRINT_NPM_LOG], options)).stdout);
 const clearNpmLog = () => {
   for (const name of Object.keys(process.env).filter((key) => NPM_LOG_NAME.test(key))) {
     vi.stubEnv(name, undefined);
@@ -401,4 +399,28 @@ test("exec keeps a user-set npm log directory or maximum for a worker spawn", as
   ).toEqual([["npm_config_logs_max", "5"]]);
   vi.stubEnv("Npm_Config_Logs_Dir", dir);
   expect(await npmLogOf({ role: "worker", cwd: tmpdir() })).toEqual([["npm_config_logs_dir", dir]]);
+});
+
+// Usefulness: verifies an empty alias of a log setting cannot mask a user value, whichever of the inherited or caller environments holds each spelling, and that exactly one spelling reaches npm (Windows treats spellings that differ in case as one name).
+test("exec leaves one spelling of a user-set npm log setting for a worker spawn", async () => {
+  clearNpmLog();
+  const dir = join(tmpdir(), "npm-logs");
+  vi.stubEnv("NPM_CONFIG_LOGS_DIR", "");
+  expect(
+    await npmLogOf({ role: "worker", cwd: tmpdir(), env: { npm_config_logs_dir: dir } }),
+  ).toEqual([["npm_config_logs_dir", dir]]);
+  vi.stubEnv("NPM_CONFIG_LOGS_DIR", "");
+  vi.stubEnv("npm_config_logs_dir", dir);
+  expect(await npmLogOf({ role: "reviewer", cwd: tmpdir() })).toEqual([
+    ["npm_config_logs_dir", dir],
+  ]);
+  clearNpmLog();
+  vi.stubEnv("NPM_CONFIG_LOGS_MAX", "");
+  expect(
+    await npmLogOf({ role: "worker", cwd: tmpdir(), env: { npm_config_logs_max: "5" } }),
+  ).toEqual([["npm_config_logs_max", "5"]]);
+  vi.stubEnv("NPM_CONFIG_LOGS_MAX", "5");
+  expect(
+    await npmLogOf({ role: "worker", cwd: tmpdir(), env: { npm_config_logs_max: "" } }),
+  ).toEqual([["npm_config_logs_max", "5"]]);
 });

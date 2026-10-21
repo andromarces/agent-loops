@@ -28,25 +28,31 @@ export function rootPins() {
 
 // npm reads these settings from an environment name of any case, with `_` or `-` before the key.
 const NPM_LOG_NAME = /^npm_config_logs[_-](dir|max)$/i;
+const settingOf = (name) => NPM_LOG_NAME.exec(name)?.[1].toLowerCase();
 
 /**
- * The environment entries that stop npm from writing debug logs in a child turn (issue #995). npm
- * writes them to its cache, outside the work tree and the turn temporary directory, and the cleanup
- * rule of a turn cannot remove them. `npm_config_logs_max=0` writes none for the run. `callerEnv`
- * is the `env` option of the spawn. A non-empty `logs_dir` or `logs_max` in the process or the
- * caller environment, in any spelling, is a user value: it is kept and nothing is added. An empty
- * one counts as unset, as for the roots. Every empty `logs_max` spelling gets the default and every
- * empty `logs_dir` spelling is cleared with `undefined`, so no spelling reaches npm to conflict
- * with the default. A `logs_max` spelling is never cleared, because Windows treats names of any
- * case as one and the clear would remove the default as well. Apply the result after `callerEnv`.
+ * Returns `env`, the complete child environment, with the npm log settings resolved to one spelling
+ * each, so npm writes no debug log in a child turn that the cleanup rule cannot clear (issue #995).
+ * npm writes them to its cache, outside the work tree and the turn temporary directory.
+ * `callerEnv` is the `env` option of the spawn. For each of `logs_dir` and `logs_max`, the value
+ * is the last non-empty one in the process environment and then in `callerEnv`, in any spelling,
+ * so a caller wins. Every spelling is removed and the value is set once, as `npm_config_<key>`. An
+ * empty value counts as unset, as for the roots, and no empty alias is left to mask a user value
+ * (names that differ in case are one name on Windows). With neither setting held, `logs_max` is
+ * `0`, which writes no log for the run. A held `logs_dir` keeps the default out, so the chosen
+ * directory still receives its logs. The caller must spawn without `extendEnv`, because a name
+ * that is missing from `env` would return from the process environment.
  */
-export function npmLogPins(callerEnv = {}) {
-  const held = [process.env, callerEnv].flatMap((env) =>
-    Object.entries(env).filter(([name]) => NPM_LOG_NAME.test(name)),
-  );
-  if (held.some(([, value]) => value)) return {};
-  return {
-    ...Object.fromEntries(held.map(([name]) => [name, /max$/i.test(name) ? "0" : undefined])),
-    npm_config_logs_max: "0",
-  };
+export function withNpmLogSettings(env, callerEnv = {}) {
+  const held = {};
+  for (const source of [process.env, callerEnv]) {
+    for (const [name, value] of Object.entries(source)) {
+      const key = settingOf(name);
+      if (key && value) held[key] = value;
+    }
+  }
+  const out = Object.fromEntries(Object.entries(env).filter(([name]) => !settingOf(name)));
+  if (!held.dir && !held.max) held.max = "0";
+  for (const [key, value] of Object.entries(held)) out[`npm_config_logs_${key}`] = value;
+  return out;
 }
