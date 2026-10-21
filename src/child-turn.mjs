@@ -4,6 +4,7 @@ import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message
 import { DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
+import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
 import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import {
   carryTestRun,
@@ -294,6 +295,23 @@ export async function runChild(options) {
     }
   };
 
+  /**
+   * Reads the shared Git state (hooks path, common hook files, remotes) of a worker turn. A failed
+   * read warns and returns null, so the turn reports no shared Git change rather than a guess. A
+   * cancel throws.
+   */
+  const readShared = async () => {
+    try {
+      return await readSharedGit(cwd, { signal });
+    } catch (err) {
+      if (readProp(err, "isCanceled")) throw err;
+      logWarn(
+        `worker: the shared Git state read failed: ${firstErrorLine(readableErrorText(err))}`,
+      );
+      return null;
+    }
+  };
+
   // Declared outside the try so a turn that fails after the command ran still
   // reports what the runtime read and the work tree change it saw (ADR 0017).
   let testRun = null;
@@ -314,6 +332,9 @@ export async function runChild(options) {
     // removal can neither read as a mutation nor hide one (issue #920).
     const scratchDir =
       roleName === "reviewer" ? await createReviewerScratch(cwd, { signal }) : null;
+    // A linked work tree shares config, hooks, and remotes with the main work tree, which the work
+    // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
+    const sharedBefore = roleName === "worker" ? await readShared() : null;
     let response;
     try {
       response = readOnly
@@ -339,6 +360,11 @@ export async function runChild(options) {
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     const workTree = roleName === "worker" ? await readWorkTree() : null;
+    const sharedAfter = sharedBefore ? await readShared() : null;
+    const sharedGitChanged = sharedAfter ? diffSharedGit(sharedBefore, sharedAfter) : [];
+    if (sharedGitChanged.length > 0) {
+      logWarn(`worker: shared Git state changed: ${sharedGitChanged.join(", ")}`);
+    }
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
@@ -354,6 +380,7 @@ export async function runChild(options) {
       ...(shellDenied ? { shellDenied } : {}),
       ...(reviewed ? { reviewed } : {}),
       ...(workTree ? { workTree } : {}),
+      ...(sharedGitChanged.length > 0 ? { sharedGitChanged } : {}),
       ...(prChecks ? { prChecks } : {}),
       ...(testRun ? { testRun } : {}),
     };

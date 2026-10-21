@@ -433,6 +433,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
 - A worker result carries workTree, the runtime-owned head and clean state read after the turn. For PR work, when workTree shows clean: false, dispatch a worker to commit or discard the leftover change, not a reviewer.
+- A worker envelope carries sharedGitChanged only when the turn changed shared Git state outside the work tree: core.hooksPath, a file in the common hooks/ directory, or a remote. The field names the items, such as core.hooksPath, hooks/pre-push, and remote.origin, and never a value or a URL. A change there affects the main work tree and every other linked work tree, and workTree does not show it. Report it in the finish summary under open. A turn that changed none carries no field.
 - Treat an accept without a Checks line as not accepted.
 - When the PR head cannot be resolved, do not finish as verified. Abort, or record the unresolved compare under notDone and open in the finish summary.
 - When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event and the headless run exits 4 instead of 0, so the recorded finish stays machine-distinct from a verified one. That marker is the only machine-readable record of the compare, and nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.
@@ -473,6 +474,7 @@ export function resultPrompt({ result, stepsUsed, maxSteps, declaredPr = null })
     ...(result.status === "ok" ? { response: result.response } : { error: result.error }),
     ...(result.reviewed ? { reviewed: result.reviewed } : {}),
     ...(result.workTree ? { workTree: result.workTree } : {}),
+    ...(result.sharedGitChanged ? { sharedGitChanged: result.sharedGitChanged } : {}),
     // The status the runtime read for a declared PR, so the orchestrator holds
     // both it and the reviewer `Checks` line in one prompt and can compare them
     // (#320). A result with no read carries no field, so a turn that made no

@@ -733,6 +733,10 @@ function dispatchPayload(roleName, result) {
   if (result.workTree) {
     payload.workTree = result.workTree;
   }
+  // Names of the shared Git items the worker turn changed outside the work tree (issue #984).
+  if (result.sharedGitChanged) {
+    payload.sharedGitChanged = result.sharedGitChanged;
+  }
   if (roleName === "reviewer") {
     payload.verdict = parseVerdict(result.response);
     if (result.reviewed) {
