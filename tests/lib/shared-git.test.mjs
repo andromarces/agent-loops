@@ -4,15 +4,18 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 // Makes every `git config` call exit with `configExit.code` when set; other calls reach real git.
-const configExit = vi.hoisted(() => ({ code: null }));
+// `gitCalls` counts the `git` processes started.
+const configExit = vi.hoisted(() => ({ code: null, gitCalls: 0 }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
-    execa: (command, args, options) =>
-      configExit.code !== null && args[0] === "config"
+    execa: (command, args, options) => {
+      configExit.gitCalls++;
+      return configExit.code !== null && args[0] === "config"
         ? { exitCode: configExit.code, stdout: "", stderr: "fatal: bad config line 1" }
-        : real.execa(command, args, options),
+        : real.execa(command, args, options);
+    },
   };
 });
 
@@ -23,6 +26,7 @@ const dirs = [];
 
 afterEach(async () => {
   configExit.code = null;
+  configExit.gitCalls = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
@@ -158,6 +162,16 @@ test("a git config read that exits 1 for an unset key reads as empty", async () 
   const { linked } = await createLinkedWorkTree();
   const state = await readSharedGit(linked);
   expect(state.remotes).toEqual({});
+});
+
+// Usefulness: verifies "a shared Git read starts at most two git processes": every worker turn reads
+// twice, and a read of five sequential processes pushed the three-dispatch tests of
+// role.reviewer-sandbox past their 15 s bound on the Windows CI runner.
+test("a shared Git read starts at most two git processes", async () => {
+  const { linked } = await createLinkedWorkTree();
+  configExit.gitCalls = 0;
+  await readSharedGit(linked);
+  expect(configExit.gitCalls).toBeLessThanOrEqual(2);
 });
 
 // Usefulness: verifies "a read from a directory outside a repository fails", so the caller can warn

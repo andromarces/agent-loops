@@ -9,43 +9,54 @@ const HOOKS_PATH_ITEM = "core.hooksPath";
 /**
  * Reads the Git state that every work tree of a repository shares and that a turn can change from
  * a linked work tree: `core.hooksPath`, the hook files in the common `hooks/` directory, and the
- * configured remotes. `core.hooksPath` is read in the local and the worktree scope. The result holds
- * digests only, so a config value or a URL never leaves this function. An unexpected `git` exit
- * throws a `SnapshotError`, because an empty state would read as a change. `bound` takes `signal`
- * and `timeoutMs`, as for `snapshot`.
+ * configured remotes. `core.hooksPath` and the remotes come from the local and the worktree scope
+ * on their own: the effective value of `core.hooksPath` would hide a change to the scope that the
+ * other one overrides. The result holds digests only, so a config value or a URL never leaves this
+ * function. An unexpected `git` exit throws a `SnapshotError`, because an empty state would read as
+ * a change. The read starts two `git` processes at once, because every worker turn reads twice and
+ * a process start is slow on Windows. `bound` takes `signal` and `timeoutMs`, as for `snapshot`.
  * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string> }>}
  */
 export async function readSharedGit(cwd, bound) {
-  const commonResult = await gitRead(cwd, ["rev-parse", "--git-common-dir"], bound);
+  const [commonResult, listResult] = await Promise.all([
+    gitRead(cwd, ["rev-parse", "--git-common-dir"], bound),
+    gitRead(cwd, ["config", "-z", "--list", "--show-scope"], { ...bound, allowExit: [0] }),
+  ]);
   if (commonResult.exitCode !== 0) {
     throw new SnapshotError(`the shared Git directory could not be read: ${cwd}`);
   }
   const commonDir = commonResult.stdout.trim();
   const commonPath = isAbsolute(commonDir) ? commonDir : join(cwd, commonDir);
+  const { hooksPath, remotes } = readConfigState(listResult.stdout);
 
-  // A worktree-scope value overrides the local one, so each scope is read on its own: the
-  // effective value would hide a change to the other scope.
-  // The worktree scope exists only under `extensions.worktreeConfig`; git refuses `--worktree`
-  // in a repository with several work trees otherwise.
-  const readConfig = (args) => gitRead(cwd, ["config", ...args], { ...bound, allowExit: [0, 1] });
-  const extension = await readConfig([
-    "--local",
-    "--type=bool",
-    "--get",
-    "extensions.worktreeConfig",
-  ]);
-  const scopeFlags = extension.stdout.trim() === "true" ? ["--local", "--worktree"] : ["--local"];
-  const scopes = [];
-  for (const scope of scopeFlags) {
-    // Exit 1 means the key is unset in that scope; any other exit throws.
-    const result = await readConfig([scope, "--get", HOOKS_PATH_ITEM]);
-    scopes.push(result.exitCode === 0 ? result.stdout : null);
+  return { hooksPath, hooks: await readHooks(join(commonPath, "hooks")), remotes };
+}
+
+// With `-z` and `--show-scope`, each entry is `<scope>NUL<key>LF<value>NUL`, and a key with no
+// value has no LF. Git writes the variable name in lower case.
+function readConfigState(listing) {
+  const hooksPath = { local: [], worktree: [] };
+  const remotes = new Map();
+  const tokens = listing.split("\0");
+  for (let i = 0; i + 1 < tokens.length; i += 2) {
+    const scope = tokens[i];
+    if (scope !== "local" && scope !== "worktree") continue;
+    const entry = tokens[i + 1];
+    const newline = entry.indexOf("\n");
+    const key = newline === -1 ? entry : entry.slice(0, newline);
+    const value = newline === -1 ? null : entry.slice(newline + 1);
+    if (key === "core.hookspath") {
+      hooksPath[scope].push(value);
+    } else if (key.startsWith("remote.")) {
+      const name = key.slice("remote.".length, key.lastIndexOf("."));
+      remotes.set(name, [...(remotes.get(name) ?? []), [scope, entry]]);
+    }
   }
-
   return {
-    hooksPath: sha256(JSON.stringify(scopes)),
-    hooks: await readHooks(join(commonPath, "hooks")),
-    remotes: await readRemotes(cwd, bound),
+    hooksPath: sha256(JSON.stringify(hooksPath)),
+    remotes: Object.fromEntries(
+      [...remotes].map(([name, list]) => [name, sha256(JSON.stringify(list.sort()))]),
+    ),
   };
 }
 
@@ -65,28 +76,6 @@ async function readHooks(hooksDir) {
     hooks[name] = await sha256File(join(hooksDir, name));
   }
   return hooks;
-}
-
-// One digest per remote name over all its `remote.<name>.*` entries.
-async function readRemotes(cwd, bound) {
-  // Exit 1 means no remote entry; any other exit throws.
-  const result = await gitRead(cwd, ["config", "-z", "--get-regexp", "^remote\\."], {
-    ...bound,
-    allowExit: [0, 1],
-  });
-  if (result.exitCode === 1) return {};
-  const entries = new Map();
-  for (const record of result.stdout.split("\0").filter(Boolean)) {
-    const newline = record.indexOf("\n");
-    const key = newline === -1 ? record : record.slice(0, newline);
-    const name = key.slice("remote.".length, key.lastIndexOf("."));
-    entries.set(name, [...(entries.get(name) ?? []), record]);
-  }
-  return Object.fromEntries(
-    [...entries]
-      .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([n, list]) => [n, sha256(list.sort().join("\0"))]),
-  );
 }
 
 /**
