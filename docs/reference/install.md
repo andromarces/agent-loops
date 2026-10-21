@@ -234,6 +234,16 @@ npm install -g --allow-git=all --allow-scripts=@andromarces/agent-loops github:a
 
 The `bin` script keeps its `#!/usr/bin/env node` shebang and executable bit, so macOS and Linux link an executable file. npm generates the `.cmd` and `.ps1` shims on Windows, so `agent-loop` resolves in PowerShell and cmd. An `agent-loops` alias points at the same CLI, so `npx @andromarces/agent-loops` and `pnpm dlx @andromarces/agent-loops` resolve it. The command locates its package files relative to the installed script, not `process.cwd()`, so it works from any directory; `--cwd` selects the work tree.
 
+### Copy extra local files into a run work tree
+
+A run in a linked work tree gets a fixed set of ignored local files from the main work tree, such as `.env` and `AGENTS.md` (see [Local files in a linked work tree](harness-entry-points.md#local-files-in-a-linked-work-tree)). To add ignored reference data, such as a downloaded specification directory, pass `--copy-local-path <relative path>` on the first `agent-loop role` call, once for each path:
+
+```bash
+agent-loop role --task "..." --worker claude --reviewer agy --parent-session <id>   --copy-local-path docs/api-spec
+```
+
+The path is relative to the main work tree and must name an ignored, untracked path. The init refuses an absolute path, a path outside the main work tree, a path with a symlink or a junction, a tracked path, a path that holds a file that is not ignored, and use with `--no-copy-local-files`, before it writes any state. The init envelope lists the copied files in `localFiles.copied`, and a later call must repeat the same paths or omit the flag. The flag belongs to `agent-loop role`. The headless `agent-loop` command has no such flag.
+
 ### From a clone (development)
 
 Development uses pnpm and the repository Git hooks. The dev toolchain is

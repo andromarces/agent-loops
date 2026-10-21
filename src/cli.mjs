@@ -389,8 +389,9 @@ Options:
   --copy-local-path <path>      role init only. Repeatable. Add one ignored path of the main work tree to
                                 the local-file copy, for example a downloaded specification directory.
                                 The path is relative to the main work tree. An absolute path, a path that
-                                leaves it, a path that holds a tracked file, and use with
-                                --no-copy-local-files are refused. Every copy rule applies. The init
+                                leaves it or passes through a symlink or junction, a path that holds a
+                                tracked file or a file that is not ignored, and use with
+                                --no-copy-local-files are refused before any state is written. Every copy rule applies. The init
                                 envelope lists the copied files in localFiles.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   --require-accept              Refuse finish until a reviewer turn reports on the state, and

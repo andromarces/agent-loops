@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role.mjs";
@@ -300,4 +300,44 @@ test("--copy-local-path is fixed at init and conflicts with --no-copy-local-file
 
   expect(changed.exitCode).toBe(1);
   expect(changed.payload.error).toContain("--copy-local-path cannot be changed after init");
+});
+
+// Usefulness: verifies every init refusal of `--copy-local-path` happens before a state file is
+// written or a child spawns: an untracked unignored path, a link out of the tree, and a tracked path
+// with `--cwd` as the main work tree.
+// Not redundant: the lib tests call the copy directly; this one proves the role init order.
+test.each([
+  ["an unignored path", "notes", "linked", "not ignored"],
+  ["a link out of the tree", "escape", "linked", "link"],
+  ["a tracked path in the main work tree", "init.txt", "main", "tracked"],
+])("--copy-local-path %s is refused before any state or child", async (_n, path, cwdIs, text) => {
+  await setup();
+  const { base, main, linked } = await createLinkedWorkTree({ ignore: ["escape/"] });
+  repos.push(base);
+  await mkdir(join(main, "notes"), { recursive: true });
+  await writeFile(join(main, "notes", "a.md"), "x\n");
+  await mkdir(join(base, "outside"), { recursive: true });
+  await symlink(
+    join(base, "outside"),
+    join(main, "escape"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const deps = basicDeps();
+  let spawned = false;
+  deps.agents.fake1.run = async () => {
+    spawned = true;
+    return "Conclusion: done\nWhy: ok\nBlockers: none";
+  };
+  const cwd = cwdIs === "main" ? main : linked;
+
+  const result = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--copy-local-path", path]), cwd),
+    deps,
+  );
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("--copy-local-path");
+  expect(result.payload.error).toContain(text);
+  expect(spawned).toBe(false);
+  await expect(readRepoState(cwd)).rejects.toThrow();
 });

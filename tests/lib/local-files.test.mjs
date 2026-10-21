@@ -1383,3 +1383,78 @@ test.each([
     /--copy-local-path/,
   );
 });
+
+const linkDirectory = (target, path) =>
+  symlink(target, path, process.platform === "win32" ? "junction" : "dir");
+
+// Usefulness: verifies guard 1 of the review of PR #983 — an operator path that reaches outside
+// the main work tree through a link, at the first, a middle, or the last level, is refused.
+// Not redundant: the fixed-list copy skips a link by name; an operator path must fail the init.
+test.each([
+  ["the last level", ["specs"], "specs"],
+  ["a middle level", ["data", "inner"], "data/inner"],
+  ["the first level", ["specs"], "specs/api"],
+])("refuses an operator path that escapes through a link at %s", async (_name, linkAt, path) => {
+  const { main, linked, base } = await createLinked({ ignore: ["specs/", "data/"] });
+  const outside = join(base, "outside");
+  await mkdir(join(outside, "api"), { recursive: true });
+  await writeFile(join(outside, "api", "leak.json"), "{}\n");
+  if (linkAt.length === 2) {
+    await mkdir(join(main, linkAt[0]));
+  }
+  await linkDirectory(outside, join(main, ...linkAt));
+
+  await expect(copyLocalFiles(linked, {}, { extraPaths: [path] })).rejects.toThrow(
+    /--copy-local-path.*link/,
+  );
+  expect(await exists(join(linked, "specs"))).toBe(false);
+});
+
+// Usefulness: verifies guard 2 — the flag adds ignored paths only, so an untracked path that no
+// ignore rule covers is refused and nothing is copied.
+// Not redundant: the fixed list skips such a file by name; an operator path must fail the init.
+test("refuses an operator path that holds an untracked file that is not ignored", async () => {
+  const { main, linked } = await createLinked({ ignore: ["specs/"] });
+  await mkdir(join(main, "specs"), { recursive: true });
+  await writeFile(join(main, "specs", "api.json"), "{}\n");
+  await mkdir(join(main, "notes"), { recursive: true });
+  await writeFile(join(main, "notes", "a.md"), "x\n");
+
+  await expect(copyLocalFiles(linked, {}, { extraPaths: ["specs", "notes"] })).rejects.toThrow(
+    /notes\/a\.md.*not ignored/,
+  );
+  expect(await exists(join(linked, "specs"))).toBe(false);
+});
+
+// Usefulness: verifies guard 3 — a run whose `--cwd` is the main work tree copies nothing but
+// still refuses a tracked, unignored, or linked operator path, and accepts a valid one.
+// Not redundant: this path returned null before any check, so every refusal was skipped.
+test("checks operator paths when --cwd is the main work tree", async () => {
+  const { main, base } = await createLinked({ ignore: ["specs/", "linked/"] });
+  await mkdir(join(main, "specs"), { recursive: true });
+  await writeFile(join(main, "specs", "api.json"), "{}\n");
+  await mkdir(join(main, "notes"), { recursive: true });
+  await writeFile(join(main, "notes", "a.md"), "x\n");
+  await linkDirectory(base, join(main, "linked"));
+
+  expect(await copyLocalFiles(main, {}, { extraPaths: ["specs"] })).toBeNull();
+  await expect(copyLocalFiles(main, {}, { extraPaths: ["init.txt"] })).rejects.toThrow(/tracked/);
+  await expect(copyLocalFiles(main, {}, { extraPaths: ["notes"] })).rejects.toThrow(/not ignored/);
+  await expect(copyLocalFiles(main, {}, { extraPaths: ["linked"] })).rejects.toThrow(/link/);
+});
+
+// Usefulness: verifies guard 4 — a spelling that differs only in case from a tracked path
+// (a Windows or macOS alias of it) is refused like the tracked spelling.
+// Not redundant: the tracked test uses the exact spelling, which a literal pathspec already matched.
+test("refuses a case alias of a tracked operator path", async () => {
+  const { main, linked } = await createLinked({ ignore: [] });
+  await mkdir(join(main, "src"), { recursive: true });
+  await writeFile(join(main, "src", "foo.txt"), "x\n");
+  await git(main, "add", "src/foo.txt");
+  await git(main, "commit", "-m", "src");
+
+  await expect(copyLocalFiles(linked, {}, { extraPaths: ["SRC/foo.txt"] })).rejects.toThrow(
+    /tracked/,
+  );
+  await expect(copyLocalFiles(linked, {}, { extraPaths: ["Src"] })).rejects.toThrow(/tracked/);
+});

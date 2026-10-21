@@ -312,8 +312,9 @@ the copy off. It is an init field, so a later call cannot change it.
 When the task needs other ignored reference data of the main work tree, such as a downloaded
 specification directory, pass `--copy-local-path <relative path>` on the init call, once for each path. The
 path joins the copy and follows every rule above, and its files appear in `localFiles.copied`. The
-init refuses an absolute path, a path that leaves the main work tree, a path that holds a tracked file,
-and use with `--no-copy-local-files`. It is an init field too, so a later call cannot change it, and
+init refuses an absolute path, a path that leaves the main work tree or passes through a symlink or a junction,
+a path that holds a tracked file, a path that holds a file that is not ignored, and use with
+`--no-copy-local-files`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and
 `localFilesDiffer` covers the files.
 
 The copy runs once. A later dispatch never replaces or refreshes a copied file, but it

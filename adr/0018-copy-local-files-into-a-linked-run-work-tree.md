@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0050: Let an operator add ignored paths to the local-file copy](0050-let-an-operator-add-ignored-paths-to-the-local-file-copy.md): the sentence of decision 12 "The state file holds the boolean, not the names." no longer holds, because the run state also holds the operator paths of `--copy-local-path`. Every other decision of this ADR remains in force.
 
 ## Date
 
@@ -213,17 +215,6 @@ files is a new runtime contract, and it handles files that can hold secrets.
     an error that names the command, before the state file exists, so no run is
     left to abort. A failed probe never reads as "no main work tree". A single file
     that fails to copy is skipped and named.
-16. **Operator paths (issue #980).** `--copy-local-path <relative path>` is a repeatable init
-    field of `agent-loop role` that adds a path to the listed paths for one run. The path
-    gets every rule of decisions 2 through 9, so it never replaces a file, never follows a
-    symlink, and keeps the size and entry bounds. The init refuses, before any copy and
-    before the state file exists, an empty, absolute, or drive-qualified path, a path with a
-    `.` or `..` segment, `.git` or a checkout under `.claude/worktrees`, a path that holds a
-    file tracked in the main work tree, and use with `--no-copy-local-files`. The state file
-    stores the normalized paths as `copyLocalPaths`, which refines decision 12 (the state
-    held no names): the paths are the operator's own input and never file content. A later
-    call must repeat the same set or omit the flag. The copied names reach
-    `localFilesCopied`, so `localFilesDiffer` covers them. The headless command has no flag.
 
 ## Consequences
 
@@ -256,9 +247,9 @@ files is a new runtime contract, and it handles files that can hold secrets.
    by two paths. No symlink is followed, which has none of those cases.
 2. **Symlink the files into `--cwd`**: rejected. A Windows symlink needs extra privileges, and a
    link follows later edits and could expose the main work tree to a child write.
-3. **A configurable path list or a size flag**: rejected for the fixed list and the cap,
-   which change with a code change. Decision 16 adds a per-run path flag after a run
-   needed an ignored specification directory (issue #980). The cap stays fixed.
+3. **A configurable path list or a size flag**: rejected. A config value that has
+   one reasonable setting is speculative. The list and the cap change with a code
+   change.
 4. **Copy by evaluating ignore rules in the main work tree**: rejected. A
    `.gitignore` comes from the branch of each work tree, so the main work tree can
    ignore a path that `--cwd` does not, and the copy would then show up as an
@@ -276,7 +267,6 @@ Andro Marces
 ## Links
 
 - [Issue #423](https://github.com/andromarces/agent-loops/issues/423)
-- [Issue #980](https://github.com/andromarces/agent-loops/issues/980)
 - Implementation: `copyLocalFiles` in `src/lib/local-files.mjs`, the init copy in
   `src/role.mjs` and `runLoop` in `src/runtime.mjs`, and the flags in `src/cli.mjs`;
   documented in [Local files in a linked work tree](../docs/reference/harness-entry-points.md#local-files-in-a-linked-work-tree) and `docs/orchestrator-instructions.md`
