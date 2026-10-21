@@ -355,29 +355,50 @@ test("exec replaces an empty root value for a worker spawn", async () => {
   expect(seen.every(Boolean)).toBe(true);
 });
 
-const NPM_LOG_ENV = ["npm_config_logs_dir", "npm_config_logs_max"];
-const PRINT_NPM_LOG = `console.log(JSON.stringify(${JSON.stringify(NPM_LOG_ENV)}.map((name) => process.env[name] || null)))`;
-const npmLogOf = async (options) =>
-  JSON.parse((await exec(process.execPath, ["-e", PRINT_NPM_LOG], options)).stdout);
+const NPM_LOG_NAME = /^npm_config_logs[_-](dir|max)$/i;
+const PRINT_NPM_LOG = `console.log(JSON.stringify(Object.entries(process.env).filter(([name]) => ${NPM_LOG_NAME}.test(name)).map(([name, value]) => [name.toLowerCase(), value])))`;
+// The npm log settings that the child sees, names lower-cased and repeats dropped.
+const npmLogOf = async (options) => {
+  const seen = JSON.parse((await exec(process.execPath, ["-e", PRINT_NPM_LOG], options)).stdout);
+  return [...new Set(seen.map((entry) => JSON.stringify(entry)))].map((entry) => JSON.parse(entry));
+};
+const clearNpmLog = () => {
+  for (const name of Object.keys(process.env).filter((key) => NPM_LOG_NAME.test(key))) {
+    vi.stubEnv(name, undefined);
+  }
+};
+const OFF = [["npm_config_logs_max", "0"]];
 
 // Usefulness: verifies a worker or reviewer child writes no npm debug log outside its own directories, so the cleanup rule has no log to delete (issue #995); other spawns stay unchanged.
 test("exec turns npm debug logs off for a worker or reviewer spawn only", async () => {
-  for (const name of NPM_LOG_ENV) vi.stubEnv(name, "");
-  expect(await npmLogOf({ role: "worker", cwd: tmpdir() })).toEqual([null, "0"]);
-  expect(await npmLogOf({ role: "reviewer", cwd: tmpdir() })).toEqual([null, "0"]);
-  expect(await npmLogOf({ role: "orchestrator", cwd: tmpdir() })).toEqual([null, null]);
-  expect(await npmLogOf({ cwd: tmpdir() })).toEqual([null, null]);
+  clearNpmLog();
+  expect(await npmLogOf({ role: "worker", cwd: tmpdir() })).toEqual(OFF);
+  expect(await npmLogOf({ role: "reviewer", cwd: tmpdir() })).toEqual(OFF);
+  expect(await npmLogOf({ role: "orchestrator", cwd: tmpdir() })).toEqual([]);
+  expect(await npmLogOf({ cwd: tmpdir() })).toEqual([]);
 });
 
-// Usefulness: verifies a user-set log directory or maximum is kept, and that a user-set directory is not switched off by the added maximum.
+// Usefulness: verifies an empty inherited value of any spelling counts as unset, so the default still takes effect and no second spelling reaches npm to conflict with it.
+test("exec replaces an empty npm log setting of any spelling with the default", async () => {
+  clearNpmLog();
+  vi.stubEnv("NPM_CONFIG_LOGS_MAX", "");
+  vi.stubEnv("Npm_Config_Logs_Dir", "");
+  expect(await npmLogOf({ role: "worker", cwd: tmpdir() })).toEqual(OFF);
+  expect(
+    await npmLogOf({ role: "worker", cwd: tmpdir(), env: { npm_config_logs_dir: "" } }),
+  ).toEqual(OFF);
+});
+
+// Usefulness: verifies a user-set log directory or maximum is kept in any case, from the environment or the caller, and that a user-set directory is not switched off by the default.
 test("exec keeps a user-set npm log directory or maximum for a worker spawn", async () => {
-  for (const name of NPM_LOG_ENV) vi.stubEnv(name, "");
-  vi.stubEnv("npm_config_logs_dir", join(tmpdir(), "npm-logs"));
-  expect(await npmLogOf({ role: "worker", cwd: tmpdir() })).toEqual([
-    join(tmpdir(), "npm-logs"),
-    null,
-  ]);
-  vi.stubEnv("npm_config_logs_dir", "");
-  vi.stubEnv("npm_config_logs_max", "5");
-  expect(await npmLogOf({ role: "reviewer", cwd: tmpdir() })).toEqual([null, "5"]);
+  clearNpmLog();
+  const dir = join(tmpdir(), "npm-logs");
+  expect(
+    await npmLogOf({ role: "worker", cwd: tmpdir(), env: { npm_config_logs_dir: dir } }),
+  ).toEqual([["npm_config_logs_dir", dir]]);
+  expect(
+    await npmLogOf({ role: "reviewer", cwd: tmpdir(), env: { Npm_Config_Logs_Max: "5" } }),
+  ).toEqual([["npm_config_logs_max", "5"]]);
+  vi.stubEnv("Npm_Config_Logs_Dir", dir);
+  expect(await npmLogOf({ role: "worker", cwd: tmpdir() })).toEqual([["npm_config_logs_dir", dir]]);
 });

@@ -85,8 +85,9 @@ export async function exec(command, args = [], options = {}) {
   const marked = MARKED_ROLES.has(role);
   if (env || marked) {
     execaOptions.env = {
-      ...(marked && { ...rootPins(), ...npmLogPins() }),
+      ...(marked && rootPins()),
       ...env,
+      ...(marked && npmLogPins(env)),
       ...(marked && { [SPAWNED_RUN_ENV]: markerFor(cwdHash(cwd ?? process.cwd())) }),
     };
   }

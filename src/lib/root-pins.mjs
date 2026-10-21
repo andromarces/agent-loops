@@ -26,17 +26,27 @@ export function rootPins() {
   return pins;
 }
 
-const NPM_LOG_SETTINGS = ["logs_dir", "logs_max"].flatMap((key) => [
-  `npm_config_${key}`,
-  `NPM_CONFIG_${key.toUpperCase()}`,
-]);
+// npm reads these settings from an environment name of any case, with `_` or `-` before the key.
+const NPM_LOG_NAME = /^npm_config_logs[_-](dir|max)$/i;
 
 /**
- * The environment entry that stops npm from writing debug logs in a child turn (issue #995). npm
+ * The environment entries that stop npm from writing debug logs in a child turn (issue #995). npm
  * writes them to its cache, outside the work tree and the turn temporary directory, and the cleanup
- * rule of a turn cannot remove them. `npm_config_logs_max=0` writes none for the run. A non-empty
- * `logs_dir` or `logs_max` that the user set, in either case, leaves the entry out.
+ * rule of a turn cannot remove them. `npm_config_logs_max=0` writes none for the run. `callerEnv`
+ * is the `env` option of the spawn. A non-empty `logs_dir` or `logs_max` in the process or the
+ * caller environment, in any spelling, is a user value: it is kept and nothing is added. An empty
+ * one counts as unset, as for the roots. Every empty `logs_max` spelling gets the default and every
+ * empty `logs_dir` spelling is cleared with `undefined`, so no spelling reaches npm to conflict
+ * with the default. A `logs_max` spelling is never cleared, because Windows treats names of any
+ * case as one and the clear would remove the default as well. Apply the result after `callerEnv`.
  */
-export function npmLogPins() {
-  return NPM_LOG_SETTINGS.some((name) => process.env[name]) ? {} : { npm_config_logs_max: "0" };
+export function npmLogPins(callerEnv = {}) {
+  const held = [process.env, callerEnv].flatMap((env) =>
+    Object.entries(env).filter(([name]) => NPM_LOG_NAME.test(name)),
+  );
+  if (held.some(([, value]) => value)) return {};
+  return {
+    ...Object.fromEntries(held.map(([name]) => [name, /max$/i.test(name) ? "0" : undefined])),
+    npm_config_logs_max: "0",
+  };
 }
