@@ -1,7 +1,7 @@
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
 import { logDebug, logInfo } from "./log.mjs";
-import { rootPins } from "./root-pins.mjs";
+import { rootPins, withNpmLogSettings } from "./root-pins.mjs";
 import { cwdHash } from "./runstate.mjs";
 
 /**
@@ -81,14 +81,21 @@ export async function exec(command, args = [], options = {}) {
     execaOptions.maxBuffer = maxBuffer;
   }
 
-  // execa merges env with process.env; the child still inherits the launcher environment.
+  // execa merges env with process.env; the child still inherits the launcher environment. A marked
+  // role passes the whole environment, because `withNpmLogSettings` must drop inherited spellings.
   const marked = MARKED_ROLES.has(role);
   if (env || marked) {
-    execaOptions.env = {
+    const childEnv = {
       ...(marked && rootPins()),
       ...env,
       ...(marked && { [SPAWNED_RUN_ENV]: markerFor(cwdHash(cwd ?? process.cwd())) }),
     };
+    if (marked) {
+      execaOptions.env = withNpmLogSettings({ ...process.env, ...childEnv }, env);
+      execaOptions.extendEnv = false;
+    } else {
+      execaOptions.env = childEnv;
+    }
   }
 
   if (typeof timeout === "number" && timeout > 0) {

@@ -25,3 +25,34 @@ export function rootPins() {
   }
   return pins;
 }
+
+// npm reads these settings from an environment name of any case, with `_` or `-` before the key.
+const NPM_LOG_NAME = /^npm_config_logs[_-](dir|max)$/i;
+const settingOf = (name) => NPM_LOG_NAME.exec(name)?.[1].toLowerCase();
+
+/**
+ * Returns `env`, the complete child environment, with the npm log settings resolved to one spelling
+ * each, so npm writes no debug log in a child turn that the cleanup rule cannot clear (issue #995).
+ * npm writes them to its cache, outside the work tree and the turn temporary directory.
+ * `callerEnv` is the `env` option of the spawn. For each of `logs_dir` and `logs_max`, the value
+ * is the last non-empty one in the process environment and then in `callerEnv`, in any spelling,
+ * so a caller wins. Every spelling is removed and the value is set once, as `npm_config_<key>`. An
+ * empty value counts as unset, as for the roots, and no empty alias is left to mask a user value
+ * (names that differ in case are one name on Windows). With neither setting held, `logs_max` is
+ * `0`, which writes no log for the run. A held `logs_dir` keeps the default out, so the chosen
+ * directory still receives its logs. The caller must spawn without `extendEnv`, because a name
+ * that is missing from `env` would return from the process environment.
+ */
+export function withNpmLogSettings(env, callerEnv = {}) {
+  const held = {};
+  for (const source of [process.env, callerEnv]) {
+    for (const [name, value] of Object.entries(source)) {
+      const key = settingOf(name);
+      if (key && value) held[key] = value;
+    }
+  }
+  const out = Object.fromEntries(Object.entries(env).filter(([name]) => !settingOf(name)));
+  if (!held.dir && !held.max) held.max = "0";
+  for (const [key, value] of Object.entries(held)) out[`npm_config_logs_${key}`] = value;
+  return out;
+}
