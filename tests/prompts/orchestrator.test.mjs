@@ -1080,3 +1080,16 @@ test("refusalPrompt and repairPrompt render no raw line separator", () => {
     }
   }
 });
+
+// Usefulness: verifies requirement "the envelope names a transient failure" (issue #1012) for a headless parent: `resultPrompt` renders the child result, so a dropped field is lost to the orchestrator.
+test("the result prompt carries transient only when the error result has it", () => {
+  const base = { role: "reviewer", status: "error", error: "codex exited with code 1." };
+  const flagged = resultPrompt({
+    result: { ...base, transient: "capacity" },
+    stepsUsed: 1,
+    maxSteps: 5,
+  });
+  const plain = resultPrompt({ result: base, stepsUsed: 1, maxSteps: 5 });
+  expect(flagged).toContain('"transient": "capacity"');
+  expect(plain).not.toContain("transient");
+});
