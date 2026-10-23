@@ -205,3 +205,13 @@ test("first worker turn tells the worker to remove temporary files it created ou
     "Before the closing block, remove every temporary file or directory that this turn created outside the work tree, and name in Notes any that you could not remove.",
   );
 });
+
+// Usefulness: verifies requirement "a worker updates the PR body after a push to a branch with an open
+// pull request" (issue #1002): without it the body describes the first head, not the head the reviewer
+// accepts, and the rule bars a revision log so the body stays a description, not a diary.
+test("first worker turn tells the worker to update the PR body after a push", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment.",
+  );
+});

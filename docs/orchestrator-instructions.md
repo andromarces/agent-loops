@@ -257,7 +257,9 @@ A task is PR work when its change is delivered on a pull request. For PR work,
 name the PR branch in the worker prompt: the worker commits its change on that
 branch and pushes it, so the PR head equals the reviewed head. The run supplies
 the PR number, and the head commit comes from that PR. In a headless run, the
-task names the PR number.
+task names the PR number. After each push, when the branch has an open PR, the worker
+updates the PR body in place so that it describes the pushed head. It adds no
+revision log to the body or to a comment.
 
 Apply these parent rules:
 

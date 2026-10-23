@@ -18,6 +18,7 @@ Your role:
   branch and push it, so the reviewer sees a committed head and the PR head
   matches that commit. A task is PR work when its change is delivered on a pull
   request.
+- After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment.
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
 - The work tree this turn runs in belongs to the parent. Never remove, move, or
   switch it, and leave it in place after the push, because every later turn of
