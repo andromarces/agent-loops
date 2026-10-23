@@ -208,6 +208,28 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
+// Usefulness: verifies both parent surfaces name the `--all` wait for the required wait's refusal
+// when no required-check source can state the required checks (issue #1018). A parent on a private
+// Free-plan repository (#301) otherwise has no wait it may run, because `--all` was allowed only
+// after `noRequiredChecks`, and the required wait can no longer return that there.
+test("the parent surfaces name the --all wait for a refusal of every required-check source", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readFile(instructionsPath, "utf8");
+  for (const text of [prompt, instructions]) {
+    expectRule(text, /settled nothing/, /did not state/);
+    expectRule(text, /--all/, /once/, /dispatch the reviewer/i, /noRequiredChecks/);
+    expectRule(text, /could not be parsed/, /--all/);
+  }
+});
+
 // The surfaces that state the empty-union rule of the gate. The reviewer found them contradicting
 // each other, so one rule is asserted on each. Only an allowlisted reply proves an absence, and a
 // private Free-plan repository must omit `--pr`. Usefulness: verifies every surface states the same
