@@ -30,6 +30,7 @@ const instructionsPath = join(
 /** The only work tree command of the instructions: the creation step that sets no upstream (#985). */
 const WORK_TREE_CREATE_COMMAND =
   "git worktree add --no-track -b <branch> <work tree> origin/<default>";
+const WORK_TREE_REMOVE_COMMAND = 'git worktree remove --force "<work tree>"';
 
 /** The user docs as one text: the reference topic files, the reference index, then the README. */
 async function readUserDocs() {
@@ -355,11 +356,15 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
     expect(instructions).toContain(rule);
     expect(prompt).toContain(rule);
   }
-  // Neither text keeps the repair procedure or the unrecoverable claim. The one `git worktree`
-  // command the instructions may hold is the single creation command of "Work tree ownership"
-  // (#985): with that command removed, no `git worktree` call is left to add, repair, or recreate.
+  // Neither text keeps the repair procedure or the unrecoverable claim. The only `git worktree`
+  // commands the instructions may hold are the single creation command (#985) and the single
+  // removal command (#998) of "Work tree ownership": with both removed, no `git worktree` call is
+  // left to add, repair, or recreate.
   expect(instructions.split(WORK_TREE_CREATE_COMMAND)).toHaveLength(2);
-  expect(instructions.replace(WORK_TREE_CREATE_COMMAND, "")).not.toContain("git worktree");
+  expect(instructions.split(WORK_TREE_REMOVE_COMMAND)).toHaveLength(2);
+  expect(
+    instructions.replace(WORK_TREE_CREATE_COMMAND, "").replace(WORK_TREE_REMOVE_COMMAND, ""),
+  ).not.toContain("git worktree");
   expect(prompt).not.toContain("git worktree");
   for (const gone of ["not recoverable", "unrecoverable"]) {
     expect(instructions).not.toContain(gone);
@@ -375,6 +380,9 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
 // including a prose instruction that tells the parent to repair or recreate the work tree in any
 // wording or position, fails until this test is edited on purpose (#991). Prose outside the
 // sections is not scanned, so unrelated text is free to change.
+const REMOVAL_PARAGRAPH =
+  'When the run ends, remove the work tree with `git worktree remove --force "<work tree>"`, then check whether the folder still exists. On Windows, the remove can leave the folder when a turn ran `pnpm install`: it holds `node_modules` with junctions into the shared pnpm store and no file. When the folder remains, check that it holds only links and directories. On Windows, run `Get-ChildItem -LiteralPath "<work tree>" -Recurse -Force -Attributes "!Directory+!ReparsePoint"` in PowerShell. On POSIX, run `find "<work tree>" -not -type d -not -type l`. Each command includes hidden files and never descends into a link or a junction. Any path that it prints is a file: stop and leave the folder to a maintainer. When it prints nothing, delete the folder without following links: `cmd.exe /c rmdir /s /q "<work tree>"` in PowerShell or cmd.exe, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"` in Git Bash, `rm -rf "<work tree>"` on POSIX, which does not follow symbolic links. Run the Windows delete as `cmd.exe /c rmdir`, because Git Bash resolves a bare `rmdir` to GNU rmdir, which rejects those switches. In Git Bash, keep `MSYS_NO_PATHCONV=1`, because MSYS path conversion rewrites the `/s` and `/q` switches, and `cmd.exe` then exits 0 and leaves the folder. Never use a recursive delete that follows junctions: it can damage the shared pnpm store.';
+
 const REFUSED_CWD_BLOCKS = {
   instructions: {
     start: "## Work tree ownership",
@@ -388,6 +396,7 @@ const REFUSED_CWD_BLOCKS = {
       '`dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`.',
       "A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.",
       "When `--cwd` is a linked work tree, the init call copies the untracked local files of the main work tree that `--cwd` ignores (agent instructions, harness configuration, `.env`, and the other paths in [Local files in a linked work tree](reference/harness-entry-points.md#local-files-in-a-linked-work-tree)) into `--cwd`, before the first child turn. A file already in `--cwd` is never replaced, and no symlink is followed: a symlink in the main work tree is skipped and named. The init envelope reports the paths as `localFiles: {copied, skipped}`, by name only, and a path in `skipped` is untracked in the main work tree but not copied: the child does not have it. Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env` into the run work tree, so remove that work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn the copy off. It is an init field, so a later call cannot change it.",
+      REMOVAL_PARAGRAPH,
       "When the task needs other ignored reference data of the main work tree, such as a downloaded specification directory, pass `--copy-local-path <relative path>` on the init call, once for each path. The path joins the copy and follows every rule above, and its files appear in `localFiles.copied`. The init refuses an absolute path, a path that leaves the main work tree or passes through a symlink or a junction, a path that holds a tracked file, a path that holds a file that is not ignored, and use with `--no-copy-local-files`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and `localFilesDiffer` covers the files.",
       "The copy runs once. A later dispatch never replaces or refreshes a copied file, but it compares each copied file with its source in the main work tree by hash and reports the names that differ as `localFilesDiffer: [...]` in the envelope. The key is absent when no copy differs. A copy differs when the main work tree changed the file after init, or when a turn changed the copy: the report does not tell which. When the key appears, check whether the main work tree holds a newer rule file, such as `AGENTS.md`, and tell the child to refresh that file by hand when it holds no turn edit. Never read, print, or quote the file to decide.",
       "A refused `--cwd` is not the parent's to repair: end the run, name the path and the refusal in the reason, and leave the work tree to a maintainer, who decides whether to recreate it and start a new run.",
@@ -522,6 +531,28 @@ test("instructions create the run work tree without an upstream and set it on th
     "git worktree add --no-track -b <branch> <work tree> origin/<default>",
   );
   expect(instructions).toContain("git push -u origin <branch>");
+});
+
+// Usefulness: verifies the instructions name the work tree removal step and a delete that never
+// follows a junction or a symlink on each platform (#998). Without it, a parent can delete the
+// leftover `node_modules` folder through pnpm junctions and damage the shared store.
+test("instructions remove the run work tree without following links", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expect(instructions).toContain(WORK_TREE_REMOVE_COMMAND);
+  // The Windows delete has one form for PowerShell or cmd.exe and one for Git Bash, where MSYS
+  // path conversion rewrites the `/s` and `/q` switches unless it is off.
+  expect(instructions).toContain('cmd.exe /c rmdir /s /q "<work tree>"');
+  expect(instructions).toContain(
+    'MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"',
+  );
+  expect(instructions).toContain('rm -rf "<work tree>"');
+  expect(instructions).toContain("Never use a recursive delete that follows junctions");
+  // The leftover-folder check lists any entry that is not a link or a directory, hidden files
+  // included, and never descends into a link.
+  expect(instructions).toContain(
+    'Get-ChildItem -LiteralPath "<work tree>" -Recurse -Force -Attributes "!Directory+!ReparsePoint"',
+  );
+  expect(instructions).toContain('find "<work tree>" -not -type d -not -type l');
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
