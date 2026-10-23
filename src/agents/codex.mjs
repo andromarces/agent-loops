@@ -14,6 +14,29 @@ import {
 const missingSession = (id) =>
   `Error: thread/resume: thread/resume failed: no rollout found for thread id ${id} (code -32600)`;
 
+// Codex reports this model capacity reply in an `error` event and a `turn.failed` event (issue #1012).
+const CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
+
+/**
+ * Marks a failed turn whose terminal failure is the model capacity reply, so a parent can tell the
+ * transient failure from a reviewer fault without reading the error text. The terminal failure is
+ * the last `error` or `turn.failed` event of the stream, so an earlier capacity event followed by
+ * another cause is never marked. A timeout, cancel, or signal ends the turn for another reason, so
+ * it is never marked either.
+ */
+function flagCapacityFailure(err, events) {
+  if (!err || typeof err !== "object" || err.timedOut || err.isCanceled || err.isTerminated) {
+    return;
+  }
+  const terminal = events.findLast(
+    (event) => event?.type === "error" || event?.type === "turn.failed",
+  );
+  const message = terminal?.type === "error" ? terminal.message : terminal?.error?.message;
+  if (message === CAPACITY_MESSAGE) {
+    err.transient = "capacity";
+  }
+}
+
 export async function runCodex(state, prompt, options = {}) {
   const { cwd, readOnly, sandbox, timeout, signal, role } = options;
   const configArgs = [];
@@ -60,10 +83,10 @@ export async function runCodex(state, prompt, options = {}) {
     ));
   } catch (err) {
     // A failed first turn still emits `thread.started` before the failure. Keep that id, then rethrow.
-    const started = parseJsonLines(err?.stdout ?? "").find(
-      (event) => event?.type === "thread.started",
-    );
+    const failedEvents = parseJsonLines(err?.stdout ?? "");
+    const started = failedEvents.find((event) => event?.type === "thread.started");
     keepFailedSessionId(state, started?.thread_id);
+    flagCapacityFailure(err, failedEvents);
     flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }

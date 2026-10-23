@@ -905,3 +905,90 @@ test.each(INHERITED_SHAPES)("the installer refusal holds for %s", async (_name, 
     await removePath(root);
   }
 });
+
+const CAPACITY = "Selected model is at capacity. Please try a different model.";
+
+const capacityStdout = (overrides = {}) =>
+  [
+    { type: "thread.started", thread_id: "th-cap" },
+    { type: "error", message: CAPACITY },
+    { type: "turn.failed", error: { message: CAPACITY } },
+  ]
+    .map((event) => JSON.stringify({ ...event, ...overrides }))
+    .join("\n");
+
+// Usefulness: verifies requirement "a Codex model capacity failure is marked transient" (issue #1012), so a parent retries without parsing the error text; the thread id of the failed turn is still kept.
+test.each([
+  ["both events", capacityStdout()],
+  [
+    "the turn.failed event alone",
+    JSON.stringify({ type: "turn.failed", error: { message: CAPACITY } }),
+  ],
+  ["the error event alone", JSON.stringify({ type: "error", message: CAPACITY })],
+])("codex marks a capacity failure transient from %s", async (_name, stdout) => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), { exitCode: 1, stdout, stderr: "" }),
+  );
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies a failure that is not the capacity reply stays unmarked, because a wrong mark makes a parent retry a real reviewer fault.
+test.each([
+  [
+    "another turn.failed message",
+    JSON.stringify({ type: "turn.failed", error: { message: "The 'x' model is not supported" } }),
+    {},
+  ],
+  [
+    "the capacity text in an agent message",
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: CAPACITY } }),
+    {},
+  ],
+  ["a timeout", capacityStdout(), { timedOut: true }],
+  ["a cancel", capacityStdout(), { isCanceled: true }],
+  ["a signal", capacityStdout(), { isTerminated: true }],
+  ["no events", "", {}],
+])("codex does not mark %s transient", async (_name, stdout, overrides) => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), {
+      exitCode: 1,
+      stdout,
+      stderr: "",
+      ...overrides,
+    }),
+  );
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "only a turn whose terminal failure is the capacity reply is marked transient" (issue #1012): an earlier capacity event followed by another terminal cause must not make a parent retry a real fault.
+test.each([
+  [
+    "an error event then a turn.failed with another cause",
+    [
+      { type: "error", message: CAPACITY },
+      { type: "turn.failed", error: { message: "Authentication failed" } },
+    ],
+  ],
+  [
+    "a capacity turn.failed then a later error with another cause",
+    [
+      { type: "turn.failed", error: { message: CAPACITY } },
+      { type: "error", message: "Authentication failed" },
+    ],
+  ],
+])("codex does not mark a capacity event that %s", async (_name, events) => {
+  const stdout = events.map((event) => JSON.stringify(event)).join("\n");
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), { exitCode: 1, stdout, stderr: "" }),
+  );
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.transient).toBeUndefined();
+});

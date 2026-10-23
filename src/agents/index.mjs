@@ -21,6 +21,8 @@ export { normalizeAgent };
  * - `shellDenied`: the turn reported a refused shell call.
  * - `resolvedModel`: the model the CLI reported (see `reportsResolvedModel` in `src/lib/agent-kinds.mjs`).
  *
+ * An adapter throws an error with `transient` set to a class name, such as `capacity`, when the
+ * provider is expected to clear the failure, so the envelope names the class (issue #1012).
  * An adapter throws an error with `sessionMissing` set when a resumed session no longer
  * exists, so the runtime reruns the turn as a first turn. Only the Claude adapter awaits
  * `options.onSessionAssigned(id)` before its CLI starts. Other adapters ignore that option.

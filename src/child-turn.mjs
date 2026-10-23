@@ -80,7 +80,7 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
  * dispatcher uses it to persist the id ahead of a crash (issue #395).
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, testRun?: object }>}
+ * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, transient?: string, testRun?: object }>}
  */
 export async function runChild(options) {
   const {
@@ -420,10 +420,13 @@ export async function runChild(options) {
     logWarn(timedOut ? errorMessage : `${roleName}: ${firstErrorLine(errorMessage)}`);
     // The failed turn may have changed the shared state before it failed.
     const sharedGitChanged = await readSharedGitChanged();
+    // An adapter marks a failure the provider is expected to clear (issue #1012).
+    const transient = readProp(err, "transient");
     return {
       role: roleName,
       status: "error",
       error: errorMessage,
+      ...(typeof transient === "string" ? { transient } : {}),
       ...(sharedGitChanged.length > 0 ? { sharedGitChanged } : {}),
       ...(testRun ? { testRun } : {}),
     };

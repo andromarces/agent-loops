@@ -2019,3 +2019,30 @@ test("reviewer dispatch carries shellDenied only for the turn that had it", asyn
   expect(second.payload.status).toBe("ok");
   expect(second.payload).not.toHaveProperty("shellDenied");
 });
+
+// Usefulness: verifies requirement "the envelope names a transient failure" (issue #1012): a reviewer turn that fails with a flagged error carries `transient`, the step stays charged, and a later plain failure carries no field.
+test("reviewer dispatch carries transient in the error envelope only for a flagged failure", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const reviewer = recordingAdapter([
+    () => {
+      throw Object.assign(new Error("codex exited with code 1."), { transient: "capacity" });
+    },
+    () => {
+      throw new Error("codex exited with code 1.");
+    },
+  ]);
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const deps = { agents: { fake1: recordingAdapter([]), fake2: reviewer }, stdin: stdinPrompt };
+  const first = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), deps);
+  const stepsAfterFirst = (await readRepoState(repo)).stepsUsed;
+  const second = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), deps);
+
+  expect(first.exitCode).toBe(1);
+  expect(first.payload).toMatchObject({ role: "reviewer", status: "error", transient: "capacity" });
+  expect(stepsAfterFirst).toBe(2);
+  expect(second.payload.status).toBe("error");
+  expect(second.payload).not.toHaveProperty("transient");
+});
