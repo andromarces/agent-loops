@@ -35,7 +35,7 @@ The runtime-supplied required-check status (ADR 0011, ADR 0024) already reads th
 - A check that is required but that no read of the PR lists yet is absent, as before (ADR 0010, decision 12, for the part that remains).
 - A parent reads `prFailures` besides `checks`. `checks` alone is no verdict while `prFailures` is present.
 
-Live verification (issue #710): pending.
+Live verification (issue #710): running.
 
 ## Alternatives
 
