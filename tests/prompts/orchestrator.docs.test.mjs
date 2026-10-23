@@ -223,10 +223,33 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
   const instructions = await readFile(instructionsPath, "utf8");
-  for (const text of [prompt, instructions]) {
-    expectRule(text, /settled nothing/, /did not state/);
-    expectRule(text, /--all/, /once/, /dispatch the reviewer/i, /noRequiredChecks/);
-    expectRule(text, /could not be parsed/, /--all/);
+  // Each rule is cut from its own passage, so the `noRequiredChecks` instruction cannot satisfy it.
+  const passages = [
+    [prompt, 'An exit 1 with "status": "error" whose error says', "no --all run."],
+    [instructions, "When no source can state the required checks", "do not run `--all` for it."],
+  ];
+  for (const [text, from, to] of passages) {
+    const start = text.indexOf(from);
+    expect(start, `no passage starts at ${from}`).toBeGreaterThanOrEqual(0);
+    const end = text.indexOf(to, start);
+    expect(end, `no passage ends at ${to}`).toBeGreaterThan(start);
+    const passage = text
+      .slice(start, end + to.length)
+      .replace(/\s+/g, " ")
+      .trim();
+    // The sources that state nothing unlock `--all`, and the instruction is to run it, not to refrain.
+    expect(passage).toMatch(/settled nothing/);
+    expect(passage).toMatch(/could not be read/);
+    expect(passage).toMatch(/did not state that it holds no required check/);
+    expect(passage).toMatch(
+      /(?:^|[.:] )(?:Run|run) the (?:same )?(?:`--all` wait below|--all command) once, as (?:after|for) `?noRequiredChecks`?, then dispatch the reviewer/,
+    );
+    // Every other error stays unresolved: a parse failure and a failed names read never unlock `--all`.
+    const exclusion = passage.slice(passage.indexOf("Any other"));
+    expect(exclusion).toMatch(/could not be parsed/);
+    expect(exclusion).toMatch(/failed read of the required check names/);
+    expect(exclusion).toMatch(/stays an unresolved read/);
+    expect(exclusion).toMatch(/do not run `--all`|no --all run/);
   }
 });
 
