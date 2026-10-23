@@ -77,6 +77,7 @@ These live checks are not done. Each result goes into this ADR when its issue re
   - The reviewer report in `Checks`, as the reviewer wrote it: `node --version` exit 0, v26.12.0, and `codex --version` exit 0, codex-cli 0.164.0-alpha.3. The plain test-slot wrapper over `pnpm test` exit 0, with 120 test files passed and 1 skipped. Tests: 2593 passed, 20 expected fail, and 16 skipped. `gh pr checks 956 --required` exit 0.
   - Separate direct probe on the same day, not a `role` run: a `codex exec` turn with `-c sandbox_mode="danger-full-access"` and `-m gpt-6.1-sol` ran the same commands. Each exited 0, with the same test counts. This probe ran no reviewer prompt and no mutation check.
 - Issue #709 (Windows): the same check. Record the same fields.
+  - Result on Windows: pending, recorded by the pull request that verifies this item.
 - Issue #710 (live runs): a Codex reviewer turn with no sandbox under a Codex requirements file that does not allow `danger-full-access`. Record the codex-cli version, the exit code, and the mode that the turn ran in.
 
 ## Alternatives
