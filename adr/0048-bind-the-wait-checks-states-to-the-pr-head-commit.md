@@ -35,7 +35,12 @@ The runtime-supplied required-check status (ADR 0011, ADR 0024) already reads th
 - A check that is required but that no read of the PR lists yet is absent, as before (ADR 0010, decision 12, for the part that remains).
 - A parent reads `prFailures` besides `checks`. `checks` alone is no verdict while `prFailures` is present.
 
-Live verification (issue #710): running.
+Live verification (issue #710). The target was PR #1009, the pull request that records this result, on Windows 11 10.0.26220 with Node v26.8.1 and gh 2.103.0. Its first commit `5da6498` passed `ci (ubuntu-latest)`, `ci (macos-latest)`, and `ci (windows-latest)`. Then commit `2b76761` was pushed (head moved to `2b7676187224293563410d372831e71eae95bb54`). Within about 30 seconds of that push, both modes started with `--head 2b7676187224293563410d372831e71eae95bb54 --timeout 240`, one after the other, and `gh pr checks 1009` listed all three checks as pending:
+
+- `node src/cli.mjs role wait-checks --pr 1009 --head <sha> --timeout 240` (required mode), exit 0 after the bound: `{"status":"ok","pr":1009,"timedOut":true,"head":"2b76761…","checks":[{"name":"ci (macos-latest)","state":"SUCCESS","bucket":"pass"},{"name":"ci (ubuntu-latest)","state":"SUCCESS","bucket":"pass"},{"name":"ci (windows-latest)","state":"IN_PROGRESS","bucket":"pending"}]}`.
+- `node src/cli.mjs role wait-checks --pr 1009 --all --head <sha> --timeout 240`, exit 0 after the bound: the same `head`, `timedOut: true`, and the same three states in another order.
+
+Both envelopes named the new commit in `head` and held only its states. The windows check of `5da6498` had passed, and it showed as `IN_PROGRESS`, so no state of the previous head leaked into `checks`. Neither envelope carried `prFailures`, because no check failed. A repeat of both commands after all three checks passed on `2b76761` returned `timedOut: false`, `head` `2b7676187224293563410d372831e71eae95bb54`, and three `SUCCESS` states, exit 0. The `prFailures` case and `gh pr update-branch` were not exercised live: this run had no failing check, and `gh pr update-branch` was not used.
 
 ## Alternatives
 
