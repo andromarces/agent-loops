@@ -858,6 +858,20 @@ before CI completes can report the CI status as unresolved, which the `--all`
 wait avoids. The `--require-ci` gate still decides the finish; it reads the same
 sources, so it does not refuse a `noRequiredChecks` branch for an unreadable source.
 
+When no source can state the required checks, the required wait cannot say whether the
+PR holds a required check, so it refuses with exit 1 and `status: "error"`. The error
+says that a source `settled nothing`, that a source `could not be read`, or that a source
+`did not state that it holds no required check`, and that the required checks of the PR
+are unresolved. The 403 of a private repository on the GitHub Free plan (#301) is that
+case. It is no required-check read, so do not run the required wait again. Run the
+`--all` wait below once, as after `noRequiredChecks`, then dispatch the reviewer, which
+reads the CI status of the PR head itself. An `--all` pass is never a required-check
+pass: never record the CI status as passed from it, from this refusal, or from a
+`noRequiredChecks` envelope. The `--require-ci` gate still decides the finish, and it
+refuses a declared run there. Any other `status: "error"` stays an unresolved read,
+including a reply that could not be parsed and a failed read of the required check names:
+do not run `--all` for it.
+
 ```bash
 agent-loop role wait-checks --all --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
 ```
@@ -889,8 +903,9 @@ returns `timedOut: true` and an empty `checks`, which is never a pass. A
 repository with no CI workflow therefore waits the full `--timeout` before it
 returns. Exit 1 with `no required checks reported on the '<branch>' branch` stays
 unresolved, because `--all` has no required-check answer. A `noRequiredChecks`
-envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`;
-when a required check exists, the required wait stays the one to run. `--all` is
+envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`
+or after the refusal above that no source states the required checks; when the
+required wait reads a required check, it stays the one to run. `--all` is
 refused on every other role operation, and so is `--head`. `--all` takes `--head`
 as the required wait does.
 
@@ -1204,7 +1219,8 @@ GitHub. Declare the PR after the worker opens it:
   GitHub Free-plan organization repository, refuses every finish of a declared
   run, so such a run can only end through `abort`. Do not declare the PR there. Finish with the `unresolvedCompare` marker
   after you compare the PR head with `reviewed.head` yourself, and run
-  `wait-checks` before each reviewer turn.
+  `wait-checks --all` once before each reviewer turn, because the required wait
+  refuses there. "Waiting for required checks" states that wait.
 
 A marked `role finish` still exits `0`, unlike the headless finish that exits
 `4` for the same marker. The exit code is not the outcome channel of this

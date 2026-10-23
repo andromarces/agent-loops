@@ -208,6 +208,64 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
+/** The words of a text in order, so case, whitespace, Markdown marks, and punctuation never decide a match. */
+const wordsOf = (text) =>
+  text
+    .toLowerCase()
+    .match(/[a-z0-9]+/g)
+    .join(" ");
+
+/** The paragraph of `text` that holds `marker`, bounded by blank lines. */
+function paragraphAround(text, marker) {
+  const paragraph = text.split(/\r?\n[ \t]*\r?\n/).find((part) => part.includes(marker));
+  expect(paragraph, `no paragraph holds: ${marker}`).toBeDefined();
+  return paragraph;
+}
+
+/** The text of `text` between the end of `after` and the start of `before`. */
+function textBetween(text, after, before) {
+  const start = text.indexOf(after);
+  expect(start, `no text holds: ${after}`).toBeGreaterThanOrEqual(0);
+  const end = text.indexOf(before, start);
+  expect(end, `no text holds: ${before}`).toBeGreaterThan(start);
+  return text.slice(start + after.length, end);
+}
+
+// The refusal rule as each parent surface states it, from its fixed start to the end of its
+// exclusion sentence. A reworded rule must update these passages.
+const DOCS_REFUSAL_PASSAGE =
+  'When no source can state the required checks, the required wait cannot say whether the PR holds a required check, so it refuses with exit 1 and `status: "error"`. The error says that a source `settled nothing`, that a source `could not be read`, or that a source `did not state that it holds no required check`, and that the required checks of the PR are unresolved. The 403 of a private repository on the GitHub Free plan (#301) is that case. It is no required-check read, so do not run the required wait again. Run the `--all` wait below once, as after `noRequiredChecks`, then dispatch the reviewer, which reads the CI status of the PR head itself. An `--all` pass is never a required-check pass: never record the CI status as passed from it, from this refusal, or from a `noRequiredChecks` envelope. The `--require-ci` gate still decides the finish, and it refuses a declared run there. Any other `status: "error"` stays an unresolved read, including a reply that could not be parsed and a failed read of the required check names: do not run `--all` for it.';
+const PROMPT_REFUSAL_PASSAGE =
+  'An exit 1 with "status": "error" whose error says that a required-check source settled nothing, could not be read, or did not state that it holds no required check, so the required checks are unresolved, as the 403 of a private repository on the GitHub Free plan does, is a refusal and not a read failure: run the same --all command once, as for noRequiredChecks, then dispatch the reviewer, and never record the CI status as passed from the --all result or the refusal. Any other error, such as a reply that could not be parsed or a failed read of the required check names, stays an unresolved read with no --all run.';
+
+// Usefulness: verifies both parent surfaces name the `--all` wait for the required wait's refusal
+// when no required-check source can state the required checks (issue #1018). A parent on a private
+// Free-plan repository (#301) otherwise has no wait it may run, because `--all` was allowed only
+// after `noRequiredChecks`, and the required wait can no longer return that there. The whole passage
+// is compared word for word, scope (a source that `settled nothing`, `could not be read`, or `did
+// not state that it holds no required check`), action, and exclusions together, so no word added,
+// removed, or changed inside it passes.
+test("the parent surfaces name the --all wait for a refusal of every required-check source", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readFile(instructionsPath, "utf8");
+  const docsPassage = paragraphAround(instructions, "When no source can state the required checks");
+  const promptPassage = textBetween(
+    prompt,
+    "as passed from the noRequiredChecks envelope.",
+    "A check that a third-party app registers late",
+  );
+  expect(wordsOf(docsPassage)).toBe(wordsOf(DOCS_REFUSAL_PASSAGE));
+  expect(wordsOf(promptPassage)).toBe(wordsOf(PROMPT_REFUSAL_PASSAGE));
+});
+
 // The surfaces that state the empty-union rule of the gate. The reviewer found them contradicting
 // each other, so one rule is asserted on each. Only an allowlisted reply proves an absence, and a
 // private Free-plan repository must omit `--pr`. Usefulness: verifies every surface states the same
