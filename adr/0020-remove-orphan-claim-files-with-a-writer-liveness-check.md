@@ -143,7 +143,9 @@ running process. It also asks to check a reported PID-reuse window.
      recorded stamp (a `linux-proc` owner costs one `readlink` of the reader
      namespace first). A process reads its own stamp once, on its first lock creation:
      no spawn on Linux, one `ps` on macOS, and one `powershell.exe` startup on
-     Windows. The Windows latency is not measured, it is bounded by the 5 s timeout,
+     Windows. The Windows latency measured a median of 804 ms (range 763 to 1207 ms,
+     15 fresh processes, Windows PowerShell 5.1, a loaded 16-CPU host, 2026-10-23,
+     #511), it is bounded by the 5 s timeout,
      and Node has no cheaper source (`process.uptime()` stops during a system sleep on
      POSIX). It is a `known-limit`.
    - The replacement owner never matches stale content because every acquisition

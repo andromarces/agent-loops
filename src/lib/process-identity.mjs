@@ -149,7 +149,7 @@ let ownStartTimeQuery;
 
 // The start time stamp of this process, read once on the first lock creation: the
 // lock content of every acquisition carries it. Linux reads /proc; macOS spawns one
-// `ps`; Windows spawns one PowerShell (a startup that was not measured, bounded by
+// `ps`; Windows spawns one PowerShell (a startup of about 0.8 s on a loaded 16-CPU Windows host, 2026-10-23, bounded by
 // START_TIME_QUERY_MS). Node has no cheaper source of the OS start time:
 // `process.uptime()` stops during a system sleep on POSIX, so `Date.now()` minus it
 // is not the start time.
