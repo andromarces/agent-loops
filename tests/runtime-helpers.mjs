@@ -1216,9 +1216,10 @@ export async function pollUntil(probe, ms) {
  * - `__STALL__` runs a loop that stalls the read. Every 0.2 s it writes a counter to the heartbeat
  *   file through a temporary file and a rename, so a reader sees a whole record or none. It checks
  *   real elapsed time (`date +%s`) and leaves the loop at the ceiling, whatever signal the body
- *   ignores, then writes the `done` marker. The ceiling is `ceilingSeconds` (default 10). Whole
- *   seconds of `date` and the 0.2 s sleep make the real ceiling at most `ceilingSeconds + 1` s
- *   plus 0.2 s.
+ *   ignores, then writes the `done` marker. The ceiling is `ceilingSeconds` (default 10). The loop
+ *   writes a heartbeat before each ceiling check, so one heartbeat exists at any ceiling, even when
+ *   the start read and the check read straddle a second boundary. Whole seconds of `date` and the
+ *   0.2 s sleep make the real ceiling at most `ceilingSeconds + 1` s plus 0.2 s.
  *
  * The test never signals the shim. The code under test (the `exec` timeout or cancel) must end it,
  * and the test observes that:
@@ -1239,9 +1240,10 @@ export async function createPsShim(body, { ceilingSeconds = 10 } = {}) {
   const stall = [
     "__start=$(date +%s)",
     "__n=0",
-    `while [ $(( $(date +%s) - __start )) -lt ${ceilingSeconds} ]; do`,
+    "while :; do",
     "  __n=$((__n + 1))",
     `  echo $__n > ${quoted}/beat.tmp && mv ${quoted}/beat.tmp ${quoted}/beat`,
+    `  [ $(( $(date +%s) - __start )) -lt ${ceilingSeconds} ] || break`,
     "  sleep 0.2",
     "done",
     `echo done > ${quoted}/done`,
