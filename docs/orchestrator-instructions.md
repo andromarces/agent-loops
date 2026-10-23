@@ -337,11 +337,14 @@ in PowerShell. On POSIX, run `find "<work tree>" -not -type d -not -type l`. Eac
 command includes hidden files and never descends into a link or a junction. Any
 path that it prints is a file: stop and leave the folder to a maintainer. When it
 prints nothing, delete the folder without following links:
-`cmd.exe /c rmdir /s /q "<work tree>"` on Windows, `rm -rf "<work tree>"` on POSIX,
-which does not follow symbolic links. Run the Windows delete as `cmd.exe /c rmdir`,
-because Git Bash resolves a bare `rmdir` to GNU rmdir, which rejects those
-switches. Never use a recursive delete that follows junctions: it
-can damage the shared pnpm store.
+`cmd.exe /c rmdir /s /q "<work tree>"` in PowerShell or cmd.exe,
+`MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"` in Git
+Bash, `rm -rf "<work tree>"` on POSIX, which does not follow symbolic links. Run
+the Windows delete as `cmd.exe /c rmdir`, because Git Bash resolves a bare `rmdir`
+to GNU rmdir, which rejects those switches. In Git Bash, keep `MSYS_NO_PATHCONV=1`,
+because MSYS path conversion rewrites the `/s` and `/q` switches, and `cmd.exe`
+then exits 0 and leaves the folder. Never use a recursive delete that follows
+junctions: it can damage the shared pnpm store.
 
 When the task needs other ignored reference data of the main work tree, such as a downloaded
 specification directory, pass `--copy-local-path <relative path>` on the init call, once for each path. The
