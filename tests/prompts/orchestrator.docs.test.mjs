@@ -208,10 +208,41 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
+/**
+ * Whether `text` holds `sentence` as a whole sentence: the same words in the same order, between a
+ * sentence start and a sentence end. Case, whitespace, Markdown marks, and punctuation inside the
+ * sentence never decide the match, so any other word change does.
+ */
+function holdsSentence(text, sentence) {
+  const words = sentence
+    .toLowerCase()
+    .match(/[a-z0-9]+/g)
+    .join("[^a-z0-9]+");
+  const closers = "[`\"')*_]*";
+  return new RegExp(
+    String.raw`(?:^|[.!?]\s+|\n\s*\n)${words}(?![a-z0-9])${closers}(?:[.!?;]|\s*\n\s*\n|\s*$)`,
+    "i",
+  ).test(text);
+}
+
+// The refusal rule as each parent surface states it. A reworded rule must update these sentences.
+const DOCS_REFUSAL_SENTENCES = [
+  'When no source can state the required checks, the required wait cannot say whether the PR holds a required check, so it refuses with exit 1 and `status: "error"`.',
+  "The error says that a source `settled nothing`, that a source `could not be read`, or that a source `did not state that it holds no required check`, and that the required checks of the PR are unresolved.",
+  "Run the `--all` wait below once, as after `noRequiredChecks`, then dispatch the reviewer, which reads the CI status of the PR head itself.",
+  'Any other `status: "error"` stays an unresolved read, including a reply that could not be parsed and a failed read of the required check names: do not run `--all` for it.',
+];
+const PROMPT_REFUSAL_SENTENCES = [
+  'An exit 1 with "status": "error" whose error says that a required-check source settled nothing, could not be read, or did not state that it holds no required check, so the required checks are unresolved, as the 403 of a private repository on the GitHub Free plan does, is a refusal and not a read failure: run the same --all command once, as for noRequiredChecks, then dispatch the reviewer, and never record the CI status as passed from the --all result or the refusal.',
+  "Any other error, such as a reply that could not be parsed or a failed read of the required check names, stays an unresolved read with no --all run.",
+];
+
 // Usefulness: verifies both parent surfaces name the `--all` wait for the required wait's refusal
 // when no required-check source can state the required checks (issue #1018). A parent on a private
 // Free-plan repository (#301) otherwise has no wait it may run, because `--all` was allowed only
-// after `noRequiredChecks`, and the required wait can no longer return that there.
+// after `noRequiredChecks`, and the required wait can no longer return that there. The scope (a source that
+// `settled nothing`, `could not be read`, or `did not state that it holds no required check`), the
+// action, and the exclusions are compared word for word, so no reversal of the rule can pass.
 test("the parent surfaces name the --all wait for a refusal of every required-check source", async () => {
   const prompt = initialPrompt({
     task: "Implement feature X",
@@ -223,40 +254,13 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
   const instructions = await readFile(instructionsPath, "utf8");
-  // Each rule is cut from its own passage, so the `noRequiredChecks` instruction cannot satisfy it.
-  // The passage runs from the refusal to the end of the sentence that opens with "Any other".
-  const passages = [
-    [prompt, 'An exit 1 with "status": "error" whose error says'],
-    [instructions, "When no source can state the required checks"],
-  ];
-  for (const [text, from] of passages) {
-    const start = text.indexOf(from);
-    expect(start, `no passage starts at ${from}`).toBeGreaterThanOrEqual(0);
-    const exclusionAt = text.indexOf("Any other", start);
-    expect(exclusionAt, "no exclusion sentence").toBeGreaterThan(start);
-    const end = text.indexOf(". ", exclusionAt);
-    const passage = text
-      .slice(start, end > 0 ? end + 1 : undefined)
-      .replace(/\s+/g, " ")
-      .trim();
-    const split = passage.indexOf("Any other");
-    // The sources that state nothing unlock `--all`, and the instruction is to run it, not to refrain.
-    expect(passage).toMatch(/settled nothing/);
-    expect(passage).toMatch(/could not be read/);
-    expect(passage).toMatch(/did not state that it holds no required check/);
-    const action = passage
-      .slice(0, split)
-      .split(/(?<=\.)\s/)
-      .find((sentence) => /--all/.test(sentence) && /dispatch the reviewer/i.test(sentence));
-    expect(action, "no sentence runs --all, then dispatches the reviewer").toBeDefined();
-    expect(action).toMatch(/run[^.]*--all[^.]*once[^.]*dispatch the reviewer/i);
-    expect(action).not.toMatch(/(?:do not|never|don't)\s+run/i);
-    // Every other error stays unresolved: a parse failure and a failed names read never unlock `--all`.
-    const exclusion = passage.slice(split);
-    expect(exclusion).toMatch(/could not be parsed/);
-    expect(exclusion).toMatch(/failed read[^.]*names/);
-    expect(exclusion).toMatch(/unresolved/);
-    expect(exclusion).toMatch(/(?:do not|never) run `?--all|no `?--all`? run/i);
+  for (const [text, sentences] of [
+    [prompt, PROMPT_REFUSAL_SENTENCES],
+    [instructions, DOCS_REFUSAL_SENTENCES],
+  ]) {
+    for (const sentence of sentences) {
+      expect(holdsSentence(text, sentence), `no sentence holds: ${sentence}`).toBe(true);
+    }
   }
 });
 
