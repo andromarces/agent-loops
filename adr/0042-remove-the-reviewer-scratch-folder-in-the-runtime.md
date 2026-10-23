@@ -21,6 +21,7 @@ The reviewer prompt tells the reviewer to remove the output that it wrote under 
 5. **No link following.** The removal uses `fs.rm` with `recursive` and `force`. It unlinks a symbolic link or a Windows junction as an entry and never follows it. Nothing outside the folder is deleted. Before the removal, the runtime checks with `lstat` that `.agent-loop` and `.agent-loop/rev` are real directories. If either is a link, a junction, or not a directory, the runtime logs a `warn` line and deletes nothing. The runtime then removes the empty `rev` and `.agent-loop` folders with a plain `rmdir`, which fails on a folder that holds another entry.
 6. **Failure is soft.** A failed creation logs a warning at `warn`, and the turn runs with the earlier prompt wording. A failed removal logs a warning at `warn` and never fails or halts the run.
 7. **Kept rule.** The `Notes` rule of issue #906 stays for output outside the scratch folder.
+8. **Removal rule exception.** The ignored-path removal rule names the scratch folder as an exception, and tells the reviewer not to delete it (issue #997). A refused delete command then adds no `Notes` line. A prompt without a scratch folder keeps the earlier removal rule.
 
 ## Consequences
 

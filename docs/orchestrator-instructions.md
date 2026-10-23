@@ -620,7 +620,7 @@ The mode table is in
   no such guidance. The prompt names no repository path, because the
   `workspace-write` prompt must stay free of a repository-specific path. The reviewer removes each temporary
   file or directory that it created outside the repository before the closing
-  block, and names any that it could not remove in `Notes` (issue #865). It also removes each file or directory that it created under an ignored path inside the repository, and names any that it could not remove in `Notes`. It keeps output that a later step needs, such as a coverage report that the task asks for, and names it in `Notes` (issue #906). A change to a cache file that Git does not
+  block, and names any that it could not remove in `Notes` (issue #865). It also removes each file or directory that it created under an ignored path inside the repository, and names any that it could not remove in `Notes`. When the turn has a runtime scratch folder, the reviewer leaves that folder out of this removal, because the runtime removes it (issue #997). It keeps output that a later step needs, such as a coverage report that the task asks for, and names it in `Notes` (issue #906). A change to a cache file that Git does not
   ignore is a reviewer mutation. The mutation check is unchanged. The headless initial
   prompt tells the orchestrator the mode, and says that its own turns stay
   read-only. A reviewer that is not Codex has no mode, and its prompts name none.
