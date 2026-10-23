@@ -558,9 +558,10 @@ export async function waitChecks({
     return contexts;
   };
   // Whether the `gh` no-required-checks answer is an established absence, decided by the same
-  // `requiredAbsence` the `--require-ci` gate uses (#1013). A failed names read, a source that
-  // settled nothing, and a ruleset read that found no rule beside no named check are errors that
-  // name the cause, because the gate refuses the same states. A source that names a required
+  // `requiredAbsence` the `--require-ci` gate uses (#1013). A source that settled nothing, and a
+  // ruleset read that found no rule beside no named check, are errors that name the cause,
+  // because the gate refuses the same states. A failed names read is an error too, where the
+  // wait is stricter than the gate, which ignores that read. A source that names a required
   // check is no absence, so the wait goes on to judge it.
   const absenceOf = async (base) => {
     await ensureSlug();

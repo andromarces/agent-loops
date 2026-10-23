@@ -820,11 +820,13 @@ reports it only when every required-check source states the absence, as the
 `--require-ci` gate decides it: `gh` answers that the branch has no required check,
 the rulesets read has a rule but no required-status-check rule, and the classic
 protection read states the branch is not protected. A source that settles nothing, as
-the 403 of a private repository on the GitHub Free plan does, a ruleset read that
-found no rule with no source naming a check, and a failed read of the required names
-exit 1 with `status: "error"`, because the gate refuses the same states. A source that
-names a required check is no absence, even beside a ruleset read that found no rule,
-and the wait continues to judge that check:
+the 403 of a private repository on the GitHub Free plan does, and a ruleset read that
+found no rule with no source naming a check, exit 1 with `status: "error"`, because
+the gate refuses the same states. A failed read of the required names exits 1 with
+`status: "error"` too. The wait is stricter than the gate there: the gate ignores a
+failed names read and accepts an established absence. A source that names a required
+check is no absence, even beside a ruleset read that found no rule, and the wait
+continues to judge that check:
 
 ```json
 {
