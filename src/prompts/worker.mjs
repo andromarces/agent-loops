@@ -1,9 +1,15 @@
 import { escapeLineSeparators } from "./escape.mjs";
 import { initTaskBlock, processRule, reportBlock, testSlotRule } from "./report.mjs";
 
+const prBodyRule =
+  "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment.";
+
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
-    return escapeLineSeparators(prompt);
+    // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the rule.
+    return escapeLineSeparators(`${prompt}
+
+${prBodyRule}`);
   }
 
   return escapeLineSeparators(
@@ -18,6 +24,7 @@ Your role:
   branch and push it, so the reviewer sees a committed head and the PR head
   matches that commit. A task is PR work when its change is delivered on a pull
   request.
+- ${prBodyRule}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
 - The work tree this turn runs in belongs to the parent. Never remove, move, or
   switch it, and leave it in place after the push, because every later turn of
