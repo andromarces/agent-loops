@@ -720,6 +720,7 @@ function dispatchPayload(roleName, result) {
       role: roleName,
       status: "error",
       error: result.error,
+      ...(result.transient ? { transient: result.transient } : {}),
       ...(result.sharedGitChanged ? { sharedGitChanged: result.sharedGitChanged } : {}),
       ...(result.testRun ? { testRun: result.testRun } : {}),
     };

@@ -472,6 +472,8 @@ export function resultPrompt({ result, stepsUsed, maxSteps, declaredPr = null })
     role: result.role,
     status: result.status,
     ...(result.status === "ok" ? { response: result.response } : { error: result.error }),
+    // A failure the provider is expected to clear, such as a model capacity reply (issue #1012).
+    ...(result.transient ? { transient: result.transient } : {}),
     ...(result.reviewed ? { reviewed: result.reviewed } : {}),
     ...(result.workTree ? { workTree: result.workTree } : {}),
     ...(result.sharedGitChanged ? { sharedGitChanged: result.sharedGitChanged } : {}),
