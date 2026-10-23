@@ -77,14 +77,25 @@ export async function readRepoState(repo) {
 const runsRoots = [];
 export const repos = [];
 
+// Counts cleanups. A `setup` that resumes after a `cleanup` belongs to a finished case (for example
+// one that timed out), so it removes its own root and rejects instead of replacing the root of the
+// case that runs now.
+let generation = 0;
+
 export async function setup() {
+  const started = generation;
   const runsRoot = await mkdtemp(join(tmpdir(), "role-test-runs-"));
+  if (started !== generation) {
+    await removePath(runsRoot);
+    throw new Error("setup resumed after cleanup: its test case has ended.");
+  }
   runsRoots.push(runsRoot);
   process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
   return runsRoot;
 }
 
 export async function cleanup() {
+  generation += 1;
   restoreRunsRoot();
   for (const dir of repos) {
     await removePath(dir);
