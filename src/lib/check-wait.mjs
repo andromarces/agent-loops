@@ -9,16 +9,15 @@ import {
   evaluateContext,
   latestBy,
   matchingEntries,
+  requiredAbsence,
+  requiredNamesRefusal,
   requiredResolutionRefusal,
 } from "./ci-gate.mjs";
 import {
-  ABSENT,
-  EMPTY,
   failureOf,
   ghFailureText,
   NO_REQUIRED_CHECKS,
   requiredContexts,
-  RULESETS,
   runGh,
 } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
@@ -558,34 +557,29 @@ export async function waitChecks({
     }
     return contexts;
   };
-  // Whether the `gh` no-required-checks answer is an established absence, judged as the
-  // `--require-ci` gate judges it (#1013): every source states that it holds no required check.
-  // A source that settled nothing, or a ruleset read that found no rule, is an error that names
-  // it. A source that names a required check is no absence, so the wait goes on to judge it.
+  // Whether the `gh` no-required-checks answer is an established absence, decided by the same
+  // `requiredAbsence` the `--require-ci` gate uses (#1013). A failed names read, a source that
+  // settled nothing, and a ruleset read that found no rule beside no named check are errors that
+  // name the cause, because the gate refuses the same states. A source that names a required
+  // check is no absence, so the wait goes on to judge it.
   const absenceOf = async (base) => {
     await ensureSlug();
-    const { contexts, unknown, unparsed, rulesetState, protectionState } = await requiredContexts(
-      bounded,
-      slug,
-      base,
-      pr,
-      cwd,
-    );
-    const unproven = new Set([...unknown, ...unparsed]);
-    if (rulesetState === EMPTY) {
-      unproven.add(RULESETS);
+    const required = await requiredContexts(bounded, slug, base, pr, cwd);
+    const namesRefusal = requiredNamesRefusal(required, pr);
+    if (namesRefusal) {
+      throw new Error(`${namesRefusal}; the read is unresolved.`);
     }
-    if (unproven.size === 0) {
-      if (contexts.length > 0) {
-        return false;
-      }
-      if (rulesetState === ABSENT && protectionState === ABSENT) {
-        return true;
-      }
+    const absence = requiredAbsence(required);
+    if (absence?.absent) {
+      return true;
     }
-    throw new Error(
-      `gh pr checks ${pr} --required reported no required check, but ${[...unproven].join(" and ")} did not state that it holds no required check, so the required checks of PR ${pr} are unresolved.`,
-    );
+    const unproven = absence?.unproven ?? required.unknown;
+    if (unproven.length > 0) {
+      throw new Error(
+        `gh pr checks ${pr} --required reported no required check, but ${unproven.join(" and ")} did not state that it holds no required check, so the required checks of PR ${pr} are unresolved.`,
+      );
+    }
+    return false;
   };
   const poll = async () => {
     for (;;) {

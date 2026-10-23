@@ -180,6 +180,30 @@ test.each([
   await expect(noRequiredChecksWait(sources)).rejects.toThrow(message);
 });
 
+// Usefulness: verifies a failed read of the required names refuses the no-required-checks
+// answer, as it refuses every other required wait, so the wait never reports an absence while
+// the names read has failed (issue #1013).
+test("waitChecks refuses the no-required-checks answer when the names read failed", async () => {
+  await expect(
+    noRequiredChecksWait({ ...ABSENT_SOURCES, names: { status: 1, stdout: "", stderr: "boom" } }),
+  ).rejects.toThrow(/required check names/);
+});
+
+// Usefulness: verifies the wait agrees with the `--require-ci` gate on a ruleset read that found
+// no rule beside a classic-protection required check: the gate judges that check and does not
+// refuse, so the wait goes on to judge it instead of erroring (issue #1013).
+test("waitChecks does not error on an empty ruleset read beside a classic required check", async () => {
+  expect(
+    await noRequiredChecksWait({
+      protection: {
+        status: 0,
+        stdout: JSON.stringify({ required_status_checks: { contexts: ["ci"] } }),
+        stderr: "",
+      },
+    }),
+  ).toEqual({ timedOut: true, head: HEAD_A, checks: [] });
+});
+
 // Usefulness: verifies a ruleset that names a required check is not an absence, even when
 // `gh` lists none yet: the check has not reported, so the wait continues to the bound (#1013).
 test("waitChecks keeps waiting when a source names a required check that gh lists none of", async () => {
