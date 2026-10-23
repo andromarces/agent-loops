@@ -913,3 +913,45 @@ test("parseReportBlock returns null for a prose line above a list that holds a m
     expect(isAcceptedReview(response)).toBe(false);
   }
 });
+
+// Usefulness: verifies a list item inside a label's list run that opens with a bold report label
+// name is item text, so the closing block of issue #1006 keeps its fields; no existing test covers a
+// label-named bold lead inside a run.
+test("parseReportBlock folds an item that opens with a bold label name into the label above", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- **Privacy:** none touched",
+    "- **Checks:** `pnpm test` ran 80 files, 1382 passed",
+    "- **PR description:** updated",
+    "",
+    "Blockers:",
+    "- **Workers Builds:** pending",
+    "",
+    "Checks: `pnpm test` 80 files/1382 passed",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    why: "**Privacy:** none touched; **Checks:** `pnpm test` ran 80 files, 1382 passed; **PR description:** updated",
+    blockers: "**Workers Builds:** pending",
+    checks: "`pnpm test` 80 files/1382 passed",
+  });
+});
+
+// Usefulness: verifies a sub-item and a heading-folded item that open with a label name fold too, so
+// every fold path of issue #1006 is covered.
+test("parseReportBlock folds a sub-item and a heading item that open with a label name", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: x\n\nSteps:\n- **Deferred:** c\nBlockers: none"),
+  ).toMatchObject({ why: "x; Steps: **Deferred:** c" });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- a\n  - **Notes:** b\nBlockers: none"),
+  ).toMatchObject({ why: "a, **Notes:** b" });
+});
+
+// Usefulness: verifies a decorated label outside a list run still blanks the block when the same
+// shape folds inside a run (issue #1006), so the #243 refusal is not weakened.
+test("parseReportBlock returns null for a decorated label item outside a list run", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: x\n\n- **Checks:** ran`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: x\n- **Checks:** ran\n**Deferred:** y`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nVerdict: accept\n- **Checks:** ran`)).toBeNull();
+});

@@ -81,3 +81,10 @@ test("the closing-block rule states the heading and list fold", () => {
     /blank line[^.]*one plain prose line[^.]*list directly under it joins the label above/,
   );
 });
+
+// Usefulness: verifies the closing-block rule states that a bold label name opening a list item
+// is item text inside a run and unparseable outside one (issue #1006), so the prompt matches the parser.
+test("the closing-block rule states the bold label name list item", () => {
+  expect(reportBlock).toMatch(/dash item or sub-item[^.]*bold report label name[^.]*item text/);
+  expect(reportBlock).toMatch(/outside a list under a label[^.]*unparseable/);
+});
