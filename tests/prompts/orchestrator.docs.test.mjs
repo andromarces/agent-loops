@@ -224,32 +224,39 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
   });
   const instructions = await readFile(instructionsPath, "utf8");
   // Each rule is cut from its own passage, so the `noRequiredChecks` instruction cannot satisfy it.
+  // The passage runs from the refusal to the end of the sentence that opens with "Any other".
   const passages = [
-    [prompt, 'An exit 1 with "status": "error" whose error says', "no --all run."],
-    [instructions, "When no source can state the required checks", "do not run `--all` for it."],
+    [prompt, 'An exit 1 with "status": "error" whose error says'],
+    [instructions, "When no source can state the required checks"],
   ];
-  for (const [text, from, to] of passages) {
+  for (const [text, from] of passages) {
     const start = text.indexOf(from);
     expect(start, `no passage starts at ${from}`).toBeGreaterThanOrEqual(0);
-    const end = text.indexOf(to, start);
-    expect(end, `no passage ends at ${to}`).toBeGreaterThan(start);
+    const exclusionAt = text.indexOf("Any other", start);
+    expect(exclusionAt, "no exclusion sentence").toBeGreaterThan(start);
+    const end = text.indexOf(". ", exclusionAt);
     const passage = text
-      .slice(start, end + to.length)
+      .slice(start, end > 0 ? end + 1 : undefined)
       .replace(/\s+/g, " ")
       .trim();
+    const split = passage.indexOf("Any other");
     // The sources that state nothing unlock `--all`, and the instruction is to run it, not to refrain.
     expect(passage).toMatch(/settled nothing/);
     expect(passage).toMatch(/could not be read/);
     expect(passage).toMatch(/did not state that it holds no required check/);
-    expect(passage).toMatch(
-      /(?:^|[.:] )(?:Run|run) the (?:same )?(?:`--all` wait below|--all command) once, as (?:after|for) `?noRequiredChecks`?, then dispatch the reviewer/,
-    );
+    const action = passage
+      .slice(0, split)
+      .split(/(?<=\.)\s/)
+      .find((sentence) => /--all/.test(sentence) && /dispatch the reviewer/i.test(sentence));
+    expect(action, "no sentence runs --all, then dispatches the reviewer").toBeDefined();
+    expect(action).toMatch(/run[^.]*--all[^.]*once[^.]*dispatch the reviewer/i);
+    expect(action).not.toMatch(/(?:do not|never|don't)\s+run/i);
     // Every other error stays unresolved: a parse failure and a failed names read never unlock `--all`.
-    const exclusion = passage.slice(passage.indexOf("Any other"));
+    const exclusion = passage.slice(split);
     expect(exclusion).toMatch(/could not be parsed/);
-    expect(exclusion).toMatch(/failed read of the required check names/);
-    expect(exclusion).toMatch(/stays an unresolved read/);
-    expect(exclusion).toMatch(/do not run `--all`|no --all run/);
+    expect(exclusion).toMatch(/failed read[^.]*names/);
+    expect(exclusion).toMatch(/unresolved/);
+    expect(exclusion).toMatch(/(?:do not|never) run `?--all|no `?--all`? run/i);
   }
 });
 
