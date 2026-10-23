@@ -187,9 +187,10 @@ Read the JSON envelope on stdout. Example reviewer envelope:
 ```
 
 - `status: "error"` carries `error`. Treat it as not accepted.
-- An error envelope can carry `"transient": "capacity"`. It means the turn ended
-  on a Codex model capacity reply (`Selected model is at capacity. Please try a
-  different model.`), a provider outage and not a reviewer fault. The turn
+- An error envelope can carry `"transient": "capacity"`. It means the last failure
+  event of the Codex turn was the model capacity reply (`Selected model is at
+  capacity. Please try a different model.`), a provider outage and not a reviewer
+  fault. A capacity event that another failure follows is not marked. The turn
   charged its step and gave no review result. Dispatch the same turn again, after
   a short wait, without reading the `error` text. Raise the budget with `extend`
   when no step is left. An error with no `transient` field is not known to be

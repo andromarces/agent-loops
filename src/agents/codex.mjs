@@ -18,20 +18,21 @@ const missingSession = (id) =>
 const CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
 
 /**
- * Marks a failed turn that ended on the model capacity reply, so a parent can tell the transient
- * failure from a reviewer fault without reading the error text. A timeout, cancel, or signal ends
- * the turn for another reason, so it is never marked.
+ * Marks a failed turn whose terminal failure is the model capacity reply, so a parent can tell the
+ * transient failure from a reviewer fault without reading the error text. The terminal failure is
+ * the last `error` or `turn.failed` event of the stream, so an earlier capacity event followed by
+ * another cause is never marked. A timeout, cancel, or signal ends the turn for another reason, so
+ * it is never marked either.
  */
 function flagCapacityFailure(err, events) {
   if (!err || typeof err !== "object" || err.timedOut || err.isCanceled || err.isTerminated) {
     return;
   }
-  const capacity = events.some(
-    (event) =>
-      (event?.type === "error" && event.message === CAPACITY_MESSAGE) ||
-      (event?.type === "turn.failed" && event.error?.message === CAPACITY_MESSAGE),
+  const terminal = events.findLast(
+    (event) => event?.type === "error" || event?.type === "turn.failed",
   );
-  if (capacity) {
+  const message = terminal?.type === "error" ? terminal.message : terminal?.error?.message;
+  if (message === CAPACITY_MESSAGE) {
     err.transient = "capacity";
   }
 }

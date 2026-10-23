@@ -965,3 +965,30 @@ test.each([
   const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
   expect(caught.transient).toBeUndefined();
 });
+
+// Usefulness: verifies requirement "only a turn whose terminal failure is the capacity reply is marked transient" (issue #1012): an earlier capacity event followed by another terminal cause must not make a parent retry a real fault.
+test.each([
+  [
+    "an error event then a turn.failed with another cause",
+    [
+      { type: "error", message: CAPACITY },
+      { type: "turn.failed", error: { message: "Authentication failed" } },
+    ],
+  ],
+  [
+    "a capacity turn.failed then a later error with another cause",
+    [
+      { type: "turn.failed", error: { message: CAPACITY } },
+      { type: "error", message: "Authentication failed" },
+    ],
+  ],
+])("codex does not mark a capacity event that %s", async (_name, events) => {
+  const stdout = events.map((event) => JSON.stringify(event)).join("\n");
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), { exitCode: 1, stdout, stderr: "" }),
+  );
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.transient).toBeUndefined();
+});
