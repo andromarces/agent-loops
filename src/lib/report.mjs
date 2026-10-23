@@ -25,6 +25,10 @@ const DECORATED_LABEL_LINE = new RegExp(
   "i",
 );
 
+// A dash item or sub-item whose text opens with a bold mark, for example `- **Checks:** ran`. When it
+// folds into a label's list run, a label name in the bold lead is item text (issue #1006).
+const BOLD_DASH_ITEM = /^\s*- \*\*/;
+
 // A list line the parser would drop, for example `- item`, `* item`, `1. item`,
 // or the same without the space after the marker (`-item`). A run of markers
 // alone (`---`), a decimal (`1.5x`), an arrow (`->`), and an ordered marker that
@@ -147,7 +151,10 @@ function closingBlock(response) {
  * repeat shadows or after the reviewer `Verdict:` line (issue #249), because the
  * scan covers every line, not only the winning last occurrence of each label. A
  * label that indentation or markdown decoration hides also makes the block
- * unparseable, so `raw` carries its value (issue #243).
+ * unparseable, so `raw` carries its value (issue #243). A `- ` item or sub-item that opens with a
+ * bold label name, for example `- **Checks:** ran`, is item text when it folds into a label's list
+ * run (issue #1006); the same line outside a run still blanks the block, because the decorated-label
+ * check runs again on the folded lines. Any other decorated form blanks the block, folded or not.
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
  */
@@ -156,11 +163,11 @@ export function parseReportBlock(response) {
   if (!block) {
     return null;
   }
-  if (block.some((line) => DECORATED_LABEL_LINE.test(line))) {
+  if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !BOLD_DASH_ITEM.test(line))) {
     return null;
   }
   const lines = foldEmptyLabelLists(block);
-  if (!lines || hasDroppedList(lines)) {
+  if (!lines || lines.some((line) => DECORATED_LABEL_LINE.test(line)) || hasDroppedList(lines)) {
     return null;
   }
   const report = {};
