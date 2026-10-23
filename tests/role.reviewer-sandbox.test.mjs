@@ -243,8 +243,13 @@ const abortCall = (repo, extra = []) =>
 // through `abort` with lifecycle `aborted`, with or without a mode flag, so the refusal of the
 // other operations cannot strand a non-terminal run.
 describe("abort over an invalid recorded mode", () => {
-  test.each(INVALID_MODES)("ends a run that records %j", async (value) => {
-    for (const flags of [[], [FLAG, "read-only"], [ALIAS]]) {
+  // One init, corrupt, abort, refused-reviewer cycle per case keeps each case inside the test
+  // timeout. A case never calls `cleanup`: only `afterEach` does, so a case that outlives its
+  // timeout cannot delete the repo or runs root of the next case.
+  const ABORT_FLAGS = [[], [FLAG, "read-only"], [ALIAS]];
+  test.each(INVALID_MODES.flatMap((value) => ABORT_FLAGS.map((flags) => [value, flags])))(
+    "ends a run that records %j with flags %j",
+    async (value, flags) => {
       const { repo, reviewer, agents } = await start();
       await corrupt(repo, value);
       const result = await abortCall(repo, flags);
@@ -254,9 +259,8 @@ describe("abort over an invalid recorded mode", () => {
       expect(reviewer.recorded).toHaveLength(0);
       // The damaged field is still refused by the other operations, so no turn runs after the abort.
       expect((await reviewerTurn(repo, agents)).exitCode).toBe(1);
-      await cleanup();
-    }
-  });
+    },
+  );
 
   test("ends the run of a reviewer that is not Codex", async () => {
     await setup();
