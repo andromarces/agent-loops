@@ -35,6 +35,8 @@ The runtime-supplied required-check status (ADR 0011, ADR 0024) already reads th
 - A check that is required but that no read of the PR lists yet is absent, as before (ADR 0010, decision 12, for the part that remains).
 - A parent reads `prFailures` besides `checks`. `checks` alone is no verdict while `prFailures` is present.
 
+Live verification (issue #710): pending.
+
 ## Alternatives
 
 1. **Use `readRequiredChecks` directly**: rejected. It judges the evaluated commit rather than the head, returns names only, withholds a pass on the clean-tree and merge-state rules, has its own timeout, and has no `--all` or `noRequiredChecks`. The wait shares its source-resolution rule instead.
