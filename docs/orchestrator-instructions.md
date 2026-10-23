@@ -327,6 +327,15 @@ The copy duplicates secrets such as `.env` into the run work tree, so remove tha
 work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
 the copy off. It is an init field, so a later call cannot change it.
 
+When the run ends, remove the work tree with `git worktree remove --force "<work tree>"`,
+then check whether the folder still exists. On Windows, the remove can leave the
+folder when a turn ran `pnpm install`: it holds `node_modules` with junctions into
+the shared pnpm store and no file. When the folder remains, check that it holds
+only links and empty directories, then delete it without following links:
+`rmdir /s /q "<work tree>"` on Windows, `rm -rf "<work tree>"` on POSIX, which does
+not follow symbolic links. Never use a recursive delete that follows junctions: it
+can damage the shared pnpm store.
+
 When the task needs other ignored reference data of the main work tree, such as a downloaded
 specification directory, pass `--copy-local-path <relative path>` on the init call, once for each path. The
 path joins the copy and follows every rule above, and its files appear in `localFiles.copied`. The
