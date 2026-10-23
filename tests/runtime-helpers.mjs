@@ -215,6 +215,12 @@ export function noRequiredCheckGh(headRefOid, calls = []) {
 /**
  * Creates a symlink, or skips the test where the host cannot: Windows without the symlink
  * privilege. Every other failure throws, so Linux and macOS never skip silently.
+ *
+ * Verified on Windows 11 (10.0.26220) without the symlink privilege (file and directory symlinks
+ * both fail with EPERM), Node v26.8.1, pnpm 12.11.2, commit eb84f61: `pnpm test` ran 2774 tests,
+ * 2647 passed, 86 skipped, 21 failed. No failure names EPERM from a symlink call. The 21 failures
+ * are timeouts and argument-shape errors in cli.session-persist, cli.reviewer-sandbox, and
+ * runtime.test-cmd (issue #709, source #603, PR #607).
  */
 export async function symlinkOrSkip(ctx, target, path, type) {
   try {
