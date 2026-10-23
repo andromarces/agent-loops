@@ -572,6 +572,26 @@ test("reviewer prompt names the runtime scratch folder as the first place for ou
   expect(named).toBeLessThan(prompt.indexOf("Use another ignored path inside the repository"));
 });
 
+// Usefulness: verifies acceptance #997 — the ignored-path removal rule leaves the runtime scratch
+// folder alone, because the runtime removes it and a Codex reviewer's refused delete command only
+// adds a Notes line; other ignored paths and output outside the repository keep the removal rule.
+test("reviewer prompt tells the reviewer to leave the runtime scratch folder to the runtime", () => {
+  const prompt = reviewerPrompt(
+    "check the fix",
+    null,
+    null,
+    null,
+    null,
+    "/work/.agent-loop/rev/ab12cd34",
+  );
+  expect(prompt).toContain(
+    "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder, and name in Notes any that you could not remove. Do not delete the scratch folder, because the runtime removes it.",
+  );
+  expect(prompt).toContain(
+    "Before the closing block, remove every temporary file or directory that this turn created outside the repository",
+  );
+});
+
 // Usefulness: verifies a turn with no scratch folder keeps the earlier wording and names no folder,
 // because a failed creation must not send the reviewer to a path that does not exist.
 test("reviewer prompt without a scratch folder names none", () => {

@@ -108,8 +108,16 @@ const scratchPlacement = (scratchDir) =>
     ? "Put the output of a test, build, or probe under an ignored path inside the repository first, such as an ignored cache directory. Use a temporary path outside the repository only when no ignored path fits."
     : `The runtime created the scratch folder ${JSON.stringify(scratchDir)} for this turn. Put the output of a test, build, or probe in that folder first. The runtime removes that folder after this turn. Use another ignored path inside the repository, or a temporary path outside it, only when that folder does not fit.`;
 
+// The scratch folder is an ignored path inside the repository, so the removal rule names it as an
+// exception. A Codex reviewer that deletes it runs a command that automatic approval review can
+// refuse, and the runtime removes it anyway (issue #997).
+const ignoredPathRemoval = (scratchDir) =>
+  scratchDir === null
+    ? "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, and name in Notes any that you could not remove."
+    : "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder, and name in Notes any that you could not remove. Do not delete the scratch folder, because the runtime removes it.";
+
 const scratchWriteRule = (scratchDir) =>
-  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove. Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, and name in Notes any that you could not remove. Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes.`;
+  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove. ${ignoredPathRemoval(scratchDir)} Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes.`;
 
 // The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
 // that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
