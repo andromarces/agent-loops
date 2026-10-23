@@ -294,8 +294,8 @@ test("two consecutive worker turns", async () => {
 
     expect(result.exitCode).toBe(0);
     expect(workerAdapter.recorded.length).toBe(2);
-    // On second turn, prompt is verbatim
-    expect(workerAdapter.recorded[1].prompt).toBe("work 2");
+    // On second turn, the prompt is the task text plus the PR body rule, with no preamble
+    expect(workerAdapter.recorded[1].prompt).toMatch(/^work 2\n\nAfter each push, /);
   } finally {
     gitDouble.answer = null;
   }

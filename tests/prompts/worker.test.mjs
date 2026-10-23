@@ -132,9 +132,12 @@ test("first worker turn requires each result inside the closing block", () => {
   );
 });
 
-// Usefulness: verifies later worker turns stay raw; the session already holds the instructions.
-test("later worker turns pass the prompt through unchanged", () => {
-  expect(workerPrompt("next step", false)).toBe("next step");
+// Usefulness: verifies later worker turns carry the task text and no preamble; the session already
+// holds the instructions. The one rule they repeat is covered by the PR body test.
+test("later worker turns pass the prompt without the preamble", () => {
+  const prompt = workerPrompt("next step", false);
+  expect(prompt.startsWith("next step")).toBe(true);
+  expect(prompt).not.toContain("You are the implementation agent");
 });
 
 // Usefulness: verifies requirement "the worker contract states that a shell command can be refused" (issue #713): a refused command is named in the report, not reported as run.
@@ -211,6 +214,16 @@ test("first worker turn tells the worker to remove temporary files it created ou
 // accepts, and the rule bars a revision log so the body stays a description, not a diary.
 test("first worker turn tells the worker to update the PR body after a push", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment.",
+  );
+});
+
+// Usefulness: verifies requirement "every worker turn that can push a fix carries the PR body rule"
+// (issue #1002): a resumed turn, including one in a replacement conversation that got no preamble
+// yet, is the turn that pushes a fix, so the rule must reach it.
+test("later worker turns carry the PR body update rule", () => {
+  const prompt = workerPrompt("fix the reviewer finding", false).replace(/\s+/g, " ");
   expect(prompt).toContain(
     "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment.",
   );

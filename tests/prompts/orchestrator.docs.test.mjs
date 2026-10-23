@@ -94,6 +94,17 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /main work tree/i, /linked work tree/i),
   (text) => expectRule(text, /Report it/i, /finish summary/i),
   (text) => expectRule(text, /failed worker turn/i, /field too/i),
+  // Issue #1002: after a push to a branch with an open PR, the worker updates the PR body in place
+  // and adds no revision log.
+  (text) => expectRule(text, /no revision log/i, /body/i, /comment/i),
+  (text) =>
+    expectRule(
+      text,
+      /after each push/i,
+      /open PR/i,
+      /updates the PR body in place/i,
+      /describes the pushed head/i,
+    ),
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

@@ -78,7 +78,7 @@ test("a replaced worker conversation receives the preamble without a task rerun"
 
     expect(result.exitCode).toBe(0);
     expect(calls.map((call) => call.sessionId)).toEqual(["gone", "replacement"]);
-    expect(calls[0].prompt).toBe("do the work");
+    expect(calls[0].prompt).toMatch(/^do the work\n\nAfter each push, /);
     expect(calls[1].prompt).toContain("You are the implementation agent (worker)");
     expect(calls[1].prompt).not.toContain("do the work");
     expect(roles.worker.conversationReplaced).toBeUndefined();
@@ -332,7 +332,7 @@ test("a missing worker session reruns the turn as a first turn in the same step"
 
     expect(result.exitCode).toBe(0);
     expect(calls.map((call) => call.sessionId)).toEqual(["gone", null]);
-    expect(calls[0].prompt).toBe("do the work");
+    expect(calls[0].prompt).toMatch(/^do the work\n\nAfter each push, /);
     expect(calls[1].prompt).toContain("You are the implementation agent (worker)");
     expect(calls[1].prompt).toContain("do the work");
     expect(events.filter((e) => e.type === "invocation" && e.role === "worker")).toMatchObject([
