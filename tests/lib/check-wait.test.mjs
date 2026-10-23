@@ -108,16 +108,97 @@ test("waitChecks refuses exit 1 when the base branch has no required check", asy
   ).rejects.toThrow(/gh pr checks 42 --required/);
 });
 
+// The exact reply a private repository on the GitHub Free plan writes to the required-context
+// API endpoints (#301).
+const FREE_PLAN =
+  "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
+
+// The sources that each state the absence of a required check, as the gate reads them: a
+// ruleset reply with a rule but no required-status-check rule, and an unprotected branch.
+const ABSENT_SOURCES = {
+  rules: { status: 0, stdout: JSON.stringify([[{ type: "deletion" }]]), stderr: "" },
+};
+
+/** Runs one wait whose `gh pr checks --required` answers that the branch has no required check. */
+function noRequiredChecksWait(sources) {
+  const clock = fakeClock();
+  return waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    gh: scriptedGh(
+      [
+        {
+          status: 1,
+          stdout: "",
+          stderr: "no required checks reported on the 'docs/212-adr-0024-agent-reads' branch\n",
+        },
+      ],
+      sources,
+    ),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+}
+
 // Usefulness: verifies the exact `gh` answer for a branch with no required check
 // is its own settled outcome, with no check state, so the parent can tell it from
 // a read error and never reads it as a pass (issue #894).
 test("waitChecks reports a branch with no required check as its own outcome", async () => {
-  const result = await once({
-    status: 1,
-    stdout: "",
-    stderr: "no required checks reported on the 'docs/212-adr-0024-agent-reads' branch\n",
+  expect(await noRequiredChecksWait(ABSENT_SOURCES)).toEqual({
+    timedOut: false,
+    head: HEAD_A,
+    noRequiredChecks: true,
+    checks: [],
   });
-  expect(result).toEqual({ timedOut: false, head: HEAD_A, noRequiredChecks: true, checks: [] });
+});
+
+// Usefulness: verifies the `gh` no-required-checks answer is not an absence while a source of
+// the `--require-ci` gate cannot state one, so the wait and the gate give the same answer on a
+// base branch whose rulesets cannot be read, such as the Free-plan 403 (issue #1013).
+test.each([
+  [
+    "an unreadable ruleset source",
+    { rules: { status: 1, stdout: "", stderr: FREE_PLAN } },
+    /repository rulesets/,
+  ],
+  ["a ruleset read that found no rule", {}, /repository rulesets/],
+  [
+    "an unreadable protection source",
+    {
+      ...ABSENT_SOURCES,
+      protection: { status: 1, stdout: "", stderr: FREE_PLAN },
+    },
+    /classic branch protection/,
+  ],
+  [
+    "a ruleset reply that cannot be parsed",
+    { rules: { status: 0, stdout: "not json", stderr: "" } },
+    /repository rulesets/,
+  ],
+])("waitChecks refuses the no-required-checks answer over %s", async (_name, sources, message) => {
+  await expect(noRequiredChecksWait(sources)).rejects.toThrow(message);
+});
+
+// Usefulness: verifies a ruleset that names a required check is not an absence, even when
+// `gh` lists none yet: the check has not reported, so the wait continues to the bound (#1013).
+test("waitChecks keeps waiting when a source names a required check that gh lists none of", async () => {
+  expect(
+    await noRequiredChecksWait({
+      rules: {
+        status: 0,
+        stdout: JSON.stringify([
+          [
+            {
+              type: "required_status_checks",
+              parameters: { required_status_checks: [{ context: "ci" }] },
+            },
+          ],
+        ]),
+        stderr: "",
+      },
+    }),
+  ).toEqual({ timedOut: true, head: HEAD_A, checks: [] });
 });
 
 // Usefulness: verifies only the exact `gh` answer is the new outcome: the same

@@ -755,7 +755,8 @@ because no state was read for a commit.
 The required wait refuses a required context it cannot resolve. A ruleset or protection
 source with no usable reply (a 403 or 404 for a caller without admin rights, for example), a
 source reply that is not valid JSON, and a failed read of the required names each exit 1
-with `status: "error"` before any state is judged, because such a
+with `status: "error"` before any state is judged, including when `gh pr checks --required`
+answers that the branch has no required check, because such a
 source can hold a required check or an app qualifier that the wait never saw. A listed
 failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
 source. A commit read that fails, or whose reply cannot be parsed or ordered, is an error
@@ -814,7 +815,15 @@ too, so one item the CLI cannot read cannot settle the wait as a pass. Never
 record a check you could not read as passed.
 
 A branch with no required check ends the wait at once with exit 0 and
-`"noRequiredChecks": true`, an empty `checks`, and `"timedOut": false`:
+`"noRequiredChecks": true`, an empty `checks`, and `"timedOut": false`. The wait
+reports it only when every required-check source states the absence, as the
+`--require-ci` gate decides it: `gh` answers that the branch has no required check,
+the rulesets read has a rule but no required-status-check rule, and the classic
+protection read states the branch is not protected. A source that settles nothing, as
+the 403 of a private repository on the GitHub Free plan does, or a ruleset read that
+found no rule, exits 1 with `status: "error"` and names the source, because the
+gate refuses the same state. A source that names a required check is no absence, and
+the wait continues:
 
 ```json
 {
@@ -833,7 +842,8 @@ nothing required to wait for, so do not run the required wait again. On
 reviewer, which reads the CI status of the PR head itself, and never record the CI
 status as passed from the `noRequiredChecks` envelope. A reviewer that starts
 before CI completes can report the CI status as unresolved, which the `--all`
-wait avoids. The `--require-ci` gate still decides the finish.
+wait avoids. The `--require-ci` gate still decides the finish; it reads the same
+sources, so it does not refuse a `noRequiredChecks` branch for an unreadable source.
 
 ```bash
 agent-loop role wait-checks --all --cwd <dir> --pr <n> --head <sha> --timeout <seconds>

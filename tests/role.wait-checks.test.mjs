@@ -12,6 +12,11 @@ afterEach(cleanup);
 
 const PENDING = { status: 8, checks: [{ name: "ci", state: "IN_PROGRESS", bucket: "pending" }] };
 const SETTLED = { status: 0, checks: [{ name: "ci", state: "SUCCESS", bucket: "pass" }] };
+const NO_REQUIRED_CHECKS_READ = {
+  status: 1,
+  stdout: "",
+  stderr: "no required checks reported on the 'docs/212-adr-0024-agent-reads' branch",
+};
 
 // Usefulness: verifies `role wait-checks` prints one bounded envelope with the
 // check states and creates no run state, so a parent can wait for the required
@@ -47,13 +52,11 @@ test("wait-checks reports a branch with no required check as its own outcome", a
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "213", "--timeout", "60"]),
     {
-      gh: scriptedGh([
-        {
-          status: 1,
-          stdout: "",
-          stderr: "no required checks reported on the 'docs/212-adr-0024-agent-reads' branch",
-        },
-      ]),
+      // Both sources state the absence: a ruleset reply with no required-status-check rule, and an
+      // unprotected branch.
+      gh: scriptedGh([NO_REQUIRED_CHECKS_READ], {
+        rules: { status: 0, stdout: JSON.stringify([[{ type: "deletion" }]]), stderr: "" },
+      }),
       ...fakeClock(),
     },
   );
@@ -66,6 +69,34 @@ test("wait-checks reports a branch with no required check as its own outcome", a
     noRequiredChecks: true,
     checks: [],
   });
+});
+
+// Usefulness: verifies `role wait-checks` exits 1 with `status: "error"` when `gh` answers that the
+// branch has no required check but the rulesets cannot be read, as on the Free plan, so the wait
+// never reports an absence that the `--require-ci` gate refuses (issue #1013).
+test("wait-checks errors on the no-required-checks answer over an unreadable ruleset source", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "213", "--timeout", "60"]),
+    {
+      gh: scriptedGh([NO_REQUIRED_CHECKS_READ], {
+        rules: {
+          status: 1,
+          stdout: "",
+          stderr:
+            "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)",
+        },
+      }),
+      ...fakeClock(),
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.status).toBe("error");
+  expect(result.payload.error).toMatch(/repository rulesets/);
+  expect(result.payload.noRequiredChecks).toBeUndefined();
 });
 
 // Usefulness: verifies exit 1 with only pending checks listed is unresolved, not a wait that
