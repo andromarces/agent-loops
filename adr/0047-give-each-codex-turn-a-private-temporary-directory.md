@@ -36,6 +36,8 @@ Several parts of the runtime key machine-wide state on `os.tmpdir()`. These are 
 - The identity check relies on the device and inode that the platform reports. It is not verified on Windows (issue #709). A mismatch refuses and leaves the directory in place.
 - A removal that the helper refuses or cannot finish leaves the directory and logs a `warn` line.
 
+Live verification (issue #710). Two Codex reviewer turns ran through `role dispatch --role reviewer --reviewer codex` on `main` at `eb84f61` (after `f70247d`), with codex-cli 0.164.0-alpha.12, Node v26.8.1, and Windows 11 10.0.26220. The default reviewer mode ran with no sandbox. The parent set `TMP`, `TEMP`, and `TMPDIR` to a fresh empty directory outside the repository and set no `AGENT_LOOP_*` root. Before the first turn the directory was empty. After it, the directory held only `agent-loops`, the host state of the run. It held no `.tmp*` or `al-*` entry, and the same listing held after the second turn. Inside each turn `agent-loop test-slot` ran a command that printed its environment. `TMP`, `TEMP`, `TMPDIR`, and `os.tmpdir()` were `<inherited>\al-Vqip7x`. `AGENT_LOOP_TEST_SLOTS_ROOT`, `AGENT_LOOP_RUNS_ROOT`, and `AGENT_LOOP_SESSION_RECORDS_ROOT` were the `<inherited>\agent-loops\...` paths that the parent resolves. The slot file `slot-0.lock` was in `<inherited>\agent-loops\test-slots`, and `<inherited>\al-Vqip7x\agent-loops\test-slots` did not exist.
+
 ## Alternatives
 
 1. **Remove the empty `.tmp*` directories that appeared during the turn.** Not taken. A concurrent process can own an empty directory of that name in the same window, and no guard is exact.
