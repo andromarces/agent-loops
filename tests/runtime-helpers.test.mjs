@@ -147,6 +147,38 @@ test.skipIf(process.platform === "win32")(
   30_000,
 );
 
+// Usefulness: #986 — a start read and a ceiling read that straddle a second boundary must still leave
+// one heartbeat, or `ready()` times out on a shim that already ended. The body replaces `date` so the
+// first read is 100 and every later read is 101, which is that straddle with no real clock.
+test.skipIf(process.platform === "win32")(
+  "createPsShim writes a heartbeat even when its first two clock reads differ by the ceiling",
+  async () => {
+    const shim = await createPsShim(
+      [
+        "date() {",
+        "  n=$(cat __DIR__/clock 2>/dev/null || echo 0)",
+        "  echo $((n + 1)) > __DIR__/clock",
+        '  if [ "$n" -eq 0 ]; then echo 100; else echo 101; fi',
+        "}",
+        "__STALL__",
+      ].join("\n"),
+      { ceilingSeconds: 1 },
+    );
+    const child = spawn(join(shim.dir, "ps"), [], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));
+    try {
+      expect(await within(exited, 10_000, "The shim exit")).toBe(0);
+      await expect(shim.ready(2000)).resolves.toBeGreaterThanOrEqual(1);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await shim.cleanup();
+    }
+  },
+  30_000,
+);
+
 // Usefulness: acceptance (#670) — cleanup after a failed kill check must end the shim child and free
 // its directory, and must not return while the shim lives, without a signal to a pid that a file supplied. A pid that a file names can belong to
 // an unrelated process once the shim exits, so a SIGKILL read from the record is the defect.
