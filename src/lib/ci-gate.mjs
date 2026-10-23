@@ -389,26 +389,16 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
     return preamble.stop;
   }
   const { info, slug } = preamble;
-  const { unknown, rulesetState, protectionState, contexts: required } = preamble.required;
-  // No required check exists only when both sources stated they hold none. A source
-  // that settled nothing, and a ruleset read that found no rule, are both named in
-  // the refusal, because a parent can only fix a source it can see (issue #336). A
-  // blocked merge state still refuses below, so an absent check set cannot pass a
+  const { contexts: required } = preamble.required;
+  // A blocked merge state still refuses below, so an absent check set cannot pass a
   // pull request another required rule blocks.
-  const noRequiredChecks =
-    required.length === 0 && rulesetState === ABSENT && protectionState === ABSENT;
-  if (required.length === 0 && !noRequiredChecks) {
-    const unproven = [...unknown];
-    if (rulesetState === EMPTY) {
-      unproven.push(RULESETS);
-    }
-    // The protection source cannot be `EMPTY`: `classifyProtection` returns
-    // `ABSENT`, `HAS_CONTEXTS`, or `UNKNOWN` and nothing else, so an unreadable
-    // protection reply is already in `unknown` and needs no second push (#336).
+  const absence = requiredAbsence(preamble.required);
+  if (absence?.unproven) {
     return fail(
-      `no required checks were found for the base branch, and ${unproven.join(" and ")} did not state that it holds no required check, so the gate cannot tell a base branch with no required check from one whose check it never saw`,
+      `no required checks were found for the base branch, and ${absence.unproven.join(" and ")} did not state that it holds no required check, so the gate cannot tell a base branch with no required check from one whose check it never saw`,
     );
   }
+  const noRequiredChecks = absence?.absent === true;
   if (noRequiredChecks) {
     if (info.mergeStateStatus === "BLOCKED") {
       return fail(
@@ -446,6 +436,55 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
 }
 
 /**
+ * Whether the required contexts that `requiredContexts` resolved state an absence of a required
+ * check. The gate and the check wait share it, so one rule decides it (issue #1013).
+ *
+ * - `null`: a source names a required check, so there is no absence to decide. The caller judges
+ *   each named check.
+ * - `{ absent: true }`: no source names a check, and both the rulesets and the classic
+ *   protection stated they hold none.
+ * - `{ unproven }`: no source names a check, and the listed sources did not state an absence. A
+ *   source that settled nothing and a ruleset read that found no rule are both named, because a
+ *   parent can only fix a source it can see (issue #336). The protection source cannot be
+ *   `EMPTY`: `classifyProtection` returns `ABSENT`, `HAS_CONTEXTS`, or `UNKNOWN` and nothing
+ *   else, so an unreadable protection reply is already in `unknown`.
+ * @param {{ unknown: string[], rulesetState: string, protectionState: string, contexts: object[] }} required
+ * @returns {{ absent: true } | { unproven: string[] } | null}
+ */
+export function requiredAbsence({ unknown, rulesetState, protectionState, contexts }) {
+  if (contexts.length > 0) {
+    return null;
+  }
+  if (rulesetState === ABSENT && protectionState === ABSENT) {
+    return { absent: true };
+  }
+  const unproven = [...unknown];
+  if (rulesetState === EMPTY) {
+    unproven.push(RULESETS);
+  }
+  return { unproven };
+}
+
+/**
+ * Why a failed read of the required names, or a reply that could not be parsed, leaves the
+ * required contexts unresolved, or null when neither applies. `requiredResolutionRefusal` and the
+ * wait on a no-required-checks answer share it.
+ * @param {{ unparsed: string[], namesRead: boolean }} required
+ * @param {number} pr
+ * @param {string} [where] text that ends the two reasons, for example the PR head
+ * @returns {string | null}
+ */
+export function requiredNamesRefusal({ unparsed, namesRead }, pr, where = "") {
+  if (unparsed.length > 0) {
+    return `${unparsed.join(" and ")} returned a reply that could not be parsed for PR ${pr}${where}`;
+  }
+  if (!namesRead) {
+    return `the required check names for PR ${pr} could not be read${where}`;
+  }
+  return null;
+}
+
+/**
  * Why the required contexts that `requiredContexts` resolved cannot be judged, or null when
  * they can. The status read and the check wait share it, so one rule decides it.
  *
@@ -465,11 +504,9 @@ export function requiredResolutionRefusal(
   pr,
   where = "",
 ) {
-  if (unparsed.length > 0) {
-    return `${unparsed.join(" and ")} returned a reply that could not be parsed for PR ${pr}${where}`;
-  }
-  if (!namesRead) {
-    return `the required check names for PR ${pr} could not be read${where}`;
+  const namesRefusal = requiredNamesRefusal({ unparsed, namesRead }, pr, where);
+  if (namesRefusal) {
+    return namesRefusal;
   }
   if (contexts.length === 0) {
     const sources = unknown.length > 0 ? ` (${unknown.join(" and ")} settled nothing)` : "";

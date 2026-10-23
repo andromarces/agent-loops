@@ -9,6 +9,8 @@ import {
   evaluateContext,
   latestBy,
   matchingEntries,
+  requiredAbsence,
+  requiredNamesRefusal,
   requiredResolutionRefusal,
 } from "./ci-gate.mjs";
 import {
@@ -488,7 +490,7 @@ export async function waitChecks({
     }
     return result;
   };
-  const readCommit = async (sha) => {
+  const ensureSlug = async () => {
     if (slug === null) {
       const read = await bounded([
         "repo",
@@ -504,6 +506,9 @@ export async function waitChecks({
         throw new Error(`gh repo view could not be read: ${ghFailureText(read)}`);
       }
     }
+  };
+  const readCommit = async (sha) => {
+    await ensureSlug();
     const read = (argv, cwdArg) => bounded(argv, cwdArg);
     const runs = await checkRuns(read, slug, sha, cwd, true);
     const statuses = await commitStatuses(read, slug, sha, cwd, true);
@@ -552,12 +557,41 @@ export async function waitChecks({
     }
     return contexts;
   };
+  // Whether the `gh` no-required-checks answer is an established absence, decided by the same
+  // `requiredAbsence` the `--require-ci` gate uses (#1013). A source that settled nothing, and a
+  // ruleset read that found no rule beside no named check, are errors that name the cause,
+  // because the gate refuses the same states. A failed names read is an error too, where the
+  // wait is stricter than the gate, which ignores that read. A source that names a required
+  // check is no absence, so the wait goes on to judge it.
+  const absenceOf = async (base) => {
+    await ensureSlug();
+    const required = await requiredContexts(bounded, slug, base, pr, cwd);
+    const namesRefusal = requiredNamesRefusal(required, pr);
+    if (namesRefusal) {
+      throw new Error(`${namesRefusal}; the read is unresolved.`);
+    }
+    const absence = requiredAbsence(required);
+    if (absence?.absent) {
+      return true;
+    }
+    const unproven = absence?.unproven ?? required.unknown;
+    if (unproven.length > 0) {
+      throw new Error(
+        `gh pr checks ${pr} --required reported no required check, but ${unproven.join(" and ")} did not state that it holds no required check, so the required checks of PR ${pr} are unresolved.`,
+      );
+    }
+    return false;
+  };
   const poll = async () => {
     for (;;) {
       prFailures = [];
       const { head: sha, base } = readHead(pr, await bounded(headArgv));
       if (head === null || sha === head) {
         const listed = readOutcome(pr, await bounded(checksArgv), all);
+        if (listed.noRequiredChecks && !(await absenceOf(base))) {
+          listed.noRequiredChecks = false;
+          listed.settled = false;
+        }
         prFailures = listed.checks.filter(isFailing);
         let outcome = listed;
         // A branch with no required check names no state to read, so it carries no commit read.
