@@ -91,6 +91,21 @@ function isFreePlan403(stderr) {
   return stderr.replace(/\r?\n$/, "") === FREE_PLAN_403;
 }
 
+// `gh` reads these two names and then writes a debug log to stderr, which breaks the exact stderr
+// match of the protection read (#1047). Compared in upper case, because Windows names are case-blind.
+const GH_DEBUG_NAMES = new Set(["GH_DEBUG", "DEBUG"]);
+
+/**
+ * The environment of this process without the names that turn on the debug log of `gh`, and
+ * without the names in `dropEnv`.
+ */
+function ghEnv(dropEnv) {
+  const dropped = new Set([...GH_DEBUG_NAMES, ...dropEnv.map((name) => name.toUpperCase())]);
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !dropped.has(name.toUpperCase())),
+  );
+}
+
 /**
  * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr, timedOut }`;
  * a non-zero exit is data, not a throw. `timeoutMs` bounds the call and
@@ -99,20 +114,16 @@ function isFreePlan403(stderr) {
  * `forceKillAfterDelay`. On Windows it is `taskkill /T /F` over the process tree.
  * No platform keeps a child the bound has given up on (#329). `dropEnv` names variables that this
  * one call removes from the child environment, compared in upper case because Windows names are
- * case-blind. The rest of the environment stays, and a call with no list changes nothing.
+ * case-blind. Every call also drops `GH_DEBUG` and `DEBUG` (#1047), and the rest of the
+ * environment stays.
  */
 export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv = [] } = {}) {
-  const dropped = new Set(dropEnv.map((name) => name.toUpperCase()));
   const result = await execBounded("gh", args, {
     cwd,
     timeoutMs,
     signal,
-    ...(dropped.size > 0 && {
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(([name]) => !dropped.has(name.toUpperCase())),
-      ),
-      extendEnv: false,
-    }),
+    env: ghEnv(dropEnv),
+    extendEnv: false,
   });
   return {
     status: result.exitCode,
