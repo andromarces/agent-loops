@@ -20,8 +20,8 @@ import {
   REVIEWED,
   routes,
   run,
-  SLUG,
   stallingGh,
+  withStatusPages,
 } from "./ci-gate-helpers.mjs";
 
 // A status-read stub over the gate's own fixtures: the read resolves the PR head,
@@ -297,32 +297,30 @@ test("binds the status to the reviewed commit when the PR head moves A to B to A
 // status list, or an unreadable context source as no objection (issue #349).
 test.each([
   ["a null check-runs reply", "check-runs", "null"],
-  ["a check-runs reply that is not paginated", "check-runs", { check_runs: [] }],
-  ["a check-runs page with no list", "check-runs", [{}]],
+  ["a check-runs page with no list", "check-runs", {}],
   [
     "a check run with no name",
     "check-runs",
-    [{ check_runs: [{ status: "completed", conclusion: "success" }] }],
+    { check_runs: [{ status: "completed", conclusion: "success" }] },
   ],
   [
     "a completed check run with no conclusion",
     "check-runs",
-    [{ check_runs: [{ name: "ci (ubuntu-latest)", status: "completed" }] }],
+    { check_runs: [{ name: "ci (ubuntu-latest)", status: "completed" }] },
   ],
   [
     "a check run with an unknown status",
     "check-runs",
-    [{ check_runs: [{ name: "ci (ubuntu-latest)", status: "weird" }] }],
+    { check_runs: [{ name: "ci (ubuntu-latest)", status: "weird" }] },
   ],
-  ["a null status reply", "status --paginate", "null"],
-  ["a status reply that is not paginated", "status --paginate", { statuses: [] }],
-  ["a status page with no list", "status --paginate", [{}]],
+  ["a null status reply", "/status?", "null"],
+  ["a status page with no list", "/status?", {}],
   [
     "a status with an unknown state",
-    "status --paginate",
-    [{ statuses: [{ context: "ci (ubuntu-latest)", state: "weird" }] }],
+    "/status?",
+    { statuses: [{ context: "ci (ubuntu-latest)", state: "weird" }] },
   ],
-  ["a status with no context", "status --paginate", [{ statuses: [{ state: "success" }] }]],
+  ["a status with no context", "/status?", { statuses: [{ state: "success" }] }],
   ["a ruleset reply that is not JSON", "rules/branches", "not json"],
   ["an empty ruleset reply", "rules/branches", ""],
   ["a protection reply that is not JSON", "branches/main/protection", "<html>"],
@@ -342,17 +340,10 @@ test.each([
 // missed (issue #349).
 test("reads a failing status from a later page of the commit status reply", async () => {
   const gh = fakeGh(
-    routes({ headRuns: [run("ci (ubuntu-latest)", "success")] }).map(([match, value]) =>
-      match === `api repos/${SLUG}/commits/${HEAD}/status --paginate --slurp`
-        ? [
-            match,
-            [
-              { statuses: [commitStatus("unrelated", "success")] },
-              { statuses: [commitStatus("ci (windows-latest)", "failure")] },
-            ],
-          ]
-        : [match, value],
-    ),
+    withStatusPages(routes({ headRuns: [run("ci (ubuntu-latest)", "success")] }), [
+      [commitStatus("unrelated", "success")],
+      [commitStatus("ci (windows-latest)", "failure")],
+    ]),
   );
   const read = await readOn(HEAD, gh);
   expect(read).toMatchObject({ status: "failing", checks: ["ci (windows-latest)"] });
@@ -379,33 +370,31 @@ test.each([
   [
     "a check run with no id",
     "check-runs",
-    [
-      {
-        check_runs: [
-          {
-            name: "ci (ubuntu-latest)",
-            status: "completed",
-            conclusion: "success",
-            started_at: "2026-01-01T00:00:00Z",
-          },
-        ],
-      },
-    ],
+    {
+      check_runs: [
+        {
+          name: "ci (ubuntu-latest)",
+          status: "completed",
+          conclusion: "success",
+          started_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    },
   ],
   [
     "a check run with a start time that is not a date",
     "check-runs",
-    [{ check_runs: [{ ...run("ci (ubuntu-latest)", "success"), started_at: "zzz" }] }],
+    { check_runs: [{ ...run("ci (ubuntu-latest)", "success"), started_at: "zzz" }] },
   ],
   [
     "a commit status with no update time",
-    "status --paginate",
-    [{ statuses: [{ id: 1, context: "ci (ubuntu-latest)", state: "success" }] }],
+    "/status?",
+    { statuses: [{ id: 1, context: "ci (ubuntu-latest)", state: "success" }] },
   ],
   [
     "a commit status with an update time that is not a date",
-    "status --paginate",
-    [{ statuses: [{ ...commitStatus("ci (ubuntu-latest)", "success"), updated_at: "later" }] }],
+    "/status?",
+    { statuses: [{ ...commitStatus("ci (ubuntu-latest)", "success"), updated_at: "later" }] },
   ],
   ["a protection reply that is an array", "branches/main/protection", []],
   [
@@ -479,8 +468,8 @@ test.each([
     {
       headRuns: [run("ci (ubuntu-latest)", "success")],
       statusPages: [
-        { statuses: [commitStatus("ci (windows-latest)", "failure", "2026-01-01T00:00:00Z")] },
-        { statuses: [commitStatus("ci (windows-latest)", "success", "2026-01-02T00:00:00Z")] },
+        [commitStatus("ci (windows-latest)", "failure", "2026-01-01T00:00:00Z")],
+        [commitStatus("ci (windows-latest)", "success", "2026-01-02T00:00:00Z")],
       ],
     },
   ],
@@ -514,11 +503,7 @@ test.each([
 ])(
   "the supplied status agrees with the finish gate on %s",
   async (_name, { statusPages, clean = true, ...options }) => {
-    const table = routes(options).map(([match, value]) =>
-      statusPages && match === `api repos/${SLUG}/commits/${HEAD}/status --paginate --slurp`
-        ? [match, statusPages]
-        : [match, value],
-    );
+    const table = statusPages ? withStatusPages(routes(options), statusPages) : routes(options);
     const read = await readOn(HEAD, fakeGh(table), clean);
     const gate = await checkCi({
       pr: 42,
@@ -539,8 +524,8 @@ test.each([
 // unresolved and never as a pass, because an entry that names nothing cannot be
 // matched to a required check and must not be skipped (issue #349).
 test.each([
-  ["an empty check-run name", "check-runs", [{ check_runs: [...BOTH_PASS, run("", "success")] }]],
-  ["an empty status context", "status --paginate", [{ statuses: [commitStatus("", "success")] }]],
+  ["an empty check-run name", "check-runs", { check_runs: [...BOTH_PASS, run("", "success")] }],
+  ["an empty status context", "/status?", { statuses: [commitStatus("", "success")] }],
 ])("reads an unresolved status for %s", async (_name, endpoint, body) => {
   const gh = fakeGh(
     routes({ headRuns: BOTH_PASS }).map(([match, value]) =>

@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
-import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "../runtime-helpers.mjs";
+import { fakeClock, HEAD_A, HEAD_B, pageStdout, scriptedGh } from "../runtime-helpers.mjs";
 
 // Usefulness: verifies the scripted `gh` routes on the argument elements, so a
 // call that merges the arguments into one element gets no reply and its error
@@ -116,7 +116,7 @@ const FREE_PLAN =
 // The sources that each state the absence of a required check, as the gate reads them: a
 // ruleset reply with a rule but no required-status-check rule, and an unprotected branch.
 const ABSENT_SOURCES = {
-  rules: { status: 0, stdout: JSON.stringify([[{ type: "deletion" }]]), stderr: "" },
+  rules: { status: 0, stdout: pageStdout([{ type: "deletion" }]), stderr: "" },
 };
 
 /** Runs one wait whose `gh pr checks --required` answers that the branch has no required check. */
@@ -211,13 +211,11 @@ test("waitChecks keeps waiting when a source names a required check that gh list
     await noRequiredChecksWait({
       rules: {
         status: 0,
-        stdout: JSON.stringify([
-          [
-            {
-              type: "required_status_checks",
-              parameters: { required_status_checks: [{ context: "ci" }] },
-            },
-          ],
+        stdout: pageStdout([
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ci" }] },
+          },
         ]),
         stderr: "",
       },
