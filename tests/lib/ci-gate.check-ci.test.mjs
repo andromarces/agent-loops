@@ -1,6 +1,12 @@
 import { expect, test } from "vite-plus/test";
 import { checkCi } from "../../src/lib/ci-gate.mjs";
-import { equalsArgs, expectNoReplyToMalformedCalls, isApiRead } from "../runtime-helpers.mjs";
+import {
+  equalsArgs,
+  expectNoReplyToMalformedCalls,
+  isPagedRead,
+  pagedApiArgs,
+  pageStdout,
+} from "../runtime-helpers.mjs";
 import {
   barrierGh,
   commitStatus,
@@ -17,6 +23,7 @@ import {
   REPO_VIEW,
   REVIEWED,
   routes,
+  SLUG,
   run,
   stallingGh,
 } from "./ci-gate-helpers.mjs";
@@ -427,62 +434,69 @@ const SECOND_PAGE_RULE = [
   },
 ];
 
-// A `gh` double for the ruleset read that serves every page only when the caller
-// actually asks for them. A caller that reads one page receives the first page
-// alone, so a missing `--paginate --slurp` cannot be hidden by a double that always
-// returns every page (issue #336 review). It replies only to a ruleset endpoint
-// followed by no flag or by `--paginate` and `--slurp` as separate elements. Any
-// other call, a merged-argument call included, gets a failure that prints the
-// arguments as an array (issue #538).
+// A `gh` double for the ruleset read that serves page `k` only to a request for page `k` by
+// number, one request per page. A caller that reads the first page alone never sees the second
+// page, so a read that stops early cannot be hidden by a double that always returns every page
+// (issue #336 review). It replies only to the exact request, with the page number and
+// `--include` as separate elements. Any other call, a merged-argument call or a `--paginate` call
+// included, gets a failure that prints the arguments as an array (issue #538, #1033).
+const RULESET = `repos/${SLUG}/rules/branches/main`;
+
 function rulesetPages(pages) {
   return async (args) => {
-    const paginated = equalsArgs(args.slice(2), ["--paginate", "--slurp"]);
-    if (!isApiRead(args, "/rules/branches/main") || !(paginated || args.length === 2)) {
+    const page = pages.findIndex((_, i) => equalsArgs(args, pagedApiArgs(RULESET, i + 1)));
+    if (page === -1) {
       return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
     }
-    return {
-      status: 0,
-      stdout: JSON.stringify(paginated ? pages : [pages[0]]),
-      stderr: "",
-    };
+    return { status: 0, stdout: pageStdout(pages[page]), stderr: "" };
   };
 }
 
-// Usefulness: verifies the ruleset double serves every page only to a caller that
-// passes `--paginate` and `--slurp` as separate elements, and gives no reply to a
-// call that merges arguments into one element (issue #538).
+const pageBody = ({ stdout }) => stdout.slice(stdout.indexOf("\r\n\r\n") + 4);
+
+// A first page of 100 rules, which the read follows with a request for the next page.
+const fullPage = (rules) => [
+  ...rules,
+  ...Array.from({ length: 100 - rules.length }, () => ({ type: "deletion" })),
+];
+
+// Usefulness: verifies the ruleset double serves a page only to the exact request for it, and gives
+// no reply to a call that merges arguments into one element or that asks for `--paginate`
+// (issue #538, #1033).
 test("the ruleset double gives no reply to a merged-argument call", async () => {
-  const read = rulesetPages([[{ type: "deletion" }], SECOND_PAGE_RULE]);
-  const endpoint = "repos/owner/repo/rules/branches/main";
-  const apart = await read(["api", endpoint, "--paginate", "--slurp"]);
-  expect(JSON.parse(apart.stdout)).toHaveLength(2);
-  const one = await read(["api", endpoint]);
-  expect(JSON.parse(one.stdout)).toHaveLength(1);
-  for (const merged of [
-    ["api", endpoint, "--paginate --slurp"],
-    ["api", `${endpoint} --paginate`, "--slurp"],
-    [`api ${endpoint}`, "--paginate", "--slurp"],
+  const read = rulesetPages([fullPage([]), SECOND_PAGE_RULE]);
+  expect(JSON.parse(pageBody(await read(pagedApiArgs(RULESET, 1))))).toHaveLength(100);
+  expect(JSON.parse(pageBody(await read(pagedApiArgs(RULESET, 2))))).toHaveLength(1);
+  for (const bad of [
+    ["api", RULESET, "--paginate", "--slurp"],
+    ["api", `${RULESET}?per_page=100&page=1`, "--include", "--paginate"],
+    ["api", `${RULESET}?per_page=100&page=1 --include`],
+    ["api", `${RULESET}?per_page=100&page=3`, "--include"],
+    [`api ${RULESET}?per_page=100&page=1`, "--include"],
   ]) {
-    const reply = await read(merged);
+    const reply = await read(bad);
     expect(reply.status).toBe(1);
     expect(reply.stdout).toBe("");
-    expect(reply.stderr).toContain(JSON.stringify(merged));
+    expect(reply.stderr).toContain(JSON.stringify(bad));
   }
 });
 
 // Usefulness: verifies a required-status-check rule that appears only on the second
 // page is still enforced, so a read that stops at the first page cannot pass a
-// branch that requires a check. The double serves the second page only to a caller
-// that requested pagination, so this fails when `--paginate --slurp` is removed
+// branch that requires a check. The double serves the second page only to a request
+// for that page number, so this fails when the read stops after the first page
 // (issue #336 review).
 test("reads every ruleset page before classifying the absence", async () => {
-  const read = rulesetPages([[{ type: "deletion" }], SECOND_PAGE_RULE]);
+  const read = rulesetPages([fullPage([{ type: "deletion" }]), SECOND_PAGE_RULE]);
   const result = await checkCi({
     pr: 42,
     reviewed: REVIEWED,
     cwd: ".",
     gh: async (args) => {
-      if (isApiRead(args, "/rules/branches/main")) {
+      if (
+        isPagedRead(args, "/rules/branches/main", 1) ||
+        isPagedRead(args, "/rules/branches/main", 2)
+      ) {
         return read(args);
       }
       return fakeGh(routes({ required: [{ type: "deletion" }] }))(args);
@@ -503,7 +517,7 @@ test("records the absence when no page names a required-status rule", async () =
     cwd: ".",
     gh: fakeGh(
       routes({
-        requiredPages: [[{ type: "deletion" }], [{ type: "non_fast_forward" }]],
+        requiredPages: [fullPage([{ type: "deletion" }]), [{ type: "non_fast_forward" }]],
         protection: null,
         prChecks: "",
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -515,7 +529,8 @@ test("records the absence when no page names a required-status rule", async () =
 
 // An empty page beside a page that holds rules settles nothing, because GitHub
 // stops paginating when there is no next page, so a partial read must not be
-// classified from the pages that did arrive (issue #336 review).
+// classified from the pages that did arrive (issue #336 review). The page-number read hands the
+// classifier every page it received, so a full page then an empty page keeps this class (#1033).
 test("refuses the empty union when a ruleset page is empty beside a page with rules", async () => {
   const result = await checkCi({
     pr: 42,
@@ -523,7 +538,7 @@ test("refuses the empty union when a ruleset page is empty beside a page with ru
     cwd: ".",
     gh: fakeGh(
       routes({
-        requiredPages: [[{ type: "deletion" }], []],
+        requiredPages: [fullPage([{ type: "deletion" }]), []],
         protection: null,
         prChecks: "",
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -541,7 +556,7 @@ test("refuses the empty union when a ruleset page is empty beside a page with ru
 // only the names it saw (issue #336 review). the gate before issue #336 treated a failed ruleset
 // read as an empty source, so both of these passed there.
 const UNKNOWN_RULESET_WITH_OTHER_NAMES = {
-  "a failed ruleset page": { requiredPages: [{ message: "unexpected" }, SECOND_PAGE_RULE] },
+  "a failed ruleset page": { requiredPages: [{ message: "unexpected" }] },
   "an unlisted rule type": {
     required: [{ type: "deletion" }, { type: "required_checks_v2" }],
   },
@@ -576,12 +591,14 @@ for (const [shape, override] of Object.entries(UNKNOWN_RULESET_WITH_OTHER_NAMES)
   });
 }
 
-// The paginated bodies the gate cannot account for every page of. Each is unknown
+// The page bodies the gate cannot account for every page of. Each is unknown
 // rather than classified from the pages that arrived (issue #336 review).
 const PARTIAL_PAGE_READS = {
-  "a body that is not the array of pages": { requiredPages: { rules: [] } },
-  "a page that is not an array": { requiredPages: [{ type: "deletion" }, { oops: true }] },
-  "a nested page that is not an array": { requiredPages: [[{ type: "deletion" }], null] },
+  "a page that is an object": { requiredPages: [{ rules: [] }] },
+  "a page that is null": { requiredPages: [null] },
+  "a later page that is not a list": {
+    requiredPages: [fullPage([{ type: "deletion" }]), { oops: true }],
+  },
 };
 
 for (const [shape, { requiredPages }] of Object.entries(PARTIAL_PAGE_READS)) {
@@ -741,10 +758,8 @@ test("an empty ruleset read is not a positive absence", async () => {
 // empty pagination shape is an anomalous sequence or a read that returned nothing,
 // so it is unknown and refuses (issue #336 review).
 const ANOMALOUS_EMPTY_READS = {
-  "a zero-page reply": { requiredPages: [] },
-  "an empty body from the paginated read": { required: "" },
-  "two empty pages": { requiredPages: [[], []] },
-  "three empty pages": { requiredPages: [[], [], []] },
+  "an empty body from the paged read": { required: "" },
+  "a full page then an empty page": { requiredPages: [fullPage([{ type: "deletion" }]), []] },
 };
 
 for (const [shape, override] of Object.entries(ANOMALOUS_EMPTY_READS)) {
@@ -774,7 +789,9 @@ for (const [shape, override] of Object.entries(ANOMALOUS_EMPTY_READS)) {
 
 // Usefulness: verifies a single empty page beside a page that holds rules is still
 // unknown, so the anomalous rule is about the sequence and not only the count
-// (issue #336 review).
+// (issue #336 review). The shapes that a page-number read cannot produce, such as an empty page
+// before a page with rules, are covered at the classifier in
+// tests/lib/ci-required-sources.rulesets.test.mjs.
 test("refuses the empty union when a page holding rules is followed by an empty page", async () => {
   const result = await checkCi({
     pr: 42,
@@ -782,7 +799,7 @@ test("refuses the empty union when a page holding rules is followed by an empty 
     cwd: ".",
     gh: fakeGh(
       routes({
-        requiredPages: [[{ type: "deletion" }], []],
+        requiredPages: [fullPage([{ type: "deletion" }]), []],
         protection: null,
         prChecks: "",
         headRuns: [run("ci (ubuntu-latest)", "success")],
@@ -792,29 +809,6 @@ test("refuses the empty union when a page holding rules is followed by an empty 
   expect(result.ok).toBe(false);
   expect(result.reason).toContain("repository rulesets");
   expect(result.noRequiredChecks).toBeUndefined();
-});
-
-// Usefulness: verifies a single empty page beside a page that holds a required
-// status rule still enforces that rule, so the anomalous rule does not refuse a
-// read that named a check (issue #336 review).
-test("enforces a required-status rule on a later page after an empty page", async () => {
-  const result = await checkCi({
-    pr: 42,
-    reviewed: REVIEWED,
-    cwd: ".",
-    gh: fakeGh(
-      routes({
-        requiredPages: [[], SECOND_PAGE_RULE],
-        protection: null,
-        prChecks: "",
-        headRuns: [run("ci (ubuntu-latest)", "failure")],
-      }),
-    ),
-  });
-  // The empty page makes the read unknown, so the gate refuses on the source
-  // rather than judging the rule it never fully read.
-  expect(result.ok).toBe(false);
-  expect(result.reason).toContain("repository rulesets");
 });
 
 // The malformed successful replies that must keep the empty-union refusal. The
@@ -1665,11 +1659,8 @@ test("starts the independent gh reads of the gate together", async () => {
 // commit-status read.
 test("surfaces the check-run failure when the commit-status read also fails", async () => {
   const failing = routes().map(([match, value]) =>
-    match.endsWith("/check-runs --paginate --slurp") || match.endsWith("/status --paginate --slurp")
-      ? [
-          match,
-          `stderr: ${match.endsWith("/status --paginate --slurp") ? "status down" : "runs down"}`,
-        ]
+    match.includes("/check-runs?") || match.includes("/status?")
+      ? [match, `stderr: ${match.includes("/status?") ? "status down" : "runs down"}`]
       : [match, value],
   );
   await expect(

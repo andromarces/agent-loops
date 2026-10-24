@@ -21,8 +21,16 @@ export function equalsArgs(args, expected) {
   return args.length === expected.length && startsWithArgs(args, expected);
 }
 
-/** The flags the gate passes to every paginated `gh api` read. */
-export const PAGED = ["--paginate", "--slurp"];
+/** The exact argument elements of the request for one page of a paged `gh api` read of `endpoint`. */
+export const pagedApiArgs = (endpoint, page = 1) => [
+  "api",
+  `${endpoint}?per_page=100&page=${page}`,
+  "--include",
+];
+
+/** The stdout of one `gh api --include` request that answered 200 with `body`, as JSON unless it is text. */
+export const pageStdout = (body) =>
+  `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${typeof body === "string" ? body : JSON.stringify(body)}`;
 
 /** The exact argument elements of the gate's `gh pr view` read. */
 export const prViewArgs = (pr) => [
@@ -40,19 +48,15 @@ export const prChecksArgs = (pr) => ["pr", "checks", String(pr), "--required", "
 export const REPO_VIEW_ARGS = ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"];
 
 /** The exact argument elements of a `gh api` read of `endpoint` with `flags`. */
-export const apiArgs = (endpoint, flags = PAGED) => ["api", endpoint, ...flags];
+export const apiArgs = (endpoint, flags = []) => ["api", endpoint, ...flags];
 
-/**
- * True when `args` is a `gh api` call whose endpoint ends with `suffix`. With
- * `flags`, the elements after the endpoint must equal `flags`, so a call that
- * merges two flags into one element does not match.
- */
-export function isApiRead(args, suffix, flags) {
+/** True when `args` request page `page` of the paged read of the endpoint that ends with `suffix`. */
+export function isPagedRead(args, suffix, page = 1) {
   return (
     args[0] === "api" &&
     typeof args[1] === "string" &&
-    args[1].endsWith(suffix) &&
-    (flags === undefined || equalsArgs(args.slice(2), flags))
+    args[1].endsWith(`${suffix}?per_page=100&page=${page}`) &&
+    equalsArgs(args.slice(2), ["--include"])
   );
 }
 
@@ -60,10 +64,10 @@ export function isApiRead(args, suffix, flags) {
 export const gateReadCalls = (head) => [
   prViewArgs(42),
   REPO_VIEW_ARGS,
-  apiArgs("repos/owner/repo/rules/branches/main"),
-  apiArgs("repos/owner/repo/branches/main/protection", []),
-  apiArgs(`repos/owner/repo/commits/${head}/check-runs`),
-  apiArgs(`repos/owner/repo/commits/${head}/status`),
+  pagedApiArgs("repos/owner/repo/rules/branches/main"),
+  apiArgs("repos/owner/repo/branches/main/protection"),
+  pagedApiArgs(`repos/owner/repo/commits/${head}/check-runs`),
+  pagedApiArgs(`repos/owner/repo/commits/${head}/status`),
   prChecksArgs(42),
 ];
 
@@ -157,26 +161,25 @@ export function prGateGh(
     if (equalsArgs(args, prChecksArgs(42))) {
       return json([]);
     }
-    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
-      // The ruleset read is paginated, so its body is an array of pages.
-      return json([
-        [
+    if (equalsArgs(args, pagedApiArgs("repos/owner/repo/rules/branches/main"))) {
+      // The ruleset read pages by number, so each reply is one page: a list of rules.
+      return ok(
+        pageStdout([
           {
             type: "required_status_checks",
             parameters: { required_status_checks: [{ context: required }] },
           },
-        ],
-      ]);
+        ]),
+      );
     }
-    if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection", []))) {
+    if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection"))) {
       return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
     }
-    if (isApiRead(args, "/check-runs", PAGED)) {
-      return json([{ check_runs: runs }]);
+    if (isPagedRead(args, "/check-runs")) {
+      return ok(pageStdout({ total_count: runs.length, check_runs: runs }));
     }
-    if (isApiRead(args, "/status", PAGED)) {
-      // The status read paginates, so its reply is an array of pages.
-      return json([{ statuses: [] }]);
+    if (isPagedRead(args, "/status")) {
+      return ok(pageStdout({ total_count: 0, statuses: [] }));
     }
     return { status: 1, stdout: "", stderr: `unmatched: ${JSON.stringify(args)}` };
   };
@@ -190,19 +193,15 @@ export function prGateGh(
 export function noRequiredCheckGh(headRefOid, calls = []) {
   const read = prGateGh(headRefOid);
   return async (args) => {
-    if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
+    if (equalsArgs(args, pagedApiArgs("repos/owner/repo/rules/branches/main"))) {
       calls.push(args.join(" "));
-      return {
-        status: 0,
-        stdout: JSON.stringify([
-          [
-            { type: "deletion" },
-            { type: "non_fast_forward" },
-            { type: "pull_request", parameters: { required_approving_review_count: 0 } },
-          ],
+      return ok(
+        pageStdout([
+          { type: "deletion" },
+          { type: "non_fast_forward" },
+          { type: "pull_request", parameters: { required_approving_review_count: 0 } },
         ]),
-        stderr: "",
-      };
+      );
     }
     if (equalsArgs(args, prChecksArgs(42))) {
       calls.push(args.join(" "));
@@ -468,7 +467,7 @@ export function scriptedGh(
     if (args[0] === "repo" && args[1] === "view") {
       return ok("owner/repo");
     }
-    if (args[0] === "api" && args[1] === "repos/owner/repo/rules/branches/main" && rules) {
+    if (isPagedRead(args, "/rules/branches/main") && rules) {
       return rules;
     }
     if (
@@ -481,9 +480,9 @@ export function scriptedGh(
     if (args.includes("--required") && args.at(-1) === "name" && names) {
       return names;
     }
-    if (args[0] === "api" && args[1] === "repos/owner/repo/rules/branches/main") {
+    if (isPagedRead(args, "/rules/branches/main")) {
       return ok(
-        JSON.stringify([
+        pageStdout(
           required.length === 0
             ? []
             : [
@@ -497,7 +496,7 @@ export function scriptedGh(
                   },
                 },
               ],
-        ]),
+        ),
       );
     }
     if (args[0] === "api" && args[1] === "repos/owner/repo/branches/main/protection") {
@@ -522,13 +521,8 @@ export function scriptedGh(
     if (api) {
       const items = commits[api[1]] ?? current;
       const page = api[2] === "check-runs" ? { check_runs: items.map(runOfItem) } : { statuses };
-      // A read that asks for the reply headers gets one page behind a `200` status block, the form
-      // of `gh api --paginate --include`. The slurped read gets every page as one array.
-      return ok(
-        args.includes("--include")
-          ? `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(page)}`
-          : JSON.stringify([page]),
-      );
+      // Each page read gets its one page behind a `200` status block, the form of `gh api --include`.
+      return ok(pageStdout(page));
     }
     if (!isCheckWaitRead(args, all)) {
       return {

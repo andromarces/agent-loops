@@ -119,13 +119,193 @@ export const MERGE_BLOCKED_REFUSAL =
   "the PR merge state is blocked (a required check, review, or other required rule is unmet)";
 
 export async function ghApi(gh, args, cwd) {
-  const { status, stdout, stderr } = await gh(["api", ...args], cwd);
+  const { status, stdout, stderr, transient } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    throw new Error(`gh api ${args[0]} failed: ${ghFailureText({ status, stderr })}`);
+    const err = new Error(`gh api ${args[0]} failed: ${ghFailureText({ status, stderr })}`);
+    if (transient) {
+      err.transient = true;
+    }
+    throw err;
   }
   const text = stdout.trim();
   return text === "" ? null : JSON.parse(text);
 }
+
+// The reply statuses of a failed paged read that the wait retries on the next poll (#1025). The
+// status is the one on the first line of the stdout that `gh api --include` wrote for that one
+// request, never a number in the error text of `gh`, which carries server-supplied text.
+const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
+
+// The status line, header lines, and blank line that open the stdout of one `gh api --include`
+// request. Body bytes can only follow them, so they never form a status block of their own.
+const STATUS_BLOCK = /^HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n(?:[^\r\n:]+:[^\r\n]*\r?\n)*\r?\n/;
+
+// Items per page, and the most pages one read takes: 10,000 items, far above any one commit.
+const PAGE_SIZE = 100;
+const MAX_PAGES = 100;
+
+/**
+ * The status, header text, and body of the one reply in a `gh api --include` stdout, or null with no
+ * status block.
+ */
+function parseReply(stdout) {
+  const block = STATUS_BLOCK.exec(stdout);
+  return block
+    ? {
+        status: Number(block[1]),
+        headers: block[0].slice(block[0].indexOf("\n") + 1),
+        body: stdout.slice(block[0].length),
+      }
+    : null;
+}
+
+// The hosts that a request of `gh api` goes to: the host from `GH_HOST`, or github.com, and the host
+// that serves its API. A host that only starts like one of these is another host.
+// known-limit: a default host set only in the `gh` config, with no `GH_HOST`, is read as github.com,
+// so a `Link` header that names it is refused; set `GH_HOST` to read it.
+function requestHosts() {
+  const host = (process.env.GH_HOST ?? "").trim().toLowerCase() || "github.com";
+  if (host === "github.com") {
+    return new Set([host, "api.github.com"]);
+  }
+  return new Set(host.endsWith(".ghe.com") ? [host, `api.${host}`] : [host]);
+}
+
+/**
+ * The first `Link` target of `headers` that names a host other than the request host, or null. A
+ * target that is not a URL counts as another host, so a header the runtime cannot read is no pass.
+ */
+function foreignLink(headers) {
+  const hosts = requestHosts();
+  const [home] = hosts;
+  for (const line of headers.split(/\r?\n/)) {
+    if (!/^link:/i.test(line)) {
+      continue;
+    }
+    for (const [, target] of line.matchAll(/<([^>]*)>/g)) {
+      let host = null;
+      try {
+        host = new URL(target, `https://${home}`).host.toLowerCase();
+      } catch {
+        // An unreadable target is refused below.
+      }
+      if (host === null || !hosts.has(host)) {
+        return target;
+      }
+    }
+  }
+  return null;
+}
+
+/** Whether `body` is empty or exactly one JSON value. */
+function isEmptyOrJson(body) {
+  if (body.trim() === "") {
+    return true;
+  }
+  try {
+    JSON.parse(body);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reads every page of the list endpoint `endpoint` with one `gh api --include` request per page,
+ * by documented page number and never by the `Link` header, so no request goes to a target that a
+ * reply named. It returns a `gh`-shaped result whose stdout is the pages as one JSON array, as a
+ * slurped read printed them. `field` names the list in an object reply (`check_runs`, `statuses`);
+ * with `null`, each page is the list itself. Every page that the read received is in the result, an
+ * empty page included, so a classifier sees the whole sequence. For a reply with `total_count`, the
+ * read ends only when the collected count equals it, and a count that changes between pages, a
+ * collected count above it, and a short or empty page with the count unmet are errors. For a reply
+ * with no `total_count`, the first page of fewer than `PAGE_SIZE` items ends the read. The page cap is
+ * an error. A `Link` header that names a host other than the request host is an error too, on a failed reply
+ * with a retryable status as on a successful one, and never `transient`: the read
+ * never requests that target, and it ends rather than return pages that a reply could have steered.
+ * A refusal about the shape of a reply carries `unreadable`, so the ruleset source reads as unknown
+ * and the gate reads throw; a foreign `Link` target is no `unreadable` refusal, so every read throws
+ * on it. `transient` is set on a failed result only when the failed
+ * request's first-line status is 500, 502, 503, or 504 and its body is empty or JSON.
+ * @param {Function} read one `gh` read, as `(args, cwd) => result`
+ * @param {string} endpoint the endpoint with no query
+ * @param {string} cwd
+ * @param {string | null} field
+ */
+async function readPages(read, endpoint, cwd, field) {
+  // `unreadable` marks a read the runtime cannot account for page by page, as no `gh` failure.
+  const refusal = (stderr) => ({ status: 1, stdout: "", stderr, unreadable: true });
+  const pages = [];
+  let collected = 0;
+  let expected;
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const result = await read(
+      ["api", `${endpoint}?per_page=${PAGE_SIZE}&page=${page}`, "--include"],
+      cwd,
+    );
+    const reply = parseReply(result.stdout);
+    // The `Link` header of every reply is judged before its status, so a failure that is retryable
+    // by its status is still terminal when a target names another host.
+    const foreign = reply === null ? null : foreignLink(reply.headers);
+    if (foreign !== null) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: `a Link header names a host other than the request host: ${foreign}`,
+      };
+    }
+    if (result.status !== 0) {
+      const transient =
+        reply !== null && RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
+      return { ...result, ...(transient ? { transient: true } : {}) };
+    }
+    if (reply === null || reply.status < 200 || reply.status > 299) {
+      return refusal("the reply carries no 2xx HTTP status block");
+    }
+    let json;
+    try {
+      json = JSON.parse(reply.body);
+    } catch {
+      return refusal("the reply body is not exactly one JSON value");
+    }
+    const list = field === null ? json : json?.[field];
+    const items = Array.isArray(list) ? list.length : 0;
+    const total =
+      Number.isInteger(json?.total_count) && json.total_count >= 0 ? json.total_count : null;
+    expected ??= { total };
+    if (total !== expected.total) {
+      return refusal("the total_count of the reply changed between pages");
+    }
+    const done = () => ({ status: 0, stdout: JSON.stringify(pages), stderr: "" });
+    pages.push(json);
+    collected += items;
+    if (total === null) {
+      // No count to check against: the first short page ends the read.
+      if (items < PAGE_SIZE) {
+        return done();
+      }
+    } else if (collected > total) {
+      return refusal("the pages hold more items than the total_count of the reply");
+    } else if (collected === total) {
+      return done();
+    } else if (items < PAGE_SIZE) {
+      // A short page proves nothing while the count is unmet, so the read is an error.
+      return refusal("the read ended before the total_count of the reply");
+    }
+  }
+  return refusal(`the read has more than ${MAX_PAGES} pages`);
+}
+
+/**
+ * A `gh` runner whose `api <endpoint>` call reads every page of `endpoint` through `readPages`,
+ * so a caller of `ghApi` or `readRequiredSource` never uses `gh --paginate` (#1033).
+ * @param {Function} gh
+ * @param {string | null} field see `readPages`
+ */
+export const pagedRead =
+  (gh, field = null) =>
+  (args, cwd, options) =>
+    readPages((pageArgs, pageCwd) => gh(pageArgs, pageCwd, options), args[1], cwd, field);
 
 /**
  * One required-check configuration source, classified by what its reply proved.
@@ -174,8 +354,11 @@ async function readRequiredSource(
   cwd,
   { absentOnError, classify, malformed = () => false },
 ) {
-  const { status, stdout, stderr } = await gh(["api", ...args], cwd);
+  const { status, stdout, stderr, unreadable } = await gh(["api", ...args], cwd);
   if (status !== 0) {
+    if (unreadable) {
+      return { state: UNKNOWN, contexts: [], unparsed: true };
+    }
     if (absentOnError(stderr)) {
       return { state: ABSENT, contexts: [] };
     }
@@ -286,7 +469,7 @@ const MERGE_STATES = new Set([
  * @param {unknown} data the parsed body.
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
-function classifyRulesets(data) {
+export function classifyRulesets(data) {
   // `--slurp` wraps every page in an outer array, so a complete read is an array
   // of arrays. A body that is not that shape, or that holds a page which is not an
   // array, is a read the gate cannot account for every page of, so it settles
@@ -603,12 +786,13 @@ export async function requiredContexts(gh, slug, base, pr, cwd) {
   const [rules, protection, listed] = await inOrder(gh, [
     (read) =>
       readRequiredSource(
-        read,
         // The endpoint paginates at 30 rules per page by default, so a single read can
         // stop before a required-status-check rule and report an absence for a branch
-        // that requires one. Every page is fetched, and a body the gate cannot account
-        // for every page of is unknown (issue #336 review).
-        [`repos/${slug}/rules/branches/${base}`, "--paginate", "--slurp"],
+        // that requires one. Every page is fetched by page number, never by a reply-supplied
+        // `Link` URL, and a body the gate cannot account for every page of is unknown or an
+        // error (issue #336 review, #1033).
+        pagedRead(read),
+        [`repos/${slug}/rules/branches/${base}`],
         cwd,
         { absentOnError: () => false, classify: classifyRulesets },
       ),

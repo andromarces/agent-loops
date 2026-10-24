@@ -1,5 +1,5 @@
 // Fixtures shared by the ci-gate test files: the PR, check-run, and ruleset replies and the `gh` double that serves them.
-import { equalsArgs } from "../runtime-helpers.mjs";
+import { equalsArgs, pagedApiArgs, pageStdout } from "../runtime-helpers.mjs";
 
 export const HEAD = "1111111111111111111111111111111111111111";
 
@@ -59,8 +59,13 @@ export const commitStatus = (context, state, updatedAt = "2026-01-01T00:00:00Z")
   updated_at: updatedAt,
 });
 
+// The route of one page of a paged read: the exact request, with the page number and no
+// `--paginate`. The replies of such a route are the one page, behind a `200` status block.
+export const pageRoute = (endpoint, page = 1) => pagedApiArgs(endpoint, page).join(" ");
+
 // Routes a `gh` call by the leading elements of its argument array, so a call
-// that merges arguments into one element gets no reply. A `hidden` value answers
+// that merges arguments into one element gets no reply. A paged route answers a success with one
+// page behind a `200` status block, as `gh api --include` writes it. A `hidden` value answers
 // with the 404 a token without repository admin receives, a `forbidden` value
 // with the 403 a `GITHUB_TOKEN` receives, a `pat forbidden` value with the 403 a
 // fine-grained PAT without the Administration permission receives, a
@@ -100,10 +105,12 @@ export function fakeGh(routes) {
         if (typeof value === "string" && value.startsWith("stderr: ")) {
           return { status: 1, stdout: "", stderr: value.slice("stderr: ".length) };
         }
-        if (typeof value === "string") {
-          return { status: 0, stdout: value, stderr: "" };
-        }
-        return { status: 0, stdout: JSON.stringify(value), stderr: "" };
+        const body = typeof value === "string" ? value : JSON.stringify(value);
+        return {
+          status: 0,
+          stdout: args.includes("--include") ? pageStdout(body) : body,
+          stderr: "",
+        };
       }
     }
     return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
@@ -118,6 +125,47 @@ export const PR_VIEW =
 export const PR_CHECKS = "pr checks 42 --required --json name";
 
 export const REPO_VIEW = "repo view --json nameWithOwner -q .nameWithOwner";
+
+export const RULES_PAGE = pageRoute(`repos/${SLUG}/rules/branches/main`);
+
+export const MERGE_CHECK_RUNS = pageRoute(`repos/${SLUG}/commits/${MERGE}/check-runs`);
+
+export const MERGE_STATUS = pageRoute(`repos/${SLUG}/commits/${MERGE}/status`);
+
+const HEAD_CHECK_RUNS = pageRoute(`repos/${SLUG}/commits/${HEAD}/check-runs`);
+
+const HEAD_STATUS = pageRoute(`repos/${SLUG}/commits/${HEAD}/status`);
+
+// The routes of a commit status read that spans pages: page `k` lists `pages[k - 1]`, and every
+// page but the last is padded with filler statuses to the 100 a full page holds, so the read goes on.
+// `total_count` is the padded total, as the endpoint reports it.
+export function statusPageRoutes(commit, pages) {
+  const full = pages.map((statuses, i) =>
+    i === pages.length - 1
+      ? statuses
+      : [
+          ...statuses,
+          ...Array.from({ length: 100 - statuses.length }, (_, n) =>
+            commitStatus(`filler ${i}.${n}`, "success"),
+          ),
+        ],
+  );
+  const total = full.flat().length;
+  return full.map((statuses, i) => [
+    pageRoute(`repos/${SLUG}/commits/${commit}/status`, i + 1),
+    { total_count: total, statuses },
+  ]);
+}
+
+// `table` with the status read of `commit` replaced by the pages of `statusPageRoutes`.
+export const withStatusPages = (table, pages, commit = HEAD) => {
+  const replaced = pageRoute(`repos/${SLUG}/commits/${commit}/status`);
+  return [...table.filter(([match]) => match !== replaced), ...statusPageRoutes(commit, pages)];
+};
+
+// One route per page of the ruleset read, for `pages`, the list of rules of each page.
+const rulesetRoutes = (pages) =>
+  pages.map((rules, i) => [pageRoute(`repos/${SLUG}/rules/branches/main`, i + 1), rules]);
 
 export function routes({
   info = prInfo(),
@@ -137,19 +185,13 @@ export function routes({
     [PR_VIEW, info],
     [PR_CHECKS, prChecks],
     [REPO_VIEW, SLUG],
-    // The ruleset read is paginated, so its body is an array of pages.
-    [
-      `api repos/${SLUG}/rules/branches/main --paginate --slurp`,
-      requiredPages ?? (Array.isArray(required) ? [required] : required),
-    ],
+    // The ruleset read pages by number, so each reply is one page: a list of rules.
+    ...rulesetRoutes(requiredPages ?? [required]),
     [`api repos/${SLUG}/branches/main/protection`, protection],
-    [
-      `api repos/${SLUG}/commits/${MERGE}/check-runs --paginate --slurp`,
-      [{ check_runs: mergeRuns }],
-    ],
-    [`api repos/${SLUG}/commits/${MERGE}/status --paginate --slurp`, [{ statuses: mergeStatuses }]],
-    [`api repos/${SLUG}/commits/${HEAD}/check-runs --paginate --slurp`, [{ check_runs: headRuns }]],
-    [`api repos/${SLUG}/commits/${HEAD}/status --paginate --slurp`, [{ statuses: headStatuses }]],
+    [MERGE_CHECK_RUNS, { check_runs: mergeRuns }],
+    [MERGE_STATUS, { statuses: mergeStatuses }],
+    [HEAD_CHECK_RUNS, { check_runs: headRuns }],
+    [HEAD_STATUS, { statuses: headStatuses }],
   ];
 }
 
@@ -208,15 +250,8 @@ export function barrierGh(inner, groups, waitMs = 1000) {
 
 export const INDEPENDENT_GROUPS = [
   [PR_VIEW, REPO_VIEW],
-  [
-    `api repos/${SLUG}/rules/branches/main --paginate --slurp`,
-    `api repos/${SLUG}/branches/main/protection`,
-    PR_CHECKS,
-  ],
-  [
-    `api repos/${SLUG}/commits/${MERGE}/check-runs --paginate --slurp`,
-    `api repos/${SLUG}/commits/${MERGE}/status --paginate --slurp`,
-  ],
+  [RULES_PAGE, `api repos/${SLUG}/branches/main/protection`, PR_CHECKS],
+  [MERGE_CHECK_RUNS, MERGE_STATUS],
 ];
 
 // A gh double that counts the calls still running. A call whose key is in `stalled`
@@ -243,7 +278,3 @@ export function stallingGh(inner, stalled, abortDelayMs = 0) {
   };
   return { gh, live };
 }
-
-export const MERGE_CHECK_RUNS = `api repos/${SLUG}/commits/${MERGE}/check-runs --paginate --slurp`;
-
-export const MERGE_STATUS = `api repos/${SLUG}/commits/${MERGE}/status --paginate --slurp`;

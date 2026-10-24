@@ -6,7 +6,14 @@ import { executeRoleCommand } from "../src/role.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { cleanup, repos, setup } from "./role-helpers.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import { createTempRepo, fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./runtime-helpers.mjs";
+import {
+  createTempRepo,
+  fakeClock,
+  HEAD_A,
+  HEAD_B,
+  pageStdout,
+  scriptedGh,
+} from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -55,7 +62,7 @@ test("wait-checks reports a branch with no required check as its own outcome", a
       // Both sources state the absence: a ruleset reply with no required-status-check rule, and an
       // unprotected branch.
       gh: scriptedGh([NO_REQUIRED_CHECKS_READ], {
-        rules: { status: 0, stdout: JSON.stringify([[{ type: "deletion" }]]), stderr: "" },
+        rules: { status: 0, stdout: pageStdout([{ type: "deletion" }]), stderr: "" },
       }),
       ...fakeClock(),
     },

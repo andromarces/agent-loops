@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
-import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "../runtime-helpers.mjs";
+import { fakeClock, HEAD_A, HEAD_B, pageStdout, scriptedGh } from "../runtime-helpers.mjs";
 
 // Usefulness: verifies the scripted `gh` routes on the argument elements, so a
 // call that merges the arguments into one element gets no reply and its error
@@ -116,7 +116,7 @@ const FREE_PLAN =
 // The sources that each state the absence of a required check, as the gate reads them: a
 // ruleset reply with a rule but no required-status-check rule, and an unprotected branch.
 const ABSENT_SOURCES = {
-  rules: { status: 0, stdout: JSON.stringify([[{ type: "deletion" }]]), stderr: "" },
+  rules: { status: 0, stdout: pageStdout([{ type: "deletion" }]), stderr: "" },
 };
 
 /** Runs one wait whose `gh pr checks --required` answers that the branch has no required check. */
@@ -211,13 +211,11 @@ test("waitChecks keeps waiting when a source names a required check that gh list
     await noRequiredChecksWait({
       rules: {
         status: 0,
-        stdout: JSON.stringify([
-          [
-            {
-              type: "required_status_checks",
-              parameters: { required_status_checks: [{ context: "ci" }] },
-            },
-          ],
+        stdout: pageStdout([
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ci" }] },
+          },
         ]),
         stderr: "",
       },
@@ -1524,4 +1522,38 @@ test("waitChecks in all mode does not match an expected name to a commit status"
   });
   expect(result.timedOut).toBe(true);
   expect(result.awaiting).toEqual(["deploy"]);
+});
+
+// Usefulness: verifies the wait shares the gate's Link rule (#1033): a page whose `Link` header names
+// a host other than the request host ends the wait with an error, never a pass or a retry, in both
+// modes, and the named target is never requested.
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode ends in an error on a Link header for another host", async (_mode, all) => {
+  const page = {
+    total_count: 1,
+    check_runs: [runEntry(1, "ci", "success", 0)],
+  };
+  const stdout = `HTTP/2.0 200 OK\r\nLink: <https://other.example/x?page=2>; rel="next"\r\n\r\n${JSON.stringify(page)}`;
+  const { gh, requests } = pagedCheckRunsGh([stdout], { all });
+  await expect(waitOn(gh, all)).rejects.toThrow(/Link header names a host other than/);
+  expect(requests).toEqual([1]);
+});
+
+// Usefulness: verifies a retryable 5xx reply that carries a `Link` header for another host is
+// terminal (#1033): the wait ends in an error at the first read and never retries it to a later
+// pass, in both modes, so a reply that names another host cannot be waited out.
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode never retries a 503 whose Link names another host", async (_mode, all) => {
+  const foreign = {
+    status: 1,
+    stdout: 'HTTP/2.0 503 Status\r\nLink: <https://other.example/x?page=2>; rel="next"\r\n\r\n{}',
+    stderr: "gh: HTTP 503",
+  };
+  const { gh, commitReads } = failingCommitGh((n) => n === 1 && foreign, { all });
+  await expect(waitOn(gh, all)).rejects.toThrow(/Link header names a host other than/);
+  expect(commitReads).toHaveLength(1);
 });
