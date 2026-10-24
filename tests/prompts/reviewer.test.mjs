@@ -614,7 +614,7 @@ test.each([
 ])("reviewer prompt bars a dependency install and names the reason with %s", (_name, render) => {
   const prompt = render().replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "Run no dependency install, repair, or update in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable `node_modules`.",
+    "Run no dependency install, repair, or update in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies.",
   );
   expect(prompt).toContain(
     "An install writes to the shared package store outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes.",
@@ -624,12 +624,14 @@ test.each([
 // Usefulness: verifies acceptance #1026 — the instructions say how a probe of old source avoids an
 // install: the probe copy links the work tree's `node_modules`, and an unreachable one is reported
 // as unresolved instead of letting a tool install into the copy.
-test("reviewer prompt tells a probe copy to link the work tree node_modules", () => {
+test("reviewer prompt tells a probe copy to link the work tree dependencies and names no tool", () => {
   const prompt = reviewerPrompt("check the fix").replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "A probe copy of the repository, for example a copy of old source, reuses the `node_modules` of the work tree: link it into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there.",
+    "A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: link the dependency directory of the work tree into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there.",
   );
   expect(prompt).toContain(
-    "When the copy cannot link `node_modules`, report the probe as unresolved in Checks.",
+    "When the copy cannot link it, report the probe as unresolved in Checks.",
   );
+  // The prompt fits any repository (ADR 0038), so the rule names no tool or directory.
+  expect(prompt).not.toMatch(/pnpm|vitest|npm|yarn|node_modules|vp/);
 });
