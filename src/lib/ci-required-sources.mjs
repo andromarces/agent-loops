@@ -159,24 +159,80 @@ function parseReply(stdout) {
     : null;
 }
 
-// The hosts that a request of `gh api` goes to, as `gh` resolves its default host: `GH_HOST`, else the
-// one host of the `gh` configuration, else github.com. The set holds that host and the host that
-// serves its API. A host that only starts like one of these is another host. It is empty when the
-// configuration cannot be read, so every target then counts as another host.
+// The tokens that `gh` reads from the environment. `gh auth status` lists github.com for either one
+// even when the configuration holds no github.com login, and `gh` does not count that listing as a
+// configured host when it picks its default host.
+const GITHUB_TOKEN_SOURCES = new Set(["GH_TOKEN", "GITHUB_TOKEN"]);
+
+/**
+ * The host that `gh api` sends a request to when `GH_HOST` is unset, or null when the hosts that
+ * `gh auth status --json hosts` lists do not state it for certain. Observed with `gh` 2.103.1: the
+ * default host is the one host of the configuration, and github.com for none or several. The list
+ * holds the configured hosts plus github.com for a `GH_TOKEN` or `GITHUB_TOKEN` login, so a github.com
+ * login from that token alone is not counted as configured. A reply that is not the documented shape
+ * states no host.
+ * known-limit: one configured host listed beside a github.com login from `GH_TOKEN` or
+ * `GITHUB_TOKEN` fits both a configuration of that host alone and one of that host and github.com,
+ * so no host is stated and a `Link` header is refused; set `GH_HOST` to read it.
+ * @param {unknown} reply the parsed stdout
+ */
+function defaultHost(reply) {
+  const hosts = reply?.hosts;
+  if (typeof hosts !== "object" || hosts === null || Array.isArray(hosts)) {
+    return null;
+  }
+  const configured = [];
+  let tokenOnly = false;
+  for (const [name, logins] of Object.entries(hosts)) {
+    const host = name.trim().toLowerCase();
+    const sound =
+      host !== "" &&
+      Array.isArray(logins) &&
+      logins.length > 0 &&
+      logins.every(
+        (login) =>
+          isJsonObject(login) &&
+          typeof login.host === "string" &&
+          login.host.trim().toLowerCase() === host &&
+          typeof login.tokenSource === "string" &&
+          login.tokenSource !== "",
+      );
+    if (!sound) {
+      return null;
+    }
+    if (
+      host === "github.com" &&
+      logins.every((login) => GITHUB_TOKEN_SOURCES.has(login.tokenSource))
+    ) {
+      tokenOnly = true;
+    } else {
+      configured.push(host);
+    }
+  }
+  if (tokenOnly && configured.length === 1) {
+    return null;
+  }
+  return configured.length === 1 ? configured[0] : "github.com";
+}
+
+// The hosts that a request of `gh api` goes to: the host from `GH_HOST`, else the default host of
+// `gh` (see `defaultHost`), and the host that serves its API. A host that only starts like one of
+// these is another host. The set is empty when no host is stated, so every target then counts as
+// another host.
 async function requestHosts(read, cwd) {
   let host = (process.env.GH_HOST ?? "").trim().toLowerCase();
   if (host === "") {
     const { status, stdout } = await read(["auth", "status", "--json", "hosts"], cwd);
-    let configured = null;
+    let reply = null;
     try {
-      configured = Object.keys(JSON.parse(stdout).hosts);
+      reply = JSON.parse(stdout);
     } catch {
-      // An unreadable configuration is refused below.
+      // An unreadable reply states no host.
     }
-    if (status !== 0 || configured === null) {
+    host = status === 0 ? defaultHost(reply) : null;
+    if (host === null) {
       return new Set();
     }
-    host = configured.length === 1 ? configured[0].toLowerCase() : "github.com";
   }
   if (host === "github.com") {
     return new Set([host, "api.github.com"]);

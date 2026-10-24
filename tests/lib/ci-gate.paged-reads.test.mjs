@@ -39,10 +39,20 @@ const reply = (body, { status = 200, headers = "" } = {}) => ({
   stderr: "",
 });
 
-/** The `gh auth status --json hosts` stdout for hosts in the `gh` configuration. */
+/**
+ * The `gh auth status --json hosts` reply for the listed hosts. A host is a name, whose login is read
+ * from the configuration file, or `[name, tokenSource]`, as `gh` reports the source of a login.
+ */
 const authHosts = (...hosts) => ({
   status: 0,
-  stdout: JSON.stringify({ hosts: Object.fromEntries(hosts.map((host) => [host, [{ host }]])) }),
+  stdout: JSON.stringify({
+    hosts: Object.fromEntries(
+      hosts.map((spec) => {
+        const [host, tokenSource = "hosts.yml"] = [spec].flat();
+        return [host, [{ host, tokenSource }]];
+      }),
+    ),
+  }),
   stderr: "",
 });
 
@@ -238,6 +248,70 @@ ${headers}
     await expect(checkRuns(gheRuns(hosts).gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
     const { gh } = gheRuns(hosts, SAME_HOST_LINK);
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
+  // Verifies #1046 review blocker 1: a token from `GH_TOKEN` adds github.com to the hosts that
+  // `gh auth status` lists without making it the host that `gh` uses, so github.com listed by that
+  // token alone is no proof of the configuration. Alone, it is the host `gh` uses.
+  const ENV_LOGIN = ["github.com", "GH_TOKEN"];
+  it.each([
+    ["GH_TOKEN", ["github.com", "GH_TOKEN"]],
+    ["GITHUB_TOKEN", ["github.com", "GITHUB_TOKEN"]],
+  ])("accepts github.com for the only login that comes from %s", async (_name, login) => {
+    const { gh } = gheRuns(authHosts(login), SAME_HOST_LINK);
+    assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
+  it.each([
+    ["a link on github.com", SAME_HOST_LINK],
+    ["a link on the enterprise host", GHE_LINK],
+  ])(
+    "refuses %s when one configured host and a GH_TOKEN login are listed",
+    async (_name, headers) => {
+      // The reply fits one enterprise host plus the token, and two configured hosts plus the token:
+      // `gh` uses the enterprise host for the first and github.com for the second.
+      const { gh } = gheRuns(authHosts("ghe.example.com", ENV_LOGIN), headers);
+      await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
+    },
+  );
+
+  it("reads github.com as the request host when two hosts and a GH_TOKEN login are listed", async () => {
+    const hosts = authHosts("ghe.example.com", "ghe2.example.com", ENV_LOGIN);
+    await expect(checkRuns(gheRuns(hosts).gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
+    const { gh } = gheRuns(hosts, SAME_HOST_LINK);
+    assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
+  it("accepts the one enterprise host when its own login comes from GH_ENTERPRISE_TOKEN", async () => {
+    const { gh } = gheRuns(authHosts(["ghe.example.com", "GH_ENTERPRISE_TOKEN"]));
+    assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
+  // Verifies #1046 review blocker 2: a reply that is not the documented shape never widens the
+  // allowlist, so a host key with no login list names no host.
+  it.each([
+    ["a null login list", { hosts: { "ghe.example.com": null } }],
+    ["an empty login list", { hosts: { "ghe.example.com": [] } }],
+    ["a login list that is not an array", { hosts: { "ghe.example.com": {} } }],
+    ["a login that is not an object", { hosts: { "ghe.example.com": ["x"] } }],
+    [
+      "a login for another host",
+      { hosts: { "ghe.example.com": [{ host: "x.example", tokenSource: "f" }] } },
+    ],
+    [
+      "a login with no token source",
+      { hosts: { "ghe.example.com": [{ host: "ghe.example.com" }] } },
+    ],
+    ["hosts as an array", { hosts: [{ host: "ghe.example.com", tokenSource: "f" }] }],
+    ["hosts as null", { hosts: null }],
+    ["a reply that is an array", []],
+    ["a reply that is null", null],
+  ])("refuses every Link header for a gh reply with %s", async (_name, reply) => {
+    const auth = { status: 0, stdout: JSON.stringify(reply), stderr: "" };
+    for (const headers of [GHE_LINK, SAME_HOST_LINK]) {
+      const { gh } = gheRuns(auth, headers);
+      await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
+    }
   });
 
   // Verifies fail-closed handling of a default host that cannot be resolved: no Link target passes.
