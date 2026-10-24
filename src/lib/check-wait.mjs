@@ -35,36 +35,51 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 const POLL_INTERVAL_MS = 15_000;
 
 // The reply statuses of a failed commit read that the wait retries on the next poll (#1025). The
-// status is the one on the final status block of a `gh api --include` reply, never a number in the
-// error text of `gh`, which carries the message of the reply and more lines after it.
+// status is the one on the final status block that `gh api --include` wrote to stdout for the
+// failing reply, never a number in the error text of `gh`, which carries server-supplied text.
 const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 
-const STATUS_LINE = /^HTTP\/\d(?:\.\d)? (\d{3})(?: [^\r\n]*)?(?:\r?\n|$)/;
+// A status block as `gh api --include` writes it: a status line, header lines, and a blank line,
+// starting at a line start. A message that the server supplies is JSON on stdout, with its line
+// breaks escaped, so it never forms a block.
+const STATUS_BLOCK =
+  /(?<![^\n])HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n(?:[^\r\n:]+:[^\r\n]*\r?\n)*\r?\n/g;
 
 /**
- * The status of the final status block of a `gh api --include` reply, or null when stdout does not
- * open with a status line. A block whose body opens with another status line, such as an interim
- * `100` or a proxy reply, is followed to the block that ends the exchange, so the last status
- * decides.
+ * The status blocks of a `gh api --include` stdout, in order, each with the offsets of its text.
+ * `--paginate` writes one block and body per page, so the last block belongs to the page that
+ * ended the read.
  */
-function replyStatus(stdout) {
-  let status = null;
-  let rest = stdout;
-  while (STATUS_LINE.test(rest)) {
-    status = Number(STATUS_LINE.exec(rest)[1]);
-    const split = /\r?\n\r?\n/.exec(rest);
-    rest = split ? rest.slice(split.index + split[0].length) : "";
-  }
-  return status;
+function statusBlocks(stdout) {
+  return [...stdout.matchAll(STATUS_BLOCK)].map((match) => ({
+    status: Number(match[1]),
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
 }
 
-// Whether the error text of a failed `gh api` read mentions at least one `HTTP <status>` and every
-// mention is a retryable status. The message text is server-supplied, so no single line is
-// trustworthy: any other status anywhere fails closed, and a real 5xx whose message quotes another
-// status is terminal too (#1025).
-function onlyRetryableStatuses(stderr) {
-  const statuses = [...stderr.matchAll(/\bHTTP (\d{3})\b/g)].map((match) => Number(match[1]));
-  return statuses.length > 0 && statuses.every((status) => RETRYABLE_STATUSES.has(status));
+/** The status of the final status block of a `gh api --include` stdout, or null when it has none. */
+function replyStatus(stdout) {
+  return statusBlocks(stdout).at(-1)?.status ?? null;
+}
+
+/**
+ * The pages of a successful `gh api --paginate --include` stdout as the JSON array that the
+ * slurped read prints. Throws when stdout holds no status block, a block that is not a 2xx, or a
+ * body that is not JSON, so a read that cannot be joined is an error and never an empty list.
+ */
+function joinPages(stdout) {
+  const blocks = statusBlocks(stdout);
+  if (blocks.length === 0) {
+    throw new Error("the reply carries no HTTP status block");
+  }
+  const pages = blocks.map((block, i) => {
+    if (block.status < 200 || block.status > 299) {
+      throw new Error(`the reply carries a status block of ${block.status}`);
+    }
+    return JSON.parse(stdout.slice(block.end, blocks[i + 1]?.start ?? stdout.length));
+  });
+  return JSON.stringify(pages);
 }
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
@@ -540,32 +555,28 @@ export async function waitChecks({
       }
     }
   };
-  // A read that fails is classified by one more request, `gh api --include` for the first page of
-  // the same endpoint, which the gate's reads build from the repository slug and the commit SHA. The
-  // read itself is the gate's paginated `gh api` read, so pagination is `gh`'s own, as in the gate.
-  // The error is marked `transient`, and the wait retries it on the next poll, only when two
-  // signals agree: every status that the error of the read mentions is 500, 502, 503, or 504, and the
-  // final status block of the classifying request is one of those too. Every other failure ends
-  // the wait: either signal missing or another status, a classifying request that succeeds, fails,
-  // or reaches the bound, and a body that fails to parse.
+  // The commit reads are the gate's paginated `gh api` reads, run with `--include` instead of
+  // `--slurp`, so pagination is `gh`'s own, as in the gate, and the failing request itself reports
+  // its status: `gh` writes the status block of the failing reply to stdout before it exits
+  // non-zero. A failed read is marked `transient`, and the wait retries it on the next poll, only
+  // when the final status block is 500, 502, 503, or 504. Every other failure ends the wait: any
+  // other status, a 4xx whatever its body or message says, a failure with no status block, and a
+  // reply that cannot be joined or parsed. The pages of a successful read are joined into the
+  // array that the slurped read printed.
   const readCommit = async (sha) => {
     await ensureSlug();
     let serverError = false;
     const read = async (argv, cwdArg) => {
-      const result = await bounded(argv, cwdArg);
+      const result = await bounded(
+        [...argv.filter((arg) => arg !== "--slurp"), "--include"],
+        cwdArg,
+      );
       serverError = false;
-      if (result.status !== 0 && onlyRetryableStatuses(result.stderr)) {
-        try {
-          const probe = await bounded(["api", argv[1], "--include"], cwdArg);
-          serverError = probe.status !== 0 && RETRYABLE_STATUSES.has(replyStatus(probe.stdout));
-        } catch (err) {
-          // A classifier that reaches the bound leaves the read error to end the wait as an error.
-          if (!(err instanceof BoundReached)) {
-            throw err;
-          }
-        }
+      if (result.status !== 0) {
+        serverError = RETRYABLE_STATUSES.has(replyStatus(result.stdout));
+        return result;
       }
-      return result;
+      return { ...result, stdout: joinPages(result.stdout) };
     };
     try {
       const runs = await checkRuns(read, slug, sha, cwd, true);
