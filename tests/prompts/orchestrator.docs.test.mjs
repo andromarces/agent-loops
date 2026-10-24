@@ -628,6 +628,19 @@ test("instructions remove the run work tree without following links", async () =
   expect(instructions).toContain('find "<work tree>" -not -type d -not -type l');
 });
 
+// Usefulness: verifies requirement "the instructions state the allowed keys of run_worker,
+// run_reviewer, and abort" (#1034), with the same split as the headless prompt, so a parent never
+// sends a key that the runtime refuses.
+test("instructions state the allowed keys of the dispatch and abort actions", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expectRule(
+    instructions,
+    /`run_worker` and `run_reviewer` actions allow only `action` and `prompt`/,
+  );
+  expectRule(instructions, /`abort` action allows only `action` and `reason`/);
+  expectRule(instructions, /any other key is refused/i, /names each unknown key/i);
+});
+
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
 // held-session rule (#671). Neither parent ends a live holder of a Claude session that
 // `--resume-interrupted` refused on.

@@ -43,18 +43,36 @@ test("decide accepts fenced JSON on first attempt", async () => {
   expect(action).toEqual({ action: "run_reviewer", prompt: "check it" });
 });
 
-// Usefulness: verifies unknown fields are pruned from returned action.
-test("decide drops unknown fields from action", async () => {
-  const agent = fakeAgent(['{"action": "abort", "reason": "stop", "extra": 42}']);
-  const state = { kind: "fake", sessionId: "sess-1" };
-  const action = await decide({
+// Usefulness: verifies requirement "a run_worker, run_reviewer, or abort with an unknown key is
+// refused" (#1034): the action goes through the repair turn, which names the key, instead of
+// running with the key dropped.
+test.each([
+  ['{"action": "run_worker", "prompt": "build it", "promt": "typo"}', "run_worker"],
+  ['{"action": "run_reviewer", "prompt": "check it", "promt": "typo"}', "run_reviewer"],
+  ['{"action": "abort", "reason": "stop", "promt": "typo"}', "abort"],
+])("decide repairs %s", async (bad, action) => {
+  const good = { run_worker: "build it", run_reviewer: "check it", abort: "stop" }[action];
+  const field = action === "abort" ? "reason" : "prompt";
+  const prompts = [];
+  const agent = fakeAgent([
+    (_state, prompt) => {
+      prompts.push(prompt);
+      return bad;
+    },
+    (_state, prompt) => {
+      prompts.push(prompt);
+      return JSON.stringify({ action, [field]: good });
+    },
+  ]);
+  const result = await decide({
     agent,
-    state,
+    state: { kind: "fake", sessionId: "sess-1" },
     prompt: "initial",
     options: { cwd: process.cwd() },
   });
 
-  expect(action).toEqual({ action: "abort", reason: "stop" });
+  expect(result).toEqual({ action, [field]: good });
+  expect(prompts[1]).toContain('"promt"');
 });
 
 // Usefulness: verifies requirement "the headless finish refuses an unknown key" (#1021): the action
