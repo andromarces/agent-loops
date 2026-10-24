@@ -896,8 +896,10 @@ test("waitChecks reports the original error when the classifying request succeed
 });
 
 // Usefulness: verifies the original read error must itself report a retryable status: a 403, a 501,
-// and a failure with no status line stay terminal although the classifying request ends in a 502,
-// in both modes, so one signal alone never turns an error into a retry (issue #1025).
+// a failure with no status line, a 403 whose message also quotes a 500, and a 5xx whose message
+// quotes a 404 stay terminal although the classifying request ends in a 502, in both modes, so one
+// signal alone, or a status that the server's message text fakes, never turns an error into a retry
+// (issue #1025).
 test.each([
   ["required", false],
   ["all", true],
@@ -909,6 +911,10 @@ test.each([
       replyOf(501, "gh: Not Implemented (HTTP 501)"),
       { status: 1, stdout: "", stderr: "gh: could not connect" },
       replyOf(403, "gh: Forbidden (HTTP 403)\ngh: upstream reported (HTTP 502)"),
+      // The message text is server-supplied, so a 5xx first line never outweighs a later 4xx.
+      replyOf(403, "gh: upstream replied (HTTP 500)\naccess denied (HTTP 403)"),
+      // A real 5xx whose message quotes another status is terminal too: the accepted cost.
+      replyOf(502, "gh: upstream said not found (HTTP 404)\nBad Gateway (HTTP 502)"),
     ];
     for (const original of originals) {
       const { gh, commitReads } = failingCommitGh((n) => n === 1 && original, {

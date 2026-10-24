@@ -58,19 +58,13 @@ function replyStatus(stdout) {
   return status;
 }
 
-// A status line of the error text of `gh api`: `gh: HTTP 502`, or the reply message ending in
-// `(HTTP 502)`. A multi-line message carries it on its last line.
-const ERROR_STATUS_LINE = /^(?:gh: HTTP (\d{3})|.*\(HTTP (\d{3})\))$/;
-
-/** The status of the first status line in the stderr of a failed `gh api` read, or null. */
-function errorStatus(stderr) {
-  for (const line of stderr.split(/\r?\n/)) {
-    const match = ERROR_STATUS_LINE.exec(line.trim());
-    if (match) {
-      return Number(match[1] ?? match[2]);
-    }
-  }
-  return null;
+// Whether the error text of a failed `gh api` read mentions at least one `HTTP <status>` and every
+// mention is a retryable status. The message text is server-supplied, so no single line is
+// trustworthy: any other status anywhere fails closed, and a real 5xx whose message quotes another
+// status is terminal too (#1025).
+function onlyRetryableStatuses(stderr) {
+  const statuses = [...stderr.matchAll(/\bHTTP (\d{3})\b/g)].map((match) => Number(match[1]));
+  return statuses.length > 0 && statuses.every((status) => RETRYABLE_STATUSES.has(status));
 }
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
@@ -550,7 +544,7 @@ export async function waitChecks({
   // the same endpoint, which the gate's reads build from the repository slug and the commit SHA. The
   // read itself is the gate's paginated `gh api` read, so pagination is `gh`'s own, as in the gate.
   // The error is marked `transient`, and the wait retries it on the next poll, only when two
-  // signals agree: the first status line of the error of the read is 500, 502, 503, or 504, and the
+  // signals agree: every status that the error of the read mentions is 500, 502, 503, or 504, and the
   // final status block of the classifying request is one of those too. Every other failure ends
   // the wait: either signal missing or another status, a classifying request that succeeds, fails,
   // or reaches the bound, and a body that fails to parse.
@@ -560,7 +554,7 @@ export async function waitChecks({
     const read = async (argv, cwdArg) => {
       const result = await bounded(argv, cwdArg);
       serverError = false;
-      if (result.status !== 0 && RETRYABLE_STATUSES.has(errorStatus(result.stderr))) {
+      if (result.status !== 0 && onlyRetryableStatuses(result.stderr)) {
         try {
           const probe = await bounded(["api", argv[1], "--include"], cwdArg);
           serverError = probe.status !== 0 && RETRYABLE_STATUSES.has(replyStatus(probe.stdout));
