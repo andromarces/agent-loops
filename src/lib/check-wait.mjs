@@ -201,6 +201,44 @@ const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 const PR_FILES_CAP = 3000;
 const DIRECTORY_CAP = 1000;
 
+/**
+ * The merge time of a `pulls` entry in ms: false for a PR that is not merged (`null`), null for any
+ * value that is not a real UTC timestamp as the API writes it (`YYYY-MM-DDTHH:MM:SSZ`).
+ */
+function mergeTimeOf(value) {
+  if (value === null) {
+    return false;
+  }
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(value)) {
+    return null;
+  }
+  const time = Date.parse(value);
+  return Number.isNaN(time) || `${new Date(time).toISOString().slice(0, 19)}Z` !== value
+    ? null
+    : time;
+}
+
+/**
+ * Whether `name` is a valid Git branch name, as `git check-ref-format --branch` judges it: no control
+ * character, space, or one of `~^:?*[\`, no `..` or `@{`, no leading dash, no leading or trailing
+ * slash or empty component, no component that starts with a dot or ends with `.lock`, no trailing dot,
+ * and neither `@` nor `HEAD` alone. A name that fails is an unknown shape, never another branch.
+ */
+function isBranchName(name) {
+  return (
+    typeof name === "string" &&
+    name !== "" &&
+    name !== "@" &&
+    name !== "HEAD" &&
+    !name.startsWith("-") &&
+    !name.endsWith(".") &&
+    ![...name].some((char) => char <= " " || char === "\x7f" || "~^:?*[\\".includes(char)) &&
+    !name.includes("..") &&
+    !name.includes("@{") &&
+    name.split("/").every((part) => part !== "" && !part.startsWith(".") && !part.endsWith(".lock"))
+  );
+}
+
 // A full object name, so two heads compare by equality. `gh` reports SHA-1 and SHA-256 names.
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
@@ -656,10 +694,50 @@ export async function waitChecks({
   // evidence comes from one commit. Each read is bounded by the wait, and a reply is validated before
   // it counts as evidence. A read that fails, cannot be parsed, is not exactly the expected shape, or
   // may be cut by an API cap returns false or throws, and the caller then keeps the normal wait. A
-  // base branch or PR head that moved during the reads keeps it too. Its limit: the base head is one
-  // commit, so a provider that skipped it or registers later stays unseen (#1054).
+  // base branch or PR head that moved during the reads keeps it too. The head of the latest PR merged
+  // as the base head commit is read for checks as well (#1062). Its limit: only those two commits are
+  // read, so a provider that skipped both, or registers later, stays unseen (#1054).
   const noCheckSource = async (sha, base) => {
     await ensureSlug();
+    // The head SHAs of the PRs merged into `base` that hold the commit `baseSha` and share the latest
+    // merge time, so a tie never resolves by list order. The list is empty when no such PR exists, and
+    // null for a read that fails or any entry of another shape: a field must be exactly as the API
+    // states it, a timestamp that is a real UTC date, a non-empty base ref, a lowercase full SHA. A PR
+    // that is not merged, or merged into another branch, is no evidence.
+    const mergedHeadsOf = async (baseSha, base) => {
+      const pages = await ghApi(
+        pagedRead(bounded, null),
+        [`repos/${slug}/commits/${baseSha}/pulls`],
+        cwd,
+      );
+      if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
+        return null;
+      }
+      let latest = -Infinity;
+      let heads = [];
+      for (const entry of pages.flat()) {
+        const mergedAt = isJsonObject(entry) ? mergeTimeOf(entry.merged_at) : null;
+        if (
+          mergedAt === null ||
+          !isJsonObject(entry.base) ||
+          !isBranchName(entry.base.ref) ||
+          !isJsonObject(entry.head) ||
+          typeof entry.head.sha !== "string" ||
+          !FULL_SHA.test(entry.head.sha)
+        ) {
+          return null;
+        }
+        if (mergedAt === false || entry.base.ref !== base || mergedAt < latest) {
+          continue;
+        }
+        if (mergedAt > latest) {
+          latest = mergedAt;
+          heads = [];
+        }
+        heads.push(entry.head.sha);
+      }
+      return heads;
+    };
     const baseShaOf = async () => {
       const read = await readOne(bounded, `repos/${slug}/commits/${encodeURIComponent(base)}`, cwd);
       const parsed = read.status === 0 ? JSON.parse(read.stdout) : null;
@@ -728,6 +806,19 @@ export async function waitChecks({
     const statuses = await commitStatuses(bounded, slug, baseSha, cwd, true);
     if (runs.length > 0 || statuses.length > 0) {
       return false;
+    }
+    // A provider that reports on PR heads only never shows on the base head, so the heads of the
+    // latest merged PRs of that commit are read the same way (#1062).
+    const mergedHeads = await mergedHeadsOf(baseSha, base);
+    if (mergedHeads === null) {
+      return false;
+    }
+    for (const mergedHead of mergedHeads) {
+      const mergedRuns = await checkRuns(bounded, slug, mergedHead, cwd, true);
+      const mergedStatuses = await commitStatuses(bounded, slug, mergedHead, cwd, true);
+      if (mergedRuns.length > 0 || mergedStatuses.length > 0) {
+        return false;
+      }
     }
     // Neither the base branch nor the PR head moved while the probe read.
     const moved = readHead(pr, await bounded(headArgv));
