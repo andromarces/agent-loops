@@ -770,15 +770,7 @@ answers that the branch has no required check, because such a
 source can hold a required check or an app qualifier that the wait never saw. A listed
 failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
 source. A commit read that fails, or that returns a reply the wait fails to parse or order,
-is an error too, with one exception: a check-run or commit-status read that fails with a GitHub reply
-status of 500, 502, 503, or 504 is retried on the next poll, inside the bound. A pass on a
-later poll settles the wait. A wait that reaches the bound while the last poll still failed
-with a `5xx` exits 1 with `status: "error"` and that error, with no `timedOut: true` and no
-pass, unless `gh pr checks` listed a failure in the last poll, which `prFailures` reports with the bound
-as before. Any other status, such as 501 or a 4xx whose message quotes a 5xx, an error with no reply
-status, and a reply that cannot be parsed still end the wait at once. The retry covers
-`wait-checks` only: the `--require-ci` finish gate keeps failing closed on every read failure
-(issue #1025). `childExitUnconfirmed: true` covers every `gh` child of the poll, including a source
+is an error too, with one exception. The wait reads each page of the check runs and commit statuses itself with `gh api --include`, so it sees the HTTP status line of the reply (for example `HTTP/2.0 502 Bad Gateway`) and not the error text of `gh`. A read that fails with a reply whose status line reads exactly 500, 502, 503, or 504 is retried on the next poll, inside the bound, and a pass on a later poll settles the wait. Any other failure still ends the wait at once: a reply with another status, such as 501 or a 4xx, whatever its error text says, a failure with no readable status line, and a reply whose body fails to parse. A later poll that completes replaces the error of an earlier one, whether it settles, skips its reads because the PR head is another commit than `--head`, or reads the commit. A wait that reaches the bound while the latest completed poll failed with a retryable status exits 1 with `status: "error"` and that error, with no `timedOut: true` and no pass, unless `gh pr checks` listed a failure in that poll, which `prFailures` reports with the bound as before. The retry covers `wait-checks` only: the `--require-ci` finish gate keeps failing closed on every read failure (issue #1025). `childExitUnconfirmed: true` covers every `gh` child of the poll, including a source
 read that the first failure of the poll left running to the ceiling, and it rides on every
 envelope, settled, timed out, or error. A required check that no
 read of the PR lists yet is absent, as before.

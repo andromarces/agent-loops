@@ -34,16 +34,26 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
 
-// The last stderr line of a `gh api` read that GitHub answered with a retryable server error: `gh`
-// ends it with the reply status, bare (`gh: HTTP 502`) or after the message (`gh: Server Error
-// (HTTP 502)`). Only 500, 502, 503, and 504 qualify. Text earlier in the line is no status, so a
-// message that quotes one never matches. The commit reads of the wait retry on the next poll when
-// they fail with it (#1025).
-const SERVER_ERROR = /^gh: (?:.*\(HTTP 50[0234]\)|HTTP 50[0234])$/;
+// The reply statuses of a failed commit read that the wait retries on the next poll (#1025). The
+// status is the one on the status line that `gh api --include` prints, never a number in the
+// error text of `gh`, which carries the message of the reply and more lines after it.
+const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 
-function isServerError(stderr) {
-  const lines = stderr.trim().split(/\r?\n/);
-  return SERVER_ERROR.test(lines.at(-1).trim());
+/**
+ * The HTTP status, header block, and body of a `gh api --include` reply, or null when stdout does
+ * not open with a status line.
+ */
+function parseReply(stdout) {
+  const split = /\r?\n\r?\n/.exec(stdout);
+  const head = split ? stdout.slice(0, split.index) : stdout;
+  const status = /^HTTP\/\d(?:\.\d)? (\d{3})(?: |$)/.exec(head.split(/\r?\n/, 1)[0]);
+  return status
+    ? {
+        status: Number(status[1]),
+        head,
+        body: split ? stdout.slice(split.index + split[0].length) : "",
+      }
+    : null;
 }
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
@@ -519,15 +529,38 @@ export async function waitChecks({
       }
     }
   };
-  // A read that fails with a GitHub 5xx throws an error marked `transient`: the wait retries it on
-  // the next poll. Every other failure, a 4xx and an unparseable reply included, ends the wait.
+  // A read that fails with a reply status of 500, 502, 503, or 504 throws an error marked
+  // `transient`: the wait retries it on the next poll. Every other failure, a reply with any other
+  // status, no reply status, or an unparseable body included, ends the wait. The gate's reads ask
+  // for `--paginate --slurp`, which prints no status line, so the wait reads each page itself with
+  // `--include` and hands the pages back in the slurped shape.
   const readCommit = async (sha) => {
     await ensureSlug();
     let serverError = false;
-    const read = async (argv, cwdArg) => {
-      const result = await bounded(argv, cwdArg);
-      serverError = result.status !== 0 && isServerError(result.stderr);
-      return result;
+    const read = async ([, endpoint], cwdArg) => {
+      const pages = [];
+      for (let page = 1; ; page += 1) {
+        serverError = false;
+        const result = await bounded(
+          ["api", `${endpoint}?per_page=100&page=${page}`, "--include"],
+          cwdArg,
+        );
+        const reply = parseReply(result.stdout);
+        if (result.status !== 0) {
+          serverError = reply !== null && RETRYABLE_STATUSES.has(reply.status);
+          return result;
+        }
+        if (reply === null) {
+          return { status: 1, stdout: "", stderr: "the reply carries no HTTP status line" };
+        }
+        if (reply.body.trim() === "") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        pages.push(JSON.parse(reply.body));
+        if (!/^link:.*rel="next"/im.test(reply.head)) {
+          return { status: 0, stdout: JSON.stringify(pages), stderr: "" };
+        }
+      }
     };
     try {
       const runs = await checkRuns(read, slug, sha, cwd, true);
@@ -608,9 +641,9 @@ export async function waitChecks({
     }
     return false;
   };
-  // The server error of the last poll whose commit read failed with it, or null once a poll
-  // read the commit. A wait that ends on the bound with it set reports it as an error, so a 5xx
-  // never reads as a timeout or a pass (#1025).
+  // The retryable server error of the latest completed poll, or null when that poll had none.
+  // A wait that ends on the bound with it set reports it as an error, so a server error never
+  // reads as a timeout or a pass (#1025).
   let transient = null;
   const poll = async () => {
     for (;;) {
@@ -648,7 +681,6 @@ export async function waitChecks({
               throw err;
             }
           }
-          transient = failed;
           if (failed !== null && prFailures.length === 0) {
             outcome = { settled: false, checks: [], unread: true };
           } else if (items === null) {
@@ -697,6 +729,8 @@ export async function waitChecks({
           };
         }
       }
+      // A completed poll replaces the error of an earlier one: only the latest poll keeps it.
+      transient = failed;
       if (!(await pause())) {
         if (transient !== null) {
           throw transient;

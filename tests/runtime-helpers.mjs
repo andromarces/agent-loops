@@ -522,15 +522,18 @@ export function scriptedGh(
         timedOut: false,
       };
     }
-    const api = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/(check-runs|status)$/.exec(
+    const api = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/(check-runs|status)(?:\?.*)?$/.exec(
       args[0] === "api" ? args[1] : "",
     );
     if (api) {
       const items = commits[api[1]] ?? current;
+      const page = api[2] === "check-runs" ? { check_runs: items.map(runOfItem) } : { statuses };
+      // A read that asks for the reply headers gets one page behind a `200` status line, the
+      // form of `gh api --include`. The paginated read gets every page as one array.
       return ok(
-        JSON.stringify(
-          api[2] === "check-runs" ? [{ check_runs: items.map(runOfItem) }] : [{ statuses }],
-        ),
+        args.includes("--include")
+          ? `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(page)}`
+          : JSON.stringify([page]),
       );
     }
     if (!isCheckWaitRead(args, all)) {

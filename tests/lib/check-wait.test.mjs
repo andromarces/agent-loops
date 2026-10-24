@@ -771,9 +771,10 @@ test("waitChecks refuses a commit read that fails", async () => {
 });
 
 /** A `gh` that answers the nth commit read with `fail(n)` when that is a reply, and passes every other read through. */
-function failingCommitGh(fail, { all = false } = {}) {
+function failingCommitGh(fail, { all = false, heads } = {}) {
   const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
     all,
+    heads,
     commits: { [HEAD_A]: [PASSED_ITEM] },
   });
   const commitReads = [];
@@ -790,15 +791,28 @@ function failingCommitGh(fail, { all = false } = {}) {
   return { gh, commitReads };
 }
 
-const serverError = (code) => ({ status: 1, stdout: "", stderr: `gh: HTTP ${code}` });
+/** The failed `gh api --include` reply of status `code`: the status line and headers on stdout, the error text on stderr. */
+function replyOf(code, stderr) {
+  return {
+    status: 1,
+    stdout: `HTTP/2.0 ${code} Status
+Content-Type: application/json
 
-function waitOn(gh, all) {
+{}`,
+    stderr,
+  };
+}
+
+const serverError = (code) => replyOf(code, `gh: HTTP ${code}`);
+
+function waitOn(gh, all, head = null) {
   const clock = fakeClock();
   return waitChecks({
     pr: 42,
     cwd: ".",
     timeoutSeconds: 60,
     all,
+    head,
     gh,
     now: clock.now,
     sleep: clock.sleep,
@@ -841,47 +855,100 @@ test.each([
   },
 );
 
-// Usefulness: verifies a 4xx and an unparseable reply still end the wait at the first read, so
-// only a 5xx is retried (issue #1025).
+// Usefulness: verifies only a reply whose HTTP status is exactly 500, 502, 503, or 504 is retried.
+// The status comes from the reply headers, never from the stderr text of `gh`: another status, a
+// 403 whose stderr also carries a `(HTTP 500)` line or quotes one, a failure with no reply, and an
+// unparseable reply each end the wait at the first read, so a pass never follows a read that GitHub
+// did not answer with a retryable status (issue #1025).
 test.each([
-  ["a 404", { status: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" }, /HTTP 404/],
-  ["a 403", { status: 1, stdout: "", stderr: "gh: Forbidden (HTTP 403)" }, /HTTP 403/],
-  ["an unparseable reply", { status: 0, stdout: "<html>", stderr: "" }, /JSON/],
-])("waitChecks does not retry %s on a commit read", async (_name, reply, message) => {
-  const { gh, commitReads } = failingCommitGh(() => reply);
-  await expect(waitOn(gh, false)).rejects.toThrow(message);
-  expect(commitReads).toHaveLength(1);
-});
-
-// Usefulness: verifies only an actual reply status of 500, 502, 503, or 504 is retried: another
-// 5xx, a 4xx whose message quotes a 5xx, and a diagnostic with no reply status end the wait at the
-// first read, so a pass never follows a read that GitHub did not answer with a retryable status
-// (issue #1025).
-test.each([
-  ["an HTTP 501", { status: 1, stdout: "", stderr: "gh: Not Implemented (HTTP 501)" }, /HTTP 501/],
+  ["a 404", replyOf(404, "gh: Not Found (HTTP 404)"), /HTTP 404/],
+  ["an HTTP 501", replyOf(501, "gh: Not Implemented (HTTP 501)"), /HTTP 501/],
   [
-    "a 403 that quotes HTTP 500",
-    { status: 1, stdout: "", stderr: "gh: proxy said HTTP 500 earlier (HTTP 403)" },
+    "a 403 followed by a 500 line",
+    replyOf(403, "gh: Forbidden (HTTP 403)\ngh: upstream reported (HTTP 500)"),
     /HTTP 403/,
   ],
   [
-    "a diagnostic with no reply status",
-    { status: 1, stdout: "", stderr: "gh: could not reach api.github.com, last reply HTTP 500" },
-    /last reply HTTP 500/,
+    "a 403 that quotes HTTP 500",
+    replyOf(403, "gh: proxy said HTTP 500 earlier (HTTP 403)"),
+    /HTTP 403/,
   ],
+  [
+    "a failure with no reply",
+    { status: 1, stdout: "", stderr: "gh: could not reach api.github.com (HTTP 500)" },
+    /could not reach/,
+  ],
+  [
+    "a reply whose status line is unreadable",
+    { status: 1, stdout: "Server Error\r\n\r\n{}", stderr: "gh: HTTP 500" },
+    /HTTP 500/,
+  ],
+  [
+    "an unparseable reply",
+    { status: 0, stdout: "HTTP/2.0 200 OK\r\n\r\n<html>", stderr: "" },
+    /JSON/,
+  ],
+  ["a reply with no status line", { status: 0, stdout: "[]", stderr: "" }, /status/],
 ])("waitChecks does not retry %s on a commit read", async (_name, reply, message) => {
   const { gh, commitReads } = failingCommitGh(() => reply);
   await expect(waitOn(gh, false)).rejects.toThrow(message);
   expect(commitReads).toHaveLength(1);
 });
 
-// Usefulness: verifies a reply status that follows the message, the form `gh` prints for a reply
-// with a body, is retried like the bare form (issue #1025).
-test("waitChecks retries a server error that carries a message", async () => {
-  const { gh } = failingCommitGh(
-    (n) => n === 1 && { status: 1, stdout: "", stderr: "gh: Server Error (HTTP 502)" },
-  );
+// Usefulness: verifies a retryable reply is retried whatever its stderr text looks like: the
+// message form, and a multi-line message whose last line does not start with `gh:` (issue #1025).
+test.each([
+  ["the message form", "gh: Server Error (HTTP 502)"],
+  ["a multi-line message", "gh: Bad Gateway\nupstream detail one\nupstream detail two (HTTP 502)"],
+  ["a trailing hint line", "gh: Bad Gateway (HTTP 502)\nAuthorize in your web browser: https://x"],
+])("waitChecks retries a 502 reply with %s", async (_name, stderr) => {
+  const { gh } = failingCommitGh((n) => n === 1 && replyOf(502, stderr));
   expect(await waitOn(gh, false)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+});
+
+// Usefulness: verifies a server error of an earlier poll is dropped once a later poll completes, so
+// a head that never reaches `--head` ends at the bound with `timedOut: true`, `head: null`, and no
+// checks, never the earlier error, in both modes (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode clears a server error when a later poll completes", async (_mode, all) => {
+  const { gh } = failingCommitGh((n) => n === 1 && serverError(500), {
+    all,
+    heads: [HEAD_A, HEAD_B],
+  });
+  expect(await waitOn(gh, all, HEAD_A)).toEqual({ timedOut: true, head: null, checks: [] });
+});
+
+// Usefulness: verifies the wait reads every page of a commit read that GitHub paginates, following
+// the `next` link, so a check run on a later page is judged and a pending one holds the wait
+// (issue #1025).
+test("waitChecks judges a check run on a later page of the commit read", async () => {
+  const lint = check("lint", "pending", "IN_PROGRESS");
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
+    all: true,
+    commits: { [HEAD_A]: [PASSED_ITEM, lint] },
+  });
+  const pageReads = [];
+  const gh = async (args, cwd, options) => {
+    const read = /\/check-runs\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
+    if (args[0] !== "api" || !read) {
+      return inner(args, cwd, options);
+    }
+    const [one, two] = JSON.parse(
+      (await inner(args, cwd, options)).stdout.split("\r\n\r\n")[1],
+    ).check_runs;
+    pageReads.push(read[1]);
+    const first = read[1] === "1";
+    return {
+      status: 0,
+      stdout: `HTTP/2.0 200 OK\r\n${first ? 'Link: <https://x/next>; rel="next"\r\n' : ""}\r\n${JSON.stringify({ check_runs: [first ? one : two] })}`,
+      stderr: "",
+    };
+  };
+  const result = await waitOn(gh, true);
+  expect(result).toMatchObject({ timedOut: true, checks: [PASSED_ITEM, lint] });
+  expect(pageReads.slice(0, 2)).toEqual(["1", "2"]);
 });
 
 // Usefulness: verifies a failure that `gh pr checks` lists on a later poll survives the bound that
