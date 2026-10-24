@@ -1904,6 +1904,30 @@ test.each([
     "a 404 with another text than the exact Not Found reply",
     { listing: { ...PROBE_NOT_FOUND, stderr: "gh: Not Found for another path (HTTP 404)" } },
   ],
+  ["a 404 with a malformed body", { listing: { ...PROBE_NOT_FOUND, stdout: http(404, "oops") } }],
+  [
+    "a 404 with a Link target on a foreign host",
+    {
+      listing: {
+        ...PROBE_NOT_FOUND,
+        stdout: http(
+          404,
+          { message: "Not Found" },
+          'Link: <https://other.example/x?page=2>; rel="next"\r\n',
+        ),
+      },
+    },
+  ],
+  [
+    "a JSON 502",
+    {
+      listing: {
+        status: 1,
+        stdout: http(502, { message: "Bad Gateway" }),
+        stderr: "gh: Bad Gateway (HTTP 502)",
+      },
+    },
+  ],
   [
     "a base head reply that is not a full SHA",
     { reply: { endpoint: "commits/main", result: readOk({ sha: "main" }) } },
