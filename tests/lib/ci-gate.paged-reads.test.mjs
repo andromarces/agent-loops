@@ -58,13 +58,14 @@ const authHosts = (...hosts) => ({
 
 /**
  * A `gh` double that serves `pages` by endpoint and records every `api` call as joined text. `auth`
- * is its `gh auth status --json hosts` reply, by default the one github.com login.
+ * is its `gh auth status --json hosts` reply, by default the one github.com login, or a function of the
+ * options of that call.
  */
 function serve(pages, auth = authHosts("github.com")) {
   const calls = [];
-  const gh = async (args) => {
+  const gh = async (args, _cwd, options) => {
     if (args[0] === "auth") {
-      return auth;
+      return typeof auth === "function" ? auth(options) : auth;
     }
     calls.push(args.join(" "));
     const served = args[0] === "api" ? pages[args[1]] : undefined;
@@ -250,36 +251,51 @@ ${headers}
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
-  // Verifies #1046 review blocker 1: a token from `GH_TOKEN` adds github.com to the hosts that
-  // `gh auth status` lists without making it the host that `gh` uses, so github.com listed by that
-  // token alone is no proof of the configuration. Alone, it is the host `gh` uses.
-  const ENV_LOGIN = ["github.com", "GH_TOKEN"];
-  it.each([
-    ["GH_TOKEN", ["github.com", "GH_TOKEN"]],
-    ["GITHUB_TOKEN", ["github.com", "GITHUB_TOKEN"]],
-  ])("accepts github.com for the only login that comes from %s", async (_name, login) => {
-    const { gh } = gheRuns(authHosts(login), SAME_HOST_LINK);
+  // Verifies #1046 acceptance item 1 with a token in the environment: `gh auth status` lists github.com
+  // for `GH_TOKEN` or `GITHUB_TOKEN` beside the configured hosts, so the lookup runs with both
+  // variables dropped, and the one configured host is then the host `gh` uses. The double answers
+  // as `gh` does: github.com is listed unless both variables are dropped.
+  const TOKEN_NAMES = ["GH_TOKEN", "GITHUB_TOKEN"];
+  const withToken =
+    (...configured) =>
+    (options) =>
+      TOKEN_NAMES.every((name) => options?.dropEnv?.includes(name))
+        ? authHosts(...configured)
+        : authHosts(...configured, ["github.com", "GH_TOKEN"]);
+
+  it("accepts the Link header of the one configured host when a token is in the environment", async () => {
+    const { gh } = gheRuns(withToken("ghe.example.com"));
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
-  it.each([
-    ["a link on github.com", SAME_HOST_LINK],
-    ["a link on the enterprise host", GHE_LINK],
-  ])(
-    "refuses %s when one configured host and a GH_TOKEN login are listed",
-    async (_name, headers) => {
-      // The reply fits one enterprise host plus the token, and two configured hosts plus the token:
-      // `gh` uses the enterprise host for the first and github.com for the second.
-      const { gh } = gheRuns(authHosts("ghe.example.com", ENV_LOGIN), headers);
-      await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
-    },
-  );
+  it("refuses github.com when one host is configured and a token is in the environment", async () => {
+    const { gh } = gheRuns(withToken("ghe.example.com"), SAME_HOST_LINK);
+    await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
+  });
 
-  it("reads github.com as the request host when two hosts and a GH_TOKEN login are listed", async () => {
-    const hosts = authHosts("ghe.example.com", "ghe2.example.com", ENV_LOGIN);
+  it("reads github.com as the request host when two hosts are configured and a token is set", async () => {
+    const hosts = withToken("ghe.example.com", "ghe2.example.com");
     await expect(checkRuns(gheRuns(hosts).gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
     const { gh } = gheRuns(hosts, SAME_HOST_LINK);
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
+  it("reads github.com as the request host when only a token is set", async () => {
+    const { gh } = gheRuns(withToken(), SAME_HOST_LINK);
+    assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
+  // Verifies the lookup is the only call that drops variables, so a page read keeps its token.
+  it("drops no variable from a page read", async () => {
+    const seen = [];
+    const gh = async (args, cwd, options) => {
+      seen.push(options?.dropEnv);
+      return serve({
+        [page(RUNS, 1)]: reply({ total_count: 1, check_runs: runs(1) }),
+      }).gh(args, cwd, options);
+    };
+    await checkRuns(gh, SLUG, SHA, ".", true);
+    assert.deepEqual(seen, [undefined]);
   });
 
   it("accepts the one enterprise host when its own login comes from GH_ENTERPRISE_TOKEN", async () => {

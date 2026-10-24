@@ -97,10 +97,23 @@ function isFreePlan403(stderr) {
  * terminates the `gh` child when it expires, so a hung `gh` cannot outlast a
  * caller bound. On POSIX systems the kill is `SIGTERM`, then `SIGKILL` after
  * `forceKillAfterDelay`. On Windows it is `taskkill /T /F` over the process tree.
- * No platform keeps a child the bound has given up on (#329).
+ * No platform keeps a child the bound has given up on (#329). `dropEnv` names variables that this
+ * one call removes from the child environment, compared in upper case because Windows names are
+ * case-blind. The rest of the environment stays, and a call with no list changes nothing.
  */
-export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
-  const result = await execBounded("gh", args, { cwd, timeoutMs, signal });
+export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv = [] } = {}) {
+  const dropped = new Set(dropEnv.map((name) => name.toUpperCase()));
+  const result = await execBounded("gh", args, {
+    cwd,
+    timeoutMs,
+    signal,
+    ...(dropped.size > 0 && {
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(([name]) => !dropped.has(name.toUpperCase())),
+      ),
+      extendEnv: false,
+    }),
+  });
   return {
     status: result.exitCode,
     stdout: result.stdout ?? "",
@@ -159,22 +172,18 @@ function parseReply(stdout) {
     : null;
 }
 
-// The tokens that `gh` reads from the environment. `gh auth status` lists github.com for either one
-// even when the configuration holds no github.com login, and `gh` does not count that listing as a
-// configured host when it picks its default host.
-const GITHUB_TOKEN_SOURCES = new Set(["GH_TOKEN", "GITHUB_TOKEN"]);
+// The variables that make `gh auth status` list github.com beside the configured hosts. `gh` does
+// not count that listing as a configured host when it picks its default host, so the lookup of the
+// default host runs without them.
+const TOKEN_NAMES = ["GH_TOKEN", "GITHUB_TOKEN"];
 
 /**
- * The host that `gh api` sends a request to when `GH_HOST` is unset, or null when the hosts that
- * `gh auth status --json hosts` lists do not state it for certain. Observed with `gh` 2.103.1: the
- * default host is the one host of the configuration, and github.com for none or several. The list
- * holds the configured hosts plus github.com for a `GH_TOKEN` or `GITHUB_TOKEN` login, so a github.com
- * login from that token alone is not counted as configured. A reply that is not the documented shape
- * states no host.
- * known-limit: one configured host listed beside a github.com login from `GH_TOKEN` or
- * `GITHUB_TOKEN` fits both a configuration of that host alone and one of that host and github.com,
- * so no host is stated and a `Link` header is refused; set `GH_HOST` to read it.
- * @param {unknown} reply the parsed stdout
+ * The host that `gh api` sends a request to when `GH_HOST` is unset, from the parsed stdout of
+ * `gh auth status --json hosts` run without `TOKEN_NAMES`, or null when the reply states none.
+ * Observed with `gh` 2.103.1: the default host is the one host of the configuration, and github.com
+ * for none or several, and that listing then holds the configured hosts only. A reply that is not
+ * the documented shape states no host, so it never widens the accepted hosts.
+ * @param {unknown} reply
  */
 function defaultHost(reply) {
   const hosts = reply?.hosts;
@@ -182,7 +191,6 @@ function defaultHost(reply) {
     return null;
   }
   const configured = [];
-  let tokenOnly = false;
   for (const [name, logins] of Object.entries(hosts)) {
     const host = name.trim().toLowerCase();
     const sound =
@@ -200,17 +208,7 @@ function defaultHost(reply) {
     if (!sound) {
       return null;
     }
-    if (
-      host === "github.com" &&
-      logins.every((login) => GITHUB_TOKEN_SOURCES.has(login.tokenSource))
-    ) {
-      tokenOnly = true;
-    } else {
-      configured.push(host);
-    }
-  }
-  if (tokenOnly && configured.length === 1) {
-    return null;
+    configured.push(host);
   }
   return configured.length === 1 ? configured[0] : "github.com";
 }
@@ -222,7 +220,9 @@ function defaultHost(reply) {
 async function requestHosts(read, cwd) {
   let host = (process.env.GH_HOST ?? "").trim().toLowerCase();
   if (host === "") {
-    const { status, stdout } = await read(["auth", "status", "--json", "hosts"], cwd);
+    const { status, stdout } = await read(["auth", "status", "--json", "hosts"], cwd, {
+      dropEnv: TOKEN_NAMES,
+    });
     let reply = null;
     try {
       reply = JSON.parse(stdout);
@@ -385,7 +385,12 @@ async function readPages(read, endpoint, cwd, field) {
 export const pagedRead =
   (gh, field = null) =>
   (args, cwd, options) =>
-    readPages((pageArgs, pageCwd) => gh(pageArgs, pageCwd, options), args[1], cwd, field);
+    readPages(
+      (pageArgs, pageCwd, extra) => gh(pageArgs, pageCwd, { ...options, ...extra }),
+      args[1],
+      cwd,
+      field,
+    );
 
 /**
  * One required-check configuration source, classified by what its reply proved.

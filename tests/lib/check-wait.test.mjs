@@ -1541,6 +1541,38 @@ test.each([
   expect(requests).toEqual([1]);
 });
 
+// Usefulness: verifies the wait gives the host lookup its variable list (#1046): the host that `gh` uses
+// is read with `GH_TOKEN` and `GITHUB_TOKEN` dropped, so a `Link` header that names the one configured
+// host passes in both modes. The double lists github.com unless both variables are dropped, as `gh` does.
+test.each([
+  ["required", false],
+  ["all", true],
+])(
+  "waitChecks %s mode reads the gh default host without the token variables",
+  async (_mode, all) => {
+    const page = { total_count: 1, check_runs: [runEntry(1, "ci", "success", 0)] };
+    const stdout = `HTTP/2.0 200 OK
+Link: <https://ghe.example.com/api/v3/x?page=2>; rel="next"
+
+${JSON.stringify(page)}`;
+    const { gh: inner } = pagedCheckRunsGh([stdout], { all });
+    const gh = async (args, cwd, options) => {
+      if (args[0] !== "auth") {
+        return inner(args, cwd, options);
+      }
+      const dropped = ["GH_TOKEN", "GITHUB_TOKEN"].every((name) =>
+        options?.dropEnv?.includes(name),
+      );
+      const hosts = dropped ? ["ghe.example.com"] : ["ghe.example.com", "github.com"];
+      const body = {
+        hosts: Object.fromEntries(hosts.map((host) => [host, [{ host, tokenSource: "f" }]])),
+      };
+      return { status: 0, stdout: JSON.stringify(body), stderr: "" };
+    };
+    await expect(waitOn(gh, all)).resolves.toBeDefined();
+  },
+);
+
 // Usefulness: verifies a retryable 5xx reply that carries a `Link` header for another host is
 // terminal (#1033): the wait ends in an error at the first read and never retries it to a later
 // pass, in both modes, so a reply that names another host cannot be waited out.

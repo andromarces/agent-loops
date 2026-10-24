@@ -591,10 +591,11 @@ export async function readRequiredChecks({
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   // A group of reads adds its own signal, so a failed read cancels its siblings
   // without reading as a timeout of the whole bound.
-  const call = (args, callCwd, { signal = null } = {}) =>
+  const call = (args, callCwd, { signal = null, dropEnv } = {}) =>
     gh(args, callCwd, {
       signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
       timeoutMs,
+      ...(dropEnv && { dropEnv }),
     });
   call.deadline = controller.signal;
   let prHead = null;
