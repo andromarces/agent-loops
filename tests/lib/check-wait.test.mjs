@@ -1848,6 +1848,12 @@ test.each([
         "  pull_request_target:\n    paths:\n      - src/**",
     ),
   ],
+  ["a flow list of paths", FILTERED("  pull_request:\n    paths: [src/**, 'docs/*.md']")],
+  ["a quoted on key", PR_PATHS("src/**").replace("on:", '"on":')],
+  [
+    "a flow map and a block scalar holding trigger text in the jobs",
+    `${PR_PATHS("src/**")}  s:\n    env: { A: b }\n    steps:\n      - run: |\n          on:\n            push:\n`,
+  ],
   [
     "a list at the indent of its key",
     FILTERED("  pull_request:\n    paths:\n    - src/**\n    - docs/*.md"),
@@ -1910,12 +1916,51 @@ test.each([
     {},
   ],
   ["an empty paths list", FILTERED("  pull_request:\n    paths:"), {}],
-  ["a flow list of paths", FILTERED("  pull_request:\n    paths: [src/**]"), {}],
   ["a scalar on", "on: pull_request\n", {}],
+  ["a later unclosed flow list", `${PR_PATHS("src/**")}jobs: [\n`, {}],
+  [
+    "an unterminated flow list in the event",
+    "on:\n  pull_request:\n    branches: [main\n    paths:\n      - src/**\n",
+    {},
+  ],
+  ["a second YAML document", `${PR_PATHS("src/**")}---\nname: second\n`, {}],
+  ["a later unclosed quote", `${PR_PATHS("src/**")}name2: 'x\n`, {}],
+  ["a YAML alias elsewhere", `x: &a [1]\n${PR_PATHS("src/**")}y: *a\n`, {}],
+  ["a YAML tag", `${PR_PATHS("src/**")}z: !!python/object x\n`, {}],
+  ["a non-string pattern", FILTERED("  pull_request:\n    paths:\n      - 12"), {}],
+  [
+    "a PR file name that ** matches across a newline",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "src/a\nb.js" }] },
+  ],
+  [
+    "a PR file name with U+2028 that ** matches",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "src/a b.js" }] },
+  ],
+  [
+    "a PR file name with a newline that no pattern matches",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "docs/a\nb.md" }] },
+  ],
+  [
+    "a PR file name with a control character",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "docs/a\u0007.md" }] },
+  ],
+  [
+    "a PR file name with a lone surrogate",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "docs/a\ud800.md" }] },
+  ],
+  [
+    "a previous_filename that is not a string",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "README.md", previous_filename: 7 }] },
+  ],
   ["a trigger name and no on block", "name: ci\njobs: {}\n# pull_request\n", {}],
   ["a tab indent", "on:\n\tpull_request:\n\t\tpaths:\n\t\t\t- src/**\n", {}],
   ["a duplicate on key", `${PR_PATHS("src/**")}on:\n  push:\n`, {}],
-  ["a quoted on key", PR_PATHS("src/**").replace("on:", '"on":'), {}],
   ["a PR file list of 3,000", PR_PATHS("src/**"), { prFiles: MANY_FILES }],
   [
     "a PR file that changes a workflow",

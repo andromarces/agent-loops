@@ -1,30 +1,29 @@
+import { parseAllDocuments } from "yaml";
+import { isJsonObject } from "./json.mjs";
+
 const PR_EVENTS = new Set(["pull_request", "pull_request_target"]);
 // A pattern the matcher can settle: word characters, dots, dashes, `@`, `/`, and `*`. Anything else
 // (`!`, `?`, `+`, `[`, `{`, `~`, a backslash, a space) is an unsettled pattern.
 const SETTLED_PATTERN = /^[A-Za-z0-9_.@/*-]+$/;
+// A file name the matcher cannot settle: a control character, a line or paragraph separator, or a
+// lone surrogate. GitHub documents no rule for such a name, so it keeps the wait.
+// oxlint-disable-next-line no-control-regex -- the control characters are the point of the pattern
+const UNSETTLED_NAME = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
-/** The text of one `paths` item when it is a settled pattern, else null. */
-function settledPattern(raw) {
-  const quoted = /^'([^']*)'$/.exec(raw) ?? /^"([^"\\]*)"$/.exec(raw);
-  const value = quoted ? quoted[1] : raw;
-  if (!quoted && (/^[!&*[\]{}|>%@`'"?,:#-]/.test(value) || /:(?:\s|$)/.test(value))) {
-    return null;
-  }
-  const segments = value.split("/");
-  if (
-    !SETTLED_PATTERN.test(value) ||
-    segments.some((segment) => segment === "" || segment === "." || segment === "..")
-  ) {
-    return null;
-  }
-  return value;
+/** Whether `value` is a pattern string that the matcher settles. */
+function isSettledPattern(value) {
+  return (
+    typeof value === "string" &&
+    SETTLED_PATTERN.test(value) &&
+    !value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  );
 }
 
 /**
  * A case-insensitive regular expression that matches every path that GitHub filter rules match for
- * `pattern`, and at most a few more: `*` stays inside one segment, `**` crosses segments, `**` plus a
- * slash may match nothing, and a pattern with no `*` also matches the files under it. A match that
- * GitHub would not make only keeps the wait.
+ * `pattern`, and at most a few more: `*` stays inside one segment, `**` crosses segments and any
+ * character, `**` plus a slash may match nothing, and a pattern with no `*` also matches the files
+ * under it. A match that GitHub would not make only keeps the wait.
  */
 function patternRegExp(pattern) {
   let source = "";
@@ -43,125 +42,64 @@ function patternRegExp(pattern) {
       i += 1;
     }
   }
-  return new RegExp(`^${source}${pattern.includes("*") ? "" : "(?:/.*)?"}$`, "i");
+  return new RegExp(`^${source}${pattern.includes("*") ? "" : "(?:/.*)?"}$`, "is");
 }
 
-/** The lines of `text` as `{ indent, content }` entries with comments and blank lines dropped; null when unreadable. */
-function contentLines(text) {
-  if (text.includes("\t")) {
+/** The one document of `text` as plain data, or null when the text is not exactly one well-formed document. */
+function onlyDocument(text) {
+  const documents = parseAllDocuments(text, { uniqueKeys: true, maxAliasCount: 0 });
+  if (
+    documents.length !== 1 ||
+    documents[0].errors.length > 0 ||
+    documents[0].warnings.length > 0
+  ) {
     return null;
   }
-  const lines = [];
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed === "" || trimmed.startsWith("#")) {
-      continue;
-    }
-    let content = trimmed;
-    if (/\s#/.test(content)) {
-      // A comment after a whole quoted item is cut; a `#` beside any other quote is unsettled.
-      const quotedItem = /^(- (?:'[^']*'|"[^"\\]*"))\s+#.*$/.exec(content);
-      if (!quotedItem && /['"]/.test(content)) {
-        return null;
-      }
-      content = quotedItem ? quotedItem[1] : content.replace(/\s+#.*$/, "");
-    }
-    const indent = line.length - line.trimStart().length;
-    if (lines.length === 0 && indent === 0 && content === "---") {
-      continue;
-    }
-    lines.push({ indent, content });
+  try {
+    return documents[0].toJS({ maxAliasCount: 0 });
+  } catch {
+    return null;
   }
-  return lines;
 }
 
-/** The `paths` patterns under one PR event, or null when the event holds no settled `paths` list. */
-function pathsOf(children) {
-  const childIndent = children[0]?.indent;
-  let patterns = null;
-  let inPaths = false;
-  let itemIndent = null;
-  for (const { indent, content } of children) {
-    if (indent < childIndent) {
-      return null;
-    }
-    const isItem = content.startsWith("- ");
-    if (indent === childIndent && !isItem) {
-      const key = /^([A-Za-z_-]+):(.*)$/.exec(content);
-      if (key === null || key[1] === "paths-ignore") {
-        return null;
-      }
-      inPaths = key[1] === "paths";
-      if (inPaths) {
-        if (patterns !== null || key[2].trim() !== "") {
-          return null;
-        }
-        patterns = [];
-      }
-    } else if (inPaths) {
-      itemIndent ??= indent;
-      const pattern =
-        isItem && indent === itemIndent ? settledPattern(content.slice(2).trim()) : null;
-      if (pattern === null) {
-        return null;
-      }
-      patterns.push(pattern);
-    }
+/** The `paths` patterns of one PR event, or null when the event holds no settled `paths` list. */
+function pathsOf(event) {
+  if (!isJsonObject(event) || "paths-ignore" in event || !Array.isArray(event.paths)) {
+    return null;
   }
-  return patterns !== null && patterns.length > 0 ? patterns : null;
+  return event.paths.length > 0 && event.paths.every(isSettledPattern) ? event.paths : null;
 }
 
 /**
- * Whether no workflow run can start for a PR that changes `files` (paths, renamed-from paths included),
- * judged from the text of one workflow file: true only when the file has one top-level `on:` block in
- * plain block YAML that names only `pull_request` and `pull_request_target`, each with a `paths` list
- * of settled patterns, and no file matches any pattern. False means a run may start or the text is
- * not settled, so the caller keeps the wait. The text is not parsed as full YAML: any shape outside
- * the plain block form returns false.
+ * Whether no workflow run can start for a PR that changes `files` (every path as a string, renamed-from
+ * paths included), judged from the text of one workflow file: true only when the text is exactly one
+ * well-formed YAML document whose `on` key names only `pull_request` and `pull_request_target`, each
+ * with a `paths` list of settled patterns, and no file matches any pattern. False means a run may
+ * start or the text is not settled, so the caller keeps the wait. A text with a syntax error anywhere,
+ * a second document, a duplicate key, an alias, or a warning is not settled, and neither is a file name
+ * with a control character, a line separator, or a lone surrogate.
  */
 export function prEventsFilteredOut(text, files) {
-  const lines = contentLines(text);
-  if (lines === null) {
+  if (
+    !files.every(
+      (file) => typeof file === "string" && file.isWellFormed() && !UNSETTLED_NAME.test(file),
+    )
+  ) {
     return false;
   }
-  const onKeys = lines.filter(
-    ({ indent, content }) => indent === 0 && /^(?:on|"on"|'on'|true)\s*:/i.test(content),
-  );
-  if (onKeys.length !== 1 || onKeys[0].content !== "on:") {
+  const workflow = onlyDocument(text);
+  if (!isJsonObject(workflow) || "true" in workflow || !isJsonObject(workflow.on)) {
     return false;
   }
-  const start = lines.indexOf(onKeys[0]) + 1;
-  const next = lines.findIndex(({ indent }, i) => i >= start && indent === 0);
-  const block = lines.slice(start, next === -1 ? lines.length : next);
-  if (block.length === 0) {
+  const events = Object.entries(workflow.on);
+  if (events.length === 0 || events.some(([name]) => !PR_EVENTS.has(name))) {
     return false;
   }
-  const eventIndent = block[0].indent;
-  const events = new Map();
-  let current = null;
-  for (const line of block) {
-    if (line.indent < eventIndent) {
-      return false;
-    }
-    if (line.indent > eventIndent) {
-      current.push(line);
-      continue;
-    }
-    const name = /^([a-z_]+):$/.exec(line.content)?.[1];
-    if (name === undefined || !PR_EVENTS.has(name) || events.has(name)) {
-      return false;
-    }
-    current = [];
-    events.set(name, current);
-  }
-  for (const children of events.values()) {
-    const patterns = pathsOf(children);
-    if (
-      patterns === null ||
-      patterns.some((pattern) => files.some((file) => patternRegExp(pattern).test(file)))
-    ) {
-      return false;
-    }
-  }
-  return true;
+  return events.every(([, event]) => {
+    const patterns = pathsOf(event);
+    return (
+      patterns !== null &&
+      !patterns.some((pattern) => files.some((file) => patternRegExp(pattern).test(file)))
+    );
+  });
 }

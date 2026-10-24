@@ -766,9 +766,7 @@ export async function waitChecks({
       }
     }
     const changedPaths = changed.flatMap((file) =>
-      typeof file.previous_filename === "string"
-        ? [file.filename, file.previous_filename]
-        : [file.filename],
+      file.previous_filename == null ? [file.filename] : [file.filename, file.previous_filename],
     );
     const listing = await readOne(
       bounded,
