@@ -902,3 +902,17 @@ test.each([
   expect(text).not.toContain("reviewer (must not edit)");
   expect(text).not.toMatch(/Agent that reviews the repository \(read-only;/);
 });
+
+// Usefulness: verifies the interactive instructions tell the parent to restate every operator
+// decision made after init in the next reviewer prompt, so the reviewer does not reject a
+// worker change that the operator approved (issue #1038). The existing restated-spec rule does
+// not cover it: a decision is a fact about the spec, not a pass condition.
+test("docs/orchestrator-instructions.md relays operator decisions to the reviewer", async () => {
+  const text = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expectRule(
+    text,
+    /restate every operator decision made after init/i,
+    /next reviewer prompt/i,
+    /worker prompt that carries it/i,
+  );
+});
