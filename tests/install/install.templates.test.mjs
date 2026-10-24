@@ -49,8 +49,9 @@ test("the Claude skill requires the harness-check ancestry gate", async () => {
 
 // Usefulness: verifies the #1055 acceptance — a Claude Code session did not attach the file
 // that an `@` line in the skill body named, so the skill states one read route: the path in full,
-// by pages when the read tool caps a read, and no `@` line that can fail to attach.
-test("the Claude skill reads the instructions file in full by pages with no @ line", async () => {
+// and no `@` line that can fail to attach. The core fits in one read (#1061), so the skill names
+// no paging and sends the parent to the reference files that the core names.
+test("the Claude skill reads the instructions core in full with no @ line and no paging", async () => {
   const home = await makeHome();
   const claude = await targetPaths("claude", home);
   const skill = claude.files.find((file) => file.path.endsWith("SKILL.md")).content;
@@ -60,8 +61,9 @@ test("the Claude skill reads the instructions file in full by pages with no @ li
   );
   expect(skill).not.toMatch(/^@/m);
   expect(skill.replace(/\s+/g, " ")).toContain(`Read \`${instructions}\` in full before acting`);
+  expect(skill).not.toMatch(/offset|by pages/);
   expect(skill.replace(/\s+/g, " ")).toContain(
-    "read again with an offset until the end of the file",
+    "names reference files to read when their conditions hold",
   );
 });
 

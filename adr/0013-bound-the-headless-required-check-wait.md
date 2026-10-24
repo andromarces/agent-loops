@@ -148,7 +148,7 @@ Andro Marces
   - Source: The `timeout` input from `src/runtime.mjs`
   - Test: `tests/prompts/orchestrator*.test.mjs`
   - Test: `tests/runtime*.test.mjs`
-  - Documented in [Headless loop waits](../docs/orchestrator-instructions.md#headless-loop-waits)
+  - Documented in [Headless loop waits](../docs/orchestrator/waiting-for-checks.md#headless-loop-waits)
   - Documented in [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
   - Documented in [Denial probe (issue #432)](../docs/reference/reviewer-safety.md#denial-probe-issue-432)
 - [PR #382](https://github.com/andromarces/agent-loops/pull/382)

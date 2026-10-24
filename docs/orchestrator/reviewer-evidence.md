@@ -1,6 +1,6 @@
 # Reviewer prompts and runtime evidence
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you write a reviewer prompt, when a reviewer envelope carries `prChecks`, `testRun`, or `shellDenied`, when the run sets `--test-cmd`, and when the reviewer could not run tests.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you write a reviewer prompt, when a reviewer envelope carries `prChecks` or `testRun`, when the run sets `--test-cmd`, and when the reviewer could not run tests. Read it after any worker or reviewer envelope that carries `shellDenied`, before the next dispatch.
 
 ## Reviewer prompts
 

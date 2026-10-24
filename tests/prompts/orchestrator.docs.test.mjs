@@ -1073,3 +1073,23 @@ test("each reference section links back to the core and its relative links resol
     }
   }
 });
+
+// Usefulness: verifies the read trigger for `shellDenied` covers a worker envelope as well as a
+// reviewer envelope, and fixes the timing as before the next dispatch (#1061 review). A refused
+// worker command makes its reported checks unreliable, so a parent that reads the rule only after a
+// reviewer envelope would dispatch the reviewer on the strength of an unrun check.
+test("the core tells the parent to read the shellDenied rule after any worker or reviewer envelope", async () => {
+  const core = await readFile(instructionsPath, "utf8");
+  const listing = core.slice(core.indexOf("## Reference sections"));
+  const entry = listing
+    .split("\n- [")
+    .find((part) => part.includes("(orchestrator/reviewer-evidence.md)"))
+    .replace(/\s+/g, " ");
+  expectRule(entry, /worker or reviewer envelope[^.]*`shellDenied`/i, /before the next dispatch/i);
+  const section = await readFile(join(referenceSectionsDir, "reviewer-evidence.md"), "utf8");
+  expectRule(
+    section.replace(/\s+/g, " "),
+    /worker or reviewer envelope[^.]*`shellDenied`/i,
+    /before the next dispatch/i,
+  );
+});

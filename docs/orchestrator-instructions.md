@@ -388,8 +388,9 @@ of this file.
 - [Runtime advisory fields](orchestrator/runtime-advisory-fields.md): read it when a reviewer
   envelope carries `inheritedTmpdirEntries` or `packageStoreEntries`.
 - [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md): read it before you
-  write a reviewer prompt, when a reviewer envelope carries `prChecks`, `testRun`, or
-  `shellDenied`, when the run sets `--test-cmd`, and when the reviewer could not run tests.
+  write a reviewer prompt, when a reviewer envelope carries `prChecks` or `testRun`, when the
+  run sets `--test-cmd`, and when the reviewer could not run tests. Read it after any worker or
+  reviewer envelope that carries `shellDenied`, before the next dispatch.
 - [Codex reviewer sandbox mode](orchestrator/reviewer-sandbox.md): read it when the run uses a
   Codex reviewer, sets `--reviewer-sandbox`, or halts on a reviewer mutation.
 - [Waiting for required checks](orchestrator/waiting-for-checks.md): read it before a run that ends
