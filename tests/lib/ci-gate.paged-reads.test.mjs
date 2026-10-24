@@ -39,10 +39,23 @@ const reply = (body, { status = 200, headers = "" } = {}) => ({
   stderr: "",
 });
 
-/** A `gh` double that serves `pages` by endpoint and records every call as joined text. */
-function serve(pages) {
+/** The `gh auth status --json hosts` stdout for hosts in the `gh` configuration. */
+const authHosts = (...hosts) => ({
+  status: 0,
+  stdout: JSON.stringify({ hosts: Object.fromEntries(hosts.map((host) => [host, [{ host }]])) }),
+  stderr: "",
+});
+
+/**
+ * A `gh` double that serves `pages` by endpoint and records every `api` call as joined text. `auth`
+ * is its `gh auth status --json hosts` reply, by default the one github.com login.
+ */
+function serve(pages, auth = authHosts("github.com")) {
   const calls = [];
   const gh = async (args) => {
+    if (args[0] === "auth") {
+      return auth;
+    }
     calls.push(args.join(" "));
     const served = args[0] === "api" ? pages[args[1]] : undefined;
     return (
@@ -198,6 +211,49 @@ ${headers}
         { headers: 'Link: <https://ghe.example.com/api/v3/x?page=2>; rel="next"\r\n' },
       ),
     });
+    assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
+  // Verifies acceptance item 1 (#1046): with no `GH_HOST`, the host `gh` sends the request to is the
+  // one host of its configuration, and a Link header that names it is accepted.
+  const GHE_LINK = 'Link: <https://ghe.example.com/api/v3/x?page=2>; rel="next"\r\n';
+  const gheRuns = (auth, headers = GHE_LINK) =>
+    serve({ [page(RUNS, 1)]: reply({ total_count: 1, check_runs: runs(1) }, { headers }) }, auth);
+
+  it("accepts a Link header that names the only host in the gh configuration", async () => {
+    const { gh } = gheRuns(authHosts("ghe.example.com"));
+    assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
+  // Verifies acceptance item 2 (#1046): any other host still ends the read with an error.
+  it("ends the read in an error for a Link header on a host other than the gh default", async () => {
+    const { gh } = gheRuns(authHosts("ghe.example.com"), LINK);
+    await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
+  });
+
+  // Verifies that `gh` falls back to github.com when several hosts are configured, so the
+  // configured enterprise host is not accepted then.
+  it("reads github.com as the request host when several hosts are configured", async () => {
+    const hosts = authHosts("ghe.example.com", "ghe2.example.com");
+    await expect(checkRuns(gheRuns(hosts).gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
+    const { gh } = gheRuns(hosts, SAME_HOST_LINK);
+    assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
+  // Verifies fail-closed handling of a default host that cannot be resolved: no Link target passes.
+  it.each([
+    ["a failed gh call", { status: 1, stdout: "", stderr: "gh: boom" }],
+    ["output that is not JSON", { status: 0, stdout: "nope", stderr: "" }],
+    ["JSON with no hosts", { status: 0, stdout: "{}", stderr: "" }],
+  ])("refuses a Link header when the gh default host is unreadable: %s", async (_name, auth) => {
+    const { gh } = gheRuns(auth, SAME_HOST_LINK);
+    await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
+  });
+
+  // Verifies that `GH_HOST` still decides the request host and `gh` is never asked.
+  it("does not ask gh for its default host when GH_HOST is set", async () => {
+    process.env.GH_HOST = "ghe.example.com";
+    const { gh } = gheRuns({ status: 1, stdout: "", stderr: "must not be read" });
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
