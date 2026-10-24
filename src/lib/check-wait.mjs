@@ -15,8 +15,11 @@ import {
 } from "./ci-gate.mjs";
 import {
   failureOf,
+  ghApi,
   ghFailureText,
   NO_REQUIRED_CHECKS,
+  pagedRead,
+  readOne,
   requiredContexts,
   runGh,
 } from "./ci-required-sources.mjs";
@@ -178,6 +181,25 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
   }
   return { settled: false, checks };
 }
+
+// The workflow triggers that can run for a PR head, and the directory that holds the workflows. The
+// probe scans the text of each workflow file for a trigger name instead of parsing the YAML, so a name
+// in a comment or a step also keeps the wait. That errs toward the wait, never toward a skip.
+const PR_TRIGGERS =
+  /\b(?:pull_request|pull_request_target|push|merge_group|workflow_run|check_suite)\b/;
+const WORKFLOW_DIR = ".github/workflows";
+const WORKFLOW_PATH = /^\.github\/workflows\//i;
+// A text the scan cannot read as plain trigger names: a backslash starts a YAML escape or a line
+// continuation that can spell an event name (`"pull_request"`), and a control character, as a
+// NUL in UTF-16 text, hides names from the scan. Such a text keeps the wait.
+// oxlint-disable-next-line no-control-regex -- the control characters are the point of the pattern
+const UNREADABLE_TEXT = /[\\\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+// A base64 string as the contents API sends it, line breaks removed.
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+// The most items that the files endpoint of a PR (3,000) and the contents endpoint of a directory
+// (1,000) return, so a list of that length may be cut and proves nothing.
+const PR_FILES_CAP = 3000;
+const DIRECTORY_CAP = 1000;
 
 // A full object name, so two heads compare by equality. `gh` reports SHA-1 and SHA-256 names.
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -377,6 +399,37 @@ async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv) {
 }
 
 /**
+ * The text of a workflow file from its contents reply, or null when the reply is not valid evidence:
+ * a file at `path` with base64 content whose string is well formed, whose decoded length equals
+ * `size`, and whose bytes are valid UTF-8. An empty file with `size` 0 is valid.
+ */
+function workflowText(body, path) {
+  if (
+    body.type !== "file" ||
+    body.encoding !== "base64" ||
+    typeof body.content !== "string" ||
+    !Number.isInteger(body.size) ||
+    body.size < 0 ||
+    (body.path !== undefined && body.path !== path)
+  ) {
+    return null;
+  }
+  const encoded = body.content.replace(/\r?\n/g, "");
+  if (!BASE64.test(encoded) || encoded.length % 4 !== 0) {
+    return null;
+  }
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.length !== body.size) {
+    return null;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Polls the required checks of `pr` until none is pending or the deadline
  * elapses. Every read is bounded by the time left, and a read that reaches the
  * bound is signaled to stop and given the child-exit ceiling. `timedOut` marks a
@@ -389,6 +442,9 @@ async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv) {
  * `all` waits on every check of the PR head instead of the required ones, for a
  * branch with no required check; it keeps the exit-code rules above, including
  * the wait on the no-checks-yet reply, except `noRequiredChecks` (#896, #950).
+ * `noCheckSource` rides on an `--all` envelope only when the first read lists no check and no source can
+ * report one for the PR head (see `noCheckSource` below): the wait ends at once with an empty `checks`,
+ * and it is no pass (#1054).
  * `expect` names check runs that the `--all` wait must see on `sha` before a pass, matched by exact
  * name against the check runs only, whichever app made them, never against commit statuses: a third-party app can
  * register a check run after the first ones passed, so a pass without it is not evidence. A
@@ -592,6 +648,93 @@ export async function waitChecks({
     }
     return false;
   };
+  // Whether no source can report a check for the PR head `sha`, once its own check runs and commit
+  // statuses came back empty: the PR changes no file under `.github/workflows/`, no workflow of the
+  // base branch names a trigger that can run for the PR head, and the base head shows no check run
+  // and no commit status from any source, so a GitHub App or third-party CI with no workflow file is
+  // covered too. The base branch resolves to one SHA first, and every base read uses it, so the
+  // evidence comes from one commit. Each read is bounded by the wait, and a reply is validated before
+  // it counts as evidence. A read that fails, cannot be parsed, is not exactly the expected shape, or
+  // may be cut by an API cap returns false or throws, and the caller then keeps the normal wait. A
+  // base branch or PR head that moved during the reads keeps it too. Its limit: the base head is one
+  // commit, so a provider that skipped it or registers later stays unseen (#1054).
+  const noCheckSource = async (sha, base) => {
+    await ensureSlug();
+    const baseShaOf = async () => {
+      const read = await readOne(bounded, `repos/${slug}/commits/${encodeURIComponent(base)}`, cwd);
+      const parsed = read.status === 0 ? JSON.parse(read.stdout) : null;
+      const found = isJsonObject(parsed) && typeof parsed.sha === "string" ? parsed.sha : "";
+      return FULL_SHA.test(found.toLowerCase()) ? found.toLowerCase() : null;
+    };
+    const baseSha = await baseShaOf();
+    if (baseSha === null) {
+      return false;
+    }
+    const pages = await ghApi(pagedRead(bounded, null), [`repos/${slug}/pulls/${pr}/files`], cwd);
+    if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
+      return false;
+    }
+    const changed = pages.flat();
+    if (changed.length >= PR_FILES_CAP) {
+      return false;
+    }
+    for (const file of changed) {
+      if (!isJsonObject(file) || typeof file.filename !== "string") {
+        return false;
+      }
+      if (WORKFLOW_PATH.test(file.filename) || WORKFLOW_PATH.test(file.previous_filename ?? "")) {
+        return false;
+      }
+    }
+    const listing = await readOne(
+      bounded,
+      `repos/${slug}/contents/${WORKFLOW_DIR}?ref=${baseSha}`,
+      cwd,
+    );
+    let entries = [];
+    if (listing.status !== 0) {
+      if (!listing.notFound) {
+        return false;
+      }
+    } else {
+      entries = JSON.parse(listing.stdout);
+      if (!Array.isArray(entries) || entries.length >= DIRECTORY_CAP) {
+        return false;
+      }
+    }
+    for (const entry of entries) {
+      if (
+        !isJsonObject(entry) ||
+        typeof entry.path !== "string" ||
+        !WORKFLOW_PATH.test(entry.path)
+      ) {
+        return false;
+      }
+      if (entry.type === "dir") {
+        continue;
+      }
+      if (entry.type !== "file") {
+        return false;
+      }
+      const path = entry.path.split("/").map(encodeURIComponent).join("/");
+      const read = await readOne(bounded, `repos/${slug}/contents/${path}?ref=${baseSha}`, cwd);
+      const body = read.status === 0 ? JSON.parse(read.stdout) : null;
+      const text = isJsonObject(body) ? workflowText(body, entry.path) : null;
+      if (text === null || UNREADABLE_TEXT.test(text) || PR_TRIGGERS.test(text)) {
+        return false;
+      }
+    }
+    const runs = await checkRuns(bounded, slug, baseSha, cwd, true);
+    const statuses = await commitStatuses(bounded, slug, baseSha, cwd, true);
+    if (runs.length > 0 || statuses.length > 0) {
+      return false;
+    }
+    // Neither the base branch nor the PR head moved while the probe read.
+    const moved = readHead(pr, await bounded(headArgv));
+    return moved.head === sha && moved.base === base && (await baseShaOf()) === baseSha;
+  };
+  // Whether the probe ran. It runs at most once per wait.
+  let probed = false;
   // The retryable server error of the latest completed poll, or null when that poll had none.
   // A wait that ends on the bound with it set reports it as an error, so a server error never
   // reads as a timeout or a pass (#1025).
@@ -614,9 +757,11 @@ export async function waitChecks({
         if (!listed.noRequiredChecks && (all || listed.checks.length > 0)) {
           let items = null;
           let runNames = [];
+          let headEmpty = false;
           try {
             const entries = await readCommit(sha);
             runNames = entries.runs.map((run) => run.name);
+            headEmpty = entries.runs.length === 0 && entries.statuses.length === 0;
             items = all
               ? allItems(entries)
               : requiredItems(entries, await contextsOf(base, listed), sha);
@@ -630,6 +775,23 @@ export async function waitChecks({
             }
             if (err instanceof BoundReached || (failed === null && prFailures.length === 0)) {
               throw err;
+            }
+          }
+          // The probe runs once, only for an `--all` wait that names no expected check, after
+          // `gh pr checks` listed nothing and the by-SHA read of the PR head found no check run and no
+          // commit status, so a state on the PR head never gives way to the probe (ADR 0048).
+          if (items !== null && all && expect.length === 0 && !probed && headEmpty) {
+            probed = true;
+            try {
+              if (listed.checks.length === 0 && (await noCheckSource(sha, base))) {
+                return { timedOut: false, noCheckSource: true, head: sha, checks: [] };
+              }
+            } catch (raw) {
+              // A failed probe read keeps the normal wait. The bound still ends it.
+              const err = failureOf(raw);
+              if (err instanceof BoundReached) {
+                throw err;
+              }
             }
           }
           if (failed !== null && prFailures.length === 0) {

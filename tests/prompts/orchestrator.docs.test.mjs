@@ -219,6 +219,55 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
+// Usefulness: verifies both parent surfaces tell the parent to act only on the `noCheckSource` field of
+// the `--all` envelope: dispatch the reviewer, record the CI status as not verified, never as passed
+// (issue #1054). A parent that reads the workflows itself leaves its role contract, and one that
+// records a pass from the field reports CI that no check backed.
+test("the parent surfaces state the action for a noCheckSource wait", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readFile(instructionsPath, "utf8");
+  for (const text of [prompt, instructions]) {
+    expectRule(text, /noCheckSource/, /(?:no|never a) pass/i);
+    expectRule(text, /dispatch the reviewer/i, /not verified/i);
+    expectRule(text, /never record the CI status as passed/i);
+  }
+});
+
+// Usefulness: verifies the interactive instructions state the three conditions of the
+// `noCheckSource` return and its limit, and tell the parent to read none of them itself
+// (issue #1054). A reworded rule that drops the workflow-file, trigger, or external-provider
+// condition would let a skip start the reviewer before CI reports.
+test("the instructions state the conditions of a noCheckSource wait", async () => {
+  const instructions = await readFile(instructionsPath, "utf8");
+  expectRule(instructions, /no `--expect` name is set/);
+  expectRule(instructions, /changes no file under `\.github\/workflows\/`/);
+  expectRule(
+    instructions,
+    /`pull_request`/,
+    /`pull_request_target`/,
+    /`push`/,
+    /`merge_group`/,
+    /`workflow_run`/,
+    /`check_suite`/,
+  );
+  expectRule(instructions, /reusable workflow/i, /caller/i);
+  expectRule(instructions, /no check run and no commit status from any source/i);
+  expectRule(instructions, /GitHub App or third-party CI/i, /no workflow file/i);
+  expectRule(instructions, /never read a workflow file/i, /yourself/i);
+  expectRule(instructions, /keeps the normal wait/i, /fails|cannot be parsed|not settled/i);
+  expectRule(instructions, /repository with a `pull_request` workflow keeps the wait/i);
+  expectRule(instructions, /limit/i, /base head is one commit/i);
+  expectRule(instructions, /never comes from the required wait/i);
+});
+
 /** The words of a text in order, so case, whitespace, Markdown marks, and punctuation never decide a match. */
 const wordsOf = (text) =>
   text

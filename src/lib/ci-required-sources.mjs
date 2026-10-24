@@ -282,6 +282,11 @@ function foreignTarget(targets, hosts) {
   return null;
 }
 
+/** Whether `body` is exactly one JSON value, an empty body not included. */
+function isJsonBody(body) {
+  return body.trim() !== "" && isEmptyOrJson(body);
+}
+
 /** Whether `body` is empty or exactly one JSON value. */
 function isEmptyOrJson(body) {
   if (body.trim() === "") {
@@ -292,6 +297,55 @@ function isEmptyOrJson(body) {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** A refusal about the shape of a reply: a read the runtime cannot account for, as no `gh` failure. */
+const refusal = (stderr) => ({ status: 1, stdout: "", stderr, unreadable: true });
+
+/**
+ * One `gh api --include` request, judged as the pager judges every page, and the one place that
+ * judges it, so a single read and a paged read cannot drift apart. The `Link` header of every reply
+ * is judged before its status, so a failure that is retryable by its status is still terminal when a
+ * target names another host. The request host is resolved once per read (`state.hosts`), and only
+ * for a reply that carries a `Link` target. It returns `{ end, reply }` for a failure or a refusal,
+ * where `end` is the `gh`-shaped result and `reply` the parsed reply, or null with no status block,
+ * and `{ reply, json }` for a 2xx reply whose body is exactly one JSON value.
+ * @param {Function} read
+ * @param {string[]} args the `gh` arguments of the request
+ * @param {string} cwd
+ * @param {{ hosts?: Set<string> }} state
+ */
+async function readReply(read, args, cwd, state) {
+  const result = await read(args, cwd);
+  const reply = parseReply(result.stdout);
+  const targets = reply === null ? [] : linkTargets(reply.headers);
+  if (targets.length > 0) {
+    state.hosts ??= await requestHosts(read, cwd);
+  }
+  const foreign = targets.length > 0 ? foreignTarget(targets, state.hosts) : null;
+  if (foreign !== null) {
+    return {
+      reply,
+      end: {
+        status: 1,
+        stdout: "",
+        stderr: `a Link header names a host other than the request host: ${foreign}`,
+      },
+    };
+  }
+  if (result.status !== 0) {
+    const transient =
+      reply !== null && RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
+    return { reply, end: { ...result, ...(transient ? { transient: true } : {}) } };
+  }
+  if (reply === null || reply.status < 200 || reply.status > 299) {
+    return { reply, end: refusal("the reply carries no 2xx HTTP status block") };
+  }
+  try {
+    return { reply, json: JSON.parse(reply.body) };
+  } catch {
+    return { reply, end: refusal("the reply body is not exactly one JSON value") };
   }
 }
 
@@ -318,46 +372,19 @@ function isEmptyOrJson(body) {
  * @param {string | null} field
  */
 async function readPages(read, endpoint, cwd, field) {
-  // `unreadable` marks a read the runtime cannot account for page by page, as no `gh` failure.
-  const refusal = (stderr) => ({ status: 1, stdout: "", stderr, unreadable: true });
   const pages = [];
   let collected = 0;
   let expected;
-  let hosts;
+  const state = {};
   for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const result = await read(
+    const { end, json } = await readReply(
+      read,
       ["api", `${endpoint}?per_page=${PAGE_SIZE}&page=${page}`, "--include"],
       cwd,
+      state,
     );
-    const reply = parseReply(result.stdout);
-    // The `Link` header of every reply is judged before its status, so a failure that is retryable
-    // by its status is still terminal when a target names another host.
-    const targets = reply === null ? [] : linkTargets(reply.headers);
-    // The request host is resolved once per read, and only for a reply that carries a `Link` target.
-    if (targets.length > 0) {
-      hosts ??= await requestHosts(read, cwd);
-    }
-    const foreign = targets.length > 0 ? foreignTarget(targets, hosts) : null;
-    if (foreign !== null) {
-      return {
-        status: 1,
-        stdout: "",
-        stderr: `a Link header names a host other than the request host: ${foreign}`,
-      };
-    }
-    if (result.status !== 0) {
-      const transient =
-        reply !== null && RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
-      return { ...result, ...(transient ? { transient: true } : {}) };
-    }
-    if (reply === null || reply.status < 200 || reply.status > 299) {
-      return refusal("the reply carries no 2xx HTTP status block");
-    }
-    let json;
-    try {
-      json = JSON.parse(reply.body);
-    } catch {
-      return refusal("the reply body is not exactly one JSON value");
+    if (end) {
+      return end;
     }
     const list = field === null ? json : json?.[field];
     const items = Array.isArray(list) ? list.length : 0;
@@ -402,6 +429,37 @@ export const pagedRead =
       cwd,
       field,
     );
+
+/**
+ * Reads one endpoint that is no list with `gh api --include`, and judges the reply with the one
+ * validation of the pager (`readReply`): the `Link` host check of every reply (#1033), the first-line
+ * status, a 2xx status block, and a body that is exactly one JSON value, and the 5xx retry
+ * classification of a failed reply (#1025), so `transient` is set as the pager sets it. A success
+ * returns a `gh`-shaped result whose stdout is that body. A `Link` target of the request host on a
+ * success is a refusal too, because it says the reply is one page of a longer list that this read
+ * would take as complete. A refusal about the shape of a reply carries `unreadable`. `notFound` is
+ * set on a failed result only for the exact absence reply: a 404 status line, exactly
+ * `gh: Not Found (HTTP 404)` on stderr, a body that is one JSON value, and no `Link` target.
+ * @param {Function} read one `gh` read, as `(args, cwd) => result`
+ * @param {string} endpoint the endpoint with its query
+ * @param {string} cwd
+ */
+export async function readOne(read, endpoint, cwd) {
+  const { reply, end } = await readReply(read, ["api", endpoint, "--include"], cwd, {});
+  if (end) {
+    const exact =
+      end.status !== 0 &&
+      reply?.status === 404 &&
+      end.stderr.trim() === "gh: Not Found (HTTP 404)" &&
+      linkTargets(reply.headers).length === 0 &&
+      isJsonBody(reply.body);
+    return { ...end, ...(exact ? { notFound: true } : {}) };
+  }
+  if (linkTargets(reply.headers).length > 0) {
+    return refusal("the reply carries a Link header, so it may be one page of a longer list");
+  }
+  return { status: 0, stdout: reply.body, stderr: "" };
+}
 
 /**
  * One required-check configuration source, classified by what its reply proved.

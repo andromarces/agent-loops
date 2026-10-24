@@ -9,6 +9,7 @@ import {
   ABSENT,
   UNKNOWN,
   failureOf,
+  readOne,
   requiredContexts,
 } from "../../src/lib/ci-required-sources.mjs";
 import { SLUG } from "./ci-gate-helpers.mjs";
@@ -478,5 +479,84 @@ ${headers}
     const found = await requiredContexts(source([], pages), SLUG, "main", 42, ".");
     assert.deepEqual(found.unknown, ["repository rulesets"]);
     assert.equal(found.rulesetState, UNKNOWN);
+  });
+});
+
+// Requirement (#1054): a single read, as the workflow-file probe makes, validates a reply exactly as
+// the pager validates a page, so a failed reply cannot state an absence before its `Link` hosts, its
+// status line, and its body are judged, and the 5xx retry classification of the pager (#1025) holds.
+describe("a single read validates its reply as the pager does", () => {
+  const NOT_FOUND_TEXT = "gh: Not Found (HTTP 404)";
+  const ENDPOINT = `repos/${SLUG}/contents/.github/workflows?ref=${SHA}`;
+  const failed = (status, body, { headers = "", stderr = NOT_FOUND_TEXT } = {}) => ({
+    status: 1,
+    stdout: `HTTP/2.0 ${status} X\r\nContent-Type: application/json\r\n${headers}\r\n${body}`,
+    stderr,
+  });
+  const single = (served) => serve({ [ENDPOINT]: served }).gh;
+
+  // Verifies the one absence the probe accepts: the exact 404 reply with a valid JSON body and no `Link`.
+  it("marks the exact 404 reply with a JSON body and no Link target as not found", async () => {
+    const read = await readOne(single(failed(404, '{"message":"Not Found"}')), ENDPOINT, ".");
+    assert.equal(read.status, 1);
+    assert.equal(read.notFound, true);
+  });
+
+  // Verifies every other 404 states no absence: a body that is not one JSON value, a `Link` target
+  // on a foreign or the request host, another error text, and a status line that is not 404.
+  it.each([
+    ["a malformed body", failed(404, "oops")],
+    ["an empty body", failed(404, "")],
+    ["two JSON values", failed(404, "{} {}")],
+    ["a foreign Link target", failed(404, "{}", { headers: LINK })],
+    ["a same-host Link target", failed(404, "{}", { headers: SAME_HOST_LINK })],
+    ["another error text", failed(404, "{}", { stderr: "gh: Not Found for x (HTTP 404)" })],
+    ["a 403 status line", failed(403, "{}")],
+  ])("never marks a 404 reply with %s as not found", async (_name, served) => {
+    const read = await readOne(single(served), ENDPOINT, ".");
+    assert.equal(read.status, 1);
+    assert.ok(!read.notFound);
+  });
+
+  // Verifies the host check of the pager on a failed reply: a foreign target is a terminal error,
+  // never transient, so no absence or retry follows it.
+  it("ends on a foreign Link target of a failed reply, never as transient", async () => {
+    const read = await readOne(single(failed(502, "{}", { headers: LINK })), ENDPOINT, ".");
+    assert.equal(read.status, 1);
+    assert.match(read.stderr, /other\.example/);
+    assert.ok(!read.transient);
+  });
+
+  // Verifies the 5xx classification of the pager (#1025): a retryable status with an empty or JSON
+  // body is transient, and the same status with another body is not.
+  it.each([
+    [500, "{}", true],
+    [502, '{"message":"bad"}', true],
+    [503, "", true],
+    [504, "{}", true],
+    [502, "<html>bad gateway</html>", false],
+    [501, "{}", false],
+  ])("classifies a %s reply with body %j as transient: %s", async (status, body, transient) => {
+    const read = await readOne(single(failed(status, body, { stderr: "gh: bad" })), ENDPOINT, ".");
+    assert.equal(read.status, 1);
+    assert.equal(Boolean(read.transient), transient);
+    assert.ok(!read.notFound);
+  });
+
+  // Verifies a successful reply: the body of one JSON value comes back, and a Link target, a missing
+  // status block, a non-2xx status, and a body of two values are refusals marked unreadable or errors.
+  it("returns the body of a successful reply and refuses every other shape", async () => {
+    const ok = await readOne(single(reply({ a: 1 })), ENDPOINT, ".");
+    assert.deepEqual([ok.status, ok.stdout], [0, '{"a":1}']);
+    for (const served of [
+      reply({}, { headers: SAME_HOST_LINK }),
+      reply({}, { headers: LINK }),
+      { status: 0, stdout: "{}", stderr: "" },
+      reply({}, { status: 302 }),
+      { status: 0, stdout: "HTTP/2.0 200 OK\r\n\r\n{} {}", stderr: "" },
+    ]) {
+      const read = await readOne(single(served), ENDPOINT, ".");
+      assert.equal(read.status, 1, JSON.stringify(served));
+    }
   });
 });
