@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
 import {
+  changedInPackageStore,
   failedPackageStoreEntries,
   snapshotPackageStore,
 } from "../src/lib/package-store-entries.mjs";
@@ -13,6 +14,12 @@ import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
 
 let repo;
 let store;
+const modulesFile = () => join(repo, "node_modules", ".modules.yaml");
+const record = async (text) => {
+  await mkdir(join(repo, "node_modules"), { recursive: true });
+  await writeFile(modulesFile(), text);
+};
+const recordStore = (dir) => record(JSON.stringify({ storeDir: dir }, null, 2));
 beforeEach(async () => {
   repo = await createTempRepo();
   store = await mkdtemp(join(tmpdir(), "package-store-"));
@@ -20,7 +27,7 @@ beforeEach(async () => {
     await mkdir(join(store, "v11", dir), { recursive: true });
   }
   await writeFile(join(store, "v11", "index.db"), "index");
-  vi.stubEnv("npm_config_store_dir", store);
+  await recordStore(join(store, "v11"));
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -98,13 +105,13 @@ test("the report names at most 20 entries, sorted", async () => {
 // directory over the scan limit is not read, so the snapshot is null and no turn fails on it.
 test("a directory over the scan limit is left unread", async () => {
   for (let i = 0; i < 8; i++) await mkdir(join(store, "v11", "links", `pkg-${i}`));
-  expect(await snapshotPackageStore({ scanLimit: 5 })).toBeNull();
-  expect(await snapshotPackageStore({ scanLimit: 50 })).not.toBeNull();
+  expect(await snapshotPackageStore({ cwd: repo, scanLimit: 5 })).toBeNull();
+  expect(await snapshotPackageStore({ cwd: repo, scanLimit: 50 })).not.toBeNull();
 });
 
 // Usefulness: verifies a host with no package store reports nothing and fails nothing.
 test("a missing package store carries no field", async () => {
-  vi.stubEnv("npm_config_store_dir", join(store, "absent"));
+  await recordStore(join(store, "absent", "v11"));
   const result = await turn("reviewer", async () => "done");
   expect(result.status).toBe("ok");
   expect(result).not.toHaveProperty("packageStoreEntries");
@@ -168,16 +175,9 @@ test("a reviewer turn that fails after a cancel ends as a cancel", async () => {
 });
 
 // Usefulness: verifies requirement "a wrong root never produces a report" (issue #1045): with no
-// `npm_config_store_dir`, the store is the one that pnpm recorded as `storeDir` in the
-// `node_modules/.modules.yaml` of the work tree, and any other case gives no field.
+// environment variable that sets another store, the store is the one that pnpm recorded as
+// `storeDir` in the `node_modules/.modules.yaml` of the work tree, and any other case gives no field.
 describe("the store that the work tree recorded", () => {
-  const modulesFile = () => join(repo, "node_modules", ".modules.yaml");
-  const record = async (text) => {
-    await mkdir(join(repo, "node_modules"), { recursive: true });
-    await writeFile(modulesFile(), text);
-  };
-  const recordStore = (dir) => record(JSON.stringify({ storeDir: dir }, null, 2));
-  beforeEach(() => vi.stubEnv("npm_config_store_dir", undefined));
   const installed = async () => {
     await install();
     return "done";
@@ -195,20 +195,36 @@ describe("the store that the work tree recorded", () => {
     expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
   });
 
-  test("gives way to npm_config_store_dir, which a later install uses", async () => {
-    await recordStore(join(store, "absent", "v11"));
-    vi.stubEnv("npm_config_store_dir", store);
+  // pnpm 12 reads `pnpm_config_*` and ignores `npm_config_*` (pnpm docs, configuring.md).
+  test("ignores npm_config_store_dir, which pnpm 12 does not read", async () => {
+    vi.stubEnv("npm_config_store_dir", join(store, "elsewhere"));
+    const result = await turn("reviewer", installed);
+    expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
+  });
+
+  test("gives no field when pnpm_config_store_dir names another store", async () => {
+    vi.stubEnv("pnpm_config_store_dir", join(store, "elsewhere"));
+    const result = await turn("reviewer", installed);
+    expect(result.status).toBe("ok");
+    expect(result).not.toHaveProperty("packageStoreEntries");
+  });
+
+  test("is read when pnpm_config_store_dir names the recorded store", async () => {
+    vi.stubEnv("pnpm_config_store_dir", store);
     const result = await turn("reviewer", installed);
     expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
   });
 
   test.each([
-    ["is absent", async () => {}],
+    ["is absent", () => removePath(join(repo, "node_modules"))],
     ["names no store", () => record('{ "layoutVersion": 5 }')],
     ["names a relative store", () => record('{ "storeDir": "relative/store" }')],
     [
       "is a directory",
-      () => mkdir(join(repo, "node_modules", ".modules.yaml"), { recursive: true }),
+      async () => {
+        await removePath(modulesFile());
+        await mkdir(modulesFile());
+      },
     ],
     [
       "is over the byte cap",
@@ -276,5 +292,23 @@ test("a canceled reviewer turn with an aborted signal still carries the entries"
 // a directory read like any other.
 test("a store root over the scan limit is left unread", async () => {
   for (let i = 0; i < 8; i++) await mkdir(join(store, `entry-${i}`));
-  expect(await snapshotPackageStore({ scanLimit: 5 })).toBeNull();
+  expect(await snapshotPackageStore({ cwd: repo, scanLimit: 5 })).toBeNull();
+});
+
+// Usefulness: verifies requirement "a snapshot keeps its root" (issue #1045): a recorded store that
+// changes between the two reads must give no field, because the two reads saw different stores
+// and every entry would read as added or removed.
+test("a recorded store that changes between the reads gives no field", async () => {
+  const other = await mkdtemp(join(tmpdir(), "package-store-other-"));
+  try {
+    await mkdir(join(other, "v11", "projects", "unrelated"), { recursive: true });
+    const before = await snapshotPackageStore({ cwd: repo });
+    await recordStore(join(other, "v11"));
+    expect(await changedInPackageStore(before, { cwd: repo })).toEqual([]);
+    await recordStore(join(store, "v11"));
+    await mkdir(join(store, "v11", "projects", "hash1"));
+    expect(await changedInPackageStore(before, { cwd: repo })).toEqual(["v11/projects/hash1"]);
+  } finally {
+    await removePath(other);
+  }
 });

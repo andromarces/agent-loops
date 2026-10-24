@@ -1,5 +1,5 @@
 import { open, opendir, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { logDebug, logWarn } from "./log.mjs";
 import { redactAndClean } from "./test-cmd.mjs";
@@ -69,29 +69,36 @@ function recordedStoreDir(text) {
   return /^'.*'$/.test(value) ? value.slice(1, -1) : value;
 }
 
+/** The store root of a `storeDir` value, which names the version directory (`<root>/v11`). */
+const storeRootOf = (cwd, dir) => {
+  const path = resolve(cwd, dir);
+  const root = VERSION_DIR.test(basename(path)) ? dirname(path) : path;
+  return process.platform === "win32" ? root.toLowerCase() : root;
+};
+
 /**
- * Resolves the pnpm store root that the work tree uses, or null when it cannot be known.
- * `npm_config_store_dir` wins when set, because a later install with a changed store directory
- * reinstalls into that store (pnpm error `ERR_PNPM_UNEXPECTED_STORE`). Otherwise the root is the
- * `storeDir` that pnpm recorded in `node_modules/.modules.yaml` of the work tree on install, read
- * up to a byte cap. A missing, unreadable, oversized, or store-less file, or a path that is not
- * absolute, gives null: no guess at a default store. A wrong root must never produce a report.
- * `storeDir` names the version directory (`<root>/v11`), so its parent is the root.
+ * Resolves the pnpm store root that the work tree uses, or null when it cannot be known. The root
+ * is the `storeDir` that pnpm recorded in `node_modules/.modules.yaml` of the work tree on install,
+ * read up to a byte cap. A missing, unreadable, oversized, or store-less file, or a path that is
+ * not absolute, gives null: no guess at a default store. pnpm 12 reads `pnpm_config_store_dir` and
+ * ignores `npm_config_store_dir`, and a later install with a changed store directory reinstalls
+ * into it, so that variable, when set to another path than the recorded one, also gives null. A
+ * wrong root must never produce a report.
  */
 // known-limit: a work tree that never ran an install, or a `--store-dir` flag of a probe command,
 // has no recorded store, so a change in the store that a probe uses is not reported
 async function packageStoreRoot(cwd, signal) {
-  let dir = envValue("npm_config_store_dir") ?? envValue("npm_config_store-dir");
-  if (!dir) {
-    try {
-      const text = await readCapped(join(cwd, "node_modules", ".modules.yaml"), signal);
-      dir = text === null ? null : recordedStoreDir(text);
-    } catch (err) {
-      if (signal.aborted) throw err;
-      return null;
-    }
+  let dir = null;
+  try {
+    const text = await readCapped(join(cwd, "node_modules", ".modules.yaml"), signal);
+    dir = text === null ? null : recordedStoreDir(text);
+  } catch (err) {
+    if (signal.aborted) throw err;
+    return null;
   }
   if (!dir || !isAbsolute(dir)) return null;
+  const configured = envValue("pnpm_config_store_dir") ?? envValue("pnpm_config_store-dir");
+  if (configured && storeRootOf(cwd, configured) !== storeRootOf(cwd, dir)) return null;
   return VERSION_DIR.test(basename(dir)) ? dirname(dir) : dir;
 }
 
@@ -105,12 +112,19 @@ async function readNames(dir, scanLimit, signal) {
     if (err?.code === "ENOENT") return names;
     throw err;
   }
-  for await (const entry of handle) {
-    signal.throwIfAborted();
-    if (names.length >= scanLimit) throw new Error(`more than ${scanLimit} entries in ${dir}`);
-    names.push(entry.name);
+  try {
+    // Each read of the directory is a file system call, so the bound is checked before each one.
+    for (;;) {
+      signal.throwIfAborted();
+      const entry = await handle.read();
+      if (entry === null) return names;
+      if (names.length >= scanLimit) throw new Error(`more than ${scanLimit} entries in ${dir}`);
+      names.push(entry.name);
+    }
+  } finally {
+    // The close of an opened handle is the one call that can follow the bound.
+    await handle.close();
   }
-  return names;
 }
 
 async function readStore(root, scanLimit, signal) {
@@ -133,18 +147,19 @@ async function readStore(root, scanLimit, signal) {
       }
     }
   }
-  return signatures;
+  return { root, entries: signatures };
 }
 
 /**
  * Reads the names of the pnpm store entries that an install changes, with a signature each, or
  * null, after a warning, when the store cannot be read in time and size. Null without a warning
- * when the root is unknown (see `packageStoreRoot`). A missing store reads as empty. Reads names,
+ * when the root is unknown (see `packageStoreRoot`). The snapshot keeps its `root`, so two
+ * snapshots of different stores are never compared. A missing store reads as empty. Reads names,
  * sizes, and times only, never store file content. The read has its own time bound and takes no
  * turn signal, so a canceled turn is read too and the read never changes the cancel outcome.
  * `boundMs` ends the read itself: no file system call starts after it.
  * @param {{ cwd?: string, scanLimit?: number, boundMs?: number }} [options]
- * @returns {Promise<Map<string, string> | null>}
+ * @returns {Promise<{ root: string, entries: Map<string, string> } | null>}
  */
 export async function snapshotPackageStore({
   cwd = process.cwd(),
@@ -184,18 +199,20 @@ export async function snapshotPackageStore({
  * most 20, each redacted like the test command output (ADR 0017), because a name is chosen by the
  * turn. The names are advisory only: the store is shared with every other process on the host,
  * so the runtime cannot attribute a change to the turn and never reverts one (issue #1045).
- * Returns [] when either read failed.
- * @param {Map<string, string> | null} before
+ * Returns [] when either read failed, or when the two reads saw different store roots.
+ * @param {{ root: string, entries: Map<string, string> } | null} before
  * @param {{ cwd?: string }} [options] as for `snapshotPackageStore`
  * @returns {Promise<string[]>}
  */
 export async function changedInPackageStore(before, options) {
   if (before === null) return [];
   const after = await snapshotPackageStore(options);
-  if (after === null) return [];
+  if (after === null || after.root !== before.root) return [];
   const names = new Set();
-  for (const [name, signature] of after) if (before.get(name) !== signature) names.add(name);
-  for (const name of before.keys()) if (!after.has(name)) names.add(name);
+  for (const [name, signature] of after.entries) {
+    if (before.entries.get(name) !== signature) names.add(name);
+  }
+  for (const name of before.entries.keys()) if (!after.entries.has(name)) names.add(name);
   return [...new Set([...names].sort().slice(0, MAX_ENTRIES).map(redactAndClean))];
 }
 

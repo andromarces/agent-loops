@@ -316,12 +316,14 @@ Apply these parent rules:
   names, sizes, and times only, never file content, within 5 seconds and 10,000 entries per
   directory, the store root included, and the read stops at that bound: no file system call starts
   after it. A store that it cannot read within the bound carries no field. The store is the one
-  that the work tree uses: `npm_config_store_dir` when set, because a later install with a changed
-  store directory reinstalls into it, else the `storeDir` that pnpm recorded in
-  `node_modules/.modules.yaml` of the work tree on install. That file is read up to 1 MiB. A file
-  that is missing, unreadable, longer than that, or without a store, and a store path that is not
-  absolute, carries no field: the runtime guesses no default store. A work tree that never ran an
-  install, and a `--store-dir` flag that only a probe command passes, are not seen. The read has
+  that pnpm recorded as `storeDir` in `node_modules/.modules.yaml` of the work tree on install,
+  read up to 1 MiB. A file that is missing, unreadable, longer than that, or without a store, and
+  a store path that is not absolute, carries no field: the runtime guesses no default store. The
+  field is also absent when `pnpm_config_store_dir`, the variable that pnpm 12 reads, names another
+  store than the recorded one, because a later install then reinstalls into that store. The
+  ignored `npm_config_store_dir` is not read. The two reads of a turn must see the same root, or
+  the turn carries no field. A work tree that never ran an install, and a `--store-dir` flag that
+  only a probe command passes, are not seen. The read has
   its own bound and takes no turn signal. Every reviewer turn that read the store before it
   started
   carries the field: an ok turn, a handled error, a turn that a mutation or a snapshot error

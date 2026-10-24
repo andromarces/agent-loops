@@ -2128,7 +2128,11 @@ test("reviewer dispatch reports a package store change, halted or not", async ()
   try {
     await mkdir(join(store, "v11", "projects"), { recursive: true });
     await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-    vi.stubEnv("npm_config_store_dir", store);
+    await mkdir(join(repo, "node_modules"), { recursive: true });
+    await writeFile(
+      join(repo, "node_modules", ".modules.yaml"),
+      JSON.stringify({ storeDir: join(store, "v11") }),
+    );
     const installing = (leak) =>
       recordingAdapter([
         async () => {
