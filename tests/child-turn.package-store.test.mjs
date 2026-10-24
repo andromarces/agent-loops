@@ -189,12 +189,6 @@ describe("the store that the work tree recorded", () => {
     expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
   });
 
-  test("is read when the file is plain YAML", async () => {
-    await record(`layoutVersion: 5\nstoreDir: ${join(store, "v11")}\n`);
-    const result = await turn("reviewer", installed);
-    expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
-  });
-
   // Usefulness: verifies the field does not predict the store of a later install: an environment
   // variable that selects another store changes nothing, because the field only reports changes
   // in the recorded store, whoever made them.
@@ -210,6 +204,22 @@ describe("the store that the work tree recorded", () => {
   test.each([
     ["is absent", () => removePath(join(repo, "node_modules"))],
     ["names no store", () => record('{ "layoutVersion": 5 }')],
+    // pnpm 12.11.2 writes JSON. Metadata that does not parse as JSON gives no field.
+    [
+      "is malformed JSON",
+      () =>
+        record(`{
+  "storeDir": ${JSON.stringify(join(store, "v11"))},
+  "list": [
+`),
+    ],
+    [
+      "is plain YAML",
+      () =>
+        record(`layoutVersion: 5
+storeDir: ${join(store, "v11")}
+`),
+    ],
     ["names a relative store", () => record('{ "storeDir": "relative/store" }')],
     [
       "is a directory",

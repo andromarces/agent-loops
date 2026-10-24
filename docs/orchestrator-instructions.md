@@ -310,9 +310,10 @@ Apply these parent rules:
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that `node_modules/.modules.yaml` of the work tree records as `storeDir`.
   The field means that store changed, whoever changed it. It never claims that the reviewer's
-  install used that store: an install into another store, or into a store that config or the
-  environment selects (`pnpm_config_store_dir`, `PNPM_HOME`, `XDG_DATA_HOME`, a config file, or a
-  `--store-dir` flag), gives no field, and so does a work tree that never ran an install. The
+  install used that store: an install into a store other than the recorded one gives no field,
+  whatever selected that store (`pnpm_config_store_dir`, `PNPM_HOME`, `XDG_DATA_HOME`, a config
+  file, or a `--store-dir` flag), and so does a work tree that never ran an install. A recorded
+  store that config selected is reported like any other. The
   field names the entries, relative to the parent of the recorded `storeDir`, such as
   `v11/projects/<hash>`, `v11/links/<package>`, or `v11/index.db`, redacted like the test command
   output (ADR 0017), and never their content, at most 20. It is advisory: the store is shared with
@@ -321,7 +322,8 @@ Apply these parent rules:
   10,000 entries per directory, the store root included, and the read stops at that bound: no file
   system call starts after it. A store that it cannot read within the bound carries no field. The
   recorded file is read up to 1 MiB. A file that is missing, unreadable, longer than that, or
-  without a store, and a store path that is not absolute, carries no field. The two reads of a
+  without a store, or not valid JSON, and a store path that is not absolute, carries no field.
+  pnpm 12.11.2 writes the file as JSON, and the runtime parses it strictly. The two reads of a
   turn must see the same root, or the turn carries no field. The read has its own bound and takes
   no turn signal. Every reviewer turn that read the store before it started carries the field: an
   ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a canceled

@@ -17,9 +17,6 @@ const MAX_CONFIG_BYTES = 1 << 20;
 // it holds the package content, one directory per hash prefix, and an install shows in the others.
 const WATCHED_DIRS = ["links", "projects"];
 const VERSION_DIR = /^v\d+$/;
-// The `storeDir` line of a `.modules.yaml` that is not JSON.
-const STORE_DIR_LINE = /^\s*["']?storeDir["']?\s*:\s*(.+?)\s*,?\s*$/m;
-
 // Lists carried by a fatal error that cannot take the property.
 const carriedEntries = new WeakMap();
 
@@ -49,34 +46,31 @@ async function readCapped(file, signal) {
   }
 }
 
-/** The `storeDir` that pnpm recorded in the `.modules.yaml` text, or null when it names none. */
+/**
+ * The `storeDir` that pnpm recorded in the `.modules.yaml` text, or null when the text is not
+ * valid JSON or names none. pnpm 12.11.2 writes this file as JSON, so it is parsed strictly.
+ */
 function recordedStoreDir(text) {
   try {
     const parsed = JSON.parse(text);
     return typeof parsed?.storeDir === "string" ? parsed.storeDir : null;
-  } catch {}
-  const value = STORE_DIR_LINE.exec(text)?.[1];
-  if (!value) return null;
-  try {
-    if (value.startsWith('"')) return JSON.parse(value);
   } catch {
     return null;
   }
-  return /^'.*'$/.test(value) ? value.slice(1, -1) : value;
 }
 
 /**
  * Resolves the root of the store that `node_modules/.modules.yaml` of the work tree records, or
  * null when no store is recorded. The file is read up to a byte cap. The root is the parent of the
  * recorded `storeDir`, which pnpm writes as the version directory (`<root>/v11`). A missing,
- * unreadable, oversized, or store-less file, or a path that is not absolute, gives null.
+ * unreadable, oversized, malformed, or store-less file, or a path that is not absolute, gives
+ * null.
  *
- * The runtime does not predict which store a later install uses: `pnpm_config_store_dir`,
- * `PNPM_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, a config file, or a `--store-dir` flag can each
- * select another one. The result only names the recorded store.
+ * The runtime does not predict which store a later install uses. The result only names the
+ * recorded store, whatever selected it (config, the environment, or a flag).
  */
-// known-limit: an install into a store other than the recorded one, or into a store that config or
-// the environment selects, is not seen, and a work tree that never ran an install records none
+// known-limit: an install into a store other than the recorded one gives no field, whatever
+// selected that store, and a work tree that never ran an install records none
 async function packageStoreRoot(cwd, signal) {
   let dir = null;
   try {
