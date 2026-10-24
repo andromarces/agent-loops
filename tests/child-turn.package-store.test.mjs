@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
 import {
   failedPackageStoreEntries,
@@ -141,4 +141,84 @@ test("a frozen fatal error still carries the package store entries", async () =>
   }).catch((err) => err);
   expect(error).toBe(fatal);
   expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+});
+
+// Usefulness: verifies requirement "a cancel ends the turn as a cancel on every path" (issue #1045):
+// a reviewer turn that fails while its signal is aborted must propagate the cancel, because a
+// handled-error result would record a canceled turn as a failed one.
+test("a reviewer turn that fails after a cancel ends as a cancel", async () => {
+  const controller = new AbortController();
+  const error = await runChild({
+    agents: {
+      fake: scripted([
+        async () => {
+          await install();
+          controller.abort();
+          throw new Error("adapter failed");
+        },
+      ]),
+    },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "go",
+    cwd: repo,
+    signal: controller.signal,
+  }).catch((err) => err);
+  expect(error).toMatchObject({ isCanceled: true });
+});
+
+// Usefulness: verifies requirement "a wrong root never produces a report" (issue #1045): with no
+// `npm_config_store_dir`, the default store is the pnpm store only when no config file selects
+// another one.
+describe("the default store root", () => {
+  let home;
+  const defaultRoot = () =>
+    process.platform === "win32"
+      ? join(home, "AppData", "Local", "pnpm", "store")
+      : process.platform === "darwin"
+        ? join(home, "Library", "pnpm", "store")
+        : join(home, ".local", "share", "pnpm", "store");
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "package-store-home-"));
+    vi.stubEnv("npm_config_store_dir", undefined);
+    for (const name of ["HOME", "USERPROFILE"]) vi.stubEnv(name, home);
+    vi.stubEnv("LOCALAPPDATA", join(home, "AppData", "Local"));
+    vi.stubEnv("XDG_DATA_HOME", undefined);
+    vi.stubEnv("XDG_CONFIG_HOME", undefined);
+    await mkdir(join(defaultRoot(), "v11", "projects"), { recursive: true });
+  });
+  afterEach(() => removePath(home));
+
+  const installIntoDefault = async () => {
+    await mkdir(join(defaultRoot(), "v11", "projects", "hash1"));
+    return "done";
+  };
+
+  test("is read when no config file selects a store", async () => {
+    const result = await turn("reviewer", installIntoDefault);
+    expect(result.packageStoreEntries).toEqual(["v11/projects/hash1"]);
+  });
+
+  test.each([
+    [".npmrc", "store-dir=/elsewhere\n"],
+    ["pnpm-workspace.yaml", "storeDir: /elsewhere\n"],
+  ])("is not read when the work tree %s selects another store", async (file, text) => {
+    await writeFile(join(repo, file), text);
+    const result = await turn("reviewer", installIntoDefault);
+    expect(result.status).toBe("ok");
+    expect(result).not.toHaveProperty("packageStoreEntries");
+  });
+
+  test("is not read when the user .npmrc selects another store", async () => {
+    await writeFile(join(home, ".npmrc"), "store-dir=/elsewhere\n");
+    const result = await turn("reviewer", installIntoDefault);
+    expect(result).not.toHaveProperty("packageStoreEntries");
+  });
+});
+
+// Usefulness: verifies the size bound covers the root directory too, because the root listing is
+// a directory read like any other.
+test("a store root over the scan limit is left unread", async () => {
+  for (let i = 0; i < 8; i++) await mkdir(join(store, `entry-${i}`));
+  expect(await snapshotPackageStore({ scanLimit: 5 })).toBeNull();
 });

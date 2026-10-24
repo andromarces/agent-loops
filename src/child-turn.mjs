@@ -359,7 +359,7 @@ export async function runChild(options) {
   };
   /** Names that a reviewer turn changed in the pnpm package store, or [] when none or unread. */
   const readPackageStoreEntries = async () => {
-    const entries = await changedInPackageStore(storeBefore);
+    const entries = await changedInPackageStore(storeBefore, { cwd, signal });
     if (entries.length > 0) {
       logWarn(`reviewer: package store entries changed: ${entries.length}`);
     }
@@ -385,7 +385,7 @@ export async function runChild(options) {
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
     sharedBefore = roleName === "worker" ? await readShared() : null;
     tmpdirBefore = roleName === "reviewer" ? await snapshotInheritedTmpdir() : null;
-    storeBefore = roleName === "reviewer" ? await snapshotPackageStore() : null;
+    storeBefore = roleName === "reviewer" ? await snapshotPackageStore({ cwd, signal }) : null;
     let response;
     try {
       response = readOnly
@@ -474,6 +474,8 @@ export async function runChild(options) {
     const sharedGitChanged = await readSharedGitChanged();
     const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
     const packageStoreEntries = await readPackageStoreEntries();
+    // A cancel that landed during these reads ends the turn as a cancel, not as a failed turn.
+    throwIfCanceled(signal, roleName);
     // An adapter marks a failure the provider is expected to clear (issue #1012).
     const transient = readProp(err, "transient");
     return {
