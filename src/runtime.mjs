@@ -22,6 +22,7 @@ import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { invoke, runChild } from "./child-turn.mjs";
 import { decide } from "./orchestrator.mjs";
 import { failedInheritedTmpdirEntries } from "./lib/inherited-tmpdir-entries.mjs";
+import { failedPackageStoreEntries } from "./lib/package-store-entries.mjs";
 import { failedTestRun, testCmdInput } from "./lib/test-cmd.mjs";
 import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 
@@ -434,6 +435,16 @@ export async function runLoop(options) {
       const entries = failedInheritedTmpdirEntries(err);
       if (entries) {
         onEvent({ type: "inherited-tmpdir", role: roleName, entries, fatal: true, stepsUsed });
+      }
+      const storeEntries = failedPackageStoreEntries(err);
+      if (storeEntries) {
+        onEvent({
+          type: "package-store",
+          role: roleName,
+          entries: storeEntries,
+          fatal: true,
+          stepsUsed,
+        });
       }
       throw err;
     }

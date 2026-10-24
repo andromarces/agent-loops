@@ -307,6 +307,21 @@ Apply these parent rules:
   one whose before-read failed. A run that the next call marks `interrupted` after such an end
   has none. Report it in the finish summary under `open`, and do not treat it as a reason to
   reject (issue #1024).
+- A reviewer envelope carries `packageStoreEntries` only when entries changed in the pnpm package
+  store during the turn, such as an install that wrote to it, which the mutation check cannot see.
+  The field names the entries, relative to the store root, such as `v11/projects/<hash>`,
+  `v11/links/<package>`, or `v11/index.db`, redacted like the test command output (ADR 0017), and
+  never their content, at most 20. It is advisory: the store is shared with other processes, so
+  the runtime cannot attribute a change to the turn, and it does not revert one. The runtime reads
+  names, sizes, and times only, never file content, within 5 seconds and 10,000 entries per
+  directory, and a store that it cannot read within that bound carries no field. It finds the
+  store from `npm_config_store_dir` or the default of the platform, so a store that only a pnpm
+  config file sets carries no field. Every reviewer turn that read the store before it started
+  carries the field: an ok turn, a handled error, a turn that a mutation or a snapshot error
+  halted, and a canceled turn. The `role dispatch` envelope and the state file `lastResult` carry
+  it for a halted or interrupted dispatch, and a headless run emits a `package-store` event with
+  `fatal: true` for a fatal error. Report `packageStoreEntries` in the finish summary under `open`,
+  and do not treat it as a reason to reject (issue #1045).
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.

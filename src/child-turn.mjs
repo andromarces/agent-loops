@@ -8,6 +8,11 @@ import {
   carryInheritedTmpdirEntries,
   snapshotInheritedTmpdir,
 } from "./lib/inherited-tmpdir-entries.mjs";
+import {
+  carryPackageStoreEntries,
+  changedInPackageStore,
+  snapshotPackageStore,
+} from "./lib/package-store-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
 import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
@@ -82,6 +87,10 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * `err.inheritedTmpdirEntries`, read through `failedInheritedTmpdirEntries`. The list is advisory:
  * the directory is shared with other processes, so the runtime cannot attribute an entry to the turn
  * and deletes none (issue #1024).
+ * A reviewer result carries `packageStoreEntries` the same way, the names that appeared, changed, or
+ * vanished in the pnpm package store during the turn, and a fatal error carries it as
+ * `err.packageStoreEntries`, read through `failedPackageStoreEntries`. The list is advisory for the
+ * same reason, and the read is bounded in time and size and never reads file content (issue #1045).
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
  * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
  * conversation that a turn carrying the task ran in. A reviewer turn that a CLI runs in a replacement
@@ -329,6 +338,7 @@ export async function runChild(options) {
   let keepReplacedMark = false;
   let sharedBefore = null;
   let tmpdirBefore = null;
+  let storeBefore = null;
 
   /** Names of the shared Git items that differ from the pre-turn read, or [] when none or unread. */
   const readSharedGitChanged = async () => {
@@ -344,6 +354,14 @@ export async function runChild(options) {
     const entries = await appearedInInheritedTmpdir(tmpdirBefore);
     if (entries.length > 0) {
       logWarn(`reviewer: entries appeared in the inherited temporary directory: ${entries.length}`);
+    }
+    return entries;
+  };
+  /** Names that a reviewer turn changed in the pnpm package store, or [] when none or unread. */
+  const readPackageStoreEntries = async () => {
+    const entries = await changedInPackageStore(storeBefore);
+    if (entries.length > 0) {
+      logWarn(`reviewer: package store entries changed: ${entries.length}`);
     }
     return entries;
   };
@@ -367,6 +385,7 @@ export async function runChild(options) {
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
     sharedBefore = roleName === "worker" ? await readShared() : null;
     tmpdirBefore = roleName === "reviewer" ? await snapshotInheritedTmpdir() : null;
+    storeBefore = roleName === "reviewer" ? await snapshotPackageStore() : null;
     let response;
     try {
       response = readOnly
@@ -398,6 +417,7 @@ export async function runChild(options) {
     }
     // Read after the last child call of the dispatch, the task-only turn included.
     const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
+    const packageStoreEntries = await readPackageStoreEntries();
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
     throwIfCanceled(signal, roleName);
@@ -412,6 +432,7 @@ export async function runChild(options) {
       ...(workTree ? { workTree } : {}),
       ...(sharedGitChanged.length > 0 ? { sharedGitChanged } : {}),
       ...(inheritedTmpdirEntries.length > 0 ? { inheritedTmpdirEntries } : {}),
+      ...(packageStoreEntries.length > 0 ? { packageStoreEntries } : {}),
       ...(prChecks ? { prChecks } : {}),
       ...(testRun ? { testRun } : {}),
     };
@@ -434,6 +455,8 @@ export async function runChild(options) {
       if (err && typeof err === "object") {
         const entries = await readInheritedTmpdirEntries();
         if (entries.length > 0) carryInheritedTmpdirEntries(err, entries);
+        const storeEntries = await readPackageStoreEntries();
+        if (storeEntries.length > 0) carryPackageStoreEntries(err, storeEntries);
       }
       if (testRun && err && typeof err === "object") {
         carryTestRun(err, testRun);
@@ -450,6 +473,7 @@ export async function runChild(options) {
     // The failed turn may have changed the shared state before it failed.
     const sharedGitChanged = await readSharedGitChanged();
     const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
+    const packageStoreEntries = await readPackageStoreEntries();
     // An adapter marks a failure the provider is expected to clear (issue #1012).
     const transient = readProp(err, "transient");
     return {
@@ -459,6 +483,7 @@ export async function runChild(options) {
       ...(typeof transient === "string" ? { transient } : {}),
       ...(sharedGitChanged.length > 0 ? { sharedGitChanged } : {}),
       ...(inheritedTmpdirEntries.length > 0 ? { inheritedTmpdirEntries } : {}),
+      ...(packageStoreEntries.length > 0 ? { packageStoreEntries } : {}),
       ...(testRun ? { testRun } : {}),
     };
   } finally {

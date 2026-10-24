@@ -100,6 +100,11 @@ const SHARED_PARENT_RULES = [
     expectRule(text, /inheritedTmpdirEntries/, /reviewer/i, /inherited temporary directory/i),
   (text) => expectRule(text, /cannot attribute/i, /not delete/i),
   (text) => expectRule(text, /Report it/i, /open/i),
+  // Issue #1045: a reviewer envelope names the pnpm package store entries that changed, as advisory
+  // evidence, and the parent reports it under open instead of rejecting.
+  (text) => expectRule(text, /packageStoreEntries/, /reviewer/i, /package store/i),
+  (text) => expectRule(text, /advisory/i, /cannot attribute/i, /not revert/i),
+  (text) => expectRule(text, /packageStoreEntries/, /Report/, /open/, /not .*reject/i),
   // Issue #1002: after a push to a branch with an open PR, the worker updates the PR body in place
   // and adds no revision log.
   (text) => expectRule(text, /no revision log/i, /body/i, /comment/i),

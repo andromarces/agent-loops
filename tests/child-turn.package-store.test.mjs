@@ -1,0 +1,144 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+import { runChild } from "../src/child-turn.mjs";
+import {
+  failedPackageStoreEntries,
+  snapshotPackageStore,
+} from "../src/lib/package-store-entries.mjs";
+import { ExecError } from "../src/lib/exec.mjs";
+import { MutationError } from "../src/lib/snapshot.mjs";
+import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+
+let repo;
+let store;
+beforeEach(async () => {
+  repo = await createTempRepo();
+  store = await mkdtemp(join(tmpdir(), "package-store-"));
+  for (const dir of ["links", "projects", "files"]) {
+    await mkdir(join(store, "v11", dir), { recursive: true });
+  }
+  await writeFile(join(store, "v11", "index.db"), "index");
+  vi.stubEnv("npm_config_store_dir", store);
+});
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await removePath(repo);
+  await removePath(store);
+});
+
+const turn = (roleName, act) =>
+  runChild({
+    agents: { fake: scripted([act]) },
+    role: { kind: "fake", sessionId: null },
+    roleName,
+    prompt: "go",
+    cwd: repo,
+  });
+
+const install = async () => {
+  await mkdir(join(store, "v11", "projects", "hash1"));
+  await mkdir(join(store, "v11", "links", "@scope"));
+  await writeFile(join(store, "v11", "index.db"), "index grew");
+};
+const INSTALL_NAMES = ["v11/index.db", "v11/links/@scope", "v11/projects/hash1"];
+
+// Usefulness: verifies acceptance #1045 — a reviewer turn that writes to the package store reports
+// the names that changed, because the mutation check cannot see a write outside the repository.
+test("an ok reviewer turn reports a package store change by name", async () => {
+  const result = await turn("reviewer", async () => {
+    await install();
+    return "done";
+  });
+  expect(result.status).toBe("ok");
+  expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
+});
+
+// Usefulness: verifies the failed turn reports it too, because a failed install is the turn most
+// likely to leave a half-written store.
+test("an error reviewer turn reports a package store change by name", async () => {
+  const result = await turn("reviewer", async () => {
+    await install();
+    throw new Error("adapter failed");
+  });
+  expect(result.status).toBe("error");
+  expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
+});
+
+// Usefulness: verifies acceptance #1045 — a turn with no store change carries no field.
+test("a reviewer turn that changed no package store entry carries no field", async () => {
+  const result = await turn("reviewer", async () => "done");
+  expect(result).not.toHaveProperty("packageStoreEntries");
+});
+
+// Usefulness: verifies the report is reviewer-only, because a worker legitimately installs.
+test("a worker turn carries no field", async () => {
+  const result = await turn("worker", async () => {
+    await install();
+    return "done";
+  });
+  expect(result).not.toHaveProperty("packageStoreEntries");
+});
+
+// Usefulness: verifies the list is bounded, because a large install adds thousands of names.
+test("the report names at most 20 entries, sorted", async () => {
+  const result = await turn("reviewer", async () => {
+    for (let i = 0; i < 30; i++) {
+      await mkdir(join(store, "v11", "links", `pkg-${String(i).padStart(2, "0")}`));
+    }
+    return "done";
+  });
+  expect(result.packageStoreEntries).toHaveLength(20);
+  expect(result.packageStoreEntries[0]).toBe("v11/links/pkg-00");
+  expect(result.packageStoreEntries).toEqual([...result.packageStoreEntries].sort());
+});
+
+// Usefulness: verifies the read is bounded in size, because the store grows without limit. A
+// directory over the scan limit is not read, so the snapshot is null and no turn fails on it.
+test("a directory over the scan limit is left unread", async () => {
+  for (let i = 0; i < 8; i++) await mkdir(join(store, "v11", "links", `pkg-${i}`));
+  expect(await snapshotPackageStore({ scanLimit: 5 })).toBeNull();
+  expect(await snapshotPackageStore({ scanLimit: 50 })).not.toBeNull();
+});
+
+// Usefulness: verifies a host with no package store reports nothing and fails nothing.
+test("a missing package store carries no field", async () => {
+  vi.stubEnv("npm_config_store_dir", join(store, "absent"));
+  const result = await turn("reviewer", async () => "done");
+  expect(result.status).toBe("ok");
+  expect(result).not.toHaveProperty("packageStoreEntries");
+});
+
+// Usefulness: verifies requirement "a fatal reviewer error carries the entries": a mutation ends
+// the turn by a throw, and the entries must still reach the dispatcher.
+test("a reviewer mutation error carries the package store entries", async () => {
+  const error = await turn("reviewer", async () => {
+    await install();
+    await writeFile(join(repo, "leak.txt"), "leak\n");
+    return "done";
+  }).catch((err) => err);
+  expect(error).toBeInstanceOf(MutationError);
+  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+});
+
+// Usefulness: verifies the same for a cancel, which ends the turn by a different throw.
+test("a canceled reviewer turn carries the package store entries", async () => {
+  const error = await turn("reviewer", async () => {
+    await install();
+    throw new ExecError("canceled", { isCanceled: true });
+  }).catch((err) => err);
+  expect(error).toMatchObject({ isCanceled: true });
+  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+});
+
+// Usefulness: verifies a fatal error that cannot take a property still carries the entries.
+test("a frozen fatal error still carries the package store entries", async () => {
+  const fatal = Object.freeze(Object.assign(new Error("fatal"), { name: "MutationError" }));
+  const error = await turn("reviewer", async () => {
+    await install();
+    throw fatal;
+  }).catch((err) => err);
+  expect(error).toBe(fatal);
+  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+});

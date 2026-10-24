@@ -239,6 +239,23 @@ test("resultPrompt carries the inherited temporary directory entries of a review
   expect(prompt).toContain("m54-3db54ca8");
 });
 
+// Usefulness: verifies the headless result payload carries the package store entries a reviewer
+// turn changed, so a headless parent holds what a `role dispatch` envelope carries (issue #1045).
+test("resultPrompt carries the package store entries of a reviewer result", () => {
+  const prompt = resultPrompt({
+    result: {
+      role: "reviewer",
+      status: "ok",
+      response: "done",
+      packageStoreEntries: ["v11/projects/hash1"],
+    },
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  expect(prompt).toContain('"packageStoreEntries"');
+  expect(prompt).toContain("v11/projects/hash1");
+});
+
 // Usefulness: verifies the headless prompt states the completion rule and its
 // mode mapping: a worker change needs a later reviewer accept, a run with no
 // worker turn finishes on the report, and the loop policy stays interactive
