@@ -228,3 +228,16 @@ test("later worker turns carry the PR body update rule", () => {
     "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment.",
   );
 });
+
+// Usefulness: verifies requirement "a worker probe copy reuses the work tree node_modules" (issue
+// #1026): a tool such as `vp` installs into the shared package store when the copy has no usable
+// `node_modules`, and every work tree that links the store sees that write.
+test("first worker turn tells a probe copy to link the work tree node_modules and run no install", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy, with a junction on Windows or a symlink elsewhere, and run no dependency install, repair, or update there.",
+  );
+  expect(prompt).toContain(
+    "A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`, and every work tree that links the store sees that write.",
+  );
+});
