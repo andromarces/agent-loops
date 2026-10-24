@@ -473,6 +473,7 @@ const REFUSED_CWD_BLOCKS = {
       "Create the work tree with no upstream, so a plain `git push` of a worker cannot reach the default branch:",
       "```bash git worktree add --no-track -b <branch> <work tree> origin/<default> ```",
       "Without `--no-track`, the new branch gets the upstream `origin/<default>` when `branch.autoSetupMerge` is at its default. The worker sets the upstream to its own remote branch on the first push, with `git push -u origin <branch>`.",
+      "The parent installs the dependencies of the work tree, and no worker or reviewer does. After you create the work tree and before the first dispatch, run the repository's lockfile install inside the work tree, for example `pnpm install --frozen-lockfile`. The work tree then has its own `node_modules` for every turn. Never link or junction the `node_modules` of another checkout into the work tree, and never run an install in another checkout: a tool such as `vp` can rewrite links in the `node_modules` that the junction points to.",
       '`dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`.',
       "A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.",
       "When `--cwd` is a linked work tree, the init call copies the untracked local files of the main work tree that `--cwd` ignores (agent instructions, harness configuration, `.env`, and the other paths in [Local files in a linked work tree](reference/harness-entry-points.md#local-files-in-a-linked-work-tree)) into `--cwd`, before the first child turn. A file already in `--cwd` is never replaced, and no symlink is followed: a symlink in the main work tree is skipped and named. The init envelope reports the paths as `localFiles: {copied, skipped}`, by name only, and a path in `skipped` is untracked in the main work tree but not copied: the child does not have it. Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env` into the run work tree, so remove that work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn the copy off. It is an init field, so a later call cannot change it.",
@@ -611,6 +612,30 @@ test("instructions create the run work tree without an upstream and set it on th
     "git worktree add --no-track -b <branch> <work tree> origin/<default>",
   );
   expect(instructions).toContain("git push -u origin <branch>");
+});
+
+// Usefulness: verifies requirement "the parent owns the dependency install of a run work tree and
+// no run work tree links another checkout's node_modules" (#1057), in the instructions and in the
+// headless prompt. Without it, a worker links the main checkout's `node_modules` and a `vp` run
+// rewrites links there.
+test("instructions and headless prompt name the work tree install owner and bar a foreign node_modules", async () => {
+  const { instructions, prompt } = await readParentTexts();
+  const ownership = instructions.slice(
+    instructions.indexOf("## Work tree ownership"),
+    instructions.indexOf(" ## Reviewer prompts"),
+  );
+  expect(ownership).toContain(
+    "After you create the work tree and before the first dispatch, run the repository's lockfile install inside the work tree, for example `pnpm install --frozen-lockfile`.",
+  );
+  expect(ownership).toContain(
+    "Never link or junction the `node_modules` of another checkout into the work tree, and never run an install in another checkout",
+  );
+  expect(prompt).toContain(
+    "the operator that created it ran the repository's lockfile install in it before the first dispatch, and no worker or reviewer installs them.",
+  );
+  expect(prompt).toContain(
+    "Never tell a worker to link or junction the `node_modules` of another checkout into the work tree, or to run an install in another checkout.",
+  );
 });
 
 // Usefulness: verifies the instructions name the work tree removal step and a delete that never

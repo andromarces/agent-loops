@@ -360,6 +360,14 @@ Without `--no-track`, the new branch gets the upstream `origin/<default>` when
 The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
 
+The parent installs the dependencies of the work tree, and no worker or reviewer
+does. After you create the work tree and before the first dispatch, run the
+repository's lockfile install inside the work tree, for example
+`pnpm install --frozen-lockfile`. The work tree then has its own `node_modules`
+for every turn. Never link or junction the `node_modules` of another checkout into
+the work tree, and never run an install in another checkout: a tool such as `vp`
+can rewrite links in the `node_modules` that the junction points to.
+
 `dispatch` checks the work tree before it reads the run state, charges a step, or
 spawns a child, so a refused `--cwd` leaves the run as it was: the init call
 writes no state file, and a later dispatch charges no step, changes no lifecycle,

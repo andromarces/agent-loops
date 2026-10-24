@@ -9,6 +9,11 @@ const prBodyRule =
 const probeCopyRule =
   "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy, with a junction on Windows or a symlink elsewhere, and run no dependency install, repair, or update there. A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`, and every work tree that links the store sees that write.";
 
+// A junction to another checkout's `node_modules` lets `vp` rewrite that checkout's links
+// (issue #1057).
+const ownNodeModulesRule =
+  "Use the own `node_modules` of this work tree, which the parent installed before the first dispatch. Never link or junction the `node_modules` of another checkout into this work tree, and never run an install in another checkout.";
+
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
     // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the rule.
@@ -25,6 +30,7 @@ Your role:
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
+- ${ownNodeModulesRule}
 - ${probeCopyRule}
 - For PR work, the dispatcher names the PR branch. Commit your change on that
   branch and push it, so the reviewer sees a committed head and the PR head

@@ -229,6 +229,16 @@ test("later worker turns carry the PR body update rule", () => {
   );
 });
 
+// Usefulness: verifies requirement "a run work tree uses its own node_modules and never links
+// another checkout's" (issue #1057): a junction to the main checkout let a `vp` run rewrite links
+// there. The probe copy test below covers a different target, the copy.
+test("first worker turn bars linking another checkout node_modules into the work tree", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Use the own `node_modules` of this work tree, which the parent installed before the first dispatch. Never link or junction the `node_modules` of another checkout into this work tree, and never run an install in another checkout.",
+  );
+});
+
 // Usefulness: verifies requirement "a worker probe copy reuses the work tree node_modules" (issue
 // #1026): a tool such as `vp` installs into the shared package store when the copy has no usable
 // `node_modules`, and every work tree that links the store sees that write.
