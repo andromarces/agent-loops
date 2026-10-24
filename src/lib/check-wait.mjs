@@ -69,9 +69,11 @@ function isEmptyOrJson(body) {
 /**
  * Reads every page of the list endpoint `endpoint` with one `gh api --include` request per page,
  * by page number and never by the `Link` header, and returns a `gh`-shaped result whose stdout is
- * the pages as one JSON array, as the slurped read printed them. The read stops when the collected
- * count reaches `total_count`, or, for a reply with no `total_count`, at the first page of fewer
- * than `PAGE_SIZE` items, or at the page cap, which is an error. `retryable` is true only when the
+ * the pages as one JSON array, as the slurped read printed them. For a reply with `total_count`, the
+ * read ends only when the collected count equals it, and a count that changes between pages, a
+ * collected count above it, and a short or empty page with the count unmet are errors. For a reply
+ * with no `total_count`, the first page of fewer than `PAGE_SIZE` items ends the read. The page cap
+ * is an error. `retryable` is true only when the
  * failed request's first-line status is 500, 502, 503, or 504 and its body is empty or JSON.
  * @param {Function} read one bounded `gh` read
  */
@@ -80,6 +82,7 @@ async function readPages(read, endpoint, cwd) {
   const refusal = (stderr) => ({ result: { status: 1, stdout: "", stderr }, retryable: false });
   const pages = [];
   let collected = 0;
+  let expected;
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const result = await read(
       ["api", `${endpoint}?per_page=${PAGE_SIZE}&page=${page}`, "--include"],
@@ -103,9 +106,28 @@ async function readPages(read, endpoint, cwd) {
     pages.push(json);
     const items = Array.isArray(json?.[field]) ? json[field].length : 0;
     collected += items;
-    const total = Number.isInteger(json?.total_count) ? json.total_count : null;
-    if (items === 0 || (total === null ? items < PAGE_SIZE : collected >= total)) {
-      return { result: { status: 0, stdout: JSON.stringify(pages), stderr: "" }, retryable: false };
+    const total =
+      Number.isInteger(json?.total_count) && json.total_count >= 0 ? json.total_count : null;
+    expected ??= { total };
+    if (total !== expected.total) {
+      return refusal("the total_count of the reply changed between pages");
+    }
+    const done = {
+      result: { status: 0, stdout: JSON.stringify(pages), stderr: "" },
+      retryable: false,
+    };
+    if (total === null) {
+      // No count to check against: the first short page ends the read.
+      if (items < PAGE_SIZE) {
+        return done;
+      }
+    } else if (collected > total) {
+      return refusal("the pages hold more items than the total_count of the reply");
+    } else if (collected === total) {
+      return done;
+    } else if (items < PAGE_SIZE) {
+      // A short page proves nothing while the count is unmet, so the read is an error.
+      return refusal("the read ended before the total_count of the reply");
     }
   }
   return refusal(`the read has more than ${MAX_PAGES} pages`);

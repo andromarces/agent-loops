@@ -908,22 +908,63 @@ function pagedCheckRunsGh(pages, { all = false } = {}) {
   return { gh, requests };
 }
 
-// Usefulness: verifies the wait pages by page number and stops when the collected count reaches
-// `total_count`, joining the pages, so a failing run on page 2 settles the wait and no page 3 is
-// read, in both modes (issue #1025).
+const fullPage = (total, fromId, minute = 0) => ({
+  total_count: total,
+  check_runs: Array.from({ length: 100 }, (_unused, i) =>
+    runEntry(fromId + i, i === 0 ? "ci" : `f${fromId + i}`, "success", minute),
+  ),
+});
+
+// Usefulness: verifies the wait pages by page number against `total_count`: a full first page
+// leads to page 2, the read ends when the collected count equals `total_count`, and a failing run
+// on page 2 settles the wait with no page 3 read, in both modes (issue #1025).
 test.each([
   ["required", false],
   ["all", true],
 ])("waitChecks %s mode stops at total_count and joins the pages", async (_mode, all) => {
   const { gh, requests } = pagedCheckRunsGh(
-    [
-      { total_count: 2, check_runs: [runEntry(1, "ci", "success", 0)] },
-      { total_count: 2, check_runs: [runEntry(2, "ci", "failure", 5)] },
-    ],
+    [fullPage(101, 1), { total_count: 101, check_runs: [runEntry(500, "ci", "failure", 5)] }],
     { all },
   );
-  expect(await waitOn(gh, all)).toEqual({ timedOut: false, head: HEAD_A, checks: [FAILED_ITEM] });
+  const result = await waitOn(gh, all);
+  expect(result).toMatchObject({ timedOut: false, head: HEAD_A });
+  expect(result.checks).toContainEqual(FAILED_ITEM);
   expect(requests).toEqual([1, 2]);
+});
+
+// Usefulness: verifies an endpoint that reports `total_count` never ends on a page while the count is
+// unmet: an empty page, a short page, a count that changes between pages, and a collected count above
+// the total are each an error and never a pass, in both modes, so a failure on a later page is
+// never skipped (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode refuses a read that ends before or past total_count", async (_mode, all) => {
+  const one = (total) => ({ total_count: total, check_runs: [runEntry(1, "ci", "success", 0)] });
+  const cases = [
+    // The reviewer's probe: one passing item, a total of 2, then an empty page.
+    [one(2), { total_count: 2, check_runs: [] }],
+    // A full page, then an empty page with the count unmet.
+    [fullPage(101, 1), { total_count: 101, check_runs: [] }],
+    // A short page with the count unmet.
+    [
+      fullPage(150, 1),
+      {
+        total_count: 150,
+        check_runs: Array.from({ length: 49 }, (_u, i) => runEntry(900 + i, `g${i}`, "success", 0)),
+      },
+    ],
+    // The count changes between pages.
+    [fullPage(101, 1), { total_count: 102, check_runs: [runEntry(500, "ci", "success", 5)] }],
+    // The count disappears on a later page.
+    [fullPage(101, 1), { check_runs: [runEntry(500, "ci", "success", 5)] }],
+    // The collected count is above the total.
+    [fullPage(99, 1)],
+  ];
+  for (const pages of cases) {
+    const { gh } = pagedCheckRunsGh(pages, { all });
+    await expect(waitOn(gh, all)).rejects.toThrow(/total_count/);
+  }
 });
 
 // Usefulness: verifies an endpoint with no `total_count` is read until the first page of fewer than
@@ -952,7 +993,7 @@ test.each([
 // Usefulness: verifies a read that never reaches its `total_count` ends at the page cap with an
 // error, never as a pass or a loop to the bound (issue #1025).
 test("waitChecks ends with an error at the page cap", async () => {
-  const forever = { total_count: 1_000_000, check_runs: [runEntry(1, "ci", "success", 0)] };
+  const forever = fullPage(1_000_000, 1);
   const { gh, requests } = pagedCheckRunsGh(Array.from({ length: 500 }, () => forever));
   await expect(waitOn(gh, false)).rejects.toThrow(/pages/);
   expect(requests.length).toBeLessThanOrEqual(100);
