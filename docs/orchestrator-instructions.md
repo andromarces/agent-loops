@@ -966,6 +966,20 @@ required wait reads a required check, it stays the one to run. `--all` is
 refused on every other role operation, and so is `--head`. `--all` takes `--head`
 as the required wait does.
 
+Skip the `--all` wait when no workflow of the base branch can report a check for
+the PR. A repository with no workflow that runs on `pull_request` or
+`pull_request_target` never reports one, so the wait always ends at the bound with
+`timedOut: true` and an empty `checks`. Read the `on:` triggers of
+`.github/workflows/*` on the base branch, not on the PR head, because a PR can add
+a workflow that the base branch lacks. A workflow that runs on `pull_request` or
+`pull_request_target` keeps the wait, even one with a path filter. A workflow with a
+`push` trigger also reports a check for the PR head, so it keeps the wait. A trigger
+that you cannot read or cannot place keeps the wait. When you skip, dispatch the
+reviewer at once and record in `verified` that the CI status is not verified,
+because the base branch has no workflow that reports a check for the PR. Never
+record the CI status as passed from a skip. The headless orchestrator reads no
+workflow file, so it keeps the wait.
+
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
 failed one. A check that has not started is absent from `checks`, because the
 command omits it, so an empty list means no required check has reported yet and
@@ -1296,7 +1310,8 @@ GitHub. Declare the PR after the worker opens it:
   run, so such a run can only end through `abort`. Do not declare the PR there. Finish with the `unresolvedCompare` marker
   after you compare the PR head with `reviewed.head` yourself, and run
   `wait-checks --all` once before each reviewer turn, because the required wait
-  refuses there. "Waiting for required checks" states that wait.
+  refuses there, unless the skip rule applies. "Waiting for required checks" states that wait and the
+  skip rule.
 
 A marked `role finish` still exits `0`, unlike the headless finish that exits
 `4` for the same marker. The exit code is not the outcome channel of this

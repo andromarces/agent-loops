@@ -219,6 +219,24 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
+// Usefulness: verifies the interactive instructions state when the parent skips the `--all` wait
+// (issue #1054): no workflow of the base branch reports a check for the PR, and `verified` records
+// the CI status as not verified. A parent without the rule waits the full bound for a check that
+// never reports, and a rule that omits the `verified` record or the `pull_request` keep-wait invites
+// a recorded pass or a skipped wait on a repository with CI.
+test("the instructions state when the parent skips the --all wait", async () => {
+  const instructions = await readFile(instructionsPath, "utf8");
+  expectRule(instructions, /skip the `--all` wait/i, /no workflow of the base branch/i);
+  expectRule(instructions, /no workflow that runs on `pull_request`/, /never reports/i);
+  expectRule(instructions, /base branch, not on the PR head/i);
+  expectRule(instructions, /`pull_request` or `pull_request_target`/, /keeps the wait/i);
+  expectRule(instructions, /`push`/, /keeps the wait/i);
+  expectRule(instructions, /cannot read/i, /keeps the wait/i);
+  expectRule(instructions, /record in `verified`/i, /not verified/i);
+  expectRule(instructions, /never record the CI status as passed/i, /skip/i);
+  expectRule(instructions, /headless orchestrator/i, /keeps the wait/i);
+});
+
 /** The words of a text in order, so case, whitespace, Markdown marks, and punctuation never decide a match. */
 const wordsOf = (text) =>
   text
