@@ -74,6 +74,36 @@ describe("the gh runner against the installed execa", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  // Usefulness: verifies `gh` never sees `GH_DEBUG` or `DEBUG`, which make it write a debug log to
+  // stderr and break the exact stderr match of the protection read (issue #1047). The other
+  // variables must still reach `gh`, so the token and host keep working.
+  test("the gh child gets no GH_DEBUG or DEBUG and keeps the rest of the environment", async () => {
+    vi.stubEnv("PATH", bin);
+    vi.stubEnv("PATHEXT", ".EXE");
+    vi.stubEnv("GH_DEBUG", "api");
+    vi.stubEnv("DEBUG", "1");
+    vi.stubEnv("GH_HOST", "github.example.test");
+    const realSpawn = childProcess.spawn;
+    const spawned = [];
+    childProcess.spawn = (file, args, options) => {
+      spawned.push(options);
+      throw new Error("stand-in spawn: no process starts");
+    };
+    syncBuiltinESMExports();
+    try {
+      await runGh(["api", "repos/o/r/branches/main/protection"], bin);
+      expect(spawned).toHaveLength(1);
+      const names = Object.keys(spawned[0].env).map((name) => name.toUpperCase());
+      expect(names).not.toContain("GH_DEBUG");
+      expect(names).not.toContain("DEBUG");
+      expect(spawned[0].env.GH_HOST).toBe("github.example.test");
+    } finally {
+      childProcess.spawn = realSpawn;
+      syncBuiltinESMExports();
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 // Usefulness: verifies the `gh` runner terminates the child when its bound
