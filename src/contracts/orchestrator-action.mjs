@@ -2,6 +2,16 @@ import { isJsonObject } from "../lib/json.mjs";
 
 export const SUMMARY_KEYS = ["changed", "verified", "deferred", "notDone", "open"];
 const FINISH_KEYS = ["action", "summary", "unresolvedCompare"];
+const DISPATCH_KEYS = ["action", "prompt"];
+const ABORT_KEYS = ["action", "reason"];
+
+/** The keys of `object` outside `allowed`. */
+const unknownKeys = (object, allowed) =>
+  Object.keys(object).filter((key) => !allowed.includes(key));
+
+/** The refusal that names each unknown key, the same for every action. */
+const unknownKeysError = (action, keys) =>
+  `${action} has unknown keys: ${keys.map((key) => JSON.stringify(key)).join(", ")}.`;
 
 /**
  * The four action formats as one-line JSON, for the orchestrator prompts. Each
@@ -25,8 +35,8 @@ export function actionFormats({ worker, reviewer, summary, reason }) {
 /**
  * Validates one parsed orchestrator reply. Returns `{ ok: true, value }` with a new
  * action object, or `{ ok: false, error }`. String fields are trimmed. A key outside
- * the action's field set is dropped, except for `finish`, which refuses it and names
- * each unknown key in the action and in the summary.
+ * the action's field set is refused, and the refusal names each unknown key. `finish`
+ * checks the action and its summary.
  * @param {unknown} value
  */
 export function validateAction(value) {
@@ -42,6 +52,10 @@ export function validateAction(value) {
   switch (action) {
     case "run_worker":
     case "run_reviewer": {
+      const unknown = unknownKeys(value, DISPATCH_KEYS);
+      if (unknown.length > 0) {
+        return { ok: false, error: unknownKeysError(action, unknown) };
+      }
       if (typeof value.prompt !== "string" || value.prompt.trim() === "") {
         return { ok: false, error: `${action} requires a non-empty string prompt.` };
       }
@@ -62,14 +76,11 @@ export function validateAction(value) {
       // A dropped key would hide a misspelled `unresolvedCompare` marker behind a
       // finish that reads as verified (#1021).
       const unknown = [
-        ...Object.keys(value).filter((key) => !FINISH_KEYS.includes(key)),
-        ...Object.keys(value.summary).filter((key) => !SUMMARY_KEYS.includes(key)),
+        ...unknownKeys(value, FINISH_KEYS),
+        ...unknownKeys(value.summary, SUMMARY_KEYS),
       ];
       if (unknown.length > 0) {
-        return {
-          ok: false,
-          error: `finish has unknown keys: ${unknown.map((key) => JSON.stringify(key)).join(", ")}.`,
-        };
+        return { ok: false, error: unknownKeysError(action, unknown) };
       }
 
       const summary = {};
@@ -109,6 +120,10 @@ export function validateAction(value) {
     }
 
     case "abort": {
+      const unknown = unknownKeys(value, ABORT_KEYS);
+      if (unknown.length > 0) {
+        return { ok: false, error: unknownKeysError(action, unknown) };
+      }
       if (typeof value.reason !== "string" || value.reason.trim() === "") {
         return { ok: false, error: "abort requires a non-empty string reason." };
       }

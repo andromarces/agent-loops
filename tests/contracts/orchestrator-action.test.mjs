@@ -5,9 +5,9 @@ import {
   validateAction,
 } from "../../src/contracts/orchestrator-action.mjs";
 
-// Usefulness: verifies valid run_worker action shape is accepted and extra fields are pruned.
-test("validateAction accepts valid run_worker and drops unknown fields", () => {
-  const input = { action: "run_worker", prompt: "implement feature", extra: 123 };
+// Usefulness: verifies valid run_worker action shape is accepted.
+test("validateAction accepts valid run_worker", () => {
+  const input = { action: "run_worker", prompt: "implement feature" };
   const result = validateAction(input);
   expect(result).toEqual({
     ok: true,
@@ -217,6 +217,33 @@ describe("validateAction rejections", () => {
     for (const key of ["extraSummary", "rootExtra", "unresolved_compare"]) {
       expect(result.error).toContain(`"${key}"`);
     }
+  });
+
+  // Usefulness: verifies requirement "run_worker, run_reviewer, and abort refuse an unknown key and
+  // name each one" (#1034): a misspelled field is refused, not dropped without a trace.
+  test.each([
+    ["run_worker", { prompt: "do it" }],
+    ["run_reviewer", { prompt: "check it" }],
+    ["abort", { reason: "stop" }],
+  ])("rejects %s with unknown keys and names each one", (action, fields) => {
+    const result = validateAction({ action, ...fields, promt: "typo", extra: 42 });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain(action);
+    for (const key of ["promt", "extra"]) {
+      expect(result.error).toContain(`"${key}"`);
+    }
+  });
+
+  // Usefulness: verifies a key that belongs to another action is unknown here, so a `reason` on a
+  // run_worker, or a `prompt` on an abort, is refused (#1034).
+  test.each([
+    ["run_worker", { prompt: "do it", reason: "x" }, "reason"],
+    ["run_reviewer", { prompt: "check it", summary: {} }, "summary"],
+    ["abort", { reason: "stop", prompt: "x" }, "prompt"],
+  ])("rejects %s that holds a key of another action", (action, fields, key) => {
+    const result = validateAction({ action, ...fields });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain(`"${key}"`);
   });
 
   // Usefulness: verifies abort requires a non-empty string reason.

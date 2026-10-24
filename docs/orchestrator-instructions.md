@@ -997,6 +997,14 @@ recorded finish stays distinct from a verified one without a transcript (#266,
 #279). An interactive `role finish` records the same marker in its envelope and
 the state file instead of a transcript event (#281).
 
+A headless orchestrator action allows only these keys. The `run_worker` and
+`run_reviewer` actions allow only `action` and `prompt`. The `abort` action
+allows only `action` and `reason`. An action that holds any other key is
+refused, and the refusal names each unknown key, so a misspelled field is never
+dropped without a trace. A refused action takes the one repair turn: it
+dispatches no child and charges no step. A second refused reply ends the run
+with an error (#1034).
+
 ## Completion
 
 Completion is completion of the requested work, not code acceptance.
