@@ -71,7 +71,7 @@ function stripControl(text) {
 
 // Redaction runs before and after the cleanup: a secret can hold a control character that the first
 // pass must match, and the cleanup can join the text around a removed character into a value.
-function redactAndClean(text) {
+export function redactAndClean(text) {
   return redactEnvSecrets(stripControl(redactEnvSecrets(text)));
 }
 

@@ -1,6 +1,7 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
 import {
@@ -15,7 +16,7 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -294,6 +295,36 @@ test("a reviewer edit in the replaced turn halts the run even when the task-only
 
   expect(halted.exitCode).not.toBe(0);
   expect((await finishGated(repo)).exitCode).toBe(1);
+});
+
+// Usefulness: verifies requirement "the entries are read after the last child call of the
+// dispatch" (issue #1024): a directory that the task-only turn leaves in the inherited temporary
+// directory is reported, so a read before that turn cannot miss it.
+test("a directory that the task-only turn leaves in the inherited temporary directory is reported", async () => {
+  const repo = await startRun();
+  const temp = await mkdtemp(join(tmpdir(), "first-turn-inherited-"));
+  try {
+    const reviewer = recordingAdapter([
+      ACCEPT,
+      replaceConversation(ACCEPT),
+      async () => {
+        await mkdir(join(temp, "m54-3db54ca8"));
+        return "OK";
+      },
+    ]);
+    const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+
+    await workerTurn(repo, agents, INIT_OVERRIDES);
+    await reviewerTurn(repo, agents);
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
+    const second = await reviewerTurn(repo, agents);
+
+    expect(second.exitCode).toBe(0);
+    expect(second.payload.inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(temp);
+  }
 });
 
 // Usefulness: a failed task-only turn must not count as delivery or as an accept, so the run cannot

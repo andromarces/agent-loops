@@ -3,6 +3,11 @@ import { throwIfCanceled } from "./agents/shared.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
+import {
+  appearedInInheritedTmpdir,
+  carryInheritedTmpdirEntries,
+  snapshotInheritedTmpdir,
+} from "./lib/inherited-tmpdir-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
 import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
@@ -72,6 +77,11 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * passes none (ADR 0019, ADR 0038).
  * A reviewer turn gets one scratch folder, named in its prompt, that the runtime removes after the
  * post-turn snapshot on every outcome. A failed removal only warns (issue #920).
+ * A reviewer result carries `inheritedTmpdirEntries`, the names that appeared directly in the inherited
+ * temporary directory during the turn, only when some did. A fatal error carries the list as
+ * `err.inheritedTmpdirEntries`, read through `failedInheritedTmpdirEntries`. The list is advisory:
+ * the directory is shared with other processes, so the runtime cannot attribute an entry to the turn
+ * and deletes none (issue #1024).
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
  * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
  * conversation that a turn carrying the task ran in. A reviewer turn that a CLI runs in a replacement
@@ -318,6 +328,7 @@ export async function runChild(options) {
   let testRun = null;
   let keepReplacedMark = false;
   let sharedBefore = null;
+  let tmpdirBefore = null;
 
   /** Names of the shared Git items that differ from the pre-turn read, or [] when none or unread. */
   const readSharedGitChanged = async () => {
@@ -327,6 +338,14 @@ export async function runChild(options) {
       logWarn(`worker: shared Git state changed: ${changed.join(", ")}`);
     }
     return changed;
+  };
+  /** Names that a reviewer turn left in the inherited temporary directory, or [] when none or unread. */
+  const readInheritedTmpdirEntries = async () => {
+    const entries = await appearedInInheritedTmpdir(tmpdirBefore);
+    if (entries.length > 0) {
+      logWarn(`reviewer: entries appeared in the inherited temporary directory: ${entries.length}`);
+    }
+    return entries;
   };
   try {
     let reviewed = null;
@@ -347,6 +366,7 @@ export async function runChild(options) {
     // A linked work tree shares config, hooks, and remotes with the main work tree, which the work
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
     sharedBefore = roleName === "worker" ? await readShared() : null;
+    tmpdirBefore = roleName === "reviewer" ? await snapshotInheritedTmpdir() : null;
     let response;
     try {
       response = readOnly
@@ -376,6 +396,8 @@ export async function runChild(options) {
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
+    // Read after the last child call of the dispatch, the task-only turn included.
+    const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
     throwIfCanceled(signal, roleName);
@@ -389,6 +411,7 @@ export async function runChild(options) {
       ...(reviewed ? { reviewed } : {}),
       ...(workTree ? { workTree } : {}),
       ...(sharedGitChanged.length > 0 ? { sharedGitChanged } : {}),
+      ...(inheritedTmpdirEntries.length > 0 ? { inheritedTmpdirEntries } : {}),
       ...(prChecks ? { prChecks } : {}),
       ...(testRun ? { testRun } : {}),
     };
@@ -406,6 +429,12 @@ export async function runChild(options) {
       // A fatal error ends the turn, and the caller records it, so the result rides on it.
       // A cancel of the command itself already carries its own result.
       testRun ??= failedTestRun(err) ?? null;
+      // A fatal error carries the entries too, because the dispatcher builds its envelope, its
+      // state record, and its event from the error (issue #1024).
+      if (err && typeof err === "object") {
+        const entries = await readInheritedTmpdirEntries();
+        if (entries.length > 0) carryInheritedTmpdirEntries(err, entries);
+      }
       if (testRun && err && typeof err === "object") {
         carryTestRun(err, testRun);
       }
@@ -420,6 +449,7 @@ export async function runChild(options) {
     logWarn(timedOut ? errorMessage : `${roleName}: ${firstErrorLine(errorMessage)}`);
     // The failed turn may have changed the shared state before it failed.
     const sharedGitChanged = await readSharedGitChanged();
+    const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
     // An adapter marks a failure the provider is expected to clear (issue #1012).
     const transient = readProp(err, "transient");
     return {
@@ -428,6 +458,7 @@ export async function runChild(options) {
       error: errorMessage,
       ...(typeof transient === "string" ? { transient } : {}),
       ...(sharedGitChanged.length > 0 ? { sharedGitChanged } : {}),
+      ...(inheritedTmpdirEntries.length > 0 ? { inheritedTmpdirEntries } : {}),
       ...(testRun ? { testRun } : {}),
     };
   } finally {

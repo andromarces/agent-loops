@@ -17,6 +17,14 @@ const REMOVAL_BOUND_MS = 30_000;
 // Short on purpose: a deep path fails some runtimes on Windows (issue #903).
 const PREFIX = "al-";
 
+// Names of the directories that this process created and has not finished removing. Only these
+// exact names are the runtime's own: the prefix alone is not, because a reviewer can create
+// `al-probe`. A name leaves the set when the removal ends, whatever its outcome.
+const createdNames = new Set();
+
+/** True for the name of a turn directory that this process created and has not finished removing. */
+export const isTurnTmpdirName = (name) => createdNames.has(name);
+
 /**
  * Runs `run(env)` with a private temporary directory for one child turn and removes it afterward
  * on every outcome. `env` sets `TMPDIR`, `TEMP`, and `TMP` to the directory, which `mkdtemp`
@@ -65,6 +73,7 @@ export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS } 
 async function createTurnTmpdir() {
   // Absolute, so the child reads the same path from any working directory.
   const dir = await mkdtemp(join(resolve(tmpdir()), PREFIX));
+  createdNames.add(basename(dir));
   const stat = await lstat(dir, { bigint: true });
   if (!stat.isDirectory()) throw new Error(`${dir} is not a directory`);
   return {
@@ -113,5 +122,9 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
     }
   } catch (err) {
     failure(firstErrorLine(readableErrorText(err)));
+  } finally {
+    // A directory that the removal refused or failed on stays in place, and its name is no longer
+    // the runtime's own, so a report can list it (issue #1024).
+    createdNames.delete(basename(dir));
   }
 }

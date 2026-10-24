@@ -288,6 +288,25 @@ Apply these parent rules:
   value or a URL. A change there affects the main work tree and every other linked work tree, and
   `workTree` does not show it. Report it in the finish summary under `open`. A failed worker turn
   carries the field too. A turn that changed none carries no field.
+- A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
+  inherited temporary directory during the turn, such as a probe directory that the reviewer
+  created there. The field names the entries, redacted like the test command output (ADR 0017),
+  and never their content, at most 20. It is advisory: the directory is shared with other
+  processes, so the runtime cannot attribute an entry to the turn, and it does not delete one.
+  Only the turn directories that this process created, matched by exact name, are left out, and
+  only until the removal ends: a directory that the removal refused or failed on, such as a
+  replacement of the turn directory, is listed. Any other name is listed, an `al-` name too, and a
+  directory of a concurrent run can appear. The runtime reads the directory once, after the last
+  child call of the dispatch, a task-only turn in a replacement conversation included.
+  Every reviewer turn that read the directory before it started carries the field: an ok turn, a
+  handled error, a turn that a mutation or a snapshot error halted, and a canceled turn. The
+  `role dispatch` envelope and the state file `lastResult` carry it for a halted or interrupted
+  dispatch, and a headless run emits an `inherited-tmpdir` event with `fatal: true` for a fatal
+  error, which the transcript keeps. A turn that cannot carry it is one whose process ended
+  without a throw, for example a crash or a kill, because the before-read lives in memory, and
+  one whose before-read failed. A run that the next call marks `interrupted` after such an end
+  has none. Report it in the finish summary under `open`, and do not treat it as a reason to
+  reject (issue #1024).
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.
@@ -655,7 +674,7 @@ The mode table is in
 - The runtime creates one scratch folder for each reviewer turn at `.agent-loop/rev/<id>` under the work tree root. The prompt names that folder as the first place for probe and test output. The folder holds its own `.gitignore` with `*`, so it needs no rule in the target repository, also in a linked work tree. The runtime removes the folder after the post-turn snapshot, on every turn outcome, and never follows a link or a junction inside it. It refuses and logs a warning when `.agent-loop` or `.agent-loop/rev` is a link. A failed removal logs a warning and never fails the run (issue #920, ADR 0042).
 - A reviewer turn runs no dependency install, repair, or update, and starts no command that installs, such as a test runner that installs when it finds no usable `node_modules` (`vp` does). An install writes to the shared package store outside the repository and reaches every work tree that links it, and the mutation check does not see that write (issue #1026). A probe of old source avoids the install: the reviewer copies the repository, links the dependency directory of the work tree (`node_modules` in a Node project) into the copy (a junction on Windows, a symlink elsewhere), and runs the tool there. When the copy cannot link `node_modules`, the reviewer reports the probe as unresolved in `Checks`. The reviewer prompt names no tool or directory, because it fits any repository. The worker preamble states the same rule for a worker probe that copies the repository. The rule is advisory, and the runtime does not detect a breach.
 - The runtime pins `AGENT_LOOP_RUNS_ROOT`, `AGENT_LOOP_TEST_SLOTS_ROOT`, and `AGENT_LOOP_SESSION_RECORDS_ROOT` to the paths that it resolves for every worker and reviewer turn, on every adapter, unless the user set them (issue #970, ADR 0049). A `TMP`, `TEMP`, or `TMPDIR` override inside the turn cannot move the test-slot directory, so the machine-wide slot limit holds. The runtime also sets `npm_config_logs_max=0` for those turns, so npm writes no debug log to its cache, unless the user set `npm_config_logs_dir` or `npm_config_logs_max` (issue #995, ADR 0049).
-- Each Codex turn runs with a private temporary directory under the inherited one, set through `TMPDIR`, `TEMP`, and `TMP`. The Codex CLI leaves two empty `.tmp*` directories there on every turn (issue #955, ADR 0047). The runtime removes them with the directory after the turn. `AGENT_LOOP_SESSION_RECORDS_ROOT` overrides the default `<os tmpdir>/agent-loops/session-records`.
+- Each Codex turn runs with a private temporary directory under the inherited one, set through `TMPDIR`, `TEMP`, and `TMP`. The Codex CLI leaves two empty `.tmp*` directories there on every turn (issue #955, ADR 0047). The runtime removes them with the directory after the turn. The reviewer prompt tells the reviewer to build a temporary path from the directory that those variables name when one is set, and never to write a literal path to the system temporary directory, because the removal covers only the private directory. The runtime lists an entry that appears directly in the inherited directory during a reviewer turn as `inheritedTmpdirEntries`, and deletes none (issue #1024). `AGENT_LOOP_SESSION_RECORDS_ROOT` overrides the default `<os tmpdir>/agent-loops/session-records`.
 - The runtime lists the inherited temporary directories in `AGENT_LOOP_INHERITED_TMPDIR`, as a JSON array of absolute paths, for the installer check of a package-runner root. The parent resolves every entry before it forwards the list, and forwards `unusable` for a value that it cannot resolve. A value that is present but is not a valid list makes the installer refuse every root. A helper process removes the turn directory only when its device and inode match the recorded ones, and ends at a 30-second bound. A replacement between the final check and `rmdir` loses at most an empty directory, because Node has no directory-handle delete.
 - Choose the mode at init, and never change it later. A later call may repeat the
   flag or omit it. Any other value is refused, in either direction. A headless

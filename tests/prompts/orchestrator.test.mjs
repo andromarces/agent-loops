@@ -221,6 +221,24 @@ test("resultPrompt carries the reviewed state for a reviewer result", () => {
   expect(prompt).toContain('"digest": "d"');
 });
 
+// Usefulness: verifies the headless result payload carries the inherited temporary directory
+// entries a reviewer turn left, so a headless parent holds what a `role dispatch` envelope carries
+// (issue #1024).
+test("resultPrompt carries the inherited temporary directory entries of a reviewer result", () => {
+  const prompt = resultPrompt({
+    result: {
+      role: "reviewer",
+      status: "ok",
+      response: "done",
+      inheritedTmpdirEntries: ["m54-3db54ca8"],
+    },
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  expect(prompt).toContain('"inheritedTmpdirEntries"');
+  expect(prompt).toContain("m54-3db54ca8");
+});
+
 // Usefulness: verifies the headless prompt states the completion rule and its
 // mode mapping: a worker change needs a later reviewer accept, a run with no
 // worker turn finishes on the report, and the loop policy stays interactive

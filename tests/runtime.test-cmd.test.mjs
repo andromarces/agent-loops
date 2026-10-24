@@ -1,5 +1,5 @@
 import { existsSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
@@ -466,6 +466,47 @@ test.each([
     expect(evidence).toMatchObject({ role: "reviewer", fatal: true, stepsUsed: 1 });
     expect(evidence.testRun).toMatchObject({ status: "pass", exitCode: 0 });
   } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies requirement "a fatal reviewer error emits the entries that appeared in the
+// inherited temporary directory" (issue #1024): a fatal error ends the run with no result event, so
+// the transcript would otherwise lose them.
+test("a fatal reviewer error emits the inherited temporary directory entries", async () => {
+  const repo = await createTempRepo();
+  const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));
+  try {
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
+    const events = [];
+    const fatal = Object.assign(new Error("fatal"), { name: "MutationError" });
+    const error = await runLoop({
+      task: "Review the change.",
+      cwd: repo,
+      maxSteps: 5,
+      roles: roles(),
+      agents: {
+        orch: scripted([JSON.stringify({ action: "run_reviewer", prompt: "review" })]),
+        work: scripted([]),
+        rev: scripted([
+          async () => {
+            await mkdir(join(temp, "m54-3db54ca8"));
+            throw fatal;
+          },
+        ]),
+      },
+      onEvent: (event) => events.push(event),
+    }).catch((err) => err);
+    expect(error).toBe(fatal);
+    expect(events.find((e) => e.type === "inherited-tmpdir")).toMatchObject({
+      role: "reviewer",
+      entries: ["m54-3db54ca8"],
+      fatal: true,
+      stepsUsed: 1,
+    });
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(temp);
     await removePath(repo);
   }
 });

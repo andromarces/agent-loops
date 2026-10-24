@@ -436,6 +436,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - Require reviewed.clean: true for PR work.
 - A worker result carries workTree, the runtime-owned head and clean state read after the turn. For PR work, when workTree shows clean: false, dispatch a worker to commit or discard the leftover change, not a reviewer.
 - A worker envelope carries sharedGitChanged only when the turn changed shared Git state outside the work tree: core.hooksPath, a file in the common hooks/ directory, or a remote. The field names the items, such as core.hooksPath, hooks/pre-push, and remote.origin, and never a value or a URL. A change there affects the main work tree and every other linked work tree, and workTree does not show it. Report it in the finish summary under open. A failed worker turn carries the field too. A turn that changed none carries no field.
+- A reviewer envelope carries inheritedTmpdirEntries only when entries appeared directly in the inherited temporary directory during the turn, such as a probe directory that the reviewer created there. The field names the entries, redacted like the test command output, and never their content, at most 20. It is advisory: the directory is shared with other processes, so the runtime cannot attribute an entry to the turn, and it does not delete one. Turn directories that the runtime created are left out, and any other name is listed, an al- name too. Every reviewer turn that read the directory before it started carries the field, a failed, halted, or canceled turn too. Report it in the finish summary under open, and do not treat it as a reason to reject.
 - Treat an accept without a Checks line as not accepted.
 - When the PR head cannot be resolved, do not finish as verified. Abort, or record the unresolved compare under notDone and open in the finish summary.
 - When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event and the headless run exits 4 instead of 0, so the recorded finish stays machine-distinct from a verified one. That marker is the only machine-readable record of the compare, and nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.
@@ -479,6 +480,9 @@ export function resultPrompt({ result, stepsUsed, maxSteps, declaredPr = null })
     ...(result.reviewed ? { reviewed: result.reviewed } : {}),
     ...(result.workTree ? { workTree: result.workTree } : {}),
     ...(result.sharedGitChanged ? { sharedGitChanged: result.sharedGitChanged } : {}),
+    ...(result.inheritedTmpdirEntries
+      ? { inheritedTmpdirEntries: result.inheritedTmpdirEntries }
+      : {}),
     // The status the runtime read for a declared PR, so the orchestrator holds
     // both it and the reviewer `Checks` line in one prompt and can compare them
     // (#320). A result with no read carries no field, so a turn that made no
