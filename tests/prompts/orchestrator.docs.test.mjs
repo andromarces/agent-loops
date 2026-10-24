@@ -241,6 +241,27 @@ test("the parent surfaces state the action for a noCheckSource wait", async () =
   }
 });
 
+// Usefulness: verifies every surface that states the `noCheckSource` rule names the merged PR head
+// read and its sampling limit (issue #1062). A surface that omits them tells a parent that the
+// skip proves more than two commits show.
+test("the noCheckSource rule names the merged PR head read and its limit on every surface", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readFile(instructionsPath, "utf8");
+  const roleDoc = await readFile(join(dirname(instructionsPath), "reference/role.md"), "utf8");
+  for (const text of [prompt, instructions, roleDoc]) {
+    expectRule(text, /merged PR/i, /latest/i);
+    expectRule(text, /base head and one merged PR head are two commits/i, /stays unseen/i);
+  }
+});
+
 // Usefulness: verifies the interactive instructions state the three conditions of the
 // `noCheckSource` return and its limit, and tell the parent to read none of them itself
 // (issue #1054). A reworded rule that drops the workflow-file, trigger, or external-provider

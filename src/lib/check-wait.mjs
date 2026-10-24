@@ -201,6 +201,23 @@ const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 const PR_FILES_CAP = 3000;
 const DIRECTORY_CAP = 1000;
 
+/**
+ * The merge time of a `pulls` entry in ms: false for a PR that is not merged (`null`), null for any
+ * value that is not a real UTC timestamp as the API writes it (`YYYY-MM-DDTHH:MM:SSZ`).
+ */
+function mergeTimeOf(value) {
+  if (value === null) {
+    return false;
+  }
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(value)) {
+    return null;
+  }
+  const time = Date.parse(value);
+  return Number.isNaN(time) || `${new Date(time).toISOString().slice(0, 19)}Z` !== value
+    ? null
+    : time;
+}
+
 // A full object name, so two heads compare by equality. `gh` reports SHA-1 and SHA-256 names.
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
@@ -661,36 +678,45 @@ export async function waitChecks({
   // read, so a provider that skipped both, or registers later, stays unseen (#1054).
   const noCheckSource = async (sha, base) => {
     await ensureSlug();
-    // The head SHA of the latest PR merged into `base` that holds the commit `baseSha`, null when no
-    // such PR exists, and false for a read that fails or a reply of another shape. A PR that is not
-    // merged, or merged into another branch, is no evidence.
-    const mergedHeadOf = async (baseSha, base) => {
+    // The head SHAs of the PRs merged into `base` that hold the commit `baseSha` and share the latest
+    // merge time, so a tie never resolves by list order. The list is empty when no such PR exists, and
+    // null for a read that fails or any entry of another shape: a field must be exactly as the API
+    // states it, a timestamp that is a real UTC date, a non-empty base ref, a lowercase full SHA. A PR
+    // that is not merged, or merged into another branch, is no evidence.
+    const mergedHeadsOf = async (baseSha, base) => {
       const pages = await ghApi(
         pagedRead(bounded, null),
         [`repos/${slug}/commits/${baseSha}/pulls`],
         cwd,
       );
       if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
-        return false;
+        return null;
       }
-      let latest = null;
+      let latest = -Infinity;
+      let heads = [];
       for (const entry of pages.flat()) {
+        const mergedAt = isJsonObject(entry) ? mergeTimeOf(entry.merged_at) : null;
         if (
-          !isJsonObject(entry) ||
-          !(entry.merged_at === null || typeof entry.merged_at === "string") ||
+          mergedAt === null ||
           !isJsonObject(entry.base) ||
+          typeof entry.base.ref !== "string" ||
+          entry.base.ref === "" ||
           !isJsonObject(entry.head) ||
-          !FULL_SHA.test(entry.head.sha ?? "")
+          typeof entry.head.sha !== "string" ||
+          !FULL_SHA.test(entry.head.sha)
         ) {
-          return false;
+          return null;
         }
-        if (entry.merged_at !== null && entry.base.ref === base) {
-          if (latest === null || entry.merged_at > latest.merged_at) {
-            latest = entry;
-          }
+        if (mergedAt === false || entry.base.ref !== base || mergedAt < latest) {
+          continue;
         }
+        if (mergedAt > latest) {
+          latest = mergedAt;
+          heads = [];
+        }
+        heads.push(entry.head.sha);
       }
-      return latest === null ? null : latest.head.sha;
+      return heads;
     };
     const baseShaOf = async () => {
       const read = await readOne(bounded, `repos/${slug}/commits/${encodeURIComponent(base)}`, cwd);
@@ -761,13 +787,13 @@ export async function waitChecks({
     if (runs.length > 0 || statuses.length > 0) {
       return false;
     }
-    // A provider that reports on PR heads only never shows on the base head, so the head of the
-    // latest merged PR of that commit is read the same way (#1062).
-    const mergedHead = await mergedHeadOf(baseSha, base);
-    if (mergedHead === false) {
+    // A provider that reports on PR heads only never shows on the base head, so the heads of the
+    // latest merged PRs of that commit are read the same way (#1062).
+    const mergedHeads = await mergedHeadsOf(baseSha, base);
+    if (mergedHeads === null) {
       return false;
     }
-    if (mergedHead !== null) {
+    for (const mergedHead of mergedHeads) {
       const mergedRuns = await checkRuns(bounded, slug, mergedHead, cwd, true);
       const mergedStatuses = await commitStatuses(bounded, slug, mergedHead, cwd, true);
       if (mergedRuns.length > 0 || mergedStatuses.length > 0) {

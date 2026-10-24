@@ -1629,6 +1629,7 @@ const BASE_STATUS = {
 };
 const PENDING_STATUS = { ...BASE_STATUS, id: 9, state: "pending" };
 const MERGED_HEAD = "e".repeat(40);
+const TIED_HEAD = "f".repeat(40);
 const MERGED_PR = {
   number: 7,
   merged_at: "2026-01-01T00:00:00Z",
@@ -1660,6 +1661,7 @@ function probeGh({
   mergedPrs = [],
   mergedRuns = [],
   mergedStatuses = [],
+  tiedRuns = [],
   failing = null,
   reply = null,
   files = null,
@@ -1728,6 +1730,12 @@ function probeGh({
     }
     if (endpoint.startsWith(`${repo}/commits/${MERGED_HEAD}/check-runs`)) {
       return readOk({ total_count: mergedRuns.length, check_runs: mergedRuns });
+    }
+    if (endpoint.startsWith(`${repo}/commits/${TIED_HEAD}/check-runs`)) {
+      return readOk({ total_count: tiedRuns.length, check_runs: tiedRuns });
+    }
+    if (endpoint.startsWith(`${repo}/commits/${TIED_HEAD}/status`)) {
+      return readOk({ total_count: 0, statuses: [] });
     }
     if (endpoint.startsWith(`${repo}/commits/${MERGED_HEAD}/status`)) {
       return readOk({ total_count: mergedStatuses.length, statuses: mergedStatuses });
@@ -2030,10 +2038,62 @@ test.each([
     { mergedPrs: [{ ...MERGED_PR, head: { sha: "abc" } }] },
   ],
   ["a merged PR with a malformed merge time", { mergedPrs: [{ ...MERGED_PR, merged_at: 5 }] }],
+  ["a merge time that is no timestamp", { mergedPrs: [{ ...MERGED_PR, merged_at: "soon" }] }],
+  [
+    "a merge time that is no calendar date",
+    { mergedPrs: [{ ...MERGED_PR, merged_at: "2026-02-31T00:00:00Z" }] },
+  ],
+  ["a PR with no base object", { mergedPrs: [{ ...MERGED_PR, base: undefined }] }],
+  ["a PR with no base ref", { mergedPrs: [{ ...MERGED_PR, base: {} }] }],
+  ["a PR with an empty base ref", { mergedPrs: [{ ...MERGED_PR, base: { ref: "" } }] }],
+  [
+    "a PR with a base ref that is an array",
+    { mergedPrs: [{ ...MERGED_PR, base: { ref: ["main"] } }] },
+  ],
+  ["a head SHA that is an array", { mergedPrs: [{ ...MERGED_PR, head: { sha: [MERGED_HEAD] } }] }],
+  [
+    "an uppercase head SHA",
+    { mergedPrs: [{ ...MERGED_PR, head: { sha: MERGED_HEAD.toUpperCase() } }] },
+  ],
+  [
+    "a head SHA of 41 characters",
+    { mergedPrs: [{ ...MERGED_PR, head: { sha: `${MERGED_HEAD}e` } }] },
+  ],
+  [
+    "a malformed entry beside a valid merged PR",
+    { mergedPrs: [MERGED_PR, { ...MERGED_PR, number: 8, head: { sha: ["x"] } }] },
+  ],
 ])("the --all wait keeps the normal wait for %s", async (_name, options) => {
   const { result } = await probedWait({ mergedPrs: [MERGED_PR], ...options });
   expect(result.noCheckSource).toBeUndefined();
   expect(result.timedOut).toBe(true);
+});
+
+// Usefulness: verifies PRs that share the latest merge time never resolve by list order (issue
+// #1062): every tied head is read, so a check on either one keeps the wait, in either list order.
+const TIED_PR = { ...MERGED_PR, number: 8, head: { sha: TIED_HEAD } };
+test.each([
+  ["the first tied head", { mergedPrs: [MERGED_PR, TIED_PR], mergedRuns: [BASE_RUN] }],
+  ["the second tied head", { mergedPrs: [MERGED_PR, TIED_PR], tiedRuns: [BASE_RUN] }],
+  ["the first tied head, listed last", { mergedPrs: [TIED_PR, MERGED_PR], mergedRuns: [BASE_RUN] }],
+  ["the second tied head, listed last", { mergedPrs: [TIED_PR, MERGED_PR], tiedRuns: [BASE_RUN] }],
+])("the --all wait keeps the normal wait for a check on %s", async (_name, options) => {
+  const { result } = await probedWait(options);
+  expect(result.noCheckSource).toBeUndefined();
+  expect(result.timedOut).toBe(true);
+});
+
+// Usefulness: verifies tied merge times add no false positive, and an older merged PR is not read
+// (issue #1062): checks on a PR that merged earlier do not keep the wait.
+test("the --all wait returns noCheckSource for tied merged PRs with no check", async () => {
+  const { result } = await probedWait({ mergedPrs: [MERGED_PR, TIED_PR] });
+  expect(result.noCheckSource).toBe(true);
+});
+
+test("the --all wait ignores the checks of a PR that merged before the latest", async () => {
+  const older = { ...TIED_PR, merged_at: "2025-12-31T00:00:00Z" };
+  const { result } = await probedWait({ mergedPrs: [MERGED_PR, older], tiedRuns: [BASE_RUN] });
+  expect(result.noCheckSource).toBe(true);
 });
 
 // Usefulness: verifies the probe keeps the wait when the PR head moves while it reads (issue

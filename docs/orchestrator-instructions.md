@@ -979,7 +979,7 @@ head. It asks when the first read lists no check, no `--expect` name is set, and
 read of the PR head by SHA finds no check run and no commit status. The command reads
 the files of the PR, the workflow files of the base branch, and the check runs and
 commit statuses of the base head and of the head of the latest merged PR of that
-commit, and you read none of them.
+commit (every head that shares the latest merge time), and you read none of them.
 When all three conditions hold, the wait returns at once with `noCheckSource: true`,
 `timedOut: false`, and an empty `checks`:
 
@@ -1001,7 +1001,8 @@ passed. Act only on the field: never read a workflow file, a PR file list, or a 
 source yourself to decide it. A read that fails, cannot be parsed, is incomplete, or is
 not settled keeps the normal wait, so an envelope without the field keeps every rule
 above. A list at its API cap (3,000 PR files, 1,000 workflow files) is incomplete, and
-a base branch or PR head that moves during the reads keeps the wait. A
+a base branch or PR head that moves during the reads keeps the wait, and so does a merged PR entry that
+is malformed. A
 repository with a `pull_request` workflow keeps the wait. The limit: the base head and
 one merged PR head are two commits, so a provider that skipped both stays unseen, and
 only the wait covers it. `noCheckSource` never comes from the required
