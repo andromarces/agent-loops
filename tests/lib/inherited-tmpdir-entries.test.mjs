@@ -6,6 +6,7 @@ import {
   appearedInInheritedTmpdir,
   snapshotInheritedTmpdir,
 } from "../../src/lib/inherited-tmpdir-entries.mjs";
+import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 let root;
@@ -28,13 +29,29 @@ test("lists only entries that appeared after the snapshot", async () => {
   expect(await appearedInInheritedTmpdir(before)).toEqual(["m54-3db54ca8"]);
 });
 
-// Usefulness: verifies requirement "turn directories are not reported", because the runtime
-// removes them and a concurrent turn creates them, so listing them would bury a real probe directory.
-test("leaves out a turn temporary directory", async () => {
+// Usefulness: verifies requirement "only the runtime's own turn directories are left out" (issue
+// #1024): the directory that `withTurnTmpdir` created is not reported while it exists, and an
+// unmanaged `al-` directory that a reviewer created is, so the prefix alone hides nothing.
+test("leaves out the directory the runtime created and reports an unmanaged al- directory", async () => {
   const before = await snapshotInheritedTmpdir();
-  await mkdir(join(root, "al-AbC123"));
-  await mkdir(join(root, "probe-1"));
-  expect(await appearedInInheritedTmpdir(before)).toEqual(["probe-1"]);
+  await mkdir(join(root, "al-probe"));
+  const seen = await withTurnTmpdir(async (env) => {
+    expect(env).toBeDefined();
+    return appearedInInheritedTmpdir(before);
+  });
+  expect(seen).toEqual(["al-probe"]);
+});
+
+// Usefulness: verifies requirement "a secret-named environment value in a name is redacted" (issue
+// #1024, ADR 0017): a reviewer-chosen name can echo a value the process holds, and the list reaches
+// the envelope, the state file, and the headless prompt.
+test("redacts the value of a secret-named environment variable in a name", async () => {
+  vi.stubEnv("PROBE_API_TOKEN", "s3cr3t-value-9402");
+  const before = await snapshotInheritedTmpdir();
+  await mkdir(join(root, "probe-s3cr3t-value-9402"));
+  const entries = await appearedInInheritedTmpdir(before);
+  expect(entries).toEqual(["probe-[redacted:PROBE_API_TOKEN]"]);
+  expect(JSON.stringify(entries)).not.toContain("s3cr3t-value-9402");
 });
 
 // Usefulness: verifies requirement "an unreadable directory reports nothing instead of a false

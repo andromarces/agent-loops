@@ -2082,3 +2082,36 @@ test("reviewer dispatch reports a directory left in the inherited temporary dire
     await removePath(temp);
   }
 });
+
+// Usefulness: verifies requirement "a halted reviewer dispatch keeps the entries in the envelope
+// and the state file" (issue #1024): a mutation halts the run through a thrown error, and the
+// envelope is built from that error.
+test("a halted reviewer dispatch reports a directory left in the inherited temporary directory", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const temp = await mkdtemp(join(tmpdir(), "role-dispatch-inherited-"));
+  try {
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
+    const mutating = recordingAdapter([
+      async () => {
+        await mkdir(join(temp, "m54-3db54ca8"));
+        await writeFile(join(repo, "leak.txt"), "leak\n");
+        return WORKER_REPLY;
+      },
+    ]);
+    const halted = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: mutating },
+      stdin: stdinPrompt,
+    });
+    expect(halted.exitCode).toBe(1);
+    expect(halted.payload.inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
+    const state = await readRepoState(repo);
+    expect(state.lifecycle).toBe("halted");
+    expect(state.lastResult.inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(temp);
+  }
+});

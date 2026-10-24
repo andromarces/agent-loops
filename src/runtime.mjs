@@ -21,6 +21,7 @@ import { withMutationCheck } from "./lib/snapshot.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { invoke, runChild } from "./child-turn.mjs";
 import { decide } from "./orchestrator.mjs";
+import { failedInheritedTmpdirEntries } from "./lib/inherited-tmpdir-entries.mjs";
 import { failedTestRun, testCmdInput } from "./lib/test-cmd.mjs";
 import { initialPrompt, refusalPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 
@@ -429,6 +430,10 @@ export async function runLoop(options) {
           fatal: true,
           stepsUsed,
         });
+      }
+      const entries = failedInheritedTmpdirEntries(err);
+      if (entries) {
+        onEvent({ type: "inherited-tmpdir", role: roleName, entries, fatal: true, stepsUsed });
       }
       throw err;
     }

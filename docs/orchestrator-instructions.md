@@ -290,11 +290,20 @@ Apply these parent rules:
   carries the field too. A turn that changed none carries no field.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn, such as a probe directory that the reviewer
-  created there. The field names the entries and never their content. It is advisory: the
-  directory is shared with other processes, so the runtime cannot attribute an entry to the turn,
-  and it does not delete one. Turn temporary directories are left out, and the list holds at most
-  20 names. A failed reviewer turn carries the field too. Report it in the finish summary under
-  `open`, and do not treat it as a reason to reject (issue #1024).
+  created there. The field names the entries, redacted like the test command output (ADR 0017),
+  and never their content, at most 20. It is advisory: the directory is shared with other
+  processes, so the runtime cannot attribute an entry to the turn, and it does not delete one.
+  Only the turn directories that this process created, matched by exact name, are left out. Any
+  other name is listed, an `al-` name too, and a directory of a concurrent run can appear.
+  Every reviewer turn that read the directory before it started carries the field: an ok turn, a
+  handled error, a turn that a mutation or a snapshot error halted, and a canceled turn. The
+  `role dispatch` envelope and the state file `lastResult` carry it for a halted or interrupted
+  dispatch, and a headless run emits an `inherited-tmpdir` event with `fatal: true` for a fatal
+  error, which the transcript keeps. A turn that cannot carry it is one whose process ended
+  without a throw, for example a crash or a kill, because the before-read lives in memory, and
+  one whose before-read failed. A run that the next call marks `interrupted` after such an end
+  has none. Report it in the finish summary under `open`, and do not treat it as a reason to
+  reject (issue #1024).
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.

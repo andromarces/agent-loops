@@ -15,7 +15,14 @@ const REMOVER_REFUSED = 3;
 const REMOVAL_BOUND_MS = 30_000;
 
 // Short on purpose: a deep path fails some runtimes on Windows (issue #903).
-export const TURN_TMPDIR_PREFIX = "al-";
+const PREFIX = "al-";
+
+// Names of the directories that this process created and has not removed. Only these exact names
+// are the runtime's own: the prefix alone is not, because a reviewer can create `al-probe`.
+const createdNames = new Set();
+
+/** True for the name of a turn directory that this process created and has not removed. */
+export const isTurnTmpdirName = (name) => createdNames.has(name);
 
 /**
  * Runs `run(env)` with a private temporary directory for one child turn and removes it afterward
@@ -64,7 +71,8 @@ export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS } 
  */
 async function createTurnTmpdir() {
   // Absolute, so the child reads the same path from any working directory.
-  const dir = await mkdtemp(join(resolve(tmpdir()), TURN_TMPDIR_PREFIX));
+  const dir = await mkdtemp(join(resolve(tmpdir()), PREFIX));
+  createdNames.add(basename(dir));
   const stat = await lstat(dir, { bigint: true });
   if (!stat.isDirectory()) throw new Error(`${dir} is not a directory`);
   return {
@@ -99,6 +107,7 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
       { cwd: dirname(dir), timeoutMs: boundMs },
     );
     if (result.exitCode === 0) {
+      createdNames.delete(basename(dir));
       logDebug(`turn temporary directory removed: ${dir}`);
     } else if (result.timedOut) {
       failure(`the removal helper did not end within ${boundMs} ms and was killed`);
