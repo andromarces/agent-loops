@@ -2003,6 +2003,10 @@ test.each([
   ["no merged PR for the base head", []],
   ["a PR that is not merged", [{ ...MERGED_PR, merged_at: null }]],
   ["a PR of another base branch", [{ ...MERGED_PR, base: { ref: "dev" } }]],
+  [
+    "a PR of another base branch with a path-like name",
+    [{ ...MERGED_PR, base: { ref: "release/v1.2-rc_1" } }],
+  ],
 ])("the --all wait returns noCheckSource for %s", async (_name, mergedPrs) => {
   const { result } = await probedWait({ mergedPrs, mergedRuns: [], mergedStatuses: [] });
   expect(result.noCheckSource).toBe(true);
@@ -2046,6 +2050,23 @@ test.each([
   ["a PR with no base object", { mergedPrs: [{ ...MERGED_PR, base: undefined }] }],
   ["a PR with no base ref", { mergedPrs: [{ ...MERGED_PR, base: {} }] }],
   ["a PR with an empty base ref", { mergedPrs: [{ ...MERGED_PR, base: { ref: "" } }] }],
+  ["a blank base ref", { mergedPrs: [{ ...MERGED_PR, base: { ref: " " } }] }],
+  ["a base ref with a leading space", { mergedPrs: [{ ...MERGED_PR, base: { ref: " main" } }] }],
+  [
+    "a base ref with a trailing newline",
+    { mergedPrs: [{ ...MERGED_PR, base: { ref: "main\n" } }] },
+  ],
+  ["a base ref of two dots", { mergedPrs: [{ ...MERGED_PR, base: { ref: ".." } }] }],
+  [
+    "a base ref with a double dot inside",
+    { mergedPrs: [{ ...MERGED_PR, base: { ref: "ma..in" } }] },
+  ],
+  ["a base ref with a lock suffix", { mergedPrs: [{ ...MERGED_PR, base: { ref: "main.lock" } }] }],
+  ["a base ref with a trailing slash", { mergedPrs: [{ ...MERGED_PR, base: { ref: "main/" } }] }],
+  ["a base ref with a leading dash", { mergedPrs: [{ ...MERGED_PR, base: { ref: "-main" } }] }],
+  ["a base ref with a reflog marker", { mergedPrs: [{ ...MERGED_PR, base: { ref: "ma@{in" } }] }],
+  ["a base ref with a glob character", { mergedPrs: [{ ...MERGED_PR, base: { ref: "ma*in" } }] }],
+  ["a base ref that is HEAD", { mergedPrs: [{ ...MERGED_PR, base: { ref: "HEAD" } }] }],
   [
     "a PR with a base ref that is an array",
     { mergedPrs: [{ ...MERGED_PR, base: { ref: ["main"] } }] },

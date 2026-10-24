@@ -218,6 +218,27 @@ function mergeTimeOf(value) {
     : time;
 }
 
+/**
+ * Whether `name` is a valid Git branch name, as `git check-ref-format --branch` judges it: no control
+ * character, space, or one of `~^:?*[\`, no `..` or `@{`, no leading dash, no leading or trailing
+ * slash or empty component, no component that starts with a dot or ends with `.lock`, no trailing dot,
+ * and neither `@` nor `HEAD` alone. A name that fails is an unknown shape, never another branch.
+ */
+function isBranchName(name) {
+  return (
+    typeof name === "string" &&
+    name !== "" &&
+    name !== "@" &&
+    name !== "HEAD" &&
+    !name.startsWith("-") &&
+    !name.endsWith(".") &&
+    ![...name].some((char) => char <= " " || char === "\x7f" || "~^:?*[\\".includes(char)) &&
+    !name.includes("..") &&
+    !name.includes("@{") &&
+    name.split("/").every((part) => part !== "" && !part.startsWith(".") && !part.endsWith(".lock"))
+  );
+}
+
 // A full object name, so two heads compare by equality. `gh` reports SHA-1 and SHA-256 names.
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
@@ -699,8 +720,7 @@ export async function waitChecks({
         if (
           mergedAt === null ||
           !isJsonObject(entry.base) ||
-          typeof entry.base.ref !== "string" ||
-          entry.base.ref === "" ||
+          !isBranchName(entry.base.ref) ||
           !isJsonObject(entry.head) ||
           typeof entry.head.sha !== "string" ||
           !FULL_SHA.test(entry.head.sha)
