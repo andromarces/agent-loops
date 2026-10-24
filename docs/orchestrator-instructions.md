@@ -967,25 +967,31 @@ refused on every other role operation, and so is `--head`. `--all` takes `--head
 as the required wait does.
 
 The `--all` wait also asks once whether any source can report a check for the PR
-head. It asks when the first read lists no check and no `--expect` name is set. The
-command reads the files of the PR, the workflow files of the base branch, and the check
-runs and commit statuses of the base head, and you read none of them. When all three
-conditions hold, the wait returns at once with `noCheckSource: true`,
+head. It asks when the first read lists no check, no `--expect` name is set, and the
+read of the PR head by SHA finds no check run and no commit status. The command reads
+the files of the PR, the workflow files of the base branch, and the check runs and
+commit statuses of the base head, all at one base commit, and you read none of them.
+When all three conditions hold, the wait returns at once with `noCheckSource: true`,
 `timedOut: false`, and an empty `checks`:
 
 - The PR changes no file under `.github/workflows/`, a rename out of it included.
 - No workflow file of the base branch names `pull_request`, `pull_request_target`,
   `push`, `merge_group`, `workflow_run`, or `check_suite`. The command scans the text
-  of each file, so a name in a comment or a step keeps the wait. A reusable workflow
-  inherits the events of its caller, and the callers are files of the same directory.
+  of each file, so a name in a comment or a step keeps the wait. A file with a
+  backslash or a control character, or one that is not valid UTF-8 or valid base64,
+  keeps the wait too, because a YAML escape can spell an event name. A reusable
+  workflow inherits the events of its caller, and the callers are files of the same
+  directory.
 - The base head has no check run and no commit status from any source, because a GitHub
   App or third-party CI can report a check with no workflow file.
 
 `noCheckSource` is never a pass. On it, dispatch the reviewer at once, record in
 `verified` that the CI status is not verified, and never record the CI status as
 passed. Act only on the field: never read a workflow file, a PR file list, or a check
-source yourself to decide it. A read that fails, cannot be parsed, or is not settled
-keeps the normal wait, so an envelope without the field keeps every rule above. A
+source yourself to decide it. A read that fails, cannot be parsed, is incomplete, or is
+not settled keeps the normal wait, so an envelope without the field keeps every rule
+above. A list at its API cap (3,000 PR files, 1,000 workflow files) is incomplete, and
+a base branch or PR head that moves during the reads keeps the wait. A
 repository with a `pull_request` workflow keeps the wait. The limit: the base head is
 one commit, so a provider that skipped it or that reports only on PR heads stays
 unseen, and only the wait covers it. `noCheckSource` never comes from the required

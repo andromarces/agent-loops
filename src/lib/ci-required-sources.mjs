@@ -404,6 +404,39 @@ export const pagedRead =
     );
 
 /**
+ * Reads one endpoint that is no list with `gh api --include`, and validates the reply as the pager
+ * validates a page: a 2xx status block and a body that is exactly one JSON value. It returns a
+ * `gh`-shaped result whose stdout is that body. A `Link` header is a refusal, because it says the
+ * reply is one page of a longer list that this read would take as complete. A refusal about the
+ * shape of a reply carries `unreadable`. A failed reply is returned as it came, with `notFound` set
+ * only when its status block says 404 and `gh` printed exactly `gh: Not Found (HTTP 404)`.
+ * @param {Function} read one `gh` read, as `(args, cwd) => result`
+ * @param {string} endpoint the endpoint with its query
+ * @param {string} cwd
+ */
+export async function readOne(read, endpoint, cwd) {
+  const result = await read(["api", endpoint, "--include"], cwd);
+  const reply = parseReply(result.stdout);
+  if (result.status !== 0) {
+    const notFound = reply?.status === 404 && result.stderr.trim() === "gh: Not Found (HTTP 404)";
+    return { ...result, ...(notFound ? { notFound: true } : {}) };
+  }
+  const refusal = (stderr) => ({ status: 1, stdout: "", stderr, unreadable: true });
+  if (reply === null || reply.status < 200 || reply.status > 299) {
+    return refusal("the reply carries no 2xx HTTP status block");
+  }
+  if (linkTargets(reply.headers).length > 0) {
+    return refusal("the reply carries a Link header, so it may be one page of a longer list");
+  }
+  try {
+    JSON.parse(reply.body);
+  } catch {
+    return refusal("the reply body is not exactly one JSON value");
+  }
+  return { status: 0, stdout: reply.body, stderr: "" };
+}
+
+/**
  * One required-check configuration source, classified by what its reply proved.
  *
  * The classification is an allowlist, so it fails closed. `ABSENT` is the only
