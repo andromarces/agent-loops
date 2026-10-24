@@ -293,8 +293,11 @@ Apply these parent rules:
   created there. The field names the entries, redacted like the test command output (ADR 0017),
   and never their content, at most 20. It is advisory: the directory is shared with other
   processes, so the runtime cannot attribute an entry to the turn, and it does not delete one.
-  Only the turn directories that this process created, matched by exact name, are left out. Any
-  other name is listed, an `al-` name too, and a directory of a concurrent run can appear.
+  Only the turn directories that this process created, matched by exact name, are left out, and
+  only until the removal ends: a directory that the removal refused or failed on, such as a
+  replacement of the turn directory, is listed. Any other name is listed, an `al-` name too, and a
+  directory of a concurrent run can appear. The runtime reads the directory once, after the last
+  child call of the dispatch, a task-only turn in a replacement conversation included.
   Every reviewer turn that read the directory before it started carries the field: an ok turn, a
   handled error, a turn that a mutation or a snapshot error halted, and a canceled turn. The
   `role dispatch` envelope and the state file `lastResult` carry it for a halted or interrupted

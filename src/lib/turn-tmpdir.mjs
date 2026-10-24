@@ -17,11 +17,12 @@ const REMOVAL_BOUND_MS = 30_000;
 // Short on purpose: a deep path fails some runtimes on Windows (issue #903).
 const PREFIX = "al-";
 
-// Names of the directories that this process created and has not removed. Only these exact names
-// are the runtime's own: the prefix alone is not, because a reviewer can create `al-probe`.
+// Names of the directories that this process created and has not finished removing. Only these
+// exact names are the runtime's own: the prefix alone is not, because a reviewer can create
+// `al-probe`. A name leaves the set when the removal ends, whatever its outcome.
 const createdNames = new Set();
 
-/** True for the name of a turn directory that this process created and has not removed. */
+/** True for the name of a turn directory that this process created and has not finished removing. */
 export const isTurnTmpdirName = (name) => createdNames.has(name);
 
 /**
@@ -107,7 +108,6 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
       { cwd: dirname(dir), timeoutMs: boundMs },
     );
     if (result.exitCode === 0) {
-      createdNames.delete(basename(dir));
       logDebug(`turn temporary directory removed: ${dir}`);
     } else if (result.timedOut) {
       failure(`the removal helper did not end within ${boundMs} ms and was killed`);
@@ -122,5 +122,9 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
     }
   } catch (err) {
     failure(firstErrorLine(readableErrorText(err)));
+  } finally {
+    // A directory that the removal refused or failed on stays in place, and its name is no longer
+    // the runtime's own, so a report can list it (issue #1024).
+    createdNames.delete(basename(dir));
   }
 }

@@ -393,10 +393,11 @@ export async function runChild(options) {
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     const workTree = roleName === "worker" ? await readWorkTree() : null;
     const sharedGitChanged = await readSharedGitChanged();
-    const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
+    // Read after the last child call of the dispatch, the task-only turn included.
+    const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
     throwIfCanceled(signal, roleName);

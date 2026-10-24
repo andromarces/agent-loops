@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import {
   appearedInInheritedTmpdir,
@@ -40,6 +40,21 @@ test("leaves out the directory the runtime created and reports an unmanaged al- 
     return appearedInInheritedTmpdir(before);
   });
   expect(seen).toEqual(["al-probe"]);
+});
+
+// Usefulness: verifies requirement "a directory the runtime did not remove is reportable" (issue
+// #1024): when the turn directory is renamed and its path recreated, the removal refuses the
+// replacement by identity, and that replacement must not stay excluded by its name.
+test("reports a replacement of the turn directory that the removal refused", async () => {
+  const before = await snapshotInheritedTmpdir();
+  let name;
+  await withTurnTmpdir(async (env) => {
+    name = basename(env.TMPDIR);
+    await rename(env.TMPDIR, join(root, "moved-away"));
+    await mkdir(env.TMPDIR);
+  });
+  const entries = await appearedInInheritedTmpdir(before);
+  expect(entries).toContain(name);
 });
 
 // Usefulness: verifies requirement "a secret-named environment value in a name is redacted" (issue
