@@ -425,6 +425,13 @@ at risk, so the reviewer can trace each changed input through them. Do not
 restate the spec as the pass condition: a restated spec asks the reviewer to
 confirm it, not to test it.
 
+The init task reaches each role once, so a later operator decision reaches only
+the worker prompt that carries it. Restate every operator decision made after
+init in the next reviewer prompt, beside the worker prompt that carries it. The
+reviewer then judges the change against the decision, not only against the init
+task. State the decision as an approved change of the spec, with the guard or
+contract that it changes, so the reviewer still tests the change.
+
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
 then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed
