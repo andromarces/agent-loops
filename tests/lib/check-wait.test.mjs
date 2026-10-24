@@ -1827,6 +1827,172 @@ test.each([
   expect(result).toMatchObject({ timedOut: true, checks: [] });
 });
 
+const FILTERED = (events) => `name: ci\non:\n${events}\njobs:\n  t:\n    runs-on: ubuntu-latest\n`;
+const PR_PATHS = (...patterns) =>
+  FILTERED(`  pull_request:\n    paths:\n${patterns.map((p) => `      - ${p}`).join("\n")}`);
+
+// Usefulness: verifies a base workflow that only names path-filtered PR events, with no PR file
+// matching any pattern, counts as unable to report, so the wait ends at once (issue #1065). One row
+// per accepted shape, so a dropped shape fails its own row.
+test.each([
+  ["the workflow filter of the issue", PR_PATHS(".github/workflows/**", ".github/actionlint.yaml")],
+  ["a quoted pattern and a trailing comment", PR_PATHS("'src/**'  # code", '"lib/*.js"')],
+  [
+    "pull_request_target with paths",
+    FILTERED("  pull_request_target:\n    paths:\n      - 'src/**'"),
+  ],
+  [
+    "both PR events with paths and a branch filter",
+    FILTERED(
+      "  pull_request:\n    branches: [main]\n    paths:\n      - src/**\n" +
+        "  pull_request_target:\n    paths:\n      - src/**",
+    ),
+  ],
+  ["a flow list of paths", FILTERED("  pull_request:\n    paths: [src/**, 'docs/*.md']")],
+  ["a quoted on key", PR_PATHS("src/**").replace("on:", '"on":')],
+  [
+    "a flow map and a block scalar holding trigger text in the jobs",
+    `${PR_PATHS("src/**")}  s:\n    env: { A: b }\n    steps:\n      - run: |\n          on:\n            push:\n`,
+  ],
+  [
+    "a list at the indent of its key",
+    FILTERED("  pull_request:\n    paths:\n    - src/**\n    - docs/*.md"),
+  ],
+])(
+  "the --all wait returns noCheckSource for a path-filtered workflow with %s",
+  async (_n, text) => {
+    const { result, elapsed } = await probedWait({ workflows: { "ci.yml": text } });
+    expect(result).toEqual({ timedOut: false, noCheckSource: true, head: HEAD_A, checks: [] });
+    expect(elapsed).toBe(0);
+  },
+);
+
+const MANY_FILES = Array.from({ length: 3000 }, (_, i) => ({ filename: `f${i}` }));
+
+// Usefulness: verifies each case that keeps the wait for a path-filtered workflow (issue #1065): a
+// PR file that matches a pattern, a rename whose old name matches, a `paths-ignore` filter, a
+// pattern the matcher cannot settle, another event, a PR event with no `paths`, and a text that
+// does not read as plain block YAML. One row per case, so a dropped rule fails its own row.
+test.each([
+  ["a PR file that matches a pattern", PR_PATHS("README.md"), {}],
+  ["a PR file that matches a ** pattern", PR_PATHS("**.md"), {}],
+  ["a PR file that matches a **/ pattern at the root", PR_PATHS("**/*.md"), {}],
+  [
+    "a PR file under a literal directory pattern",
+    PR_PATHS("docs"),
+    { prFiles: [{ filename: "docs/a.md" }] },
+  ],
+  [
+    "a PR file renamed out of a matching path",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "README.md", previous_filename: "src/a.js" }] },
+  ],
+  ["a ! negation pattern", PR_PATHS("'src/**'", "'!src/x.js'"), {}],
+  ["a character class pattern", PR_PATHS("'src/[ab].js'"), {}],
+  ["a ? pattern", PR_PATHS("'src/a?.js'"), {}],
+  ["a pattern that is a YAML alias", PR_PATHS("*.js"), {}],
+  [
+    "a push event beside the filtered PR event",
+    FILTERED("  push:\n  pull_request:\n    paths:\n      - src/**"),
+    {},
+  ],
+  [
+    "a workflow_dispatch event beside the filtered PR event",
+    FILTERED("  workflow_dispatch:\n  pull_request:\n    paths:\n      - src/**"),
+    {},
+  ],
+  ["paths-ignore", FILTERED("  pull_request:\n    paths-ignore:\n      - README.md"), {}],
+  [
+    "paths and paths-ignore",
+    FILTERED("  pull_request:\n    paths:\n      - src/**\n    paths-ignore:\n      - a"),
+    {},
+  ],
+  ["a PR event with no paths", FILTERED("  pull_request:\n    branches: [main]"), {}],
+  [
+    "one PR event with paths and one without",
+    FILTERED(
+      "  pull_request:\n    paths:\n      - src/**\n  pull_request_target:\n    branches: [main]",
+    ),
+    {},
+  ],
+  ["an empty paths list", FILTERED("  pull_request:\n    paths:"), {}],
+  ["a scalar on", "on: pull_request\n", {}],
+  ["a later unclosed flow list", `${PR_PATHS("src/**")}jobs: [\n`, {}],
+  [
+    "an unterminated flow list in the event",
+    "on:\n  pull_request:\n    branches: [main\n    paths:\n      - src/**\n",
+    {},
+  ],
+  ["a second YAML document", `${PR_PATHS("src/**")}---\nname: second\n`, {}],
+  ["a later unclosed quote", `${PR_PATHS("src/**")}name2: 'x\n`, {}],
+  ["a YAML alias elsewhere", `x: &a [1]\n${PR_PATHS("src/**")}y: *a\n`, {}],
+  ["a YAML tag", `${PR_PATHS("src/**")}z: !!python/object x\n`, {}],
+  ["a !!str tag on a pattern", FILTERED("  pull_request:\n    paths: [!!str src/**]"), {}],
+  ["a !!map tag on an event", FILTERED("  pull_request: !!map\n    paths: [src/**]"), {}],
+  ["a !!seq tag on the paths list", FILTERED("  pull_request:\n    paths: !!seq [src/**]"), {}],
+  ["a tag on the on map", `name: ci\non: !!map\n  pull_request:\n    paths: [src/**]\n`, {}],
+  ["a tag far from the on block", `${PR_PATHS("src/**")}extra:\n  t: !!map\n    a: b\n`, {}],
+  ["an unused anchor", FILTERED("  pull_request: &filter\n    paths: [src/**]"), {}],
+  ["an anchor on a pattern", FILTERED("  pull_request:\n    paths: [&p src/**]"), {}],
+  ["a non-string pattern", FILTERED("  pull_request:\n    paths:\n      - 12"), {}],
+  [
+    "a PR file name that ** matches across a newline",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "src/a\nb.js" }] },
+  ],
+  [
+    "a PR file name with U+2028 that ** matches",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "src/a b.js" }] },
+  ],
+  [
+    "a PR file name with a newline that no pattern matches",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "docs/a\nb.md" }] },
+  ],
+  [
+    "a PR file name with a control character",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "docs/a\u0007.md" }] },
+  ],
+  [
+    "a PR file name with a lone surrogate",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "docs/a\ud800.md" }] },
+  ],
+  [
+    "a previous_filename that is not a string",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: "README.md", previous_filename: 7 }] },
+  ],
+  ["a trigger name and no on block", "name: ci\njobs: {}\n# pull_request\n", {}],
+  ["a tab indent", "on:\n\tpull_request:\n\t\tpaths:\n\t\t\t- src/**\n", {}],
+  ["a duplicate on key", `${PR_PATHS("src/**")}on:\n  push:\n`, {}],
+  ["a PR file list of 3,000", PR_PATHS("src/**"), { prFiles: MANY_FILES }],
+  [
+    "a PR file that changes a workflow",
+    PR_PATHS("src/**"),
+    { prFiles: [{ filename: ".github/workflows/x.yml" }] },
+  ],
+])(
+  "the --all wait keeps the normal wait for a path-filtered workflow with %s",
+  async (_n, text, options) => {
+    const { result } = await probedWait({ workflows: { "ci.yml": text }, ...options });
+    expect(result.noCheckSource).toBeUndefined();
+    expect(result).toMatchObject({ timedOut: true, checks: [] });
+  },
+);
+
+// Usefulness: verifies one workflow that can still run keeps the wait beside a filtered one
+// (issue #1065), so the rule judges every file, not the first.
+test("the --all wait keeps the normal wait when one workflow can still run", async () => {
+  const { result } = await probedWait({
+    workflows: { "a.yml": PR_PATHS("src/**"), "b.yml": "on:\n  push:\n" },
+  });
+  expect(result.noCheckSource).toBeUndefined();
+  expect(result.timedOut).toBe(true);
+});
+
 // Usefulness: verifies the states of the PR head keep the wait (issue #1054, ADR 0048): a queued
 // check run, or a pending commit status, on the PR head SHA means a source reports for the head,
 // even when `gh pr checks` listed nothing. The probe never returns before the by-SHA read of the head.

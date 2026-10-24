@@ -24,6 +24,7 @@ import {
   runGh,
 } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
+import { prEventsFilteredOut } from "./workflow-paths.mjs";
 
 /** Default wait bound, in seconds. Short enough to fit a harness command timeout. */
 export const DEFAULT_WAIT_SECONDS = 300;
@@ -764,6 +765,9 @@ export async function waitChecks({
         return false;
       }
     }
+    const changedPaths = changed.flatMap((file) =>
+      file.previous_filename == null ? [file.filename] : [file.filename, file.previous_filename],
+    );
     const listing = await readOne(
       bounded,
       `repos/${slug}/contents/${WORKFLOW_DIR}?ref=${baseSha}`,
@@ -798,7 +802,12 @@ export async function waitChecks({
       const read = await readOne(bounded, `repos/${slug}/contents/${path}?ref=${baseSha}`, cwd);
       const body = read.status === 0 ? JSON.parse(read.stdout) : null;
       const text = isJsonObject(body) ? workflowText(body, entry.path) : null;
-      if (text === null || UNREADABLE_TEXT.test(text) || PR_TRIGGERS.test(text)) {
+      if (text === null || UNREADABLE_TEXT.test(text)) {
+        return false;
+      }
+      // A file that names a trigger keeps the wait unless every trigger is a PR event whose `paths`
+      // filter matches no PR file (#1065).
+      if (PR_TRIGGERS.test(text) && !prEventsFilteredOut(text, changedPaths)) {
         return false;
       }
     }
