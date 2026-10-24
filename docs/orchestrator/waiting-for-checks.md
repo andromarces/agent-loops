@@ -226,7 +226,8 @@ The `--all` wait also asks once whether any source can report a check for the PR
 head. It asks when the first read lists no check, no `--expect` name is set, and the
 read of the PR head by SHA finds no check run and no commit status. The command reads
 the files of the PR, the workflow files of the base branch, and the check runs and
-commit statuses of the base head, all at one base commit, and you read none of them.
+commit statuses of the base head and of the head of the latest merged PR of that
+commit (every head that shares the latest merge time), and you read none of them.
 When all three conditions hold, the wait returns at once with `noCheckSource: true`,
 `timedOut: false`, and an empty `checks`:
 
@@ -238,8 +239,9 @@ When all three conditions hold, the wait returns at once with `noCheckSource: tr
   keeps the wait too, because a YAML escape can spell an event name. A reusable
   workflow inherits the events of its caller, and the callers are files of the same
   directory.
-- The base head has no check run and no commit status from any source, because a GitHub
-  App or third-party CI can report a check with no workflow file.
+- The base head, and the head of the latest merged PR of that commit, have no check run
+  and no commit status from any source, because a GitHub App or third-party CI can
+  report a check with no workflow file, and one can report on PR heads only.
 
 `noCheckSource` is never a pass. On it, dispatch the reviewer at once, record in
 `verified` that the CI status is not verified, and never record the CI status as
@@ -247,10 +249,11 @@ passed. Act only on the field: never read a workflow file, a PR file list, or a 
 source yourself to decide it. A read that fails, cannot be parsed, is incomplete, or is
 not settled keeps the normal wait, so an envelope without the field keeps every rule
 above. A list at its API cap (3,000 PR files, 1,000 workflow files) is incomplete, and
-a base branch or PR head that moves during the reads keeps the wait. A
-repository with a `pull_request` workflow keeps the wait. The limit: the base head is
-one commit, so a provider that skipped it or that reports only on PR heads stays
-unseen, and only the wait covers it. `noCheckSource` never comes from the required
+a base branch or PR head that moves during the reads keeps the wait, and so does a merged PR entry that
+is malformed. A
+repository with a `pull_request` workflow keeps the wait. The limit: the base head and
+one merged PR head are two commits, so a provider that skipped both stays unseen, and
+only the wait covers it. `noCheckSource` never comes from the required
 wait. The headless orchestrator prompt carries the same rule.
 
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
