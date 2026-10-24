@@ -508,7 +508,7 @@ export async function waitChecks({
     }
   };
   // The commit reads are the gate's own reads, which page by page number with one `gh api --include`
-  // request per page and never follow the `Link` header (see `pagedRead`). A failed read is marked
+  // request per page and never follow the `Link` header, which they reject when it names another host (see `pagedRead`). A failed read is marked
   // `transient`, and the wait retries it on the next poll, only when its first-line status is 500,
   // 502, 503, or 504 and its body is empty or one JSON value. Every other failure ends the wait: any
   // other status, a 4xx whatever its body says, a failure with no status block, and a reply whose

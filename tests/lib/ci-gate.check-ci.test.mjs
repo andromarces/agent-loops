@@ -527,9 +527,11 @@ test("records the absence when no page names a required-status rule", async () =
   expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
 });
 
-// An empty page after a full page is the end of the list, as the list holds exactly the rules of the
-// full pages: the page-number read has no `Link` header to say so (#1033).
-test("records the absence when the ruleset ends with an empty page after a full page", async () => {
+// An empty page beside a page that holds rules settles nothing, because GitHub
+// stops paginating when there is no next page, so a partial read must not be
+// classified from the pages that did arrive (issue #336 review). The page-number read hands the
+// classifier every page it received, so a full page then an empty page keeps this class (#1033).
+test("refuses the empty union when a ruleset page is empty beside a page with rules", async () => {
   const result = await checkCi({
     pr: 42,
     reviewed: REVIEWED,
@@ -543,7 +545,9 @@ test("records the absence when the ruleset ends with an empty page after a full 
       }),
     ),
   });
-  expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain("repository rulesets");
+  expect(result.noRequiredChecks).toBeUndefined();
 });
 
 // An unknown ruleset read must refuse whatever the rest of the union holds, because
@@ -755,6 +759,7 @@ test("an empty ruleset read is not a positive absence", async () => {
 // so it is unknown and refuses (issue #336 review).
 const ANOMALOUS_EMPTY_READS = {
   "an empty body from the paged read": { required: "" },
+  "a full page then an empty page": { requiredPages: [fullPage([{ type: "deletion" }]), []] },
 };
 
 for (const [shape, override] of Object.entries(ANOMALOUS_EMPTY_READS)) {
@@ -784,7 +789,9 @@ for (const [shape, override] of Object.entries(ANOMALOUS_EMPTY_READS)) {
 
 // Usefulness: verifies a single empty page beside a page that holds rules is still
 // unknown, so the anomalous rule is about the sequence and not only the count
-// (issue #336 review).
+// (issue #336 review). The shapes that a page-number read cannot produce, such as an empty page
+// before a page with rules, are covered at the classifier in
+// tests/lib/ci-required-sources.rulesets.test.mjs.
 test("refuses the empty union when a page holding rules is followed by an empty page", async () => {
   const result = await checkCi({
     pr: 42,
@@ -799,30 +806,9 @@ test("refuses the empty union when a page holding rules is followed by an empty 
       }),
     ),
   });
-  expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
-});
-
-// Usefulness: verifies a single empty page beside a page that holds a required
-// status rule still enforces that rule, so the anomalous rule does not refuse a
-// read that named a check (issue #336 review).
-test("enforces a required-status rule on a later page after an empty page", async () => {
-  const result = await checkCi({
-    pr: 42,
-    reviewed: REVIEWED,
-    cwd: ".",
-    gh: fakeGh(
-      routes({
-        requiredPages: [[], SECOND_PAGE_RULE],
-        protection: null,
-        prChecks: "",
-        headRuns: [run("ci (ubuntu-latest)", "failure")],
-      }),
-    ),
-  });
-  // The empty page makes the read unknown, so the gate refuses on the source
-  // rather than judging the rule it never fully read.
   expect(result.ok).toBe(false);
   expect(result.reason).toContain("repository rulesets");
+  expect(result.noRequiredChecks).toBeUndefined();
 });
 
 // The malformed successful replies that must keep the empty-union refusal. The

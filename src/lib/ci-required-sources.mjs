@@ -144,10 +144,57 @@ const STATUS_BLOCK = /^HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n(?:[^\r\n:]+:[^\r\n
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 
-/** The status and body of the one reply in a `gh api --include` stdout, or null with no status block. */
+/**
+ * The status, header text, and body of the one reply in a `gh api --include` stdout, or null with no
+ * status block.
+ */
 function parseReply(stdout) {
   const block = STATUS_BLOCK.exec(stdout);
-  return block ? { status: Number(block[1]), body: stdout.slice(block[0].length) } : null;
+  return block
+    ? {
+        status: Number(block[1]),
+        headers: block[0].slice(block[0].indexOf("\n") + 1),
+        body: stdout.slice(block[0].length),
+      }
+    : null;
+}
+
+// The hosts that a request of `gh api` goes to: the host from `GH_HOST`, or github.com, and the host
+// that serves its API. A host that only starts like one of these is another host.
+// known-limit: a default host set only in the `gh` config, with no `GH_HOST`, is read as github.com,
+// so a `Link` header that names it is refused; set `GH_HOST` to read it.
+function requestHosts() {
+  const host = (process.env.GH_HOST ?? "").trim().toLowerCase() || "github.com";
+  if (host === "github.com") {
+    return new Set([host, "api.github.com"]);
+  }
+  return new Set(host.endsWith(".ghe.com") ? [host, `api.${host}`] : [host]);
+}
+
+/**
+ * The first `Link` target of `headers` that names a host other than the request host, or null. A
+ * target that is not a URL counts as another host, so a header the runtime cannot read is no pass.
+ */
+function foreignLink(headers) {
+  const hosts = requestHosts();
+  const [home] = hosts;
+  for (const line of headers.split(/\r?\n/)) {
+    if (!/^link:/i.test(line)) {
+      continue;
+    }
+    for (const [, target] of line.matchAll(/<([^>]*)>/g)) {
+      let host = null;
+      try {
+        host = new URL(target, `https://${home}`).host.toLowerCase();
+      } catch {
+        // An unreadable target is refused below.
+      }
+      if (host === null || !hosts.has(host)) {
+        return target;
+      }
+    }
+  }
+  return null;
 }
 
 /** Whether `body` is empty or exactly one JSON value. */
@@ -168,12 +215,16 @@ function isEmptyOrJson(body) {
  * by documented page number and never by the `Link` header, so no request goes to a target that a
  * reply named. It returns a `gh`-shaped result whose stdout is the pages as one JSON array, as a
  * slurped read printed them. `field` names the list in an object reply (`check_runs`, `statuses`);
- * with `null`, each page is the list itself. For a reply with `total_count`, the read ends only when
- * the collected count equals it, and a count that changes between pages, a collected count above it,
- * and a short or empty page with the count unmet are errors. For a reply with no `total_count`, the
- * first page of fewer than `PAGE_SIZE` items ends the read, and an empty list page after the first is
- * not kept. The page cap is an error. A refusal carries `unreadable`, so the ruleset source reads as
- * unknown and the gate reads throw. `transient` is set on a failed result only when the failed
+ * with `null`, each page is the list itself. Every page that the read received is in the result, an
+ * empty page included, so a classifier sees the whole sequence. For a reply with `total_count`, the
+ * read ends only when the collected count equals it, and a count that changes between pages, a
+ * collected count above it, and a short or empty page with the count unmet are errors. For a reply
+ * with no `total_count`, the first page of fewer than `PAGE_SIZE` items ends the read. The page cap is
+ * an error. A `Link` header that names a host other than the request host is an error too: the read
+ * never requests that target, and it ends rather than return pages that a reply could have steered.
+ * A refusal about the shape of a reply carries `unreadable`, so the ruleset source reads as unknown
+ * and the gate reads throw; a foreign `Link` target is no `unreadable` refusal, so every read throws
+ * on it. `transient` is set on a failed result only when the failed
  * request's first-line status is 500, 502, 503, or 504 and its body is empty or JSON.
  * @param {Function} read one `gh` read, as `(args, cwd) => result`
  * @param {string} endpoint the endpoint with no query
@@ -200,6 +251,14 @@ async function readPages(read, endpoint, cwd, field) {
     if (reply === null || reply.status < 200 || reply.status > 299) {
       return refusal("the reply carries no 2xx HTTP status block");
     }
+    const foreign = foreignLink(reply.headers);
+    if (foreign !== null) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: `a Link header names a host other than the request host: ${foreign}`,
+      };
+    }
     let json;
     try {
       json = JSON.parse(reply.body);
@@ -215,10 +274,6 @@ async function readPages(read, endpoint, cwd, field) {
       return refusal("the total_count of the reply changed between pages");
     }
     const done = () => ({ status: 0, stdout: JSON.stringify(pages), stderr: "" });
-    if (total === null && page > 1 && Array.isArray(list) && items === 0) {
-      // The page after a full last page: the list ended on the page before.
-      return done();
-    }
     pages.push(json);
     collected += items;
     if (total === null) {
@@ -411,7 +466,7 @@ const MERGE_STATES = new Set([
  * @param {unknown} data the parsed body.
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
-function classifyRulesets(data) {
+export function classifyRulesets(data) {
   // `--slurp` wraps every page in an outer array, so a complete read is an array
   // of arrays. A body that is not that shape, or that holds a page which is not an
   // array, is a read the gate cannot account for every page of, so it settles

@@ -1,14 +1,36 @@
 // Requirement (#1033): the gate reads and the ruleset read page by documented page number, one
-// `gh api` request per page, and never follow a reply-supplied `Link` URL. A read that the runtime
-// cannot account for page by page is an error, never a pass.
+// `gh api` request per page, and never follow a reply-supplied `Link` URL. A `Link` target on a host
+// other than the request host ends the read with an error, and a read that the runtime cannot account
+// for page by page is an error or an unknown source, never a pass.
 import assert from "node:assert/strict";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { checkRuns, commitStatuses } from "../../src/lib/ci-gate.mjs";
-import { ABSENT, UNKNOWN, requiredContexts } from "../../src/lib/ci-required-sources.mjs";
+import {
+  ABSENT,
+  UNKNOWN,
+  failureOf,
+  requiredContexts,
+} from "../../src/lib/ci-required-sources.mjs";
 import { SLUG } from "./ci-gate-helpers.mjs";
 
 const SHA = "1111111111111111111111111111111111111111";
 const LINK = 'Link: <https://other.example/repos/x/y/check-runs?page=2>; rel="next"\r\n';
+const SAME_HOST_LINK =
+  'Link: <https://api.github.com/repositories/1/commits/x/check-runs?per_page=100&page=2>; rel="next"\r\n';
+
+// The request host comes from `GH_HOST`, so each test pins it to the default.
+let savedHost;
+beforeEach(() => {
+  savedHost = process.env.GH_HOST;
+  delete process.env.GH_HOST;
+});
+afterEach(() => {
+  if (savedHost === undefined) {
+    delete process.env.GH_HOST;
+  } else {
+    process.env.GH_HOST = savedHost;
+  }
+});
 
 /** One `gh api --include` stdout: the status block of one request, then one JSON body. */
 const reply = (body, { status = 200, headers = "" } = {}) => ({
@@ -83,26 +105,77 @@ describe("gate reads and the ruleset read page by page number", () => {
     expectBoundedCalls(calls, STATUS, 2);
   });
 
-  // Verifies the credential rule: a `Link` URL on another host is never requested, because the
-  // runtime sends no request that the reply named.
-  it("never requests the target that a reply Link header names", async () => {
+  // Verifies that a `Link` URL on the request host is never requested either: the runtime sends no
+  // request that the reply named.
+  it("never requests the target that a same-host Link header names", async () => {
     const { gh, calls } = serve({
-      [page(RUNS, 1)]: reply({ total_count: 1, check_runs: runs(1) }, { headers: LINK }),
+      [page(RUNS, 1)]: reply({ total_count: 1, check_runs: runs(1) }, { headers: SAME_HOST_LINK }),
     });
     const read = await checkRuns(gh, SLUG, SHA, ".", true);
     assert.equal(read.length, 1);
     expectBoundedCalls(calls, RUNS, 1);
   });
 
+  // Verifies acceptance item 2: a `Link` target on a host other than the request host ends the read
+  // with an error, never a pass, and the target is never requested.
+  it.each([
+    ["a next link", LINK],
+    ["a lower-case header name", LINK.replace("Link:", "link:")],
+    [
+      "a last link beside a same-host next link",
+      `${SAME_HOST_LINK}Link: <https://other.example/x?page=9>; rel="last"\r\n`,
+    ],
+    [
+      "one header that lists both hosts",
+      'Link: <https://api.github.com/x?page=2>; rel="next", <https://other.example/x?page=9>; rel="last"\r\n',
+    ],
+    [
+      "a host that only starts like the request host",
+      'Link: <https://api.github.com.evil.example/x>; rel="next"\r\n',
+    ],
+    ["a link that is not a URL", 'Link: <http://>; rel="next"\r\n'],
+  ])("ends the check-run read in an error for %s on another host", async (_name, headers) => {
+    const { gh, calls } = serve({
+      [page(RUNS, 1)]: reply({ total_count: 1, check_runs: runs(1) }, { headers }),
+    });
+    await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
+    expectBoundedCalls(calls, RUNS, 1);
+  });
+
+  it("ends the commit-status read in an error for a Link header on another host", async () => {
+    const { gh } = serve({
+      [page(STATUS, 1)]: reply({ total_count: 1, statuses: statuses(1) }, { headers: LINK }),
+    });
+    await expect(commitStatuses(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
+  });
+
+  // Verifies the host comes from `GH_HOST`, so an enterprise host is not refused for naming itself.
+  it("accepts a Link header that names the GH_HOST host", async () => {
+    process.env.GH_HOST = "ghe.example.com";
+    const { gh } = serve({
+      [page(RUNS, 1)]: reply(
+        { total_count: 1, check_runs: runs(1) },
+        { headers: 'Link: <https://ghe.example.com/api/v3/x?page=2>; rel="next"\r\n' },
+      ),
+    });
+    assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
+  });
+
   // Verifies that a count the pages cannot meet, because the Link-named next page would be needed,
   // ends the read with an error and not a pass.
   it("ends a read in an error when a page ends before the total_count", async () => {
     const { gh, calls } = serve({
-      [page(RUNS, 1)]: reply({ total_count: 150, check_runs: runs(100) }, { headers: LINK }),
-      [page(RUNS, 2)]: reply({ total_count: 150, check_runs: runs(10, 100) }, { headers: LINK }),
+      [page(RUNS, 1)]: reply(
+        { total_count: 150, check_runs: runs(100) },
+        { headers: SAME_HOST_LINK },
+      ),
+      [page(RUNS, 2)]: reply(
+        { total_count: 150, check_runs: runs(10, 100) },
+        { headers: SAME_HOST_LINK },
+      ),
     });
     await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/total_count/);
-    assert.ok(calls.every((call) => !call.includes("other.example")));
+    expectBoundedCalls(calls, RUNS, 2);
   });
 
   // Verifies fail-closed handling of a reply that is not one 2xx exchange.
@@ -140,7 +213,7 @@ describe("gate reads and the ruleset read page by page number", () => {
   it("finds a required check on a later page of the ruleset read", async () => {
     const seen = [];
     const gh = source(seen, {
-      [page(RULES, 1)]: reply(Array(100).fill(OTHER), { headers: LINK }),
+      [page(RULES, 1)]: reply(Array(100).fill(OTHER), { headers: SAME_HOST_LINK }),
       [page(RULES, 2)]: reply(
         ruleset({ required_status_checks: [{ context: "ci (ubuntu-latest)" }] }),
       ),
@@ -157,13 +230,47 @@ describe("gate reads and the ruleset read page by page number", () => {
     );
   });
 
-  // Verifies that a full first page then an empty page still reads as the complete rule list.
-  it("accepts a ruleset whose last page is empty after a full page", async () => {
+  // Verifies that a Link header on another host ends the ruleset read with an error, not with an
+  // unknown source and not with a pass, and that the target is never requested.
+  it("ends the ruleset read in an error for a Link header on another host", async () => {
+    const seen = [];
+    const gh = source(seen, {
+      [page(RULES, 1)]: reply(Array(100).fill(OTHER), { headers: LINK }),
+      [page(RULES, 2)]: reply([]),
+    });
+    await expect(
+      requiredContexts(gh, SLUG, "main", 42, ".").catch((err) => {
+        throw failureOf(err);
+      }),
+    ).rejects.toThrow(/Link/);
+    expectBoundedCalls(
+      seen[0].filter((call) => call.includes("/rules/")),
+      RULES,
+      1,
+    );
+  });
+
+  // Verifies ADR 0012 is unchanged: the pager hands the classifier every page it received, so a
+  // full page then an empty page is the sequence the classifier calls unknown, not an absence.
+  it("reads a full ruleset page then an empty page as an unknown source", async () => {
     const seen = [];
     const gh = source(seen, {
       [page(RULES, 1)]: reply(Array(100).fill(OTHER)),
       [page(RULES, 2)]: reply([]),
     });
+    const found = await requiredContexts(gh, SLUG, "main", 42, ".");
+    assert.equal(found.rulesetState, UNKNOWN);
+    assert.deepEqual(found.unknown, ["repository rulesets"]);
+    expectBoundedCalls(
+      seen[0].filter((call) => call.includes("/rules/")),
+      RULES,
+      2,
+    );
+  });
+
+  // Verifies a short first page still reads as the complete list and as an absence.
+  it("reads a short ruleset page with no required rule as an absence", async () => {
+    const gh = source([], { [page(RULES, 1)]: reply([OTHER]) });
     const found = await requiredContexts(gh, SLUG, "main", 42, ".");
     assert.equal(found.rulesetState, ABSENT);
   });

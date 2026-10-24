@@ -1523,3 +1523,20 @@ test("waitChecks in all mode does not match an expected name to a commit status"
   expect(result.timedOut).toBe(true);
   expect(result.awaiting).toEqual(["deploy"]);
 });
+
+// Usefulness: verifies the wait shares the gate's Link rule (#1033): a page whose `Link` header names
+// a host other than the request host ends the wait with an error, never a pass or a retry, in both
+// modes, and the named target is never requested.
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode ends in an error on a Link header for another host", async (_mode, all) => {
+  const page = {
+    total_count: 1,
+    check_runs: [runEntry(1, "ci", "success", 0)],
+  };
+  const stdout = `HTTP/2.0 200 OK\r\nLink: <https://other.example/x?page=2>; rel="next"\r\n\r\n${JSON.stringify(page)}`;
+  const { gh, requests } = pagedCheckRunsGh([stdout], { all });
+  await expect(waitOn(gh, all)).rejects.toThrow(/Link header names a host other than/);
+  expect(requests).toEqual([1]);
+});
