@@ -35,126 +35,80 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 const POLL_INTERVAL_MS = 15_000;
 
 // The reply statuses of a failed commit read that the wait retries on the next poll (#1025). The
-// status is the one of the final exchange in the stdout that `gh api --include` wrote for the
-// failing reply, never a number in the error text of `gh`, which carries server-supplied text.
+// status is the one on the first line of the stdout that `gh api --include` wrote for that one
+// request, never a number in the error text of `gh`, which carries server-supplied text.
 const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 
-// A status line, header lines, and the blank line that ends them, as `gh api --include` writes them.
-const STATUS_BLOCK = /HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n(?:[^\r\n:]+:[^\r\n]*\r?\n)*\r?\n/y;
-const JSON_SCALAR = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/y;
+// The status line, header lines, and blank line that open the stdout of one `gh api --include`
+// request. Body bytes can only follow them, so they never form a status block of their own.
+const STATUS_BLOCK = /^HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n(?:[^\r\n:]+:[^\r\n]*\r?\n)*\r?\n/;
 
-/** The end of the JSON value that starts at `start`, or -1 when none starts there. */
-function jsonValueEnd(text, start) {
-  const first = text[start];
-  if (first === "{" || first === "[" || first === '"') {
-    let depth = 0;
-    let inString = false;
-    for (let i = start; i < text.length; i += 1) {
-      const char = text[i];
-      if (inString) {
-        if (char === "\\") {
-          i += 1;
-        } else if (char === '"') {
-          inString = false;
-          if (depth === 0) {
-            return i + 1;
-          }
-        }
-      } else if (char === '"') {
-        inString = true;
-      } else if (char === "{" || char === "[") {
-        depth += 1;
-      } else if ((char === "}" || char === "]") && (depth -= 1) === 0) {
-        return i + 1;
-      }
-    }
-    return -1;
+// Items per page, and the most pages one read takes: 10,000 items, far above any one commit.
+const PAGE_SIZE = 100;
+const MAX_PAGES = 100;
+
+/** The status and body of the one reply in a `gh api --include` stdout, or null with no status block. */
+function parseReply(stdout) {
+  const block = STATUS_BLOCK.exec(stdout);
+  return block ? { status: Number(block[1]), body: stdout.slice(block[0].length) } : null;
+}
+
+/** Whether `body` is empty or exactly one JSON value. */
+function isEmptyOrJson(body) {
+  if (body.trim() === "") {
+    return true;
   }
-  JSON_SCALAR.lastIndex = start;
-  const scalar = JSON_SCALAR.exec(text);
-  return scalar ? start + scalar[0].length : -1;
+  try {
+    JSON.parse(body);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
- * The exchanges of a `gh api --include` stdout, from its start: each is a status block and a body
- * that is empty or exactly one JSON value, `{ status, json }` with `json` undefined for an empty
- * body, and only whitespace lies between exchanges. `--paginate` writes one exchange per page. An
- * exchange with no body may be followed by another only when its status is 1xx or 2xx, an interim
- * or proxy block, so text in a 4xx or 5xx body can never form a block of its own. Returns null when
- * any byte does not fit this structure, so a reply the wait cannot read is never trusted.
+ * Reads every page of the list endpoint `endpoint` with one `gh api --include` request per page,
+ * by page number and never by the `Link` header, and returns a `gh`-shaped result whose stdout is
+ * the pages as one JSON array, as the slurped read printed them. The read stops when the collected
+ * count reaches `total_count`, or, for a reply with no `total_count`, at the first page of fewer
+ * than `PAGE_SIZE` items, or at the page cap, which is an error. `retryable` is true only when the
+ * failed request's first-line status is 500, 502, 503, or 504 and its body is empty or JSON.
+ * @param {Function} read one bounded `gh` read
  */
-function parseExchanges(stdout) {
-  const exchanges = [];
-  let pos = 0;
-  for (;;) {
-    while (pos < stdout.length && /\s/.test(stdout[pos])) {
-      pos += 1;
+async function readPages(read, endpoint, cwd) {
+  const field = endpoint.endsWith("/check-runs") ? "check_runs" : "statuses";
+  const refusal = (stderr) => ({ result: { status: 1, stdout: "", stderr }, retryable: false });
+  const pages = [];
+  let collected = 0;
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const result = await read(
+      ["api", `${endpoint}?per_page=${PAGE_SIZE}&page=${page}`, "--include"],
+      cwd,
+    );
+    const reply = parseReply(result.stdout);
+    if (result.status !== 0) {
+      const retryable =
+        reply !== null && RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
+      return { result, retryable };
     }
-    if (pos >= stdout.length) {
-      return exchanges.length > 0 ? exchanges : null;
-    }
-    STATUS_BLOCK.lastIndex = pos;
-    const block = STATUS_BLOCK.exec(stdout);
-    if (!block) {
-      return null;
-    }
-    const status = Number(block[1]);
-    pos += block[0].length;
-    while (pos < stdout.length && /\s/.test(stdout[pos])) {
-      pos += 1;
-    }
-    if (pos >= stdout.length || stdout.startsWith("HTTP/", pos)) {
-      if (pos < stdout.length && status >= 300) {
-        return null;
-      }
-      exchanges.push({ status, json: undefined });
-      continue;
-    }
-    const end = jsonValueEnd(stdout, pos);
-    if (end < 0) {
-      return null;
+    if (reply === null || reply.status < 200 || reply.status > 299) {
+      return refusal("the reply carries no 2xx HTTP status block");
     }
     let json;
     try {
-      json = { value: JSON.parse(stdout.slice(pos, end)) };
+      json = JSON.parse(reply.body);
     } catch {
-      return null;
+      return refusal("the reply body is not exactly one JSON value");
     }
-    exchanges.push({ status, json: json.value });
-    pos = end;
-  }
-}
-
-/** The status of the final exchange of a `gh api --include` stdout, or null when it does not parse. */
-function replyStatus(stdout) {
-  return parseExchanges(stdout)?.at(-1).status ?? null;
-}
-
-/**
- * The pages of a successful `gh api --paginate --include` stdout as the JSON array that the
- * slurped read prints. Throws when stdout does not parse, when the final exchange is not a 2xx
- * with a body, or when an exchange is neither interim nor 2xx, so a read that cannot be joined is
- * an error and never an empty list.
- */
-function joinPages(stdout) {
-  const exchanges = parseExchanges(stdout);
-  if (exchanges === null) {
-    throw new Error("the reply is not a sequence of HTTP status blocks and JSON bodies");
-  }
-  const last = exchanges.at(-1);
-  if (last.status < 200 || last.status > 299 || last.json === undefined) {
-    throw new Error(`the final reply carries a status of ${last.status} or no JSON body`);
-  }
-  const pages = [];
-  for (const exchange of exchanges) {
-    if (exchange.status >= 300) {
-      throw new Error(`the reply carries a status block of ${exchange.status}`);
-    }
-    if (exchange.status >= 200 && exchange.json !== undefined) {
-      pages.push(exchange.json);
+    pages.push(json);
+    const items = Array.isArray(json?.[field]) ? json[field].length : 0;
+    collected += items;
+    const total = Number.isInteger(json?.total_count) ? json.total_count : null;
+    if (items === 0 || (total === null ? items < PAGE_SIZE : collected >= total)) {
+      return { result: { status: 0, stdout: JSON.stringify(pages), stderr: "" }, retryable: false };
     }
   }
-  return JSON.stringify(pages);
+  return refusal(`the read has more than ${MAX_PAGES} pages`);
 }
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
@@ -630,28 +584,21 @@ export async function waitChecks({
       }
     }
   };
-  // The commit reads are the gate's paginated `gh api` reads, run with `--include` instead of
-  // `--slurp`, so pagination is `gh`'s own, as in the gate, and the failing request itself reports
-  // its status: `gh` writes the status block of the failing reply to stdout before it exits
-  // non-zero. A failed read is marked `transient`, and the wait retries it on the next poll, only
-  // when the final status block is 500, 502, 503, or 504. Every other failure ends the wait: any
-  // other status, a 4xx whatever its body or message says, a failure with no status block, and a
-  // reply that cannot be joined or parsed. The pages of a successful read are joined into the
-  // array that the slurped read printed.
+  // The commit reads use the endpoints of the gate's reads, one `gh api --include` request per page
+  // with no `--paginate`, so each `gh` output holds exactly one exchange, `gh` writes the status
+  // line of that request first, and body bytes can only follow it. The paging is the wait's own, by
+  // page number, and it never follows the `Link` header (see `readPages`). A failed read is marked
+  // `transient`, and the wait retries it on the next poll, only when its first-line status is 500,
+  // 502, 503, or 504 and its body is empty or one JSON value. Every other failure ends the wait: any
+  // other status, a 4xx whatever its body says, a failure with no status block, and a reply whose
+  // body is not exactly one JSON value.
   const readCommit = async (sha) => {
     await ensureSlug();
     let serverError = false;
-    const read = async (argv, cwdArg) => {
-      const result = await bounded(
-        [...argv.filter((arg) => arg !== "--slurp"), "--include"],
-        cwdArg,
-      );
-      serverError = false;
-      if (result.status !== 0) {
-        serverError = RETRYABLE_STATUSES.has(replyStatus(result.stdout));
-        return result;
-      }
-      return { ...result, stdout: joinPages(result.stdout) };
+    const read = async ([, endpoint], cwdArg) => {
+      const { result, retryable } = await readPages(bounded, endpoint, cwdArg);
+      serverError = retryable;
+      return result;
     };
     try {
       const runs = await checkRuns(read, slug, sha, cwd, true);

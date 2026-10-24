@@ -522,7 +522,7 @@ export function scriptedGh(
         timedOut: false,
       };
     }
-    const api = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/(check-runs|status)$/.exec(
+    const api = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/(check-runs|status)(?:\?.*)?$/.exec(
       args[0] === "api" ? args[1] : "",
     );
     if (api) {

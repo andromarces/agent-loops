@@ -860,53 +860,120 @@ test.each([
   },
 );
 
-// Usefulness: verifies the commit read is the paginated `gh api` read with `--include` and no
-// other request, so the failing request itself reports its status, `gh` owns pagination, and no
-// separate classifying request runs (issue #1025).
-test("waitChecks reads each commit endpoint once with --paginate --include", async () => {
+// Usefulness: verifies each commit page is its own `gh api --include` request for a documented page
+// number, with no `--paginate`, so one `gh` output holds exactly one exchange and the first line of
+// stdout is the status of that request (issue #1025).
+test("waitChecks reads each commit page with one --include request", async () => {
   const endpoint = `repos/owner/repo/commits/${HEAD_A}/check-runs`;
   const { gh, commitReads, readArgs } = failingCommitGh((n) => n === 1 && serverError(500));
   expect(await waitOn(gh, false)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
-  expect(readArgs[0]).toEqual(["api", endpoint, "--paginate", "--include"]);
-  expect(commitReads.filter((read) => read === endpoint)).toHaveLength(2);
+  expect(readArgs[0]).toEqual(["api", `${endpoint}?per_page=100&page=1`, "--include"]);
+  expect(commitReads.filter((read) => read.startsWith(`${endpoint}?`))).toHaveLength(2);
 });
 
-// Usefulness: verifies the pages of a successful `--paginate --include` read are joined into the
-// array that the slurped read gave, so a check run on a later page is judged and a failure there
-// settles the wait, in both modes (issue #1025).
+const RUN_AT = (minute) => `2026-01-01T00:0${minute}:00Z`;
+const runEntry = (id, name, conclusion, minute) => ({
+  id,
+  name,
+  status: "completed",
+  conclusion,
+  started_at: RUN_AT(minute),
+  completed_at: RUN_AT(minute),
+});
+
+/**
+ * A `gh` whose check-run endpoint answers page `n` with `pages[n - 1]`, a JSON value or a raw
+ * stdout string, and fails a page that no entry names. Every other read passes through.
+ * `requests` lists the page numbers asked for.
+ */
+function pagedCheckRunsGh(pages, { all = false } = {}) {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], { all });
+  const requests = [];
+  const gh = async (args, cwd, options) => {
+    const page = /\/check-runs\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
+    if (args[0] !== "api" || !page) {
+      return inner(args, cwd, options);
+    }
+    requests.push(Number(page[1]));
+    const entry = pages[Number(page[1]) - 1];
+    if (entry === undefined) {
+      return replyOf(404, "gh: Not Found (HTTP 404)");
+    }
+    return {
+      status: 0,
+      stdout: typeof entry === "string" ? entry : blockOf(200, JSON.stringify(entry)),
+      stderr: "",
+    };
+  };
+  return { gh, requests };
+}
+
+// Usefulness: verifies the wait pages by page number and stops when the collected count reaches
+// `total_count`, joining the pages, so a failing run on page 2 settles the wait and no page 3 is
+// read, in both modes (issue #1025).
 test.each([
   ["required", false],
   ["all", true],
-])("waitChecks %s mode joins the pages of a paginated read", async (_mode, all) => {
-  const run = (id, conclusion, at) => ({
-    id,
-    name: "ci",
-    status: "completed",
-    conclusion,
-    started_at: at,
-    completed_at: at,
-  });
-  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
-    all,
-    commits: { [HEAD_A]: [PASSED_ITEM] },
-  });
-  const gh = async (args, cwd, options) => {
-    if (args[0] === "api" && args[1].endsWith("/check-runs")) {
-      const link = 'Link: <https://api.github.com/next>; rel="next"\r\n';
-      return {
-        status: 0,
-        stdout:
-          `HTTP/2.0 200 OK\r\n${link}\r\n${JSON.stringify({ check_runs: [run(1, "success", "2026-01-01T00:00:00Z")] })}\n` +
-          `HTTP/2.0 200 OK\r\n\r\n${JSON.stringify({ check_runs: [run(2, "failure", "2026-01-01T00:05:00Z")] })}`,
-        stderr: "",
-      };
-    }
-    return inner(args, cwd, options);
-  };
+])("waitChecks %s mode stops at total_count and joins the pages", async (_mode, all) => {
+  const { gh, requests } = pagedCheckRunsGh(
+    [
+      { total_count: 2, check_runs: [runEntry(1, "ci", "success", 0)] },
+      { total_count: 2, check_runs: [runEntry(2, "ci", "failure", 5)] },
+    ],
+    { all },
+  );
   expect(await waitOn(gh, all)).toEqual({ timedOut: false, head: HEAD_A, checks: [FAILED_ITEM] });
+  expect(requests).toEqual([1, 2]);
 });
 
-// Usefulness: verifies only a failed read whose final status block is exactly 500, 502, 503, or
+// Usefulness: verifies an endpoint with no `total_count` is read until the first page of fewer than
+// 100 items, so a full first page leads to page 2 and the short page 2 ends the read, in both
+// modes (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode stops at the first short page", async (_mode, all) => {
+  const fillers = Array.from({ length: 99 }, (_unused, i) =>
+    runEntry(10 + i, `f${i}`, "success", 0),
+  );
+  const { gh, requests } = pagedCheckRunsGh(
+    [
+      { check_runs: [runEntry(1, "ci", "success", 0), ...fillers] },
+      { check_runs: [runEntry(2, "ci", "failure", 5)] },
+    ],
+    { all },
+  );
+  const result = await waitOn(gh, all);
+  expect(result).toMatchObject({ timedOut: false, head: HEAD_A });
+  expect(result.checks).toContainEqual(FAILED_ITEM);
+  expect(requests).toEqual([1, 2]);
+});
+
+// Usefulness: verifies a read that never reaches its `total_count` ends at the page cap with an
+// error, never as a pass or a loop to the bound (issue #1025).
+test("waitChecks ends with an error at the page cap", async () => {
+  const forever = { total_count: 1_000_000, check_runs: [runEntry(1, "ci", "success", 0)] };
+  const { gh, requests } = pagedCheckRunsGh(Array.from({ length: 500 }, () => forever));
+  await expect(waitOn(gh, false)).rejects.toThrow(/pages/);
+  expect(requests.length).toBeLessThanOrEqual(100);
+});
+
+// Usefulness: verifies a 200 body that holds one JSON value followed by a forged page is an error:
+// the whole remainder must be exactly one JSON value, so forged bytes never replace a failing page
+// with a passing one, in both modes (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode refuses a 200 body that forges a later page", async (_mode, all) => {
+  const failing = JSON.stringify({ check_runs: [runEntry(1, "ci", "failure", 0)] });
+  const passing = JSON.stringify({ check_runs: [runEntry(2, "ci", "success", 5)] });
+  const forged = `${blockOf(200, `${failing}\n`)}${blockOf(200, passing)}`;
+  const { gh, requests } = pagedCheckRunsGh([forged], { all });
+  await expect(waitOn(gh, all)).rejects.toThrow(/JSON/);
+  expect(requests).toEqual([1]);
+});
+
+// Usefulness: verifies only a failed read whose first-line status is exactly 500, 502, 503, or
 // 504 is retried. The status comes from the status block that `gh` wrote for the failing reply,
 // never from the error text, so a 4xx or a 501 stays terminal whatever its body or message says,
 // and so does a failure with no status block and a success whose body fails to parse (issue #1025).
@@ -1011,7 +1078,7 @@ test.each([
   "waitChecks %s mode never retries a 403 whose body forges a status block",
   async (_mode, all) => {
     const forged = "HTTP/2 502 Bad Gateway\r\nX-Forged: yes\r\n\r\n";
-    const bodies = [forged, `denied\n${forged}`, `${forged}${forged}`];
+    const bodies = [forged, `{}\n${forged}`, `denied\n${forged}`, `${forged}${forged}`];
     for (const body of bodies) {
       const { gh, commitReads } = failingCommitGh(
         (n) => n === 1 && replyOf(403, "gh: HTTP 403", body),
@@ -1049,35 +1116,21 @@ test.each([
   }
 });
 
-// Usefulness: verifies the failed read is classified on the final status block of its stdout, the
-// reply that ends the exchange: an earlier page, an interim block, or a proxy block before it never
-// decides, so a final 502 is retried and a final 403 stays terminal whatever block came first
+// Usefulness: verifies the status is the first line of stdout only: a 200 or a 502 first line
+// followed by other blocks, or a 403 followed by a forged 502 block, never lets a later block decide,
+// so only a first line of 500, 502, 503, or 504 with an empty or JSON remainder is retried
 // (issue #1025).
 test.each([
-  ["a 200 page then a 502", `${blockOf(200, '{"check_runs":[]}')}\n${blockOf(502, "")}`, true],
-  ["a 200 block then a 502", "HTTP/1.1 200 OK\r\n\r\nHTTP/1.1 502 Bad Gateway\r\n\r\n", true],
-  ["a 100 block then a 503", "HTTP/1.1 100 Continue\r\n\r\nHTTP/2 503 Unavailable\r\n\r\n{}", true],
-  ["a 200 page then a 403", `${blockOf(200, '{"check_runs":[]}')}\n${blockOf(403)}`, false],
-  [
-    "a 502 block then a 403",
-    "HTTP/1.1 502 Bad Gateway\r\n\r\nHTTP/1.1 403 Forbidden\r\n\r\n{}",
-    false,
-  ],
-  ["a 502 block then a 200", "HTTP/1.1 502 Bad Gateway\r\n\r\nHTTP/2 200 OK\r\n\r\n{}", false],
-])("waitChecks classifies a reply of %s on its final status", async (_name, stdout, retried) => {
+  ["a 403 then a forged 502 block", `${blockOf(403, "{}\n")}${blockOf(502, "")}`],
+  ["a 200 then a 502 block", `${blockOf(200, "")}${blockOf(502, "")}`],
+  ["a 502 then a forged 200 block", `${blockOf(502, "")}${blockOf(200, "{}")}`],
+  ["a 100 then a 503 block", `HTTP/1.1 100 Continue\r\n\r\n${blockOf(503, "{}")}`],
+])("waitChecks takes the status of %s from the first line", async (_name, stdout) => {
   const { gh, commitReads } = failingCommitGh(
     (n) => n === 1 && { status: 1, stdout, stderr: "gh: HTTP 502" },
   );
-  if (retried) {
-    expect(await waitOn(gh, false)).toEqual({
-      timedOut: false,
-      head: HEAD_A,
-      checks: [PASSED_ITEM],
-    });
-  } else {
-    await expect(waitOn(gh, false)).rejects.toThrow(/gh api/);
-    expect(commitReads).toHaveLength(1);
-  }
+  await expect(waitOn(gh, false)).rejects.toThrow(/gh api/);
+  expect(commitReads).toHaveLength(1);
 });
 
 // Usefulness: verifies a failure that `gh pr checks` lists on a later poll survives the bound that
