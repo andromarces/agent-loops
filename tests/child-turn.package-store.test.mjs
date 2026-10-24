@@ -174,9 +174,9 @@ test("a reviewer turn that fails after a cancel ends as a cancel", async () => {
   expect(error).toMatchObject({ isCanceled: true });
 });
 
-// Usefulness: verifies requirement "a wrong root never produces a report" (issue #1045): with no
-// environment variable that sets another store, the store is the one that pnpm recorded as
-// `storeDir` in the `node_modules/.modules.yaml` of the work tree, and any other case gives no field.
+// Usefulness: verifies the narrowed contract (issue #1045): the field names changes in the store
+// that the `node_modules/.modules.yaml` of the work tree records as `storeDir`, and any other
+// case gives no field. It never claims that the reviewer's install used that store.
 describe("the store that the work tree recorded", () => {
   const installed = async () => {
     await install();
@@ -195,22 +195,14 @@ describe("the store that the work tree recorded", () => {
     expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
   });
 
-  // pnpm 12 reads `pnpm_config_*` and ignores `npm_config_*` (pnpm docs, configuring.md).
-  test("ignores npm_config_store_dir, which pnpm 12 does not read", async () => {
-    vi.stubEnv("npm_config_store_dir", join(store, "elsewhere"));
-    const result = await turn("reviewer", installed);
-    expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
-  });
-
-  test("gives no field when pnpm_config_store_dir names another store", async () => {
+  // Usefulness: verifies the field does not predict the store of a later install: an environment
+  // variable that selects another store changes nothing, because the field only reports changes
+  // in the recorded store, whoever made them.
+  test("is read whatever the environment selects for a later install", async () => {
     vi.stubEnv("pnpm_config_store_dir", join(store, "elsewhere"));
-    const result = await turn("reviewer", installed);
-    expect(result.status).toBe("ok");
-    expect(result).not.toHaveProperty("packageStoreEntries");
-  });
-
-  test("is read when pnpm_config_store_dir names the recorded store", async () => {
-    vi.stubEnv("pnpm_config_store_dir", store);
+    vi.stubEnv("PNPM_HOME", join(store, "elsewhere"));
+    vi.stubEnv("XDG_DATA_HOME", join(store, "elsewhere"));
+    vi.stubEnv("XDG_CONFIG_HOME", join(store, "elsewhere"));
     const result = await turn("reviewer", installed);
     expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
   });

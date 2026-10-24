@@ -307,30 +307,28 @@ Apply these parent rules:
   one whose before-read failed. A run that the next call marks `interrupted` after such an end
   has none. Report it in the finish summary under `open`, and do not treat it as a reason to
   reject (issue #1024).
-- A reviewer envelope carries `packageStoreEntries` only when entries changed in the pnpm package
-  store during the turn, such as an install that wrote to it, which the mutation check cannot see.
-  The field names the entries, relative to the store root, such as `v11/projects/<hash>`,
-  `v11/links/<package>`, or `v11/index.db`, redacted like the test command output (ADR 0017), and
-  never their content, at most 20. It is advisory: the store is shared with other processes, so
-  the runtime cannot attribute a change to the turn, and it does not revert one. The runtime reads
-  names, sizes, and times only, never file content, within 5 seconds and 10,000 entries per
-  directory, the store root included, and the read stops at that bound: no file system call starts
-  after it. A store that it cannot read within the bound carries no field. The store is the one
-  that pnpm recorded as `storeDir` in `node_modules/.modules.yaml` of the work tree on install,
-  read up to 1 MiB. A file that is missing, unreadable, longer than that, or without a store, and
-  a store path that is not absolute, carries no field: the runtime guesses no default store. The
-  field is also absent when `pnpm_config_store_dir`, the variable that pnpm 12 reads, names another
-  store than the recorded one, because a later install then reinstalls into that store. The
-  ignored `npm_config_store_dir` is not read. The two reads of a turn must see the same root, or
-  the turn carries no field. A work tree that never ran an install, and a `--store-dir` flag that
-  only a probe command passes, are not seen. The read has
-  its own bound and takes no turn signal. Every reviewer turn that read the store before it
-  started
-  carries the field: an ok turn, a handled error, a turn that a mutation or a snapshot error
-  halted, and a canceled turn. The `role dispatch` envelope and the state file `lastResult` carry
-  it for a halted or interrupted dispatch, and a headless run emits a `package-store` event with
-  `fatal: true` for a fatal error. Report `packageStoreEntries` in the finish summary under `open`,
-  and do not treat it as a reason to reject (issue #1045).
+- A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
+  the pnpm package store that `node_modules/.modules.yaml` of the work tree records as `storeDir`.
+  The field means that store changed, whoever changed it. It never claims that the reviewer's
+  install used that store: an install into another store, or into a store that config or the
+  environment selects (`pnpm_config_store_dir`, `PNPM_HOME`, `XDG_DATA_HOME`, a config file, or a
+  `--store-dir` flag), gives no field, and so does a work tree that never ran an install. The
+  field names the entries, relative to the parent of the recorded `storeDir`, such as
+  `v11/projects/<hash>`, `v11/links/<package>`, or `v11/index.db`, redacted like the test command
+  output (ADR 0017), and never their content, at most 20. It is advisory: the store is shared with
+  other processes, so the runtime cannot attribute a change to the turn, and it does not revert
+  one. The runtime reads names, sizes, and times only, never file content, within 5 seconds and
+  10,000 entries per directory, the store root included, and the read stops at that bound: no file
+  system call starts after it. A store that it cannot read within the bound carries no field. The
+  recorded file is read up to 1 MiB. A file that is missing, unreadable, longer than that, or
+  without a store, and a store path that is not absolute, carries no field. The two reads of a
+  turn must see the same root, or the turn carries no field. The read has its own bound and takes
+  no turn signal. Every reviewer turn that read the store before it started carries the field: an
+  ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a canceled
+  turn. The `role dispatch` envelope and the state file `lastResult` carry it for a halted or
+  interrupted dispatch, and a headless run emits a `package-store` event with `fatal: true` for a
+  fatal error. Report `packageStoreEntries` in the finish summary under `open`, and do not treat
+  it as a reason to reject (issue #1045).
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.

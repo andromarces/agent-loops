@@ -1,5 +1,5 @@
 import { open, opendir, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { logDebug, logWarn } from "./log.mjs";
 import { redactAndClean } from "./test-cmd.mjs";
@@ -22,10 +22,6 @@ const STORE_DIR_LINE = /^\s*["']?storeDir["']?\s*:\s*(.+?)\s*,?\s*$/m;
 
 // Lists carried by a fatal error that cannot take the property.
 const carriedEntries = new WeakMap();
-
-/** The value of an environment variable, matched by name without regard to case. */
-const envValue = (name) =>
-  Object.entries(process.env).find(([key]) => key.toLowerCase() === name)?.[1] || undefined;
 
 /**
  * Reads a file as text up to `MAX_CONFIG_BYTES`, or returns null when it is longer. A growing file
@@ -69,24 +65,18 @@ function recordedStoreDir(text) {
   return /^'.*'$/.test(value) ? value.slice(1, -1) : value;
 }
 
-/** The store root of a `storeDir` value, which names the version directory (`<root>/v11`). */
-const storeRootOf = (cwd, dir) => {
-  const path = resolve(cwd, dir);
-  const root = VERSION_DIR.test(basename(path)) ? dirname(path) : path;
-  return process.platform === "win32" ? root.toLowerCase() : root;
-};
-
 /**
- * Resolves the pnpm store root that the work tree uses, or null when it cannot be known. The root
- * is the `storeDir` that pnpm recorded in `node_modules/.modules.yaml` of the work tree on install,
- * read up to a byte cap. A missing, unreadable, oversized, or store-less file, or a path that is
- * not absolute, gives null: no guess at a default store. pnpm 12 reads `pnpm_config_store_dir` and
- * ignores `npm_config_store_dir`, and a later install with a changed store directory reinstalls
- * into it, so that variable, when set to another path than the recorded one, also gives null. A
- * wrong root must never produce a report.
+ * Resolves the root of the store that `node_modules/.modules.yaml` of the work tree records, or
+ * null when no store is recorded. The file is read up to a byte cap. The root is the parent of the
+ * recorded `storeDir`, which pnpm writes as the version directory (`<root>/v11`). A missing,
+ * unreadable, oversized, or store-less file, or a path that is not absolute, gives null.
+ *
+ * The runtime does not predict which store a later install uses: `pnpm_config_store_dir`,
+ * `PNPM_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, a config file, or a `--store-dir` flag can each
+ * select another one. The result only names the recorded store.
  */
-// known-limit: a work tree that never ran an install, or a `--store-dir` flag of a probe command,
-// has no recorded store, so a change in the store that a probe uses is not reported
+// known-limit: an install into a store other than the recorded one, or into a store that config or
+// the environment selects, is not seen, and a work tree that never ran an install records none
 async function packageStoreRoot(cwd, signal) {
   let dir = null;
   try {
@@ -96,10 +86,7 @@ async function packageStoreRoot(cwd, signal) {
     if (signal.aborted) throw err;
     return null;
   }
-  if (!dir || !isAbsolute(dir)) return null;
-  const configured = envValue("pnpm_config_store_dir") ?? envValue("pnpm_config_store-dir");
-  if (configured && storeRootOf(cwd, configured) !== storeRootOf(cwd, dir)) return null;
-  return VERSION_DIR.test(basename(dir)) ? dirname(dir) : dir;
+  return dir && isAbsolute(dir) ? dirname(dir) : null;
 }
 
 async function readNames(dir, scanLimit, signal) {
