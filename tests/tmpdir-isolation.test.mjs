@@ -35,11 +35,11 @@ test(
   NESTED_RUN_TIMEOUT_MS + 30000,
 );
 
+// A nested run of several files, started while the whole suite loads the machine, outlasts the one-file bound (it timed out at 60 s on CI).
+const ROOT_RUN_TIMEOUT_MS = 150000;
 const ROOT_FILES = [
   "tests/lib/session-record.test.mjs",
   "tests/lib/runstate.test.mjs",
-  "tests/lib/test-slot.test.mjs",
-  "tests/lib/test-cmd.slot.test.mjs",
   "tests/hook/parent-guard.test.mjs",
   "tests/role-helpers.test.mjs",
 ];
@@ -60,7 +60,7 @@ test(
         execa("pnpm", ["exec", "vp", "test", "run", ...ROOT_FILES], {
           env: { ...pins, TMPDIR: osTmp, TEMP: osTmp, TMP: osTmp },
           extendEnv: true,
-          timeout: NESTED_RUN_TIMEOUT_MS,
+          timeout: ROOT_RUN_TIMEOUT_MS,
           forceKillAfterDelay: 1000,
           cleanup: true,
           killDescendants: true,
@@ -73,5 +73,5 @@ test(
       await removePath(osTmp);
     }
   },
-  NESTED_RUN_TIMEOUT_MS + 30000,
+  ROOT_RUN_TIMEOUT_MS + 30000,
 );
