@@ -359,7 +359,7 @@ export async function runChild(options) {
   };
   /** Names that a reviewer turn changed in the pnpm package store, or [] when none or unread. */
   const readPackageStoreEntries = async () => {
-    const entries = await changedInPackageStore(storeBefore, { cwd, signal });
+    const entries = await changedInPackageStore(storeBefore, { cwd });
     if (entries.length > 0) {
       logWarn(`reviewer: package store entries changed: ${entries.length}`);
     }
@@ -385,7 +385,7 @@ export async function runChild(options) {
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
     sharedBefore = roleName === "worker" ? await readShared() : null;
     tmpdirBefore = roleName === "reviewer" ? await snapshotInheritedTmpdir() : null;
-    storeBefore = roleName === "reviewer" ? await snapshotPackageStore({ cwd, signal }) : null;
+    storeBefore = roleName === "reviewer" ? await snapshotPackageStore({ cwd }) : null;
     let response;
     try {
       response = readOnly

@@ -168,52 +168,108 @@ test("a reviewer turn that fails after a cancel ends as a cancel", async () => {
 });
 
 // Usefulness: verifies requirement "a wrong root never produces a report" (issue #1045): with no
-// `npm_config_store_dir`, the default store is the pnpm store only when no config file selects
-// another one.
-describe("the default store root", () => {
-  let home;
-  const defaultRoot = () =>
-    process.platform === "win32"
-      ? join(home, "AppData", "Local", "pnpm", "store")
-      : process.platform === "darwin"
-        ? join(home, "Library", "pnpm", "store")
-        : join(home, ".local", "share", "pnpm", "store");
-  beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), "package-store-home-"));
-    vi.stubEnv("npm_config_store_dir", undefined);
-    for (const name of ["HOME", "USERPROFILE"]) vi.stubEnv(name, home);
-    vi.stubEnv("LOCALAPPDATA", join(home, "AppData", "Local"));
-    vi.stubEnv("XDG_DATA_HOME", undefined);
-    vi.stubEnv("XDG_CONFIG_HOME", undefined);
-    await mkdir(join(defaultRoot(), "v11", "projects"), { recursive: true });
-  });
-  afterEach(() => removePath(home));
-
-  const installIntoDefault = async () => {
-    await mkdir(join(defaultRoot(), "v11", "projects", "hash1"));
+// `npm_config_store_dir`, the store is the one that pnpm recorded as `storeDir` in the
+// `node_modules/.modules.yaml` of the work tree, and any other case gives no field.
+describe("the store that the work tree recorded", () => {
+  const modulesFile = () => join(repo, "node_modules", ".modules.yaml");
+  const record = async (text) => {
+    await mkdir(join(repo, "node_modules"), { recursive: true });
+    await writeFile(modulesFile(), text);
+  };
+  const recordStore = (dir) => record(JSON.stringify({ storeDir: dir }, null, 2));
+  beforeEach(() => vi.stubEnv("npm_config_store_dir", undefined));
+  const installed = async () => {
+    await install();
     return "done";
   };
 
-  test("is read when no config file selects a store", async () => {
-    const result = await turn("reviewer", installIntoDefault);
-    expect(result.packageStoreEntries).toEqual(["v11/projects/hash1"]);
+  test("is read when the file names it", async () => {
+    await recordStore(join(store, "v11"));
+    const result = await turn("reviewer", installed);
+    expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
+  });
+
+  test("is read when the file is plain YAML", async () => {
+    await record(`layoutVersion: 5\nstoreDir: ${join(store, "v11")}\n`);
+    const result = await turn("reviewer", installed);
+    expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
+  });
+
+  test("gives way to npm_config_store_dir, which a later install uses", async () => {
+    await recordStore(join(store, "absent", "v11"));
+    vi.stubEnv("npm_config_store_dir", store);
+    const result = await turn("reviewer", installed);
+    expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
   });
 
   test.each([
-    [".npmrc", "store-dir=/elsewhere\n"],
-    ["pnpm-workspace.yaml", "storeDir: /elsewhere\n"],
-  ])("is not read when the work tree %s selects another store", async (file, text) => {
-    await writeFile(join(repo, file), text);
-    const result = await turn("reviewer", installIntoDefault);
+    ["is absent", async () => {}],
+    ["names no store", () => record('{ "layoutVersion": 5 }')],
+    ["names a relative store", () => record('{ "storeDir": "relative/store" }')],
+    [
+      "is a directory",
+      () => mkdir(join(repo, "node_modules", ".modules.yaml"), { recursive: true }),
+    ],
+    [
+      "is over the byte cap",
+      () => record(`{ "storeDir": ${JSON.stringify(join(store, "v11"))} }${" ".repeat(2 << 20)}`),
+    ],
+  ])("gives no field when the file %s", async (_name, arrange) => {
+    await arrange();
+    const result = await turn("reviewer", installed);
     expect(result.status).toBe("ok");
     expect(result).not.toHaveProperty("packageStoreEntries");
   });
 
-  test("is not read when the user .npmrc selects another store", async () => {
-    await writeFile(join(home, ".npmrc"), "store-dir=/elsewhere\n");
-    const result = await turn("reviewer", installIntoDefault);
-    expect(result).not.toHaveProperty("packageStoreEntries");
+  // Usefulness: verifies the reported case: an unused default store that changes during the turn
+  // gives no field when the work tree recorded another store.
+  test("gives no field for a change in an unused default store", async () => {
+    const home = await mkdtemp(join(tmpdir(), "package-store-home-"));
+    try {
+      for (const name of ["HOME", "USERPROFILE"]) vi.stubEnv(name, home);
+      vi.stubEnv("LOCALAPPDATA", join(home, "AppData", "Local"));
+      vi.stubEnv("XDG_DATA_HOME", undefined);
+      const unused = [
+        join(home, "AppData", "Local", "pnpm", "store"),
+        join(home, "Library", "pnpm", "store"),
+        join(home, ".local", "share", "pnpm", "store"),
+      ];
+      for (const root of unused) await mkdir(join(root, "v11", "projects"), { recursive: true });
+      await recordStore(join(store, "v11"));
+      const result = await turn("reviewer", async () => {
+        for (const root of unused) await mkdir(join(root, "v11", "projects", "hash9"));
+        return "done";
+      });
+      expect(result).not.toHaveProperty("packageStoreEntries");
+    } finally {
+      await removePath(home);
+    }
   });
+});
+
+// Usefulness: verifies requirement "the after-read runs on a cancel too, under its own bound"
+// (issue #1045): a canceled reviewer turn keeps the field, as `inheritedTmpdirEntries` does, even
+// though the turn signal is aborted.
+test("a canceled reviewer turn with an aborted signal still carries the entries", async () => {
+  const controller = new AbortController();
+  const error = await runChild({
+    agents: {
+      fake: scripted([
+        async () => {
+          await install();
+          controller.abort();
+          throw new ExecError("canceled", { isCanceled: true });
+        },
+      ]),
+    },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "go",
+    cwd: repo,
+    signal: controller.signal,
+  }).catch((err) => err);
+  expect(error).toMatchObject({ isCanceled: true });
+  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
 });
 
 // Usefulness: verifies the size bound covers the root directory too, because the root listing is

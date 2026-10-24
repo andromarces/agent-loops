@@ -314,12 +314,16 @@ Apply these parent rules:
   never their content, at most 20. It is advisory: the store is shared with other processes, so
   the runtime cannot attribute a change to the turn, and it does not revert one. The runtime reads
   names, sizes, and times only, never file content, within 5 seconds and 10,000 entries per
-  directory, the store root included, and the traversal stops at that bound. A store that it
-  cannot read within the bound carries no field. It uses `npm_config_store_dir` when set, else the
-  default of the platform, and only when no `.npmrc` or `pnpm-workspace.yaml` of the work tree or
-  a parent, no user or global npm or pnpm config file, sets a store, and the work tree is on the
-  device of the home directory. Any doubt about the root carries no field, so a `--store-dir`
-  flag that only a probe command passes is not seen. Every reviewer turn that read the store before it started
+  directory, the store root included, and the read stops at that bound: no file system call starts
+  after it. A store that it cannot read within the bound carries no field. The store is the one
+  that the work tree uses: `npm_config_store_dir` when set, because a later install with a changed
+  store directory reinstalls into it, else the `storeDir` that pnpm recorded in
+  `node_modules/.modules.yaml` of the work tree on install. That file is read up to 1 MiB. A file
+  that is missing, unreadable, longer than that, or without a store, and a store path that is not
+  absolute, carries no field: the runtime guesses no default store. A work tree that never ran an
+  install, and a `--store-dir` flag that only a probe command passes, are not seen. The read has
+  its own bound and takes no turn signal. Every reviewer turn that read the store before it
+  started
   carries the field: an ok turn, a handled error, a turn that a mutation or a snapshot error
   halted, and a canceled turn. The `role dispatch` envelope and the state file `lastResult` carry
   it for a halted or interrupted dispatch, and a headless run emits a `package-store` event with

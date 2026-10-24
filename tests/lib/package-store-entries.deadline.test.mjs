@@ -4,13 +4,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { removePath } from "../runtime-helpers.mjs";
 
-const calls = vi.hoisted(() => ({ count: 0 }));
+const calls = vi.hoisted(() => ({ count: 0, slowPath: null }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal();
   const counted =
     (fn) =>
-    (...args) => {
+    async (...args) => {
       calls.count++;
+      if (args[0] === calls.slowPath) await new Promise((resolve) => setTimeout(resolve, 60));
       return fn(...args);
     };
   return {
@@ -19,6 +20,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     opendir: counted(real.opendir),
     readdir: counted(real.readdir),
     stat: counted(real.stat),
+    open: counted(real.open),
     readFile: counted(real.readFile),
   };
 });
@@ -35,6 +37,7 @@ beforeEach(async () => {
   vi.stubEnv("npm_config_store_dir", store);
 });
 afterEach(async () => {
+  calls.slowPath = null;
   vi.unstubAllEnvs();
   await removePath(store);
 });
@@ -56,3 +59,26 @@ test("a read inside the bound lists every version directory", async () => {
   expect(snapshot.size).toBe(40);
   expect(calls.count - before).toBeGreaterThan(80);
 });
+
+// Usefulness: verifies requirement "no file system call may start after the bound" (issue #1045)
+// for the calls that resolve the store, not only the traversal: a call that is slow past the bound
+// must not be followed by another call.
+test.each(["the work tree", "the recorded store file"])(
+  "no call starts after a slow call on %s outlasts the bound",
+  async (which) => {
+    const cwd = await mkdtemp(join(tmpdir(), "package-store-cwd-"));
+    try {
+      vi.stubEnv("npm_config_store_dir", undefined);
+      const recorded = join(cwd, "node_modules", ".modules.yaml");
+      await mkdir(join(cwd, "node_modules"));
+      await writeFile(recorded, JSON.stringify({ storeDir: join(store, "v0") }));
+      calls.slowPath = which === "the work tree" ? cwd : recorded;
+      await snapshotPackageStore({ cwd, boundMs: 20 });
+      const atReturn = calls.count;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(calls.count).toBe(atReturn);
+    } finally {
+      await removePath(cwd);
+    }
+  },
+);
