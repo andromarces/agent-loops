@@ -95,10 +95,14 @@ function isFreePlan403(stderr) {
 // match of the protection read (#1047). Compared in upper case, because Windows names are case-blind.
 const GH_DEBUG_NAMES = new Set(["GH_DEBUG", "DEBUG"]);
 
-/** The environment of this process without the names that turn on the debug log of `gh`. */
-function ghEnv() {
+/**
+ * The environment of this process without the names that turn on the debug log of `gh`, and
+ * without the names in `dropEnv`.
+ */
+function ghEnv(dropEnv) {
+  const dropped = new Set([...GH_DEBUG_NAMES, ...dropEnv.map((name) => name.toUpperCase())]);
   return Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !GH_DEBUG_NAMES.has(name.toUpperCase())),
+    Object.entries(process.env).filter(([name]) => !dropped.has(name.toUpperCase())),
   );
 }
 
@@ -108,14 +112,17 @@ function ghEnv() {
  * terminates the `gh` child when it expires, so a hung `gh` cannot outlast a
  * caller bound. On POSIX systems the kill is `SIGTERM`, then `SIGKILL` after
  * `forceKillAfterDelay`. On Windows it is `taskkill /T /F` over the process tree.
- * No platform keeps a child the bound has given up on (#329).
+ * No platform keeps a child the bound has given up on (#329). `dropEnv` names variables that this
+ * one call removes from the child environment, compared in upper case because Windows names are
+ * case-blind. Every call also drops `GH_DEBUG` and `DEBUG` (#1047), and the rest of the
+ * environment stays.
  */
-export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
+export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv = [] } = {}) {
   const result = await execBounded("gh", args, {
     cwd,
     timeoutMs,
     signal,
-    env: ghEnv(),
+    env: ghEnv(dropEnv),
     extendEnv: false,
   });
   return {
@@ -176,39 +183,100 @@ function parseReply(stdout) {
     : null;
 }
 
-// The hosts that a request of `gh api` goes to: the host from `GH_HOST`, or github.com, and the host
-// that serves its API. A host that only starts like one of these is another host.
-// known-limit: a default host set only in the `gh` config, with no `GH_HOST`, is read as github.com,
-// so a `Link` header that names it is refused; set `GH_HOST` to read it.
-function requestHosts() {
-  const host = (process.env.GH_HOST ?? "").trim().toLowerCase() || "github.com";
+// The variables that make `gh auth status` list github.com beside the configured hosts. `gh` does
+// not count that listing as a configured host when it picks its default host, so the lookup of the
+// default host runs without them.
+const TOKEN_NAMES = ["GH_TOKEN", "GITHUB_TOKEN"];
+
+/**
+ * The host that `gh api` sends a request to when `GH_HOST` is unset, from the parsed stdout of
+ * `gh auth status --json hosts` run without `TOKEN_NAMES`, or null when the reply states none.
+ * Observed with `gh` 2.103.1: the default host is the one host of the configuration, and github.com
+ * for none or several, and that listing then holds the configured hosts only. A reply that is not
+ * the documented shape states no host, so it never widens the accepted hosts.
+ * @param {unknown} reply
+ */
+function defaultHost(reply) {
+  const hosts = reply?.hosts;
+  if (typeof hosts !== "object" || hosts === null || Array.isArray(hosts)) {
+    return null;
+  }
+  const configured = [];
+  for (const [name, logins] of Object.entries(hosts)) {
+    const host = name.trim().toLowerCase();
+    const sound =
+      host !== "" &&
+      Array.isArray(logins) &&
+      logins.length > 0 &&
+      logins.every(
+        (login) =>
+          isJsonObject(login) &&
+          typeof login.host === "string" &&
+          login.host.trim().toLowerCase() === host &&
+          typeof login.tokenSource === "string" &&
+          login.tokenSource !== "",
+      );
+    if (!sound) {
+      return null;
+    }
+    configured.push(host);
+  }
+  return configured.length === 1 ? configured[0] : "github.com";
+}
+
+// The hosts that a request of `gh api` goes to: the host from `GH_HOST`, else the default host of
+// `gh` (see `defaultHost`), and the host that serves its API. A host that only starts like one of
+// these is another host. The set is empty when no host is stated, so every target then counts as
+// another host.
+async function requestHosts(read, cwd) {
+  let host = (process.env.GH_HOST ?? "").trim().toLowerCase();
+  if (host === "") {
+    const { status, stdout } = await read(["auth", "status", "--json", "hosts"], cwd, {
+      dropEnv: TOKEN_NAMES,
+    });
+    let reply = null;
+    try {
+      reply = JSON.parse(stdout);
+    } catch {
+      // An unreadable reply states no host.
+    }
+    host = status === 0 ? defaultHost(reply) : null;
+    if (host === null) {
+      return new Set();
+    }
+  }
   if (host === "github.com") {
     return new Set([host, "api.github.com"]);
   }
   return new Set(host.endsWith(".ghe.com") ? [host, `api.${host}`] : [host]);
 }
 
-/**
- * The first `Link` target of `headers` that names a host other than the request host, or null. A
- * target that is not a URL counts as another host, so a header the runtime cannot read is no pass.
- */
-function foreignLink(headers) {
-  const hosts = requestHosts();
-  const [home] = hosts;
+/** The targets of the `Link` headers in `headers`. */
+function linkTargets(headers) {
+  const targets = [];
   for (const line of headers.split(/\r?\n/)) {
-    if (!/^link:/i.test(line)) {
-      continue;
+    if (/^link:/i.test(line)) {
+      targets.push(...Array.from(line.matchAll(/<([^>]*)>/g), ([, target]) => target));
     }
-    for (const [, target] of line.matchAll(/<([^>]*)>/g)) {
-      let host = null;
-      try {
-        host = new URL(target, `https://${home}`).host.toLowerCase();
-      } catch {
-        // An unreadable target is refused below.
-      }
-      if (host === null || !hosts.has(host)) {
-        return target;
-      }
+  }
+  return targets;
+}
+
+/**
+ * The first of `targets` that names a host outside `hosts`, or null. A target that is not a URL
+ * counts as another host, so a header the runtime cannot read is no pass.
+ */
+function foreignTarget(targets, hosts) {
+  const [home] = hosts;
+  for (const target of targets) {
+    let host = null;
+    try {
+      host = home === undefined ? null : new URL(target, `https://${home}`).host.toLowerCase();
+    } catch {
+      // An unreadable target is refused below.
+    }
+    if (host === null || !hosts.has(host)) {
+      return target;
     }
   }
   return null;
@@ -237,7 +305,7 @@ function isEmptyOrJson(body) {
  * read ends only when the collected count equals it, and a count that changes between pages, a
  * collected count above it, and a short or empty page with the count unmet are errors. For a reply
  * with no `total_count`, the first page of fewer than `PAGE_SIZE` items ends the read. The page cap is
- * an error. A `Link` header that names a host other than the request host is an error too, on a failed reply
+ * an error. A `Link` header that names a host other than the request host (see `requestHosts`) is an error too, on a failed reply
  * with a retryable status as on a successful one, and never `transient`: the read
  * never requests that target, and it ends rather than return pages that a reply could have steered.
  * A refusal about the shape of a reply carries `unreadable`, so the ruleset source reads as unknown
@@ -255,6 +323,7 @@ async function readPages(read, endpoint, cwd, field) {
   const pages = [];
   let collected = 0;
   let expected;
+  let hosts;
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const result = await read(
       ["api", `${endpoint}?per_page=${PAGE_SIZE}&page=${page}`, "--include"],
@@ -263,7 +332,12 @@ async function readPages(read, endpoint, cwd, field) {
     const reply = parseReply(result.stdout);
     // The `Link` header of every reply is judged before its status, so a failure that is retryable
     // by its status is still terminal when a target names another host.
-    const foreign = reply === null ? null : foreignLink(reply.headers);
+    const targets = reply === null ? [] : linkTargets(reply.headers);
+    // The request host is resolved once per read, and only for a reply that carries a `Link` target.
+    if (targets.length > 0) {
+      hosts ??= await requestHosts(read, cwd);
+    }
+    const foreign = targets.length > 0 ? foreignTarget(targets, hosts) : null;
     if (foreign !== null) {
       return {
         status: 1,
@@ -322,7 +396,12 @@ async function readPages(read, endpoint, cwd, field) {
 export const pagedRead =
   (gh, field = null) =>
   (args, cwd, options) =>
-    readPages((pageArgs, pageCwd) => gh(pageArgs, pageCwd, options), args[1], cwd, field);
+    readPages(
+      (pageArgs, pageCwd, extra) => gh(pageArgs, pageCwd, { ...options, ...extra }),
+      args[1],
+      cwd,
+      field,
+    );
 
 /**
  * One required-check configuration source, classified by what its reply proved.

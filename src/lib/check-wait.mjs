@@ -332,14 +332,18 @@ class BoundReached extends Error {
  * with the read still unaccounted for, which is a claim the command does not
  * make on the parent's behalf (#329).
  */
-async function readWithin(gh, argv, cwd, remainingMs, signal) {
+async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv) {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
   let timer;
   let ceiling;
   try {
-    const read = gh(argv, cwd, { signal: controller.signal, timeoutMs: remainingMs }).then(
+    const read = gh(argv, cwd, {
+      signal: controller.signal,
+      timeoutMs: remainingMs,
+      ...(dropEnv && { dropEnv }),
+    }).then(
       (value) => ({ value }),
       (error) => ({ error }),
     );
@@ -483,6 +487,7 @@ export async function waitChecks({
       cwd,
       remaining,
       stop.length > 1 ? AbortSignal.any(stop) : (stop[0] ?? null),
+      options.dropEnv,
     );
     if (result.timedOut) {
       unconfirmed ||= Boolean(result.childExitUnconfirmed);

@@ -75,6 +75,42 @@ describe("the gh runner against the installed execa", () => {
     }
   });
 
+  // Usefulness: verifies a call can drop named variables from the child environment (#1046), as the
+  // host lookup must run without `GH_TOKEN` and `GITHUB_TOKEN`, which add github.com to the hosts
+  // that `gh auth status` lists. The list adds to the `GH_DEBUG` removal of #1047, the rest of the
+  // environment stays, and a call with no list keeps its token.
+  test("the gh child gets no variable named in dropEnv and keeps the rest", async () => {
+    vi.stubEnv("PATH", bin);
+    vi.stubEnv("PATHEXT", ".EXE");
+    vi.stubEnv("GH_TOKEN", "token-a");
+    vi.stubEnv("GITHUB_TOKEN", "token-b");
+    vi.stubEnv("GH_DEBUG", "api");
+    vi.stubEnv("GH_HOST", "github.example.test");
+    const realSpawn = childProcess.spawn;
+    const spawned = [];
+    childProcess.spawn = (file, args, options) => {
+      spawned.push(options);
+      throw new Error("stand-in spawn: no process starts");
+    };
+    syncBuiltinESMExports();
+    try {
+      await runGh(["auth", "status"], bin, { dropEnv: ["gh_token", "GITHUB_TOKEN"] });
+      await runGh(["auth", "status"], bin);
+      expect(spawned).toHaveLength(2);
+      const names = (options) => Object.keys(options.env).map((name) => name.toUpperCase());
+      expect(names(spawned[0])).not.toContain("GH_TOKEN");
+      expect(names(spawned[0])).not.toContain("GITHUB_TOKEN");
+      expect(names(spawned[0])).not.toContain("GH_DEBUG");
+      expect(spawned[0].env.GH_HOST).toBe("github.example.test");
+      expect(spawned[1].env.GH_TOKEN).toBe("token-a");
+      expect(spawned[1].env.GITHUB_TOKEN).toBe("token-b");
+    } finally {
+      childProcess.spawn = realSpawn;
+      syncBuiltinESMExports();
+      vi.unstubAllEnvs();
+    }
+  });
+
   // Usefulness: verifies `gh` never sees `GH_DEBUG` or `DEBUG`, which make it write a debug log to
   // stderr and break the exact stderr match of the protection read (issue #1047). The other
   // variables must still reach `gh`, so the token and host keep working.

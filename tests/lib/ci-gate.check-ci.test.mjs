@@ -481,6 +481,39 @@ test("the ruleset double gives no reply to a merged-argument call", async () => 
   }
 });
 
+// Usefulness: verifies the gate gives the host lookup its variable list (#1046): the host that `gh`
+// uses is read with `GH_TOKEN` and `GITHUB_TOKEN` dropped, so a `Link` header on the ruleset read that
+// names the one configured host is no refusal. The double lists github.com unless both are dropped.
+test("reads the gh default host without the token variables for a Link header", async () => {
+  const base = fakeGh(routes({ required: [{ type: "deletion" }] }));
+  const gh = async (args, cwd, options) => {
+    if (args[0] === "auth") {
+      const dropped = ["GH_TOKEN", "GITHUB_TOKEN"].every((name) =>
+        options?.dropEnv?.includes(name),
+      );
+      const hosts = dropped ? ["ghe.example.com"] : ["ghe.example.com", "github.com"];
+      const body = {
+        hosts: Object.fromEntries(hosts.map((host) => [host, [{ host, tokenSource: "f" }]])),
+      };
+      return { status: 0, stdout: JSON.stringify(body), stderr: "" };
+    }
+    if (isPagedRead(args, "/rules/branches/main", 1)) {
+      const link = 'Link: <https://ghe.example.com/api/v3/x?page=2>; rel="next"';
+      return {
+        status: 0,
+        stdout: `HTTP/2.0 200 OK
+${link}
+
+${JSON.stringify([{ type: "deletion" }])}`,
+        stderr: "",
+      };
+    }
+    return base(args);
+  };
+  const result = await checkCi({ pr: 42, reviewed: REVIEWED, cwd: ".", gh });
+  expect(result.reason ?? "").not.toMatch(/Link/);
+});
+
 // Usefulness: verifies a required-status-check rule that appears only on the second
 // page is still enforced, so a read that stops at the first page cannot pass a
 // branch that requires a check. The double serves the second page only to a request
