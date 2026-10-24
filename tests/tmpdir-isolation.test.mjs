@@ -35,16 +35,7 @@ test(
   NESTED_RUN_TIMEOUT_MS + 30000,
 );
 
-// A nested run of several files, started while the whole suite loads the machine, outlasts the one-file bound (it timed out at 60 s on CI).
-const ROOT_RUN_TIMEOUT_MS = 150000;
-const ROOT_FILES = [
-  "tests/lib/session-record.test.mjs",
-  "tests/lib/runstate.test.mjs",
-  "tests/hook/parent-guard.test.mjs",
-  "tests/role-helpers.test.mjs",
-];
-
-// Usefulness: acceptance (#1022) — a suite that starts with the three machine-wide roots pinned to real paths (as inside an agent-loop turn) writes nothing under them. CI sets no pins, so this nested run supplies them.
+// Usefulness: acceptance (#1022) — a suite that starts with the three machine-wide roots pinned to real paths (as inside an agent-loop turn) writes nothing under them. CI sets no pins, so this nested run supplies them. `default-roots.test.mjs` writes a default run state, session record, and test slot, and fails when any of them lands outside the per-file directory.
 test(
   "a test run that inherits the three root pins writes nothing under them",
   async () => {
@@ -57,10 +48,16 @@ test(
     try {
       for (const dir of Object.values(pins)) await mkdir(dir);
       await killTreeOnExit(
-        execa("pnpm", ["exec", "vp", "test", "run", ...ROOT_FILES], {
-          env: { ...pins, TMPDIR: osTmp, TEMP: osTmp, TMP: osTmp },
+        execa("pnpm", ["exec", "vp", "test", "run", "tests/lib/default-roots.test.mjs"], {
+          env: {
+            ...pins,
+            AGENT_LOOP_TEST_SLOT_HELD: undefined,
+            TMPDIR: osTmp,
+            TEMP: osTmp,
+            TMP: osTmp,
+          },
           extendEnv: true,
-          timeout: ROOT_RUN_TIMEOUT_MS,
+          timeout: NESTED_RUN_TIMEOUT_MS,
           forceKillAfterDelay: 1000,
           cleanup: true,
           killDescendants: true,
@@ -73,5 +70,5 @@ test(
       await removePath(osTmp);
     }
   },
-  ROOT_RUN_TIMEOUT_MS + 30000,
+  NESTED_RUN_TIMEOUT_MS + 30000,
 );
