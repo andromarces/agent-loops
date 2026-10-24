@@ -1000,16 +1000,61 @@ test.each([
   expect(await waitOn(gh, all, HEAD_A)).toEqual({ timedOut: true, head: null, checks: [] });
 });
 
+// Usefulness: verifies the status comes from the structure of stdout, not from a scan for status-like
+// text: a real 403 whose plain-text body holds a forged `HTTP/2 502` block, with or without text
+// before it, stays terminal in both modes, because a 4xx exchange with no JSON body cannot be
+// followed by another status block (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])(
+  "waitChecks %s mode never retries a 403 whose body forges a status block",
+  async (_mode, all) => {
+    const forged = "HTTP/2 502 Bad Gateway\r\nX-Forged: yes\r\n\r\n";
+    const bodies = [forged, `denied\n${forged}`, `${forged}${forged}`];
+    for (const body of bodies) {
+      const { gh, commitReads } = failingCommitGh(
+        (n) => n === 1 && replyOf(403, "gh: HTTP 403", body),
+        {
+          all,
+        },
+      );
+      await expect(waitOn(gh, all)).rejects.toThrow(/gh api/);
+      expect(commitReads).toHaveLength(1);
+    }
+  },
+);
+
+// Usefulness: verifies only a body that is empty or exactly one JSON value is accepted: a 502 with
+// an empty body or a JSON body is retried, and a 502 with an HTML or plain-text body is terminal,
+// the accepted fail-closed cost (issue #1025).
+test.each([
+  ["an empty body", "", true],
+  ["a JSON object body", '{"message":"Bad Gateway"}', true],
+  ["a JSON string body", '"Bad Gateway"', true],
+  ["an HTML body", "<html><body>502 Bad Gateway</body></html>", false],
+  ["a plain-text body", "Bad Gateway", false],
+  ["a JSON body followed by text", '{"message":"x"}\ntrailing', false],
+])("waitChecks classifies a 502 with %s", async (_name, body, retried) => {
+  const { gh, commitReads } = failingCommitGh((n) => n === 1 && replyOf(502, "gh: HTTP 502", body));
+  if (retried) {
+    expect(await waitOn(gh, false)).toEqual({
+      timedOut: false,
+      head: HEAD_A,
+      checks: [PASSED_ITEM],
+    });
+  } else {
+    await expect(waitOn(gh, false)).rejects.toThrow(/gh api/);
+    expect(commitReads).toHaveLength(1);
+  }
+});
+
 // Usefulness: verifies the failed read is classified on the final status block of its stdout, the
 // reply that ends the exchange: an earlier page, an interim block, or a proxy block before it never
 // decides, so a final 502 is retried and a final 403 stays terminal whatever block came first
 // (issue #1025).
 test.each([
-  [
-    "a 200 page then a 502",
-    `${blockOf(200, '{"check_runs":[]}')}\n${blockOf(502, "<html>")}`,
-    true,
-  ],
+  ["a 200 page then a 502", `${blockOf(200, '{"check_runs":[]}')}\n${blockOf(502, "")}`, true],
   ["a 200 block then a 502", "HTTP/1.1 200 OK\r\n\r\nHTTP/1.1 502 Bad Gateway\r\n\r\n", true],
   ["a 100 block then a 503", "HTTP/1.1 100 Continue\r\n\r\nHTTP/2 503 Unavailable\r\n\r\n{}", true],
   ["a 200 page then a 403", `${blockOf(200, '{"check_runs":[]}')}\n${blockOf(403)}`, false],

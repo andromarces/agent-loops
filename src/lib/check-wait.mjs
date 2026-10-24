@@ -35,50 +35,125 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 const POLL_INTERVAL_MS = 15_000;
 
 // The reply statuses of a failed commit read that the wait retries on the next poll (#1025). The
-// status is the one on the final status block that `gh api --include` wrote to stdout for the
+// status is the one of the final exchange in the stdout that `gh api --include` wrote for the
 // failing reply, never a number in the error text of `gh`, which carries server-supplied text.
 const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 
-// A status block as `gh api --include` writes it: a status line, header lines, and a blank line,
-// starting at a line start. A message that the server supplies is JSON on stdout, with its line
-// breaks escaped, so it never forms a block.
-const STATUS_BLOCK =
-  /(?<![^\n])HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n(?:[^\r\n:]+:[^\r\n]*\r?\n)*\r?\n/g;
+// A status line, header lines, and the blank line that ends them, as `gh api --include` writes them.
+const STATUS_BLOCK = /HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n(?:[^\r\n:]+:[^\r\n]*\r?\n)*\r?\n/y;
+const JSON_SCALAR = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/y;
 
-/**
- * The status blocks of a `gh api --include` stdout, in order, each with the offsets of its text.
- * `--paginate` writes one block and body per page, so the last block belongs to the page that
- * ended the read.
- */
-function statusBlocks(stdout) {
-  return [...stdout.matchAll(STATUS_BLOCK)].map((match) => ({
-    status: Number(match[1]),
-    start: match.index,
-    end: match.index + match[0].length,
-  }));
+/** The end of the JSON value that starts at `start`, or -1 when none starts there. */
+function jsonValueEnd(text, start) {
+  const first = text[start];
+  if (first === "{" || first === "[" || first === '"') {
+    let depth = 0;
+    let inString = false;
+    for (let i = start; i < text.length; i += 1) {
+      const char = text[i];
+      if (inString) {
+        if (char === "\\") {
+          i += 1;
+        } else if (char === '"') {
+          inString = false;
+          if (depth === 0) {
+            return i + 1;
+          }
+        }
+      } else if (char === '"') {
+        inString = true;
+      } else if (char === "{" || char === "[") {
+        depth += 1;
+      } else if ((char === "}" || char === "]") && (depth -= 1) === 0) {
+        return i + 1;
+      }
+    }
+    return -1;
+  }
+  JSON_SCALAR.lastIndex = start;
+  const scalar = JSON_SCALAR.exec(text);
+  return scalar ? start + scalar[0].length : -1;
 }
 
-/** The status of the final status block of a `gh api --include` stdout, or null when it has none. */
+/**
+ * The exchanges of a `gh api --include` stdout, from its start: each is a status block and a body
+ * that is empty or exactly one JSON value, `{ status, json }` with `json` undefined for an empty
+ * body, and only whitespace lies between exchanges. `--paginate` writes one exchange per page. An
+ * exchange with no body may be followed by another only when its status is 1xx or 2xx, an interim
+ * or proxy block, so text in a 4xx or 5xx body can never form a block of its own. Returns null when
+ * any byte does not fit this structure, so a reply the wait cannot read is never trusted.
+ */
+function parseExchanges(stdout) {
+  const exchanges = [];
+  let pos = 0;
+  for (;;) {
+    while (pos < stdout.length && /\s/.test(stdout[pos])) {
+      pos += 1;
+    }
+    if (pos >= stdout.length) {
+      return exchanges.length > 0 ? exchanges : null;
+    }
+    STATUS_BLOCK.lastIndex = pos;
+    const block = STATUS_BLOCK.exec(stdout);
+    if (!block) {
+      return null;
+    }
+    const status = Number(block[1]);
+    pos += block[0].length;
+    while (pos < stdout.length && /\s/.test(stdout[pos])) {
+      pos += 1;
+    }
+    if (pos >= stdout.length || stdout.startsWith("HTTP/", pos)) {
+      if (pos < stdout.length && status >= 300) {
+        return null;
+      }
+      exchanges.push({ status, json: undefined });
+      continue;
+    }
+    const end = jsonValueEnd(stdout, pos);
+    if (end < 0) {
+      return null;
+    }
+    let json;
+    try {
+      json = { value: JSON.parse(stdout.slice(pos, end)) };
+    } catch {
+      return null;
+    }
+    exchanges.push({ status, json: json.value });
+    pos = end;
+  }
+}
+
+/** The status of the final exchange of a `gh api --include` stdout, or null when it does not parse. */
 function replyStatus(stdout) {
-  return statusBlocks(stdout).at(-1)?.status ?? null;
+  return parseExchanges(stdout)?.at(-1).status ?? null;
 }
 
 /**
  * The pages of a successful `gh api --paginate --include` stdout as the JSON array that the
- * slurped read prints. Throws when stdout holds no status block, a block that is not a 2xx, or a
- * body that is not JSON, so a read that cannot be joined is an error and never an empty list.
+ * slurped read prints. Throws when stdout does not parse, when the final exchange is not a 2xx
+ * with a body, or when an exchange is neither interim nor 2xx, so a read that cannot be joined is
+ * an error and never an empty list.
  */
 function joinPages(stdout) {
-  const blocks = statusBlocks(stdout);
-  if (blocks.length === 0) {
-    throw new Error("the reply carries no HTTP status block");
+  const exchanges = parseExchanges(stdout);
+  if (exchanges === null) {
+    throw new Error("the reply is not a sequence of HTTP status blocks and JSON bodies");
   }
-  const pages = blocks.map((block, i) => {
-    if (block.status < 200 || block.status > 299) {
-      throw new Error(`the reply carries a status block of ${block.status}`);
+  const last = exchanges.at(-1);
+  if (last.status < 200 || last.status > 299 || last.json === undefined) {
+    throw new Error(`the final reply carries a status of ${last.status} or no JSON body`);
+  }
+  const pages = [];
+  for (const exchange of exchanges) {
+    if (exchange.status >= 300) {
+      throw new Error(`the reply carries a status block of ${exchange.status}`);
     }
-    return JSON.parse(stdout.slice(block.end, blocks[i + 1]?.start ?? stdout.length));
-  });
+    if (exchange.status >= 200 && exchange.json !== undefined) {
+      pages.push(exchange.json);
+    }
+  }
   return JSON.stringify(pages);
 }
 
