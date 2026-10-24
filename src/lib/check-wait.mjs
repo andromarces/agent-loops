@@ -34,9 +34,17 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
 
-// The stderr of a `gh api` read that GitHub answered with a server error. The commit reads of
-// the wait retry on the next poll when they fail with it (#1025).
-const SERVER_ERROR = /\bHTTP 5\d\d\b/;
+// The last stderr line of a `gh api` read that GitHub answered with a retryable server error: `gh`
+// ends it with the reply status, bare (`gh: HTTP 502`) or after the message (`gh: Server Error
+// (HTTP 502)`). Only 500, 502, 503, and 504 qualify. Text earlier in the line is no status, so a
+// message that quotes one never matches. The commit reads of the wait retry on the next poll when
+// they fail with it (#1025).
+const SERVER_ERROR = /^gh: (?:.*\(HTTP 50[0234]\)|HTTP 50[0234])$/;
+
+function isServerError(stderr) {
+  const lines = stderr.trim().split(/\r?\n/);
+  return SERVER_ERROR.test(lines.at(-1).trim());
+}
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
 // as right after a push. It is an empty list, not a read error, in the required
@@ -518,7 +526,7 @@ export async function waitChecks({
     let serverError = false;
     const read = async (argv, cwdArg) => {
       const result = await bounded(argv, cwdArg);
-      serverError = result.status !== 0 && SERVER_ERROR.test(result.stderr);
+      serverError = result.status !== 0 && isServerError(result.stderr);
       return result;
     };
     try {
@@ -703,7 +711,8 @@ export async function waitChecks({
     let err = failureOf(raw);
     if (err instanceof BoundReached) {
       unconfirmed ||= Boolean(err.result.childExitUnconfirmed);
-      if (transient === null) {
+      // A listed failure is reported with the bound, so an earlier server error never replaces it.
+      if (transient === null || prFailures.length > 0) {
         return seal(timeout());
       }
       err = transient;

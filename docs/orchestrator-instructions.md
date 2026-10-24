@@ -770,11 +770,13 @@ answers that the branch has no required check, because such a
 source can hold a required check or an app qualifier that the wait never saw. A listed
 failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
 source. A commit read that fails, or that returns a reply the wait fails to parse or order,
-is an error too, with one exception: a check-run or commit-status read that fails with a GitHub `5xx`
-(`HTTP 500`, `502`, `503`, `504`) is retried on the next poll, inside the bound. A pass on a
+is an error too, with one exception: a check-run or commit-status read that fails with a GitHub reply
+status of 500, 502, 503, or 504 is retried on the next poll, inside the bound. A pass on a
 later poll settles the wait. A wait that reaches the bound while the last poll still failed
 with a `5xx` exits 1 with `status: "error"` and that error, with no `timedOut: true` and no
-pass. A `4xx` and a reply that cannot be parsed still end the wait at once. The retry covers
+pass, unless `gh pr checks` listed a failure in the last poll, which `prFailures` reports with the bound
+as before. Any other status, such as 501 or a 4xx whose message quotes a 5xx, an error with no reply
+status, and a reply that cannot be parsed still end the wait at once. The retry covers
 `wait-checks` only: the `--require-ci` finish gate keeps failing closed on every read failure
 (issue #1025). `childExitUnconfirmed: true` covers every `gh` child of the poll, including a source
 read that the first failure of the poll left running to the ceiling, and it rides on every

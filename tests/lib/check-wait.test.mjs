@@ -853,6 +853,74 @@ test.each([
   expect(commitReads).toHaveLength(1);
 });
 
+// Usefulness: verifies only an actual reply status of 500, 502, 503, or 504 is retried: another
+// 5xx, a 4xx whose message quotes a 5xx, and a diagnostic with no reply status end the wait at the
+// first read, so a pass never follows a read that GitHub did not answer with a retryable status
+// (issue #1025).
+test.each([
+  ["an HTTP 501", { status: 1, stdout: "", stderr: "gh: Not Implemented (HTTP 501)" }, /HTTP 501/],
+  [
+    "a 403 that quotes HTTP 500",
+    { status: 1, stdout: "", stderr: "gh: proxy said HTTP 500 earlier (HTTP 403)" },
+    /HTTP 403/,
+  ],
+  [
+    "a diagnostic with no reply status",
+    { status: 1, stdout: "", stderr: "gh: could not reach api.github.com, last reply HTTP 500" },
+    /last reply HTTP 500/,
+  ],
+])("waitChecks does not retry %s on a commit read", async (_name, reply, message) => {
+  const { gh, commitReads } = failingCommitGh(() => reply);
+  await expect(waitOn(gh, false)).rejects.toThrow(message);
+  expect(commitReads).toHaveLength(1);
+});
+
+// Usefulness: verifies a reply status that follows the message, the form `gh` prints for a reply
+// with a body, is retried like the bare form (issue #1025).
+test("waitChecks retries a server error that carries a message", async () => {
+  const { gh } = failingCommitGh(
+    (n) => n === 1 && { status: 1, stdout: "", stderr: "gh: Server Error (HTTP 502)" },
+  );
+  expect(await waitOn(gh, false)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+});
+
+// Usefulness: verifies a failure that `gh pr checks` lists on a later poll survives the bound that
+// a commit read reaches after an earlier server error, in both modes: the result is
+// `timedOut: true` with `prFailures`, never the earlier error (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])(
+  "waitChecks %s mode keeps a listed failure past a bound after a server error",
+  async (_mode, all) => {
+    const inner = scriptedGh(
+      [
+        { status: 0, checks: [PASSED_ITEM] },
+        { status: 1, checks: [FAILED_ITEM] },
+      ],
+      { all, commits: { [HEAD_A]: [PASSED_ITEM] } },
+    );
+    let commitReads = 0;
+    const gh = (args, cwd, options) => {
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        commitReads += 1;
+        return commitReads === 1 ? Promise.resolve(serverError(500)) : new Promise(() => {});
+      }
+      return inner(args, cwd, options);
+    };
+    const result = await waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 0.3,
+      all,
+      gh,
+      sleep: async () => {},
+    });
+    expect(result).toMatchObject({ timedOut: true, checks: [], prFailures: [FAILED_ITEM] });
+  },
+  20000,
+);
+
 // Usefulness: verifies the last checks kept for a timeout envelope are never the
 // checks of a head the envelope does not name (issue #961).
 test("waitChecks drops the kept checks of an earlier head when the head moves", async () => {
