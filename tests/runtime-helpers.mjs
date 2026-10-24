@@ -304,19 +304,13 @@ const REMOVE_MAX_WAIT_MS =
 // Slack over the retry waits for the removal calls themselves.
 const REMOVE_SYSCALL_SLACK_MS = 500;
 
-// Captured at import, before any test overrides the runs root.
-const originalRunsRoot = process.env.AGENT_LOOP_RUNS_ROOT;
-
 /**
- * Puts AGENT_LOOP_RUNS_ROOT back to the value it had before the tests overrode
- * it: set when it existed, deleted only when it did not.
+ * Puts AGENT_LOOP_RUNS_ROOT back to the isolated state, which is unset, so the
+ * default runs root follows the per-file temp directory. The inherited pin is
+ * never reinstated (issue #1022); a test that needs a root sets it explicitly.
  */
 export function restoreRunsRoot() {
-  if (originalRunsRoot === undefined) {
-    delete process.env.AGENT_LOOP_RUNS_ROOT;
-  } else {
-    process.env.AGENT_LOOP_RUNS_ROOT = originalRunsRoot;
-  }
+  delete process.env.AGENT_LOOP_RUNS_ROOT;
 }
 
 // Captured at import, before any test overrides the install home.

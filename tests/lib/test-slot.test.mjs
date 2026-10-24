@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { deadPid, processExists, removePath } from "../runtime-helpers.mjs";
 
 // Delays each in-process lock attempt by `ms`, so a test can make one acquisition pass end
@@ -52,7 +52,11 @@ const SLOT_ENV = [
 ];
 
 const dirs = [];
-const savedEnv = Object.fromEntries(SLOT_ENV.map((name) => [name, process.env[name]]));
+// Captured per test, after the file isolation has unset an inherited root pin, so the restore never reinstates it (issue #1022).
+let savedEnv;
+beforeEach(() => {
+  savedEnv = Object.fromEntries(SLOT_ENV.map((name) => [name, process.env[name]]));
+});
 afterEach(async () => {
   hostCpus.count = null;
   slowLock.ms = 0;
