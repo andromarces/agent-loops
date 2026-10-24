@@ -1,8 +1,9 @@
 # Share one virtual store across projects on this machine.
 virtualStoreType: global
 
-# Route the Vite and Vitest copies that Vite+ uses to one version each. The
-# vitest pin must match the Vitest that vite-plus bundles (`vp --version`).
+# Route the Vite and Vitest copies that Vite+ uses to one version each. Both
+# pins must match the `vite` and `vitest` dependencies of vite-plus; a test
+# fails when they differ.
 overrides:
-  vite: npm:@voidzero-dev/vite-plus-core@1.1.0
+  vite: npm:@voidzero-dev/vite-plus-core@1.3.0
   vitest: 5.0.5
