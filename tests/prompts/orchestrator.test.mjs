@@ -8,6 +8,7 @@ import {
   resultPrompt,
 } from "../../src/prompts/orchestrator.mjs";
 import {
+  clauses,
   expectRule,
   expectReviewerGateRule,
   COMPARE_BEFORE_FINISH,
@@ -36,13 +37,28 @@ test("initialPrompt produces expected orchestrator prompt", () => {
 });
 
 // Usefulness: verifies requirement "the headless prompt states the unknown-key refusal and its
-// repair" (issue #1021): the runtime refuses a finish with an extra key, so the orchestrator must
-// know the refusal names each key and that the fix is to resend the finish with only the allowed keys.
+// repair" (issue #1021) with the right split: the action object allows action, summary, and a boolean
+// unresolvedCompare, the nested summary object allows only the five summary keys. A clause that
+// swaps or merges the two allowlists fails, which a bare keyword match would not catch.
 test("initialPrompt states the unknown-key finish refusal and its repair", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expectRule(prompt, /\bfinish\b/i, /\bother than\b/i, /\bunresolvedCompare\b/, /\brefused\b/i);
-  expectRule(prompt, /\brefusal\b/i, /\bnames each\b/i, /\bkey\b/i);
-  expectRule(prompt, /\bresend\b/i, /\bfinish\b/i, /\bonly\b/i, /\bunresolvedCompare\b/);
+  const clauseWith = (term) => clauses(prompt).find((clause) => term.test(clause));
+
+  const action = clauseWith(/\bfinish action object\b/i);
+  expect(action, "no clause names the action object allowlist").toBeDefined();
+  expect(action).toMatch(
+    /\bonly\b[^.]*\baction\b[^.]*\bsummary\b[^.]*\bboolean unresolvedCompare\b/i,
+  );
+  expect(action).not.toMatch(/\bfive\b/i);
+
+  const summary = clauseWith(/\bsummary object\b/i);
+  expect(summary, "no clause names the summary object allowlist").toBeDefined();
+  expect(summary).toMatch(/\bonly the five summary keys\b/i);
+  expect(summary).not.toMatch(/\bunresolvedCompare\b/);
+
+  expectRule(prompt, /\brefused\b/i, /\bany other key\b/i, /\beither object\b/i);
+  expectRule(prompt, /\brefusal\b/i, /\bnames each unknown key\b/i);
+  expectRule(prompt, /\bresend\b/i, /\bfinish\b/i, /\bonly\b/i, /\ballowed keys\b/i);
 });
 
 // Usefulness: verifies the headless prompt states the notes and deferred finish

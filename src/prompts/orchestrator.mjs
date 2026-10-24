@@ -418,7 +418,7 @@ ${INITIAL_FORMATS.finishUnresolved}
 ${INITIAL_FORMATS.abort}
 
 The finish summary requires non-empty strings for all five keys: ${SUMMARY_KEYS.join(", ")}.
-A finish whose summary or action holds a key other than the five summary keys and unresolvedCompare is refused. The refusal names each unknown key. Resend the finish with only the five summary keys and unresolvedCompare.
+The finish action object allows only action, summary, and an optional boolean unresolvedCompare. The nested summary object allows only the five summary keys. A finish that holds any other key in either object is refused. The refusal names each unknown key. Resend the finish with only the allowed keys.
 
 When you dispatch the reviewer, name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them. Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it.
 
