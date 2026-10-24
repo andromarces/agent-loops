@@ -34,6 +34,105 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
 
+// The reply statuses of a failed commit read that the wait retries on the next poll (#1025). The
+// status is the one on the first line of the stdout that `gh api --include` wrote for that one
+// request, never a number in the error text of `gh`, which carries server-supplied text.
+const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
+
+// The status line, header lines, and blank line that open the stdout of one `gh api --include`
+// request. Body bytes can only follow them, so they never form a status block of their own.
+const STATUS_BLOCK = /^HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n(?:[^\r\n:]+:[^\r\n]*\r?\n)*\r?\n/;
+
+// Items per page, and the most pages one read takes: 10,000 items, far above any one commit.
+const PAGE_SIZE = 100;
+const MAX_PAGES = 100;
+
+/** The status and body of the one reply in a `gh api --include` stdout, or null with no status block. */
+function parseReply(stdout) {
+  const block = STATUS_BLOCK.exec(stdout);
+  return block ? { status: Number(block[1]), body: stdout.slice(block[0].length) } : null;
+}
+
+/** Whether `body` is empty or exactly one JSON value. */
+function isEmptyOrJson(body) {
+  if (body.trim() === "") {
+    return true;
+  }
+  try {
+    JSON.parse(body);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reads every page of the list endpoint `endpoint` with one `gh api --include` request per page,
+ * by page number and never by the `Link` header, and returns a `gh`-shaped result whose stdout is
+ * the pages as one JSON array, as the slurped read printed them. For a reply with `total_count`, the
+ * read ends only when the collected count equals it, and a count that changes between pages, a
+ * collected count above it, and a short or empty page with the count unmet are errors. For a reply
+ * with no `total_count`, the first page of fewer than `PAGE_SIZE` items ends the read. The page cap
+ * is an error. `retryable` is true only when the
+ * failed request's first-line status is 500, 502, 503, or 504 and its body is empty or JSON.
+ * @param {Function} read one bounded `gh` read
+ */
+async function readPages(read, endpoint, cwd) {
+  const field = endpoint.endsWith("/check-runs") ? "check_runs" : "statuses";
+  const refusal = (stderr) => ({ result: { status: 1, stdout: "", stderr }, retryable: false });
+  const pages = [];
+  let collected = 0;
+  let expected;
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const result = await read(
+      ["api", `${endpoint}?per_page=${PAGE_SIZE}&page=${page}`, "--include"],
+      cwd,
+    );
+    const reply = parseReply(result.stdout);
+    if (result.status !== 0) {
+      const retryable =
+        reply !== null && RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
+      return { result, retryable };
+    }
+    if (reply === null || reply.status < 200 || reply.status > 299) {
+      return refusal("the reply carries no 2xx HTTP status block");
+    }
+    let json;
+    try {
+      json = JSON.parse(reply.body);
+    } catch {
+      return refusal("the reply body is not exactly one JSON value");
+    }
+    pages.push(json);
+    const items = Array.isArray(json?.[field]) ? json[field].length : 0;
+    collected += items;
+    const total =
+      Number.isInteger(json?.total_count) && json.total_count >= 0 ? json.total_count : null;
+    expected ??= { total };
+    if (total !== expected.total) {
+      return refusal("the total_count of the reply changed between pages");
+    }
+    const done = {
+      result: { status: 0, stdout: JSON.stringify(pages), stderr: "" },
+      retryable: false,
+    };
+    if (total === null) {
+      // No count to check against: the first short page ends the read.
+      if (items < PAGE_SIZE) {
+        return done;
+      }
+    } else if (collected > total) {
+      return refusal("the pages hold more items than the total_count of the reply");
+    } else if (collected === total) {
+      return done;
+    } else if (items < PAGE_SIZE) {
+      // A short page proves nothing while the count is unmet, so the read is an error.
+      return refusal("the read ended before the total_count of the reply");
+    }
+  }
+  return refusal(`the read has more than ${MAX_PAGES} pages`);
+}
+
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
 // as right after a push. It is an empty list, not a read error, in the required
 // and the all-checks read alike (#941, #950).
@@ -507,12 +606,32 @@ export async function waitChecks({
       }
     }
   };
+  // The commit reads use the endpoints of the gate's reads, one `gh api --include` request per page
+  // with no `--paginate`, so each `gh` output holds exactly one exchange, `gh` writes the status
+  // line of that request first, and body bytes can only follow it. The paging is the wait's own, by
+  // page number, and it never follows the `Link` header (see `readPages`). A failed read is marked
+  // `transient`, and the wait retries it on the next poll, only when its first-line status is 500,
+  // 502, 503, or 504 and its body is empty or one JSON value. Every other failure ends the wait: any
+  // other status, a 4xx whatever its body says, a failure with no status block, and a reply whose
+  // body is not exactly one JSON value.
   const readCommit = async (sha) => {
     await ensureSlug();
-    const read = (argv, cwdArg) => bounded(argv, cwdArg);
-    const runs = await checkRuns(read, slug, sha, cwd, true);
-    const statuses = await commitStatuses(read, slug, sha, cwd, true);
-    return { runs, statuses };
+    let serverError = false;
+    const read = async ([, endpoint], cwdArg) => {
+      const { result, retryable } = await readPages(bounded, endpoint, cwdArg);
+      serverError = retryable;
+      return result;
+    };
+    try {
+      const runs = await checkRuns(read, slug, sha, cwd, true);
+      const statuses = await commitStatuses(read, slug, sha, cwd, true);
+      return { runs, statuses };
+    } catch (err) {
+      if (serverError && err instanceof Error) {
+        err.transient = true;
+      }
+      throw err;
+    }
   };
   // False when the bound is spent, so the caller reports it instead of sleeping.
   const pause = async () => {
@@ -582,9 +701,14 @@ export async function waitChecks({
     }
     return false;
   };
+  // The retryable server error of the latest completed poll, or null when that poll had none.
+  // A wait that ends on the bound with it set reports it as an error, so a server error never
+  // reads as a timeout or a pass (#1025).
+  let transient = null;
   const poll = async () => {
     for (;;) {
       prFailures = [];
+      let failed = null;
       const { head: sha, base } = readHead(pr, await bounded(headArgv));
       if (head === null || sha === head) {
         const listed = readOutcome(pr, await bounded(checksArgv), all);
@@ -609,11 +733,17 @@ export async function waitChecks({
             // A failure that `gh pr checks` lists settles the wait, so a commit or source read
             // that fails never delays it. The bound and every other failure still end it.
             const err = failureOf(raw);
-            if (err instanceof BoundReached || prFailures.length === 0) {
+            if (err?.transient && !(err instanceof BoundReached)) {
+              // A server error is retried on the next poll, unless a listed failure settles the wait.
+              failed = err;
+            }
+            if (err instanceof BoundReached || (failed === null && prFailures.length === 0)) {
               throw err;
             }
           }
-          if (items === null) {
+          if (failed !== null && prFailures.length === 0) {
+            outcome = { settled: false, checks: [], unread: true };
+          } else if (items === null) {
             // No state was read for `sha`, so the result names no head and holds no check.
             outcome = { settled: true, checks: [], unread: true };
           } else {
@@ -659,7 +789,12 @@ export async function waitChecks({
           };
         }
       }
+      // A completed poll replaces the error of an earlier one: only the latest poll keeps it.
+      transient = failed;
       if (!(await pause())) {
+        if (transient !== null) {
+          throw transient;
+        }
         return timeout();
       }
     }
@@ -667,10 +802,14 @@ export async function waitChecks({
   try {
     return seal(await poll());
   } catch (raw) {
-    const err = failureOf(raw);
+    let err = failureOf(raw);
     if (err instanceof BoundReached) {
       unconfirmed ||= Boolean(err.result.childExitUnconfirmed);
-      return seal(timeout());
+      // A listed failure is reported with the bound, so an earlier server error never replaces it.
+      if (transient === null || prFailures.length > 0) {
+        return seal(timeout());
+      }
+      err = transient;
     }
     // An error envelope carries the unconfirmed exit too: a child may still run.
     if (unconfirmed && err instanceof Error) {

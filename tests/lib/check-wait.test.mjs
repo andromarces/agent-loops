@@ -770,6 +770,466 @@ test("waitChecks refuses a commit read that fails", async () => {
   ).rejects.toThrow(/gh api repos\/owner\/repo\/commits\/.+ failed: boom/);
 });
 
+/**
+ * A `gh` whose commit reads fail as `fail(n)` says, for the nth such read. A failure is the whole
+ * result of the failed `gh api --paginate --include` read: `{ status, stdout, stderr }`, with the
+ * status block of the reply on stdout. A reply with status 0 is a read that exits 0 with that
+ * stdout. Every other read passes through. `commitReads` lists the endpoint of each commit read
+ * and `readArgs` its arguments.
+ */
+function failingCommitGh(fail, { all = false, heads } = {}) {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
+    all,
+    heads,
+    commits: { [HEAD_A]: [PASSED_ITEM] },
+  });
+  const commitReads = [];
+  const readArgs = [];
+  const gh = async (args, cwd, options) => {
+    if (args[0] === "api" && args[1].includes("/commits/")) {
+      commitReads.push(args[1]);
+      readArgs.push(args);
+      const reply = fail(commitReads.length);
+      if (reply) {
+        return reply;
+      }
+    }
+    return inner(args, cwd, options);
+  };
+  return { gh, commitReads, readArgs };
+}
+
+/** The status block `gh api --include` prints for a reply of status `code`, then `body`. */
+const blockOf = (code, body = "{}") =>
+  `HTTP/2.0 ${code} Status\r\nContent-Type: application/json\r\n\r\n${body}`;
+
+/** The failed `gh api --include` read of status `code`: the status block on stdout, the error text on stderr. */
+function replyOf(code, stderr, body = "{}") {
+  return { status: 1, stdout: blockOf(code, body), stderr };
+}
+
+const serverError = (code) => replyOf(code, `gh: HTTP ${code}`);
+
+function waitOn(gh, all, head = null) {
+  const clock = fakeClock();
+  return waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    all,
+    head,
+    gh,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+}
+
+// Usefulness: verifies a GitHub 5xx on one commit read does not end the wait: the next poll
+// reads again and a passing read settles the wait inside the bound, for the check-run read and
+// the status read, in both modes (issue #1025).
+test.each([
+  ["required", "check-runs", 500, false, 1],
+  ["all", "check-runs", 502, true, 1],
+  ["required", "status", 503, false, 2],
+  ["all", "status", 504, true, 2],
+])(
+  "waitChecks %s mode retries a %s read that fails with HTTP %i",
+  async (_mode, _endpoint, code, all, failingRead) => {
+    // The check-runs read comes first in a poll, then the status read.
+    const { gh, commitReads } = failingCommitGh((n) => n === failingRead && serverError(code), {
+      all,
+    });
+    expect(await waitOn(gh, all)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+    expect(commitReads.length).toBeGreaterThan(2);
+  },
+);
+
+// Usefulness: verifies a 5xx on every poll until the bound is an error that names the last
+// failure, never a pass and never a timeout envelope (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])(
+  "waitChecks %s mode reports an error when every poll fails with HTTP 5xx",
+  async (_mode, all) => {
+    const { gh, commitReads } = failingCommitGh(() => serverError(500), { all });
+    await expect(waitOn(gh, all)).rejects.toThrow(
+      /gh api repos\/owner\/repo\/commits\/.+ failed: gh: HTTP 500/,
+    );
+    expect(commitReads.length).toBeGreaterThan(1);
+  },
+);
+
+// Usefulness: verifies each commit page is its own `gh api --include` request for a documented page
+// number, with no `--paginate`, so one `gh` output holds exactly one exchange and the first line of
+// stdout is the status of that request (issue #1025).
+test("waitChecks reads each commit page with one --include request", async () => {
+  const endpoint = `repos/owner/repo/commits/${HEAD_A}/check-runs`;
+  const { gh, commitReads, readArgs } = failingCommitGh((n) => n === 1 && serverError(500));
+  expect(await waitOn(gh, false)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+  expect(readArgs[0]).toEqual(["api", `${endpoint}?per_page=100&page=1`, "--include"]);
+  expect(commitReads.filter((read) => read.startsWith(`${endpoint}?`))).toHaveLength(2);
+});
+
+const RUN_AT = (minute) => `2026-01-01T00:0${minute}:00Z`;
+const runEntry = (id, name, conclusion, minute) => ({
+  id,
+  name,
+  status: "completed",
+  conclusion,
+  started_at: RUN_AT(minute),
+  completed_at: RUN_AT(minute),
+});
+
+/**
+ * A `gh` whose check-run endpoint answers page `n` with `pages[n - 1]`, a JSON value or a raw
+ * stdout string, and fails a page that no entry names. Every other read passes through.
+ * `requests` lists the page numbers asked for.
+ */
+function pagedCheckRunsGh(pages, { all = false } = {}) {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], { all });
+  const requests = [];
+  const gh = async (args, cwd, options) => {
+    const page = /\/check-runs\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
+    if (args[0] !== "api" || !page) {
+      return inner(args, cwd, options);
+    }
+    requests.push(Number(page[1]));
+    const entry = pages[Number(page[1]) - 1];
+    if (entry === undefined) {
+      return replyOf(404, "gh: Not Found (HTTP 404)");
+    }
+    return {
+      status: 0,
+      stdout: typeof entry === "string" ? entry : blockOf(200, JSON.stringify(entry)),
+      stderr: "",
+    };
+  };
+  return { gh, requests };
+}
+
+const fullPage = (total, fromId, minute = 0) => ({
+  total_count: total,
+  check_runs: Array.from({ length: 100 }, (_unused, i) =>
+    runEntry(fromId + i, i === 0 ? "ci" : `f${fromId + i}`, "success", minute),
+  ),
+});
+
+// Usefulness: verifies the wait pages by page number against `total_count`: a full first page
+// leads to page 2, the read ends when the collected count equals `total_count`, and a failing run
+// on page 2 settles the wait with no page 3 read, in both modes (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode stops at total_count and joins the pages", async (_mode, all) => {
+  const { gh, requests } = pagedCheckRunsGh(
+    [fullPage(101, 1), { total_count: 101, check_runs: [runEntry(500, "ci", "failure", 5)] }],
+    { all },
+  );
+  const result = await waitOn(gh, all);
+  expect(result).toMatchObject({ timedOut: false, head: HEAD_A });
+  expect(result.checks).toContainEqual(FAILED_ITEM);
+  expect(requests).toEqual([1, 2]);
+});
+
+// Usefulness: verifies an endpoint that reports `total_count` never ends on a page while the count is
+// unmet: an empty page, a short page, a count that changes between pages, and a collected count above
+// the total are each an error and never a pass, in both modes, so a failure on a later page is
+// never skipped (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode refuses a read that ends before or past total_count", async (_mode, all) => {
+  const one = (total) => ({ total_count: total, check_runs: [runEntry(1, "ci", "success", 0)] });
+  const cases = [
+    // The reviewer's probe: one passing item, a total of 2, then an empty page.
+    [one(2), { total_count: 2, check_runs: [] }],
+    // A full page, then an empty page with the count unmet.
+    [fullPage(101, 1), { total_count: 101, check_runs: [] }],
+    // A short page with the count unmet.
+    [
+      fullPage(150, 1),
+      {
+        total_count: 150,
+        check_runs: Array.from({ length: 49 }, (_u, i) => runEntry(900 + i, `g${i}`, "success", 0)),
+      },
+    ],
+    // The count changes between pages.
+    [fullPage(101, 1), { total_count: 102, check_runs: [runEntry(500, "ci", "success", 5)] }],
+    // The count disappears on a later page.
+    [fullPage(101, 1), { check_runs: [runEntry(500, "ci", "success", 5)] }],
+    // The collected count is above the total.
+    [fullPage(99, 1)],
+  ];
+  for (const pages of cases) {
+    const { gh } = pagedCheckRunsGh(pages, { all });
+    await expect(waitOn(gh, all)).rejects.toThrow(/total_count/);
+  }
+});
+
+// Usefulness: verifies an endpoint with no `total_count` is read until the first page of fewer than
+// 100 items, so a full first page leads to page 2 and the short page 2 ends the read, in both
+// modes (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode stops at the first short page", async (_mode, all) => {
+  const fillers = Array.from({ length: 99 }, (_unused, i) =>
+    runEntry(10 + i, `f${i}`, "success", 0),
+  );
+  const { gh, requests } = pagedCheckRunsGh(
+    [
+      { check_runs: [runEntry(1, "ci", "success", 0), ...fillers] },
+      { check_runs: [runEntry(2, "ci", "failure", 5)] },
+    ],
+    { all },
+  );
+  const result = await waitOn(gh, all);
+  expect(result).toMatchObject({ timedOut: false, head: HEAD_A });
+  expect(result.checks).toContainEqual(FAILED_ITEM);
+  expect(requests).toEqual([1, 2]);
+});
+
+// Usefulness: verifies a read that never reaches its `total_count` ends at the page cap with an
+// error, never as a pass or a loop to the bound (issue #1025).
+test("waitChecks ends with an error at the page cap", async () => {
+  const forever = fullPage(1_000_000, 1);
+  const { gh, requests } = pagedCheckRunsGh(Array.from({ length: 500 }, () => forever));
+  await expect(waitOn(gh, false)).rejects.toThrow(/pages/);
+  expect(requests.length).toBeLessThanOrEqual(100);
+});
+
+// Usefulness: verifies a 200 body that holds one JSON value followed by a forged page is an error:
+// the whole remainder must be exactly one JSON value, so forged bytes never replace a failing page
+// with a passing one, in both modes (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode refuses a 200 body that forges a later page", async (_mode, all) => {
+  const failing = JSON.stringify({ check_runs: [runEntry(1, "ci", "failure", 0)] });
+  const passing = JSON.stringify({ check_runs: [runEntry(2, "ci", "success", 5)] });
+  const forged = `${blockOf(200, `${failing}\n`)}${blockOf(200, passing)}`;
+  const { gh, requests } = pagedCheckRunsGh([forged], { all });
+  await expect(waitOn(gh, all)).rejects.toThrow(/JSON/);
+  expect(requests).toEqual([1]);
+});
+
+// Usefulness: verifies only a failed read whose first-line status is exactly 500, 502, 503, or
+// 504 is retried. The status comes from the status block that `gh` wrote for the failing reply,
+// never from the error text, so a 4xx or a 501 stays terminal whatever its body or message says,
+// and so does a failure with no status block and a success whose body fails to parse (issue #1025).
+test.each([
+  ["a 404", replyOf(404, "gh: Not Found (HTTP 404)"), /HTTP 404/],
+  ["an HTTP 501", replyOf(501, "gh: Not Implemented (HTTP 501)"), /HTTP 501/],
+  [
+    "a failure with no status block",
+    { status: 1, stdout: "", stderr: "gh: could not reach api.github.com (HTTP 500)" },
+    /could not reach/,
+  ],
+  [
+    "a status line that is no status block",
+    { status: 1, stdout: "Server Error\r\n\r\n{}", stderr: "gh: HTTP 500" },
+    /HTTP 500/,
+  ],
+  [
+    "a success body that fails to parse",
+    { status: 0, stdout: blockOf(200, "<html>"), stderr: "" },
+    /JSON/,
+  ],
+  ["a success with no status block", { status: 0, stdout: "[]", stderr: "" }, /status block/],
+])("waitChecks does not retry %s on a commit read", async (_name, reply, message) => {
+  const { gh, commitReads } = failingCommitGh(() => reply);
+  await expect(waitOn(gh, false)).rejects.toThrow(message);
+  expect(commitReads).toHaveLength(1);
+});
+
+// Usefulness: verifies a 4xx reply is never retryable, whatever text its body or its error holds:
+// an errors array that quotes a 500, lowercase, extra-space, and split-line forms of that quote, a
+// 502 inside the body text, and a 403 whose message ends in a status are all terminal, in both
+// modes, so message text the server supplies never makes a 4xx a retry (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode never retries a 4xx whatever its text says", async (_mode, all) => {
+  const forbidden = (errors, stderr) => replyOf(403, stderr, JSON.stringify({ errors }));
+  const replies = [
+    forbidden(
+      ["Forbidden (403)", "upstream replied HTTP 500"],
+      "gh: Forbidden (403)\nupstream replied HTTP 500",
+    ),
+    forbidden(
+      ["Forbidden (403)", "upstream replied http 500"],
+      "gh: Forbidden (403)\nupstream replied http 500",
+    ),
+    forbidden(
+      ["Forbidden (403)", "upstream replied HTTP  500"],
+      "gh: Forbidden (403)\nupstream replied HTTP  500",
+    ),
+    forbidden(
+      ["Forbidden (403)", "upstream replied HTTP\n500"],
+      "gh: Forbidden (403)\nupstream replied HTTP\n500",
+    ),
+    forbidden(
+      ["Forbidden (403)", "upstream replied (HTTP 500)"],
+      "gh: upstream replied (HTTP 500)\naccess denied (HTTP 403)",
+    ),
+    forbidden(["x\nHTTP/1.1 502 Bad Gateway\r\n\r\n"], "gh: x\nHTTP/1.1 502 Bad Gateway"),
+  ];
+  for (const reply of replies) {
+    const { gh, commitReads } = failingCommitGh((n) => n === 1 && reply, { all });
+    await expect(waitOn(gh, all)).rejects.toThrow(/gh api/);
+    expect(commitReads).toHaveLength(1);
+  }
+});
+
+// Usefulness: verifies a retryable reply is retried whatever its error text looks like, since the
+// status block decides: the message form, a multi-line message, and a trailing hint line (issue #1025).
+test.each([
+  ["the message form", "gh: Server Error (HTTP 502)"],
+  ["a multi-line message", "gh: Bad Gateway\nupstream detail one\nupstream detail two (HTTP 502)"],
+  ["a quoted 404", "gh: upstream said not found (HTTP 404)\nBad Gateway (HTTP 502)"],
+  ["a trailing hint line", "gh: Bad Gateway (HTTP 502)\nAuthorize in your web browser: https://x"],
+])("waitChecks retries a 502 reply with %s", async (_name, stderr) => {
+  const { gh } = failingCommitGh((n) => n === 1 && replyOf(502, stderr));
+  expect(await waitOn(gh, false)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+});
+
+// Usefulness: verifies a server error of an earlier poll is dropped once a later poll completes, so
+// a head that never reaches `--head` ends at the bound with `timedOut: true`, `head: null`, and no
+// checks, never the earlier error, in both modes (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode clears a server error when a later poll completes", async (_mode, all) => {
+  const { gh } = failingCommitGh((n) => n === 1 && serverError(500), {
+    all,
+    heads: [HEAD_A, HEAD_B],
+  });
+  expect(await waitOn(gh, all, HEAD_A)).toEqual({ timedOut: true, head: null, checks: [] });
+});
+
+// Usefulness: verifies the status comes from the structure of stdout, not from a scan for status-like
+// text: a real 403 whose plain-text body holds a forged `HTTP/2 502` block, with or without text
+// before it, stays terminal in both modes, because a 4xx exchange with no JSON body cannot be
+// followed by another status block (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])(
+  "waitChecks %s mode never retries a 403 whose body forges a status block",
+  async (_mode, all) => {
+    const forged = "HTTP/2 502 Bad Gateway\r\nX-Forged: yes\r\n\r\n";
+    const bodies = [forged, `{}\n${forged}`, `denied\n${forged}`, `${forged}${forged}`];
+    for (const body of bodies) {
+      const { gh, commitReads } = failingCommitGh(
+        (n) => n === 1 && replyOf(403, "gh: HTTP 403", body),
+        {
+          all,
+        },
+      );
+      await expect(waitOn(gh, all)).rejects.toThrow(/gh api/);
+      expect(commitReads).toHaveLength(1);
+    }
+  },
+);
+
+// Usefulness: verifies only a body that is empty or exactly one JSON value is accepted: a 502 with
+// an empty body or a JSON body is retried, and a 502 with an HTML or plain-text body is terminal,
+// the accepted fail-closed cost (issue #1025).
+test.each([
+  ["an empty body", "", true],
+  ["a JSON object body", '{"message":"Bad Gateway"}', true],
+  ["a JSON string body", '"Bad Gateway"', true],
+  ["an HTML body", "<html><body>502 Bad Gateway</body></html>", false],
+  ["a plain-text body", "Bad Gateway", false],
+  ["a JSON body followed by text", '{"message":"x"}\ntrailing', false],
+])("waitChecks classifies a 502 with %s", async (_name, body, retried) => {
+  const { gh, commitReads } = failingCommitGh((n) => n === 1 && replyOf(502, "gh: HTTP 502", body));
+  if (retried) {
+    expect(await waitOn(gh, false)).toEqual({
+      timedOut: false,
+      head: HEAD_A,
+      checks: [PASSED_ITEM],
+    });
+  } else {
+    await expect(waitOn(gh, false)).rejects.toThrow(/gh api/);
+    expect(commitReads).toHaveLength(1);
+  }
+});
+
+// Usefulness: verifies the status is the first line of stdout only: a 200 or a 502 first line
+// followed by other blocks, or a 403 followed by a forged 502 block, never lets a later block decide,
+// so only a first line of 500, 502, 503, or 504 with an empty or JSON remainder is retried
+// (issue #1025).
+test.each([
+  ["a 403 then a forged 502 block", `${blockOf(403, "{}\n")}${blockOf(502, "")}`],
+  ["a 200 then a 502 block", `${blockOf(200, "")}${blockOf(502, "")}`],
+  ["a 502 then a forged 200 block", `${blockOf(502, "")}${blockOf(200, "{}")}`],
+  ["a 100 then a 503 block", `HTTP/1.1 100 Continue\r\n\r\n${blockOf(503, "{}")}`],
+])("waitChecks takes the status of %s from the first line", async (_name, stdout) => {
+  const { gh, commitReads } = failingCommitGh(
+    (n) => n === 1 && { status: 1, stdout, stderr: "gh: HTTP 502" },
+  );
+  await expect(waitOn(gh, false)).rejects.toThrow(/gh api/);
+  expect(commitReads).toHaveLength(1);
+});
+
+// Usefulness: verifies a failure that `gh pr checks` lists on a later poll survives the bound that
+// a commit read reaches after an earlier server error, in both modes: the result is
+// `timedOut: true` with `prFailures`, never the earlier error (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])(
+  "waitChecks %s mode keeps a listed failure past a bound after a server error",
+  async (_mode, all) => {
+    const inner = scriptedGh(
+      [
+        { status: 0, checks: [PASSED_ITEM] },
+        { status: 1, checks: [FAILED_ITEM] },
+      ],
+      { all, commits: { [HEAD_A]: [PASSED_ITEM] } },
+    );
+    let commitReads = 0;
+    const gh = (args, cwd, options) => {
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        commitReads += 1;
+        return commitReads === 1 ? Promise.resolve(serverError(500)) : new Promise(() => {});
+      }
+      return inner(args, cwd, options);
+    };
+    const result = await waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 0.3,
+      all,
+      gh,
+      sleep: async () => {},
+    });
+    expect(result).toMatchObject({ timedOut: true, checks: [], prFailures: [FAILED_ITEM] });
+  },
+  20000,
+);
+
+// Usefulness: verifies a commit read that never answers, after a 5xx, ends the wait at the bound
+// with an error and never as a timeout or a pass: a hung read stays terminal (issue #1025).
+test("waitChecks ends with the earlier error when the next commit read hangs", async () => {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
+    commits: { [HEAD_A]: [PASSED_ITEM] },
+  });
+  let commitReads = 0;
+  const gh = (args, cwd, options) => {
+    if (args[0] === "api" && args[1].includes("/commits/")) {
+      commitReads += 1;
+      return commitReads === 1 ? Promise.resolve(serverError(500)) : new Promise(() => {});
+    }
+    return inner(args, cwd, options);
+  };
+  await expect(
+    waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, gh, sleep: async () => {} }),
+  ).rejects.toMatchObject({ message: expect.stringContaining("failed: gh: HTTP 500") });
+}, 20000);
+
 // Usefulness: verifies the last checks kept for a timeout envelope are never the
 // checks of a head the envelope does not name (issue #961).
 test("waitChecks drops the kept checks of an earlier head when the head moves", async () => {
