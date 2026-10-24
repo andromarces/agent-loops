@@ -966,19 +966,30 @@ required wait reads a required check, it stays the one to run. `--all` is
 refused on every other role operation, and so is `--head`. `--all` takes `--head`
 as the required wait does.
 
-Skip the `--all` wait when no workflow of the base branch can report a check for
-the PR. A repository with no workflow that runs on `pull_request` or
-`pull_request_target` never reports one, so the wait always ends at the bound with
-`timedOut: true` and an empty `checks`. Read the `on:` triggers of
-`.github/workflows/*` on the base branch, not on the PR head, because a PR can add
-a workflow that the base branch lacks. A workflow that runs on `pull_request` or
-`pull_request_target` keeps the wait, even one with a path filter. A workflow with a
-`push` trigger also reports a check for the PR head, so it keeps the wait. A trigger
-that you cannot read or cannot place keeps the wait. When you skip, dispatch the
-reviewer at once and record in `verified` that the CI status is not verified,
-because the base branch has no workflow that reports a check for the PR. Never
-record the CI status as passed from a skip. The headless orchestrator reads no
-workflow file, so it keeps the wait.
+Skip the `--all` wait only when no source can report a check for the PR head.
+Keep the wait unless every condition holds:
+
+- The PR changes no file under `.github/workflows/`, so the PR head runs only the
+  workflows of the base branch. Read the file list with `gh pr diff <pr> --name-only`.
+- No workflow of the base branch has an `on:` trigger of `pull_request`,
+  `pull_request_target`, `push`, `merge_group`, `workflow_run`, or `check_suite`.
+  Read the `on:` triggers of `.github/workflows/*` on the base branch, not on the PR
+  head. A `workflow_run`, `merge_group`, or `check_suite` trigger does not show that
+  the PR head gets no check, so it keeps the wait. A reusable workflow
+  (`workflow_call`) inherits the events of its caller, so read the triggers of each
+  caller.
+- The base head, the latest commit of the base branch, has no check run and no
+  commit status from any source. A GitHub App or third-party CI can report a check
+  with no workflow file, so the triggers alone are not evidence. Read
+  `repos/<slug>/commits/<base head>/check-runs` and `.../status`, and require a
+  `total_count` of 0 in both.
+
+A file list, trigger, or read that you cannot read or cannot place keeps the wait.
+The limit: the base head is one commit, so a provider that skipped it or that
+registers later stays unseen, and only the wait covers it. When you skip, dispatch
+the reviewer at once and record in `verified` that the CI status is not verified,
+with the three conditions that held. Never record the CI status as passed from a
+skip. The headless orchestrator reads no workflow file, so it keeps the wait.
 
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
 failed one. A check that has not started is absent from `checks`, because the

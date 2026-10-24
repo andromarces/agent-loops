@@ -220,17 +220,32 @@ test("the parent surfaces name --expect for a check that registers late", async 
 });
 
 // Usefulness: verifies the interactive instructions state when the parent skips the `--all` wait
-// (issue #1054): no workflow of the base branch reports a check for the PR, and `verified` records
-// the CI status as not verified. A parent without the rule waits the full bound for a check that
-// never reports, and a rule that omits the `verified` record or the `pull_request` keep-wait invites
-// a recorded pass or a skipped wait on a repository with CI.
+// (issue #1054): only when the PR changes no workflow file, no workflow of the base branch has a
+// trigger that can run for the PR head, and the base head shows no check run or commit status from
+// any source. A rule that reads the base triggers alone starts the reviewer before CI reports, when
+// a GitHub App or third-party CI reports with no workflow file, or when the PR adds a workflow.
 test("the instructions state when the parent skips the --all wait", async () => {
   const instructions = await readFile(instructionsPath, "utf8");
-  expectRule(instructions, /skip the `--all` wait/i, /no workflow of the base branch/i);
-  expectRule(instructions, /no workflow that runs on `pull_request`/, /never reports/i);
+  expectRule(instructions, /skip the `--all` wait only when no source can report a check/i);
+  // The PR head runs the workflows it adds or changes.
+  expectRule(instructions, /changes no file under `\.github\/workflows\/`/);
+  expectRule(instructions, /`gh pr diff <pr> --name-only`/);
+  // The triggers of the base branch, each one that can run for the PR head.
+  expectRule(
+    instructions,
+    /`pull_request`/,
+    /`pull_request_target`/,
+    /`push`/,
+    /`merge_group`/,
+    /`workflow_run`/,
+    /`check_suite`/,
+  );
   expectRule(instructions, /base branch, not on the PR head/i);
-  expectRule(instructions, /`pull_request` or `pull_request_target`/, /keeps the wait/i);
-  expectRule(instructions, /`push`/, /keeps the wait/i);
+  expectRule(instructions, /reusable workflow/i, /caller/i);
+  // An external provider reports with no workflow file.
+  expectRule(instructions, /no check run and no commit status from any source/i, /base head/i);
+  expectRule(instructions, /GitHub App or third-party CI/i, /no workflow file/i);
+  expectRule(instructions, /limit/i, /base head is one commit/i);
   expectRule(instructions, /cannot read/i, /keeps the wait/i);
   expectRule(instructions, /record in `verified`/i, /not verified/i);
   expectRule(instructions, /never record the CI status as passed/i, /skip/i);
