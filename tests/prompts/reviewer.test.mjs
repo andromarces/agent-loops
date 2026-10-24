@@ -597,3 +597,39 @@ test("reviewer prompt tells the reviewer to leave the runtime scratch folder to 
 test("reviewer prompt without a scratch folder names none", () => {
   expect(reviewerPrompt("check the fix")).not.toContain("scratch folder");
 });
+
+// Usefulness: verifies acceptance #1026 — every reviewer turn bars a dependency install, repair, or
+// update, including one a test runner starts, and names the reason, because that write reaches the
+// shared package store and every work tree that links it, and the mutation check does not see it.
+test.each([
+  ["no sandbox mode", () => reviewerPrompt("check the fix")],
+  ["a PR input with a supplied status", () => reviewerPrompt("review PR 1026", FAILING_READ)],
+  ["a test run", () => reviewerPrompt("check", null, TEST_RUN, "none")],
+  ["read-only mode", () => reviewerPrompt("check", null, null, "read-only")],
+  ["workspace-write mode", () => reviewerPrompt("check", null, null, "workspace-write")],
+  [
+    "a scratch folder",
+    () => reviewerPrompt("check", null, null, null, null, "/work/.agent-loop/rev/ab12"),
+  ],
+])("reviewer prompt bars a dependency install and names the reason with %s", (_name, render) => {
+  const prompt = render().replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Run no dependency install, repair, or update in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable `node_modules`.",
+  );
+  expect(prompt).toContain(
+    "An install writes to the shared package store outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes.",
+  );
+});
+
+// Usefulness: verifies acceptance #1026 — the instructions say how a probe of old source avoids an
+// install: the probe copy links the work tree's `node_modules`, and an unreachable one is reported
+// as unresolved instead of letting a tool install into the copy.
+test("reviewer prompt tells a probe copy to link the work tree node_modules", () => {
+  const prompt = reviewerPrompt("check the fix").replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "A probe copy of the repository, for example a copy of old source, reuses the `node_modules` of the work tree: link it into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there.",
+  );
+  expect(prompt).toContain(
+    "When the copy cannot link `node_modules`, report the probe as unresolved in Checks.",
+  );
+});

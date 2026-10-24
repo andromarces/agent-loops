@@ -4,6 +4,11 @@ import { initTaskBlock, processRule, reportBlock, testSlotRule } from "./report.
 const prBodyRule =
   "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment.";
 
+// A probe copy without a usable `node_modules` makes `vp` install into the shared package store
+// (issue #1026).
+const probeCopyRule =
+  "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy, with a junction on Windows or a symlink elsewhere, and run no dependency install, repair, or update there. A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`, and every work tree that links the store sees that write.";
+
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
     // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the rule.
@@ -20,6 +25,7 @@ Your role:
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
+- ${probeCopyRule}
 - For PR work, the dispatcher names the PR branch. Commit your change on that
   branch and push it, so the reviewer sees a committed head and the PR head
   matches that commit. A task is PR work when its change is delivered on a pull
