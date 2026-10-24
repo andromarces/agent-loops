@@ -958,7 +958,7 @@ listed failing check is settled, and every other exit 1 is unresolved with
 reported yet, so the wait continues. At the bound with only that reply, `--all`
 returns `timedOut: true` and an empty `checks`, which is never a pass. A
 repository with no CI workflow therefore waits the full `--timeout` before it
-returns. Exit 1 with `no required checks reported on the '<branch>' branch` stays
+returns, unless `noCheckSource` ends the wait, as stated below. Exit 1 with `no required checks reported on the '<branch>' branch` stays
 unresolved, because `--all` has no required-check answer. A `noRequiredChecks`
 envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`
 or after the refusal above that no source states the required checks; when the
@@ -966,30 +966,30 @@ required wait reads a required check, it stays the one to run. `--all` is
 refused on every other role operation, and so is `--head`. `--all` takes `--head`
 as the required wait does.
 
-Skip the `--all` wait only when no source can report a check for the PR head.
-Keep the wait unless every condition holds:
+The `--all` wait also asks once whether any source can report a check for the PR
+head. It asks when the first read lists no check and no `--expect` name is set. The
+command reads the files of the PR, the workflow files of the base branch, and the check
+runs and commit statuses of the base head, and you read none of them. When all three
+conditions hold, the wait returns at once with `noCheckSource: true`,
+`timedOut: false`, and an empty `checks`:
 
-- The PR changes no file under `.github/workflows/`, so the PR head runs only the
-  workflows of the base branch. Read the file list with `gh pr diff <pr> --name-only`.
-- No workflow of the base branch has an `on:` trigger of `pull_request`,
-  `pull_request_target`, `push`, `merge_group`, `workflow_run`, or `check_suite`.
-  Read the `on:` triggers of `.github/workflows/*` on the base branch, not on the PR
-  head. A `workflow_run`, `merge_group`, or `check_suite` trigger does not show that
-  the PR head gets no check, so it keeps the wait. A reusable workflow
-  (`workflow_call`) inherits the events of its caller, so read the triggers of each
-  caller.
-- The base head, the latest commit of the base branch, has no check run and no
-  commit status from any source. A GitHub App or third-party CI can report a check
-  with no workflow file, so the triggers alone are not evidence. Read
-  `repos/<slug>/commits/<base head>/check-runs` and `.../status`, and require a
-  `total_count` of 0 in both.
+- The PR changes no file under `.github/workflows/`, a rename out of it included.
+- No workflow file of the base branch names `pull_request`, `pull_request_target`,
+  `push`, `merge_group`, `workflow_run`, or `check_suite`. The command scans the text
+  of each file, so a name in a comment or a step keeps the wait. A reusable workflow
+  inherits the events of its caller, and the callers are files of the same directory.
+- The base head has no check run and no commit status from any source, because a GitHub
+  App or third-party CI can report a check with no workflow file.
 
-A file list, trigger, or read that you cannot read or cannot place keeps the wait.
-The limit: the base head is one commit, so a provider that skipped it or that
-registers later stays unseen, and only the wait covers it. When you skip, dispatch
-the reviewer at once and record in `verified` that the CI status is not verified,
-with the three conditions that held. Never record the CI status as passed from a
-skip. The headless orchestrator reads no workflow file, so it keeps the wait.
+`noCheckSource` is never a pass. On it, dispatch the reviewer at once, record in
+`verified` that the CI status is not verified, and never record the CI status as
+passed. Act only on the field: never read a workflow file, a PR file list, or a check
+source yourself to decide it. A read that fails, cannot be parsed, or is not settled
+keeps the normal wait, so an envelope without the field keeps every rule above. A
+repository with a `pull_request` workflow keeps the wait. The limit: the base head is
+one commit, so a provider that skipped it or that reports only on PR heads stays
+unseen, and only the wait covers it. `noCheckSource` never comes from the required
+wait. The headless orchestrator prompt carries the same rule.
 
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
 failed one. A check that has not started is absent from `checks`, because the
@@ -1321,8 +1321,8 @@ GitHub. Declare the PR after the worker opens it:
   run, so such a run can only end through `abort`. Do not declare the PR there. Finish with the `unresolvedCompare` marker
   after you compare the PR head with `reviewed.head` yourself, and run
   `wait-checks --all` once before each reviewer turn, because the required wait
-  refuses there, unless the skip rule applies. "Waiting for required checks" states that wait and the
-  skip rule.
+  refuses there. "Waiting for required checks" states that wait and the `noCheckSource`
+  envelope that ends it at once.
 
 A marked `role finish` still exits `0`, unlike the headless finish that exits
 `4` for the same marker. The exit code is not the outcome channel of this

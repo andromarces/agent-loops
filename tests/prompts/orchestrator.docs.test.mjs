@@ -219,18 +219,36 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
-// Usefulness: verifies the interactive instructions state when the parent skips the `--all` wait
-// (issue #1054): only when the PR changes no workflow file, no workflow of the base branch has a
-// trigger that can run for the PR head, and the base head shows no check run or commit status from
-// any source. A rule that reads the base triggers alone starts the reviewer before CI reports, when
-// a GitHub App or third-party CI reports with no workflow file, or when the PR adds a workflow.
-test("the instructions state when the parent skips the --all wait", async () => {
+// Usefulness: verifies both parent surfaces tell the parent to act only on the `noCheckSource` field of
+// the `--all` envelope: dispatch the reviewer, record the CI status as not verified, never as passed
+// (issue #1054). A parent that reads the workflows itself leaves its role contract, and one that
+// records a pass from the field reports CI that no check backed.
+test("the parent surfaces state the action for a noCheckSource wait", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
   const instructions = await readFile(instructionsPath, "utf8");
-  expectRule(instructions, /skip the `--all` wait only when no source can report a check/i);
-  // The PR head runs the workflows it adds or changes.
+  for (const text of [prompt, instructions]) {
+    expectRule(text, /noCheckSource/, /(?:no|never a) pass/i);
+    expectRule(text, /dispatch the reviewer/i, /not verified/i);
+    expectRule(text, /never record the CI status as passed/i);
+  }
+});
+
+// Usefulness: verifies the interactive instructions state the three conditions of the
+// `noCheckSource` return and its limit, and tell the parent to read none of them itself
+// (issue #1054). A reworded rule that drops the workflow-file, trigger, or external-provider
+// condition would let a skip start the reviewer before CI reports.
+test("the instructions state the conditions of a noCheckSource wait", async () => {
+  const instructions = await readFile(instructionsPath, "utf8");
+  expectRule(instructions, /no `--expect` name is set/);
   expectRule(instructions, /changes no file under `\.github\/workflows\/`/);
-  expectRule(instructions, /`gh pr diff <pr> --name-only`/);
-  // The triggers of the base branch, each one that can run for the PR head.
   expectRule(
     instructions,
     /`pull_request`/,
@@ -240,16 +258,14 @@ test("the instructions state when the parent skips the --all wait", async () => 
     /`workflow_run`/,
     /`check_suite`/,
   );
-  expectRule(instructions, /base branch, not on the PR head/i);
   expectRule(instructions, /reusable workflow/i, /caller/i);
-  // An external provider reports with no workflow file.
-  expectRule(instructions, /no check run and no commit status from any source/i, /base head/i);
+  expectRule(instructions, /no check run and no commit status from any source/i);
   expectRule(instructions, /GitHub App or third-party CI/i, /no workflow file/i);
+  expectRule(instructions, /never read a workflow file/i, /yourself/i);
+  expectRule(instructions, /keeps the normal wait/i, /fails|cannot be parsed|not settled/i);
+  expectRule(instructions, /repository with a `pull_request` workflow keeps the wait/i);
   expectRule(instructions, /limit/i, /base head is one commit/i);
-  expectRule(instructions, /cannot read/i, /keeps the wait/i);
-  expectRule(instructions, /record in `verified`/i, /not verified/i);
-  expectRule(instructions, /never record the CI status as passed/i, /skip/i);
-  expectRule(instructions, /headless orchestrator/i, /keeps the wait/i);
+  expectRule(instructions, /never comes from the required wait/i);
 });
 
 /** The words of a text in order, so case, whitespace, Markdown marks, and punctuation never decide a match. */

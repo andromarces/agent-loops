@@ -1589,3 +1589,181 @@ test.each([
   await expect(waitOn(gh, all)).rejects.toThrow(/Link header names a host other than/);
   expect(commitReads).toHaveLength(1);
 });
+
+// The `--all` wait's no-check-source early return (issue #1054). The probe reads the files of the
+// PR, the workflow files of the base branch, and the check runs and commit statuses of the base
+// head. A failed or unreadable read keeps the normal wait, so the helper fails one endpoint on demand.
+const BASE_HEAD = "c".repeat(40);
+const NO_CHECKS_YET = {
+  status: 1,
+  stdout: "",
+  stderr: "no checks reported on the 'main' branch",
+};
+const readOk = (stdout) => ({ status: 0, stdout, stderr: "", timedOut: false });
+const INERT_WORKFLOW =
+  "name: nightly\non:\n  workflow_dispatch:\n  schedule:\n    - cron: '0 0 * * *'\n";
+const BASE_RUN = {
+  id: 1,
+  name: "app-ci",
+  status: "completed",
+  conclusion: "success",
+  started_at: "2026-01-01T00:00:00Z",
+  completed_at: "2026-01-01T00:01:00Z",
+};
+const BASE_STATUS = {
+  id: 1,
+  context: "ci/external",
+  state: "success",
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
+/** A scripted `gh` for a PR with no check yet, plus the probe reads, each overridable or failing by endpoint prefix. */
+function probeGh({
+  prFiles = [{ filename: "README.md" }],
+  workflows = { "nightly.yml": INERT_WORKFLOW },
+  baseRuns = [],
+  baseStatuses = [],
+  failing = null,
+  content = null,
+  all = true,
+} = {}) {
+  const inner = scriptedGh([NO_CHECKS_YET], { all });
+  const repo = "repos/owner/repo";
+  return async (args, cwd) => {
+    const endpoint = args[0] === "api" ? args[1] : "";
+    if (failing !== null && endpoint.startsWith(`${repo}/${failing}`)) {
+      return { status: 1, stdout: "", stderr: "gh: Internal failure (HTTP 500)", timedOut: false };
+    }
+    if (endpoint.startsWith(`${repo}/pulls/42/files`)) {
+      return readOk(pageStdout(prFiles));
+    }
+    if (endpoint === `${repo}/contents/.github/workflows?ref=main`) {
+      return workflows === null
+        ? { status: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)", timedOut: false }
+        : readOk(
+            JSON.stringify(
+              Object.keys(workflows).map((name) => ({
+                name,
+                path: `.github/workflows/${name}`,
+                type: "file",
+              })),
+            ),
+          );
+    }
+    const file = /^repos\/owner\/repo\/contents\/\.github\/workflows\/([^?]+)\?ref=main$/.exec(
+      endpoint,
+    );
+    if (file) {
+      return readOk(
+        content ??
+          JSON.stringify({
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(workflows[file[1]]).toString("base64"),
+          }),
+      );
+    }
+    if (endpoint === `${repo}/commits/main`) {
+      return readOk(`${BASE_HEAD}\n`);
+    }
+    if (endpoint.startsWith(`${repo}/commits/${BASE_HEAD}/check-runs`)) {
+      return readOk(pageStdout({ total_count: baseRuns.length, check_runs: baseRuns }));
+    }
+    if (endpoint.startsWith(`${repo}/commits/${BASE_HEAD}/status`)) {
+      return readOk(pageStdout({ total_count: baseStatuses.length, statuses: baseStatuses }));
+    }
+    return inner(args, cwd);
+  };
+}
+
+function probedWait(options = {}, extra = {}) {
+  const clock = fakeClock();
+  return waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    all: true,
+    gh: probeGh(options),
+    now: clock.now,
+    sleep: clock.sleep,
+    ...extra,
+  }).then((result) => ({ result, elapsed: clock.elapsed() }));
+}
+
+// Usefulness: verifies the `--all` wait returns at once with `noCheckSource`, no timeout, and an
+// empty `checks` when the PR changes no workflow file, the base workflows hold no trigger that runs
+// for the PR head, and the base head has no check run or commit status (issue #1054). A parent then
+// skips the full bound without reading any workflow itself.
+test("the --all wait returns noCheckSource at once when no source can report a check", async () => {
+  const { result, elapsed } = await probedWait();
+  expect(result).toEqual({ timedOut: false, noCheckSource: true, head: HEAD_A, checks: [] });
+  expect(elapsed).toBe(0);
+});
+
+// Usefulness: verifies a base branch with no workflow directory counts as no workflow, so a
+// repository with no CI at all skips the wait (issue #1054).
+test("the --all wait returns noCheckSource when the base branch has no workflow directory", async () => {
+  const { result } = await probedWait({ workflows: null });
+  expect(result).toEqual({ timedOut: false, noCheckSource: true, head: HEAD_A, checks: [] });
+});
+
+// Usefulness: verifies each condition that keeps the normal wait: the wait runs to the bound with
+// `timedOut: true`, an empty `checks`, and no `noCheckSource` (issue #1054). One row per condition,
+// so a dropped condition fails its own row.
+test.each([
+  ["a PR file under .github/workflows", { prFiles: [{ filename: ".github/workflows/ci.yml" }] }],
+  [
+    "a PR file renamed out of .github/workflows",
+    { prFiles: [{ filename: "ci.yml", previous_filename: ".github/workflows/ci.yml" }] },
+  ],
+  ...[
+    "pull_request",
+    "pull_request_target",
+    "push",
+    "merge_group",
+    "workflow_run",
+    "check_suite",
+  ].map((trigger) => [
+    `a base workflow with a ${trigger} trigger`,
+    { workflows: { "ci.yml": `on:\n  ${trigger}:\n    branches: [main]\n` } },
+  ]),
+  ["a base workflow with an inline trigger list", { workflows: { "ci.yml": "on: [push]\n" } }],
+  ["a check run on the base head", { baseRuns: [BASE_RUN] }],
+  ["a commit status on the base head", { baseStatuses: [BASE_STATUS] }],
+  ["a failed PR files read", { failing: "pulls/42/files" }],
+  ["a failed workflow listing read", { failing: "contents/.github/workflows?" }],
+  ["a failed workflow file read", { failing: "contents/.github/workflows/nightly.yml" }],
+  ["an unparseable workflow file reply", { content: "not json" }],
+  ["a workflow file with no base64 content", { content: JSON.stringify({ type: "file" }) }],
+  ["a failed base head read", { failing: "commits/main" }],
+  ["a failed base head check-runs read", { failing: `commits/${BASE_HEAD}/check-runs` }],
+  ["a failed base head status read", { failing: `commits/${BASE_HEAD}/status` }],
+])("the --all wait keeps the normal wait for %s", async (_name, options) => {
+  const { result } = await probedWait(options);
+  expect(result.noCheckSource).toBeUndefined();
+  expect(result).toMatchObject({ timedOut: true, checks: [] });
+});
+
+// Usefulness: verifies a named expected check keeps the wait, because the parent named a check
+// that must register, and an early return would end the wait before it (issue #1054).
+test("the --all wait keeps the normal wait when a check name is expected", async () => {
+  const { result } = await probedWait({}, { expect: ["deploy"] });
+  expect(result.noCheckSource).toBeUndefined();
+  expect(result).toMatchObject({ timedOut: true, awaiting: ["deploy"] });
+});
+
+// Usefulness: verifies the required wait never returns `noCheckSource`, because the probe belongs
+// to the `--all` wait alone (issue #1054).
+test("the required wait never returns noCheckSource", async () => {
+  const clock = fakeClock();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    gh: probeGh({ all: false }),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result.noCheckSource).toBeUndefined();
+});

@@ -15,8 +15,10 @@ import {
 } from "./ci-gate.mjs";
 import {
   failureOf,
+  ghApi,
   ghFailureText,
   NO_REQUIRED_CHECKS,
+  pagedRead,
   requiredContexts,
   runGh,
 } from "./ci-required-sources.mjs";
@@ -178,6 +180,16 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
   }
   return { settled: false, checks };
 }
+
+// The workflow triggers that can run for a PR head, and the directory that holds the workflows. The
+// probe scans the text of each workflow file for a trigger name instead of parsing the YAML, so a name
+// in a comment or a step also keeps the wait. That errs toward the wait, never toward a skip.
+const PR_TRIGGERS =
+  /\b(?:pull_request|pull_request_target|push|merge_group|workflow_run|check_suite)\b/;
+const WORKFLOW_DIR = ".github/workflows";
+const WORKFLOW_PATH = /^\.github\/workflows\//i;
+// The one `gh api` reply that states a path or ref holds nothing, compared whole.
+const NOT_FOUND_404 = /^gh: Not Found \(HTTP 404\)$/;
 
 // A full object name, so two heads compare by equality. `gh` reports SHA-1 and SHA-256 names.
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -389,6 +401,9 @@ async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv) {
  * `all` waits on every check of the PR head instead of the required ones, for a
  * branch with no required check; it keeps the exit-code rules above, including
  * the wait on the no-checks-yet reply, except `noRequiredChecks` (#896, #950).
+ * `noCheckSource` rides on an `--all` envelope only when the first read lists no check and no source can
+ * report one for the PR head (see `noCheckSource` below): the wait ends at once with an empty `checks`,
+ * and it is no pass (#1054).
  * `expect` names check runs that the `--all` wait must see on `sha` before a pass, matched by exact
  * name against the check runs only, whichever app made them, never against commit statuses: a third-party app can
  * register a check run after the first ones passed, so a pass without it is not evidence. A
@@ -592,6 +607,76 @@ export async function waitChecks({
     }
     return false;
   };
+  // Whether no source can report a check for the PR head: the PR changes no file under
+  // `.github/workflows/`, no workflow of the base branch names a trigger that can run for the PR
+  // head, and the base head shows no check run and no commit status from any source, so a GitHub App
+  // or third-party CI with no workflow file is covered too. It is a few reads, each bounded by the
+  // wait. Any read that fails, cannot be parsed, or is not exactly the expected shape returns false
+  // or throws, and the caller then keeps the normal wait. Its limit: the base head is one commit, so
+  // a provider that skipped it or registers later stays unseen (#1054).
+  const noCheckSource = async (base) => {
+    await ensureSlug();
+    const ref = encodeURIComponent(base);
+    const pages = await ghApi(pagedRead(bounded, null), [`repos/${slug}/pulls/${pr}/files`], cwd);
+    if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
+      return false;
+    }
+    for (const file of pages.flat()) {
+      if (!isJsonObject(file) || typeof file.filename !== "string") {
+        return false;
+      }
+      if (WORKFLOW_PATH.test(file.filename) || WORKFLOW_PATH.test(file.previous_filename ?? "")) {
+        return false;
+      }
+    }
+    const listing = await bounded(["api", `repos/${slug}/contents/${WORKFLOW_DIR}?ref=${ref}`]);
+    let entries = [];
+    if (listing.status !== 0) {
+      if (!NOT_FOUND_404.test(listing.stderr.trim())) {
+        return false;
+      }
+    } else {
+      entries = JSON.parse(listing.stdout);
+      if (!Array.isArray(entries)) {
+        return false;
+      }
+    }
+    for (const entry of entries) {
+      if (
+        !isJsonObject(entry) ||
+        typeof entry.path !== "string" ||
+        !WORKFLOW_PATH.test(entry.path)
+      ) {
+        return false;
+      }
+      if (entry.type === "dir") {
+        continue;
+      }
+      if (entry.type !== "file") {
+        return false;
+      }
+      const path = entry.path.split("/").map(encodeURIComponent).join("/");
+      const read = await bounded(["api", `repos/${slug}/contents/${path}?ref=${ref}`]);
+      const body = read.status === 0 ? JSON.parse(read.stdout) : null;
+      if (!isJsonObject(body) || body.encoding !== "base64" || typeof body.content !== "string") {
+        return false;
+      }
+      if (PR_TRIGGERS.test(Buffer.from(body.content, "base64").toString("utf8"))) {
+        return false;
+      }
+    }
+    const baseRead = await bounded(["api", `repos/${slug}/commits/${ref}`, "--jq", ".sha"]);
+    const baseHead = baseRead.stdout.trim().toLowerCase();
+    if (baseRead.status !== 0 || !FULL_SHA.test(baseHead)) {
+      return false;
+    }
+    const runs = await checkRuns(bounded, slug, baseHead, cwd, true);
+    const statuses = await commitStatuses(bounded, slug, baseHead, cwd, true);
+    return runs.length === 0 && statuses.length === 0;
+  };
+  // The probe runs once, and only for an `--all` wait that names no expected check and that read no
+  // check state yet.
+  let probed = false;
   // The retryable server error of the latest completed poll, or null when that poll had none.
   // A wait that ends on the bound with it set reports it as an error, so a server error never
   // reads as a timeout or a pass (#1025).
@@ -603,6 +688,20 @@ export async function waitChecks({
       const { head: sha, base } = readHead(pr, await bounded(headArgv));
       if (head === null || sha === head) {
         const listed = readOutcome(pr, await bounded(checksArgv), all);
+        if (all && expect.length === 0 && !probed && listed.checks.length === 0) {
+          probed = true;
+          try {
+            if (await noCheckSource(base)) {
+              return { timedOut: false, noCheckSource: true, head: sha, checks: [] };
+            }
+          } catch (raw) {
+            // A failed probe read keeps the normal wait. The bound still ends it.
+            const err = failureOf(raw);
+            if (err instanceof BoundReached) {
+              throw err;
+            }
+          }
+        }
         if (listed.noRequiredChecks && !(await absenceOf(base))) {
           listed.noRequiredChecks = false;
           listed.settled = false;
