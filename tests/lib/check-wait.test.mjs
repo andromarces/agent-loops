@@ -895,6 +895,77 @@ test("waitChecks reports the original error when the classifying request succeed
   expect(probes).toHaveLength(1);
 });
 
+// Usefulness: verifies the original read error must itself report a retryable status: a 403, a 501,
+// and a failure with no status line stay terminal although the classifying request ends in a 502,
+// in both modes, so one signal alone never turns an error into a retry (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])(
+  "waitChecks %s mode needs the original error to report a retryable status",
+  async (_mode, all) => {
+    const originals = [
+      replyOf(403, "gh: Forbidden (HTTP 403)"),
+      replyOf(501, "gh: Not Implemented (HTTP 501)"),
+      { status: 1, stdout: "", stderr: "gh: could not connect" },
+      replyOf(403, "gh: Forbidden (HTTP 403)\ngh: upstream reported (HTTP 502)"),
+    ];
+    for (const original of originals) {
+      const { gh, commitReads } = failingCommitGh((n) => n === 1 && original, {
+        all,
+        probe: () => serverError(502),
+      });
+      await expect(waitOn(gh, all)).rejects.toThrow(/gh api/);
+      expect(commitReads).toHaveLength(1);
+    }
+  },
+);
+
+// Usefulness: verifies a classifying request that fails, with or without output, leaves the
+// original error terminal, and that a retryable original error with a classifying status that is
+// not retryable does too (issue #1025).
+test.each([
+  ["fails with no output", { status: 1, stdout: "", stderr: "boom" }],
+  ["ends in a 403", replyOf(403, "gh: Forbidden (HTTP 403)")],
+])("waitChecks keeps the original error when the classifying request %s", async (_name, reply) => {
+  const { gh, commitReads } = failingCommitGh((n) => n === 1 && serverError(500), {
+    probe: () => reply,
+  });
+  await expect(waitOn(gh, false)).rejects.toThrow(/failed: gh: HTTP 500/);
+  expect(commitReads).toHaveLength(1);
+});
+
+// Usefulness: verifies a classifying request that never answers leaves the original read error
+// terminal, with an error and no `timedOut: true`, in both modes: a hung classifier never turns
+// into an ok envelope, and the unconfirmed child rides on the error (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])(
+  "waitChecks %s mode reports the original error when the classifying request hangs",
+  async (_mode, all) => {
+    const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
+      all,
+      commits: { [HEAD_A]: [PASSED_ITEM] },
+    });
+    const gh = (args, cwd, options) => {
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return args.includes("--include")
+          ? new Promise(() => {})
+          : Promise.resolve({ status: 1, stdout: "", stderr: "gh: HTTP 500" });
+      }
+      return inner(args, cwd, options);
+    };
+    await expect(
+      waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, all, gh, sleep: async () => {} }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("failed: gh: HTTP 500"),
+      childExitUnconfirmed: true,
+    });
+  },
+  20000,
+);
+
 // Usefulness: verifies only a reply whose final HTTP status is exactly 500, 502, 503, or 504 is
 // retried. The status comes from the reply headers, never from the stderr text of `gh`: another
 // status, a 403 whose stderr also carries a `(HTTP 500)` line or quotes one, a failure with no

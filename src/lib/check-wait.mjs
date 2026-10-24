@@ -58,6 +58,21 @@ function replyStatus(stdout) {
   return status;
 }
 
+// A status line of the error text of `gh api`: `gh: HTTP 502`, or the reply message ending in
+// `(HTTP 502)`. A multi-line message carries it on its last line.
+const ERROR_STATUS_LINE = /^(?:gh: HTTP (\d{3})|.*\(HTTP (\d{3})\))$/;
+
+/** The status of the first status line in the stderr of a failed `gh api` read, or null. */
+function errorStatus(stderr) {
+  for (const line of stderr.split(/\r?\n/)) {
+    const match = ERROR_STATUS_LINE.exec(line.trim());
+    if (match) {
+      return Number(match[1] ?? match[2]);
+    }
+  }
+  return null;
+}
+
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
 // as right after a push. It is an empty list, not a read error, in the required
 // and the all-checks read alike (#941, #950).
@@ -533,20 +548,28 @@ export async function waitChecks({
   };
   // A read that fails is classified by one more request, `gh api --include` for the first page of
   // the same endpoint, which the gate's reads build from the repository slug and the commit SHA. The
-  // read itself is the gate's paginated `gh api` read, so `gh` owns pagination and host scoping,
-  // and no URL that a reply names is requested. The error is marked `transient`, and the wait
-  // retries it on the next poll, only when the final status block of that request is 500, 502, 503,
-  // or 504. Every other failure ends the wait: another status, a request that succeeds, a reply
-  // with no status block, and a body that fails to parse.
+  // read itself is the gate's paginated `gh api` read, so pagination is `gh`'s own, as in the gate.
+  // The error is marked `transient`, and the wait retries it on the next poll, only when two
+  // signals agree: the first status line of the error of the read is 500, 502, 503, or 504, and the
+  // final status block of the classifying request is one of those too. Every other failure ends
+  // the wait: either signal missing or another status, a classifying request that succeeds, fails,
+  // or reaches the bound, and a body that fails to parse.
   const readCommit = async (sha) => {
     await ensureSlug();
     let serverError = false;
     const read = async (argv, cwdArg) => {
       const result = await bounded(argv, cwdArg);
       serverError = false;
-      if (result.status !== 0) {
-        const probe = await bounded(["api", argv[1], "--include"], cwdArg);
-        serverError = probe.status !== 0 && RETRYABLE_STATUSES.has(replyStatus(probe.stdout));
+      if (result.status !== 0 && RETRYABLE_STATUSES.has(errorStatus(result.stderr))) {
+        try {
+          const probe = await bounded(["api", argv[1], "--include"], cwdArg);
+          serverError = probe.status !== 0 && RETRYABLE_STATUSES.has(replyStatus(probe.stdout));
+        } catch (err) {
+          // A classifier that reaches the bound leaves the read error to end the wait as an error.
+          if (!(err instanceof BoundReached)) {
+            throw err;
+          }
+        }
       }
       return result;
     };
