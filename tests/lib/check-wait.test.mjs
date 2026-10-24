@@ -1628,6 +1628,13 @@ const BASE_STATUS = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 const PENDING_STATUS = { ...BASE_STATUS, id: 9, state: "pending" };
+const MERGED_HEAD = "e".repeat(40);
+const MERGED_PR = {
+  number: 7,
+  merged_at: "2026-01-01T00:00:00Z",
+  base: { ref: "main" },
+  head: { sha: MERGED_HEAD },
+};
 
 /** A workflow file reply as the contents API sends it: base64 with a line break every 60 characters. */
 function fileReply(text, over = {}) {
@@ -1650,6 +1657,9 @@ function probeGh({
   workflows = { "nightly.yml": INERT_WORKFLOW },
   baseRuns = [],
   baseStatuses = [],
+  mergedPrs = [],
+  mergedRuns = [],
+  mergedStatuses = [],
   failing = null,
   reply = null,
   files = null,
@@ -1712,6 +1722,15 @@ function probeGh({
     }
     if (endpoint.startsWith(`${repo}/commits/${BASE_HEAD}/status`)) {
       return readOk({ total_count: baseStatuses.length, statuses: baseStatuses });
+    }
+    if (endpoint.startsWith(`${repo}/commits/${BASE_HEAD}/pulls`)) {
+      return readOk(mergedPrs);
+    }
+    if (endpoint.startsWith(`${repo}/commits/${MERGED_HEAD}/check-runs`)) {
+      return readOk({ total_count: mergedRuns.length, check_runs: mergedRuns });
+    }
+    if (endpoint.startsWith(`${repo}/commits/${MERGED_HEAD}/status`)) {
+      return readOk({ total_count: mergedStatuses.length, statuses: mergedStatuses });
     }
     return inner(args, cwd);
   };
@@ -1953,6 +1972,66 @@ test.each([
 // have mixed the evidence of two commits, so the wait stays.
 test("the --all wait keeps the normal wait when the base branch moves during the probe", async () => {
   const { result } = await probedWait({ baseShas: [BASE_HEAD, OTHER_BASE_HEAD] });
+  expect(result.noCheckSource).toBeUndefined();
+  expect(result.timedOut).toBe(true);
+});
+
+// Usefulness: verifies a provider that reported only on a merged PR head keeps the `--all` wait
+// (issue #1062), where the base head alone shows no check. The merged PR is the one that the base
+// head commit belongs to, so the read reuses the paged read and the commit-state reads of the probe.
+test.each([
+  ["a check run", { mergedRuns: [BASE_RUN] }],
+  ["a commit status", { mergedStatuses: [BASE_STATUS] }],
+])("the --all wait keeps the normal wait for %s on a merged PR head", async (_name, options) => {
+  const { result } = await probedWait({ mergedPrs: [MERGED_PR], ...options });
+  expect(result.noCheckSource).toBeUndefined();
+  expect(result.timedOut).toBe(true);
+});
+
+// Usefulness: verifies the merged PR read adds no false positive (issue #1062): a merged PR head
+// with no check, and a PR on that commit that is not merged or targets another branch, still skip.
+test.each([
+  ["a merged PR head with no check", [MERGED_PR]],
+  ["no merged PR for the base head", []],
+  ["a PR that is not merged", [{ ...MERGED_PR, merged_at: null }]],
+  ["a PR of another base branch", [{ ...MERGED_PR, base: { ref: "dev" } }]],
+])("the --all wait returns noCheckSource for %s", async (_name, mergedPrs) => {
+  const { result } = await probedWait({ mergedPrs, mergedRuns: [], mergedStatuses: [] });
+  expect(result.noCheckSource).toBe(true);
+});
+
+// Usefulness: verifies a PR that is not merged is never evidence (issue #1062): its head can hold
+// checks without a provider reporting on merged work, so the probe reads only merged PR heads.
+test("the --all wait ignores the checks of a PR that is not merged", async () => {
+  const { result } = await probedWait({
+    mergedPrs: [{ ...MERGED_PR, merged_at: null }],
+    mergedRuns: [BASE_RUN],
+  });
+  expect(result.noCheckSource).toBe(true);
+});
+
+// Usefulness: verifies a failed, incomplete, or unparseable read of the merged PR head keeps the
+// wait (issue #1062), one row per read and per reply shape.
+test.each([
+  [
+    "a failed merged PR list read",
+    { failing: `commits/${BASE_HEAD}/pulls`, mergedPrs: [MERGED_PR] },
+  ],
+  ["a failed merged head check-runs read", { failing: `commits/${MERGED_HEAD}/check-runs` }],
+  ["a failed merged head status read", { failing: `commits/${MERGED_HEAD}/status` }],
+  [
+    "a merged PR list that is an object",
+    { reply: { endpoint: `commits/${BASE_HEAD}/pulls`, result: readOk({ message: "x" }) } },
+  ],
+  ["a merged PR entry that is not an object", { mergedPrs: ["x"] }],
+  ["a merged PR with no head SHA", { mergedPrs: [{ ...MERGED_PR, head: {} }] }],
+  [
+    "a merged PR with a head that is not a full SHA",
+    { mergedPrs: [{ ...MERGED_PR, head: { sha: "abc" } }] },
+  ],
+  ["a merged PR with a malformed merge time", { mergedPrs: [{ ...MERGED_PR, merged_at: 5 }] }],
+])("the --all wait keeps the normal wait for %s", async (_name, options) => {
+  const { result } = await probedWait({ mergedPrs: [MERGED_PR], ...options });
   expect(result.noCheckSource).toBeUndefined();
   expect(result.timedOut).toBe(true);
 });

@@ -264,7 +264,8 @@ test("the instructions state the conditions of a noCheckSource wait", async () =
   expectRule(instructions, /never read a workflow file/i, /yourself/i);
   expectRule(instructions, /keeps the normal wait/i, /fails|cannot be parsed|not settled/i);
   expectRule(instructions, /repository with a `pull_request` workflow keeps the wait/i);
-  expectRule(instructions, /limit/i, /base head is one commit/i);
+  expectRule(instructions, /limit/i, /base head and one merged PR head are two commits/i);
+  expectRule(instructions, /latest merged PR/i);
   expectRule(instructions, /never comes from the required wait/i);
 });
 
