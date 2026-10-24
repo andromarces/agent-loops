@@ -2115,3 +2115,58 @@ test("a halted reviewer dispatch reports a directory left in the inherited tempo
     await removePath(temp);
   }
 });
+
+// Usefulness: verifies requirement "a reviewer dispatch that changed the package store reports the
+// names in the envelope and the state file, a halted dispatch keeps them, and a turn that changed
+// none carries no field" (issue #1045). The child-turn tests cover the read; only a dispatch covers
+// the envelope and the state file.
+test("reviewer dispatch reports a package store change, halted or not", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const store = await mkdtemp(join(tmpdir(), "role-dispatch-store-"));
+  try {
+    await mkdir(join(store, "v11", "projects"), { recursive: true });
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+    await mkdir(join(repo, "node_modules"), { recursive: true });
+    await writeFile(
+      join(repo, "node_modules", ".modules.yaml"),
+      JSON.stringify({ storeDir: join(store, "v11") }),
+    );
+    const installing = (leak) =>
+      recordingAdapter([
+        async () => {
+          await mkdir(join(store, "v11", "projects", leak ? "hash2" : "hash1"));
+          if (leak) await writeFile(join(repo, "leak.txt"), "leak\n");
+          return WORKER_REPLY;
+        },
+      ]);
+    const left = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: installing(false) },
+      stdin: stdinPrompt,
+    });
+    expect(left.payload.packageStoreEntries).toEqual(["v11/projects/hash1"]);
+    expect((await readRepoState(repo)).lastResult.packageStoreEntries).toEqual([
+      "v11/projects/hash1",
+    ]);
+
+    const clean = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+      stdin: stdinPrompt,
+    });
+    expect(clean.payload).not.toHaveProperty("packageStoreEntries");
+
+    const halted = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: installing(true) },
+      stdin: stdinPrompt,
+    });
+    expect(halted.exitCode).toBe(1);
+    expect(halted.payload.packageStoreEntries).toEqual(["v11/projects/hash2"]);
+    expect((await readRepoState(repo)).lastResult.packageStoreEntries).toEqual([
+      "v11/projects/hash2",
+    ]);
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(store);
+  }
+});
