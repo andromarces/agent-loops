@@ -25,7 +25,7 @@ test("validateAction accepts valid run_reviewer", () => {
   });
 });
 
-// Usefulness: verifies valid finish action with complete summary object is accepted and extra summary keys or root keys are dropped.
+// Usefulness: verifies valid finish action with complete summary object is accepted unchanged.
 test("validateAction accepts valid finish with summary", () => {
   const input = {
     action: "finish",
@@ -35,9 +35,7 @@ test("validateAction accepts valid finish with summary", () => {
       deferred: "none",
       notDone: "none",
       open: "none",
-      extraSummary: "ignore",
     },
-    rootExtra: "drop",
   };
   const result = validateAction(input);
   expect(result).toEqual({
@@ -185,6 +183,41 @@ describe("validateAction rejections", () => {
       expect(result.error).toBe("finish unresolvedCompare must be a boolean.");
     },
   );
+
+  // Usefulness: verifies requirement "a finish with an unknown key is refused, not dropped" (#1021):
+  // a misspelled unresolvedCompare marker must not read as a verified finish.
+  const FULL_SUMMARY = {
+    changed: "all",
+    verified: "tests",
+    deferred: "none",
+    notDone: "none",
+    open: "none",
+  };
+  test.each(["notNotDone", "unresolvedcompare", "unresolved_compare"])(
+    "rejects finish with unknown summary key %s and names it",
+    (key) => {
+      const result = validateAction({
+        action: "finish",
+        summary: { ...FULL_SUMMARY, [key]: true },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain(`"${key}"`);
+    },
+  );
+
+  // Usefulness: verifies the same refusal for a key beside `summary`, and that every unknown key is named.
+  test("rejects finish with unknown action keys and names each one", () => {
+    const result = validateAction({
+      action: "finish",
+      summary: { ...FULL_SUMMARY, extraSummary: "x" },
+      rootExtra: "y",
+      unresolved_compare: true,
+    });
+    expect(result.ok).toBe(false);
+    for (const key of ["extraSummary", "rootExtra", "unresolved_compare"]) {
+      expect(result.error).toContain(`"${key}"`);
+    }
+  });
 
   // Usefulness: verifies abort requires a non-empty string reason.
   test.each(["", "   ", null, undefined, 123])(

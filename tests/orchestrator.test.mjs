@@ -57,6 +57,24 @@ test("decide drops unknown fields from action", async () => {
   expect(action).toEqual({ action: "abort", reason: "stop" });
 });
 
+// Usefulness: verifies requirement "the headless finish refuses an unknown key" (#1021): the action
+// goes through the repair turn instead of finishing with the key dropped.
+test("decide repairs a finish that carries an unknown key", async () => {
+  const summary = '"changed": "a", "verified": "b", "deferred": "c", "notDone": "d", "open": "e"';
+  const agent = fakeAgent([
+    `{"action": "finish", "summary": {${summary}}, "unresolved_compare": true}`,
+    `{"action": "finish", "summary": {${summary}}, "unresolvedCompare": true}`,
+  ]);
+  const action = await decide({
+    agent,
+    state: { kind: "fake", sessionId: "sess-1" },
+    prompt: "initial",
+    options: { cwd: process.cwd() },
+  });
+
+  expect(action.unresolvedCompare).toBe(true);
+});
+
 // Usefulness: verifies malformed JSON recovers via one repair turn.
 test("decide recovers from malformed response via repair turn", async () => {
   const agent = fakeAgent([

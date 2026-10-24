@@ -748,6 +748,24 @@ test("finish refuses a non-boolean unresolvedCompare", async () => {
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 
+// Usefulness: verifies requirement "role finish refuses an unknown summary key" (#1021): the key was
+// dropped and the finish read as verified, including a misspelled unresolvedCompare marker.
+test.each(["notNotDone", "unresolvedcompare", "unresolved_compare"])(
+  "finish refuses the unknown summary key %s, names it, and keeps the run active",
+  async (key) => {
+    await setup();
+    const repo = await useCleanRepo();
+    await initWorkerRun(repo);
+
+    const result = await executeRoleCommand(withRepo(["finish", "--cwd", "<repo>"], repo), {
+      stdin: async () => JSON.stringify({ ...GATE_SUMMARY, [key]: true }),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain(`"${key}"`);
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  },
+);
+
 // Usefulness: verifies a finish cannot claim an unresolved compare and pass the
 // CI gate, which resolves the PR head and so proves the compare (#281).
 test("finish refuses unresolvedCompare together with --require-ci", async () => {

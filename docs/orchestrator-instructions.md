@@ -1006,9 +1006,14 @@ Completion is completion of the requested work, not code acceptance.
   checks that passed.
 - `review-only`: call `finish` after the reviewer turn, whatever it returned. The
   gate is on the turn, not on a report: a turn that ended in an error satisfies
-  it, so the finish can carry no report. The runtime checks only that all five
-  summary keys are non-empty strings, and it never compares their content with
-  what the reviewer returned.
+  it, so the finish can carry no report. The runtime checks that all five
+  summary keys are non-empty strings. It refuses a finish that holds any other
+  key and names each unknown key: the headless action object allows only
+  `action`, `summary`, and an optional boolean `unresolvedCompare`, and its
+  nested `summary` object allows only the five summary keys. The `role finish`
+  stdin object allows the five summary keys and an optional boolean
+  `unresolvedCompare`. It never compares the summary content with what the
+  reviewer returned.
 
 A `review-only` finish needs a reviewer turn that ran, whatever it returned. The
 runtime does not compare the summary with the reviewer result. Record the
@@ -1072,7 +1077,13 @@ printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","def
 ```
 
 The value must be a boolean, and the key is not one of the five summary keys:
-`summary` keeps exactly those five. The envelope then carries
+`summary` keeps exactly those five. The stdin object allows only the five
+summary keys and `unresolvedCompare`. The headless finish action object allows
+only `action`, `summary`, and `unresolvedCompare`, and its nested `summary`
+object allows only the five summary keys. A finish with any other key in
+either object, such as a misspelled marker, is refused and the refusal names
+each unknown key; resend the finish with only the allowed keys (#1021). The
+envelope then carries
 `"unresolvedCompare": true` and the state file records the same field beside
 `summary`, so a recorded unresolved compare never reads the same as a verified
 finish, which keeps the current envelope and state (#281). A finish with the

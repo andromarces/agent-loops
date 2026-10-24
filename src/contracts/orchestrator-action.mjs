@@ -1,6 +1,7 @@
 import { isJsonObject } from "../lib/json.mjs";
 
 export const SUMMARY_KEYS = ["changed", "verified", "deferred", "notDone", "open"];
+const FINISH_KEYS = ["action", "summary", "unresolvedCompare"];
 
 /**
  * The four action formats as one-line JSON, for the orchestrator prompts. Each
@@ -23,8 +24,9 @@ export function actionFormats({ worker, reviewer, summary, reason }) {
 
 /**
  * Validates one parsed orchestrator reply. Returns `{ ok: true, value }` with a new
- * action object, or `{ ok: false, error }`. String fields are trimmed, and a key
- * outside the action's field set is dropped.
+ * action object, or `{ ok: false, error }`. String fields are trimmed. A key outside
+ * the action's field set is dropped, except for `finish`, which refuses it and names
+ * each unknown key in the action and in the summary.
  * @param {unknown} value
  */
 export function validateAction(value) {
@@ -55,6 +57,19 @@ export function validateAction(value) {
     case "finish": {
       if (!isJsonObject(value.summary)) {
         return { ok: false, error: "finish requires a summary object." };
+      }
+
+      // A dropped key would hide a misspelled `unresolvedCompare` marker behind a
+      // finish that reads as verified (#1021).
+      const unknown = [
+        ...Object.keys(value).filter((key) => !FINISH_KEYS.includes(key)),
+        ...Object.keys(value.summary).filter((key) => !SUMMARY_KEYS.includes(key)),
+      ];
+      if (unknown.length > 0) {
+        return {
+          ok: false,
+          error: `finish has unknown keys: ${unknown.map((key) => JSON.stringify(key)).join(", ")}.`,
+        };
       }
 
       const summary = {};

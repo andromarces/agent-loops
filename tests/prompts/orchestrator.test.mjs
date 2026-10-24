@@ -8,6 +8,7 @@ import {
   resultPrompt,
 } from "../../src/prompts/orchestrator.mjs";
 import {
+  clauses,
   expectRule,
   expectReviewerGateRule,
   COMPARE_BEFORE_FINISH,
@@ -33,6 +34,31 @@ test("initialPrompt produces expected orchestrator prompt", () => {
   expectRule(prompt, /step budget/i, /\b10 steps\b/i);
   expect(prompt).toContain("Implement feature X");
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<instructions for worker>"}');
+});
+
+// Usefulness: verifies requirement "the headless prompt states the unknown-key refusal and its
+// repair" (issue #1021) with the right split: the action object allows action, summary, and a boolean
+// unresolvedCompare, the nested summary object allows only the five summary keys. A clause that
+// swaps or merges the two allowlists fails, which a bare keyword match would not catch.
+test("initialPrompt states the unknown-key finish refusal and its repair", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  const clauseWith = (term) => clauses(prompt).find((clause) => term.test(clause));
+
+  const action = clauseWith(/\bfinish action object\b/i);
+  expect(action, "no clause names the action object allowlist").toBeDefined();
+  expect(action).toMatch(
+    /\bonly\b[^.]*\baction\b[^.]*\bsummary\b[^.]*\bboolean unresolvedCompare\b/i,
+  );
+  expect(action).not.toMatch(/\bfive\b/i);
+
+  const summary = clauseWith(/\bsummary object\b/i);
+  expect(summary, "no clause names the summary object allowlist").toBeDefined();
+  expect(summary).toMatch(/\bonly the five summary keys\b/i);
+  expect(summary).not.toMatch(/\bunresolvedCompare\b/);
+
+  expectRule(prompt, /\brefused\b/i, /\bany other key\b/i, /\beither object\b/i);
+  expectRule(prompt, /\brefusal\b/i, /\bnames each unknown key\b/i);
+  expectRule(prompt, /\bresend\b/i, /\bfinish\b/i, /\bonly\b/i, /\ballowed keys\b/i);
 });
 
 // Usefulness: verifies the headless prompt states the notes and deferred finish
