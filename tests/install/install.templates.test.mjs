@@ -47,6 +47,24 @@ test("the Claude skill requires the harness-check ancestry gate", async () => {
   expect(skill).toContain("CLAUDE_SESSION_ID");
 });
 
+// Usefulness: verifies the #1055 acceptance — a Claude Code session did not attach the file
+// that an `@` line in the skill body named, so the skill states one read route: the path in full,
+// by pages when the read tool caps a read, and no `@` line that can fail to attach.
+test("the Claude skill reads the instructions file in full by pages with no @ line", async () => {
+  const home = await makeHome();
+  const claude = await targetPaths("claude", home);
+  const skill = claude.files.find((file) => file.path.endsWith("SKILL.md")).content;
+  const instructions = join(PACKAGE_ROOT, "docs/orchestrator-instructions.md").replaceAll(
+    "\\",
+    "/",
+  );
+  expect(skill).not.toMatch(/^@/m);
+  expect(skill.replace(/\s+/g, " ")).toContain(`Read \`${instructions}\` in full before acting`);
+  expect(skill.replace(/\s+/g, " ")).toContain(
+    "read again with an offset until the end of the file",
+  );
+});
+
 // Usefulness: verifies the OpenCode acceptance — OpenCode discovers both
 // ~/.claude/skills and ~/.agents/skills and lists each shared skill to the
 // model, so the model auto-invoked it for an /agent-loop request instead of the

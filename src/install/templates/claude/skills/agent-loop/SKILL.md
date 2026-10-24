@@ -11,10 +11,10 @@ metadata:
   opencode/autoinvoke: false
 ---
 
-@{{AGENT_LOOP_INSTRUCTIONS}}
-
-Follow the attached instructions for this invocation. If the file is not
-attached, read `{{AGENT_LOOP_INSTRUCTIONS}}` before acting. Run every
+Read `{{AGENT_LOOP_INSTRUCTIONS}}` in full before acting, and follow it for this
+invocation. The file is long and the read tool caps one read, so read it by
+pages: after each capped read, read again with an offset until the end of the
+file. Run every
 `agent-loop` command in the instructions as `__AGENT_LOOP_CLI__` instead, so the
 run does not depend on the `agent-loop` command resolving on PATH. The task and
 role settings from the invocation are:

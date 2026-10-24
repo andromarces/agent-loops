@@ -5,7 +5,7 @@
 An interactive parent session runs the same role rules through the subcommand,
 driven by `docs/orchestrator-instructions.md`. One harness-neutral instruction
 file defines the role; each supported harness gets a thin entry point that
-includes it rather than copying it. Role activation never goes into `AGENTS.md`
+names it rather than copying it. Role activation never goes into `AGENTS.md`
 or `CLAUDE.md`, because dispatched children read those files; activation
 happens only through explicit invocation.
 
@@ -25,7 +25,11 @@ command in the instructions with that resolved invocation, so a Git Bash session
 that cannot resolve the `agent-loop` command still starts a guarded run (#151).
 `harness-check` exits 0 for a match, 3 when another harness is the nearest
 ancestor, and 1 when the check cannot run or finds no harness ancestor, so the
-skill separates a refusal from a check that did not decide. See
+skill separates a refusal from a check that did not decide. The Claude Code
+skill names the instructions file by path with no `@` line, because an `@` line
+in a skill body did not attach the file in a live session (#1055). It tells the
+parent to read the file in full, by pages with an offset when the read tool caps
+one read, because the file is longer than one capped read. See
 [Parent guard details](../parent-guard.md) for every guard target.
 
 Live check (issue #144): on 2026-10-10, two checks ran on macOS 27.2 with Node v26.11.1.
