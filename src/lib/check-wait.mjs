@@ -34,6 +34,10 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
 
+// The stderr of a `gh api` read that GitHub answered with a server error. The commit reads of
+// the wait retry on the next poll when they fail with it (#1025).
+const SERVER_ERROR = /\bHTTP 5\d\d\b/;
+
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
 // as right after a push. It is an empty list, not a read error, in the required
 // and the all-checks read alike (#941, #950).
@@ -507,12 +511,26 @@ export async function waitChecks({
       }
     }
   };
+  // A read that fails with a GitHub 5xx throws an error marked `transient`: the wait retries it on
+  // the next poll. Every other failure, a 4xx and an unparseable reply included, ends the wait.
   const readCommit = async (sha) => {
     await ensureSlug();
-    const read = (argv, cwdArg) => bounded(argv, cwdArg);
-    const runs = await checkRuns(read, slug, sha, cwd, true);
-    const statuses = await commitStatuses(read, slug, sha, cwd, true);
-    return { runs, statuses };
+    let serverError = false;
+    const read = async (argv, cwdArg) => {
+      const result = await bounded(argv, cwdArg);
+      serverError = result.status !== 0 && SERVER_ERROR.test(result.stderr);
+      return result;
+    };
+    try {
+      const runs = await checkRuns(read, slug, sha, cwd, true);
+      const statuses = await commitStatuses(read, slug, sha, cwd, true);
+      return { runs, statuses };
+    } catch (err) {
+      if (serverError && err instanceof Error) {
+        err.transient = true;
+      }
+      throw err;
+    }
   };
   // False when the bound is spent, so the caller reports it instead of sleeping.
   const pause = async () => {
@@ -582,9 +600,14 @@ export async function waitChecks({
     }
     return false;
   };
+  // The server error of the last poll whose commit read failed with it, or null once a poll
+  // read the commit. A wait that ends on the bound with it set reports it as an error, so a 5xx
+  // never reads as a timeout or a pass (#1025).
+  let transient = null;
   const poll = async () => {
     for (;;) {
       prFailures = [];
+      let failed = null;
       const { head: sha, base } = readHead(pr, await bounded(headArgv));
       if (head === null || sha === head) {
         const listed = readOutcome(pr, await bounded(checksArgv), all);
@@ -609,11 +632,18 @@ export async function waitChecks({
             // A failure that `gh pr checks` lists settles the wait, so a commit or source read
             // that fails never delays it. The bound and every other failure still end it.
             const err = failureOf(raw);
-            if (err instanceof BoundReached || prFailures.length === 0) {
+            if (err?.transient && !(err instanceof BoundReached)) {
+              // A server error is retried on the next poll, unless a listed failure settles the wait.
+              failed = err;
+            }
+            if (err instanceof BoundReached || (failed === null && prFailures.length === 0)) {
               throw err;
             }
           }
-          if (items === null) {
+          transient = failed;
+          if (failed !== null && prFailures.length === 0) {
+            outcome = { settled: false, checks: [], unread: true };
+          } else if (items === null) {
             // No state was read for `sha`, so the result names no head and holds no check.
             outcome = { settled: true, checks: [], unread: true };
           } else {
@@ -660,6 +690,9 @@ export async function waitChecks({
         }
       }
       if (!(await pause())) {
+        if (transient !== null) {
+          throw transient;
+        }
         return timeout();
       }
     }
@@ -667,10 +700,13 @@ export async function waitChecks({
   try {
     return seal(await poll());
   } catch (raw) {
-    const err = failureOf(raw);
+    let err = failureOf(raw);
     if (err instanceof BoundReached) {
       unconfirmed ||= Boolean(err.result.childExitUnconfirmed);
-      return seal(timeout());
+      if (transient === null) {
+        return seal(timeout());
+      }
+      err = transient;
     }
     // An error envelope carries the unconfirmed exit too: a child may still run.
     if (unconfirmed && err instanceof Error) {

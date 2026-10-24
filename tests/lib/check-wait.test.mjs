@@ -770,6 +770,89 @@ test("waitChecks refuses a commit read that fails", async () => {
   ).rejects.toThrow(/gh api repos\/owner\/repo\/commits\/.+ failed: boom/);
 });
 
+/** A `gh` that answers the nth commit read with `fail(n)` when that is a reply, and passes every other read through. */
+function failingCommitGh(fail, { all = false } = {}) {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
+    all,
+    commits: { [HEAD_A]: [PASSED_ITEM] },
+  });
+  const commitReads = [];
+  const gh = async (args, cwd, options) => {
+    if (args[0] === "api" && args[1].includes("/commits/")) {
+      commitReads.push(args[1]);
+      const reply = fail(commitReads.length);
+      if (reply) {
+        return reply;
+      }
+    }
+    return inner(args, cwd, options);
+  };
+  return { gh, commitReads };
+}
+
+const serverError = (code) => ({ status: 1, stdout: "", stderr: `gh: HTTP ${code}` });
+
+function waitOn(gh, all) {
+  const clock = fakeClock();
+  return waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    all,
+    gh,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+}
+
+// Usefulness: verifies a GitHub 5xx on one commit read does not end the wait: the next poll
+// reads again and a passing read settles the wait inside the bound, for the check-run read and
+// the status read, in both modes (issue #1025).
+test.each([
+  ["required", "check-runs", 500, false, 1],
+  ["all", "check-runs", 502, true, 1],
+  ["required", "status", 503, false, 2],
+  ["all", "status", 504, true, 2],
+])(
+  "waitChecks %s mode retries a %s read that fails with HTTP %i",
+  async (_mode, _endpoint, code, all, failingRead) => {
+    // The check-runs read comes first in a poll, then the status read.
+    const { gh, commitReads } = failingCommitGh((n) => n === failingRead && serverError(code), {
+      all,
+    });
+    expect(await waitOn(gh, all)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+    expect(commitReads.length).toBeGreaterThan(2);
+  },
+);
+
+// Usefulness: verifies a 5xx on every poll until the bound is an error that names the last
+// failure, never a pass and never a timeout envelope (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])(
+  "waitChecks %s mode reports an error when every poll fails with HTTP 5xx",
+  async (_mode, all) => {
+    const { gh, commitReads } = failingCommitGh(() => serverError(500), { all });
+    await expect(waitOn(gh, all)).rejects.toThrow(
+      /gh api repos\/owner\/repo\/commits\/.+ failed: gh: HTTP 500/,
+    );
+    expect(commitReads.length).toBeGreaterThan(1);
+  },
+);
+
+// Usefulness: verifies a 4xx and an unparseable reply still end the wait at the first read, so
+// only a 5xx is retried (issue #1025).
+test.each([
+  ["a 404", { status: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" }, /HTTP 404/],
+  ["a 403", { status: 1, stdout: "", stderr: "gh: Forbidden (HTTP 403)" }, /HTTP 403/],
+  ["an unparseable reply", { status: 0, stdout: "<html>", stderr: "" }, /JSON/],
+])("waitChecks does not retry %s on a commit read", async (_name, reply, message) => {
+  const { gh, commitReads } = failingCommitGh(() => reply);
+  await expect(waitOn(gh, false)).rejects.toThrow(message);
+  expect(commitReads).toHaveLength(1);
+});
+
 // Usefulness: verifies the last checks kept for a timeout envelope are never the
 // checks of a head the envelope does not name (issue #961).
 test("waitChecks drops the kept checks of an earlier head when the head moves", async () => {
