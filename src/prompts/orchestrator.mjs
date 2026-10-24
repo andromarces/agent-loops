@@ -442,6 +442,8 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - When the PR head cannot be resolved, do not finish as verified. Abort, or record the unresolved compare under notDone and open in the finish summary.
 - When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event and the headless run exits 4 instead of 0, so the recorded finish stays machine-distinct from a verified one. That marker is the only machine-readable record of the compare, and nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.
 
+The work tree arrives with its dependencies installed: the operator that created it ran the repository's lockfile install in it before the first dispatch, and no worker or reviewer installs them. Never tell a worker to link or junction the \`node_modules\` of another checkout into the work tree, or to run an install in another checkout.
+
 Map the report fields into the finish summary:
 - Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.
 - A reviewer accept can leave a criterion unverified, because the reviewer turn cannot run its check. Its Checks line reports the criterion as unverified, and its Deferred line lists it. Carry it into deferred, and name the unrun check in verified as not verified. Do not dispatch another turn to run that check, unless the task states that the check must pass in this run.
