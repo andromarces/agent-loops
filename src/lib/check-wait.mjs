@@ -39,21 +39,109 @@ const POLL_INTERVAL_MS = 15_000;
 // error text of `gh`, which carries the message of the reply and more lines after it.
 const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 
+const STATUS_LINE = /^HTTP\/\d(?:\.\d)? (\d{3})(?: [^\r\n]*)?(?:\r?\n|$)/;
+
 /**
- * The HTTP status, header block, and body of a `gh api --include` reply, or null when stdout does
- * not open with a status line.
+ * The HTTP status, header block, and body of the final status block of a `gh api --include` reply,
+ * or null when stdout does not open with a status line. A block whose body opens with another
+ * status line, such as an interim `100` or a proxy reply, is followed to the block that ends the
+ * exchange, so the last status decides.
  */
 function parseReply(stdout) {
-  const split = /\r?\n\r?\n/.exec(stdout);
-  const head = split ? stdout.slice(0, split.index) : stdout;
-  const status = /^HTTP\/\d(?:\.\d)? (\d{3})(?: |$)/.exec(head.split(/\r?\n/, 1)[0]);
-  return status
-    ? {
-        status: Number(status[1]),
-        head,
-        body: split ? stdout.slice(split.index + split[0].length) : "",
+  let reply = null;
+  let rest = stdout;
+  while (STATUS_LINE.test(rest)) {
+    const split = /\r?\n\r?\n/.exec(rest);
+    const head = split ? rest.slice(0, split.index) : rest;
+    reply = {
+      status: Number(STATUS_LINE.exec(head)[1]),
+      head,
+      body: split ? rest.slice(split.index + split[0].length) : "",
+    };
+    rest = reply.body;
+  }
+  return reply;
+}
+
+/**
+ * The `rel="next"` URL of the `Link` headers in `head`, or null when there is none. Throws when a
+ * header does not parse, when two entries name `next`, or when the target is not an https URL
+ * without credentials, so a link the wait does not understand is an error and never a last page.
+ */
+function nextPageUrl(head, endpoint) {
+  const malformed = (why) => new Error(`the Link header of ${endpoint} is malformed: ${why}`);
+  let next = null;
+  const values = head
+    .split(/\r?\n/)
+    .filter((line) => /^link:/i.test(line))
+    .map((line) => line.slice(line.indexOf(":") + 1));
+  for (const value of values) {
+    for (const entry of value.split(/,(?=\s*<)/)) {
+      const parsed = /^\s*<([^<>\s]+)>((?:\s*;\s*[^;,]+)*)\s*$/.exec(entry);
+      if (!parsed) {
+        throw malformed("an entry is not `<url>; parameters`");
       }
-    : null;
+      const rel = /;\s*rel\s*=\s*(?:"([^"]*)"|([^\s;,"]+))/i.exec(parsed[2]);
+      if (rel && (rel[1] ?? rel[2]).toLowerCase().split(/\s+/).includes("next")) {
+        if (next !== null) {
+          throw malformed("two entries name the next page");
+        }
+        next = parsed[1];
+      }
+    }
+  }
+  if (next !== null) {
+    let url = null;
+    try {
+      url = new URL(next);
+    } catch {
+      // Left null: the target is refused below.
+    }
+    if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "") {
+      throw malformed("the next page is not an https URL without credentials");
+    }
+  }
+  return next;
+}
+
+/**
+ * Reads every page of `endpoint` with `gh api --include`, one bounded read per page, and returns a
+ * `gh`-shaped result whose stdout is the pages as one JSON array, as `--paginate --slurp` prints
+ * them. The next page is the exact `rel="next"` URL of the reply, and a URL that was already read
+ * throws instead of looping. `retryable` is true only when the failed reply ended in a status of
+ * 500, 502, 503, or 504.
+ * @param {Function} read one bounded `gh` read
+ */
+async function readPages(read, endpoint, cwd) {
+  const pages = [];
+  const seen = new Set();
+  let request = `${endpoint}?per_page=100`;
+  for (;;) {
+    const result = await read(["api", request, "--include"], cwd);
+    const reply = parseReply(result.stdout);
+    if (result.status !== 0) {
+      return { result, retryable: reply !== null && RETRYABLE_STATUSES.has(reply.status) };
+    }
+    if (reply === null) {
+      return {
+        result: { status: 1, stdout: "", stderr: "the reply carries no HTTP status line" },
+        retryable: false,
+      };
+    }
+    if (reply.body.trim() === "") {
+      return { result: { status: 0, stdout: "", stderr: "" }, retryable: false };
+    }
+    pages.push(JSON.parse(reply.body));
+    const next = nextPageUrl(reply.head, endpoint);
+    if (next === null) {
+      return { result: { status: 0, stdout: JSON.stringify(pages), stderr: "" }, retryable: false };
+    }
+    if (seen.has(next)) {
+      throw new Error(`the Link header of ${endpoint} repeats a page already read: ${next}`);
+    }
+    seen.add(next);
+    request = next;
+  }
 }
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
@@ -533,34 +621,14 @@ export async function waitChecks({
   // `transient`: the wait retries it on the next poll. Every other failure, a reply with any other
   // status, no reply status, or an unparseable body included, ends the wait. The gate's reads ask
   // for `--paginate --slurp`, which prints no status line, so the wait reads each page itself with
-  // `--include` and hands the pages back in the slurped shape.
+  // `--include`, follows the exact `next` link, and hands the pages back in the slurped shape.
   const readCommit = async (sha) => {
     await ensureSlug();
     let serverError = false;
     const read = async ([, endpoint], cwdArg) => {
-      const pages = [];
-      for (let page = 1; ; page += 1) {
-        serverError = false;
-        const result = await bounded(
-          ["api", `${endpoint}?per_page=100&page=${page}`, "--include"],
-          cwdArg,
-        );
-        const reply = parseReply(result.stdout);
-        if (result.status !== 0) {
-          serverError = reply !== null && RETRYABLE_STATUSES.has(reply.status);
-          return result;
-        }
-        if (reply === null) {
-          return { status: 1, stdout: "", stderr: "the reply carries no HTTP status line" };
-        }
-        if (reply.body.trim() === "") {
-          return { status: 0, stdout: "", stderr: "" };
-        }
-        pages.push(JSON.parse(reply.body));
-        if (!/^link:.*rel="next"/im.test(reply.head)) {
-          return { status: 0, stdout: JSON.stringify(pages), stderr: "" };
-        }
-      }
+      const { result, retryable } = await readPages(bounded, endpoint, cwdArg);
+      serverError = retryable;
+      return result;
     };
     try {
       const runs = await checkRuns(read, slug, sha, cwd, true);

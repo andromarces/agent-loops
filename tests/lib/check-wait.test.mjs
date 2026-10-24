@@ -920,35 +920,167 @@ test.each([
   expect(await waitOn(gh, all, HEAD_A)).toEqual({ timedOut: true, head: null, checks: [] });
 });
 
-// Usefulness: verifies the wait reads every page of a commit read that GitHub paginates, following
-// the `next` link, so a check run on a later page is judged and a pending one holds the wait
-// (issue #1025).
-test("waitChecks judges a check run on a later page of the commit read", async () => {
-  const lint = check("lint", "pending", "IN_PROGRESS");
-  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
-    all: true,
-    commits: { [HEAD_A]: [PASSED_ITEM, lint] },
-  });
-  const pageReads = [];
+const LINK_HOST = "https://api.github.com/repositories/1";
+
+/** A check run of the commit read, in the shape the REST reply carries. */
+function runEntry(id, name, conclusion, startedAt) {
+  return {
+    id,
+    name,
+    status: "completed",
+    conclusion,
+    started_at: startedAt,
+    completed_at: startedAt,
+  };
+}
+
+/**
+ * A `gh` whose check-run read is a chain of pages. `pages` maps a request, the endpoint with its
+ * query or an absolute URL, to `{ runs, next, link, stdout }`: the runs of the page, the `next` URL
+ * its `Link` header names, a raw `Link` header value, or a raw reply. A request that no page
+ * names fails with a 404, so a read of the wrong page is an error. Every other read passes through.
+ */
+function pagedCheckRunsGh(pages, { all = false } = {}) {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], { all });
+  const requests = [];
   const gh = async (args, cwd, options) => {
-    const read = /\/check-runs\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
-    if (args[0] !== "api" || !read) {
+    if (args[0] !== "api" || !/\/check-runs[?]/.test(args[1])) {
       return inner(args, cwd, options);
     }
-    const [one, two] = JSON.parse(
-      (await inner(args, cwd, options)).stdout.split("\r\n\r\n")[1],
-    ).check_runs;
-    pageReads.push(read[1]);
-    const first = read[1] === "1";
+    requests.push(args[1]);
+    const page = pages[args[1]];
+    if (!page) {
+      return replyOf(404, "gh: Not Found (HTTP 404)");
+    }
+    const link = page.link ?? (page.next ? `<${page.next}>; rel="next"` : null);
     return {
       status: 0,
-      stdout: `HTTP/2.0 200 OK\r\n${first ? 'Link: <https://x/next>; rel="next"\r\n' : ""}\r\n${JSON.stringify({ check_runs: [first ? one : two] })}`,
+      stdout:
+        page.stdout ??
+        `HTTP/2.0 200 OK\r\n${link ? `Link: ${link}\r\n` : ""}\r\n${JSON.stringify({ check_runs: page.runs })}`,
       stderr: "",
     };
   };
-  const result = await waitOn(gh, true);
-  expect(result).toMatchObject({ timedOut: true, checks: [PASSED_ITEM, lint] });
-  expect(pageReads.slice(0, 2)).toEqual(["1", "2"]);
+  return { gh, requests };
+}
+
+const FIRST_PAGE = "repos/owner/repo/commits/" + HEAD_A + "/check-runs?per_page=100";
+
+// Usefulness: verifies the wait follows the exact `next` URL of the `Link` header, so a link that
+// skips to page 3 reads page 3 and judges its failing run instead of reading page 2 and passing,
+// in both modes (issue #1025).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode follows the next URL of the Link header", async (_mode, all) => {
+  const page3 = `${LINK_HOST}/commits/x/check-runs?per_page=100&page=3`;
+  const { gh, requests } = pagedCheckRunsGh(
+    {
+      [FIRST_PAGE]: {
+        runs: [runEntry(1, "ci", "success", "2026-01-01T00:00:00Z")],
+        next: page3,
+      },
+      [page3]: { runs: [runEntry(3, "ci", "failure", "2026-01-01T00:05:00Z")] },
+    },
+    { all },
+  );
+  expect(await waitOn(gh, all)).toEqual({ timedOut: false, head: HEAD_A, checks: [FAILED_ITEM] });
+  expect(requests).toEqual([FIRST_PAGE, page3]);
+});
+
+// Usefulness: verifies a malformed `Link` header, a `next` target that is no https URL, a next
+// target that names credentials, and two `next` targets each end the wait at once with an error
+// that no pass follows (issue #1025).
+test.each([
+  ["a malformed Link header", "garbage; rel=next"],
+  ["a next target that is not a URL", '<not a url>; rel="next"'],
+  ["a next target that is not https", '<http://api.github.com/x?page=2>; rel="next"'],
+  ["a next target with credentials", '<https://user:pw@api.github.com/x?page=2>; rel="next"'],
+  [
+    "two next targets",
+    '<https://api.github.com/x?page=2>; rel="next", <https://api.github.com/x?page=3>; rel="next"',
+  ],
+])("waitChecks ends with an error on %s", async (_name, link) => {
+  const { gh, requests } = pagedCheckRunsGh({
+    [FIRST_PAGE]: { runs: [runEntry(1, "ci", "success", "2026-01-01T00:00:00Z")], link },
+  });
+  await expect(waitOn(gh, false)).rejects.toThrow(/Link/);
+  expect(requests).toEqual([FIRST_PAGE]);
+});
+
+// Usefulness: verifies a `next` URL that repeats one already read ends the wait with an error at
+// once, not a loop that runs until the bound (issue #1025).
+test("waitChecks ends with an error on a next URL that repeats a page", async () => {
+  const page2 = `${LINK_HOST}/commits/x/check-runs?per_page=100&page=2`;
+  const run = runEntry(1, "ci", "success", "2026-01-01T00:00:00Z");
+  const { gh, requests } = pagedCheckRunsGh({
+    [FIRST_PAGE]: { runs: [run], next: page2 },
+    [page2]: { runs: [run], next: page2 },
+  });
+  await expect(waitOn(gh, false)).rejects.toThrow(/repeats/);
+  expect(requests).toEqual([FIRST_PAGE, page2]);
+});
+
+// Usefulness: verifies a page read that never answers still ends at the wait bound: the read of a
+// followed page is bounded like every other read (issue #1025).
+test("waitChecks bounds the read of a followed page", async () => {
+  const page2 = `${LINK_HOST}/commits/x/check-runs?per_page=100&page=2`;
+  const { gh } = pagedCheckRunsGh({
+    [FIRST_PAGE]: { runs: [runEntry(1, "ci", "success", "2026-01-01T00:00:00Z")], next: page2 },
+  });
+  const hanging = (args, cwd, options) =>
+    args[1] === page2 ? new Promise(() => {}) : gh(args, cwd, options);
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 0.3,
+    gh: hanging,
+    sleep: async () => {},
+  });
+  expect(result).toMatchObject({ timedOut: true, head: null, checks: [] });
+}, 20000);
+
+// Usefulness: verifies the reply is classified on its final status block, the reply that ends the
+// exchange: an interim or proxy block before it never decides, so a final 502 is retried and a
+// final 403 stays terminal whatever block came first (issue #1025).
+test.each([
+  ["a 200 block then a 502", "HTTP/1.1 200 OK\r\n\r\nHTTP/1.1 502 Bad Gateway\r\n\r\n", true],
+  ["a 100 block then a 503", "HTTP/1.1 100 Continue\r\n\r\nHTTP/2 503 Unavailable\r\n\r\n{}", true],
+  [
+    "a 502 block then a 403",
+    "HTTP/1.1 502 Bad Gateway\r\n\r\nHTTP/1.1 403 Forbidden\r\n\r\n{}",
+    false,
+  ],
+  ["a 502 block then a 200", "HTTP/1.1 502 Bad Gateway\r\n\r\nHTTP/2 200 OK\r\n\r\n{}", false],
+])("waitChecks classifies a reply of %s on its final status", async (_name, stdout, retried) => {
+  const { gh, commitReads } = failingCommitGh(
+    (n) => n === 1 && { status: 1, stdout, stderr: "gh: HTTP 502" },
+  );
+  if (retried) {
+    expect(await waitOn(gh, false)).toEqual({
+      timedOut: false,
+      head: HEAD_A,
+      checks: [PASSED_ITEM],
+    });
+  } else {
+    await expect(waitOn(gh, false)).rejects.toThrow(/gh api/);
+    expect(commitReads).toHaveLength(1);
+  }
+});
+
+// Usefulness: verifies a success reply that follows an interim block is read from the final block,
+// so a `100 Continue` line before the reply never fails a read that passed (issue #1025).
+test("waitChecks reads a success reply that follows an interim block", async () => {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
+    commits: { [HEAD_A]: [PASSED_ITEM] },
+  });
+  const gh = async (args, cwd, options) => {
+    const reply = await inner(args, cwd, options);
+    return args.includes("--include")
+      ? { ...reply, stdout: `HTTP/1.1 100 Continue\r\n\r\n${reply.stdout}` }
+      : reply;
+  };
+  expect(await waitOn(gh, false)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
 });
 
 // Usefulness: verifies a failure that `gh pr checks` lists on a later poll survives the bound that
