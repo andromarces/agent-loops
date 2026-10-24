@@ -12,6 +12,7 @@ test("a default run state, session record, and test slot are written under the t
   vi.stubEnv("AGENT_LOOP_TEST_SLOT_HELD", "");
   const work = await mkdtemp(join(tmpdir(), "default-roots-"));
   const writes = [];
+  let slot;
   try {
     const { stateDir, stateFile } = statePaths({ cwd: work });
     await mkdir(stateDir, { recursive: true });
@@ -27,7 +28,7 @@ test("a default run state, session record, and test slot are written under the t
     });
     writes.push(join(tmpdir(), "agent-loops", "session-records"));
 
-    const slot = await holdTestSlot({
+    slot = await holdTestSlot({
       slots: 1,
       waitSeconds: 5,
       signal: new AbortController().signal,
@@ -39,8 +40,8 @@ test("a default run state, session record, and test slot are written under the t
     for (const path of writes) {
       expect((await readdir(path)).length).toBeGreaterThan(0);
     }
-    await slot.release();
   } finally {
+    await slot?.release();
     vi.unstubAllEnvs();
     await rm(work, { recursive: true, force: true });
   }
