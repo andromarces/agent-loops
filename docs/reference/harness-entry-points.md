@@ -30,8 +30,10 @@ ancestor, and 1 when the check cannot run or finds no harness ancestor, so the
 skill separates a refusal from a check that did not decide. The Claude Code
 skill names the instructions file by path with no `@` line, because an `@` line
 in a skill body did not attach the file in a live session (#1055). It tells the
-parent to read the file in full, which fits in one read of the read tool, and to read
-each reference section that the file names when its condition holds. See
+parent to read the file in full, and to read each reference section that the file names
+when its condition holds. The core is expected to fit in one read of the read
+tool. When the read tool caps a read, the skill tells the parent to read again
+with an offset until the end of the file. See
 [Parent guard details](../parent-guard.md) for every guard target.
 
 Live check (issue #144): on 2026-10-10, two checks ran on macOS 27.2 with Node v26.11.1.
