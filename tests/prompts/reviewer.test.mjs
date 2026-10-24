@@ -597,3 +597,13 @@ test("reviewer prompt tells the reviewer to leave the runtime scratch folder to 
 test("reviewer prompt without a scratch folder names none", () => {
   expect(reviewerPrompt("check the fix")).not.toContain("scratch folder");
 });
+
+// Usefulness: verifies acceptance #1024 — the reviewer is told to reach the system temporary
+// directory only through TMPDIR, TEMP, or TMP, because a Codex turn gets a private directory there
+// that the runtime removes, and a literal path to the inherited directory escapes that removal.
+test("reviewer prompt bars a literal path to the system temporary directory", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "Create a temporary path outside the repository only through the TMPDIR, TEMP, or TMP environment variable, never through a literal path to the system temporary directory, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it.",
+  );
+});

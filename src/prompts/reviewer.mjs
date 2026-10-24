@@ -101,7 +101,9 @@ const remoteWriteRule =
 // the repository comes first (issue #885), and the turn removes that output too, because no runtime
 // step does (issue #906). The runtime now creates and removes one scratch folder per turn, so that
 // folder comes first when the turn has one (issue #920). The other sentences stay for output outside
-// it. That path stays short, because a deep redirected temporary path fails the Cloudflare Workers
+// it. A Codex turn also gets a private temporary directory that the runtime removes (ADR 0047), so
+// the rule sends temporary output through TMPDIR, TEMP, or TMP and bars a literal path to the
+// inherited directory, which that removal does not cover (issue #1024). That path stays short, because a deep redirected temporary path fails the Cloudflare Workers
 // test runtime on Windows (issue #903).
 const scratchPlacement = (scratchDir) =>
   scratchDir === null
@@ -117,7 +119,7 @@ const ignoredPathRemoval = (scratchDir) =>
     : "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder, and name in Notes any that you could not remove. Do not delete the scratch folder, because the runtime removes it.";
 
 const scratchWriteRule = (scratchDir) =>
-  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove. ${ignoredPathRemoval(scratchDir)} Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes.`;
+  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. Create a temporary path outside the repository only through the TMPDIR, TEMP, or TMP environment variable, never through a literal path to the system temporary directory, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove. ${ignoredPathRemoval(scratchDir)} Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes.`;
 
 // The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
 // that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
