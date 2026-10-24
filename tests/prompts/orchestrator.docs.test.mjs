@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
@@ -31,6 +31,23 @@ const instructionsPath = join(
 const WORK_TREE_CREATE_COMMAND =
   "git worktree add --no-track -b <branch> <work tree> origin/<default>";
 const WORK_TREE_REMOVE_COMMAND = 'git worktree remove --force "<work tree>"';
+
+const referenceSectionsDir = join(dirname(instructionsPath), "orchestrator");
+
+/** The reference section files of the instructions, sorted by name. */
+async function referenceSectionNames() {
+  return (await readdir(referenceSectionsDir)).filter((name) => name.endsWith(".md")).sort();
+}
+
+/** The instructions as one text: the core, then every reference section file. */
+async function readInstructions() {
+  const names = await referenceSectionNames();
+  const parts = [
+    readFile(instructionsPath, "utf8"),
+    ...names.map((name) => readFile(join(referenceSectionsDir, name), "utf8")),
+  ];
+  return (await Promise.all(parts)).join("\n\n");
+}
 
 /** The user docs as one text: the reference topic files, the reference index, then the README. */
 async function readUserDocs() {
@@ -123,7 +140,7 @@ const SHARED_PARENT_RULES = [
 // diverge. The reviewer-Checks gate rule uses the same presence check as the gate test. A reword
 // keeps the parity check, and a removal breaks it (issue #318).
 test("interactive instructions and headless prompt share the reviewed-state rules", async () => {
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   for (const rule of SHARED_PARENT_RULES) {
     rule(instructions);
@@ -152,7 +169,7 @@ test("the headless prompt states the no-required-check gate outcome", async () =
   expectRule(prompt, /cannot read/i, /refus/i);
   // The same rule on the interactive surface, so the two parent paths do not
   // diverge on it.
-  const instructions = await readFile(instructionsPath, "utf8");
+  const instructions = await readInstructions();
   expectRule(instructions, /no required check/i, /pass/i, /PR head/i, /reviewed/i, /merge state/i);
   expectRule(instructions, /no required check/i, /record/i);
   expectRule(instructions, /cannot read/i, /refus/i);
@@ -171,7 +188,7 @@ test("the parent surfaces state the action for a wait with no required check", a
     reviewerKind: "claude",
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
-  const instructions = await readFile(instructionsPath, "utf8");
+  const instructions = await readInstructions();
   for (const text of [prompt, instructions]) {
     expectRule(text, /noRequiredChecks/, /dispatch the reviewer/i, /never record/i);
   }
@@ -190,7 +207,7 @@ test("the parent surfaces state when to wait on every check of the head", async 
     reviewerKind: "claude",
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
-  const instructions = await readFile(instructionsPath, "utf8");
+  const instructions = await readInstructions();
   for (const text of [prompt, instructions]) {
     expectRule(text, /noRequiredChecks/, /wait-checks[^.]*--all/i, /never record/i);
   }
@@ -209,7 +226,7 @@ test("the parent surfaces name --expect for a check that registers late", async 
     reviewerKind: "claude",
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
-  const instructions = await readFile(instructionsPath, "utf8");
+  const instructions = await readInstructions();
   for (const text of [prompt, instructions]) {
     expectRule(text, /--expect/, /--all/, /late/i);
     expectRule(text, /awaiting/, /never a pass/i);
@@ -233,7 +250,7 @@ test("the parent surfaces state the action for a noCheckSource wait", async () =
     reviewerKind: "claude",
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
-  const instructions = await readFile(instructionsPath, "utf8");
+  const instructions = await readInstructions();
   for (const text of [prompt, instructions]) {
     expectRule(text, /noCheckSource/, /(?:no|never a) pass/i);
     expectRule(text, /dispatch the reviewer/i, /not verified/i);
@@ -254,7 +271,7 @@ test("the noCheckSource rule names the merged PR head read and its limit on ever
     reviewerKind: "claude",
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
-  const instructions = await readFile(instructionsPath, "utf8");
+  const instructions = await readInstructions();
   const roleDoc = await readFile(join(dirname(instructionsPath), "reference/role.md"), "utf8");
   for (const text of [prompt, instructions, roleDoc]) {
     expectRule(text, /merged PR/i, /latest/i);
@@ -267,7 +284,7 @@ test("the noCheckSource rule names the merged PR head read and its limit on ever
 // (issue #1054). A reworded rule that drops the workflow-file, trigger, or external-provider
 // condition would let a skip start the reviewer before CI reports.
 test("the instructions state the conditions of a noCheckSource wait", async () => {
-  const instructions = await readFile(instructionsPath, "utf8");
+  const instructions = await readInstructions();
   expectRule(instructions, /no `--expect` name is set/);
   expectRule(instructions, /changes no file under `\.github\/workflows\/`/);
   expectRule(
@@ -337,7 +354,7 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
     reviewerKind: "claude",
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
-  const instructions = await readFile(instructionsPath, "utf8");
+  const instructions = await readInstructions();
   const docsPassage = paragraphAround(instructions, "When no source can state the required checks");
   const promptPassage = textBetween(
     prompt,
@@ -354,7 +371,7 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
 // rule (#336 review). An orchestrator reading one is then not told that a run passes on a branch
 // that the gate refuses.
 const RULE_SURFACES = [
-  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["the user docs", readUserDocs],
 ];
 
@@ -423,7 +440,7 @@ for (const [name, load] of RULE_SURFACES) {
 // Usefulness: verifies the two parent paths state the same narrow exception (issue #319). An
 // interactive parent and a headless orchestrator then resolve the role conflict the same way.
 test("interactive instructions and headless prompt share the status-read exception", async () => {
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   const prompt = gatedPrompt("claude").replace(/\s+/g, " ");
   for (const rule of ["status read", "not a review", "not a test"]) {
     expect(instructions).toContain(rule);
@@ -438,7 +455,7 @@ test("instructions, prompt, and user docs share the status-read exception scope"
   const scope = "and agent-loop role wait-checks is the only command it covers";
   const flat = (text) => text.replace(/`/g, "").replace(/\s+/g, " ");
   const readme = await readUserDocs();
-  expect(flat(await readFile(instructionsPath, "utf8"))).toContain(scope);
+  expect(flat(await readInstructions())).toContain(scope);
   expect(flat(gatedPrompt("claude"))).toContain(scope);
   expect(flat(readme)).toContain(scope);
   for (const text of [gatedPrompt("claude"), readme]) {
@@ -468,7 +485,7 @@ test("the reference architecture rule names role wait-checks as the only excepti
 // Usefulness: verifies the interactive instructions state the same remote-write
 // rule and the same status-read carve-out as the headless prompt (issue #422).
 test("the interactive instructions forbid a remote write and allow a status read", async () => {
-  const text = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const text = (await readInstructions()).replace(/\s+/g, " ");
   expect(text).toContain("Never write to GitHub or any remote");
   expect(text).toContain(
     "A status read, such as `agent-loop role wait-checks`, changes nothing, so it is not a write.",
@@ -501,7 +518,7 @@ const REFUSED_CWD_RULE = [
 // refused-`--cwd` rule (issue #327). Neither parent path then sends a maintainer through a work
 // tree repair that the runtime never asked for.
 test("interactive instructions and headless prompt share the refused --cwd rule", async () => {
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   for (const rule of REFUSED_CWD_RULE) {
     expect(instructions).toContain(rule);
@@ -537,7 +554,7 @@ const REMOVAL_PARAGRAPH =
 const REFUSED_CWD_BLOCKS = {
   instructions: {
     start: "## Work tree ownership",
-    end: " ## Reviewer prompts",
+    end: " ## Reference sections",
     text: [
       "## Work tree ownership",
       "The parent creates the run's work tree and owns it. Keep that work tree in place for the whole run, and never tell a worker to remove it: a worker turn pushes its branch and stops there, because every later dispatch of that run targets the same `--cwd`.",
@@ -593,7 +610,7 @@ function expectRefusedCwdBlock(text, { start, end, text: pinned }) {
 
 /** The interactive instructions and the headless prompt, whitespace collapsed. */
 async function readParentTexts() {
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   return { instructions, prompt };
 }
@@ -621,7 +638,7 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
     instructions: "Never read, print, or quote the file to decide.",
     prompt: "- In review-only mode,",
   };
-  const AFTER_RULE_BLOCK = { instructions: " ## Reviewer prompts", prompt: " User Task:" };
+  const AFTER_RULE_BLOCK = { instructions: " ## Reference sections", prompt: " User Task:" };
   const SECTION_START = {
     instructions: "## Work tree ownership",
     prompt: "Map the report fields into the finish summary:",
@@ -678,7 +695,7 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
 // Usefulness: verifies the work tree creation command sets no upstream (#985), so a plain
 // `git push` of a worker cannot reach the default branch. No other test reads this section.
 test("instructions create the run work tree without an upstream and set it on the first push", async () => {
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   expect(instructions).toContain(
     "git worktree add --no-track -b <branch> <work tree> origin/<default>",
   );
@@ -693,7 +710,7 @@ test("instructions and headless prompt name the work tree install owner and bar 
   const { instructions, prompt } = await readParentTexts();
   const ownership = instructions.slice(
     instructions.indexOf("## Work tree ownership"),
-    instructions.indexOf(" ## Reviewer prompts"),
+    instructions.indexOf(" ## Reference sections"),
   );
   expect(ownership).toContain(
     "After you create the work tree and before the first dispatch, run the repository's lockfile install inside the work tree, for example `pnpm install --frozen-lockfile`.",
@@ -713,7 +730,7 @@ test("instructions and headless prompt name the work tree install owner and bar 
 // follows a junction or a symlink on each platform (#998). Without it, a parent can delete the
 // leftover `node_modules` folder through pnpm junctions and damage the shared store.
 test("instructions remove the run work tree without following links", async () => {
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   expect(instructions).toContain(WORK_TREE_REMOVE_COMMAND);
   // The Windows delete has one form for PowerShell or cmd.exe and one for Git Bash, where MSYS
   // path conversion rewrites the `/s` and `/q` switches unless it is off.
@@ -739,7 +756,7 @@ test("instructions remove the run work tree without following links", async () =
 // run_reviewer, and abort" (#1034), with the same split as the headless prompt, so a parent never
 // sends a key that the runtime refuses.
 test("instructions state the allowed keys of the dispatch and abort actions", async () => {
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   expectRule(
     instructions,
     /`run_worker` and `run_reviewer` actions allow only `action` and `prompt`/,
@@ -754,7 +771,7 @@ test("instructions state the allowed keys of the dispatch and abort actions", as
 test("interactive instructions and headless prompt share the held-session rule", async () => {
   const rule =
     "`dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the Claude session of the role. Do not end that process. The maintainer ends it or waits for it.";
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   expect(instructions).toContain(rule);
   expect(prompt).toContain(rule);
@@ -764,7 +781,7 @@ test("interactive instructions and headless prompt share the held-session rule",
 // supplied-status rule the same way (issue #320 review). The two paths resolve the same rule for a
 // parent. If a statement drifts, it tells one of them that the reviewer still reads the checks.
 test("interactive instructions and headless prompt state the supplied-status rule alike", async () => {
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   const prompt = initialPrompt({
     task: "Implement feature X",
     maxSteps: 10,
@@ -791,7 +808,7 @@ test("interactive instructions and headless prompt state the supplied-status rul
 // the same conditions (issue #320 review, second round). A parent reading the instructions and an
 // orchestrator reading the prompt then resolve one rule.
 test("the supplied-status rule states the same conditions in both surfaces", async () => {
-  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
   const declared = initialPrompt({
     task: "Implement feature X",
     maxSteps: 10,
@@ -826,7 +843,7 @@ test("the supplied-status rule states the same conditions in both surfaces", asy
 // instructions too, since the two surfaces must state the same rule
 // (issue #320 review, fourth round).
 test("the instructions qualify the only-check-read claim the same way", async () => {
-  const instructions = await readFile(instructionsPath, "utf8");
+  const instructions = await readInstructions();
   const lines = instructions.split("\n").filter((line) => /only check read/i.test(line));
   expect(lines.length).toBeGreaterThan(0);
   for (const line of lines) {
@@ -893,7 +910,7 @@ test("the user docs describe the reviewer sandbox opt-in consistently with ADR 0
 // web_search. A reader never takes the limit for a block on every channel.
 test.each([
   ["the user docs", readUserDocs],
-  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", readHelpText],
   ["reviewer prompt", async () => reviewerPrompt("x", null, null, "workspace-write")],
@@ -937,7 +954,7 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
 // one rule about what the Codex sandbox blocks.
 test.each([
   ["the user docs", readUserDocs],
-  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["docs/parent-guard.md", () => readRepoFile("docs/parent-guard.md")],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", readHelpText],
@@ -957,7 +974,7 @@ test.each([
 // removed on purpose. A restored phrase fails here. A reword that keeps the meaning passes.
 test.each([
   ["the user docs", readUserDocs],
-  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["--help", readHelpText],
   [
     "the headless orchestrator prompt",
@@ -979,7 +996,7 @@ test.each([
 // each reader looks. The new default is then not only in the ADR (ADR 0038).
 test.each([
   ["the user docs", readUserDocs],
-  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["--help", readHelpText],
 ])("%s states the no-sandbox default and the two opt-in modes", async (_name, load) => {
   const text = (await load()).replace(/\s+/g, " ");
@@ -1010,7 +1027,7 @@ test.each([
 
 test.each([
   ["the user docs", readUserDocs],
-  ["docs/orchestrator-instructions.md", () => readFile(instructionsPath, "utf8")],
+  ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["--help", readHelpText],
   [
     "the headless orchestrator prompt",
@@ -1028,11 +1045,73 @@ test.each([
 // worker change that the operator approved (issue #1038). The existing restated-spec rule does
 // not cover it: a decision is a fact about the spec, not a pass condition.
 test("docs/orchestrator-instructions.md relays operator decisions to the reviewer", async () => {
-  const text = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  const text = (await readInstructions()).replace(/\s+/g, " ");
   expectRule(
     text,
     /restate every operator decision made after init/i,
     /next reviewer prompt/i,
     /worker prompt that carries it/i,
+  );
+});
+
+// Usefulness: verifies the core stays within one read of the Claude Code read tool (25,000 token
+// cap, #1061). The byte bound leaves headroom at the density that the cap showed in #1055 (870
+// lines of 1581 for about 62 KB). A larger core makes the parent read the file by pages again.
+test("the core instructions stay within one read of the read tool", async () => {
+  const { size } = await stat(instructionsPath);
+  expect(size).toBeLessThanOrEqual(50_000);
+});
+
+// Usefulness: verifies the core names each reference section with the condition that makes the
+// parent read it (#1061). A section that the core never names is never read, so its rules would
+// silently drop out of a run. The check also rejects a link whose target does not exist.
+test("the core names every reference section and when to read it", async () => {
+  const core = await readFile(instructionsPath, "utf8");
+  const listing = core.slice(core.indexOf("## Reference sections"));
+  const entries = listing.split("\n- [").slice(1);
+  for (const name of await referenceSectionNames()) {
+    const entry = entries.find((part) => part.includes(`(orchestrator/${name})`));
+    expect(entry, `${name} is not named in the Reference sections list`).toBeDefined();
+    expect(entry.replace(/\s+/g, " "), `${name} has no condition`).toMatch(
+      /read it .*\b(when|before)\b/,
+    );
+  }
+  for (const [, target] of core.matchAll(/\]\((orchestrator\/[^)#]+)\)/g)) {
+    await expect(readFile(join(dirname(instructionsPath), target), "utf8")).resolves.toBeTruthy();
+  }
+});
+
+// Usefulness: verifies each reference section links back to the core and every relative link in
+// it resolves, so the split files stay reachable from one another and from the core (#1061).
+test("each reference section links back to the core and its relative links resolve", async () => {
+  for (const name of await referenceSectionNames()) {
+    const text = await readFile(join(referenceSectionsDir, name), "utf8");
+    expect(text, name).toContain("](../orchestrator-instructions.md)");
+    for (const [, target] of text.matchAll(/\]\(((?:\.\.?\/|[a-z-]+\.md)[^)#]*)\)/g)) {
+      await expect(
+        readFile(join(referenceSectionsDir, target), "utf8"),
+        `${name} -> ${target}`,
+      ).resolves.toBeTruthy();
+    }
+  }
+});
+
+// Usefulness: verifies the read trigger for `shellDenied` covers a worker envelope as well as a
+// reviewer envelope, and fixes the timing as before the next dispatch (#1061 review). A refused
+// worker command makes its reported checks unreliable, so a parent that reads the rule only after a
+// reviewer envelope would dispatch the reviewer on the strength of an unrun check.
+test("the core tells the parent to read the shellDenied rule after any worker or reviewer envelope", async () => {
+  const core = await readFile(instructionsPath, "utf8");
+  const listing = core.slice(core.indexOf("## Reference sections"));
+  const entry = listing
+    .split("\n- [")
+    .find((part) => part.includes("(orchestrator/reviewer-evidence.md)"))
+    .replace(/\s+/g, " ");
+  expectRule(entry, /worker or reviewer envelope[^.]*`shellDenied`/i, /before the next dispatch/i);
+  const section = await readFile(join(referenceSectionsDir, "reviewer-evidence.md"), "utf8");
+  expectRule(
+    section.replace(/\s+/g, " "),
+    /worker or reviewer envelope[^.]*`shellDenied`/i,
+    /before the next dispatch/i,
   );
 });

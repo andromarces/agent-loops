@@ -12,9 +12,9 @@ metadata:
 ---
 
 Read `{{AGENT_LOOP_INSTRUCTIONS}}` in full before acting, and follow it for this
-invocation. The file is long and the read tool caps one read, so read it by
-pages: after each capped read, read again with an offset until the end of the
-file. Run every
+invocation. The file is a core that is expected to fit in one read, but when a
+read is capped, read again with an offset until the end of the file. It names
+reference files to read when their conditions hold. Run every
 `agent-loop` command in the instructions as `__AGENT_LOOP_CLI__` instead, so the
 run does not depend on the `agent-loop` command resolving on PATH. The task and
 role settings from the invocation are:

@@ -49,8 +49,11 @@ test("the Claude skill requires the harness-check ancestry gate", async () => {
 
 // Usefulness: verifies the #1055 acceptance — a Claude Code session did not attach the file
 // that an `@` line in the skill body named, so the skill states one read route: the path in full,
-// by pages when the read tool caps a read, and no `@` line that can fail to attach.
-test("the Claude skill reads the instructions file in full by pages with no @ line", async () => {
+// and no `@` line that can fail to attach. The core is expected to fit in one read (#1061), but the
+// byte bound of its test is not a token count, so the skill keeps a conditional continuation: when
+// a read is capped, read again with an offset until the end of the core. It also sends the parent to
+// the reference files that the core names.
+test("the Claude skill reads the instructions core in full, continues a capped read, and has no @ line", async () => {
   const home = await makeHome();
   const claude = await targetPaths("claude", home);
   const skill = claude.files.find((file) => file.path.endsWith("SKILL.md")).content;
@@ -60,8 +63,11 @@ test("the Claude skill reads the instructions file in full by pages with no @ li
   );
   expect(skill).not.toMatch(/^@/m);
   expect(skill.replace(/\s+/g, " ")).toContain(`Read \`${instructions}\` in full before acting`);
+  expect(skill.replace(/\s+/g, " ")).toMatch(
+    /expected to fit in one read, but when a read is capped, read again with an offset until the end of the file/,
+  );
   expect(skill.replace(/\s+/g, " ")).toContain(
-    "read again with an offset until the end of the file",
+    "names reference files to read when their conditions hold",
   );
 });
 

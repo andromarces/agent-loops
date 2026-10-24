@@ -8,13 +8,16 @@ rules in JSON-action form; this file is the source for shared rules. Work tree
 ownership below is stated in that prompt as well, and the two state the same
 rule.
 
+The rules that only some turns need are in the reference files under `orchestrator/`. The
+Reference sections list below names each file and when to read it.
+
 ## Role
 
 - Delegate the task, track results, handle blockers, and report completion.
 - Never implement changes, never review code yourself, never run tests, never
   open child transcripts.
 - The one exception is a pull request check status read, which a run that ends
-  with `--require-ci` allows, as the waiting rules below state. A status read is
+  with `--require-ci` allows, as the [waiting rules](orchestrator/waiting-for-checks.md) state. A status read is
   not a review, not a test, and not an edit, and `agent-loop role wait-checks` is
   the only command it covers.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
@@ -90,34 +93,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
 - The init task (`--task` or `--task-file`) reaches each child conversation once. The first turn of a
   conversation shows the task under its own `Init task:` label, before `Instructions:`. This holds in the worker
   preamble and in the reviewer prompt. A later turn of the same conversation does not repeat it.
-  - The role state records `taskSentTo`, the session id of the conversation that last carried the task. A turn
-    shows the task when that id differs from the session id it runs in, or when the role has no session id.
-  - A role with no session id starts a new conversation. That happens on the first turn and after a first turn
-    that failed before its CLI reported a session. It also happens on a rerun after a missing session (below).
-  - A turn that carries the task records the session id that its CLI returns. That id can name a replacement
-    conversation, which received the whole prompt.
-  - A resumed turn that ran in a replacement conversation carries no task, so it records nothing. A task-only
-    turn in the same dispatch then delivers it: the preamble-only turn for a worker, and a turn with the
-    `Init task:` block and no review for a reviewer.
-  - A cancel never repeats the task. After a cancel, the next worker turn sends the preamble again, as before.
-    It leaves the task out when the record names the session that it resumes.
-  - Every adapter (Claude Code, Codex, Copilot, opencode, agy) fails a turn that reports no session id. A
-    successful turn therefore always stores one.
-  - Known limit: a canceled turn that carried the task counts as delivered. The CLI can drop that prompt. That
-    conversation then never sees the task.
-  - A hard kill of the dispatch records no delivery, so the next turn can send the task again.
-  - The task-only reviewer turn costs one extra child turn in the same dispatch. It runs under its own
-    read-only check, apart from the review turn, so a write in either turn halts the run. The replacement has
-    the task before the verdict counts toward a finish.
-  - A task-only reviewer turn that fails, other than by a cancel, records no delivery, and the whole reviewer
-    dispatch is an error result with no verdict. `finish --require-accept` then refuses, and the next reviewer
-    turn shows the task.
-  - A task-only turn that runs in yet another conversation delivers the task there and records that
-    conversation, so the next turn does not repeat it. The dispatch is an error result with no verdict,
-    because the conversation that gave the verdict never had the task.
-  - A cancel in the task-only turn follows the known limit above: it counts as delivered, so the resumed
-    reviewer turn does not repeat the task. The cancel keeps the replacement mark, and the dispatch gives no
-    verdict.
+  - The delivery rules cover `taskSentTo`, a replacement conversation, the task-only turn, and
+    a cancel. They are in [Init task delivery](orchestrator/task-delivery.md).
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot
@@ -157,7 +134,7 @@ printf '%s' "<prompt>" | agent-loop role dispatch --role reviewer --cwd "<work t
 ```
 
 A run that set `--test-cmd` at init passes the same `--test-cmd "<command>"` on
-every reviewer dispatch, as the section on the runtime test command states.
+every reviewer dispatch, as [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states.
 A run that set `--reviewer-sandbox` at init needs no flag on a later
 dispatch: the state file holds the mode. A later dispatch that names another
 mode is refused.
@@ -211,52 +188,9 @@ Read the JSON envelope on stdout. Example reviewer envelope:
 - `report.notes` holds non-blocking findings the next turn does not need to act
   on. `report.deferred` holds items found but left out of scope. Both are
   optional: a child that omits the label yields `null` for that field, and the
-  block still parses. Each value is one line, the label plain at column 0. A `- `
-  list or an ordered `N. ` list (a `-` or a number and a period at column 0, exactly one space U+0020, then the item) that directly follows a report
-  label line is that label's value, or joins the value that line already holds:
-  the markers drop and the items join into one line with `; ` (issues #846, #879,
-  and #915). A list under `Blockers: none` therefore reads `none; <item>`, never
-  `none`. The reviewer `Verdict:` line is no report label, so a list after it
-  stays unparseable. One nesting level folds too:
-  a sub-item line (spaces U+0020 up to the column where the parent item text starts, so two after `- ` and three after `1. `, then a `-`, one space U+0020, then the
-  item) directly after a `- ` or `N. ` item joins into that item with `, `, and several
-  consecutive sub-items under one parent all fold into it, so the lines `- a`,
-  two spaces then `- b`, and two spaces then `- c` read `a, b, c` (issues #870 and #915). A sub-item under `1. a` takes three spaces, so `1. a` and `   - b` read `a, b`.
-  The run ends at the first line that is not a `- ` or `N. ` item or a sub-item of the item above it, so a blank line or prose between
-  the label and the list breaks it. One shape with prose folds too: a blank line after the label
-  line (or after its folded list), then one prose line, then a `- ` list directly under that line (dash items only: an ordered list there stays unparseable).
-  The prose and its list join the value of the label just above, as `; <prose>: <items>` (the prose
-  loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
-  `x; Design settled: a` (issue #898). The prose line must not start with whitespace (a nonbreaking or ideographic
-  space counts), `*`, `_`, a backtick, `>`, or `#`, must not be a list, and must not hold a report label name or `Verdict`, in
-  any case, followed by any run of `*`, `_`, or backtick marks (or none), whitespace (or none), and a colon, anywhere in the line. So a
-  `*` line (issue #275), a decorated or malformed label, and a `Verdict` line never introduce the
-  list. A `- ` item or sub-item that opens with a bold report label name, for example
-  `- **Notes:** ran`, is item text when it sits inside a run that folds under a label
-  (issue #1006). The same line outside such a run, and any other decorated label,
-  makes the block unparseable. A prose line directly after the label with no blank line,
-  a blank line between the prose and its list, a second prose line before the list, prose after
-  the reviewer `Verdict:` line, and a later repeat of the label stay unparseable. Any other list in the closing block, for
-  example bullets after the reviewer `Verdict:` line, a list outside any label,
-  a bullet with no space after the marker (`-item`, `*item`) or a separator
-  other than one space (a tab, a nonbreaking space, two spaces) even under an
-  empty label, a `*` or `+` bullet, an `N)` item, an ordered item that a blank line or prose separates from its label, a bold heading line that groups a `- ` list with no label directly above it (the parent prompt may format its own blockers as an ordered list, and a child that mirrors that shape must still put the list under a label), an indented bullet that is
-  not one nested level (no parent item, a second level, another indent width or
-  marker), makes the block unparseable, so the list surfaces
-  through `raw` instead of being dropped. An indented label or a decorated label
-  does the same. This covers a label occurrence that a later repeat shadows, which
-  also drops a list that the repeat shadows. A non-list line, for example a closing
-  sentence, does not make the block unparseable. A `*` line is not always a
-  list, and one shape is the case that matters here: a `*` line whose closing
-  `*` a letter precedes, where the character right after the close is not a word
-  character or `*`, and where nothing glued from that character on is a letter
-  or an ASCII digit, for example `*file*` or `*use a* b`. Such a line is
-  dropped without `raw` under any label, and every matching line in the block
-  drops the same way, so the block still parses with the text gone (issue #275,
-  accepted gap).
-  A child is told to write no block line that starts with `*`. Every other `*`
-  line either is a list and blanks the block, for example `*item`, `* item`, or
-  `*file*.mjs`, or is not a list and drops as prose, for example `**bold** note`.
+  block still parses. Each value is one line, the label plain at column 0.
+  The rules that fold a list under a label into that value, and the shapes that make the
+  block unparseable, are in [Closing block list rules](orchestrator/closing-block.md).
 
 A reviewer envelope carries `reviewed`, the runtime-owned identity of the state
 the reviewer saw. The runtime writes these fields from the snapshot taken at the
@@ -293,44 +227,17 @@ Apply these parent rules:
   created there. The field names the entries, redacted like the test command output (ADR 0017),
   and never their content, at most 20. It is advisory: the directory is shared with other
   processes, so the runtime cannot attribute an entry to the turn, and it does not delete one.
-  Only the turn directories that this process created, matched by exact name, are left out, and
-  only until the removal ends: a directory that the removal refused or failed on, such as a
-  replacement of the turn directory, is listed. Any other name is listed, an `al-` name too, and a
-  directory of a concurrent run can appear. The runtime reads the directory once, after the last
-  child call of the dispatch, a task-only turn in a replacement conversation included.
-  Every reviewer turn that read the directory before it started carries the field: an ok turn, a
-  handled error, a turn that a mutation or a snapshot error halted, and a canceled turn. The
-  `role dispatch` envelope and the state file `lastResult` carry it for a halted or interrupted
-  dispatch, and a headless run emits an `inherited-tmpdir` event with `fatal: true` for a fatal
-  error, which the transcript keeps. A turn that cannot carry it is one whose process ended
-  without a throw, for example a crash or a kill, because the before-read lives in memory, and
-  one whose before-read failed. A run that the next call marks `interrupted` after such an end
-  has none. Report it in the finish summary under `open`, and do not treat it as a reason to
+  The field rules are in [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
+  Report it in the finish summary under `open`, and do not treat it as a reason to
   reject (issue #1024).
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that `node_modules/.modules.yaml` of the work tree records as `storeDir`.
-  The field means that store changed, whoever changed it. It never claims that the reviewer's
-  install used that store: an install into a store other than the recorded one gives no field,
-  whatever selected that store (`pnpm_config_store_dir`, `PNPM_HOME`, `XDG_DATA_HOME`, a config
-  file, or a `--store-dir` flag), and so does a work tree that never ran an install. A recorded
-  store that config selected is reported like any other. The
-  field names the entries, relative to the parent of the recorded `storeDir`, such as
-  `v11/projects/<hash>`, `v11/links/<package>`, or `v11/index.db`, redacted like the test command
-  output (ADR 0017), and never their content, at most 20. It is advisory: the store is shared with
-  other processes, so the runtime cannot attribute a change to the turn, and it does not revert
-  one. The runtime reads names, sizes, and times only, never file content, within 5 seconds and
-  10,000 entries per directory, the store root included, and the read stops at that bound: no file
-  system call starts after it. A store that it cannot read within the bound carries no field. The
-  recorded file is read up to 1 MiB. A file that is missing, unreadable, longer than that, or
-  without a store, or not valid JSON, and a store path that is not absolute, carries no field.
-  pnpm 12.11.2 writes the file as JSON, and the runtime parses it strictly. The two reads of a
-  turn must see the same root, or the turn carries no field. The read has its own bound and takes
-  no turn signal. Every reviewer turn that read the store before it started carries the field: an
-  ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a canceled
-  turn. The `role dispatch` envelope and the state file `lastResult` carry it for a halted or
-  interrupted dispatch, and a headless run emits a `package-store` event with `fatal: true` for a
-  fatal error. Report `packageStoreEntries` in the finish summary under `open`, and do not treat
-  it as a reason to reject (issue #1045).
+  The field means that store changed, whoever changed it. It is advisory: the store is shared
+  with other processes, so the runtime cannot attribute a change to the turn, and it does not
+  revert one. The field rules are in
+  [Runtime advisory fields](orchestrator/runtime-advisory-fields.md). Report
+  `packageStoreEntries` in the finish summary under `open`, and do not treat it as a reason
+  to reject (issue #1045).
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.
@@ -468,564 +375,33 @@ orchestrator can act, and the run keeps no state file. A headless worker turn
 gets the ownership rule from the same file, because `runChild` builds the worker
 prompt there for both paths.
 
-## Reviewer prompts
+## Reference sections
 
-The reviewer prompt sets the task scope; the fixed review scope and closing
-block wrap it on every turn. Name the guards and contracts that the change puts
-at risk, so the reviewer can trace each changed input through them. Do not
-restate the spec as the pass condition: a restated spec asks the reviewer to
-confirm it, not to test it.
+The files below hold the rules that most turns do not need. Read a file in full when its
+condition holds, before you act on that condition. Each path is relative to the directory
+of this file.
 
-The init task reaches each role once, so a later operator decision reaches only
-the worker prompt that carries it. Restate every operator decision made after
-init in the next reviewer prompt, beside the worker prompt that carries it. The
-reviewer then judges the change against the decision, not only against the init
-task. State the decision as an approved change of the spec, with the guard or
-contract that it changes, so the reviewer still tests the change.
-
-The fixed review scope also carries the required-check rule. The rule text is in
-every reviewer prompt. It applies only when the task names a pull request, and
-then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed
-head. The command reads status only and changes nothing. Every
-rule below belongs to that one condition, so the prompt nests them under it:
-
-- When the task names a pull request, read the required checks for the reviewed
-  head with `gh pr checks <pr> --required`. The command reads status only. It
-  changes nothing. The rules below it apply only then.
-  - A failing required check is a blocker.
-  - Exit code 8 means a check is pending. The pending check goes in `Checks`, not
-    into the blockers.
-  - Exit code 1 covers a failing check, a repository with no required check, and
-    a read error. A blocker is reported only when the output lists a failing
-    required check. Any other exit 1 is unresolved and goes in `Checks`.
-  - The command omits a check that has not started, so a read pass covers only
-    the listed checks.
-  - The read reflects the PR head on GitHub. When that head differs from the
-    local reviewed head, the mismatch goes in `Checks`.
-  - When `gh` cannot read the checks, for example the shell has no `gh` or no network, the
-    status is unresolved and goes in `Checks`. A pass is reported only when the
-    read shows one.
-
-The `--require-ci` finish gate stays the enforcement point. The rule only lets
-the reviewer see a failure before the gate refuses, so the run needs no extra
-worker turn and no extra reviewer turn for that failure.
-
-## The runtime supplies the required-check status
-
-A reviewer turn whose shell commands cannot reach the network, for example a
-Codex reviewer in a sandboxed mode, only reported the status as unresolved before. The user-rule exception of ADR 0019 applies to such a turn. A Codex reviewer with no sandbox (the default, ADR 0038) keeps shell network, so its own read can succeed, and it is the fallback of the second line below. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
-knows the pull request before the first turn. So the
-runtime reads the required-check status for that PR head and supplies it to every
-reviewer prompt. The prompt adds two lines inside the required-check group, so
-they apply only under the pull request condition:
-
-- This run read the required checks for PR <pr> before this turn: <summary>. That
-  status is advisory evidence for this turn, in place of the read above: report
-  it, and treat it as a report rather than a verdict. The `--require-ci` finish
-  gate re-reads GitHub and enforces the condition.
-- Your own read is the fallback. Read the required checks yourself when the
-  supplied status is unresolved, or when the reviewed head is not the head the
-  supplied status names. Report any difference between your read and the supplied
-  status in `Checks`.
-
-The runtime reads the status for that PR head and supplies it to every reviewer
-prompt. That status is advisory evidence, in place of the reviewer reading the
-checks: the reviewer reports it, keeps its own read as the fallback, and reads
-the checks itself when the supplied status is unresolved. The `--require-ci`
-finish gate re-reads GitHub and enforces the condition. The runtime reports the
-status it read beside the reviewer result, so compare it with the reviewer Checks
-line.
-
-The reviewer's own read is never removed, and the head matters. A supplied status
-is evidence for that turn, not a gate: it is a snapshot taken before the turn, so
-a check that starts or finishes later is not in it, and a failed read is an
-unresolved status rather than a turn failure. The runtime reports the
-status it read beside the reviewer result, in the dispatch envelope and in the
-state file, so compare it with the reviewer Checks line and act on a
-disagreement. A headless run renders the same status in the result prompt the
-orchestrator receives after a reviewer turn, as `prChecks` beside the response and
-the reviewed state, so the orchestrator holds the status and the reviewer Checks
-line in one prompt. A turn that made no read carries no `prChecks` field.
-
-A worker or reviewer turn on a CLI that refuses a tool call (Copilot, under
-`--no-ask-user`) can carry `"shellDenied": true`, in the dispatch envelope and in
-the headless result prompt. It means the turn text reports a refused command, so
-a check that the turn claims may not have run. Run the validation yourself, or
-choose another worker CLI, before you rely on it. A turn with no denial carries
-no field, and an orchestrator turn never carries it.
-
-The runtime reads the PR head and compares it with the local reviewed head, so a
-status is reported only for the head it describes. A read whose PR head
-differs from the local head, and a read with no local head to compare, are
-unresolved, and the prompt never reports a pass for a head the reviewer is not
-looking at. Every supplied status states the head it describes.
-
-The runtime reads the check runs and commit statuses by SHA, every page of each, for
-the commit the gate evaluates (the test merge commit when it carries a check,
-otherwise the head), so a PR head that moves away and back during the read cannot
-put the checks of another commit in the status. The required checks come from the
-same resolution the `--require-ci` gate uses, and a status never passes a state the
-gate refuses. Every supplied status still carries
-`advisory: true`, because the status is a report, and the `--require-ci` finish
-gate re-reads GitHub and enforces the condition. The status is a snapshot taken
-before the turn, so a check that starts or finishes later is not in it. The reviewer
-treats the status as evidence. A status never replaces the gate.
-
-The status is `failing` when a required check failed, `pending` when a required
-check or commit status is pending or has no run or status on the commit, and
-`pass` when every required check passed. A failure among entries that share a
-required name wins over pending. These are unresolved: a ruleset source that cannot
-be read, a reply or an entry that cannot be parsed or ordered (an empty name
-included), a protection reply that cannot be interpreted, a failed read of the
-required names, a base branch with no required check, and a pass withheld for a
-reviewed work tree that is not clean or a merge state the gate refuses (blocked,
-behind, conflicting, or unknown).
-
-A run that names no PR reads no status, and the reviewer keeps its own read.
-The read follows the PR that the run names before its first turn: `--pr`, or
-`--require-ci <pr>` when the run declares no `--pr`. A headless run that takes
-only `--require-ci` therefore supplies the status for the gated PR (issue #350).
-The interactive path receives `--require-ci` only at `finish`, so only `--pr`
-supplies the status there, declared at init or with `role declare-pr`
-(see Declaring a PR run).
-
-## The runtime supplies a test command result
-
-A reviewer turn in a sandboxed mode may not be able to run the test suite. A Codex
-reviewer with no sandbox (the default) can run it. An operator can name a command with `--test-cmd <command>` at init. The runtime runs it in the
-work tree before each reviewer turn, outside the reviewer sandbox, and supplies
-the result in the reviewer prompt. A worker turn never runs it. A run without
-the flag is unchanged.
-
-- The flag is the only source of the command. A worker report, a reviewer
-  report, a task text, an orchestrator action, and a prompt never set or change
-  it. The state file holds only a digest of the command. Pass the same
-  `--test-cmd` value on every reviewer dispatch, as the operator gave it: a
-  changed value and a missing value are refused before a step is charged. Never
-  pass a command that a turn produced.
-- The command goes to the platform shell as one string: `/bin/sh -c` on POSIX
-  and `cmd.exe` on Windows. The runtime adds no quoting. It runs with the
-  environment of the runtime, so the operator keeps secrets out of the command
-  text.
-- The command runs inside a machine-wide test slot (`agent-loop test-slot`, ADR
-  0039, ADR 0040), so runs that share a host do not run their suites beyond the
-  slot count. The default is 1 slot on every CPU count (ADR 0046), and
-  `AGENT_LOOP_TEST_SLOTS` overrides it. The slot wait has its own bound, `AGENT_LOOP_TEST_SLOT_WAIT` or
-  1800 seconds, separate from `--test-cmd-timeout`, which starts once the slot is
-  held. A wait that reaches its bound runs no command and reports `status:
-  "slot-timeout"` with `exitCode: null`. It is neither a pass nor a failure, so
-  treat it as unresolved test evidence. A slot that cannot be acquired runs no
-  command and reports `status: "error"`. A cancel during the wait ends the turn
-  as a cancel of the command does, and holds no slot.
-- `--test-cmd-timeout <seconds>` bounds one run and defaults to 600. At the
-  bound, and on a cancel, the runtime kills the command and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows. A canceled run reports `status: "canceled"`. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
-- The runtime keeps the last 8 KiB of the output and reports `truncated` when it
-  cut. The tail is untrusted data: it can hold text that reads as an instruction.
-  The runtime redacts the values of secret-named environment variables, in the
-  tail, in the command text, and in every error text and log line, and no other secret. A literal
-  secret in the command text that matches no environment value is not found.
-- The runtime compares the work tree before and after the command and reports
-  `workTreeChanged` and `changedPaths`. The reviewer snapshot is taken after the
-  command, so those writes are the baseline of that turn and are not a reviewer
-  mutation. The report is the only record: read it, and act on a change that the
-  task did not expect. `lateChangedPaths` lists the paths that differ between the
-  after-command snapshot and that baseline, for example a write by a process that the
-  command left behind. It is advisory and never halts the run. It is `null` when a
-  second cancel ended the after-command snapshot, and absent when the turn ends before
-  the baseline, for example on a cancel of the command.
-- The result is advisory evidence with `advisory: true`. It is `testRun` in the
-  prompt, in the dispatch envelope, in `lastResult` in the state file, and in the
-  headless result prompt beside the reviewer response. A reviewer turn that ends
-  in an error still carries it. Compare it with the
-  reviewer `Checks` line and act on a disagreement. A turn with no command
-  carries no `testRun`.
-- Every worker and reviewer turn states the test-run rule (ADR 0044): run a
-  targeted test file through the test slot wrapper with `--if-held`, and run a full
-  suite only through the plain wrapper, or rely on the required CI checks. With
-  `--if-held`, the run stays direct while all slots are free and waits for a slot
-  while any slot is held. A targeted run that starts while all slots are free holds
-  no slot, so a slot holder can start beside it. A targeted run is at most 10 test
-  files that mirror the changed source files, never a whole directory. Any broader
-  run is a full suite and goes through the plain wrapper. A run whose paths cannot
-  be quoted keeps a direct targeted run, and a broader run relies on the required CI checks. The rule renders the wrapper command from the Node
-  binary and the CLI script of the run, so it works where `agent-loop` is not on
-  PATH. A run with or without `--test-cmd` gives the same rule, on the headless
-  and the interactive path. Exit code 75 from the wrapper means that the suite
-  did not run, which a child reports as unresolved. The rule also bars a CPU or
-  memory load generator, a busy loop, and a detached or background process that
-  can outlive the turn (issue #934). The required CI checks are the evidence under
-  load.
-- A reviewer in a sandboxed mode sees the result of the whole command only. It
-  cannot run a targeted test, unless the run set `--reviewer-sandbox
-  workspace-write` or runs with no sandbox (next section).
-
-## The Codex reviewer sandbox mode
-
-A Codex reviewer turn runs with no sandbox by default, with
-`sandbox_mode="danger-full-access"` (ADR 0038). It can run the test suite and
-`gh pr checks`. An operator can choose a sandbox at init with
-`--reviewer-sandbox read-only` or `--reviewer-sandbox workspace-write`. The
-older `--reviewer-workspace-write` stays as an alias of `--reviewer-sandbox
-workspace-write`. The flag needs `--reviewer codex`, and any other reviewer is
-refused at init.
-
-The mode table is in
-[Codex reviewer sandbox mode](reference/reviewer-safety.md#codex-reviewer-sandbox-mode).
-
-- Only reviewer turns change. Every orchestrator turn keeps `read-only`, every
-  worker turn gets no reviewer input, and the other four adapters keep their
-  invocations. The runtime mutation check still wraps every reviewer turn in
-  every mode.
-- In the two sandboxed modes, network access stays off for the shell commands that
-  the sandbox runs. The runtime sets it explicitly for `workspace-write`, because
-  the mode takes network from the user Codex config otherwise. A user Codex
-  execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception, as
-  ADR 0019 states. The limit covers shell commands only. It does not block
-  model-side tools such as Codex `web_search`, or any other channel outside the
-  sandbox. With no sandbox, no such rule applies, because no sandbox exists to skip.
-- The reviewer prompt gains one note that states the actual mode. The reviewer
-  still must not change a tracked file or an untracked file that Git does not
-  ignore, including a cache file, must not change Git state, and must not write to
-  a remote. The file-change rule has the same scope in every mode: a test, build,
-  or probe is allowed when every write goes to an ignored path or to a temporary
-  file outside the repository, so the reviewer runs the test suite instead of
-  waiting for permission (issue #837). The reviewer puts probe and test output
-  under an ignored path inside the repository first, such as an ignored cache
-  directory. It uses a temporary path outside the repository only when no
-  ignored path fits (issue #885). The reviewer keeps that output path short and
-  does not set `TMP`, `TEMP`, or `TMPDIR` to a deep path for a test runner,
-  because a long temporary path can fail a Windows test runtime with an internal
-  error (issue #903). The worker prompt has no scratch-redirect rule, so it needs
-  no such guidance. The prompt names no repository path, because the
-  `workspace-write` prompt must stay free of a repository-specific path. The reviewer removes each temporary
-  file or directory that it created outside the repository before the closing
-  block, and names any that it could not remove in `Notes` (issue #865). It also removes each file or directory that it created under an ignored path inside the repository, and names any that it could not remove in `Notes`. When the turn has a runtime scratch folder, the reviewer leaves that folder out of this removal, because the runtime removes it (issue #997). It keeps output that a later step needs, such as a coverage report that the task asks for, and names it in `Notes` (issue #906). A change to a cache file that Git does not
-  ignore is a reviewer mutation. The mutation check is unchanged. The headless initial
-  prompt tells the orchestrator the mode, and says that its own turns stay
-  read-only. A reviewer that is not Codex has no mode, and its prompts name none.
-- The runtime creates one scratch folder for each reviewer turn at `.agent-loop/rev/<id>` under the work tree root. The prompt names that folder as the first place for probe and test output. The folder holds its own `.gitignore` with `*`, so it needs no rule in the target repository, also in a linked work tree. The runtime removes the folder after the post-turn snapshot, on every turn outcome, and never follows a link or a junction inside it. It refuses and logs a warning when `.agent-loop` or `.agent-loop/rev` is a link. A failed removal logs a warning and never fails the run (issue #920, ADR 0042).
-- A reviewer turn runs no dependency install, repair, or update, and starts no command that installs, such as a test runner that installs when it finds no usable `node_modules` (`vp` does). An install writes to the shared package store outside the repository and reaches every work tree that links it, and the mutation check does not see that write (issue #1026). A probe of old source avoids the install: the reviewer copies the repository, links the dependency directory of the work tree (`node_modules` in a Node project) into the copy (a junction on Windows, a symlink elsewhere), and runs the tool there. When the copy cannot link `node_modules`, the reviewer reports the probe as unresolved in `Checks`. The reviewer prompt names no tool or directory, because it fits any repository. The worker preamble states the same rule for a worker probe that copies the repository. The rule is advisory, and the runtime does not detect a breach.
-- The runtime pins `AGENT_LOOP_RUNS_ROOT`, `AGENT_LOOP_TEST_SLOTS_ROOT`, and `AGENT_LOOP_SESSION_RECORDS_ROOT` to the paths that it resolves for every worker and reviewer turn, on every adapter, unless the user set them (issue #970, ADR 0049). A `TMP`, `TEMP`, or `TMPDIR` override inside the turn cannot move the test-slot directory, so the machine-wide slot limit holds. The runtime also sets `npm_config_logs_max=0` for those turns, so npm writes no debug log to its cache, unless the user set `npm_config_logs_dir` or `npm_config_logs_max` (issue #995, ADR 0049).
-- Each Codex turn runs with a private temporary directory under the inherited one, set through `TMPDIR`, `TEMP`, and `TMP`. The Codex CLI leaves two empty `.tmp*` directories there on every turn (issue #955, ADR 0047). The runtime removes them with the directory after the turn. The reviewer prompt tells the reviewer to build a temporary path from the directory that those variables name when one is set, and never to write a literal path to the system temporary directory, because the removal covers only the private directory. The runtime lists an entry that appears directly in the inherited directory during a reviewer turn as `inheritedTmpdirEntries`, and deletes none (issue #1024). `AGENT_LOOP_SESSION_RECORDS_ROOT` overrides the default `<os tmpdir>/agent-loops/session-records`.
-- The runtime lists the inherited temporary directories in `AGENT_LOOP_INHERITED_TMPDIR`, as a JSON array of absolute paths, for the installer check of a package-runner root. The parent resolves every entry before it forwards the list, and forwards `unusable` for a value that it cannot resolve. A value that is present but is not a valid list makes the installer refuse every root. A helper process removes the turn directory only when its device and inode match the recorded ones, and ends at a 30-second bound. A replacement between the final check and `rmdir` loses at most an empty directory, because Node has no directory-handle delete.
-- Choose the mode at init, and never change it later. A later call may repeat the
-  flag or omit it. Any other value is refused, in either direction. A headless
-  `--continue-from` run keeps the mode of the earlier run, and a flag that names
-  another mode is refused. No turn sets it.
-- A state file or a transcript from before ADR 0038 has no recorded mode. It gets
-  `workspace-write` when it held `--reviewer-workspace-write`, and `read-only`
-  otherwise. It never gets the no-sandbox mode.
-- Required-check reads with no sandbox: the runtime still supplies the status
-  first. When the orchestrator is `codex`, `copilot`, or unnamed, a headless run
-  with `--require-ci` now tells the orchestrator that the reviewer turns do the
-  wait, because a no-sandbox Codex reviewer keeps shell network. A waiting
-  orchestrator (`claude`, `agy`, `opencode`) still runs `agent-loop role
-  wait-checks`, whatever the reviewer mode. A sandboxed Codex reviewer with a
-  non-waiting orchestrator stays on the gate rule. The `--require-ci` finish gate
-  is the only read that enforces.
-- The mutation check is detection only. With no sandbox, or in `workspace-write`,
-  a reviewer edit succeeds, the run halts with a `MutationError`, exit 1, and the
-  runtime does not revert it. The snapshot does not see a write to an ignored
-  file, a write outside the repository, or a remote write. The rule against
-  remote writes (issue #422) is advisory. An operator who needs containment
-  chooses a sandboxed mode, or runs the reviewer in an external sandbox with no
-  credential for the remote. Read the accepted gaps in
-  [Codex reviewer sandbox mode](reference/reviewer-safety.md#codex-reviewer-sandbox-mode)
-  and
-  [Safety trade-off of the no-sandbox mode](reference/reviewer-safety.md#safety-trade-off-of-the-no-sandbox-mode)
-  before you rely on a mode.
-- A reviewer `Checks` line that shows a local test run is the reviewer's own
-  report. Compare it with `testRun` and with the required CI checks.
-
-## Test evidence when the reviewer cannot run tests
-
-A Codex reviewer in the `read-only` mode cannot run the test suite on Windows or on
-macOS. A child spawn fails, or `vp` cannot write its temporary directory. A
-reviewer with no sandbox is not limited this way, and the `workspace-write` mode
-probably is on the unelevated Windows sandbox. The reference section
-[Codex read-only child-spawn limit](reference/reviewer-safety.md#codex-read-only-child-spawn-limit)
-holds the probes. Linux and the elevated Windows sandbox are not verified.
-
-When a reviewer `Checks` line shows that tests did not run, for any reason, the
-reviewer accept is not test evidence. Use the required CI checks for test
-evidence instead. The `--require-ci` finish gate and the status rules above
-already govern how a run reads them. A run with `--test-cmd` also has the result
-of the section above.
-A worker `Checks` line that shows a passing local test run is reported evidence,
-not a gate input.
-
-## Waiting for required checks
-
-When a run will end with `--require-ci`, wait for the required checks on the new
-PR head to complete before you dispatch the reviewer. When a reviewer turn
-reports a pending required check in `Checks`, wait for those checks to complete
-before you call `finish`.
-
-The wait is the status read the role rule excepts, and it changes nothing. The
-runtime owns the bound, because `gh pr checks --watch` takes no timeout and a
-shell `timeout` exists on neither Windows nor macOS by default:
-
-```bash
-agent-loop role wait-checks --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
-```
-
-The command returns inside its own bound, before the command timeout your harness
-applies to a shell command, and prints one JSON envelope on stdout. `--cwd` must
-be inside a Git work tree, as it is for `dispatch`, because the read runs there:
-
-```json
-{
-  "status": "ok",
-  "pr": 42,
-  "timedOut": false,
-  "head": "0123456789abcdef0123456789abcdef01234567",
-  "checks": [{ "name": "ci", "state": "SUCCESS", "bucket": "pass" }]
-}
-```
-
-`head` names the commit that `checks` describe. `gh pr checks` queries by PR identity
-and names no commit, so a wait that starts before GitHub moves the PR head to a new
-commit, as right after a worker push or `gh pr update-branch`, or that sees the head
-move away and back, can read the passing checks of another commit from it. The wait
-therefore never takes a check state from `gh pr checks`. Each poll reads the PR head
-`<sha>`, runs `gh pr checks` for its exit-code outcome, and then reads every state
-from the check runs and commit statuses of `<sha>` itself, every page, by SHA. The
-required wait judges each required context as the `--require-ci` gate does: the
-contexts come from the repository rulesets (`integration_id`), classic branch
-protection (`app_id`), and the names that `gh pr checks --required` lists, an
-app-qualified context is satisfied only by a check run of that app, and the latest
-matching entry decides. A context with no entry on `<sha>` is pending. The `--all`
-wait judges the latest check run of each name and app, and the latest commit status
-of each context of `<sha>`. So `checks` always describe `head` and no other commit,
-even when the PR head moves during the wait.
-
-The states of `<sha>` only make the outcome stricter. A failing state of `<sha>`
-settles the wait. A pass needs both: the `gh pr checks` outcome must be a pass, and so
-must every state of `<sha>`. A `gh pr checks` outcome that is pending (exit 8) or that
-reports no check yet keeps the wait running while `<sha>` shows a pass, and it ends at
-the bound with `timedOut: true`, never a pass.
-
-A failure that `gh pr checks` lists settles the wait whatever `<sha>` shows. That
-evidence is PR-level and is not pinned to `<sha>`, so it never goes into `checks`. It
-is reported in `prFailures`, a field that appears only when `gh pr checks` listed a
-failure in the poll that ended the wait. `checks` holds only states read for `head`.
-Never record a pass from an envelope that carries `prFailures`: the failure may belong
-to a commit other than `head`, and the parent decides what it means.
-
-```json
-{
-  "status": "ok",
-  "pr": 42,
-  "timedOut": false,
-  "head": "0123456789abcdef0123456789abcdef01234567",
-  "checks": [{ "name": "ci", "state": "SUCCESS", "bucket": "pass" }],
-  "prFailures": [{ "name": "ci", "state": "FAILURE", "bucket": "fail" }]
-}
-```
-
-`prFailures` survives a bound that a later read reaches (`timedOut: true`) and a commit
-or source read that fails. In the second case `head` is `null` and `checks` is empty,
-because no state was read for a commit.
-
-The required wait refuses a required context it cannot resolve. A ruleset or protection
-source with no usable reply (a 403 or 404 for a caller without admin rights, for example), a
-source reply that is not valid JSON, and a failed read of the required names each exit 1
-with `status: "error"` before any state is judged, including when `gh pr checks --required`
-answers that the branch has no required check, because such a
-source can hold a required check or an app qualifier that the wait never saw. A listed
-failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
-source. A commit read that fails, or that returns a reply the wait fails to parse or order,
-is an error too, with one exception. The commit reads are the gate's own reads, and no read of the wait or the gate uses `gh --paginate`: each sends one `gh api --include` request per page, for the documented page number (`?per_page=100&page=N`), and never follows the `Link` header. The read does look at the `Link` header of every reply, a retryable 5xx included and before its status is judged, only to reject it: a target on a host other than the request host (`GH_HOST`, else the default host of `gh`, and its API host) or a target that is not a URL ends the read with an error, never a pass, and is never requested. Such a reply is terminal even when its status is 500, 502, 503, or 504: it is never retried. Each `gh` output then holds exactly one exchange, and `gh` writes the status line of that request first, followed by the headers, a blank line, and the body, so body bytes can only follow the status line and never form a status block of their own. The default host of `gh` is the one host of its configuration, or github.com for none or several. The read takes it from `gh auth status --json hosts`, run once per read for a reply that carries a `Link` target, with `GH_TOKEN` and `GITHUB_TOKEN` removed from that one call, because either variable adds github.com to the listing. A failed call and a reply of another shape name no host, so every target is then refused. Observed with `gh` 2.103.1 against a local server: a 403, a 502 with an empty, JSON, or HTML body, and a 403 whose body held a forged status block each wrote their own status line first, a redirect showed only the status line of its final reply, and `gh` itself rejected a 403 body that held extra bytes after one JSON value. The wait takes the status only from that first line and never reads the error text, which carries server-supplied text. A failed read is retried on the next poll, inside the bound, only when the first-line status is exactly 500, 502, 503, or 504 and the rest of stdout after the headers is empty or exactly one JSON value, and a pass on a later poll settles the wait. A successful page needs a 2xx first line and a remainder that is exactly one JSON value, checked on the whole remainder, so trailing bytes make the read an error. For an endpoint that reports `total_count`, such as the check runs, the read ends only when the collected count equals it: an empty or short page while the count is unmet, a `total_count` that changes or disappears between pages, and a collected count above it are each an error, never a pass, so a failure on a later page is never skipped. For an endpoint with no `total_count`, the first page of fewer than 100 items ends the read. The read stops with an error after 100 pages. Each page read stays inside the wait bound. Trade-off: a real 5xx whose body is HTML or plain text, as a proxy sends, stays terminal, because its body cannot be told apart from forged text. Relation to issue #1033: the `--require-ci` gate reads and the ruleset read page the same way, so no read follows a reply-supplied `Link` URL, and no request goes to a target that a reply named. A `Link` target on another host is an error for the gate reads, the ruleset read, and the wait alike, because they share one pager. Observed against github.com with `gh` 2.103.1 on Windows 11 (2026-10-24, #710): the gate reads of PR #1040 sent one `?per_page=100&page=1` request with `--include` for each of the ruleset, commit status, and check-run reads, with no `--paginate`, and a three-page read of `repos/cli/cli/releases` through the same pager accepted the `api.github.com` `Link` header of each reply and requested only `page=1` to `page=3`. A GitHub Enterprise host was not tested. A gate read that cannot be accounted for page by page is an error, and a ruleset read that cannot is an unknown source, never a pass. The pager hands the ruleset classifier every page it received, empty pages included, so ADR 0012 classes are unchanged: a full page of 100 rules followed by an empty page is unknown and refuses. Any other failure also ends the wait at once: another first-line status, such as 501 or a 4xx, whatever its body says, a failure with no status line, and a body that fails to parse. A later poll that completes replaces the error of an earlier one, whether it settles, skips its reads because the PR head is another commit than `--head`, or reads the commit. A wait that reaches the bound while the latest completed poll failed with a retryable status exits 1 with `status: "error"` and that error, with no `timedOut: true` and no pass, unless `gh pr checks` listed a failure in that poll, which `prFailures` reports with the bound as before. The retry covers `wait-checks` only: the `--require-ci` finish gate keeps failing closed on every read failure (issue #1025). `childExitUnconfirmed: true` covers every `gh` child of the poll, including a source
-read that the first failure of the poll left running to the ceiling, and it rides on every
-envelope, settled, timed out, or error. A required check that no
-read of the PR lists yet is absent, as before.
-
-The PR head is the one read at the start of the poll, so the PR can have moved on by
-the time the wait returns. Compare `head` with the commit you expect before you record the
-checks as passed.
-
-Pass `--head <sha>` with the commit you expect, for example `workTree.head` of
-the worker envelope. It takes a full lowercase commit SHA, 40 or 64 hex digits,
-and refuses an abbreviation. While the PR head is another commit, the wait reads
-no checks and continues. A wait that reaches the bound before the PR head reaches
-`--head` returns `timedOut: true`, `head: null`, and an empty `checks`, which is
-never a pass. Without `--head`, the wait settles on whatever the PR head is when a
-poll starts. `head` is `null` only when no read completed.
-
-`--timeout` is in seconds and defaults to 300. Set it below the command timeout
-your harness applies when that timeout is smaller. `--timeout 0` is refused.
-
-The bound starts at command entry, so no step of the command adds time to it.
-Work-tree validation runs inside the bound, so a slow or hung `git` cannot push
-the command past it; a validation that reaches the bound refuses, because a work
-tree the probe never confirmed is not one this command may read. Every read is
-limited to the time the command has left, and a read that reaches the limit is
-stopped and then given five seconds to exit. The total bound of the command is
-`--timeout` plus those five seconds, so set `--timeout` at least five seconds
-below your harness command timeout. A wait that ends on the bound reports
-`timedOut: true` with the last check states it read. It is a completed read, not
-a read failure. An empty `checks` with `timedOut: true` means no check state was
-ever read, so it never reads as a pass.
-
-`childExitUnconfirmed: true` appears only when those five seconds expired with the
-`gh` child still unaccounted for. The command does not claim an exit it did not
-observe, so a `gh` process from an earlier wait may still be running; a parent
-that sees it should settle the outstanding `gh` process before starting another
-wait.
-
-The `gh pr checks` exit codes decide the outcome, as the reviewer read states:
-exit 0 with no pending check listed is settled, exit 8 is pending, and exit 1 is
-settled only when the output lists a failing required check, or when `gh` prints
-exactly `no required checks reported on the '<branch>' branch` and no output.
-That one answer is its own outcome, below. Exit 1 with no output and exactly
-`no checks reported on the '<branch>' branch` is an empty list: no check has
-reported on the PR head yet, as right after a push. The wait continues. If the
-bound arrives with only that reply, the wait returns `timedOut: true` and an
-empty `checks`, which is never a pass. Any other exit 1, and any output that
-is not a check list, is unresolved: the command exits 1 with
-`status: "error"` and records no check state for that wait, so an unresolved
-read never reads as a pass. Every check item is read as a name plus a `state` or
-a `bucket` the CLI knows; an item that carries no readable state is unresolved
-too, so one item the CLI cannot read cannot settle the wait as a pass. Never
-record a check you could not read as passed.
-
-A branch with no required check ends the wait at once with exit 0 and
-`"noRequiredChecks": true`, an empty `checks`, and `"timedOut": false`. The wait
-reports it only when every required-check source states the absence, as the
-`--require-ci` gate decides it: `gh` answers that the branch has no required check,
-the rulesets read has a rule but no required-status-check rule, and the classic
-protection read states the branch is not protected. A source that settles nothing, as
-the 403 of a private repository on the GitHub Free plan does, and a ruleset read that
-found no rule with no source naming a check, exit 1 with `status: "error"`, because
-the gate refuses the same states. A failed read of the required names exits 1 with
-`status: "error"` too. The wait is stricter than the gate there: the gate ignores a
-failed names read and accepts an established absence. A source that names a required
-check is no absence, even beside a ruleset read that found no rule, and the wait
-continues to judge that check:
-
-```json
-{
-  "status": "ok",
-  "pr": 213,
-  "timedOut": false,
-  "noRequiredChecks": true,
-  "head": "0123456789abcdef0123456789abcdef01234567",
-  "checks": []
-}
-```
-
-It is not a read error and not a pass, because no check was read. There is
-nothing required to wait for, so do not run the required wait again. On
-`noRequiredChecks`, run `agent-loop role wait-checks --all` once, then dispatch the
-reviewer, which reads the CI status of the PR head itself, and never record the CI
-status as passed from the `noRequiredChecks` envelope. A reviewer that starts
-before CI completes can report the CI status as unresolved, which the `--all`
-wait avoids. The `--require-ci` gate still decides the finish; it reads the same
-sources, so it does not refuse a `noRequiredChecks` branch for an unreadable source.
-
-When no source can state the required checks, the required wait cannot say whether the
-PR holds a required check, so it refuses with exit 1 and `status: "error"`. The error
-says that a source `settled nothing`, that a source `could not be read`, or that a source
-`did not state that it holds no required check`, and that the required checks of the PR
-are unresolved. The 403 of a private repository on the GitHub Free plan (#301) is that
-case. It is no required-check read, so do not run the required wait again. Run the
-`--all` wait below once, as after `noRequiredChecks`, then dispatch the reviewer, which
-reads the CI status of the PR head itself. An `--all` pass is never a required-check
-pass: never record the CI status as passed from it, from this refusal, or from a
-`noRequiredChecks` envelope. The `--require-ci` gate still decides the finish, and it
-refuses a declared run there. Any other `status: "error"` stays an unresolved read,
-including a reply that could not be parsed and a failed read of the required check names:
-do not run `--all` for it.
-
-```bash
-agent-loop role wait-checks --all --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
-```
-
-`--all` waits on every check of the commit `head` names, not only the required
-ones. A check that a third-party app registers late is absent until it starts, so
-an `--all` pass can come before it. For a late check that you know by name, such as
-a deployment check, add `--expect "<check name>"` to `--all` once per name:
-
-```bash
-agent-loop role wait-checks --all --expect "<check name>" --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
-```
-
-The wait does not pass until each named check has a check run on `head`. A name
-matches the name of a check run exactly: it is trimmed, case-sensitive, and any
-app qualifies. A commit status of that name never matches, though commit statuses
-still count in the overall pass evaluation. An empty name is refused, and a
-repeated name is accepted. A name that
-never registers ends the wait at the bound with `timedOut: true` and the name in
-`awaiting`, which is never a pass. A failing check still settles the wait at
-once. `--expect` needs `--all` and is refused on every other operation.
-It runs `gh pr checks <pr>` without `--required`, so it keeps the bound and
-the exit-code rules above, and the states of the commit only make them stricter: exit 0 with no pending check listed is settled, exit 8 is pending, a
-listed failing check is settled, and every other exit 1 is unresolved with
-`status: "error"`. Exit 1 with no output and exactly `no checks reported on the
-'<branch>' branch` is the exception, as in the required wait: no check has
-reported yet, so the wait continues. At the bound with only that reply, `--all`
-returns `timedOut: true` and an empty `checks`, which is never a pass. A
-repository with no CI workflow therefore waits the full `--timeout` before it
-returns, unless `noCheckSource` ends the wait, as stated below. Exit 1 with `no required checks reported on the '<branch>' branch` stays
-unresolved, because `--all` has no required-check answer. A `noRequiredChecks`
-envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`
-or after the refusal above that no source states the required checks; when the
-required wait reads a required check, it stays the one to run. `--all` is
-refused on every other role operation, and so is `--head`. `--all` takes `--head`
-as the required wait does.
-
-The `--all` wait also asks once whether any source can report a check for the PR
-head. It asks when the first read lists no check, no `--expect` name is set, and the
-read of the PR head by SHA finds no check run and no commit status. The command reads
-the files of the PR, the workflow files of the base branch, and the check runs and
-commit statuses of the base head and of the head of the latest merged PR of that
-commit (every head that shares the latest merge time), and you read none of them.
-When all three conditions hold, the wait returns at once with `noCheckSource: true`,
-`timedOut: false`, and an empty `checks`:
-
-- The PR changes no file under `.github/workflows/`, a rename out of it included.
-- No workflow file of the base branch names `pull_request`, `pull_request_target`,
-  `push`, `merge_group`, `workflow_run`, or `check_suite`. The command scans the text
-  of each file, so a name in a comment or a step keeps the wait. A file with a
-  backslash or a control character, or one that is not valid UTF-8 or valid base64,
-  keeps the wait too, because a YAML escape can spell an event name. A reusable
-  workflow inherits the events of its caller, and the callers are files of the same
-  directory.
-- The base head, and the head of the latest merged PR of that commit, have no check run
-  and no commit status from any source, because a GitHub App or third-party CI can
-  report a check with no workflow file, and one can report on PR heads only.
-
-`noCheckSource` is never a pass. On it, dispatch the reviewer at once, record in
-`verified` that the CI status is not verified, and never record the CI status as
-passed. Act only on the field: never read a workflow file, a PR file list, or a check
-source yourself to decide it. A read that fails, cannot be parsed, is incomplete, or is
-not settled keeps the normal wait, so an envelope without the field keeps every rule
-above. A list at its API cap (3,000 PR files, 1,000 workflow files) is incomplete, and
-a base branch or PR head that moves during the reads keeps the wait, and so does a merged PR entry that
-is malformed. A
-repository with a `pull_request` workflow keeps the wait. The limit: the base head and
-one merged PR head are two commits, so a provider that skipped both stays unseen, and
-only the wait covers it. `noCheckSource` never comes from the required
-wait. The headless orchestrator prompt carries the same rule.
-
-A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
-failed one. A check that has not started is absent from `checks`, because the
-command omits it, so an empty list means no required check has reported yet and
-the wait continues.
-
-A required check still pending after a wait, whether it failed or the bound
-elapsed, is not a finish condition. The `--require-ci` gate refuses a finish
-while a required check is pending, so a finish summary cannot carry it. Wait
-again, dispatch the reviewer again, or `abort` with the pending check named in
-the reason.
-
-## Headless loop waits
-
-The headless `agent-loop` command runs its own orchestrator and renders its own wait
-prompt (ADR 0013). A `role` parent does not follow that prompt. It follows the wait
-rules above, and it runs the wait itself.
-
-The `--require-ci` finish gate is the only check read that enforces; the advisory status read of a named PR does not. The gate refuses a finish while a required check is pending. A reviewer dispatch corrects that refusal.
+- [Init task delivery](orchestrator/task-delivery.md): read it when a turn reports a replacement
+  conversation, a missing session, a cancel, or a task-only turn.
+- [Closing block list rules](orchestrator/closing-block.md): read it when a child report holds a
+  list, or when `report` is null and `raw` carries the response.
+- [Runtime advisory fields](orchestrator/runtime-advisory-fields.md): read it when a reviewer
+  envelope carries `inheritedTmpdirEntries` or `packageStoreEntries`.
+- [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md): read it before you
+  write a reviewer prompt, when a reviewer envelope carries `prChecks` or `testRun`, when the
+  run sets `--test-cmd`, and when the reviewer could not run tests. Read it after any worker or
+  reviewer envelope that carries `shellDenied`, before the next dispatch.
+- [Codex reviewer sandbox mode](orchestrator/reviewer-sandbox.md): read it when the run uses a
+  Codex reviewer, sets `--reviewer-sandbox`, or halts on a reviewer mutation.
+- [Waiting for required checks](orchestrator/waiting-for-checks.md): read it before a run that ends
+  with `--require-ci` dispatches its reviewer, when a reviewer reports a pending required check,
+  and when `wait-checks` returns an error, `noRequiredChecks`, or `noCheckSource`.
+- [Declaring the PR when a worker opens it](orchestrator/pr-declaration.md): read it when the PR
+  does not exist at init, or when a headless run declares its PR itself.
+- [Finish gates](orchestrator/finish-gates.md): read it when a `finish` is refused, and before you
+  end a run with `--require-accept` or `--require-ci`.
+- [Turn history and the step budget](orchestrator/run-history.md): read it when you rebuild a run
+  after compaction or restart, or when a stored `maxSteps` or sandbox mode is out of range.
 
 ## Several runs at once
 
@@ -1249,244 +625,11 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the
 gap for a run that states its PR (issue #302). A headless run that takes neither
-`--pr` nor `--require-ci` can also gain its PR from the runtime, as the next
-section states.
+`--pr` nor `--require-ci` can also gain its PR from the runtime, as
+[Declaring the PR when a worker opens it](orchestrator/pr-declaration.md) states.
 
-### A headless task whose worker opens the PR
-
-A headless run with neither `--pr` nor `--require-ci` has no PR input at start.
-After each worker turn that ends `ok`, the runtime looks for the PR that the
-worker opened. It declares that PR once, and the run then behaves as one that
-passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
-
-- The runtime reads Git and GitHub state only. It reads the checked-out branch
-  and the URL of the branch remote. It reads the work tree head that it read
-  after the turn. It reads `gh pr list --head <branch> --state open`. A worker report, a task text, and an orchestrator
-  action never choose or change the PR.
-- The runtime declares the PR only when one open PR comes from that branch. Its
-  base repository must be the repository of the branch remote. Its URL must end
-  in its number. Its head commit must equal the work tree head.
-- The work tree head must equal that head before and after the `gh` read. The
-  branch and the remote repository must be unchanged by the read. A change
-  leaves the run undeclared.
-- The branch remote is `branch.<branch>.remote`, or `origin` when none is set.
-  The PR URL gives the base repository, because `GH_REPO` can redirect `gh`.
-- These states leave the run undeclared: no match, several matches, a PR from a
-  fork, a PR for another base repository, and a detached head. A head that
-  differs from the turn head does the same. So does a branch or remote that
-  changes during the read. A failed `gh` read, an unparseable reply, and any
-  malformed entry also leave the run undeclared.
-- The runtime logs a warning for each of those states except no match. The next
-  worker turn tries again.
-- A declaration emits one `pr-declared` event with `pr` and `stepsUsed`. The
-  result prompt of that worker turn carries `declaredPr` and states the finish
-  rule. Every later reviewer prompt carries the required-check status for that PR.
-- The declaration is one way and happens once. A run with `--pr` or
-  `--require-ci` at start never resolves a PR. No later turn changes the PR.
-- The runtime applies the `--require-ci` gate to the PR that it declared, as if
-  the run had passed `--require-ci <pr>` (ADR 0045). A finish passes only after
-  a reviewer turn on the current state, with the PR head equal to the reviewed
-  commit, a clean reviewed tree, a merge state the gate accepts, and every
-  required check passed. A finish is refused while a required check fails or is
-  pending, and a refusal names the check. A finish with `unresolvedCompare` is
-  refused, because the gate resolves that compare. The missing-gate refusal and
-  the abort-only outcome apply only to `--pr` with no `--require-ci`.
-- `--continue-from` keeps a declared PR. The continued run restores it from the
-  `pr-declared` events of the earlier transcript. It emits a `pr-declared` event
-  with `restored: true` for every continuation of a declared run, whatever flags
-  it passes. A later continuation of that transcript keeps the PR.
-- The declared PR is an init field of the continued run. `--pr` or `--require-ci`
-  for another PR is refused before any turn. A flag for the same PR is accepted.
-- A continuation refuses `--mode review-only` for a declared PR. It also refuses
-  a malformed `pr-declared` record, such as a `pr` that is not a positive integer.
-- A continued run applies the same gate to the restored PR. A `--pr` for that PR
-  adds no refusal, because the PR was declared by the runtime.
-- To gate a PR that exists at start, pass `--require-ci <n>`. Or use
-  `agent-loop role` with `role declare-pr`, which takes the gate at `finish`.
-
-### A task whose worker opens the PR
-
-The PR does not exist at init when the task is "address issue N through a PR", and
-the parent cannot open it, because the role rules forbid a parent write to
-GitHub. Declare the PR after the worker opens it:
-
-1. Init the run with no `--pr`, and dispatch the worker.
-2. Read the PR number from the worker report.
-3. Run `agent-loop role declare-pr --cwd <dir> --parent-session <id> --pr <n>`.
-   The envelope is `{"status": "ok", "lifecycle": "active", "pr": <n>}`.
-4. From then on, the run is a declared run: every reviewer prompt carries the
-   required-check status, the Waiting for required checks rules apply, and
-   `finish` must end through `--require-ci <n>`.
-
-- The transition is one way, from no PR to a number. `declare-pr` refuses a run
-  that already has a PR, whether set at init or by an earlier `declare-pr`, and
-  refuses a terminal run. It works from `active`, `dispatched`, and
-  `interrupted`, and leaves the lifecycle as it is.
-- `declare-pr` refuses `review-only`, as init refuses `--pr` there.
-- `declare-pr` is a parent operation. A child role never runs it: the spawn-time
-  marker refuses it, as it refuses `extend`, `finish`, and `abort`. It requires
-  `--parent-session` with the stored id, and the id check has the limits that the
-  `extend` rules state.
-- The headless loop has no `declare-pr`, because the orchestrator is a child turn
-  and never chooses the PR. The runtime resolves it instead, as the next
-  section states.
-- Declare the PR before the first reviewer turn that follows the worker turn, so
-  that turn already carries the status. A reviewer turn that ran earlier read the
-  checks itself.
-- A repository whose rulesets the gate does not get (#301), for example a private
-  GitHub Free-plan organization repository, refuses every finish of a declared
-  run, so such a run can only end through `abort`. Do not declare the PR there. Finish with the `unresolvedCompare` marker
-  after you compare the PR head with `reviewed.head` yourself, and run
-  `wait-checks --all` once before each reviewer turn, because the required wait
-  refuses there. "Waiting for required checks" states that wait and the `noCheckSource`
-  envelope that ends it at once.
-
-A marked `role finish` still exits `0`, unlike the headless finish that exits
-`4` for the same marker. The exit code is not the outcome channel of this
-subcommand: `abort` exits `0` too, and the parent guard reads the state
-lifecycle, not the code. Read the marker in the envelope or the state file.
-
-Two opt-in gates apply to `work-first` and `review-first` only. In the headless
-loop, one refusal names every condition the finish breaks. The interactive `role
-finish` names every condition above the `--require-ci` gate, and a later `finish`
-can report a `--require-ci` condition that the first refusal did not name. The
-headless loop collects them in this order: the marker condition, then the `review-only` reviewer-turn condition, then
-`--require-accept`, then the declared-PR gate condition, then `--require-ci`. The
-`role finish` command checks the same conditions in the same order, except the
-`review-only` condition, which it cannot reach, because its init dispatch is
-itself a reviewer turn, and except `--require-ci`, which it checks only after
-every other condition passes. A refusal from `role finish` never lists a
-`--require-ci` condition beside another condition. The headless loop grants one corrective turn, so a refusal
-that named a single condition would spend it on the condition the next refusal
-names instead, so a headless parent learns every condition from one call. A headless run
-ends when two refusals land with no child turn between them. The marker is
-satisfied on a re-finish, with no child turn; the `review-only` condition and
-`--require-accept` take the same corrective turn, which costs a step, and the
-missing gate of a declared PR run is the one condition no child turn can supply.
-Two things decide whether a refused `finish` reads GitHub, and they are separate.
-The interactive `role finish` command throws as soon as any condition above the
-gate refused, so on that path a refused `finish` never reaches the gate and never
-reads GitHub. The headless loop evaluates every gate it owns,
-so the `--require-ci` gate runs whenever the run carries it and the declared-PR
-condition did not refuse, and a finish the marker, the `review-only` condition, or
-`--require-accept` already refused still runs the gate. Only the declared-PR gate
-condition skips it, because that condition means no gate for this run's PR.
-Running the gate is not the same as reading GitHub: the gate checks its own local
-conditions first, and only then reads. Those local conditions are exactly two. The
-gate refuses with no GitHub call when the latest reviewer turn has no reviewed
-state, and when the reviewed work tree is not clean. Every other condition it
-checks needs a read to settle it, the PR head comparison included, because it reads
-the PR first. In `review-only`, a `finish` without them keeps the current behavior,
-and each flag fails with a clear error.
-
-- `--require-accept`: refuse unless the latest turn is a reviewer accept with a
-  `Checks` line, the reviewed snapshot is exact, and the current snapshot is
-  exact with the same `head` and `digest`. The `head` and `digest` comparison
-  detects a change to an uncommitted state at the same commit.
-- `--require-ci <pr>`: refuse unless the PR head equals the reviewed `head`, the
-  reviewed tree is clean, the PR is not behind its base under a strict rule, has no
-  merge conflicts, the merge state is one the gate can read and is not blocked, and
-  every required check passed on the commit GitHub evaluates. GitHub evaluates the
-  test merge commit when that commit has a check run or a commit status, and the
-  head commit otherwise. A required check run passes with the conclusion
-  `success`, `skipped`, or `neutral`; a required commit status passes with the
-  state `success`. When a check run and a commit status share a required name,
-  both must pass, and a pending or missing check fails. Required contexts come
-  from repository rulesets, classic branch protection, and
-  `gh pr checks --required`. A context qualified by
-  an app (a ruleset `integration_id` or a classic-protection `app_id`) is
-  satisfied only by a check run from that app, and an unqualified copy of that
-  name is dropped.
-  A base branch whose
-  required-check sources each state that it holds no required check has no check to
-  wait for: the gate then passes on the PR head, the clean reviewed tree, and the
-  merge state, and records that no required check exists, in a
-  `no-required-checks` event in a headless run and in `noRequiredChecks` in the
-  envelope and the state file here. The event appears on an accepted finish only, so
-  a refused finish never reports an absence.
-  The rule for that pass is one allowlist, and it fails closed. Each required-check
-  configuration source is classified by what its reply proved. A ruleset read the gate
-  cannot interpret has the class unknown, and it refuses the finish whatever the rest of
-  the union
-  holds, before the per-check pass, because that reply may carry a required-status rule
-  the gate never saw; that is a failed or partial page, a ruleset read that the runtime cannot account for page by page (no 2xx status block, a body that is not one JSON value, or more than 100 pages; a `Link` target on another host is an error, not an unknown source), an anomalous page sequence, which is no page at all, two or more empty pages,
-  or an empty page beside a page that holds rules, and an unlisted or malformed rule type.
-  A ruleset read of exactly one empty page is neither of those: its class is empty, a
-  successful read that found no rule, so it contributes no contexts
-  and the per-check pass runs on the other sources, so a
-  classic-only repository whose required checks passed still finishes.
-  Otherwise a finish passes on the absence only when no source named a required
-  check and no source is unknown, so both sources must have stated the outcome, and
-  an unknown classic-protection source keeps the empty-union refusal with the reason
-  naming it, so a parent can fix a source it can name. An exact list of every reply
-  shape and its class is in
-  `adr/0012-establish-the-absence-of-a-required-check.md`; the classes are
-  absent, has-contexts, empty, and unknown, and the table states each one on both the normal
-  and the relaxed path.
-  Absent, the only class that lets a finish pass, has exactly one reply per source.
-  For repository rulesets it is a read of every page that returns a non-empty array
-  whose entries all carry a documented rule type and none is a
-  `required_status_checks` rule, which is the read of a branch that has no
-  required-status-check rule; the read is paginated by page number, 100 rules per page, and never
-  follows a reply-supplied `Link` URL, so a rule on a later page is enforced rather than
-  missed, and a read the runtime cannot account for every page of is unknown. For classic branch protection it is exactly
-  `gh: Branch not protected (HTTP 404)`, one trailing line break aside, which the
-  endpoint writes only to a caller that can read protection. No successful
-  classic-protection body proves an absence, because a classic-protected branch can
-  require reviews without requiring a check, so a readable body that names no check
-  is unknown. Has-contexts is a reply that named at least one required check, so the
-  per-check pass runs and enforces it. Empty is exactly one empty page: a successful
-  read that found no rule, which contributes no contexts and is not a positive absence,
-  so the empty-union refusal names it on the relaxed path.
-  Unknown is every other reply, including a ruleset read of no page at all,
-  a ruleset entry whose type is missing or is not a documented
-  rule type, a malformed or unparseable body, an empty page inside a longer read,
-  and every unreadable reply.
-  A branch reaches the absence path where both sources state the outcome, so a
-  ruleset-only branch does, while a branch with no ruleset at all does not, because
-  its read is one empty page, and empty is not absent, and an empty page inside a
-  longer read states nothing, and neither does a
-  classic-protected branch that
-  requires reviews but names no check. GitHub documents that the ruleset read
-  returns active rules only, so a rule in a ruleset whose enforcement is `disabled`
-  or `evaluate` never appears in it and never affects the classification.
-  `gh pr checks --required` is never classified and never establishes the absence. It
-  lists only the checks that already reported, so it can name a required check and
-  it cannot prove one is absent, and on a base branch with no required check it
-  prints nothing, which is the same silence as a read failure. The gate takes
-  required names from its stdout whatever the exit status, so a non-zero exit whose
-  stdout holds that JSON still contributes names, and only a stdout that is not a
-  JSON array of named checks contributes none. It is an independent source and its
-  Free-plan reply was not measured.
-  The observed replies for the two configuration sources are `Not Found` (404) for a
-  token without repository admin, `Branch not protected` (404) for an admin on a
-  branch with no classic protection,
-  `Resource not accessible by integration` (403) for a `GITHUB_TOKEN`, and
-  `Resource not accessible by personal access token` (403) for a fine-grained PAT
-  without the Administration permission. A rate-limit or SSO 403 fails the run by
-  design, because it matches no unreadable shape and is not read as a source at all.
-  The exception to ruleset readability is a private repository on the GitHub Free
-  plan, where the plan does not allow the rule at all. The Free-plan 403, `Upgrade
-  to GitHub Pro or make this repository public to enable this feature.`, was measured
-  on the classic protection, branch rules, and rulesets endpoints with an admin
-  classic PAT and an admin fine-grained PAT, and a read-capable collaborator was not
-  tested, so whether a non-admin sees the same 403 is unverified. That reply
-  leaves each measured endpoint with no required contexts, and it is classified
-  unknown rather than empty, so the empty-union refusal names it. A private GitHub
-  Free-plan repository still refuses a declared run under this change, so this does
-  not resolve #336 for it, and such a repository must omit `--pr`, which leaves the
-  #286 gap in place.
-  Repository rulesets are readable with read access on a repository whose plan allows
-  the rule, so a token without repository admin still gates through repository rulesets
-  and through `gh pr checks --required` while the classic-protection source stays
-  unknown. A required check that never started cannot escape the gate: the per-check
-  pass refuses it when a source names it, and the blocked-merge-state refusal covers
-  it when no source names it. The gate cannot tell a missing check from an unmet
-  review or another required rule, so a repository with required approvals also
-  refuses until they are met, and a branch that states it has no required check still
-  refuses while its merge state is blocked. GitHub computes the merge state lazily,
-  so a retry shortly after a push can clear an `unknown` state. This gate needs the
-  `gh` CLI.
+The conditions that the `--require-accept` and `--require-ci` gates check at `finish` are in
+[Finish gates](orchestrator/finish-gates.md).
 
 ## Blockers and terminal states
 
@@ -1520,7 +663,7 @@ and each flag fails with a clear error.
   abort and start a new run to gain steps: that starts every role on a new
   session and loses its conversation history. `<count>` must be larger than both
   `stepsUsed` and the current `maxSteps`, and follows the `--max-steps` range
-  below. `extend` works from `active`, `dispatched`, and `interrupted`, leaves
+  in [Turn history and the step budget](orchestrator/run-history.md). `extend` works from `active`, `dispatched`, and `interrupted`, leaves
   the lifecycle as it is, and refuses a terminal run. An `interrupted` run still
   needs `abort` or `dispatch --resume-interrupted`.
 - `declare-pr` sets the run PR once after init, as the section on declaring a PR
@@ -1572,52 +715,3 @@ any parent-side caller that holds the id, and it gives no guard coverage. A chil
 role never runs `extend` or `declare-pr`: the spawn-time marker refuses it, and the prompt rule
 backs the marker. To get a guard, call `abort` and start a new run with
 the new session id. A new run starts every role on a new session (ADR 0021).
-
-## Turn history
-
-Every `agent-loop role` run keeps its own turn history. No `--transcript` flag is
-needed: the subcommand records each dispatched turn itself.
-
-- The state file's `turns` array holds one entry per charged step, in order, and
-  each entry survives every later dispatch that overwrites `lastDispatch` and
-  `lastResult`.
-- Each entry holds `role`, `status`, `verdict`, `head`, and `at`: the role that
-  ran, the turn `status`, the reviewer verdict for a reviewer turn (`null`
-  otherwise), the head the reviewer turn reviewed (`null` otherwise), and the
-  turn time. Report and response text stay out of the entries.
-- `status` is `ok`, `error`, or `interrupted`. An `interrupted` entry is a turn
-  whose step was charged but whose outcome is unknown: no child result was ever
-  recorded for it, so its verdict and head are `null`. The call that marks the
-  run `interrupted` records it, so the history stays complete across recovery.
-- Size bound: exactly one entry per charged step, and a dispatch past `maxSteps`
-  is refused before it runs, so `turns` holds at most `maxSteps` entries. The
-  recovery call records an already-charged step and charges none of its own, so
-  it does not push the history past that bound. The entries are fixed-shape, so
-  the history cannot grow with the text a child returns.
-- `budgetChanges` holds one entry per `role extend`: `from` and `to` (the old
-  and new `maxSteps`), `stepsUsed` when the change ran, and `at`. It shows after
-  which turn the budget changed. A run never extended has no `budgetChanges`.
-  Because `maxSteps` only grows, `turns` still holds at most `maxSteps` entries.
-- Accepted `--max-steps` range: 1 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
-  The CLI refuses a `--max-steps` outside it, and `dispatch`, `finish`, and
-  `extend` re-check the stored `maxSteps` against the same range before reading the
-  budget, because a state file written by an earlier version or hand-edited
-  carries the value past the flag check. A refusal names the state file field to
-  correct. Every budget a run reads is therefore a safe integer, so the step
-  count always advances by exactly one per charged step.
-- `abort` is not subject to that check. It charges no step and reads no budget,
-  so it proceeds and ends the run. Use it to close a run whose stored `maxSteps`
-  is out of range: `dispatch` and `finish` are refused, and a new init refuses
-  over a non-terminal run, so `abort` is the only route to a terminal lifecycle
-  for such a run. A new init then starts normally and archives the old state
-  file. No field has to be hand-corrected.
-- `abort` is not subject to the recorded reviewer sandbox mode check either (ADR 0038). `dispatch`,
-  `--resume-interrupted`, `extend`, and `finish` refuse a state file whose
-  `reviewerSandbox` is present but not `none`, `read-only`, or `workspace-write`. `abort` runs
-  no reviewer turn, so it ends such a run, and it ignores a `--reviewer-sandbox` flag that it
-  cannot compare with the damaged field. Over a valid mode, `abort` still refuses a flag that
-  names another mode.
-- Read `turns` after compaction or restart to rebuild which turns ran, which
-  verdicts they returned, and which head each reviewer turn saw.
-- `--transcript <file>` still appends one JSON line per `invocation` and
-  `result` event. It stays a per-call flag and is not the turn history.

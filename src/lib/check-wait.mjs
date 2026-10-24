@@ -42,7 +42,7 @@ const POLL_INTERVAL_MS = 15_000;
 // and the all-checks read alike (#941, #950).
 const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
 
-// The `gh pr checks` exit codes, as `docs/orchestrator-instructions.md` states
+// The `gh pr checks` exit codes, as `docs/orchestrator/reviewer-evidence.md` states
 // them for the reviewer read: 8 is a pending check, and 1 covers a failing check,
 // a repository with no required check, and a read error. An exit 1 is therefore
 // not a failure on its own; the check list decides (#329).
