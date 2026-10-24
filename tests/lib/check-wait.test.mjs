@@ -770,35 +770,52 @@ test("waitChecks refuses a commit read that fails", async () => {
   ).rejects.toThrow(/gh api repos\/owner\/repo\/commits\/.+ failed: boom/);
 });
 
-/** A `gh` that answers the nth commit read with `fail(n)` when that is a reply, and passes every other read through. */
-function failingCommitGh(fail, { all = false, heads } = {}) {
+/**
+ * A `gh` whose paginated commit reads fail as `fail(n)` says, for the nth such read. A failure is a
+ * reply `{ status, stdout, stderr }`: the failed read gets its stderr and no stdout, and the
+ * classifying `gh api --include` request that follows gets the whole reply, or `probe(reply)` when
+ * given. A reply with status 0 is the answer of the paginated read itself. Every other read passes
+ * through. `commitReads` lists the endpoint of each paginated read, `readArgs` its arguments, and
+ * `probes` the arguments of each classifying request.
+ */
+function failingCommitGh(fail, { all = false, heads, probe = (reply) => reply } = {}) {
   const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
     all,
     heads,
     commits: { [HEAD_A]: [PASSED_ITEM] },
   });
   const commitReads = [];
+  const readArgs = [];
+  const probes = [];
+  let failure = null;
   const gh = async (args, cwd, options) => {
     if (args[0] === "api" && args[1].includes("/commits/")) {
+      if (args.includes("--include")) {
+        probes.push(args);
+        return failure ? probe(failure) : inner(args, cwd, options);
+      }
       commitReads.push(args[1]);
+      readArgs.push(args);
+      failure = null;
       const reply = fail(commitReads.length);
-      if (reply) {
+      if (reply && reply.status === 0) {
         return reply;
+      }
+      if (reply) {
+        failure = reply;
+        return { status: reply.status, stdout: "", stderr: reply.stderr };
       }
     }
     return inner(args, cwd, options);
   };
-  return { gh, commitReads };
+  return { gh, commitReads, readArgs, probes };
 }
 
 /** The failed `gh api --include` reply of status `code`: the status line and headers on stdout, the error text on stderr. */
 function replyOf(code, stderr) {
   return {
     status: 1,
-    stdout: `HTTP/2.0 ${code} Status
-Content-Type: application/json
-
-{}`,
+    stdout: `HTTP/2.0 ${code} Status\r\nContent-Type: application/json\r\n\r\n{}`,
     stderr,
   };
 }
@@ -855,11 +872,34 @@ test.each([
   },
 );
 
-// Usefulness: verifies only a reply whose HTTP status is exactly 500, 502, 503, or 504 is retried.
-// The status comes from the reply headers, never from the stderr text of `gh`: another status, a
-// 403 whose stderr also carries a `(HTTP 500)` line or quotes one, a failure with no reply, and an
-// unparseable reply each end the wait at the first read, so a pass never follows a read that GitHub
-// did not answer with a retryable status (issue #1025).
+// Usefulness: verifies the failed read is the paginated `gh api` read the gate uses, so `gh` owns
+// pagination and host scoping, and that one classifying request for the first page of the same
+// endpoint, built from the slug and the commit SHA, follows it, so no URL that a reply names is
+// ever requested (issue #1025).
+test("waitChecks classifies a failed read with one request for the first page of the endpoint", async () => {
+  const endpoint = `repos/owner/repo/commits/${HEAD_A}/check-runs`;
+  const { gh, readArgs, probes } = failingCommitGh((n) => n === 1 && serverError(500));
+  expect(await waitOn(gh, false)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+  expect(readArgs[0]).toEqual(["api", endpoint, "--paginate", "--slurp"]);
+  expect(probes).toEqual([["api", endpoint, "--include"]]);
+});
+
+// Usefulness: verifies a failed read whose classifying request succeeds stays the original error:
+// a 5xx that clears before the request runs is reported as an error, never as a pass (issue #1025).
+test("waitChecks reports the original error when the classifying request succeeds", async () => {
+  const { gh, commitReads, probes } = failingCommitGh((n) => n === 1 && serverError(500), {
+    probe: () => ({ status: 0, stdout: "HTTP/2.0 200 OK\r\n\r\n{}", stderr: "" }),
+  });
+  await expect(waitOn(gh, false)).rejects.toThrow(/failed: gh: HTTP 500/);
+  expect(commitReads).toHaveLength(1);
+  expect(probes).toHaveLength(1);
+});
+
+// Usefulness: verifies only a reply whose final HTTP status is exactly 500, 502, 503, or 504 is
+// retried. The status comes from the reply headers, never from the stderr text of `gh`: another
+// status, a 403 whose stderr also carries a `(HTTP 500)` line or quotes one, a failure with no
+// reply, and an unparseable body each end the wait at the first read, so a pass never follows a
+// read that GitHub did not answer with a retryable status (issue #1025).
 test.each([
   ["a 404", replyOf(404, "gh: Not Found (HTTP 404)"), /HTTP 404/],
   ["an HTTP 501", replyOf(501, "gh: Not Implemented (HTTP 501)"), /HTTP 501/],
@@ -883,12 +923,7 @@ test.each([
     { status: 1, stdout: "Server Error\r\n\r\n{}", stderr: "gh: HTTP 500" },
     /HTTP 500/,
   ],
-  [
-    "an unparseable reply",
-    { status: 0, stdout: "HTTP/2.0 200 OK\r\n\r\n<html>", stderr: "" },
-    /JSON/,
-  ],
-  ["a reply with no status line", { status: 0, stdout: "[]", stderr: "" }, /status/],
+  ["an unparseable reply", { status: 0, stdout: "<html>", stderr: "" }, /JSON/],
 ])("waitChecks does not retry %s on a commit read", async (_name, reply, message) => {
   const { gh, commitReads } = failingCommitGh(() => reply);
   await expect(waitOn(gh, false)).rejects.toThrow(message);
@@ -920,126 +955,6 @@ test.each([
   expect(await waitOn(gh, all, HEAD_A)).toEqual({ timedOut: true, head: null, checks: [] });
 });
 
-const LINK_HOST = "https://api.github.com/repositories/1";
-
-/** A check run of the commit read, in the shape the REST reply carries. */
-function runEntry(id, name, conclusion, startedAt) {
-  return {
-    id,
-    name,
-    status: "completed",
-    conclusion,
-    started_at: startedAt,
-    completed_at: startedAt,
-  };
-}
-
-/**
- * A `gh` whose check-run read is a chain of pages. `pages` maps a request, the endpoint with its
- * query or an absolute URL, to `{ runs, next, link, stdout }`: the runs of the page, the `next` URL
- * its `Link` header names, a raw `Link` header value, or a raw reply. A request that no page
- * names fails with a 404, so a read of the wrong page is an error. Every other read passes through.
- */
-function pagedCheckRunsGh(pages, { all = false } = {}) {
-  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], { all });
-  const requests = [];
-  const gh = async (args, cwd, options) => {
-    if (args[0] !== "api" || !/\/check-runs[?]/.test(args[1])) {
-      return inner(args, cwd, options);
-    }
-    requests.push(args[1]);
-    const page = pages[args[1]];
-    if (!page) {
-      return replyOf(404, "gh: Not Found (HTTP 404)");
-    }
-    const link = page.link ?? (page.next ? `<${page.next}>; rel="next"` : null);
-    return {
-      status: 0,
-      stdout:
-        page.stdout ??
-        `HTTP/2.0 200 OK\r\n${link ? `Link: ${link}\r\n` : ""}\r\n${JSON.stringify({ check_runs: page.runs })}`,
-      stderr: "",
-    };
-  };
-  return { gh, requests };
-}
-
-const FIRST_PAGE = "repos/owner/repo/commits/" + HEAD_A + "/check-runs?per_page=100";
-
-// Usefulness: verifies the wait follows the exact `next` URL of the `Link` header, so a link that
-// skips to page 3 reads page 3 and judges its failing run instead of reading page 2 and passing,
-// in both modes (issue #1025).
-test.each([
-  ["required", false],
-  ["all", true],
-])("waitChecks %s mode follows the next URL of the Link header", async (_mode, all) => {
-  const page3 = `${LINK_HOST}/commits/x/check-runs?per_page=100&page=3`;
-  const { gh, requests } = pagedCheckRunsGh(
-    {
-      [FIRST_PAGE]: {
-        runs: [runEntry(1, "ci", "success", "2026-01-01T00:00:00Z")],
-        next: page3,
-      },
-      [page3]: { runs: [runEntry(3, "ci", "failure", "2026-01-01T00:05:00Z")] },
-    },
-    { all },
-  );
-  expect(await waitOn(gh, all)).toEqual({ timedOut: false, head: HEAD_A, checks: [FAILED_ITEM] });
-  expect(requests).toEqual([FIRST_PAGE, page3]);
-});
-
-// Usefulness: verifies a malformed `Link` header, a `next` target that is no https URL, a next
-// target that names credentials, and two `next` targets each end the wait at once with an error
-// that no pass follows (issue #1025).
-test.each([
-  ["a malformed Link header", "garbage; rel=next"],
-  ["a next target that is not a URL", '<not a url>; rel="next"'],
-  ["a next target that is not https", '<http://api.github.com/x?page=2>; rel="next"'],
-  ["a next target with credentials", '<https://user:pw@api.github.com/x?page=2>; rel="next"'],
-  [
-    "two next targets",
-    '<https://api.github.com/x?page=2>; rel="next", <https://api.github.com/x?page=3>; rel="next"',
-  ],
-])("waitChecks ends with an error on %s", async (_name, link) => {
-  const { gh, requests } = pagedCheckRunsGh({
-    [FIRST_PAGE]: { runs: [runEntry(1, "ci", "success", "2026-01-01T00:00:00Z")], link },
-  });
-  await expect(waitOn(gh, false)).rejects.toThrow(/Link/);
-  expect(requests).toEqual([FIRST_PAGE]);
-});
-
-// Usefulness: verifies a `next` URL that repeats one already read ends the wait with an error at
-// once, not a loop that runs until the bound (issue #1025).
-test("waitChecks ends with an error on a next URL that repeats a page", async () => {
-  const page2 = `${LINK_HOST}/commits/x/check-runs?per_page=100&page=2`;
-  const run = runEntry(1, "ci", "success", "2026-01-01T00:00:00Z");
-  const { gh, requests } = pagedCheckRunsGh({
-    [FIRST_PAGE]: { runs: [run], next: page2 },
-    [page2]: { runs: [run], next: page2 },
-  });
-  await expect(waitOn(gh, false)).rejects.toThrow(/repeats/);
-  expect(requests).toEqual([FIRST_PAGE, page2]);
-});
-
-// Usefulness: verifies a page read that never answers still ends at the wait bound: the read of a
-// followed page is bounded like every other read (issue #1025).
-test("waitChecks bounds the read of a followed page", async () => {
-  const page2 = `${LINK_HOST}/commits/x/check-runs?per_page=100&page=2`;
-  const { gh } = pagedCheckRunsGh({
-    [FIRST_PAGE]: { runs: [runEntry(1, "ci", "success", "2026-01-01T00:00:00Z")], next: page2 },
-  });
-  const hanging = (args, cwd, options) =>
-    args[1] === page2 ? new Promise(() => {}) : gh(args, cwd, options);
-  const result = await waitChecks({
-    pr: 42,
-    cwd: ".",
-    timeoutSeconds: 0.3,
-    gh: hanging,
-    sleep: async () => {},
-  });
-  expect(result).toMatchObject({ timedOut: true, head: null, checks: [] });
-}, 20000);
-
 // Usefulness: verifies the reply is classified on its final status block, the reply that ends the
 // exchange: an interim or proxy block before it never decides, so a final 502 is retried and a
 // final 403 stays terminal whatever block came first (issue #1025).
@@ -1068,21 +983,6 @@ test.each([
   }
 });
 
-// Usefulness: verifies a success reply that follows an interim block is read from the final block,
-// so a `100 Continue` line before the reply never fails a read that passed (issue #1025).
-test("waitChecks reads a success reply that follows an interim block", async () => {
-  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
-    commits: { [HEAD_A]: [PASSED_ITEM] },
-  });
-  const gh = async (args, cwd, options) => {
-    const reply = await inner(args, cwd, options);
-    return args.includes("--include")
-      ? { ...reply, stdout: `HTTP/1.1 100 Continue\r\n\r\n${reply.stdout}` }
-      : reply;
-  };
-  expect(await waitOn(gh, false)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
-});
-
 // Usefulness: verifies a failure that `gh pr checks` lists on a later poll survives the bound that
 // a commit read reaches after an earlier server error, in both modes: the result is
 // `timedOut: true` with `prFailures`, never the earlier error (issue #1025).
@@ -1102,8 +1002,13 @@ test.each([
     let commitReads = 0;
     const gh = (args, cwd, options) => {
       if (args[0] === "api" && args[1].includes("/commits/")) {
+        if (args.includes("--include")) {
+          return Promise.resolve(serverError(500));
+        }
         commitReads += 1;
-        return commitReads === 1 ? Promise.resolve(serverError(500)) : new Promise(() => {});
+        return commitReads === 1
+          ? Promise.resolve({ status: 1, stdout: "", stderr: "gh: HTTP 500" })
+          : new Promise(() => {});
       }
       return inner(args, cwd, options);
     };

@@ -35,113 +35,27 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 const POLL_INTERVAL_MS = 15_000;
 
 // The reply statuses of a failed commit read that the wait retries on the next poll (#1025). The
-// status is the one on the status line that `gh api --include` prints, never a number in the
+// status is the one on the final status block of a `gh api --include` reply, never a number in the
 // error text of `gh`, which carries the message of the reply and more lines after it.
 const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 
 const STATUS_LINE = /^HTTP\/\d(?:\.\d)? (\d{3})(?: [^\r\n]*)?(?:\r?\n|$)/;
 
 /**
- * The HTTP status, header block, and body of the final status block of a `gh api --include` reply,
- * or null when stdout does not open with a status line. A block whose body opens with another
- * status line, such as an interim `100` or a proxy reply, is followed to the block that ends the
- * exchange, so the last status decides.
+ * The status of the final status block of a `gh api --include` reply, or null when stdout does not
+ * open with a status line. A block whose body opens with another status line, such as an interim
+ * `100` or a proxy reply, is followed to the block that ends the exchange, so the last status
+ * decides.
  */
-function parseReply(stdout) {
-  let reply = null;
+function replyStatus(stdout) {
+  let status = null;
   let rest = stdout;
   while (STATUS_LINE.test(rest)) {
+    status = Number(STATUS_LINE.exec(rest)[1]);
     const split = /\r?\n\r?\n/.exec(rest);
-    const head = split ? rest.slice(0, split.index) : rest;
-    reply = {
-      status: Number(STATUS_LINE.exec(head)[1]),
-      head,
-      body: split ? rest.slice(split.index + split[0].length) : "",
-    };
-    rest = reply.body;
+    rest = split ? rest.slice(split.index + split[0].length) : "";
   }
-  return reply;
-}
-
-/**
- * The `rel="next"` URL of the `Link` headers in `head`, or null when there is none. Throws when a
- * header does not parse, when two entries name `next`, or when the target is not an https URL
- * without credentials, so a link the wait does not understand is an error and never a last page.
- */
-function nextPageUrl(head, endpoint) {
-  const malformed = (why) => new Error(`the Link header of ${endpoint} is malformed: ${why}`);
-  let next = null;
-  const values = head
-    .split(/\r?\n/)
-    .filter((line) => /^link:/i.test(line))
-    .map((line) => line.slice(line.indexOf(":") + 1));
-  for (const value of values) {
-    for (const entry of value.split(/,(?=\s*<)/)) {
-      const parsed = /^\s*<([^<>\s]+)>((?:\s*;\s*[^;,]+)*)\s*$/.exec(entry);
-      if (!parsed) {
-        throw malformed("an entry is not `<url>; parameters`");
-      }
-      const rel = /;\s*rel\s*=\s*(?:"([^"]*)"|([^\s;,"]+))/i.exec(parsed[2]);
-      if (rel && (rel[1] ?? rel[2]).toLowerCase().split(/\s+/).includes("next")) {
-        if (next !== null) {
-          throw malformed("two entries name the next page");
-        }
-        next = parsed[1];
-      }
-    }
-  }
-  if (next !== null) {
-    let url = null;
-    try {
-      url = new URL(next);
-    } catch {
-      // Left null: the target is refused below.
-    }
-    if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "") {
-      throw malformed("the next page is not an https URL without credentials");
-    }
-  }
-  return next;
-}
-
-/**
- * Reads every page of `endpoint` with `gh api --include`, one bounded read per page, and returns a
- * `gh`-shaped result whose stdout is the pages as one JSON array, as `--paginate --slurp` prints
- * them. The next page is the exact `rel="next"` URL of the reply, and a URL that was already read
- * throws instead of looping. `retryable` is true only when the failed reply ended in a status of
- * 500, 502, 503, or 504.
- * @param {Function} read one bounded `gh` read
- */
-async function readPages(read, endpoint, cwd) {
-  const pages = [];
-  const seen = new Set();
-  let request = `${endpoint}?per_page=100`;
-  for (;;) {
-    const result = await read(["api", request, "--include"], cwd);
-    const reply = parseReply(result.stdout);
-    if (result.status !== 0) {
-      return { result, retryable: reply !== null && RETRYABLE_STATUSES.has(reply.status) };
-    }
-    if (reply === null) {
-      return {
-        result: { status: 1, stdout: "", stderr: "the reply carries no HTTP status line" },
-        retryable: false,
-      };
-    }
-    if (reply.body.trim() === "") {
-      return { result: { status: 0, stdout: "", stderr: "" }, retryable: false };
-    }
-    pages.push(JSON.parse(reply.body));
-    const next = nextPageUrl(reply.head, endpoint);
-    if (next === null) {
-      return { result: { status: 0, stdout: JSON.stringify(pages), stderr: "" }, retryable: false };
-    }
-    if (seen.has(next)) {
-      throw new Error(`the Link header of ${endpoint} repeats a page already read: ${next}`);
-    }
-    seen.add(next);
-    request = next;
-  }
+  return status;
 }
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet,
@@ -617,17 +531,23 @@ export async function waitChecks({
       }
     }
   };
-  // A read that fails with a reply status of 500, 502, 503, or 504 throws an error marked
-  // `transient`: the wait retries it on the next poll. Every other failure, a reply with any other
-  // status, no reply status, or an unparseable body included, ends the wait. The gate's reads ask
-  // for `--paginate --slurp`, which prints no status line, so the wait reads each page itself with
-  // `--include`, follows the exact `next` link, and hands the pages back in the slurped shape.
+  // A read that fails is classified by one more request, `gh api --include` for the first page of
+  // the same endpoint, which the gate's reads build from the repository slug and the commit SHA. The
+  // read itself is the gate's paginated `gh api` read, so `gh` owns pagination and host scoping,
+  // and no URL that a reply names is requested. The error is marked `transient`, and the wait
+  // retries it on the next poll, only when the final status block of that request is 500, 502, 503,
+  // or 504. Every other failure ends the wait: another status, a request that succeeds, a reply
+  // with no status block, and a body that fails to parse.
   const readCommit = async (sha) => {
     await ensureSlug();
     let serverError = false;
-    const read = async ([, endpoint], cwdArg) => {
-      const { result, retryable } = await readPages(bounded, endpoint, cwdArg);
-      serverError = retryable;
+    const read = async (argv, cwdArg) => {
+      const result = await bounded(argv, cwdArg);
+      serverError = false;
+      if (result.status !== 0) {
+        const probe = await bounded(["api", argv[1], "--include"], cwdArg);
+        serverError = probe.status !== 0 && RETRYABLE_STATUSES.has(replyStatus(probe.stdout));
+      }
       return result;
     };
     try {
