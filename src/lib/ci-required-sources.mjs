@@ -91,6 +91,17 @@ function isFreePlan403(stderr) {
   return stderr.replace(/\r?\n$/, "") === FREE_PLAN_403;
 }
 
+// `gh` reads these two names and then writes a debug log to stderr, which breaks the exact stderr
+// match of the protection read (#1047). Compared in upper case, because Windows names are case-blind.
+const GH_DEBUG_NAMES = new Set(["GH_DEBUG", "DEBUG"]);
+
+/** The environment of this process without the names that turn on the debug log of `gh`. */
+function ghEnv() {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !GH_DEBUG_NAMES.has(name.toUpperCase())),
+  );
+}
+
 /**
  * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr, timedOut }`;
  * a non-zero exit is data, not a throw. `timeoutMs` bounds the call and
@@ -100,7 +111,13 @@ function isFreePlan403(stderr) {
  * No platform keeps a child the bound has given up on (#329).
  */
 export async function runGh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
-  const result = await execBounded("gh", args, { cwd, timeoutMs, signal });
+  const result = await execBounded("gh", args, {
+    cwd,
+    timeoutMs,
+    signal,
+    env: ghEnv(),
+    extendEnv: false,
+  });
   return {
     status: result.exitCode,
     stdout: result.stdout ?? "",
