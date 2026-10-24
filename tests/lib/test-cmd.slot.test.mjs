@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { runTestCmd } from "../../src/lib/test-cmd.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
 
@@ -18,7 +18,11 @@ const SLOT_ENV = [
   "AGENT_LOOP_TEST_SLOT_WAIT",
   "AGENT_LOOP_TEST_SLOT_HELD",
 ];
-const savedEnv = Object.fromEntries(SLOT_ENV.map((name) => [name, process.env[name]]));
+// Captured per test, after the file isolation has unset an inherited root pin, so the restore never reinstates it (issue #1022).
+let savedEnv;
+beforeEach(() => {
+  savedEnv = Object.fromEntries(SLOT_ENV.map((name) => [name, process.env[name]]));
+});
 const dirs = [];
 afterEach(async () => {
   for (const [name, value] of Object.entries(savedEnv)) {

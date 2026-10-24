@@ -51,3 +51,65 @@ test("inherited root pins are unset while a file runs, so default roots stay in 
     }
   }
 });
+
+const ROOT_NAMES = [
+  "AGENT_LOOP_RUNS_ROOT",
+  "AGENT_LOOP_TEST_SLOTS_ROOT",
+  "AGENT_LOOP_SESSION_RECORDS_ROOT",
+];
+const snapshot = () => Object.fromEntries(ROOT_NAMES.map((name) => [name, process.env[name]]));
+const restoreSnapshot = (saved) => {
+  for (const name of ROOT_NAMES) {
+    if (saved[name] === undefined) delete process.env[name];
+    else process.env[name] = saved[name];
+  }
+};
+const sentinelPins = () =>
+  Object.fromEntries(ROOT_NAMES.map((name) => [name, join(tmpdir(), "sentinel-real-root", name)]));
+
+// Usefulness: nested isolation (a suite that enters again) hands the inherited pins back only at the outermost exit, so a pin never leaks into the real roots or goes missing for the rest of the file.
+test("a nested entry restores the outer isolated state, then the inherited pins at the outermost exit", async () => {
+  const before = snapshot();
+  const pinned = sentinelPins();
+  const outer = createTmpdirIsolation({ removeDir: async () => {} });
+  const inner = createTmpdirIsolation({ removeDir: async () => {} });
+  try {
+    Object.assign(process.env, pinned);
+    await outer.enter();
+    await outer.enter();
+    await outer.exit();
+    expect(snapshot()).toEqual(Object.fromEntries(ROOT_NAMES.map((name) => [name, undefined])));
+    await outer.exit();
+    expect(snapshot()).toEqual(pinned);
+    await inner.enter();
+    await inner.exit();
+    expect(snapshot()).toEqual(pinned);
+  } finally {
+    restoreSnapshot(before);
+  }
+});
+
+// Usefulness: a re-entry that fails to create its directory must not overwrite the saved inherited pins with the isolated state, or the outer exit restores the wrong values.
+test("a failed re-entry keeps the inherited pins for the outermost exit", async () => {
+  const before = snapshot();
+  const pinned = sentinelPins();
+  let calls = 0;
+  const isolation = createTmpdirIsolation({
+    makeDir: async (prefix) => {
+      calls += 1;
+      if (calls > 1) throw new Error("disk full");
+      return `${prefix}stub`;
+    },
+    removeDir: async () => {},
+  });
+  try {
+    Object.assign(process.env, pinned);
+    await isolation.enter();
+    await expect(isolation.enter()).rejects.toThrow("disk full");
+    await isolation.exit();
+    await isolation.exit();
+    expect(snapshot()).toEqual(pinned);
+  } finally {
+    restoreSnapshot(before);
+  }
+});
