@@ -35,6 +35,16 @@ test("initialPrompt produces expected orchestrator prompt", () => {
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<instructions for worker>"}');
 });
 
+// Usefulness: verifies requirement "the headless prompt states the unknown-key refusal and its
+// repair" (issue #1021): the runtime refuses a finish with an extra key, so the orchestrator must
+// know the refusal names each key and that the fix is to resend the finish with only the allowed keys.
+test("initialPrompt states the unknown-key finish refusal and its repair", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expectRule(prompt, /\bfinish\b/i, /\bother than\b/i, /\bunresolvedCompare\b/, /\brefused\b/i);
+  expectRule(prompt, /\brefusal\b/i, /\bnames each\b/i, /\bkey\b/i);
+  expectRule(prompt, /\bresend\b/i, /\bfinish\b/i, /\bonly\b/i, /\bunresolvedCompare\b/);
+});
+
 // Usefulness: verifies the headless prompt states the notes and deferred finish
 // mapping that the interactive instructions also carry: which labels the closing
 // block requires, that deferred items persist, that a resolved item lands in

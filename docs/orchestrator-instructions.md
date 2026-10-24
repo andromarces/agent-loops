@@ -1000,9 +1000,10 @@ Completion is completion of the requested work, not code acceptance.
   checks that passed.
 - `review-only`: call `finish` after the reviewer turn, whatever it returned. The
   gate is on the turn, not on a report: a turn that ended in an error satisfies
-  it, so the finish can carry no report. The runtime checks only that all five
-  summary keys are non-empty strings, and it never compares their content with
-  what the reviewer returned.
+  it, so the finish can carry no report. The runtime checks that all five
+  summary keys are non-empty strings and refuses a finish that holds any other
+  key than those five and `unresolvedCompare`, naming each unknown key. It never
+  compares the summary content with what the reviewer returned.
 
 A `review-only` finish needs a reviewer turn that ran, whatever it returned. The
 runtime does not compare the summary with the reviewer result. Record the
