@@ -23,6 +23,7 @@ import { refuseHeldIds, refuseHeldSessions } from "./lib/command-line.mjs";
 import { DEFAULT_WAIT_SECONDS, isFullSha, waitChecks } from "./lib/check-wait.mjs";
 import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
 import { isSpawnedByRun } from "./lib/exec.mjs";
+import { isJsonObject } from "./lib/json.mjs";
 import { copyLocalFiles, findDifferingLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, logWarn, setVerbose, setLogsToStderr } from "./lib/log.mjs";
 import { acceptanceFailure, parseReportBlock, parseVerdict } from "./lib/report.mjs";
@@ -830,7 +831,8 @@ function describeJsonParseError(error) {
 
 /**
  * `finish`: accepts the five-key summary as JSON on stdin, from active only, and
- * sets the lifecycle to `finished`.
+ * sets the lifecycle to `finished`. A key other than the five and
+ * `unresolvedCompare` is refused and named (#1021).
  * `--require-accept` and `--require-ci` gate the finish. Every applicable refusal
  * is reported in one error. A run that declared `--pr <pr>` at init must end
  * through `--require-ci <pr>`: a finish with no gate or a gate for another PR is
@@ -865,11 +867,14 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
       );
     }
     // The summary arrives unwrapped, so the marker the headless action carries
-    // beside `summary` sits beside the five keys here. The validator drops it
-    // from the summary and keeps its own boolean check (#281).
+    // beside `summary` sits beside the five keys here. It moves out of the
+    // summary so the validator keeps its own boolean check (#281) and refuses
+    // every other unknown key (#1021).
     const action = { action: "finish", summary: value };
-    if (value?.unresolvedCompare !== undefined) {
-      action.unresolvedCompare = value.unresolvedCompare;
+    if (isJsonObject(value) && value.unresolvedCompare !== undefined) {
+      const { unresolvedCompare, ...summary } = value;
+      action.summary = summary;
+      action.unresolvedCompare = unresolvedCompare;
     }
     const validated = validateAction(action);
     if (!validated.ok) {

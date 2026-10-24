@@ -1066,7 +1066,10 @@ printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","def
 ```
 
 The value must be a boolean, and the key is not one of the five summary keys:
-`summary` keeps exactly those five. The envelope then carries
+`summary` keeps exactly those five. A finish with any other key, such as a
+misspelled marker, is refused and the refusal names each key; the headless
+finish action refuses an unknown key the same way, in the action and in its
+summary (#1021). The envelope then carries
 `"unresolvedCompare": true` and the state file records the same field beside
 `summary`, so a recorded unresolved compare never reads the same as a verified
 finish, which keeps the current envelope and state (#281). A finish with the
