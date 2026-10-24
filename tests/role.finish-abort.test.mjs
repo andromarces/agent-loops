@@ -41,9 +41,10 @@ import {
   equalsArgs,
   expectNoReplyToMalformedCalls,
   gateReadCalls,
-  isApiRead,
+  isPagedRead,
   noRequiredCheckGh,
-  PAGED,
+  pagedApiArgs,
+  pageStdout,
   prChecksArgs,
   prGateGh,
   prViewArgs,
@@ -602,23 +603,26 @@ const ciGh = (head, mergeStateStatus) => async (args) => {
   if (equalsArgs(args, REPO_VIEW_ARGS)) {
     return { status: 0, stdout: "owner/repo", stderr: "" };
   }
-  if (equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))) {
-    // The ruleset read is paginated, so its body is an array of pages.
-    return json([
-      [
+  if (equalsArgs(args, pagedApiArgs("repos/owner/repo/rules/branches/main"))) {
+    // The ruleset read pages by number, so each reply is one page: a list of rules.
+    return {
+      status: 0,
+      stdout: pageStdout([
         {
           type: "required_status_checks",
           parameters: { required_status_checks: [{ context: "ci (ubuntu-latest)" }] },
         },
-      ],
-    ]);
+      ]),
+      stderr: "",
+    };
   }
-  if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection", []))) {
+  if (equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection"))) {
     return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
   }
-  if (isApiRead(args, "/check-runs", PAGED)) {
-    return json([
-      {
+  if (isPagedRead(args, "/check-runs")) {
+    return {
+      status: 0,
+      stdout: pageStdout({
         check_runs: [
           {
             name: "ci (ubuntu-latest)",
@@ -627,11 +631,12 @@ const ciGh = (head, mergeStateStatus) => async (args) => {
             started_at: "2026-01-01T00:00:00Z",
           },
         ],
-      },
-    ]);
+      }),
+      stderr: "",
+    };
   }
-  if (isApiRead(args, "/status", PAGED)) {
-    return json({ statuses: [] });
+  if (isPagedRead(args, "/status")) {
+    return { status: 0, stdout: pageStdout({ statuses: [] }), stderr: "" };
   }
   return { status: 1, stdout: "", stderr: `unmatched: ${JSON.stringify(args)}` };
 };
@@ -928,7 +933,7 @@ describe("finish on a run that declares a PR", () => {
     // The absence rests on the two fixtures this double names, so a route that
     // stops matching fails here instead of passing on a fallback.
     expect(calls).toEqual([
-      apiArgs("repos/owner/repo/rules/branches/main").join(" "),
+      pagedApiArgs("repos/owner/repo/rules/branches/main").join(" "),
       prChecksArgs(42).join(" "),
     ]);
     expect(result.payload).toMatchObject({ noRequiredChecks: true });

@@ -9,6 +9,7 @@ import { readableErrorText } from "./error-message.mjs";
 import { isJsonObject } from "./json.mjs";
 import {
   ghApi,
+  pagedRead,
   ABSENT,
   UNKNOWN,
   EMPTY,
@@ -71,8 +72,8 @@ const isOrderable = (entry, fields) =>
 /** The check runs of `sha`, every page. `strict` makes a malformed reply throw. */
 export async function checkRuns(gh, slug, sha, cwd, strict = false) {
   const pages = await ghApi(
-    gh,
-    [`repos/${slug}/commits/${sha}/check-runs`, "--paginate", "--slurp"],
+    pagedRead(gh, "check_runs"),
+    [`repos/${slug}/commits/${sha}/check-runs`],
     cwd,
   );
   if (!strict) {
@@ -100,8 +101,8 @@ export async function checkRuns(gh, slug, sha, cwd, strict = false) {
 /** The commit statuses of `sha`, every page. `strict` makes a malformed reply throw. */
 export async function commitStatuses(gh, slug, sha, cwd, strict = false) {
   const pages = await ghApi(
-    gh,
-    [`repos/${slug}/commits/${sha}/status`, "--paginate", "--slurp"],
+    pagedRead(gh, "statuses"),
+    [`repos/${slug}/commits/${sha}/status`],
     cwd,
   );
   if (!strict) {

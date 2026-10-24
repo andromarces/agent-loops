@@ -93,6 +93,13 @@ function testRunLines(testRun) {
 const remoteWriteRule =
   "Do not write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A read-only query changes nothing, so it stays allowed.";
 
+// A package-manager install writes to the shared store outside the repository and to `node_modules`,
+// both ignored, so the mutation check passes and every work tree that links the store is exposed.
+// `vp` starts an install by itself when it finds no usable `node_modules`, so a probe copy needs a
+// link to the work tree's own (issue #1026). The runtime does not detect a breach.
+const noInstallRule =
+  "Run no dependency install, repair, or update in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to the shared package store outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: link the dependency directory of the work tree into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there. When the copy cannot link it, report the probe as unresolved in Checks.";
+
 // The file-change rule bars a change to the work tree and Git state only. Without this scope a
 // reviewer reads it as a ban on the test suite and rejects with no code blocker (issue #837). The
 // runtime mutation check is unchanged: it does not see an ignored or outside-repository write, so
@@ -165,6 +172,7 @@ export function reviewerPrompt(
     `
 Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state. Review, assess, and verify only. ${scratchWriteRule(scratchDir)} Live probes and read-only queries are authorized.
 ${remoteWriteRule}
+${noInstallRule}
 ${processRule}
 ${testSlotRule()}
 

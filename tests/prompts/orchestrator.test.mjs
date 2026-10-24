@@ -61,6 +61,26 @@ test("initialPrompt states the unknown-key finish refusal and its repair", () =>
   expectRule(prompt, /\bresend\b/i, /\bfinish\b/i, /\bonly\b/i, /\ballowed keys\b/i);
 });
 
+// Usefulness: verifies requirement "the headless prompt states the allowed keys of run_worker,
+// run_reviewer, and abort" (#1034). Each action names its own keys, so a clause that gives abort a
+// `prompt` or a dispatch a `reason` fails.
+test("initialPrompt states the allowed keys of the dispatch and abort actions", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  const clauseWith = (term) => clauses(prompt).find((clause) => term.test(clause));
+
+  const dispatch = clauseWith(/\brun_worker and run_reviewer actions allow only\b/i);
+  expect(dispatch, "no clause names the dispatch allowlist").toBeDefined();
+  expect(dispatch).toMatch(/\bonly\b[^.]*\baction\b[^.]*\bprompt\b/i);
+  expect(dispatch).not.toMatch(/\breason\b/i);
+
+  const abort = clauseWith(/\babort action allows only\b/i);
+  expect(abort, "no clause names the abort allowlist").toBeDefined();
+  expect(abort).toMatch(/\bonly\b[^.]*\baction\b[^.]*\breason\b/i);
+  expect(abort).not.toMatch(/\bprompt\b/i);
+
+  expectRule(prompt, /\brefused\b/i, /\bany other key\b/i, /\bnames each unknown key\b/i);
+});
+
 // Usefulness: verifies the headless prompt states the notes and deferred finish
 // mapping that the interactive instructions also carry: which labels the closing
 // block requires, that deferred items persist, that a resolved item lands in

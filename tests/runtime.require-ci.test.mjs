@@ -20,16 +20,16 @@ vi.mock("execa", async (importOriginal) => {
 import { snapshot } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import {
-  apiArgs,
   CLEAN_REPO_HEAD,
   cleanRepoGit,
   createCleanRepoDir,
   createTempRepo,
   equalsArgs,
   gateRoles,
-  isApiRead,
+  isPagedRead,
   noRequiredCheckGh,
-  PAGED,
+  pagedApiArgs,
+  pageStdout,
   PASSING_RUN,
   prChecksArgs,
   prGateGh,
@@ -700,25 +700,23 @@ test("a pending-check refusal is cleared by the reviewer turn its prompt names",
       JSON.stringify({ action: "finish", summary: SUMMARY }),
     ]);
     const gh = async (args) => {
-      if (isApiRead(args, "/check-runs", PAGED)) {
+      if (isPagedRead(args, "/check-runs")) {
         const answer = await prGateGh(head)(args);
         if (check.status === "completed") {
           return answer;
         }
         return {
           status: 0,
-          stdout: JSON.stringify([
-            {
-              check_runs: [
-                {
-                  name: "ci (ubuntu-latest)",
-                  status: check.status,
-                  conclusion: null,
-                  started_at: "2026-01-01T00:00:00Z",
-                },
-              ],
-            },
-          ]),
+          stdout: pageStdout({
+            check_runs: [
+              {
+                name: "ci (ubuntu-latest)",
+                status: check.status,
+                conclusion: null,
+                started_at: "2026-01-01T00:00:00Z",
+              },
+            ],
+          }),
           stderr: "",
         };
       }
@@ -992,7 +990,7 @@ test("a declared PR finishes on a base branch with no required check", async () 
     expect(result.summary).toEqual(SUMMARY);
     // The absence rests on the two fixtures this double names, so a route that
     // stops matching fails here instead of passing on a fallback.
-    expect(calls).toContain(apiArgs("repos/owner/repo/rules/branches/main").join(" "));
+    expect(calls).toContain(pagedApiArgs("repos/owner/repo/rules/branches/main").join(" "));
     expect(calls).toContain(prChecksArgs(42).join(" "));
     expect(events.filter((e) => e.type === "no-required-checks")).toHaveLength(1);
     // A finish on a checked branch records no such event, so the event means the
@@ -1605,7 +1603,7 @@ test("a hung required-check read yields an unresolved status and a completed tur
         // call a hung `gh` would hold open.
         if (
           rev.recorded.length === 0 &&
-          equalsArgs(args, apiArgs("repos/owner/repo/rules/branches/main"))
+          equalsArgs(args, pagedApiArgs("repos/owner/repo/rules/branches/main"))
         ) {
           return new Promise((resolve, reject) => {
             options.signal.addEventListener("abort", () => reject(new Error("read timed out")));

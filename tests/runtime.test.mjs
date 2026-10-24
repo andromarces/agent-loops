@@ -103,6 +103,44 @@ test("a headless worker sees the run task on its first turn only", async () => {
   }
 });
 
+// Usefulness: verifies requirement "a refused action charges no step and ends no run" (#1034). With
+// a budget of one step, a run_worker that holds an unknown key is repaired and the repaired dispatch
+// still runs, so the refusal charged nothing.
+test("a refused run_worker charges no step and the repaired action runs", async () => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "start work", promt: "typo" }),
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const workerAdapter = scripted(["worker did task"]);
+
+    const result = await runLoop({
+      task: "Task 1034",
+      cwd: repo,
+      maxSteps: 1,
+      onEvent: (event) => events.push(event),
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(workerAdapter.recorded.length).toBe(1);
+    expect(events.filter((event) => event.type === "action")[0].stepsUsed).toBe(0);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // 2. Usefulness: verifies orchestrator dispatches reviewer first.
 test("orchestrator dispatches reviewer first", async () => {
   const repo = await createTempRepo();

@@ -607,3 +607,41 @@ test("reviewer prompt bars a literal path to the system temporary directory", ()
     "When a temporary path outside the repository is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
   );
 });
+
+// Usefulness: verifies acceptance #1026 — every reviewer turn bars a dependency install, repair, or
+// update, including one a test runner starts, and names the reason, because that write reaches the
+// shared package store and every work tree that links it, and the mutation check does not see it.
+test.each([
+  ["no sandbox mode", () => reviewerPrompt("check the fix")],
+  ["a PR input with a supplied status", () => reviewerPrompt("review PR 1026", FAILING_READ)],
+  ["a test run", () => reviewerPrompt("check", null, TEST_RUN, "none")],
+  ["read-only mode", () => reviewerPrompt("check", null, null, "read-only")],
+  ["workspace-write mode", () => reviewerPrompt("check", null, null, "workspace-write")],
+  [
+    "a scratch folder",
+    () => reviewerPrompt("check", null, null, null, null, "/work/.agent-loop/rev/ab12"),
+  ],
+])("reviewer prompt bars a dependency install and names the reason with %s", (_name, render) => {
+  const prompt = render().replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Run no dependency install, repair, or update in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies.",
+  );
+  expect(prompt).toContain(
+    "An install writes to the shared package store outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes.",
+  );
+});
+
+// Usefulness: verifies acceptance #1026 — the instructions say how a probe of old source avoids an
+// install: the probe copy links the work tree's `node_modules`, and an unreachable one is reported
+// as unresolved instead of letting a tool install into the copy.
+test("reviewer prompt tells a probe copy to link the work tree dependencies and names no tool", () => {
+  const prompt = reviewerPrompt("check the fix").replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: link the dependency directory of the work tree into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there.",
+  );
+  expect(prompt).toContain(
+    "When the copy cannot link it, report the probe as unresolved in Checks.",
+  );
+  // The prompt fits any repository (ADR 0038), so the rule names no tool or directory.
+  expect(prompt).not.toMatch(/pnpm|vitest|npm|yarn|node_modules|vp/);
+});
