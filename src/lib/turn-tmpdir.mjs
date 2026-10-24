@@ -15,7 +15,7 @@ const REMOVER_REFUSED = 3;
 const REMOVAL_BOUND_MS = 30_000;
 
 // Short on purpose: a deep path fails some runtimes on Windows (issue #903).
-const PREFIX = "al-";
+export const TURN_TMPDIR_PREFIX = "al-";
 
 /**
  * Runs `run(env)` with a private temporary directory for one child turn and removes it afterward
@@ -64,7 +64,7 @@ export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS } 
  */
 async function createTurnTmpdir() {
   // Absolute, so the child reads the same path from any working directory.
-  const dir = await mkdtemp(join(resolve(tmpdir()), PREFIX));
+  const dir = await mkdtemp(join(resolve(tmpdir()), TURN_TMPDIR_PREFIX));
   const stat = await lstat(dir, { bigint: true });
   if (!stat.isDirectory()) throw new Error(`${dir} is not a directory`);
   return {

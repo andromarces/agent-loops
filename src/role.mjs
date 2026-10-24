@@ -723,6 +723,9 @@ function dispatchPayload(roleName, result) {
       error: result.error,
       ...(result.transient ? { transient: result.transient } : {}),
       ...(result.sharedGitChanged ? { sharedGitChanged: result.sharedGitChanged } : {}),
+      ...(result.inheritedTmpdirEntries
+        ? { inheritedTmpdirEntries: result.inheritedTmpdirEntries }
+        : {}),
       ...(result.testRun ? { testRun: result.testRun } : {}),
     };
   }
@@ -739,6 +742,11 @@ function dispatchPayload(roleName, result) {
   // Names of the shared Git items the worker turn changed outside the work tree (issue #984).
   if (result.sharedGitChanged) {
     payload.sharedGitChanged = result.sharedGitChanged;
+  }
+  // Names that appeared in the inherited temporary directory during a reviewer turn. Advisory: the
+  // runtime cannot attribute them to the turn (issue #1024).
+  if (result.inheritedTmpdirEntries) {
+    payload.inheritedTmpdirEntries = result.inheritedTmpdirEntries;
   }
   if (roleName === "reviewer") {
     payload.verdict = parseVerdict(result.response);

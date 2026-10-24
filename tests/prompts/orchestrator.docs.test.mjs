@@ -94,6 +94,12 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /main work tree/i, /linked work tree/i),
   (text) => expectRule(text, /Report it/i, /finish summary/i),
   (text) => expectRule(text, /failed worker turn/i, /field too/i),
+  // Issue #1024: a reviewer envelope names the entries that appeared in the inherited temporary
+  // directory, as advisory evidence that the runtime cannot attribute, and the parent reports it.
+  (text) =>
+    expectRule(text, /inheritedTmpdirEntries/, /reviewer/i, /inherited temporary directory/i),
+  (text) => expectRule(text, /cannot attribute/i, /not delete/i),
+  (text) => expectRule(text, /Report it/i, /open/i),
   // Issue #1002: after a push to a branch with an open PR, the worker updates the PR body in place
   // and adds no revision log.
   (text) => expectRule(text, /no revision log/i, /body/i, /comment/i),

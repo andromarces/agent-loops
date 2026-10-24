@@ -604,6 +604,6 @@ test("reviewer prompt without a scratch folder names none", () => {
 test("reviewer prompt bars a literal path to the system temporary directory", () => {
   const prompt = reviewerPrompt("check the fix");
   expect(prompt).toContain(
-    "Create a temporary path outside the repository only through the TMPDIR, TEMP, or TMP environment variable, never through a literal path to the system temporary directory, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it.",
+    "When a temporary path outside the repository is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
   );
 });

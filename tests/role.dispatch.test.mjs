@@ -2046,3 +2046,39 @@ test("reviewer dispatch carries transient in the error envelope only for a flagg
   expect(second.payload.status).toBe("error");
   expect(second.payload).not.toHaveProperty("transient");
 });
+
+// Usefulness: verifies requirement "a reviewer turn that leaves a directory in the inherited
+// temporary directory reports its name in the envelope and the state file, and a turn that leaves
+// none carries no field" (issue #1024). The child-turn tests cover the read; only a dispatch
+// covers the envelope and the state file.
+test("reviewer dispatch reports a directory left in the inherited temporary directory", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const temp = await mkdtemp(join(tmpdir(), "role-dispatch-inherited-"));
+  try {
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
+    const leaving = recordingAdapter([
+      async () => {
+        await mkdir(join(temp, "m54-3db54ca8"));
+        return WORKER_REPLY;
+      },
+    ]);
+    const left = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: leaving },
+      stdin: stdinPrompt,
+    });
+    expect(left.payload.inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
+    expect((await readRepoState(repo)).lastResult.inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
+
+    const clean = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+      stdin: stdinPrompt,
+    });
+    expect(clean.payload).not.toHaveProperty("inheritedTmpdirEntries");
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(temp);
+  }
+});
