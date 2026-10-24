@@ -1540,3 +1540,20 @@ test.each([
   await expect(waitOn(gh, all)).rejects.toThrow(/Link header names a host other than/);
   expect(requests).toEqual([1]);
 });
+
+// Usefulness: verifies a retryable 5xx reply that carries a `Link` header for another host is
+// terminal (#1033): the wait ends in an error at the first read and never retries it to a later
+// pass, in both modes, so a reply that names another host cannot be waited out.
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode never retries a 503 whose Link names another host", async (_mode, all) => {
+  const foreign = {
+    status: 1,
+    stdout: 'HTTP/2.0 503 Status\r\nLink: <https://other.example/x?page=2>; rel="next"\r\n\r\n{}',
+    stderr: "gh: HTTP 503",
+  };
+  const { gh, commitReads } = failingCommitGh((n) => n === 1 && foreign, { all });
+  await expect(waitOn(gh, all)).rejects.toThrow(/Link header names a host other than/);
+  expect(commitReads).toHaveLength(1);
+});

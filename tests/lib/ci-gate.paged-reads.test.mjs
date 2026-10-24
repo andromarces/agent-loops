@@ -149,6 +149,46 @@ describe("gate reads and the ruleset read page by page number", () => {
     await expect(commitStatuses(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
   });
 
+  // Verifies a retryable 5xx reply is judged by its Link header first: a target on another host is a
+  // terminal error that is never marked transient, and the same reply with a same-host target stays
+  // retryable.
+  const failure503 = (headers) => ({
+    status: 1,
+    stdout: `HTTP/2.0 503 Service Unavailable
+${headers}
+{}`,
+    stderr: "gh: HTTP 503",
+  });
+
+  it.each([
+    ["check-run", RUNS, (gh) => checkRuns(gh, SLUG, SHA, ".", true)],
+    ["commit-status", STATUS, (gh) => commitStatuses(gh, SLUG, SHA, ".", true)],
+  ])(
+    "ends the %s read in a terminal error for a 503 with a Link on another host",
+    async (_name, endpoint, read) => {
+      const { gh, calls } = serve({ [page(endpoint, 1)]: failure503(LINK) });
+      const err = await read(gh).catch((error) => error);
+      assert.match(err.message, /Link/);
+      assert.ok(!err.transient, "a foreign Link is never retryable");
+      expectBoundedCalls(calls, endpoint, 1);
+    },
+  );
+
+  it("keeps a 503 with a same-host Link retryable", async () => {
+    const { gh } = serve({ [page(RUNS, 1)]: failure503(SAME_HOST_LINK) });
+    const err = await checkRuns(gh, SLUG, SHA, ".", true).catch((error) => error);
+    assert.equal(err.transient, true);
+  });
+
+  it("ends the ruleset read in an error for a 503 with a Link on another host", async () => {
+    const gh = source([], { [page(RULES, 1)]: failure503(LINK) });
+    await expect(
+      requiredContexts(gh, SLUG, "main", 42, ".").catch((err) => {
+        throw failureOf(err);
+      }),
+    ).rejects.toThrow(/Link/);
+  });
+
   // Verifies the host comes from `GH_HOST`, so an enterprise host is not refused for naming itself.
   it("accepts a Link header that names the GH_HOST host", async () => {
     process.env.GH_HOST = "ghe.example.com";

@@ -220,7 +220,8 @@ function isEmptyOrJson(body) {
  * read ends only when the collected count equals it, and a count that changes between pages, a
  * collected count above it, and a short or empty page with the count unmet are errors. For a reply
  * with no `total_count`, the first page of fewer than `PAGE_SIZE` items ends the read. The page cap is
- * an error. A `Link` header that names a host other than the request host is an error too: the read
+ * an error. A `Link` header that names a host other than the request host is an error too, on a failed reply
+ * with a retryable status as on a successful one, and never `transient`: the read
  * never requests that target, and it ends rather than return pages that a reply could have steered.
  * A refusal about the shape of a reply carries `unreadable`, so the ruleset source reads as unknown
  * and the gate reads throw; a foreign `Link` target is no `unreadable` refusal, so every read throws
@@ -243,6 +244,16 @@ async function readPages(read, endpoint, cwd, field) {
       cwd,
     );
     const reply = parseReply(result.stdout);
+    // The `Link` header of every reply is judged before its status, so a failure that is retryable
+    // by its status is still terminal when a target names another host.
+    const foreign = reply === null ? null : foreignLink(reply.headers);
+    if (foreign !== null) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: `a Link header names a host other than the request host: ${foreign}`,
+      };
+    }
     if (result.status !== 0) {
       const transient =
         reply !== null && RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
@@ -250,14 +261,6 @@ async function readPages(read, endpoint, cwd, field) {
     }
     if (reply === null || reply.status < 200 || reply.status > 299) {
       return refusal("the reply carries no 2xx HTTP status block");
-    }
-    const foreign = foreignLink(reply.headers);
-    if (foreign !== null) {
-      return {
-        status: 1,
-        stdout: "",
-        stderr: `a Link header names a host other than the request host: ${foreign}`,
-      };
     }
     let json;
     try {
