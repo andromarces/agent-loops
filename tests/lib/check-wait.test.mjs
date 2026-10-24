@@ -1927,6 +1927,13 @@ test.each([
   ["a later unclosed quote", `${PR_PATHS("src/**")}name2: 'x\n`, {}],
   ["a YAML alias elsewhere", `x: &a [1]\n${PR_PATHS("src/**")}y: *a\n`, {}],
   ["a YAML tag", `${PR_PATHS("src/**")}z: !!python/object x\n`, {}],
+  ["a !!str tag on a pattern", FILTERED("  pull_request:\n    paths: [!!str src/**]"), {}],
+  ["a !!map tag on an event", FILTERED("  pull_request: !!map\n    paths: [src/**]"), {}],
+  ["a !!seq tag on the paths list", FILTERED("  pull_request:\n    paths: !!seq [src/**]"), {}],
+  ["a tag on the on map", `name: ci\non: !!map\n  pull_request:\n    paths: [src/**]\n`, {}],
+  ["a tag far from the on block", `${PR_PATHS("src/**")}extra:\n  t: !!map\n    a: b\n`, {}],
+  ["an unused anchor", FILTERED("  pull_request: &filter\n    paths: [src/**]"), {}],
+  ["an anchor on a pattern", FILTERED("  pull_request:\n    paths: [&p src/**]"), {}],
   ["a non-string pattern", FILTERED("  pull_request:\n    paths:\n      - 12"), {}],
   [
     "a PR file name that ** matches across a newline",

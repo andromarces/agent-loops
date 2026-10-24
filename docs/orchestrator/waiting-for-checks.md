@@ -244,7 +244,7 @@ When all three conditions hold, the wait returns at once with `noCheckSource: tr
   matches a pattern under the GitHub filter rules, because that workflow cannot run
   for the PR (#1065). Any other event, `push` included, `paths-ignore`, a pattern
   that the command cannot settle (a `!` negation, `?`, `+`, `[...]`), a syntax
-  error anywhere in the file, a second document, a duplicate key, an alias, a tag,
+  error anywhere in the file, a second document, a duplicate key, a tag on any node (`!!str` and `!!map` included), an anchor, an alias,
   and a PR file name with a control character, a line separator, or a lone surrogate
   keep the wait. The command validates YAML syntax, not the schema of a workflow, so
   a file that is well-formed YAML but that GitHub rejects for another reason is

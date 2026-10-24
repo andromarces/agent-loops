@@ -1,4 +1,4 @@
-import { parseAllDocuments } from "yaml";
+import { isAlias, parseAllDocuments, visit } from "yaml";
 import { isJsonObject } from "./json.mjs";
 
 const PR_EVENTS = new Set(["pull_request", "pull_request_target"]);
@@ -45,13 +45,30 @@ function patternRegExp(pattern) {
   return new RegExp(`^${source}${pattern.includes("*") ? "" : "(?:/.*)?"}$`, "is");
 }
 
-/** The one document of `text` as plain data, or null when the text is not exactly one well-formed document. */
+/** Whether any node of `document` carries a tag or an anchor, whatever its value, or is an alias. */
+function hasNodeProperty(document) {
+  let found = false;
+  visit(document, (_key, node) => {
+    if (node && (node.tag !== undefined || node.anchor !== undefined || isAlias(node))) {
+      found = true;
+      return visit.BREAK;
+    }
+    return undefined;
+  });
+  return found;
+}
+
+/**
+ * The one document of `text` as plain data, or null when the text is not exactly one well-formed
+ * document, or when any node carries a tag, an anchor, or an alias.
+ */
 function onlyDocument(text) {
   const documents = parseAllDocuments(text, { uniqueKeys: true, maxAliasCount: 0 });
   if (
     documents.length !== 1 ||
     documents[0].errors.length > 0 ||
-    documents[0].warnings.length > 0
+    documents[0].warnings.length > 0 ||
+    hasNodeProperty(documents[0])
   ) {
     return null;
   }
@@ -76,7 +93,7 @@ function pathsOf(event) {
  * well-formed YAML document whose `on` key names only `pull_request` and `pull_request_target`, each
  * with a `paths` list of settled patterns, and no file matches any pattern. False means a run may
  * start or the text is not settled, so the caller keeps the wait. A text with a syntax error anywhere,
- * a second document, a duplicate key, an alias, or a warning is not settled, and neither is a file name
+ * a second document, a duplicate key, a tag, an anchor, an alias, or a warning is not settled, and neither is a file name
  * with a control character, a line separator, or a lone surrogate.
  */
 export function prEventsFilteredOut(text, files) {
