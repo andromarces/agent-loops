@@ -5,7 +5,9 @@
 An interactive parent session runs the same role rules through the subcommand,
 driven by `docs/orchestrator-instructions.md`. One harness-neutral instruction
 file defines the role; each supported harness gets a thin entry point that
-names it rather than copying it. Role activation never goes into `AGENTS.md`
+names it rather than copying it. The file is a short core that names the
+reference sections under `docs/orchestrator/`, and the parent reads a section
+when the core says its condition holds. Role activation never goes into `AGENTS.md`
 or `CLAUDE.md`, because dispatched children read those files; activation
 happens only through explicit invocation.
 

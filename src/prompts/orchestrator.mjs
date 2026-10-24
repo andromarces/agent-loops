@@ -6,8 +6,8 @@ import { agentHas } from "../lib/agent-kinds.mjs";
 import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
 
-// Shared rule source: docs/orchestrator-instructions.md states the role rules
-// for interactive parents (#56); this headless prompt states the same rules in
+// Shared rule source: docs/orchestrator-instructions.md and its reference sections in
+// docs/orchestrator/ state the role rules for interactive parents (#56); this headless prompt states the same rules in
 // JSON-action form, including the completion rule. Keep the two consistent when
 // either changes.
 // The CLI capabilities `networkedReadOnly` and `waitsForChecks` live in `src/lib/agent-kinds.mjs`.

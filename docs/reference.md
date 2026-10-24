@@ -51,6 +51,7 @@ version. Each section keeps the anchor that it had in the README.
 Other documents:
 
 - [Orchestrator instructions](orchestrator-instructions.md): the role rules for an
-  interactive parent session.
+  interactive parent session. The core names the reference sections under
+  `orchestrator/` and when to read each.
 - [Parent guard details](parent-guard.md): every guard target and matcher.
 - [Architecture Decision Records](https://github.com/andromarces/agent-loops/blob/main/adr/README.md).
