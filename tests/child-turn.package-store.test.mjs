@@ -8,6 +8,7 @@ import {
   failedPackageStoreEntries,
   snapshotPackageStore,
 } from "../src/lib/package-store-entries.mjs";
+import { failedInheritedTmpdirEntries } from "../src/lib/inherited-tmpdir-entries.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
@@ -172,6 +173,39 @@ test("a reviewer turn that fails after a cancel ends as a cancel", async () => {
     signal: controller.signal,
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
+  // The reads ran before the cancel check, so the cancel error carries what they found, as the
+  // fatal path does, because the dispatcher builds its envelope and `lastResult` from the error.
+  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+});
+
+// Usefulness: verifies the sibling evidence on the same path (issue #1024): the entries that the
+// turn left in the inherited temporary directory ride on the cancel error as well.
+test("a reviewer turn that fails after a cancel carries the temporary directory entries", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "package-store-inherited-"));
+  for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
+  try {
+    const controller = new AbortController();
+    const error = await runChild({
+      agents: {
+        fake: scripted([
+          async () => {
+            await mkdir(join(temp, "m54-3db54ca8"));
+            controller.abort();
+            throw new Error("adapter failed");
+          },
+        ]),
+      },
+      role: { kind: "fake", sessionId: null },
+      roleName: "reviewer",
+      prompt: "go",
+      cwd: repo,
+      signal: controller.signal,
+    }).catch((err) => err);
+    expect(error).toMatchObject({ isCanceled: true });
+    expect(failedInheritedTmpdirEntries(error)).toEqual(["m54-3db54ca8"]);
+  } finally {
+    await removePath(temp);
+  }
 });
 
 // Usefulness: verifies the narrowed contract (issue #1045): the field names changes in the store

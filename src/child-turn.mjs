@@ -474,8 +474,18 @@ export async function runChild(options) {
     const sharedGitChanged = await readSharedGitChanged();
     const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
     const packageStoreEntries = await readPackageStoreEntries();
-    // A cancel that landed during these reads ends the turn as a cancel, not as a failed turn.
-    throwIfCanceled(signal, roleName);
+    // A cancel that landed during these reads ends the turn as a cancel, not as a failed turn. This
+    // throw leaves the catch block, so it carries the evidence just read, as the fatal path does.
+    try {
+      throwIfCanceled(signal, roleName);
+    } catch (canceled) {
+      if (inheritedTmpdirEntries.length > 0) {
+        carryInheritedTmpdirEntries(canceled, inheritedTmpdirEntries);
+      }
+      if (packageStoreEntries.length > 0) carryPackageStoreEntries(canceled, packageStoreEntries);
+      if (testRun) carryTestRun(canceled, testRun);
+      throw canceled;
+    }
     // An adapter marks a failure the provider is expected to clear (issue #1012).
     const transient = readProp(err, "transient");
     return {
