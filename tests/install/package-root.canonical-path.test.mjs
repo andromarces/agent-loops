@@ -159,6 +159,22 @@ test("the unreadable-path refusal names the folder that failed", async () => {
   }
 });
 
+// Usefulness: verifies #1088 review — when the stat of a child folder fails, the refusal names that child and not its readable parent, so the user fixes the folder that is denied; the 8.3 expansion that reads each segment runs on Windows only.
+test.skipIf(process.platform !== "win32")(
+  "the refusal names a child folder whose stat fails, not its parent",
+  async () => {
+    const base = await scratch();
+    const denied = join(base, "denied");
+    const stable = join(denied, "pkg");
+    await mkdir(stable, { recursive: true });
+    realpathMock.lstatFail = (path) => (basename(path) === "denied" ? "EPERM" : null);
+    const refusal = installRefusal(stable);
+    expect(refusal).toMatch(/folder .*[\\/]denied cannot be read/);
+    expect(refusal).not.toBe(EPHEMERAL_ROOT_MESSAGE);
+    expect(isEphemeralPackageRoot(stable, process.platform, { bunx: [], yarn: [] })).toBe(true);
+  },
+);
+
 // Usefulness: verifies #962 review — a temporary root that cannot be canonicalized refuses every package root, since the match cannot rule the root out.
 test("a temporary root that cannot be canonicalized refuses every package root", async () => {
   const base = await scratch();

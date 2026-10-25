@@ -151,19 +151,28 @@ function expandShortSegments(path, related) {
 
 const MISSING = Symbol("missing");
 
-/** The long name of an existing segment, `MISSING` for a missing one, or `null` when unresolved. */
+/**
+ * The long name of an existing segment, `MISSING` for a missing one, or `null` when unresolved. An
+ * unreadable result records the path whose read failed: the segment, the listing of `parent`, or a
+ * sibling that the file id comparison stats. A listing with no matching entry records `parent`.
+ */
 function longName(parent, segment) {
+  let reading = join(parent, segment);
   try {
-    const id = lstatSync(join(parent, segment), { bigint: true }).ino;
+    const id = lstatSync(reading, { bigint: true }).ino;
+    reading = parent;
     const names = readdirSync(parent);
     const lower = segment.toLowerCase();
     return (
       names.find((name) => name.toLowerCase() === lower) ??
-      names.find((name) => lstatSync(join(parent, name), { bigint: true }).ino === id) ??
+      names.find((name) => {
+        reading = join(parent, name);
+        return lstatSync(reading, { bigint: true }).ino === id;
+      }) ??
       failAt(parent)
     );
   } catch (error) {
-    return error?.code === "ENOENT" || error?.code === "ENOTDIR" ? MISSING : failAt(parent);
+    return error?.code === "ENOENT" || error?.code === "ENOTDIR" ? MISSING : failAt(reading);
   }
 }
 
