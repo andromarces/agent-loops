@@ -140,7 +140,8 @@ function closingBlock(response) {
  * and the items join with "; " (issues #846, #879, and #915). The reviewer `Verdict:` line is no
  * report label, so a list after it stays dropped. One level of `- ` sub-items, indented to the
  * text column of the item above (two spaces, or three after `1. `), joins into that item with
- * ", " (issues #870 and #915). A prose line with a `- ` list directly under it also folds into the label above
+ * ", " (issues #870 and #915). An indented non-list line directly after an item or its sub-items
+ * folds into that item with a space, unless it reads as a label line: after NFKC normalization, leading non-letter, non-digit characters and one optional number are skipped, then a label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace follow (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
  * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
  * Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
@@ -212,6 +213,23 @@ const HEADING_ITEM = /^- (?=\S)/;
 // stay lists that hasDroppedList rejects.
 const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}- (?=\\S)`);
 
+// A line that reads as a report label or `Verdict` line under any markup or separator: after NFKC
+// normalization it skips every leading character that is no letter or digit (quote, heading, list,
+// and emphasis marks, in any count) and one optional number, then holds a label name or `Verdict`,
+// any case, optional whitespace, and a character that is no letter, digit, or whitespace. Every
+// colon variant (`:`, `：`, `∶`) and every other separator therefore matches, and the check names no
+// markup or separator shape. A label word that a letter, digit, or whitespace-then-letter follows
+// (`Notes about x`, `Why this matters:`) is prose and does not match.
+const LABEL_WORD_THEN_SEPARATOR = new RegExp(
+  `^[^\\p{L}\\p{N}]*(?:\\p{N}+[^\\p{L}\\p{N}]*)?(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})\\s*[^\\p{L}\\p{N}\\s]`,
+  "iu",
+);
+
+/** True when the line reads as a report label or `Verdict` line under any markup or separator. */
+function readsAsLabelLine(line) {
+  return LABEL_WORD_THEN_SEPARATOR.test(line.normalize("NFKC"));
+}
+
 /** True when the line is a list item. A thematic break and an emphasis run are not lists. */
 function isListLine(line) {
   return LIST_LINE.test(line) && !THEMATIC_BREAK.test(line) && !EMPHASIS_LINE.test(line);
@@ -227,7 +245,26 @@ function isFoldableSubitem(line, marker) {
   return foldableSubitem(marker).test(line) && isListLine(line);
 }
 
-/** The items that match `pattern` and directly follow line `start`, each with its sub-items, and the last line used. */
+/**
+ * True when the line is an indented prose line that continues the item above (issue #1082): ASCII
+ * spaces or tabs, then text that is neither a list, a thematic break, nor a report label or
+ * `Verdict` line. An indented list line or label line is no continuation and keeps its earlier
+ * outcome: hasDroppedList refuses the list, and the label line never folds into an item.
+ */
+function isContinuationLine(line) {
+  return (
+    /^[ \t]+\S/.test(line) &&
+    !isListLine(line) &&
+    !THEMATIC_BREAK.test(line) &&
+    !readsAsLabelLine(line)
+  );
+}
+
+/**
+ * The items that match `pattern` and directly follow line `start`, and the last line used. Each
+ * item absorbs its sub-items, joined with ", ", then the continuation lines after them, joined with
+ * a space like a Markdown lazy continuation.
+ */
 function takeItems(lines, start, pattern) {
   let i = start;
   const items = [];
@@ -237,7 +274,11 @@ function takeItems(lines, start, pattern) {
     while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1], marker)) {
       parts.push(lines[++i].trim().slice(2).trim());
     }
-    items.push(parts.join(", "));
+    const continuation = [];
+    while (i + 1 < lines.length && isContinuationLine(lines[i + 1])) {
+      continuation.push(lines[++i].trim());
+    }
+    items.push([parts.join(", "), ...continuation].join(" "));
   }
   return { items, end: i };
 }

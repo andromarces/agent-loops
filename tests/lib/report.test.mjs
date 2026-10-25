@@ -955,3 +955,78 @@ test("parseReportBlock returns null for a decorated label item outside a list ru
   expect(parseReportBlock(`${REPORT}\nNotes: x\n- **Checks:** ran\n**Deferred:** y`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\nVerdict: accept\n- **Checks:** ran`)).toBeNull();
 });
+
+// Usefulness: verifies an indented non-list line directly after an item or its sub-items folds into
+// that item with a space, so the issue #1082 shapes neither blank the block nor drop the text.
+test("parseReportBlock folds an indented continuation line into its list item", () => {
+  const sub = "- b: two:\n  - x\n  - y\n  More prose under b.";
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- a: one\n${sub}\n- c: three`)).toMatchObject({
+    notes: "a: one; b: two:, x, y More prose under b.; c: three",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- a: one\n${sub}`)).toMatchObject({
+    notes: "a: one; b: two:, x, y More prose under b.",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n  more a\n  and more\n- b`)).toMatchObject({
+    notes: "a more a and more; b",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n1. a\n   - b\n   tail\n2. c`)).toMatchObject({
+    notes: "a, b tail; c",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n      deep tail`)).toMatchObject({
+    notes: "a deep tail",
+  });
+});
+
+// Usefulness: verifies an indented `Verdict:` or report label line never folds into an item in any
+// bold, italic, code, quote, spaced, or cased form, so a reviewer reject cannot hide in a
+// continuation position and turn into an accept (issue #1082).
+test("parseReportBlock refuses an indented label line between list items", () => {
+  for (const line of [
+    "  Verdict: reject",
+    "  **Verdict:** reject",
+    "  **Verdict**: reject",
+    "  *Verdict:* reject",
+    "  `Verdict:` reject",
+    "  > Verdict: reject",
+    "  ### Verdict: reject",
+    "  VERDICT : reject",
+    "  Notes: x",
+    "  **Deferred:** x",
+    "  Verdict***: reject",
+    "  Verdict*****: reject",
+    "  ~~Verdict~~: reject",
+    "  >>> **Verdict:** reject",
+    "  1 Verdict: reject",
+    "  1. **Verdict:** reject",
+    "  Verdict： reject",
+    "  **Verdict**： reject",
+    "  Ｖerdict: reject",
+    "  Verdict∶ reject",
+    "  Verdict; reject",
+  ]) {
+    const response = `${REPORT}
+Checks:
+- ran
+${line}
+- next
+Verdict: accept`;
+    expect(parseReportBlock(response), line).toBeNull();
+    expect(isAcceptedReview(response), line).toBe(false);
+  }
+});
+
+// Usefulness: guards the broadened label matcher against over-matching: ordinary indented prose that
+// only mentions a label word still folds. No other test pins this (issue #1082).
+test("parseReportBlock folds an indented prose line that is no label line", () => {
+  for (const line of ["Notes about x", "Why this matters:", "see Verdict: reject"]) {
+    expect(
+      parseReportBlock(`${REPORT}
+Notes:
+- a
+  ${line}
+- b`),
+    ).toMatchObject({
+      notes: `a ${line}; b`,
+    });
+  }
+});
