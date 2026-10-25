@@ -184,7 +184,8 @@ test.skipIf(process.platform !== "win32")(
     await mkdir(stable, { recursive: true });
     await writeFile(join(base, "aaa-file.txt"), "");
     // The listing of `base` omits `stablepkg`, so the expansion compares file ids of the siblings.
-    realpathMock.readdirList = (path) => (path === base ? ["aaa-file.txt"] : null);
+    realpathMock.readdirList = (path) =>
+      basename(path) === basename(base) ? ["aaa-file.txt"] : null;
     realpathMock.lstatFail = (path) => (basename(path) === "aaa-file.txt" ? "EPERM" : null);
     const refusal = installRefusal(stable);
     expect(refusal).toMatch(/^Refusing to install/);
