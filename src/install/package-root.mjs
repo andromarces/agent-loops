@@ -65,14 +65,48 @@ function canonicalPath(path, platform = process.platform) {
 }
 
 /**
+ * `path` with each 8.3 short segment replaced by its long name, without resolving a link, so a
+ * junction keeps its own spelling (#1068). The long name is the entry of the parent directory
+ * with the same file id. A segment that does not exist or cannot be listed stays as it is.
+ */
+function expandShortSegments(path) {
+  const { root } = win32.parse(path);
+  let expanded = root;
+  for (const segment of splitPath(path.slice(root.length))) {
+    expanded = win32.join(expanded, longName(expanded, segment));
+  }
+  return expanded;
+}
+
+function longName(parent, segment) {
+  if (!/~\d/.test(segment)) return segment;
+  try {
+    const id = lstatSync(join(parent, segment), { bigint: true }).ino;
+    return (
+      readdirSync(parent).find(
+        (name) => name !== segment && lstatSync(join(parent, name), { bigint: true }).ino === id,
+      ) ?? segment
+    );
+  } catch {
+    return segment;
+  }
+}
+
+/**
  * The spellings to match: the normalized path, which is what the installer renders into entry
  * points, and its canonical path. A package junction inside a runner layout matches by its own
- * spelling even when its target is stable. `null` when the canonical path cannot be resolved.
+ * spelling even when its target is stable, and on Windows an 8.3 segment of that spelling expands
+ * to its long name. `null` when the canonical path cannot be resolved.
  */
 function spellings(path, platform) {
   const canonical = canonicalPath(path, platform);
   if (canonical === null) return null;
-  return [...new Set([(platform === "win32" ? win32 : posix).normalize(path), canonical])];
+  const normalized = (platform === "win32" ? win32 : posix).normalize(path);
+  const own =
+    platform === "win32" && platform === process.platform
+      ? expandShortSegments(normalized)
+      : normalized;
+  return [...new Set([normalized, own, canonical])];
 }
 
 /**

@@ -126,3 +126,27 @@ test.skipIf(process.platform !== "win32")(
     expect(isEphemeralPackageRoot(shortStable, "win32", canonicalRoots)).toBe(false);
   },
 );
+
+// Usefulness: verifies #1068 review — a package junction inside a runner layout refuses when it or its temporary root is spelled 8.3, as it does when spelled canonically, even when its target is stable.
+test.skipIf(process.platform !== "win32")(
+  "an 8.3 spelling of a junction package root inside a temporary runner layout is refused",
+  async () => {
+    const base = await scratch();
+    const tempRoot = join(base, "shortnamedtemproot");
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+    for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+      await mkdir(join(tempRoot, ...layout), { recursive: true });
+      const junction = join(tempRoot, ...layout, "packagejunctionlink");
+      await symlink(stable, junction, LINK_TYPE);
+      const shortJunction = shortSpelling(junction);
+      if (shortJunction === null) return;
+      expect(isEphemeralPackageRoot(junction, "win32", roots), junction).toBe(true);
+      expect(isEphemeralPackageRoot(shortJunction, "win32", roots), shortJunction).toBe(true);
+      const shortRoots = { bunx: [shortSpelling(tempRoot)], yarn: [shortSpelling(tempRoot)] };
+      expect(isEphemeralPackageRoot(junction, "win32", shortRoots), "short temp").toBe(true);
+    }
+    expect(isEphemeralPackageRoot(stable, "win32", roots)).toBe(false);
+  },
+);
