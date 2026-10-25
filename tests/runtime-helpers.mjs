@@ -186,6 +186,42 @@ export function prGateGh(
 }
 
 /**
+ * The `gh` state of a private repository on the GitHub Free plan (#301): the ruleset and classic
+ * protection reads answer the exact plan 403, so the gate cannot read any required-check source.
+ * `calls` receives each call as joined text.
+ */
+export function freePlanGh(headRefOid, calls = []) {
+  const read = prGateGh(headRefOid, calls);
+  const refusal = {
+    status: 1,
+    stdout: "",
+    stderr:
+      "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)",
+  };
+  return async (args, cwd, options) => {
+    if (
+      equalsArgs(args, pagedApiArgs("repos/owner/repo/rules/branches/main")) ||
+      equalsArgs(args, apiArgs("repos/owner/repo/branches/main/protection"))
+    ) {
+      calls.push(args.join(" "));
+      return refusal;
+    }
+    return read(args, cwd, options);
+  };
+}
+
+/**
+ * The `gh` state of a base branch whose required-check sources cannot be read for a reason other
+ * than the plan, a network failure: every call fails with a transport error.
+ */
+export function unreachableGh(calls = []) {
+  return async (args) => {
+    calls.push(args.join(" "));
+    return { status: 1, stdout: "", stderr: "gh: dial tcp: lookup api.github.com: no such host" };
+  };
+}
+
+/**
  * The `gh` state of a ruleset-only base branch with no required check: the ruleset read returns
  * well-formed rules with no required-status-check rule, classic protection answers the exact 404,
  * and the required-names read carries no list. `calls` receives those two reads as joined text.

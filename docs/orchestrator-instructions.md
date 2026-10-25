@@ -623,6 +623,19 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   whose required checks this credential cannot read still refuses every finish,
   because the gate cannot establish the absence, and the refusal names the source
   it could not read.
+- Omit `--pr` when the repository rulesets of the PR base branch are unreadable to
+  the gate, for example a private repository on the GitHub Free plan (#301), because
+  a declared run there refuses every finish and can end only through `abort`.
+  Init with `--pr`, `role declare-pr`, and the headless start read the required-check
+  sources of the PR base once. They refuse when the rulesets read settled nothing,
+  before any state file is written or child spawns. A read that fails for another
+  reason, such as a transport failure, warns and does not refuse. A `--continue-from`
+  run that restored its PR makes no start read, because the earlier run's start made
+  it, and its prompt states none. After a refusal, omit
+  `--pr` and finish with the `"unresolvedCompare": true` marker after you compare
+  the PR head with `reviewed.head` yourself. The headless `--require-ci` with no
+  `--pr` declares nothing, so the start does not read it and its gate refuses at
+  finish.
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the

@@ -18,7 +18,13 @@ import {
   roleFlags,
   TASK_SOURCE_CONFLICT,
 } from "./lib/args.mjs";
-import { checkCi, missingGateRefusal, unresolvedCompareReason } from "./lib/ci-gate.mjs";
+import {
+  checkCi,
+  missingGateRefusal,
+  unreadableGateReason,
+  unreadableGateRefusal,
+  unresolvedCompareReason,
+} from "./lib/ci-gate.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "./lib/command-line.mjs";
 import { DEFAULT_WAIT_SECONDS, isFullSha, waitChecks } from "./lib/check-wait.mjs";
 import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
@@ -283,6 +289,14 @@ function initialState(args) {
   };
 }
 
+/** Refuses a PR declaration whose required-check sources the finish gate cannot read (#1092). */
+async function refuseUnreadableGate(label, { pr, cwd, gh }) {
+  const reason = await unreadableGateReason({ pr, cwd, gh });
+  if (reason) {
+    throw new RoleError(unreadableGateRefusal(label, reason));
+  }
+}
+
 /** Role state, or null when the role was not configured at init. */
 function roleState(source, roleName) {
   const kind = source[roleName];
@@ -408,6 +422,9 @@ async function dispatchLocked(
       throw new RoleError(
         `Existing run is ${existing.lifecycle}; abort it before starting a new run.`,
       );
+    }
+    if (args.pr !== null) {
+      await refuseUnreadableGate(`--pr ${args.pr}`, { pr: args.pr, cwd: args.cwd, gh });
     }
     state = initialState(args);
   } else {
@@ -1135,7 +1152,7 @@ async function extend(args) {
  * one that passed `--pr` at init: a reviewer turn supplies the required-check status, and a finish
  * must end through `--require-ci <pr>` (#916). `review-only` refuses it, as it refuses `--pr`.
  */
-async function declarePr(args) {
+async function declarePr(args, { gh } = {}) {
   rejectMisplacedFlags(args, "declare-pr");
   if (args.pr === null) {
     throw new RoleError("declare-pr requires --pr <pr>.");
@@ -1154,6 +1171,7 @@ async function declarePr(args) {
           `declare-pr is refused: the run already declares PR ${state.pr}, and the declaration cannot change.`,
         );
       }
+      await refuseUnreadableGate("declare-pr", { pr: args.pr, cwd: args.cwd, gh });
       state.pr = args.pr;
       await writeState(paths.stateFile, state);
       logInfo(`run declared PR ${state.pr} (${state.stepsUsed} steps used)`);
@@ -1297,7 +1315,7 @@ export async function executeRoleCommand(args, deps = {}) {
       case "extend":
         return await extend(args);
       case "declare-pr":
-        return await declarePr(args);
+        return await declarePr(args, deps);
       case "wait-checks":
         return await waitChecksOperation(args, deps);
       default:

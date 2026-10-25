@@ -290,9 +290,11 @@ Role flags:
                                 sources each state that it holds none does not
                                 refuse it; the gate passes on the PR head, the
                                 clean reviewed tree, and the merge state, and
-                                records that no required check exists. A private
-                                GitHub Free-plan repository still refuses a
-                                declared run, so it must omit --pr. Later
+                                records that no required check exists. A repository
+                                whose rulesets are unreadable to the gate, such as a
+                                private Free-plan repository, refuses a declared
+                                run, so init and declare-pr refuse --pr there before
+                                any state is written: omit --pr. Later
                                 calls read it from the state file and reject any
                                 attempt to change it, except declare-pr on a run
                                 that has none. declare-pr and wait-checks also take it.
@@ -418,7 +420,11 @@ Options:
                                 worker turn opens a PR. The runtime then declares that PR
                                 once (ADR 0043). The run then ends through the --require-ci
                                 gate for that PR, which the runtime applies (ADR 0045). A
-                                --mode review-only run refuses it outright.
+                                --mode review-only run refuses it outright. A run whose
+                                repository rulesets are unreadable to the gate, such as
+                                a private Free-plan repository, would refuse every finish,
+                                so the start refuses --pr there before any turn: omit it. A
+                                continuation that restored its PR reads nothing at start.
   --require-ci <pr>             Refuse finish until the runtime resolves the PR head from
                                 this pull request: the PR head must match the reviewed commit,
                                 the reviewed tree must be clean, the PR must not be behind its
@@ -705,7 +711,7 @@ function createEventHandler({ recordEvents, events, onInvocation, onTestRun }) {
 export async function main(
   argv = process.argv.slice(2),
   agents = defaultAgents,
-  { stdin = readStdinText } = {},
+  { stdin = readStdinText, gh } = {},
 ) {
   if (argv[0] === "--version" || argv[0] === "-V") {
     // Read on demand: install fixtures copy src without package.json.
@@ -870,6 +876,7 @@ export async function main(
         continued: Boolean(options.continueFrom),
         earlierGate,
         earlierPr,
+        gh,
         copyLocalFiles: options.copyLocalFiles,
         // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
         // parent crash. known-limit: a failed write only warns, as at exit, and runs that share

@@ -354,7 +354,7 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
 // A gate-only run gets the same clauses for the gated PR (#320, #350).
 test("the headless prompt adds the declaration rule and nothing else", () => {
   const block =
-    "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.";
+    "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed. At start, the runtime read the required-check sources of PR #42 once and refused a run whose repository rulesets it could not read, for example a private Free-plan repository, because the gate would refuse every finish of such a run; the recovery is to omit --pr and finish with unresolvedCompare. A read that failed for another reason, such as a transport failure, warned and let the run start, so the gate can still refuse at finish.";
   const supplied =
     " This run names PR #42, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. That status is advisory evidence, in place of the reviewer reading the checks: the reviewer reports it, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The --require-ci finish gate re-reads GitHub and enforces the condition. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.";
   const advisory = " The advisory status read above reports to the reviewer and never enforces.";
@@ -386,6 +386,17 @@ test("the headless prompt adds the declaration rule and nothing else", () => {
   expect(withPrAndGate).toContain(
     `${block}\n- This run enforces the PR gate (--require-ci 42): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit`,
   );
+});
+
+// Usefulness: verifies the start-read sentence of #1092 appears only for a run whose start made the
+// read. A continuation that restored its PR skips the read, so its prompt must not claim one; a
+// continuation that declares a new PR makes the read and says so.
+test("the start-read sentence is absent from a continued run that restored its PR", () => {
+  const sentence = "At start, the runtime read the required-check sources of PR #42";
+  const base = { task: "T", maxSteps: 10, pr: 42 };
+  expect(initialPrompt(base)).toContain(sentence);
+  expect(initialPrompt({ ...base, continued: true })).not.toContain(sentence);
+  expect(initialPrompt({ ...base, continued: true, startRead: true })).toContain(sentence);
 });
 
 // Usefulness: verifies a run that declares no PR keeps the prompt it sent

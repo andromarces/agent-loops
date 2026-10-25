@@ -13,7 +13,13 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo, PASSING_RUN, prGateGh } from "./runtime-helpers.mjs";
+import {
+  createTempRepo,
+  freePlanGh,
+  PASSING_RUN,
+  prGateGh,
+  unreachableGh,
+} from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 afterEach(() => {
@@ -41,12 +47,18 @@ async function startRun(initFlags = [], role = "worker") {
   await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, ...initFlags], role), repo), {
     agents,
     stdin: stdinPrompt,
+    gh: prGateGh("1".repeat(40)),
   });
   return { repo, agents };
 }
 
 const declare = (repo, pr, ...flags) =>
-  executeRoleCommand(withRepo(declareArgv(pr, ...flags), repo));
+  executeRoleCommand(withRepo(declareArgv(pr, ...flags), repo), {
+    gh: prGateGh("1".repeat(40)),
+  });
+
+const declareWith = (repo, gh, pr = 42) =>
+  executeRoleCommand(withRepo(declareArgv(pr), repo), { gh });
 
 // Usefulness: verifies acceptance of #916 — a run that declared its PR after init supplies the
 // required-check status to the next reviewer prompt and reports it in the envelope, as a run
@@ -171,4 +183,30 @@ test("declare-pr refuses a review-only run", async () => {
   expect(refused.exitCode).toBe(1);
   expect(refused.payload.error).toContain("review-only");
   expect((await readRepoState(repo)).pr).toBeNull();
+});
+
+// Usefulness: verifies acceptance of #1092 — declare-pr on a repository whose required-check sources
+// all answer the Free-plan 403 is refused with the fix named and leaves the run unchanged, so the
+// run can still finish with the unresolvedCompare marker.
+test("declare-pr refuses unreadable required-check sources and leaves the run unchanged", async () => {
+  const { repo } = await startRun();
+  const before = await readRepoState(repo);
+  const refused = await declareWith(repo, freePlanGh("1".repeat(40)));
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("declare-pr is refused");
+  expect(refused.payload.error).toContain("repository rulesets");
+  expect(refused.payload.error).toContain("unresolvedCompare");
+  expect(await readRepoState(repo)).toEqual(before);
+});
+
+// Usefulness: verifies a declaration on a readable repository, and one whose read fails for another
+// reason, is unchanged, so only the unreadable-source case refuses.
+test("declare-pr proceeds on a readable repository and on a failed read", async () => {
+  const readable = await startRun();
+  expect((await declareWith(readable.repo, prGateGh("1".repeat(40)))).exitCode).toBe(0);
+  expect((await readRepoState(readable.repo)).pr).toBe(42);
+
+  const failed = await startRun();
+  expect((await declareWith(failed.repo, unreachableGh())).exitCode).toBe(0);
+  expect((await readRepoState(failed.repo)).pr).toBe(42);
 });

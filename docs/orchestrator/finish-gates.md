@@ -136,7 +136,9 @@ and each flag fails with a clear error.
   unknown rather than empty, so the empty-union refusal names it. A private GitHub
   Free-plan repository still refuses a declared run under this change, so this does
   not resolve #336 for it, and such a repository must omit `--pr`, which leaves the
-  #286 gap in place.
+  #286 gap in place. Init with `--pr`, `role declare-pr`, and the headless `--pr`
+  start refuse that case up front (#1092), so the parent does not learn of it at
+  `finish`.
   Repository rulesets are readable with read access on a repository whose plan allows
   the rule, so a token without repository admin still gates through repository rulesets
   and through `gh pr checks --required` while the classic-protection source stays

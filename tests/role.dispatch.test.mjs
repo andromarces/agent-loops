@@ -1655,7 +1655,11 @@ test("a declared PR supplies the runtime-read required-check status to the revie
   const reviewer = recordingAdapter([]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
   const init = dispatchArgv([...INIT_OVERRIDES, "--pr", "42"], "worker");
-  await executeRoleCommand(withRepo(init, repo), { agents, stdin: stdinPrompt });
+  await executeRoleCommand(withRepo(init, repo), {
+    agents,
+    stdin: stdinPrompt,
+    gh: failingCheckGh("1".repeat(40)),
+  });
 
   // The status read resolves the PR head and compares it with the local reviewed
   // head, then judges the required contexts on the check runs of that commit.

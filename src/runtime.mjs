@@ -6,6 +6,8 @@ import {
   checkCi,
   DEFAULT_READ_TIMEOUT_MS,
   missingGateRefusal,
+  unreadableGateReason,
+  unreadableGateRefusal,
   unresolvedCompareReason,
 } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
@@ -161,6 +163,22 @@ export async function runLoop(options) {
   // and this check holds for any other caller, before the first child spawn.
   refuseDeclaredPrConflict(continued ? earlierPr : null, { pr, requireCi, mode });
 
+  // A declared PR whose required-check sources the gate cannot read could only end through `abort`,
+  // so the start refuses it before any child spawn (#1092). A continued run that restored its PR
+  // passed this check when the earlier run started.
+  const readAtStart = pr !== null && (continued ? earlierPr : null) === null;
+  if (readAtStart) {
+    const unreadable = await unreadableGateReason({
+      pr,
+      cwd,
+      gh,
+      timeoutMs: readTimeoutMs,
+    });
+    if (unreadable) {
+      throw new Error(unreadableGateRefusal(`--pr ${pr}`, unreadable));
+    }
+  }
+
   logInfo(`agent loop started (cwd: ${cwd}, maxSteps: ${maxSteps})`);
 
   // Before the first child spawn and the first snapshot, so the copied files are
@@ -241,6 +259,7 @@ export async function runLoop(options) {
     reviewerSandbox: sandboxMode,
     mode,
     continued,
+    startRead: readAtStart,
     gateRestored: restoredGate !== null,
     timeout,
     cwd,
