@@ -23,6 +23,7 @@ import {
   cleanRepoGit,
   continueAgents,
   createWithContinueRepo,
+  prGateGh,
   SUMMARY,
 } from "./runtime-helpers.mjs";
 
@@ -50,13 +51,24 @@ function git(command, args, options) {
   }
 }
 
+// `gh pr list` names the PR that the worker opened, and every other read is the readable gate
+// fixture for PR 42, so the declaration's required-check read settles (#1097).
+const gateGh = prGateGh(CLEAN_REPO_HEAD);
+async function openedPrGh(command, args, options) {
+  if (args[0] === "pr" && args[1] === "list") {
+    return { exitCode: 0, stdout: JSON.stringify([MATCH]), stderr: "" };
+  }
+  const { status, stdout, stderr } = await gateGh(args, options?.cwd, options);
+  return { exitCode: status, stdout, stderr };
+}
+
 // Usefulness: verifies --continue-from keeps the PR that the runtime declared late in the earlier
 // run. The continued run applies the gate for that PR, so a finish with no reviewer turn is refused
 // and the run never ends through the unresolvedCompare path (issues #919, #924).
 test("--continue-from keeps a PR that the earlier run declared after a worker turn", async () => {
   await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
     doubles.git = git;
-    doubles.gh = () => ({ exitCode: 0, stdout: JSON.stringify([MATCH]), stderr: "" });
+    doubles.gh = openedPrGh;
     await main(
       [...BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
       continueAgents([work, work]),
@@ -95,7 +107,7 @@ test("--continue-from keeps a PR that the earlier run declared after a worker tu
 // The call counts the turns that the continued run makes, so a refusal can show that none ran.
 async function declareThenContinue(repo, transcriptPath, errorSpy) {
   doubles.git = git;
-  doubles.gh = () => ({ exitCode: 0, stdout: JSON.stringify([MATCH]), stderr: "" });
+  doubles.gh = openedPrGh;
   await main(
     [...BASE, "--cwd", repo, "--max-steps", "1", "--transcript", transcriptPath],
     continueAgents([work, work]),

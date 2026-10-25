@@ -256,6 +256,7 @@ function noRequiredCheckClause() {
  * that the runtime never reads (#302). The start sentence states the unreadable-source refusal of
  * the `--pr` start, its recovery, and the warn-and-proceed case (#1092). `startRead` is whether this
  * run made that read: a continuation that restored its PR made none, so it states nothing about one.
+ * A PR that the runtime declared after a worker turn gets its read sentence from `declaredPrNote` (#1097).
  */
 function prDeclarationBlock(pr, startRead) {
   if (pr === null) return "";
@@ -475,7 +476,7 @@ ${task}
  * The runtime gates the finish on that PR in that case, so the line states the finish rule.
  */
 function declaredPrNote(pr) {
-  return `The runtime declared PR #${pr} for this run, because the worker turn opened it from this branch at this head. You did not choose it, and no turn can change it. The runtime now supplies the required-check status for PR #${pr} to every reviewer prompt. The runtime also gates the finish on PR #${pr}, as --require-ci ${pr} does: it refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. A finish with "unresolvedCompare": true is refused, because the gate resolves that compare. Dispatch the reviewer on the current state before you finish, and wait for a pending required check through another reviewer turn.`;
+  return `The runtime declared PR #${pr} for this run, because the worker turn opened it from this branch at this head. Before it declared the PR, the runtime read the required-check sources of PR #${pr} once and declared it only because the read did not find the repository rulesets unreadable; a read that failed for another reason, such as a transport failure, warned and still declared, so the gate can still refuse at finish. You did not choose it, and no turn can change it. The runtime now supplies the required-check status for PR #${pr} to every reviewer prompt. The runtime also gates the finish on PR #${pr}, as --require-ci ${pr} does: it refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. A finish with "unresolvedCompare": true is refused, because the gate resolves that compare. Dispatch the reviewer on the current state before you finish, and wait for a pending required check through another reviewer turn.`;
 }
 
 export function resultPrompt({ result, stepsUsed, maxSteps, declaredPr = null }) {
