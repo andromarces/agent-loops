@@ -223,6 +223,78 @@ test("waitChecks keeps waiting when a source names a required check that gh list
   ).toEqual({ timedOut: true, head: HEAD_A, checks: [] });
 });
 
+/** Runs one required wait whose `gh pr checks --required` answers that no check has reported. */
+function noChecksReportedWait(sources) {
+  const clock = fakeClock();
+  const calls = [];
+  const gh = scriptedGh(
+    [{ status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch\n" }],
+    sources,
+  );
+  return {
+    clock,
+    calls,
+    result: waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 300,
+      gh: async (args, cwd) => {
+        calls.push(args);
+        return gh(args, cwd);
+      },
+      now: clock.now,
+      sleep: clock.sleep,
+    }),
+  };
+}
+
+// Usefulness: verifies a required wait that reads `no checks reported` refuses on the first poll
+// while no required-check source can state the required checks, instead of waiting out its bound
+// on a repository where no check can report (issue #1091).
+test("waitChecks refuses no-checks-reported at once when every required source is unreadable", async () => {
+  const wait = noChecksReportedWait({
+    rules: { status: 1, stdout: "", stderr: FREE_PLAN },
+    protection: { status: 1, stdout: "", stderr: FREE_PLAN },
+  });
+  await expect(wait.result).rejects.toThrow(
+    /gh pr checks 42 --required reported no checks.*repository rulesets and classic branch protection did not state/,
+  );
+  expect(wait.clock.elapsed()).toBe(0);
+});
+
+// Usefulness: verifies #941 holds beside a readable source: a source that states the absence of a
+// required check, or names one that has not reported, keeps the wait running to the bound.
+test.each([
+  [
+    "sources that state an absence",
+    {
+      ...ABSENT_SOURCES,
+      protection: { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" },
+    },
+  ],
+  [
+    "a ruleset that names a required check",
+    {
+      rules: {
+        status: 0,
+        stdout: pageStdout([
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ci" }] },
+          },
+        ]),
+        stderr: "",
+      },
+    },
+  ],
+])("waitChecks keeps waiting on no-checks-reported over %s", async (_name, sources) => {
+  expect(await noChecksReportedWait(sources).result).toEqual({
+    timedOut: true,
+    head: HEAD_A,
+    checks: [],
+  });
+});
+
 // Usefulness: verifies only the exact `gh` answer is the new outcome: the same
 // words inside a longer error text, or on another exit code, stay unresolved
 // (issue #894).

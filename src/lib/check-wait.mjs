@@ -22,6 +22,7 @@ import {
   readOne,
   requiredContexts,
   runGh,
+  UNKNOWN,
 } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
 import { prEventsFilteredOut } from "./workflow-paths.mjs";
@@ -175,7 +176,7 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
     return { settled: true, checks, noRequiredChecks: true };
   }
   if (status === 1 && text === "" && NO_CHECKS_YET.test(stderr.trim())) {
-    return { settled: false, checks };
+    return { settled: false, checks, noChecksYet: true };
   }
   if (status !== 0) {
     throw new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
@@ -667,11 +668,18 @@ export async function waitChecks({
   // ruleset read that found no rule beside no named check, are errors that name the cause,
   // because the gate refuses the same states. A failed names read is an error too, where the
   // wait is stricter than the gate, which ignores that read. A source that names a required
-  // check is no absence, so the wait goes on to judge it.
-  const absenceOf = async (base) => {
+  // check is no absence, so the wait goes on to judge it. The `no checks reported` reply (#1091)
+  // refuses only when no source can state the required checks: both configuration sources are
+  // unreadable and no check is named. Its names read never succeeds, so that read is not judged,
+  // and any readable source keeps the wait running (#941).
+  const absenceOf = async (base, reply = "no required check") => {
     await ensureSlug();
     const required = await requiredContexts(bounded, slug, base, pr, cwd);
-    const namesRefusal = requiredNamesRefusal(required, pr);
+    const noChecksYet = reply === "no checks";
+    const namesRefusal = requiredNamesRefusal(
+      noChecksYet ? { ...required, namesRead: true } : required,
+      pr,
+    );
     if (namesRefusal) {
       throw new Error(`${namesRefusal}; the read is unresolved.`);
     }
@@ -679,10 +687,14 @@ export async function waitChecks({
     if (absence?.absent) {
       return true;
     }
-    const unproven = absence?.unproven ?? required.unknown;
+    const noSource =
+      absence && required.rulesetState === UNKNOWN && required.protectionState === UNKNOWN
+        ? required.unknown
+        : [];
+    const unproven = noChecksYet ? noSource : (absence?.unproven ?? required.unknown);
     if (unproven.length > 0) {
       throw new Error(
-        `gh pr checks ${pr} --required reported no required check, but ${unproven.join(" and ")} did not state that it holds no required check, so the required checks of PR ${pr} are unresolved.`,
+        `gh pr checks ${pr} --required reported ${reply}, but ${unproven.join(" and ")} did not state that it holds no required check, so the required checks of PR ${pr} are unresolved.`,
       );
     }
     return false;
@@ -849,6 +861,9 @@ export async function waitChecks({
         if (listed.noRequiredChecks && !(await absenceOf(base))) {
           listed.noRequiredChecks = false;
           listed.settled = false;
+        }
+        if (listed.noChecksYet && !all) {
+          await absenceOf(base, "no checks");
         }
         prFailures = listed.checks.filter(isFailing);
         let outcome = listed;
