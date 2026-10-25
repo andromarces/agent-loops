@@ -67,8 +67,9 @@ function canonicalPath(path, platform = process.platform) {
 /**
  * `path` with each 8.3 short segment replaced by its long name, without resolving a link, so a
  * junction keeps its own spelling (#1068). The long name is the entry of the parent directory
- * with the same file id. A segment that does not exist stays as it is, as in `canonicalPath`.
- * Returns `null` when a stat or a listing fails for another reason, so the caller can fail closed.
+ * with the same file id. Returns `null` when a segment that looks like an 8.3 alias (`~<digit>`)
+ * cannot be stat'd or listed, a missing path included, so the caller can fail closed.
+ * known-limit: a missing stable suffix with a literal `~<digit>` in a segment name refuses.
  */
 function expandShortSegments(path) {
   const { root } = win32.parse(path);
@@ -86,8 +87,10 @@ function longName(parent, segment) {
   let id;
   try {
     id = lstatSync(join(parent, segment), { bigint: true }).ino;
-  } catch (error) {
-    return error?.code === "ENOENT" || error?.code === "ENOTDIR" ? segment : null;
+  } catch {
+    // A segment that looks like an alias and cannot be stat'd may have vanished after the
+    // canonical resolution, so keeping its name could hide a temporary junction.
+    return null;
   }
   try {
     return (

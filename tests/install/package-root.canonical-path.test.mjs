@@ -191,3 +191,27 @@ test.skipIf(process.platform !== "win32")(
     }
   },
 );
+
+// Usefulness: verifies #1068 review — a short segment that vanishes between canonical resolution and expansion refuses the install instead of keeping its name, while a stable path with a missing suffix stays accepted.
+test.skipIf(process.platform !== "win32")(
+  "a short segment that vanishes during expansion is refused and a missing stable suffix is accepted",
+  async () => {
+    const base = await scratch();
+    const tempRoot = join(base, "shortnamedtemproot");
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+    for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+      await mkdir(join(tempRoot, ...layout), { recursive: true });
+      const junction = join(tempRoot, ...layout, "packagejunctionlink");
+      await symlink(stable, junction, LINK_TYPE);
+      const shortJunction = shortSpelling(junction);
+      if (shortJunction === null) return;
+      realpathMock.lstatFail = (path) => (basename(path).includes("~") ? "ENOENT" : null);
+      expect(isEphemeralPackageRoot(shortJunction, "win32", roots), shortJunction).toBe(true);
+      realpathMock.lstatFail = null;
+    }
+    const missing = join(base, "stablenamedparent", "missing", "pkg");
+    expect(isEphemeralPackageRoot(missing, "win32", roots)).toBe(false);
+  },
+);
