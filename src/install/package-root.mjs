@@ -288,11 +288,28 @@ export function isEphemeralPackageRoot(
   platform = process.platform,
   tempRoots = temporaryRoots(),
 ) {
-  if (tempRoots.invalid === true) return true;
+  return packageRootRefusal(packageRoot, platform, tempRoots) !== null;
+}
+
+const UNREADABLE = "unreadable";
+const EPHEMERAL = "ephemeral";
+
+/** `UNREADABLE` when a check fails closed on a folder it cannot read, `EPHEMERAL` for any other refusal, else `null`. */
+function packageRootRefusal(packageRoot, platform, tempRoots) {
+  if (tempRoots.invalid === true) return EPHEMERAL;
   const initial = canonicalPath(packageRoot, platform);
+  // A path that cannot be resolved is a runner cache only when its own spelling shows the layout.
+  const unresolved = () =>
+    [absolutePath(packageRoot, platform), initial].some(
+      (spelling) =>
+        spelling !== null &&
+        (isCacheRoot(spelling, platform) || isTempRunnerRoot(spelling, platform, tempRoots)),
+    )
+      ? EPHEMERAL
+      : UNREADABLE;
   const bunx = tempRoots.bunx.map((root) => spellings(root, platform));
   const yarn = tempRoots.yarn.map((root) => spellings(root, platform));
-  if (bunx.includes(null) || yarn.includes(null)) return true;
+  if (bunx.includes(null) || yarn.includes(null)) return unresolved();
   const rootSegments = [...bunx.flat(), ...yarn.flat()].map((root) =>
     splitPath(root.toLowerCase()),
   );
@@ -309,18 +326,18 @@ export function isEphemeralPackageRoot(
     );
   const packageSpellings = spellings(packageRoot, platform, related);
   // A path that cannot be canonicalized cannot be ruled out, so the check refuses it.
-  if (packageSpellings === null || matches(packageSpellings)) return true;
+  if (packageSpellings === null) return unresolved();
+  if (matches(packageSpellings)) return EPHEMERAL;
   // The path is accepted only when a second check sees the same spellings, and when the canonical
   // path taken before the temporary roots were read is among them, so a path that changes while
   // the check runs is refused (#1074).
   const again = spellings(packageRoot, platform, related);
-  return (
-    initial === null ||
+  if (initial === null || again === null) return unresolved();
+  const changed =
     !packageSpellings.includes(initial) ||
-    again === null ||
     again.length !== packageSpellings.length ||
-    again.some((spelling, i) => spelling !== packageSpellings[i])
-  );
+    again.some((spelling, i) => spelling !== packageSpellings[i]);
+  return changed ? EPHEMERAL : null;
 }
 
 export const INHERITED_TMPDIR_INVALID_MESSAGE =
@@ -330,15 +347,21 @@ export const INHERITED_TMPDIR_INVALID_MESSAGE =
 
 /**
  * The reason that `install` refuses `packageRoot`, or null. An invalid
- * `AGENT_LOOP_INHERITED_TMPDIR` refuses every root.
+ * `AGENT_LOOP_INHERITED_TMPDIR` refuses every root. A folder that the check cannot read refuses
+ * with its own message, since the root is then not known to be a runner cache (#1081).
  */
 export function installRefusal(packageRoot) {
   const tempRoots = temporaryRoots();
   if (tempRoots.invalid) return INHERITED_TMPDIR_INVALID_MESSAGE;
-  return isEphemeralPackageRoot(packageRoot, process.platform, tempRoots)
-    ? EPHEMERAL_ROOT_MESSAGE
-    : null;
+  const refusal = packageRootRefusal(packageRoot, process.platform, tempRoots);
+  if (refusal === UNREADABLE) return unreadableRootMessage(packageRoot);
+  return refusal === EPHEMERAL ? EPHEMERAL_ROOT_MESSAGE : null;
 }
+
+const unreadableRootMessage = (packageRoot) =>
+  `Refusing to install: a folder of the package path ${packageRoot} or of a temporary root ` +
+  "cannot be read or resolved, so the installer cannot tell whether this package root is a temporary " +
+  "one. Fix the folder permissions, then run install again.";
 
 // pnpm resolves a global package into a version-named virtual store entry
 // (`.pnpm/<name>@<version>/node_modules/<name>`) and links it to a

@@ -4,7 +4,11 @@ import { realpathSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { installRefusal, isEphemeralPackageRoot } from "../../src/install/package-root.mjs";
+import {
+  EPHEMERAL_ROOT_MESSAGE,
+  installRefusal,
+  isEphemeralPackageRoot,
+} from "../../src/install/package-root.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const realpathMock = vi.hoisted(() => ({
@@ -106,6 +110,24 @@ test("a package root that cannot be canonicalized is refused", async () => {
   realpathMock.fail = (path) => path === stable;
   expect(isEphemeralPackageRoot(stable, process.platform, roots), stable).toBe(true);
   expect(installRefusal(stable)).toMatch(/^Refusing to install/);
+});
+
+// Usefulness: verifies #1081 — an unreadable folder refuses with a message that names the unreadable package path and not a runner cache, so a user with a stable global install is not told to install globally; a proven runner cache keeps its own message.
+test("a package root that cannot be read is refused without the runner-cache message", async () => {
+  const base = await scratch();
+  const stable = join(base, "stable", "pkg");
+  await mkdir(stable, { recursive: true });
+  realpathMock.fail = (path) => path === stable;
+  const refusal = installRefusal(stable);
+  expect(refusal).toMatch(/^Refusing to install/);
+  expect(refusal).toContain(stable);
+  expect(refusal).not.toMatch(/npx|dlx|bunx|cache/);
+  expect(refusal).not.toBe(EPHEMERAL_ROOT_MESSAGE);
+  realpathMock.fail = null;
+
+  const npxRoot = join(base, "_npx", "0123456789abcdef", "node_modules", "pkg");
+  await mkdir(npxRoot, { recursive: true });
+  expect(installRefusal(npxRoot)).toBe(EPHEMERAL_ROOT_MESSAGE);
 });
 
 // Usefulness: verifies #962 review — a temporary root that cannot be canonicalized refuses every package root, since the match cannot rule the root out.
