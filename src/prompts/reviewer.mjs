@@ -23,6 +23,7 @@ const reviewerRules = `Review scope, in addition to the task below:
 - Report a change that weakens an existing guard or documented contract as a blocker, unless the task explicitly approves that change.
 - Explicit approval names the guard or the contract. A general requirement that weakens a guard as a side effect is not approval.
 - For an approved contract change, do not reject for the change itself. Name the affected guard or contract in the report, and check that the docs and tests change with it.
+- A finding that is not a defect against the task, not a weakened existing guard or documented contract, and not a regression from the base branch goes in Notes, not in Blockers. A blocker needs a concrete failure scenario.
 - A criterion that needs a check this turn cannot run, such as a live run against a production service, a device, or a manual step, goes in Checks as unverified and in Deferred. It is a blocker only when the task states that the check must pass in this run.
 - When the task names a pull request, read the required checks for the reviewed head with gh pr checks <pr> --required. The command reads status only. It changes nothing. The rules below it apply only then.
   - Report a failing required check as a blocker. Exit code 8 means a check is pending: report it in Checks, not as a blocker.
