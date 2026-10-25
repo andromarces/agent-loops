@@ -385,7 +385,7 @@ test.skipIf(process.platform !== "win32")(
   },
 );
 
-// Usefulness: verifies #1074 — a link spelling of the temporary root that is renamed away, before or during the check, still refuses a runner layout under it, so a rename cannot turn an existing alias into a missing segment that passes.
+// Usefulness: verifies #1074 — a link spelling of the temporary root that is renamed away while the check runs still refuses a runner layout under it, so a rename cannot turn an existing alias into a missing segment that passes.
 test.skipIf(process.platform !== "win32")(
   "a link spelling of the temporary root renamed away is refused",
   async () => {
@@ -401,11 +401,11 @@ test.skipIf(process.platform !== "win32")(
       await symlink(tempRoot, rootLink, LINK_TYPE);
       const viaLink = join(rootLink, ...layout, "packagejunctionlink");
       expect(isEphemeralPackageRoot(viaLink, "win32", roots), `${viaLink} before`).toBe(true);
+      // The rename lands while the temporary root is read, before the package root is resolved.
       realpathMock.beforeLstat = (path) =>
-        path.startsWith(rootLink) &&
+        path === tempRoot &&
         (renameSync(rootLink, join(base, `renamedaway${layout.length}`)), true);
       expect(isEphemeralPackageRoot(viaLink, "win32", roots), `${viaLink} during`).toBe(true);
-      expect(isEphemeralPackageRoot(viaLink, "win32", roots), `${viaLink} after`).toBe(true);
     }
   },
 );

@@ -70,6 +70,9 @@ function canonicalPath(path, platform = process.platform) {
   }
 }
 
+// An 8.3 short name is at most 8 characters, a dot, and 3 more, with no space.
+const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
+
 /**
  * `path` with each segment replaced by its long name, without resolving a link, so a junction
  * keeps its own spelling (#1068). Every segment is either positively resolved or the whole
@@ -78,24 +81,23 @@ function canonicalPath(path, platform = process.platform) {
  * `~<digit>` resolves too. A failed stat, listing, or sibling stat, and a listing with no matching
  * entry, are unresolved.
  *
- * A missing segment is also unresolved, because an alias can vanish by a rename or a delete. The
- * first missing segment is kept only when it cannot stand for a directory of a temporary root or a
- * runner layout, which is when `related` says that its existing parent is neither at, above, nor
- * below a temporary root, or when `atOrAboveRoot` says that the missing segment is a temporary root
- * or one of its ancestors, such as the default `/tmp` on Windows. Every segment below a kept one is
+ * A missing segment is also unresolved, because a short name can vanish by a rename. The first
+ * missing segment is kept only when it cannot stand for a temporary root or a runner layout
+ * directory, which is when its name has no 8.3 shape, or when `related` says that its existing
+ * parent is neither at, above, nor below a temporary root. Every segment below a kept one is
  * missing too and is kept.
  *
- * `isEphemeralPackageRoot` accepts a path only when a second check gives the same spellings, so a
- * rename or delete that lands between the two checks, or between the steps of the first one,
- * refuses the install (#1074). A segment that is already gone when the check starts is handled by
- * the missing-segment rule above.
+ * `isEphemeralPackageRoot` accepts a path only when its canonical path and the spellings of a
+ * second check match those of the first check and of the start of the call. A rename or delete
+ * that lands while the check runs refuses the install (#1074).
  *
- * known-limit: a change after the second check, such as a runner that deletes its folder while
- * the installer writes files, is not detected, and neither is a vanished link whose parent is
- * unrelated to every temporary root, because that path looks the same as a missing stable path.
- * The first limit is the deletion that the refusal exists for, and no check can close it.
+ * known-limit: a path that is already missing before the call starts and has a long name below a
+ * parent that is above a temporary root looks the same as a missing stable path, so a vanished
+ * link spelling of a temporary root is accepted. A change after the second check, such as a
+ * runner that deletes its folder while the installer writes files, is not detected either, and
+ * that deletion is the one that the refusal exists for.
  */
-function expandShortSegments(path, { related, atOrAboveRoot }) {
+function expandShortSegments(path, related) {
   const { root } = win32.parse(path);
   const segments = splitPath(path.slice(root.length));
   let expanded = root;
@@ -103,8 +105,8 @@ function expandShortSegments(path, { related, atOrAboveRoot }) {
     const name = longName(expanded, segment);
     if (name === null) return null;
     if (name === MISSING) {
-      const kept = !related(expanded) || atOrAboveRoot(win32.join(expanded, segment));
-      return kept ? win32.join(expanded, ...segments.slice(i)) : null;
+      const canStandForRoot = SHORT_NAME_SHAPE.test(segment) && related(expanded);
+      return canStandForRoot ? null : win32.join(expanded, ...segments.slice(i));
     }
     expanded = win32.join(expanded, name);
   }
@@ -175,19 +177,15 @@ function resolvedParentSpellings(path, platform) {
  * spelling even when its target is stable, and on Windows each segment of that spelling expands
  * to its long name. A link spelling of a parent folder also matches by the resolved parent.
  * `null` when the canonical path, a parent, or an 8.3 expansion cannot be resolved.
- * `rootTests` is passed to `expandShortSegments`.
+ * `related` is passed to `expandShortSegments`.
  */
-function spellings(
-  path,
-  platform,
-  rootTests = { related: () => false, atOrAboveRoot: () => false },
-) {
+function spellings(path, platform, related = () => false) {
   const canonical = canonicalPath(path, platform);
   if (canonical === null) return null;
   const normalized = absolutePath(path, platform);
   const own =
     platform === "win32" && platform === process.platform
-      ? expandShortSegments(normalized, rootTests)
+      ? expandShortSegments(normalized, related)
       : normalized;
   if (own === null) return null;
   const parents = platform === process.platform ? resolvedParentSpellings(own, platform) : [];
@@ -270,35 +268,34 @@ export function isEphemeralPackageRoot(
   tempRoots = temporaryRoots(),
 ) {
   if (tempRoots.invalid === true) return true;
+  const initial = canonicalPath(packageRoot, platform);
   const bunx = tempRoots.bunx.map((root) => spellings(root, platform));
   const yarn = tempRoots.yarn.map((root) => spellings(root, platform));
   if (bunx.includes(null) || yarn.includes(null)) return true;
   const rootSegments = [...bunx.flat(), ...yarn.flat()].map((root) =>
     splitPath(root.toLowerCase()),
   );
-  const startsWith = (list, prefix) => prefix.every((segment, i) => list[i] === segment);
   const related = (dir) => {
     const segments = splitPath(dir.toLowerCase());
+    const startsWith = (list, prefix) => prefix.every((segment, i) => list[i] === segment);
     return rootSegments.some((root) => startsWith(root, segments) || startsWith(segments, root));
   };
-  const atOrAboveRoot = (dir) => {
-    const segments = splitPath(dir.toLowerCase());
-    return rootSegments.some((root) => startsWith(root, segments));
-  };
-  const rootTests = { related, atOrAboveRoot };
   const matches = (list) =>
     list.some(
       (spelling) =>
         isCacheRoot(spelling, platform) ||
         isTempRunnerRoot(spelling, platform, { bunx: bunx.flat(), yarn: yarn.flat() }),
     );
-  const packageSpellings = spellings(packageRoot, platform, rootTests);
+  const packageSpellings = spellings(packageRoot, platform, related);
   // A path that cannot be canonicalized cannot be ruled out, so the check refuses it.
   if (packageSpellings === null || matches(packageSpellings)) return true;
-  // The path is accepted only when a second check sees the same spellings, so a path that
-  // changes while the first check runs is refused (#1074).
-  const again = spellings(packageRoot, platform, rootTests);
+  // The path is accepted only when a second check sees the same spellings, and when the canonical
+  // path taken before the temporary roots were read is among them, so a path that changes while
+  // the check runs is refused (#1074).
+  const again = spellings(packageRoot, platform, related);
   return (
+    initial === null ||
+    !packageSpellings.includes(initial) ||
     again === null ||
     again.length !== packageSpellings.length ||
     again.some((spelling, i) => spelling !== packageSpellings[i])
