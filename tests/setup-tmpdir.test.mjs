@@ -113,3 +113,23 @@ test("a failed re-entry keeps the inherited pins for the outermost exit", async 
     restoreSnapshot(before);
   }
 });
+
+// Usefulness: acceptance (#1087) — an inherited temporary-directory pin must not make the installer treat the per-file directory as a temporary root, and must come back after the file.
+test("an inherited AGENT_LOOP_INHERITED_TMPDIR is unset while a file runs, then restored", async () => {
+  const name = "AGENT_LOOP_INHERITED_TMPDIR";
+  const before = process.env[name];
+  const pinned = JSON.stringify([tmpdir()]);
+  const isolation = createTmpdirIsolation({ removeDir: async () => {} });
+  try {
+    process.env[name] = pinned;
+    await isolation.enter();
+    expect(process.env[name]).toBeUndefined();
+    process.env[name] = "set by the test itself";
+    expect(process.env[name]).toBe("set by the test itself");
+    await isolation.exit();
+    expect(process.env[name]).toBe(pinned);
+  } finally {
+    if (before === undefined) delete process.env[name];
+    else process.env[name] = before;
+  }
+});
