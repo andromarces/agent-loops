@@ -643,9 +643,11 @@ async function assertDependenciesResolve(store) {
   const { dependencies } = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
   const probe = join(store, "src", "resolve-dependency.mjs");
   await writeFile(probe, "console.log(import.meta.resolve(process.argv[2]));\n");
+  // Node resolves the probe, the main module, to its real path, so the expectation starts there.
+  const modules = realpathSync(dirname(dirname(store)));
   for (const name of Object.keys(dependencies)) {
     const { stdout } = await runInstalled(probe, [name], {}, ["--preserve-symlinks"]);
-    const link = join(dirname(dirname(store)), name) + sep;
+    const link = join(modules, name) + sep;
     expect(fileURLToPath(stdout).startsWith(link)).toBe(true);
   }
 }
@@ -654,8 +656,12 @@ async function assertDependenciesResolve(store) {
 // package.json lists through its own link, so a dependency the fixture omits fails here
 // even when no module on the `--version` path imports it.
 test("an installed layout resolves every runtime dependency package.json lists", async () => {
-  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-deps-global-"));
-  paths.push(globalHome);
+  // macOS hands out a temporary directory through a symlink (`/var` points at
+  // `/private/var`), so the fixture is reached through a link on every platform.
+  const real = await mkdtemp(join(tmpdir(), "agent-loop-deps-global-"));
+  const globalHome = `${real}-link`;
+  await symlink(real, globalHome, LINK_TYPE);
+  paths.push(real, globalHome);
   const { store } = await pnpmGlobal(join(globalHome, "global", "v11"), {
     id: "637c-18d963de1bc57d7c-0",
     hash: null,
