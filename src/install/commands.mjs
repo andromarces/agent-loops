@@ -112,6 +112,20 @@ async function selectHarnesses(discovered) {
   }
 }
 
+/**
+ * Runs the menu and returns the selection, or null after reporting a bad answer
+ * and setting exit code 1.
+ */
+async function promptHarnesses(discovered) {
+  try {
+    return await selectHarnesses(discovered);
+  } catch (err) {
+    logError(readableErrorText(err));
+    process.exitCode = 1;
+    return null;
+  }
+}
+
 function printReports(reports, dryRun) {
   if (reports.length === 0) {
     logInfo("Nothing to change.");
@@ -174,7 +188,10 @@ export async function runInstallCommand(argv) {
       process.exitCode = 1;
       return;
     }
-    harnesses = await selectHarnesses(await detectHarnesses());
+    harnesses = await promptHarnesses(await detectHarnesses());
+    if (!harnesses) {
+      return;
+    }
   }
   if (!harnesses.length) {
     logWarn("No harness selected; nothing to do.");
@@ -232,7 +249,10 @@ export async function runUninstallCommand(argv) {
       logInfo("No harness is installed; nothing to remove.");
       return;
     }
-    harnesses = await selectHarnesses(installed);
+    harnesses = await promptHarnesses(installed);
+    if (!harnesses) {
+      return;
+    }
   }
 
   let reports;

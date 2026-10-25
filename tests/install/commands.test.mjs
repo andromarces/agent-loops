@@ -453,47 +453,86 @@ test.each([
 });
 
 // Usefulness: acceptance (#539) — a number selects the harness the menu prints at that
-// position whatever is detected, and a number outside the menu fails. Detection is empty here
-// (PATH holds no CLI), so a number resolved against the detected list would fail instead.
+// position whatever is detected. Detection is empty here (PATH holds no CLI), so a number
+// resolved against the detected list would select nothing instead.
 test.each([
-  ["2", { codex: true, claude: false }, undefined],
-  ["1,2", { codex: true, claude: true }, undefined],
-  ["6", { codex: false, claude: false }, "No harness at position 6."],
-  ["0", { codex: false, claude: false }, "No harness at position 0."],
-])(
-  "CLI install resolves the answer %s against the menu positions",
-  async (answer, installed, failure) => {
-    const home = await makeHome();
-    process.env.AGENT_LOOP_HOME = home;
-    const originalPath = process.env.PATH;
-    const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
-    const originalLog = console.log;
-    const originalError = console.error;
-    console.log = () => {};
-    console.error = () => {};
+  ["2", { codex: true, claude: false }],
+  ["1,2", { codex: true, claude: true }],
+])("CLI install resolves the answer %s against the menu positions", async (answer, installed) => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const originalPath = process.env.PATH;
+  const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = () => {};
+  process.env.PATH = home;
+  Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+  prompt.answer = answer;
+  try {
+    process.exitCode = 0;
+    await cliMain(["install"]);
+    expect(process.exitCode).toBe(0);
+    expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(installed.codex);
+    expect(existsSync(join(home, ".claude", "settings.json"))).toBe(installed.claude);
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    process.env.PATH = originalPath;
+    if (ttyDescriptor) {
+      Object.defineProperty(process.stdin, "isTTY", ttyDescriptor);
+    } else {
+      delete process.stdin.isTTY;
+    }
+    restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: acceptance (#1070) — a bad menu answer in install or uninstall prints one
+// `[agent-loop] error:` line, no stack trace, and exits 1, like every other refusal; a
+// stack trace would mean the selection error escaped the command.
+test.each([
+  ["install", "9", "No harness at position 9."],
+  ["install", "0", "No harness at position 0."],
+  ["install", "nope", "Unknown harness: nope. Choose from"],
+  ["uninstall", "9", "No harness at position 9."],
+  ["uninstall", "nope", "Unknown harness: nope. Choose from"],
+])("CLI %s reports the bad menu answer %s as one error line", async (command, answer, message) => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const originalPath = process.env.PATH;
+  const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const originalLog = console.log;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  console.log = () => {};
+  try {
+    if (command === "uninstall") {
+      await cliMain(["install", "--harness", "claude"]);
+    }
     process.env.PATH = home;
     Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
     prompt.answer = answer;
-    try {
-      process.exitCode = 0;
-      const outcome = await cliMain(["install"]).then(
-        () => undefined,
-        (error) => error.message,
-      );
-      expect(outcome).toBe(failure);
-      expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(installed.codex);
-      expect(existsSync(join(home, ".claude", "settings.json"))).toBe(installed.claude);
-    } finally {
-      console.log = originalLog;
-      console.error = originalError;
-      process.env.PATH = originalPath;
-      if (ttyDescriptor) {
-        Object.defineProperty(process.stdin, "isTTY", ttyDescriptor);
-      } else {
-        delete process.stdin.isTTY;
-      }
-      restoreAgentLoopHome();
-      process.exitCode = 0;
+    errorSpy.mockClear();
+    process.exitCode = 0;
+    await cliMain([command]);
+    expect(process.exitCode).toBe(1);
+    const lines = errorSpy.mock.calls.map((call) => call.join(" "));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].startsWith("[agent-loop] error: ")).toBe(true);
+    expect(lines[0]).toContain(message);
+    expect(lines[0]).not.toContain("    at ");
+  } finally {
+    console.log = originalLog;
+    errorSpy.mockRestore();
+    process.env.PATH = originalPath;
+    if (ttyDescriptor) {
+      Object.defineProperty(process.stdin, "isTTY", ttyDescriptor);
+    } else {
+      delete process.stdin.isTTY;
     }
-  },
-);
+    restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
