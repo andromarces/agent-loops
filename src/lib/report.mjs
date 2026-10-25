@@ -140,7 +140,8 @@ function closingBlock(response) {
  * and the items join with "; " (issues #846, #879, and #915). The reviewer `Verdict:` line is no
  * report label, so a list after it stays dropped. One level of `- ` sub-items, indented to the
  * text column of the item above (two spaces, or three after `1. `), joins into that item with
- * ", " (issues #870 and #915). A prose line with a `- ` list directly under it also folds into the label above
+ * ", " (issues #870 and #915). An indented non-list line directly after an item or its sub-items
+ * folds into that item with a space (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
  * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
  * Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
@@ -227,7 +228,20 @@ function isFoldableSubitem(line, marker) {
   return foldableSubitem(marker).test(line) && isListLine(line);
 }
 
-/** The items that match `pattern` and directly follow line `start`, each with its sub-items, and the last line used. */
+/**
+ * True when the line is an indented prose line that continues the item above (issue #1082): ASCII
+ * spaces or tabs, then text that is neither a list nor a thematic break. An indented list line is
+ * no continuation, so hasDroppedList still refuses it.
+ */
+function isContinuationLine(line) {
+  return /^[ \t]+\S/.test(line) && !isListLine(line) && !THEMATIC_BREAK.test(line);
+}
+
+/**
+ * The items that match `pattern` and directly follow line `start`, and the last line used. Each
+ * item absorbs its sub-items, joined with ", ", then the continuation lines after them, joined with
+ * a space like a Markdown lazy continuation.
+ */
 function takeItems(lines, start, pattern) {
   let i = start;
   const items = [];
@@ -237,7 +251,11 @@ function takeItems(lines, start, pattern) {
     while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1], marker)) {
       parts.push(lines[++i].trim().slice(2).trim());
     }
-    items.push(parts.join(", "));
+    const continuation = [];
+    while (i + 1 < lines.length && isContinuationLine(lines[i + 1])) {
+      continuation.push(lines[++i].trim());
+    }
+    items.push([parts.join(", "), ...continuation].join(" "));
   }
   return { items, end: i };
 }
