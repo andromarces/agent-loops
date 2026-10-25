@@ -249,3 +249,42 @@ test.skipIf(process.platform !== "win32")(
     expect(isEphemeralPackageRoot(literal, "win32", roots)).toBe(false);
   },
 );
+
+/** True when a hand-set 8.3 name was applied, which needs the privilege that `fsutil` requires. */
+function setShortName(path, name) {
+  try {
+    execFileSync("fsutil", ["file", "setshortname", path, name], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Usefulness: verifies #1068 review — a hand-set 8.3 name without a tilde and digit refuses like the canonical spelling does, for the temporary root and for a junction package root in a bunx and a yarn dlx layout.
+test.skipIf(process.platform !== "win32")(
+  "a hand-set 8.3 name without a tilde refuses a junction package root inside a runner layout",
+  async () => {
+    const base = await scratch();
+    const tempRoot = join(base, "handsettemproot");
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    await mkdir(tempRoot);
+    if (!setShortName(tempRoot, "TEMPROOT")) return;
+    const aliasRoot = join(base, "TEMPROOT");
+    const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+    for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+      await mkdir(join(tempRoot, ...layout), { recursive: true });
+      const junction = join(tempRoot, ...layout, "packagejunctionlink");
+      await symlink(stable, junction, LINK_TYPE);
+      expect(setShortName(junction, "PKGLINK"), "junction short name").toBe(true);
+      expect(isEphemeralPackageRoot(junction, "win32", roots), junction).toBe(true);
+      const aliasJunction = join(tempRoot, ...layout, "PKGLINK");
+      expect(isEphemeralPackageRoot(aliasJunction, "win32", roots), aliasJunction).toBe(true);
+      const viaRoot = join(aliasRoot, ...layout, "packagejunctionlink");
+      expect(isEphemeralPackageRoot(viaRoot, "win32", roots), viaRoot).toBe(true);
+      const aliasRoots = { bunx: [aliasRoot], yarn: [aliasRoot] };
+      expect(isEphemeralPackageRoot(junction, "win32", aliasRoots), "alias temp root").toBe(true);
+    }
+    expect(isEphemeralPackageRoot(stable, "win32", roots)).toBe(false);
+  },
+);

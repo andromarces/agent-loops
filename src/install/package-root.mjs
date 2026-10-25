@@ -39,26 +39,27 @@ export const EPHEMERAL_ROOT_MESSAGE =
 const splitPath = (path) => path.split(/[\\/]+/).filter(Boolean);
 
 /**
- * The canonical spelling of `path`: the realpath of its deepest existing ancestor joined to the
+ * The canonical spelling of `path` and its count of missing segments: the realpath of its deepest existing ancestor joined to the
  * rest, normalized, so a link such as macOS `/var` resolves to `/private/var` and a `..`
  * segment is resolved even when the path does not exist (#962). A path for another platform
  * is only normalized. Returns `null` when a realpath fails for a reason other than a missing
  * path, such as EACCES or ELOOP, so the caller can fail closed. On Windows the native realpath
- * expands an 8.3 short segment, which the JS realpath keeps (#1068).
+ * expands an 8.3 short segment, which the JS realpath keeps (#1068). `missing` counts the trailing
+ * segments that did not exist at resolution.
  */
 function canonicalPath(path, platform = process.platform) {
   const pathApi = platform === "win32" ? win32 : posix;
   const realpath = platform === "win32" ? realpathSync.native : realpathSync;
   const normalized = pathApi.normalize(path);
-  if (platform !== process.platform) return normalized;
-  for (let dir = normalized, tail = ""; ;) {
+  if (platform !== process.platform) return { path: normalized, missing: 0 };
+  for (let dir = normalized, tail = "", missing = 0; ; missing++) {
     try {
-      return pathApi.join(realpath(dir), tail);
+      return { path: pathApi.join(realpath(dir), tail), missing };
     } catch (error) {
       if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return null;
     }
     const parent = pathApi.dirname(dir);
-    if (parent === dir) return normalized;
+    if (parent === dir) return { path: normalized, missing: splitPath(normalized).length };
     tail = pathApi.join(pathApi.basename(dir), tail);
     dir = parent;
   }
@@ -66,27 +67,26 @@ function canonicalPath(path, platform = process.platform) {
 
 /**
  * `path` with each 8.3 short segment replaced by its long name, without resolving a link, so a
- * junction keeps its own spelling (#1068). Every segment that can be an alias (`~<digit>`) is
- * either positively resolved or the whole expansion returns `null` so the caller fails closed.
- * Positively resolved is a name that the parent listing holds, or the listing entry with the
- * same file id. A failed stat, listing, or sibling stat, a missing path, and a listing with no
- * matching entry are all unresolved. A segment that cannot be an alias is kept without a check.
- * known-limit: a missing stable suffix with a literal `~<digit>` in a segment name refuses, and a
- * short name set by hand without `~<digit>` is not expanded (fsutil setshortname).
+ * junction keeps its own spelling (#1068). Every segment is either positively resolved or the
+ * whole expansion returns `null` so the caller fails closed. Positively resolved is a name that
+ * the parent listing holds, or the listing entry with the same file id, so a hand-set alias with
+ * no `~<digit>` resolves too. A failed stat, listing, or sibling stat, a vanished segment, and a
+ * listing with no matching entry are unresolved. Only one of the last `missing` segments, which
+ * did not exist when the path was canonicalized, may be missing now, and it is kept as it is.
  */
-function expandShortSegments(path) {
+function expandShortSegments(path, missing) {
   const { root } = win32.parse(path);
+  const segments = splitPath(path.slice(root.length));
   let expanded = root;
-  for (const segment of splitPath(path.slice(root.length))) {
-    const name = longName(expanded, segment);
+  for (const [i, segment] of segments.entries()) {
+    const name = longName(expanded, segment, i >= segments.length - missing);
     if (name === null) return null;
     expanded = win32.join(expanded, name);
   }
   return expanded;
 }
 
-function longName(parent, segment) {
-  if (!/~\d/.test(segment)) return segment;
+function longName(parent, segment, mayBeMissing) {
   try {
     const id = lstatSync(join(parent, segment), { bigint: true }).ino;
     const names = readdirSync(parent);
@@ -96,10 +96,11 @@ function longName(parent, segment) {
       names.find((name) => lstatSync(join(parent, name), { bigint: true }).ino === id) ??
       null
     );
-  } catch {
-    // A segment that looks like an alias and cannot be verified may have vanished after the
-    // canonical resolution, so keeping its name could hide a temporary junction.
-    return null;
+  } catch (error) {
+    // A segment that existed at canonicalization and cannot be verified now may have vanished,
+    // so keeping its name could hide a temporary junction.
+    const gone = error?.code === "ENOENT" || error?.code === "ENOTDIR";
+    return mayBeMissing && gone ? segment : null;
   }
 }
 
@@ -115,9 +116,9 @@ function spellings(path, platform) {
   const normalized = (platform === "win32" ? win32 : posix).normalize(path);
   const own =
     platform === "win32" && platform === process.platform
-      ? expandShortSegments(normalized)
+      ? expandShortSegments(normalized, canonical.missing)
       : normalized;
-  return own === null ? null : [...new Set([normalized, own, canonical])];
+  return own === null ? null : [...new Set([normalized, own, canonical.path])];
 }
 
 /**
