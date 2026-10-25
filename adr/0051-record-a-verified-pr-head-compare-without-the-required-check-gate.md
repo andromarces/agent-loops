@@ -15,7 +15,7 @@ ADR 0009 and ADR 0045 end a PR run through the `--require-ci` gate, which resolv
 ## Decision
 
 1. **Flag.** `agent-loop role finish --compare-head <pr>` reads the PR head with one `gh pr view` and refuses unless it equals `reviewed.head` and the reviewed tree is clean. Both refusals use the wording of the gate.
-2. **No check claim.** The compare reads no required-check source, merge state, or check result, and claims none.
+2. **No check claim.** The compare reads no required-check source or check result, and claims none. The PR read returns the merge state, which the compare does not evaluate.
 3. **Record.** A passing compare adds `"headCompare": "verified"` to the envelope and the state file. The value differs from `unresolvedCompare`, which records that no one resolved the head.
 4. **Exclusion.** The flag is refused beside `--require-ci`, beside `unresolvedCompare`, and for a run that declares a PR, which still needs its gate. It is finish-only and refused in `review-only`. The refusals run before any GitHub read.
 5. **Interactive only.** The headless `agent-loop` command takes no such flag, because its finish action carries the parent's own compare.
@@ -24,7 +24,7 @@ ADR 0009 and ADR 0045 end a PR run through the `--require-ci` gate, which resolv
 
 - A reader tells a runtime-verified head from an unresolved one, on a repository where the gate cannot run.
 - `headCompare` is no pass on the checks. The `verified` text and the reviewer `Checks` line state them.
-- The merge state is not read, so a PR that is behind its base or blocked still finishes. The gate stays the route that enforces that.
+- The merge state is not evaluated, so a PR that is behind its base or blocked still finishes. The gate stays the route that enforces that.
 - An omitted flag keeps the accepted gap of issue #286.
 
 ## Alternatives
@@ -40,6 +40,7 @@ Andro Marces
 ## Links
 
 - [Issue #1098](https://github.com/andromarces/agent-loops/issues/1098)
+- [Pull request #1101](https://github.com/andromarces/agent-loops/pull/1101)
 - Related: #301, #281, #286, [ADR 0009](0009-declare-a-pr-input-on-every-run.md), [ADR 0012](0012-establish-the-absence-of-a-required-check.md), [ADR 0045](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md)
 - Implementation: `checkPrHead` and `compareHeadConflict` in `src/lib/ci-gate.mjs`, the flag in `src/role.mjs`; documented in `docs/orchestrator-instructions.md`, `docs/orchestrator/pr-declaration.md`, and `docs/reference/role.md`
 - [ADR Index](README.md)

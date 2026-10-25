@@ -882,8 +882,8 @@ function describeJsonParseError(error) {
  * sets the lifecycle to `finished`. A key other than the five and
  * `unresolvedCompare` is refused and named (#1021).
  * `--compare-head <pr>` makes the PR-head half of the gate and nothing else: it refuses unless the
- * PR head equals `reviewed.head` and the reviewed tree is clean, reads no required-check source, and
- * records `headCompare: "verified"` in the envelope and the state file. It is refused beside
+ * PR head equals `reviewed.head` and the reviewed tree is clean, reads no required-check source, evaluates no
+ * merge state, and records `headCompare: "verified"` in the envelope and the state file. It is refused beside
  * `--require-ci` and `unresolvedCompare`, and a declared-PR run still needs its gate (#1098).
  * `--require-accept` and `--require-ci` gate the finish. Every applicable refusal
  * is reported in one error. A run that declared `--pr <pr>` at init must end

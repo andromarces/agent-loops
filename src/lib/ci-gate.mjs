@@ -327,8 +327,8 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
 
 /**
  * Refuses unless the PR head equals the reviewed commit and the reviewed tree is clean. This is the
- * head part of `checkCi` alone: it reads the PR and nothing else, so no required-check source, merge
- * state, or check result is read or claimed. It serves a repository whose required-check sources
+ * head part of `checkCi` alone: it makes the one PR read, whose merge-state field it ignores, so no
+ * required-check source is read and no merge state or check result is evaluated or claimed. It serves a repository whose required-check sources
  * settle nothing, where `checkCi` refuses every finish (#1098).
  * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}

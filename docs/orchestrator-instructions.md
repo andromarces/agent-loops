@@ -584,8 +584,9 @@ printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...",
 ```
 
 The runtime reads the PR head and refuses the finish unless it equals
-`reviewed.head` and the reviewed tree is clean. It reads no required-check source,
-merge state, or check result, and claims none, so `verified` still states what
+`reviewed.head` and the reviewed tree is clean. The one `gh pr view` also returns the
+merge state, which the runtime does not evaluate. It reads no required-check
+source or check result and claims none, so `verified` still states what
 the checks showed. The envelope then carries `"headCompare": "verified"` and the
 state file records the same field beside `summary`. That record differs from
 `unresolvedCompare`, which says no one resolved the head. The flag is refused
