@@ -94,7 +94,7 @@ export function splitInlineFlag(arg) {
 // Both readers accept a safe integer only. Above `Number.MAX_SAFE_INTEGER`, an
 // integer double has no room for `value + 1`, so a step counter built from it
 // stops advancing and `--max-steps` stops bounding anything (#312).
-function readPositiveInt(flag, value) {
+export function readPositiveInt(flag, value) {
   const val = Number(value);
   if (!Number.isSafeInteger(val) || val < 1) {
     throw new Error(`${flag} must be a positive integer.`);

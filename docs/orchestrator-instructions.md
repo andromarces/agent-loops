@@ -570,11 +570,30 @@ field absent, or set to `false`, is a verified finish. The marker cannot be
 combined with `--require-ci`: that gate resolves the PR head itself, so a
 compare it verified is not unresolved. A run that cannot use `--require-ci`,
 for example one whose base branch requires a check this credential cannot read,
-records the marker. A base branch whose required-check sources each state that it
+finishes with `--compare-head <pr>` below, or records the marker when it cannot
+read the PR head. A base branch whose required-check sources each state that it
 holds no required check can use the gate, which verifies the PR head, the clean
 reviewed tree, and the merge state.
 
-Without the gate, the runtime never resolves the PR head, so it cannot tell an
+`--compare-head <pr>` makes the PR-head half of the gate and nothing else, for a
+repository whose required-check sources are unreadable, for example a private
+repository on the GitHub Free plan (#301, #1098):
+
+```bash
+printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...","open":"..."}'   | agent-loop role finish --cwd "<work tree>" --compare-head <pr>
+```
+
+The runtime reads the PR head and refuses the finish unless it equals
+`reviewed.head` and the reviewed tree is clean. It reads no required-check source,
+merge state, or check result, and claims none, so `verified` still states what
+the checks showed. The envelope then carries `"headCompare": "verified"` and the
+state file records the same field beside `summary`. That record differs from
+`unresolvedCompare`, which says no one resolved the head. The flag is refused
+together with `--require-ci` and with `unresolvedCompare`, and a run that
+declares its PR still needs its `--require-ci` gate. Dispatch the reviewer again
+when the PR head moved, then repeat the finish.
+
+Without the gate or `--compare-head`, the runtime never resolves the PR head, so it cannot tell an
 absent field from a verified compare. A finish that records the compare under
 notDone and open and omits the field is a verified finish to every machine
 consumer, and the free text is the only trace. `--require-ci` closes the gap in
@@ -632,8 +651,9 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   reason, such as a transport failure, warns and does not refuse. A `--continue-from`
   run that restored its PR makes no start read, because the earlier run's start made
   it, and its prompt states none. After a refusal, omit
-  `--pr` and finish with the `"unresolvedCompare": true` marker after you compare
-  the PR head with `reviewed.head` yourself. The headless `--require-ci` with no
+  `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
+  `reviewed.head` in the runtime. Use the `"unresolvedCompare": true` marker only
+  when the PR head itself cannot be read. The headless `--require-ci` with no
   `--pr` declares nothing, so the start does not read it and its gate refuses at
   finish.
 

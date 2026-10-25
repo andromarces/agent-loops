@@ -91,8 +91,11 @@ GitHub. Declare the PR after the worker opens it:
   run, so such a run can only end through `abort`. `declare-pr` reads the
   required-check sources once and refuses there, leaving the run unchanged. A read
   that fails for another reason warns and does not refuse. Do not declare the PR
-  there. Finish with the `unresolvedCompare` marker
-  after you compare the PR head with `reviewed.head` yourself, and run
+  there. Finish with `role finish --compare-head <pr>`, which reads the PR head,
+  refuses unless it equals `reviewed.head` and the reviewed tree is clean, reads no
+  required-check source, and records `headCompare: "verified"` in place of the
+  `unresolvedCompare` marker. Use the marker only when the PR head itself cannot be
+  read. Run
   `wait-checks --all` once before each reviewer turn, because the required wait
   refuses there. [Waiting for required checks](waiting-for-checks.md) states that wait and the `noCheckSource`
   envelope that ends it at once.

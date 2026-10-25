@@ -325,6 +325,33 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
   }
 }
 
+/**
+ * Refuses unless the PR head equals the reviewed commit and the reviewed tree is clean. This is the
+ * head part of `checkCi` alone: it reads the PR and nothing else, so no required-check source, merge
+ * state, or check result is read or claimed. It serves a repository whose required-check sources
+ * settle nothing, where `checkCi` refuses every finish (#1098).
+ * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
+ * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
+ */
+export async function checkPrHead({ pr, reviewed, cwd, gh = runGh }) {
+  if (!reviewed) {
+    return fail("the latest reviewer turn has no reviewed state");
+  }
+  if (!reviewed.clean) {
+    return fail("the reviewed work tree is not clean");
+  }
+  let info;
+  try {
+    info = await prInfo(gh, pr, cwd);
+  } catch (err) {
+    throw failureOf(err);
+  }
+  if (info.headRefOid !== reviewed.head) {
+    return fail("the PR head differs from the reviewed commit");
+  }
+  return { ok: true, commit: info.headRefOid };
+}
+
 // The reads that `judgeCi` and `readRequiredChecks` both start with: the PR, the
 // repository slug, and the required contexts. `refuseInfo(info)` runs right after
 // the PR read and `refuseUnknownRuleset(info)` after the contexts read. A truthy
@@ -484,13 +511,19 @@ export async function unreadableGateReason({
 
 /**
  * The refusal of a declaration of a PR that the gate can never pass. `label` names the refused
- * input, for example `--pr 42`, and `reason` is the text of `unreadableGateReason`.
+ * input, for example `--pr 42`, and `reason` is the text of `unreadableGateReason`. `finish` is the
+ * recovery clause that follows "omit --pr, then".
  * @param {string} label
  * @param {string} reason
+ * @param {string} [finish]
  * @returns {string}
  */
-export function unreadableGateRefusal(label, reason) {
-  return `${label} is refused: ${reason}, so the --require-ci gate would refuse every finish of a declared run. Do not declare the PR: omit --pr, then finish with the unresolvedCompare marker after you compare the PR head with the reviewed commit yourself.`;
+export function unreadableGateRefusal(
+  label,
+  reason,
+  finish = "finish with the unresolvedCompare marker after you compare the PR head with the reviewed commit yourself",
+) {
+  return `${label} is refused: ${reason}, so the --require-ci gate would refuse every finish of a declared run. Do not declare the PR: omit --pr, then ${finish}.`;
 }
 
 /**
@@ -777,6 +810,23 @@ export function unresolvedCompareReason({ pr = null, requireCi = null }) {
   }
   if (pr !== null) {
     return `unresolvedCompare cannot be combined with a run that declares PR ${pr} (--pr): the run must end through the --require-ci ${pr} gate, which resolves that PR head, so that compare is not unresolved`;
+  }
+  return null;
+}
+
+/**
+ * The refusal of `--compare-head` beside a flag or marker that already settles the PR head, or null.
+ * `--require-ci` resolves the head in its gate, and `unresolvedCompare` records that no one did, so
+ * either one with this verified compare would record two outcomes for one head (#1098).
+ * @param {{ requireCi: number | null, unresolvedCompare: boolean }} options
+ * @returns {string | null}
+ */
+export function compareHeadConflict({ requireCi, unresolvedCompare }) {
+  if (requireCi !== null) {
+    return "--compare-head cannot be combined with --require-ci: the gate resolves the PR head and reads the required checks, so pass one of them";
+  }
+  if (unresolvedCompare) {
+    return "--compare-head cannot be combined with unresolvedCompare: the compare either resolved the PR head or did not";
   }
   return null;
 }

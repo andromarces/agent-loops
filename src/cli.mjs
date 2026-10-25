@@ -325,6 +325,14 @@ Role flags:
                                 reviewed tree, and the merge state, and the run
                                 records the absence. Refuses a
                                 finish that also sets unresolvedCompare.
+  --compare-head <pr>           finish only: refuse unless the PR head matches the
+                                reviewed commit and the reviewed tree is clean. Reads
+                                no required-check source and claims no check result, so
+                                it serves a repository whose required-check sources are
+                                unreadable, such as a private Free-plan repository.
+                                Records headCompare: "verified" in the envelope and the
+                                state file. Refused with --require-ci, with
+                                unresolvedCompare, and by a run that declares a PR.
   --test-cmd <command>          ${wrapHelp(`init only. ${TEST_CMD_TEXT} The state file holds only a digest, so pass the same --test-cmd on every reviewer dispatch; a changed or missing value is refused.`)}
   --test-cmd-timeout <seconds>  ${wrapHelp(TEST_CMD_TIMEOUT_TEXT)}
   --reviewer-sandbox <mode>     ${wrapHelp(`init only. ${REVIEWER_SANDBOX_TEXT} A later call can repeat the stored value or omit the flag, and any other value is refused.`)}
