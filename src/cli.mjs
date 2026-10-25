@@ -710,7 +710,7 @@ function createEventHandler({ recordEvents, events, onInvocation, onTestRun }) {
 export async function main(
   argv = process.argv.slice(2),
   agents = defaultAgents,
-  { stdin = readStdinText } = {},
+  { stdin = readStdinText, gh } = {},
 ) {
   if (argv[0] === "--version" || argv[0] === "-V") {
     // Read on demand: install fixtures copy src without package.json.
@@ -875,6 +875,7 @@ export async function main(
         continued: Boolean(options.continueFrom),
         earlierGate,
         earlierPr,
+        gh,
         copyLocalFiles: options.copyLocalFiles,
         // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
         // parent crash. known-limit: a failed write only warns, as at exit, and runs that share

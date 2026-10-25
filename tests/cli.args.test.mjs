@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { beforeEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
-import { createBodyBarrier, createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { createBodyBarrier, createTempRepo, prGateGh, removePath } from "./runtime-helpers.mjs";
 
 // Tests that spy on console.error and read process.exitCode run through the barrier. A body that
 // passes its timeout under load keeps running, and its late cleanup would clear the spy calls and
@@ -386,7 +386,9 @@ spyTest("the other modes and a mode-free run still take the PR flags", async () 
       try {
         // The gate is declared but never evaluated. This orchestrator finishes with no reviewer
         // turn. The gate refuses, and the run ends on exit 1 with a gate reason, not a usage error.
-        await main([...BASE, ...flags, "--pr", "42", "--require-ci", "42", "--cwd", repo], agents);
+        await main([...BASE, ...flags, "--pr", "42", "--require-ci", "42", "--cwd", repo], agents, {
+          gh: prGateGh("1".repeat(40)),
+        });
         // The run started, so the orchestrator CLI was called at least once, and
         // no usage error named a review-only refusal.
         expect(orchestratorCalls).toBeGreaterThan(0);
@@ -513,6 +515,7 @@ spyTest("a repeated --mode takes the last value", async () => {
       await main(
         [...BASE, "--mode", "review-only", "--mode", "work-first", "--pr", "42", "--cwd", accepted],
         agents,
+        { gh: prGateGh("1".repeat(40)) },
       );
       // work-first won, so the declaration was accepted and the run started.
       expect(orchestratorCalls).toBeGreaterThan(0);
