@@ -141,7 +141,7 @@ function closingBlock(response) {
  * report label, so a list after it stays dropped. One level of `- ` sub-items, indented to the
  * text column of the item above (two spaces, or three after `1. `), joins into that item with
  * ", " (issues #870 and #915). An indented non-list line directly after an item or its sub-items
- * folds into that item with a space, unless it starts with a label name or `Verdict` and a colon once all punctuation except the colon is removed (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
+ * folds into that item with a space, unless it reads as a label line: after NFKC normalization, leading non-letter, non-digit characters and one optional number are skipped, then a label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace follow (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
  * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
  * Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
@@ -213,18 +213,21 @@ const HEADING_ITEM = /^- (?=\S)/;
 // stay lists that hasDroppedList rejects.
 const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}- (?=\\S)`);
 
-// A line that starts with a report label name or `Verdict` once every punctuation and symbol
-// character except the colon is removed, for example `Verdict***: x`, `~~Verdict~~: x`, or
-// `>>> **Verdict:** x`. The check fails closed on purpose: it names no markup shape, so no markup
-// count or kind can hide a label line from it.
-const LABEL_NAME_THEN_COLON = new RegExp(
-  `^\\s*(?:\\d+\\s+)?(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})\\s*:`,
-  "i",
+// A line that reads as a report label or `Verdict` line under any markup or separator: after NFKC
+// normalization it skips every leading character that is no letter or digit (quote, heading, list,
+// and emphasis marks, in any count) and one optional number, then holds a label name or `Verdict`,
+// any case, optional whitespace, and a character that is no letter, digit, or whitespace. Every
+// colon variant (`:`, `：`, `∶`) and every other separator therefore matches, and the check names no
+// markup or separator shape. A label word that a letter, digit, or whitespace-then-letter follows
+// (`Notes about x`, `Why this matters:`) is prose and does not match.
+const LABEL_WORD_THEN_SEPARATOR = new RegExp(
+  `^[^\\p{L}\\p{N}]*(?:\\p{N}+[^\\p{L}\\p{N}]*)?(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})\\s*[^\\p{L}\\p{N}\\s]`,
+  "iu",
 );
 
-/** True when the line reads as a report label or `Verdict` line under any markup. */
+/** True when the line reads as a report label or `Verdict` line under any markup or separator. */
 function readsAsLabelLine(line) {
-  return LABEL_NAME_THEN_COLON.test(line.replace(/(?!:)[\p{P}\p{S}]/gu, ""));
+  return LABEL_WORD_THEN_SEPARATOR.test(line.normalize("NFKC"));
 }
 
 /** True when the line is a list item. A thematic break and an emphasis run are not lists. */

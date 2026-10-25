@@ -996,7 +996,13 @@ test("parseReportBlock refuses an indented label line between list items", () =>
     "  Verdict*****: reject",
     "  ~~Verdict~~: reject",
     "  >>> **Verdict:** reject",
-    "  Ver*dict: reject",
+    "  1 Verdict: reject",
+    "  1. **Verdict:** reject",
+    "  Verdict： reject",
+    "  **Verdict**： reject",
+    "  Ｖerdict: reject",
+    "  Verdict∶ reject",
+    "  Verdict; reject",
   ]) {
     const response = `${REPORT}
 Checks:
