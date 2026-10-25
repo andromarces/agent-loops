@@ -1,7 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { afterEach, expect, test } from "vite-plus/test";
@@ -29,18 +29,18 @@ afterEach(async () => {
  * Runs the `cli.mjs` of an installed layout with no `NODE_PATH`, which `pnpm exec` points at
  * the repository dependencies, so the layout resolves only the dependencies it links.
  */
-function runInstalled(cli, args, env = {}) {
+function runInstalled(cli, args, env = {}, nodeArgs = []) {
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "NODE_PATH"),
   );
-  return execa(process.execPath, [cli, ...args], {
+  return execa(process.execPath, [...nodeArgs, cli, ...args], {
     env: { ...inherited, ...env },
     extendEnv: false,
   });
 }
 
 /** Copies the package into `store` and links each runtime dependency that package.json lists beside it. */
-async function populateStore(store) {
+async function populateStore(store, omit = []) {
   await mkdir(store, { recursive: true });
   await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
   await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
@@ -48,7 +48,7 @@ async function populateStore(store) {
   const { dependencies } = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
   // Beside the package the way pnpm places each dependency.
   const modules = dirname(dirname(store));
-  for (const name of Object.keys(dependencies)) {
+  for (const name of Object.keys(dependencies).filter((dep) => !omit.includes(dep))) {
     const link = join(modules, name);
     await mkdir(dirname(link), { recursive: true });
     await symlink(join(REPO_ROOT, "node_modules", name), link, LINK_TYPE);
@@ -62,7 +62,7 @@ async function populateStore(store) {
  * directory to `<global>/v11/<hash>`, the path the bin shim calls. An older pnpm
  * global layout has no such hash link, so `hash` is optional.
  */
-async function pnpmGlobal(v11, { id, hash, version }) {
+async function pnpmGlobal(v11, { id, hash, version, omit }) {
   const installDir = join(v11, id);
   const store = join(
     installDir,
@@ -73,7 +73,7 @@ async function pnpmGlobal(v11, { id, hash, version }) {
     "@andromarces",
     "agent-loops",
   );
-  await populateStore(store);
+  await populateStore(store, omit);
   const linked = join(installDir, "node_modules", "@andromarces", "agent-loops");
   await mkdir(dirname(linked), { recursive: true });
   await symlink(store, linked, LINK_TYPE);
@@ -634,9 +634,25 @@ test("--version prints the package version from an installed layout", async () =
   expect(stdout).toBe(version);
 });
 
+/**
+ * Fails unless every runtime dependency that package.json lists resolves through the link
+ * beside the package in `store`, not through an ancestor `node_modules`. `--preserve-symlinks`
+ * keeps the link path in the resolved URL, which a real path would hide.
+ */
+async function assertDependenciesResolve(store) {
+  const { dependencies } = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
+  const probe = join(store, "src", "resolve-dependency.mjs");
+  await writeFile(probe, "console.log(import.meta.resolve(process.argv[2]));\n");
+  for (const name of Object.keys(dependencies)) {
+    const { stdout } = await runInstalled(probe, [name], {}, ["--preserve-symlinks"]);
+    const link = join(dirname(dirname(store)), name) + sep;
+    expect(fileURLToPath(stdout).startsWith(link)).toBe(true);
+  }
+}
+
 // Usefulness: verifies the installed layout resolves every runtime dependency that
-// package.json lists, so a dependency the fixture omits fails here even when no
-// module on the `--version` path imports it.
+// package.json lists through its own link, so a dependency the fixture omits fails here
+// even when no module on the `--version` path imports it.
 test("an installed layout resolves every runtime dependency package.json lists", async () => {
   const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-deps-global-"));
   paths.push(globalHome);
@@ -645,12 +661,26 @@ test("an installed layout resolves every runtime dependency package.json lists",
     hash: null,
     version: "0.3.0",
   });
-  const { dependencies } = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
-  const probe = join(store, "src", "resolve-dependency.mjs");
-  await writeFile(probe, "await import(process.argv[2]);\n");
-  for (const name of Object.keys(dependencies)) {
-    await runInstalled(probe, [name]);
-  }
+  await assertDependenciesResolve(store);
+});
+
+// Usefulness: verifies a dependency that only an ancestor `node_modules` provides does not
+// pass for a link beside the package, so a parent directory cannot hide an omitted link.
+test("a dependency provided by an ancestor node_modules does not satisfy the installed layout", async () => {
+  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-deps-ancestor-"));
+  paths.push(globalHome);
+  const { installDir, store } = await pnpmGlobal(join(globalHome, "global", "v11"), {
+    id: "637c-18d963de1bc57d7c-0",
+    hash: null,
+    version: "0.3.0",
+    omit: ["yaml"],
+  });
+  await symlink(
+    join(REPO_ROOT, "node_modules", "yaml"),
+    join(installDir, "node_modules", "yaml"),
+    LINK_TYPE,
+  );
+  await expect(assertDependenciesResolve(store)).rejects.toThrow();
 });
 
 // Usefulness: verifies `install` fails closed on an inherited-list value that is present but not a
