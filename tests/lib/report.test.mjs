@@ -992,6 +992,11 @@ test("parseReportBlock refuses an indented label line between list items", () =>
     "  VERDICT : reject",
     "  Notes: x",
     "  **Deferred:** x",
+    "  Verdict***: reject",
+    "  Verdict*****: reject",
+    "  ~~Verdict~~: reject",
+    "  >>> **Verdict:** reject",
+    "  Ver*dict: reject",
   ]) {
     const response = `${REPORT}
 Checks:
@@ -1004,8 +1009,8 @@ Verdict: accept`;
   }
 });
 
-// Usefulness: verifies ordinary indented prose that only mentions a label word still folds, so the
-// label guard stays as narrow as the label forms the parsers read (issue #1082).
+// Usefulness: guards the broadened label matcher against over-matching: ordinary indented prose that
+// only mentions a label word still folds. No other test pins this (issue #1082).
 test("parseReportBlock folds an indented prose line that is no label line", () => {
   for (const line of ["Notes about x", "Why this matters:", "see Verdict: reject"]) {
     expect(

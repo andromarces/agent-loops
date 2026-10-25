@@ -20,10 +20,8 @@ export const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 // so the whole block is unparseable and `raw` carries the text (issue #243).
 // The Verdict label is excluded: a malformed verdict already maps to `unknown`
 // and never carries report text.
-const labelOpening = (names) =>
-  `\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${names.join("|")})[*_\`]{0,2}\\s*:`;
 const DECORATED_LABEL_LINE = new RegExp(
-  `^(?!(?:${REPORT_LABEL_NAMES.join("|")}):)${labelOpening(REPORT_LABEL_NAMES)}`,
+  `^(?!(?:${REPORT_LABEL_NAMES.join("|")}):)\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${REPORT_LABEL_NAMES.join("|")})[*_\`]{0,2}\\s*:`,
   "i",
 );
 
@@ -143,7 +141,7 @@ function closingBlock(response) {
  * report label, so a list after it stays dropped. One level of `- ` sub-items, indented to the
  * text column of the item above (two spaces, or three after `1. `), joins into that item with
  * ", " (issues #870 and #915). An indented non-list line directly after an item or its sub-items
- * folds into that item with a space, unless it reads as a report label or `Verdict` line, decorated or not (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
+ * folds into that item with a space, unless it starts with a label name or `Verdict` and a colon once all punctuation except the colon is removed (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
  * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
  * Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
@@ -215,13 +213,19 @@ const HEADING_ITEM = /^- (?=\S)/;
 // stay lists that hasDroppedList rejects.
 const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}- (?=\\S)`);
 
-// An indented line that reads as a report label or `Verdict` line in any form that
-// DECORATED_LABEL_LINE accepts: quote, heading, or list lead-in, emphasis or code marks, spaces
-// before the colon, any case. It shares labelOpening, so the two cannot drift.
-const INDENTED_LABEL_LINE = new RegExp(
-  `^[ \\t]${labelOpening([...REPORT_LABEL_NAMES, "Verdict"])}`,
+// A line that starts with a report label name or `Verdict` once every punctuation and symbol
+// character except the colon is removed, for example `Verdict***: x`, `~~Verdict~~: x`, or
+// `>>> **Verdict:** x`. The check fails closed on purpose: it names no markup shape, so no markup
+// count or kind can hide a label line from it.
+const LABEL_NAME_THEN_COLON = new RegExp(
+  `^\\s*(?:\\d+\\s+)?(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})\\s*:`,
   "i",
 );
+
+/** True when the line reads as a report label or `Verdict` line under any markup. */
+function readsAsLabelLine(line) {
+  return LABEL_NAME_THEN_COLON.test(line.replace(/(?!:)[\p{P}\p{S}]/gu, ""));
+}
 
 /** True when the line is a list item. A thematic break and an emphasis run are not lists. */
 function isListLine(line) {
@@ -249,7 +253,7 @@ function isContinuationLine(line) {
     /^[ \t]+\S/.test(line) &&
     !isListLine(line) &&
     !THEMATIC_BREAK.test(line) &&
-    !INDENTED_LABEL_LINE.test(line)
+    !readsAsLabelLine(line)
   );
 }
 
