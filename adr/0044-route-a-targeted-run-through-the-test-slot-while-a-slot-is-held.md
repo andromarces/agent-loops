@@ -22,6 +22,7 @@ A direct targeted run holds no slot, so its load is not counted (ADR 0040, issue
 4. **Prompt rule.** `testSlotRule` tells each worker and reviewer turn to run a targeted test file through the wrapper with `--if-held`, and a full suite through the plain wrapper. One command form serves both: the turn adds `--if-held` after `test-slot` for a targeted run.
 5. **Documented limit.** A targeted run that starts while all slots are free holds no slot, so a slot holder can start beside it. Closing that gap needs a registration that slot holders count, which this ADR does not add.
 6. **No load generator, no process that outlives the turn (issue #934).** The same rule text bars a CPU or memory load generator, a busy loop, and a detached or background process that can outlive the turn, and names the required CI checks as the evidence under load. The rule adds a bar and changes no earlier decision, so it stays in this ADR. The cause was a #927 worker that started 64 busy loops per run from a script with no trap. An interrupted run left the loops running, all 16 CPUs stayed at 100 %, and the editor of the maintainer crashed. The runtime cannot clean up after this, because the crash also ended the `role dispatch` process.
+7. **Direct importers inside the bound (issue #1078).** A targeted run covers the test files that mirror the changed source files first, then the test files of the direct importers of a changed source file, at most 10 test files in total and never a whole directory. The 10-file bound of decision 3 stays. A test of a caller can break while every mirror file passes, as in PR #1076, where only CI found 9 failures. The rule adds a permitted scope and changes no earlier decision, so it stays in this ADR. Indirect importers and a broader run keep the plain wrapper or the required CI checks.
 
 ## Consequences
 
@@ -52,7 +53,8 @@ Andro Marces
 - [ADR 0039: Gate full-suite test runs with a machine-wide test slot](0039-machine-wide-test-slot.md)
 - [PR #928](https://github.com/andromarces/agent-loops/pull/928)
 - [PR #939](https://github.com/andromarces/agent-loops/pull/939)
-- Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934)
+- [PR #1084](https://github.com/andromarces/agent-loops/pull/1084) (decision 7, closes [issue #1078](https://github.com/andromarces/agent-loops/issues/1078))
+- Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934), [#1078](https://github.com/andromarces/agent-loops/issues/1078)
 - Implementation:
   - Source: `holdTestSlot` and `parseTestSlotArgs` in `src/lib/test-slot.mjs`, `testSlotRule` in `src/prompts/report.mjs`
   - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/report.test.mjs`

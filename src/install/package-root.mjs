@@ -1,6 +1,6 @@
 // Detects an ephemeral package root (npx, pnpm dlx, yarn dlx, bunx) and finds the stable root
 // that installed files must name (#205, #207, #305, #311).
-import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, parse, posix, relative, resolve, win32 } from "node:path";
 import { INHERITED_TMPDIR_ENV, readInheritedTmpdirs } from "../lib/inherited-tmpdir.mjs";
@@ -94,8 +94,13 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
  * cover a link to a layout directory that vanishes while the first check runs, and a link spelling
  * of a temporary root that is renamed while the temporary roots are read.
  *
- * known-limit: a change that lands before the first canonicalization reads the affected segment,
- * or while it reads it, is accepted (#1074). The process then never sees the segment present, so a
+ * `isEphemeralPackageRoot` also looks at each prefix of the package root once, before the first
+ * canonicalization, and refuses when a prefix that this look saw is missing at the second check
+ * (#1077). Tests cover a link spelling of a bunx and a yarn dlx layout that is renamed as the first
+ * canonicalization starts.
+ *
+ * known-limit: a change that lands before that first look reads the affected segment, or while it
+ * reads it, is accepted (#1074, #1077). The process then never sees the segment present, so a
  * vanished link spelling of a temporary root looks the same as a missing stable path, which the
  * missing-segment rule above keeps accepted on purpose. No check inside one process can tell the
  * two apart without refusing every missing stable path and missing default root. A change after
@@ -226,6 +231,25 @@ function temporaryRoots() {
 }
 
 /**
+ * The prefixes of `packageRoot` that exist now, from the root down to the first missing one. This
+ * is the first look at the path, taken before any canonicalization. Empty for another platform.
+ */
+function presentPrefixes(packageRoot, platform) {
+  if (platform !== process.platform) return [];
+  const pathApi = platform === "win32" ? win32 : posix;
+  const absolute = absolutePath(packageRoot, platform);
+  const { root } = pathApi.parse(absolute);
+  const segments = splitPath(absolute.slice(root.length));
+  const present = [];
+  for (let depth = 1; depth <= segments.length; depth++) {
+    const prefix = pathApi.join(root, ...segments.slice(0, depth));
+    if (!existsSync(prefix)) break;
+    present.push(prefix);
+  }
+  return present;
+}
+
+/**
  * True when the package root sits in an npx or pnpm dlx cache (#205): the cache
  * directory, a hash directory, then `node_modules`. On Windows the match folds
  * case, because an existing `_NPX` or `DLX` directory keeps its spelling (#625).
@@ -297,6 +321,7 @@ const EPHEMERAL = "ephemeral";
 /** `UNREADABLE` when a check fails closed on a folder it cannot read, `EPHEMERAL` for any other refusal, else `null`. */
 function packageRootRefusal(packageRoot, platform, tempRoots) {
   if (tempRoots.invalid === true) return EPHEMERAL;
+  const seen = presentPrefixes(packageRoot, platform);
   const initial = canonicalPath(packageRoot, platform);
   // A path that cannot be resolved is a runner cache only when a spelling of it shows the layout,
   // under a temporary root as given or as its realpath resolves it.
@@ -338,8 +363,10 @@ function packageRootRefusal(packageRoot, platform, tempRoots) {
   if (matches(packageSpellings)) return EPHEMERAL;
   // The path is accepted only when a second check sees the same spellings, and when the canonical
   // path taken before the temporary roots were read is among them, so a path that changes while
-  // the check runs is refused (#1074).
+  // the check runs is refused (#1074). So is a prefix that the first look saw and that is gone now
+  // (#1077).
   const again = spellings(packageRoot, platform, related);
+  if (seen.some((prefix) => !existsSync(prefix))) return EPHEMERAL;
   if (initial === null || again === null) return unresolved();
   const changed =
     !packageSpellings.includes(initial) ||
