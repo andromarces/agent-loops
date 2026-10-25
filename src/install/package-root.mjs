@@ -87,10 +87,15 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
  * parent is neither at, above, nor below a temporary root. Every segment below a kept one is
  * missing too and is kept.
  *
- * known-limit: a concurrent rename or delete of a segment while the check runs (a race) is out of
- * scope (#1068). A layout directory that vanishes during the check can leave the unchecked tail
- * kept, and the check does not guard against it. The checks above only fail closed where a
- * failure is observed.
+ * known-limit: a concurrent rename or delete of a segment while the check runs (a race) is an
+ * accepted limit (#1068, #1074). A layout directory that vanishes during the check can leave the
+ * unchecked tail kept, and a rename before canonicalization can make an alias look like a missing
+ * segment. The checks above only fail closed where a failure is observed. Reasons: the threat is a
+ * runner that deletes its own folder, which happens after the installer exits, so the folder exists
+ * for the whole check; a process that renames path segments during the check is outside that
+ * threat; and a second check would narrow only the check window, not the later file writes, which
+ * face the same deletion with or without a refusal. Add a second check that refuses when the two
+ * results differ if a mid-check rename or delete is ever observed.
  */
 function expandShortSegments(path, related) {
   const { root } = win32.parse(path);
