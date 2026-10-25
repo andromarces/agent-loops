@@ -132,7 +132,9 @@ poll also reads the required-check sources. If the rulesets and the classic prot
 both settle nothing and no source names a check, as on a private repository on the
 GitHub Free plan (#301), the required wait refuses at once on the first poll with the
 unresolved-source error below, because no check can be known to report. A readable
-source keeps the wait running, whether it names a required check or states the absence.
+source keeps the wait running, whether it names a required check or states the absence,
+whatever the other source returned. A server error (500, 502, 503, 504) on a source read is
+retried on the next poll, and one that lasts to the bound exits 1 with `status: "error"`.
 If the bound arrives with only that reply, the wait returns `timedOut: true` and an
 empty `checks`, which is never a pass. Any other exit 1, and any output that
 is not a check list, is unresolved: the command exits 1 with

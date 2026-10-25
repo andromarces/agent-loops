@@ -670,16 +670,17 @@ export async function waitChecks({
   // wait is stricter than the gate, which ignores that read. A source that names a required
   // check is no absence, so the wait goes on to judge it. The `no checks reported` reply (#1091)
   // refuses only when no source can state the required checks: both configuration sources are
-  // unreadable and no check is named. Its names read never succeeds, so that read is not judged,
-  // and any readable source keeps the wait running (#941).
+  // unreadable and no check is named. Its names read never succeeds and a malformed reply of one
+  // source says nothing about the other, so neither is judged, and a source that names a check or
+  // states the absence keeps the wait running whatever the other returned (#941). Its source reads
+  // are retryable reads, so a server error carries `transient` and the poll retries it.
   const absenceOf = async (base, reply = "no required check") => {
     await ensureSlug();
-    const required = await requiredContexts(bounded, slug, base, pr, cwd);
     const noChecksYet = reply === "no checks";
-    const namesRefusal = requiredNamesRefusal(
-      noChecksYet ? { ...required, namesRead: true } : required,
-      pr,
-    );
+    const required = await requiredContexts(bounded, slug, base, pr, cwd, {
+      retryable: noChecksYet,
+    });
+    const namesRefusal = noChecksYet ? null : requiredNamesRefusal(required, pr);
     if (namesRefusal) {
       throw new Error(`${namesRefusal}; the read is unresolved.`);
     }
@@ -863,7 +864,17 @@ export async function waitChecks({
           listed.settled = false;
         }
         if (listed.noChecksYet && !all) {
-          await absenceOf(base, "no checks");
+          try {
+            await absenceOf(base, "no checks");
+          } catch (raw) {
+            // A server error of a source read is retried on the next poll. The bound and every
+            // other failure still end the wait.
+            const err = failureOf(raw);
+            if (!err?.transient || err instanceof BoundReached) {
+              throw err;
+            }
+            failed = err;
+          }
         }
         prFailures = listed.checks.filter(isFailing);
         let outcome = listed;
