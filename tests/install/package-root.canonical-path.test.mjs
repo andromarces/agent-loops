@@ -7,7 +7,12 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { installRefusal, isEphemeralPackageRoot } from "../../src/install/package-root.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
-const realpathMock = vi.hoisted(() => ({ fail: null, readdirFail: null, lstatFail: null }));
+const realpathMock = vi.hoisted(() => ({
+  fail: null,
+  readdirFail: null,
+  readdirList: null,
+  lstatFail: null,
+}));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal();
   const failing =
@@ -30,7 +35,10 @@ vi.mock("node:fs", async (importOriginal) => {
     };
   return {
     ...actual,
-    readdirSync: failingWith("readdirSync", "readdirFail"),
+    // `readdirList` returns the listing to report for a directory, or null for the real one.
+    readdirSync: (path, ...rest) =>
+      realpathMock.readdirList?.(String(path)) ??
+      failingWith("readdirSync", "readdirFail")(path, ...rest),
     lstatSync: failingWith("lstatSync", "lstatFail"),
     realpathSync: Object.assign(failing(actual.realpathSync), {
       native: failing(actual.realpathSync.native),
@@ -46,6 +54,7 @@ const paths = [];
 afterEach(async () => {
   realpathMock.fail = null;
   realpathMock.readdirFail = null;
+  realpathMock.readdirList = null;
   realpathMock.lstatFail = null;
   for (const path of paths.splice(0)) await removePath(path);
 });
@@ -213,5 +222,30 @@ test.skipIf(process.platform !== "win32")(
     }
     const missing = join(base, "stablenamedparent", "missing", "pkg");
     expect(isEphemeralPackageRoot(missing, "win32", roots)).toBe(false);
+  },
+);
+
+// Usefulness: verifies #1068 review — a short segment whose stat succeeds but whose directory listing holds no entry with its file id refuses the install, while a literal name that the listing holds stays accepted.
+test.skipIf(process.platform !== "win32")(
+  "a short segment with no matching listing entry is refused and a listed literal name is accepted",
+  async () => {
+    const base = await scratch();
+    const tempRoot = join(base, "shortnamedtemproot");
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+    for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+      await mkdir(join(tempRoot, ...layout), { recursive: true });
+      const junction = join(tempRoot, ...layout, "packagejunctionlink");
+      await symlink(stable, junction, LINK_TYPE);
+      const shortJunction = shortSpelling(junction);
+      if (shortJunction === null) return;
+      realpathMock.readdirList = () => [];
+      expect(isEphemeralPackageRoot(shortJunction, "win32", roots), shortJunction).toBe(true);
+      realpathMock.readdirList = null;
+    }
+    const literal = join(base, "stablenamedparent", "literal~1dir", "pkg");
+    await mkdir(literal, { recursive: true });
+    expect(isEphemeralPackageRoot(literal, "win32", roots)).toBe(false);
   },
 );

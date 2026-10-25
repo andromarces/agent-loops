@@ -66,10 +66,13 @@ function canonicalPath(path, platform = process.platform) {
 
 /**
  * `path` with each 8.3 short segment replaced by its long name, without resolving a link, so a
- * junction keeps its own spelling (#1068). The long name is the entry of the parent directory
- * with the same file id. Returns `null` when a segment that looks like an 8.3 alias (`~<digit>`)
- * cannot be stat'd or listed, a missing path included, so the caller can fail closed.
- * known-limit: a missing stable suffix with a literal `~<digit>` in a segment name refuses.
+ * junction keeps its own spelling (#1068). Every segment that can be an alias (`~<digit>`) is
+ * either positively resolved or the whole expansion returns `null` so the caller fails closed.
+ * Positively resolved is a name that the parent listing holds, or the listing entry with the
+ * same file id. A failed stat, listing, or sibling stat, a missing path, and a listing with no
+ * matching entry are all unresolved. A segment that cannot be an alias is kept without a check.
+ * known-limit: a missing stable suffix with a literal `~<digit>` in a segment name refuses, and a
+ * short name set by hand without `~<digit>` is not expanded (fsutil setshortname).
  */
 function expandShortSegments(path) {
   const { root } = win32.parse(path);
@@ -84,21 +87,18 @@ function expandShortSegments(path) {
 
 function longName(parent, segment) {
   if (!/~\d/.test(segment)) return segment;
-  let id;
   try {
-    id = lstatSync(join(parent, segment), { bigint: true }).ino;
-  } catch {
-    // A segment that looks like an alias and cannot be stat'd may have vanished after the
-    // canonical resolution, so keeping its name could hide a temporary junction.
-    return null;
-  }
-  try {
+    const id = lstatSync(join(parent, segment), { bigint: true }).ino;
+    const names = readdirSync(parent);
+    const lower = segment.toLowerCase();
     return (
-      readdirSync(parent).find(
-        (name) => name !== segment && lstatSync(join(parent, name), { bigint: true }).ino === id,
-      ) ?? segment
+      names.find((name) => name.toLowerCase() === lower) ??
+      names.find((name) => lstatSync(join(parent, name), { bigint: true }).ino === id) ??
+      null
     );
   } catch {
+    // A segment that looks like an alias and cannot be verified may have vanished after the
+    // canonical resolution, so keeping its name could hide a temporary junction.
     return null;
   }
 }
