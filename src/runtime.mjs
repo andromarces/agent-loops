@@ -506,23 +506,28 @@ async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
     gh,
     signal,
     timeoutMs: readTimeoutMs,
+    // The same read as the start of a `--pr` run (#1092): a declared PR whose gate cannot read the
+    // required-check sources could only end through `abort`, so the run stays undeclared (#1097).
+    // The resolver runs it before its final identity check, so a head, branch, or remote that
+    // moves during it leaves the run undeclared too (ADR 0043).
+    confirm: async (pr) => {
+      const unreadable = await unreadableGateReason({
+        pr,
+        cwd,
+        gh,
+        timeoutMs: readTimeoutMs,
+        when: "before declaring it",
+      });
+      return unreadable
+        ? `PR ${pr} is not declared, because ${unreadable}, so the --require-ci gate would refuse every finish. The run keeps the unresolvedCompare marker path: finish with unresolvedCompare after you compare the PR head with the reviewed commit yourself.`
+        : null;
+    },
   });
   if (resolved.pr === null) {
-    if (!resolved.quiet) logWarn(`no PR declared after the worker turn: ${resolved.reason}`);
-    return null;
-  }
-  // The same read as the start of a `--pr` run (#1092): a declared PR whose gate cannot read the
-  // required-check sources could only end through `abort`, so the run stays undeclared (#1097).
-  const unreadable = await unreadableGateReason({
-    pr: resolved.pr,
-    cwd,
-    gh,
-    timeoutMs: readTimeoutMs,
-    when: "before declaring it",
-  });
-  if (unreadable) {
-    logWarnFull(
-      `no PR declared after the worker turn: PR ${resolved.pr} is not declared, because ${unreadable}, so the --require-ci gate would refuse every finish. The run keeps the unresolvedCompare marker path: finish with unresolvedCompare after you compare the PR head with the reviewed commit yourself.`,
+    if (resolved.quiet) return null;
+    // A trusted reason names no untrusted text, so the recovery stays whole.
+    (resolved.trusted ? logWarnFull : logWarn)(
+      `no PR declared after the worker turn: ${resolved.reason}`,
     );
     return null;
   }
