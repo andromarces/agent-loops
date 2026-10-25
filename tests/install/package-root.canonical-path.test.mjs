@@ -385,6 +385,39 @@ test.skipIf(process.platform !== "win32")(
   },
 );
 
+// Usefulness: verifies #1077 — a link spelling of a runner layout that is renamed away as the first canonicalization starts still refuses, because an earlier look saw the link, while a missing stable path stays accepted.
+test("a link spelling that vanishes before the first canonicalization is refused", async () => {
+  const base = await scratch();
+  const stable = join(base, "stablenamedparent", "pkg");
+  await mkdir(stable, { recursive: true });
+  for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+    const tempRoot = join(base, `temproot${layout.length}`);
+    const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+    await mkdir(join(tempRoot, ...layout), { recursive: true });
+    const layoutLink = join(base, `linkedlayout${layout.length}`);
+    await symlink(join(tempRoot, layout[0]), layoutLink, LINK_TYPE);
+    const viaLink = join(layoutLink, ...layout.slice(1), "pkg");
+    await mkdir(viaLink, { recursive: true });
+    expect(isEphemeralPackageRoot(viaLink, process.platform, roots), `${viaLink} before`).toBe(
+      true,
+    );
+    let renamed = false;
+    realpathMock.fail = () => {
+      if (!renamed) renameSync(layoutLink, join(base, `renamedlayout${layout.length}`));
+      renamed = true;
+      return false;
+    };
+    expect(isEphemeralPackageRoot(viaLink, process.platform, roots), `${viaLink} during`).toBe(
+      true,
+    );
+    realpathMock.fail = null;
+  }
+  const missing = join(base, "stablenamedparent", "missing", "pkg");
+  const otherRoot = join(base, "temproot");
+  const roots = { bunx: [otherRoot], yarn: [otherRoot] };
+  expect(isEphemeralPackageRoot(missing, process.platform, roots), "missing stable").toBe(false);
+});
+
 // Usefulness: verifies #1074 — a link spelling of the temporary root that is renamed away while the check runs still refuses a runner layout under it, so a rename cannot turn an existing alias into a missing segment that passes.
 test.skipIf(process.platform !== "win32")(
   "a link spelling of the temporary root renamed away is refused",

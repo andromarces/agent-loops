@@ -20,7 +20,7 @@ test("an unquotable path leaves only the required CI checks", () => {
 // whole-directory run outside the machine-wide test slot (issue #872).
 test("the rule bounds a direct targeted run and sends a broader run through the wrapper", () => {
   const withWrapper = testSlotRule();
-  expect(withWrapper).toMatch(/targeted[^.]*at most 10 test files[^.]*mirror[^.]*changed source/);
+  expect(withWrapper).toMatch(/targeted run[^.]*at most 10 test files/);
   expect(withWrapper).toMatch(/never a whole directory/);
   expect(withWrapper).toMatch(/broader run[^.]*through the test slot wrapper, as a full suite/);
   const withoutWrapper = testSlotRule({ execPath: '/opt/no"de', platform: "linux" });
@@ -40,6 +40,19 @@ test("the rule routes a targeted run through the wrapper with --if-held", () => 
   expect(rule).toMatch(/at most 10 test files/);
   expect(rule).toMatch(/full test suite only through the test slot wrapper, which waits/);
   expect(rule).toMatch(/Exit code 75[^.]*unresolved, not as a pass or a failure/);
+});
+
+// Usefulness: verifies requirement "a targeted run may include the test files of direct importers of
+// a changed file, inside the 10-file bound" (issue #1078), on both rule forms, so a worker or
+// reviewer catches a caller that a change breaks before CI does.
+test("the rule lets a targeted run add the tests of direct importers inside the 10-file bound", () => {
+  const forms = [testSlotRule(), testSlotRule({ execPath: '/opt/no"de', platform: "linux" })];
+  for (const rule of forms) {
+    expect(rule).toMatch(
+      /targeted run[^.]*mirror[^.]*changed source files[^.]*then[^.]*direct importers[^.]*at most 10 test files in total/,
+    );
+    expect(rule).toMatch(/never a whole directory/);
+  }
 });
 
 // Usefulness: verifies the rendered wrapper runs a suite command in the default shell of the host

@@ -184,8 +184,10 @@ the flag is unchanged.
   suite only through the plain wrapper, or rely on the required CI checks. With
   `--if-held`, the run stays direct while all slots are free and waits for a slot
   while any slot is held. A targeted run that starts while all slots are free holds
-  no slot, so a slot holder can start beside it. A targeted run is at most 10 test
-  files that mirror the changed source files, never a whole directory. Any broader
+  no slot, so a slot holder can start beside it. A targeted run covers the test
+  files that mirror the changed source files first, then the test files of the
+  direct importers of a changed source file, at most 10 test files in total,
+  never a whole directory (issue #1078). Any broader
   run is a full suite and goes through the plain wrapper. A run whose paths cannot
   be quoted keeps a direct targeted run, and a broader run relies on the required CI checks. The rule renders the wrapper command from the Node
   binary and the CLI script of the run, so it works where `agent-loop` is not on

@@ -90,11 +90,12 @@ const NO_LOAD_GENERATORS =
   "Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn. Use the required CI checks as the evidence under load.";
 
 const TARGETED_RUN_BOUND =
-  "A targeted run is at most 10 test files that mirror the changed source files, never a whole directory.";
+  "A targeted run covers the test files that mirror the changed source files first, then the test files of the direct importers of a changed source file, at most 10 test files in total, never a whole directory.";
 
 /**
  * The test-run rule for every worker and reviewer turn (issue #848, ADR 0040, issue #872, issue
- * #921, ADR 0044): a targeted test run of at most 10 files goes through the `test-slot` wrapper
+ * #921, ADR 0044, issue #1078): a targeted test run of at most 10 files, the mirror files first,
+ * then the test files of direct importers of a changed source file, goes through the `test-slot` wrapper
  * of this process with `--if-held`, which runs it directly while all slots are free and waits for
  * a slot while any slot is held. Any broader run is a full suite and runs only through the plain
  * wrapper, or the required CI checks stand in for it. A path that cannot be quoted leaves a direct
