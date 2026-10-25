@@ -67,28 +67,36 @@ function canonicalPath(path, platform = process.platform) {
 /**
  * `path` with each 8.3 short segment replaced by its long name, without resolving a link, so a
  * junction keeps its own spelling (#1068). The long name is the entry of the parent directory
- * with the same file id. A segment that does not exist or cannot be listed stays as it is.
+ * with the same file id. A segment that does not exist stays as it is, as in `canonicalPath`.
+ * Returns `null` when a stat or a listing fails for another reason, so the caller can fail closed.
  */
 function expandShortSegments(path) {
   const { root } = win32.parse(path);
   let expanded = root;
   for (const segment of splitPath(path.slice(root.length))) {
-    expanded = win32.join(expanded, longName(expanded, segment));
+    const name = longName(expanded, segment);
+    if (name === null) return null;
+    expanded = win32.join(expanded, name);
   }
   return expanded;
 }
 
 function longName(parent, segment) {
   if (!/~\d/.test(segment)) return segment;
+  let id;
   try {
-    const id = lstatSync(join(parent, segment), { bigint: true }).ino;
+    id = lstatSync(join(parent, segment), { bigint: true }).ino;
+  } catch (error) {
+    return error?.code === "ENOENT" || error?.code === "ENOTDIR" ? segment : null;
+  }
+  try {
     return (
       readdirSync(parent).find(
         (name) => name !== segment && lstatSync(join(parent, name), { bigint: true }).ino === id,
       ) ?? segment
     );
   } catch {
-    return segment;
+    return null;
   }
 }
 
@@ -96,7 +104,7 @@ function longName(parent, segment) {
  * The spellings to match: the normalized path, which is what the installer renders into entry
  * points, and its canonical path. A package junction inside a runner layout matches by its own
  * spelling even when its target is stable, and on Windows an 8.3 segment of that spelling expands
- * to its long name. `null` when the canonical path cannot be resolved.
+ * to its long name. `null` when the canonical path or an 8.3 expansion cannot be resolved.
  */
 function spellings(path, platform) {
   const canonical = canonicalPath(path, platform);
@@ -106,7 +114,7 @@ function spellings(path, platform) {
     platform === "win32" && platform === process.platform
       ? expandShortSegments(normalized)
       : normalized;
-  return [...new Set([normalized, own, canonical])];
+  return own === null ? null : [...new Set([normalized, own, canonical])];
 }
 
 /**

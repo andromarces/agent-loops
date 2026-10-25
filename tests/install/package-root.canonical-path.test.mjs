@@ -2,12 +2,12 @@ import { mkdir, mkdtemp, symlink } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { installRefusal, isEphemeralPackageRoot } from "../../src/install/package-root.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
-const realpathMock = vi.hoisted(() => ({ fail: null }));
+const realpathMock = vi.hoisted(() => ({ fail: null, readdirFail: null, lstatFail: null }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal();
   const failing =
@@ -20,8 +20,18 @@ vi.mock("node:fs", async (importOriginal) => {
       }
       return realpath(path, ...rest);
     };
+  // A predicate that returns an error code makes the call throw it.
+  const failingWith =
+    (call, predicate) =>
+    (path, ...rest) => {
+      const code = realpathMock[predicate]?.(String(path));
+      if (code) throw Object.assign(new Error(`${code}: ${call} '${path}'`), { code });
+      return actual[call](path, ...rest);
+    };
   return {
     ...actual,
+    readdirSync: failingWith("readdirSync", "readdirFail"),
+    lstatSync: failingWith("lstatSync", "lstatFail"),
     realpathSync: Object.assign(failing(actual.realpathSync), {
       native: failing(actual.realpathSync.native),
     }),
@@ -35,6 +45,8 @@ const paths = [];
 
 afterEach(async () => {
   realpathMock.fail = null;
+  realpathMock.readdirFail = null;
+  realpathMock.lstatFail = null;
   for (const path of paths.splice(0)) await removePath(path);
 });
 
@@ -148,5 +160,34 @@ test.skipIf(process.platform !== "win32")(
       expect(isEphemeralPackageRoot(junction, "win32", shortRoots), "short temp").toBe(true);
     }
     expect(isEphemeralPackageRoot(stable, "win32", roots)).toBe(false);
+  },
+);
+
+// Usefulness: verifies #1068 review — an 8.3 expansion that fails on the directory listing or on a sibling stat refuses the install, as a realpath failure does, so a short-spelled junction in a runner layout is never accepted for lack of an expansion.
+test.skipIf(process.platform !== "win32")(
+  "a failed 8.3 expansion of a junction package root inside a runner layout is refused",
+  async () => {
+    const base = await scratch();
+    const tempRoot = join(base, "shortnamedtemproot");
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+    const failures = {
+      readdirFail: () => "EACCES",
+      lstatFail: (path) => (basename(path).includes("~") ? null : "ENOENT"),
+    };
+    for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+      await mkdir(join(tempRoot, ...layout), { recursive: true });
+      const junction = join(tempRoot, ...layout, "packagejunctionlink");
+      await symlink(stable, junction, LINK_TYPE);
+      const shortJunction = shortSpelling(junction);
+      if (shortJunction === null) return;
+      expect(isEphemeralPackageRoot(shortJunction, "win32", roots), "no failure").toBe(true);
+      for (const [name, predicate] of Object.entries(failures)) {
+        realpathMock[name] = predicate;
+        expect(isEphemeralPackageRoot(shortJunction, "win32", roots), name).toBe(true);
+        realpathMock[name] = null;
+      }
+    }
   },
 );
