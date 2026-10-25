@@ -615,6 +615,19 @@ test("--help lists --version and role --help", async () => {
   expect(stdout).toContain("agent-loop role --help");
 });
 
+// Usefulness: verifies the --pr help states when the earlier required-check read happened (#1097), so
+// a reader does not take a continuation as the run that made the read.
+test("--help states where the required-check read of a restored PR happened", async () => {
+  const { stdout } = await execa(process.execPath, [CLI, "--help"]);
+  const text = stdout.replace(/\s+/g, " ");
+  expect(text).toContain(
+    "before it declares a PR that a worker turn opened, and leaves the run undeclared",
+  );
+  expect(text).toContain(
+    "the earlier run read at its own --pr start, or before it declared the PR",
+  );
+});
+
 // Usefulness: verifies `role --help` and `role -h` print usage on stdout and exit 0.
 test.each(["--help", "-h"])("role %s prints usage and exits 0", async (flag) => {
   const result = await execa(process.execPath, [CLI, "role", flag]);

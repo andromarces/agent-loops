@@ -90,8 +90,11 @@ const isListEntry = (entry) =>
  * matches, a PR from a fork, a PR for another base repository, a PR head that differs from `head`,
  * a PR URL that does not end in the PR number, and a head that differs from `head` before or
  * after the read. A branch or remote that changed during the read does the same. The function never throws.
- * @param {{ cwd: string, head: string | null, gh?: Function, signal?: AbortSignal, timeoutMs?: number }} options
- * @returns {Promise<{ pr: number } | { pr: null, reason: string, quiet?: true }>}
+ * `confirm(pr)` is an optional read that runs on the matched PR before the final identity check, so
+ * that check covers it. It returns null to accept the PR, or the reason text that leaves the run
+ * undeclared; that text is the runtime's own, so the result carries `trusted`.
+ * @param {{ cwd: string, head: string | null, gh?: Function, signal?: AbortSignal, timeoutMs?: number, confirm?: (pr: number) => Promise<string | null> }} options
+ * @returns {Promise<{ pr: number } | { pr: null, reason: string, quiet?: true, trusted?: true }>}
  */
 export async function resolveWorkerPr({
   cwd,
@@ -99,6 +102,7 @@ export async function resolveWorkerPr({
   gh = runGh,
   signal,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
+  confirm = null,
 }) {
   if (typeof head !== "string" || head === "" || head === "unborn") {
     return { pr: null, reason: "the work tree head is not known" };
@@ -160,10 +164,12 @@ export async function resolveWorkerPr({
         reason: `PR ${entry.number} head differs from the work tree head ${head}`,
       };
     }
+    const refusal = confirm ? await confirm(entry.number) : null;
     const after = await readRunState(cwd, signal);
     if (after.branch !== branch || after.repo !== runRepo || after.head !== head) {
       return { pr: null, reason: "the branch, remote, or head changed during the PR read" };
     }
+    if (refusal) return { pr: null, reason: refusal, trusted: true };
     return { pr: entry.number };
   } catch (err) {
     return { pr: null, reason: `the PR read failed: ${readableErrorText(err)}` };
