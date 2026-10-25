@@ -130,6 +130,32 @@ test("a package root that cannot be read is refused without the runner-cache mes
   expect(installRefusal(npxRoot)).toBe(EPHEMERAL_ROOT_MESSAGE);
 });
 
+// Usefulness: verifies #1088 — the unreadable-path refusal names the folder that failed, not only the package root, so a user can fix the permission on that folder without searching for it; it also covers a parent folder and a temporary root, which the package root alone does not point at.
+test("the unreadable-path refusal names the folder that failed", async () => {
+  const base = await scratch();
+  const denied = join(base, "denied");
+  const stable = join(denied, "pkg");
+  await mkdir(stable, { recursive: true });
+  realpathMock.fail = (path) => path === denied;
+  const refusal = installRefusal(stable);
+  expect(refusal).toMatch(/^Refusing to install/);
+  expect(refusal).toContain(denied);
+  expect(refusal).not.toBe(EPHEMERAL_ROOT_MESSAGE);
+  expect(isEphemeralPackageRoot(stable, process.platform, { bunx: [], yarn: [] })).toBe(true);
+
+  const unreadableTemp = join(base, "unreadable-temp");
+  await mkdir(unreadableTemp);
+  realpathMock.fail = (path) => path === unreadableTemp;
+  const saved = process.env.AGENT_LOOP_INHERITED_TMPDIR;
+  process.env.AGENT_LOOP_INHERITED_TMPDIR = JSON.stringify([unreadableTemp]);
+  try {
+    expect(installRefusal(stable)).toContain(unreadableTemp);
+  } finally {
+    if (saved === undefined) delete process.env.AGENT_LOOP_INHERITED_TMPDIR;
+    else process.env.AGENT_LOOP_INHERITED_TMPDIR = saved;
+  }
+});
+
 // Usefulness: verifies #962 review — a temporary root that cannot be canonicalized refuses every package root, since the match cannot rule the root out.
 test("a temporary root that cannot be canonicalized refuses every package root", async () => {
   const base = await scratch();
