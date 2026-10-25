@@ -136,20 +136,23 @@ test("the unreadable-path refusal names the folder that failed", async () => {
   const denied = join(base, "denied");
   const stable = join(denied, "pkg");
   await mkdir(stable, { recursive: true });
-  realpathMock.fail = (path) => path === denied;
+  // The check names a folder by its long spelling, which differs from `denied` under an 8.3
+  // temporary root, so the mock and the assertions match on the folder name.
+  const namesFolder = (name) => new RegExp(`folder .*[\\\\/]${name} cannot be read`);
+  realpathMock.fail = (path) => basename(path) === "denied";
   const refusal = installRefusal(stable);
   expect(refusal).toMatch(/^Refusing to install/);
-  expect(refusal).toContain(denied);
+  expect(refusal).toMatch(namesFolder("denied"));
   expect(refusal).not.toBe(EPHEMERAL_ROOT_MESSAGE);
   expect(isEphemeralPackageRoot(stable, process.platform, { bunx: [], yarn: [] })).toBe(true);
 
   const unreadableTemp = join(base, "unreadable-temp");
   await mkdir(unreadableTemp);
-  realpathMock.fail = (path) => path === unreadableTemp;
+  realpathMock.fail = (path) => basename(path) === "unreadable-temp";
   const saved = process.env.AGENT_LOOP_INHERITED_TMPDIR;
   process.env.AGENT_LOOP_INHERITED_TMPDIR = JSON.stringify([unreadableTemp]);
   try {
-    expect(installRefusal(stable)).toContain(unreadableTemp);
+    expect(installRefusal(stable)).toMatch(namesFolder("unreadable-temp"));
   } finally {
     if (saved === undefined) delete process.env.AGENT_LOOP_INHERITED_TMPDIR;
     else process.env.AGENT_LOOP_INHERITED_TMPDIR = saved;
