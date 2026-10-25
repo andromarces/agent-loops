@@ -51,9 +51,17 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
   a malformed `pr-declared` record, such as a `pr` that is not a positive integer.
 - A continued run applies the same gate to the restored PR. A `--pr` for that PR
   adds no refusal, because the PR was declared by the runtime.
+- Before the runtime declares the PR, it reads the required-check sources of the
+  PR base once, as the start of a `--pr` run does (#1092). When the rulesets read
+  settles nothing, such as the Free-plan 403 (#301), the run stays undeclared and the
+  runtime logs a warning that names the reason. The run then keeps the
+  `unresolvedCompare` marker path: compare the PR head with the reviewed commit, and
+  finish with the marker. A read that fails for another reason, such as a transport
+  failure, warns and still declares the PR (#1097).
 - A continued run that restored its PR reads no required-check source at start,
-  because the earlier run's start made that read (#1092), and its orchestrator
-  prompt states no start read. A continuation that declares a new PR makes the read.
+  because the earlier run read at the start of its own `--pr` run or before it
+  declared a worker-opened PR (#1092, #1097). Its orchestrator prompt states no
+  start read. A continuation that declares a new PR makes the read.
 - To gate a PR that exists at start, pass `--require-ci <n>`. Or use
   `agent-loop role` with `role declare-pr`, which takes the gate at `finish`.
 

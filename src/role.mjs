@@ -893,9 +893,9 @@ function describeJsonParseError(error) {
  * An optional `unresolvedCompare` boolean beside the five keys, and a gate that
  * passes with no required check (`noRequiredChecks`), are recorded in the
  * envelope and the state file. Both keep the finish distinct from a verified
- * one. Without `--require-ci` this subcommand never resolves the PR head, so an
- * omitted marker is an accepted gap (ADR 0009, ADR 0012, issues #281, #286, #293,
- * #302, #336).
+ * one. Without `--require-ci` or `--compare-head` this subcommand never resolves
+ * the PR head, so an omitted marker is an accepted gap (ADR 0009, ADR 0012,
+ * issues #281, #286, #293, #302, #336).
  */
 async function finish(args, { stdin = readStdin, gh, signal } = {}) {
   rejectMisplacedFlags(args, "finish");

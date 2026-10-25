@@ -650,8 +650,9 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   sources of the PR base once. They refuse when the rulesets read settled nothing,
   before any state file is written or child spawns. A read that fails for another
   reason, such as a transport failure, warns and does not refuse. A `--continue-from`
-  run that restored its PR makes no start read, because the earlier run's start made
-  it, and its prompt states none. After a refusal, omit
+  run that restored its PR makes no start read, because the earlier run read at the
+  start of its own `--pr` run or before it declared a worker-opened PR, and its
+  prompt states none. After a refusal, omit
   `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
   `reviewed.head` in the runtime. Use the `"unresolvedCompare": true` marker only
   when the PR head itself cannot be read. The headless `--require-ci` with no

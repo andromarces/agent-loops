@@ -11,7 +11,7 @@ import {
   unresolvedCompareReason,
 } from "./lib/ci-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
-import { logError, logInfo, logWarn } from "./lib/log.mjs";
+import { logError, logInfo, logWarn, logWarnFull } from "./lib/log.mjs";
 import {
   applyResult,
   freshGate,
@@ -165,7 +165,8 @@ export async function runLoop(options) {
 
   // A declared PR whose required-check sources the gate cannot read could only end through `abort`,
   // so the start refuses it before any child spawn (#1092). A continued run that restored its PR
-  // passed this check when the earlier run started.
+  // makes no read here: the earlier run read at its own start when it took `--pr`, or before it
+  // declared a PR that a worker turn opened (#1097).
   const readAtStart = pr !== null && (continued ? earlierPr : null) === null;
   if (readAtStart) {
     const unreadable = await unreadableGateReason({
@@ -493,7 +494,8 @@ export async function runLoop(options) {
  * Resolves the PR that a worker turn opened, for a run with no PR input (ADR 0043). The head
  * compared is the work tree head that the runtime read after the turn, never a child report.
  * Returns the PR number, or null when the run stays undeclared. A refusal to name one PR is
- * logged as a warning, except for no PR at all, which is the usual state of a task with no PR.
+ * logged as a warning, except for no PR at all, which is the usual state of a task with no PR. A
+ * PR whose required-check sources the gate cannot read stays undeclared too (#1097).
  * @returns {Promise<number | null>}
  */
 async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
@@ -504,9 +506,29 @@ async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
     gh,
     signal,
     timeoutMs: readTimeoutMs,
+    // The same read as the start of a `--pr` run (#1092): a declared PR whose gate cannot read the
+    // required-check sources could only end through `abort`, so the run stays undeclared (#1097).
+    // The resolver runs it before its final identity check, so a head, branch, or remote that
+    // moves during it leaves the run undeclared too (ADR 0043).
+    confirm: async (pr) => {
+      const unreadable = await unreadableGateReason({
+        pr,
+        cwd,
+        gh,
+        timeoutMs: readTimeoutMs,
+        when: "before declaring it",
+      });
+      return unreadable
+        ? `PR ${pr} is not declared, because ${unreadable}, so the --require-ci gate would refuse every finish. The run keeps the unresolvedCompare marker path: finish with unresolvedCompare after you compare the PR head with the reviewed commit yourself.`
+        : null;
+    },
   });
   if (resolved.pr === null) {
-    if (!resolved.quiet) logWarn(`no PR declared after the worker turn: ${resolved.reason}`);
+    if (resolved.quiet) return null;
+    // A trusted reason names no untrusted text, so the recovery stays whole.
+    (resolved.trusted ? logWarnFull : logWarn)(
+      `no PR declared after the worker turn: ${resolved.reason}`,
+    );
     return null;
   }
   logInfo(`runtime declared PR ${resolved.pr} after the worker turn`);

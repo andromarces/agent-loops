@@ -20,6 +20,7 @@ import {
   cleanRepoGit,
   createCleanRepoDir,
   equalsArgs,
+  freePlanGh,
   gateRoles,
   PASSING_RUN,
   prGateGh,
@@ -27,6 +28,7 @@ import {
   REVIEW_ACCEPT,
   scripted,
   SUMMARY,
+  unreachableGh,
 } from "./runtime-helpers.mjs";
 
 const OTHER_HEAD = "2".repeat(40);
@@ -62,6 +64,7 @@ function declareGit(command, args, options) {
       gitState.resolverReads += 1;
       return ok(gitState.branch);
     case `["config","--get","branch.${CLEAN_REPO_BRANCH}.remote"]`:
+    case '["config","--get","branch.other.remote"]':
       return { exitCode: 1, stdout: "", stderr: "" };
     case '["remote","get-url","origin"]':
       return ok(gitState.remoteUrl);
@@ -72,8 +75,8 @@ function declareGit(command, args, options) {
 
 // `gh pr list` for the run branch answers `listReply`; every other read is the shared gate fixture
 // for PR 42. `listReply` is a list of PRs, or a function that throws or returns a gh result.
-function declareGh(listReply, calls = [], runs = [PASSING_RUN]) {
-  const gate = prGateGh(CLEAN_REPO_HEAD, calls, runs);
+function declareGh(listReply, calls = [], runs = [PASSING_RUN], gate = null) {
+  gate ??= prGateGh(CLEAN_REPO_HEAD, calls, runs);
   return async (args, cwd, options) => {
     if (equalsArgs(args.slice(0, 5), ["pr", "list", "--head", CLEAN_REPO_BRANCH, "--state"])) {
       calls.push("pr list");
@@ -139,6 +142,9 @@ test("a headless run declares the PR its worker opened and finishes through the 
   expect(orch.recorded[1].prompt).toContain('"declaredPr": 42');
   expect(orch.recorded[1].prompt).toContain("--require-ci 42");
   expect(orch.recorded[1].prompt).not.toContain("refuses every finish");
+  expect(orch.recorded[1].prompt).toContain(
+    "Before it declared the PR, the runtime read the required-check sources of PR #42",
+  );
   const reviewed = events.find((e) => e.type === "result" && e.role === "reviewer");
   expect(reviewed.result.prChecks).toMatchObject({ pr: 42 });
   expect(rev.recorded[0].prompt).toContain("This run read the required checks for PR 42");
@@ -357,3 +363,78 @@ test("a head that differs before the read and returns after it leaves the run un
 
   expect(events.some((e) => e.type === "pr-declared")).toBe(false);
 });
+
+// Usefulness: verifies acceptance of #1097 — a worker-opened PR on a repository whose required-check
+// sources settle nothing stays undeclared with a warning that names the reason and the recovery, so
+// the run finishes through unresolvedCompare instead of a gate that would refuse every finish.
+test("a worker-opened PR whose required-check sources are unreadable leaves the run undeclared", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { result, events } = await runWorkerPrRun({
+      gh: declareGh([MATCH], [], [PASSING_RUN], freePlanGh(CLEAN_REPO_HEAD)),
+      orchReplies: [work, review, finish({ unresolvedCompare: true })],
+    });
+
+    expect(events.some((e) => e.type === "pr-declared")).toBe(false);
+    expect(result.exitCode).toBe(0);
+    expect(result.unresolvedCompare).toBe(true);
+    const text = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(text).toContain("warn: no PR declared after the worker turn");
+    expect(text).toContain("repository rulesets could not be read");
+    expect(text).toContain("unresolvedCompare");
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+// Usefulness: verifies a read that fails for another reason than an unreadable source still
+// declares the PR, as the start of a --pr run proceeds on such a failure.
+test("a worker-opened PR is declared when the required-check read fails for another reason", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { events } = await runWorkerPrRun({
+      gh: declareGh([MATCH], [], [PASSING_RUN], unreachableGh()),
+      orchReplies: [work, finish(), finish()],
+    });
+
+    expect(events.filter((e) => e.type === "pr-declared")).toEqual([
+      { type: "pr-declared", pr: 42, stepsUsed: 1 },
+    ]);
+    const text = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(text).not.toContain("at start");
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+// Usefulness: verifies the identity guard of ADR 0043 covers the required-check read of the
+// declaration, so a head, branch, or remote that changes during that read leaves the run undeclared
+// with the warning of the other undeclared states, and no PR gates a state the run did not hold.
+test.each([
+  ["head", () => (gitState.head = OTHER_HEAD)],
+  ["branch", () => (gitState.branch = "other")],
+  ["remote", () => (gitState.remoteUrl = "https://github.com/other/repo.git")],
+])(
+  "a %s that changes during the required-check read leaves the run undeclared",
+  async (_name, move) => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const base = prGateGh(CLEAN_REPO_HEAD);
+      const gate = async (args, cwd, options) => {
+        if (args.some((arg) => String(arg).includes("rules/branches"))) move();
+        return base(args, cwd, options);
+      };
+      const { events } = await runWorkerPrRun({
+        gh: declareGh([MATCH], [], [PASSING_RUN], gate),
+        orchReplies: [work, finish({ unresolvedCompare: true })],
+      });
+
+      expect(events.some((e) => e.type === "pr-declared")).toBe(false);
+      const text = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+      expect(text).toContain("no PR declared after the worker turn");
+      expect(text).toContain("changed during the PR read");
+    } finally {
+      warn.mockRestore();
+    }
+  },
+);

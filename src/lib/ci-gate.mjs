@@ -470,7 +470,9 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
  * refuses whatever the other sources hold: a repository-rulesets read that settled nothing, such as
  * the Free-plan 403. A read that fails for another reason, such as the network, logs a warning and
  * returns null, because the gate may read the sources when the run finishes.
- * @param {{ pr: number, cwd: string, gh?: Function, timeoutMs?: number }} options
+ * `when` completes the warning of a failed read: "at start" for a `--pr` start, or the point where a
+ * declaration of a worker-opened PR reads.
+ * @param {{ pr: number, cwd: string, gh?: Function, timeoutMs?: number, when?: string }} options
  * @returns {Promise<string | null>}
  */
 export async function unreadableGateReason({
@@ -478,6 +480,7 @@ export async function unreadableGateReason({
   cwd,
   gh = runGh,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
+  when = "at start",
 }) {
   // The signal ends a call that a runner does not bound itself, so a hung `gh` cannot hold the start open.
   const deadline = AbortSignal.timeout(timeoutMs);
@@ -501,7 +504,7 @@ export async function unreadableGateReason({
     return preamble.stop ?? null;
   } catch (err) {
     logWarn(
-      `the required-check sources of PR ${pr} could not be read at start: ${oneLine(readableErrorText(failureOf(err)))}`,
+      `the required-check sources of PR ${pr} could not be read ${when}: ${oneLine(readableErrorText(failureOf(err)))}`,
     );
     return null;
   } finally {
