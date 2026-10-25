@@ -127,8 +127,15 @@ settled only when the output lists a failing required check, or when `gh` prints
 exactly `no required checks reported on the '<branch>' branch` and no output.
 That one answer is its own outcome, below. Exit 1 with no output and exactly
 `no checks reported on the '<branch>' branch` is an empty list: no check has
-reported on the PR head yet, as right after a push. The wait continues. If the
-bound arrives with only that reply, the wait returns `timedOut: true` and an
+reported on the PR head yet, as right after a push. The wait continues, and the
+poll also reads the required-check sources. If the rulesets and the classic protection
+both settle nothing and no source names a check, as on a private repository on the
+GitHub Free plan (#301), the required wait refuses at once on the first poll with the
+unresolved-source error below, because no check can be known to report. A readable
+source keeps the wait running, whether it names a required check or states the absence,
+whatever the other source returned. A server error (500, 502, 503, 504) on a source read is
+retried on the next poll, and one that lasts to the bound exits 1 with `status: "error"`.
+If the bound arrives with only that reply, the wait returns `timedOut: true` and an
 empty `checks`, which is never a pass. Any other exit 1, and any output that
 is not a check list, is unresolved: the command exits 1 with
 `status: "error"` and records no check state for that wait, so an unresolved

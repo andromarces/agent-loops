@@ -22,6 +22,7 @@ import {
   readOne,
   requiredContexts,
   runGh,
+  UNKNOWN,
 } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
 import { prEventsFilteredOut } from "./workflow-paths.mjs";
@@ -175,7 +176,7 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
     return { settled: true, checks, noRequiredChecks: true };
   }
   if (status === 1 && text === "" && NO_CHECKS_YET.test(stderr.trim())) {
-    return { settled: false, checks };
+    return { settled: false, checks, noChecksYet: true };
   }
   if (status !== 0) {
     throw new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
@@ -667,11 +668,19 @@ export async function waitChecks({
   // ruleset read that found no rule beside no named check, are errors that name the cause,
   // because the gate refuses the same states. A failed names read is an error too, where the
   // wait is stricter than the gate, which ignores that read. A source that names a required
-  // check is no absence, so the wait goes on to judge it.
-  const absenceOf = async (base) => {
+  // check is no absence, so the wait goes on to judge it. The `no checks reported` reply (#1091)
+  // refuses only when no source can state the required checks: both configuration sources are
+  // unreadable and no check is named. Its names read never succeeds and a malformed reply of one
+  // source says nothing about the other, so neither is judged, and a source that names a check or
+  // states the absence keeps the wait running whatever the other returned (#941). Its source reads
+  // are retryable reads, so a server error carries `transient` and the poll retries it.
+  const absenceOf = async (base, reply = "no required check") => {
     await ensureSlug();
-    const required = await requiredContexts(bounded, slug, base, pr, cwd);
-    const namesRefusal = requiredNamesRefusal(required, pr);
+    const noChecksYet = reply === "no checks";
+    const required = await requiredContexts(bounded, slug, base, pr, cwd, {
+      retryable: noChecksYet,
+    });
+    const namesRefusal = noChecksYet ? null : requiredNamesRefusal(required, pr);
     if (namesRefusal) {
       throw new Error(`${namesRefusal}; the read is unresolved.`);
     }
@@ -679,10 +688,14 @@ export async function waitChecks({
     if (absence?.absent) {
       return true;
     }
-    const unproven = absence?.unproven ?? required.unknown;
+    const noSource =
+      absence && required.rulesetState === UNKNOWN && required.protectionState === UNKNOWN
+        ? required.unknown
+        : [];
+    const unproven = noChecksYet ? noSource : (absence?.unproven ?? required.unknown);
     if (unproven.length > 0) {
       throw new Error(
-        `gh pr checks ${pr} --required reported no required check, but ${unproven.join(" and ")} did not state that it holds no required check, so the required checks of PR ${pr} are unresolved.`,
+        `gh pr checks ${pr} --required reported ${reply}, but ${unproven.join(" and ")} did not state that it holds no required check, so the required checks of PR ${pr} are unresolved.`,
       );
     }
     return false;
@@ -849,6 +862,19 @@ export async function waitChecks({
         if (listed.noRequiredChecks && !(await absenceOf(base))) {
           listed.noRequiredChecks = false;
           listed.settled = false;
+        }
+        if (listed.noChecksYet && !all) {
+          try {
+            await absenceOf(base, "no checks");
+          } catch (raw) {
+            // A server error of a source read is retried on the next poll. The bound and every
+            // other failure still end the wait.
+            const err = failureOf(raw);
+            if (!err?.transient || err instanceof BoundReached) {
+              throw err;
+            }
+            failed = err;
+          }
         }
         prFailures = listed.checks.filter(isFailing);
         let outcome = listed;

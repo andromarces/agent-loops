@@ -365,6 +365,26 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
   expect(wordsOf(promptPassage)).toBe(wordsOf(PROMPT_REFUSAL_PASSAGE));
 });
 
+// Usefulness: verifies both parent surfaces state that the required wait refuses at once on the
+// no-checks-yet reply when no required-check source is readable, and that a readable source keeps
+// the wait running (issue #1091). A parent that misses it expects a timeout where the refusal comes.
+test("the parent surfaces state the refusal of a no-checks-yet reply with no readable source", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readInstructions();
+  for (const text of [prompt, instructions]) {
+    expectRule(text, /refuses? at once/i, /first poll/i, /unresolved-source/i);
+    expectRule(text, /readable source/i, /keeps? the (?:required )?wait/i);
+  }
+});
+
 // The surfaces that state the empty-union rule of the gate. The reviewer found them contradicting
 // each other, so one rule is asserted on each. Only an allowlisted reply proves an absence, and a
 // private Free-plan repository must omit `--pr`. Usefulness: verifies every surface states the same
