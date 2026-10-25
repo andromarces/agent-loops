@@ -5,7 +5,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 ## The Codex reviewer sandbox mode
 
 A Codex reviewer turn runs with no sandbox by default, with
-`sandbox_mode="danger-full-access"` (ADR 0038). It can run the test suite and
+`sandbox_mode="danger-full-access"` (ADR 0038), and with the app connectors off
+(`features.apps=false`, issue #496). It can run the test suite and
 `gh pr checks`. An operator can choose a sandbox at init with
 `--reviewer-sandbox read-only` or `--reviewer-sandbox workspace-write`. The
 older `--reviewer-workspace-write` stays as an alias of `--reviewer-sandbox

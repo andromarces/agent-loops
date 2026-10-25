@@ -445,9 +445,10 @@ test.each([
   ]);
 });
 
-// Usefulness: verifies the reviewer sandbox input "none" runs the Codex turn with no sandbox in the
-// same `-c` form on new and resumed sessions (ADR 0038), and that an explicit "read-only" input
-// keeps the present read-only invocation. Both are cheap to break and none is covered above.
+// Usefulness: verifies the reviewer sandbox input "none" runs the Codex turn with no sandbox and with
+// the app connectors off, in the same `-c` form on new and resumed sessions (ADR 0038, issue #496),
+// and that an explicit "read-only" input keeps the present read-only invocation. Both are cheap to
+// break and none is covered above.
 test.each([
   ["initial", null, ["exec"]],
   ["resume", "th-1", ["exec", "resume", "th-1"]],
@@ -475,6 +476,8 @@ test.each([
       ...head,
       "-c",
       'sandbox_mode="danger-full-access"',
+      "-c",
+      "features.apps=false",
       ...tail,
     ]);
     expect(await run("read-only")).toEqual([...head, "-c", 'sandbox_mode="read-only"', ...tail]);
