@@ -18,7 +18,7 @@ import {
   withRepo,
   WORKER_REPLY,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo, freePlanGh, unreachableGh } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -142,6 +142,58 @@ test("role --pr parses on init and records the declared PR", async () => {
   );
   expect(result.exitCode).toBe(0);
   expect((await readState(paths.stateFile)).pr).toBe(42);
+});
+
+// Usefulness: verifies acceptance of #1092 — an init with --pr on a repository whose required-check
+// sources all answer the Free-plan 403 is refused before a state file is written or a child spawns,
+// and the refusal names the fix, so a parent does not learn of the dead end at finish.
+test("init with --pr is refused when the required-check sources are unreadable", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+
+  const result = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", "42"]), repo),
+    { agents, stdin: stdinPrompt, gh: freePlanGh("1".repeat(40)) },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("--pr 42 is refused");
+  expect(result.payload.error).toContain("repository rulesets");
+  expect(result.payload.error).toContain("omit --pr");
+  expect(result.payload.error).toContain("unresolvedCompare");
+  expect(await readState(paths.stateFile)).toBeNull();
+  expect(agents.fake1.recorded).toHaveLength(0);
+  expect(agents.fake2.recorded).toHaveLength(0);
+});
+
+// Usefulness: verifies an init with --pr on a repository with a readable source is unchanged, so the
+// refusal does not reach a run whose gate can read the required checks.
+test("init with --pr on a readable repository records the PR", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const result = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", "42"]), repo),
+    basicDeps(),
+  );
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).pr).toBe(42);
+});
+
+// Usefulness: verifies a read that fails for another reason, such as the network, warns and lets
+// the init proceed, because the gate may still judge the checks when GitHub answers again.
+test("init with --pr proceeds when the source read fails for another reason", async () => {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const result = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", "42"]), repo),
+    { ...basicDeps(), gh: unreachableGh() },
+  );
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).pr).toBe(42);
 });
 
 // Usefulness: verifies review-only refuses a declared PR at init, because

@@ -7,6 +7,7 @@
 // responses. The default runner shells out to the `gh` CLI.
 import { readableErrorText } from "./error-message.mjs";
 import { isJsonObject } from "./json.mjs";
+import { logWarn } from "./log.mjs";
 import {
   ghApi,
   pagedRead,
@@ -32,6 +33,9 @@ const PASS_CHECK_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 function fail(reason) {
   return { ok: false, reason };
 }
+
+const RULESETS_UNREADABLE =
+  "the repository rulesets could not be read, so the gate cannot tell which required checks the base branch requires";
 
 const CHECK_RUN_STATUSES = new Set([
   "queued",
@@ -381,10 +385,7 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
     // classic-only repository whose required checks passed therefore still
     // finishes. The read is still not a positive absence, so the empty-union
     // refusal below names it.
-    refuseUnknownRuleset: () =>
-      fail(
-        "the repository rulesets could not be read, so the gate cannot tell which required checks the base branch requires",
-      ),
+    refuseUnknownRuleset: () => fail(RULESETS_UNREADABLE),
   });
   if (preamble.stop) {
     return preamble.stop;
@@ -434,6 +435,62 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
   }
 
   return { ok: true, commit };
+}
+
+/**
+ * Why a run that declares `pr` could never finish through the `--require-ci` gate, or null. Reads the
+ * required-check sources of the PR base once, as the gate does, and reports the one answer the gate
+ * refuses whatever the other sources hold: a repository-rulesets read that settled nothing, such as
+ * the Free-plan 403. A read that fails for another reason, such as the network, logs a warning and
+ * returns null, because the gate may read the sources when the run finishes.
+ * @param {{ pr: number, cwd: string, gh?: Function, timeoutMs?: number }} options
+ * @returns {Promise<string | null>}
+ */
+export async function unreadableGateReason({
+  pr,
+  cwd,
+  gh = runGh,
+  timeoutMs = DEFAULT_READ_TIMEOUT_MS,
+}) {
+  // The signal ends a call that a runner does not bound itself, so a hung `gh` cannot hold the start open.
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const call = (args, callCwd, options = {}) =>
+    gh(args, callCwd, {
+      timeoutMs,
+      ...options,
+      signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
+    });
+  call.deadline = deadline;
+  const slugRead = startRepoSlug(call, cwd);
+  try {
+    const preamble = await readCiPreamble({
+      gh: call,
+      cwd,
+      pr,
+      slugRead: slugRead.read,
+      refuseInfo: () => null,
+      refuseUnknownRuleset: () => RULESETS_UNREADABLE,
+    });
+    return preamble.stop ?? null;
+  } catch (err) {
+    logWarn(
+      `the required-check sources of PR ${pr} could not be read at start: ${oneLine(readableErrorText(failureOf(err)))}`,
+    );
+    return null;
+  } finally {
+    await slugRead.cancel();
+  }
+}
+
+/**
+ * The refusal of a declaration of a PR that the gate can never pass. `label` names the refused
+ * input, for example `--pr 42`, and `reason` is the text of `unreadableGateReason`.
+ * @param {string} label
+ * @param {string} reason
+ * @returns {string}
+ */
+export function unreadableGateRefusal(label, reason) {
+  return `${label} is refused: ${reason}, so the --require-ci gate would refuse every finish of a declared run. Do not declare the PR: omit --pr, then finish with the unresolvedCompare marker after you compare the PR head with the reviewed commit yourself.`;
 }
 
 /**

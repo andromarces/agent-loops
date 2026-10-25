@@ -85,7 +85,10 @@ GitHub. Declare the PR after the worker opens it:
   checks itself.
 - A repository whose rulesets the gate does not get (#301), for example a private
   GitHub Free-plan organization repository, refuses every finish of a declared
-  run, so such a run can only end through `abort`. Do not declare the PR there. Finish with the `unresolvedCompare` marker
+  run, so such a run can only end through `abort`. `declare-pr` reads the
+  required-check sources once and refuses there, leaving the run unchanged. A read
+  that fails for another reason warns and does not refuse. Do not declare the PR
+  there. Finish with the `unresolvedCompare` marker
   after you compare the PR head with `reviewed.head` yourself, and run
   `wait-checks --all` once before each reviewer turn, because the required wait
   refuses there. [Waiting for required checks](waiting-for-checks.md) states that wait and the `noCheckSource`

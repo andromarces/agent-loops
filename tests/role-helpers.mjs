@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { vi } from "vite-plus/test";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
-import { removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
+import { prGateGh, removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
 
 export const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
 export const WORKER_REPLY = `${REPORT}\nContinuing next turn.`;
@@ -60,10 +60,11 @@ export const reviewerTurn = (repo, agents, overrides = []) =>
     stdin: stdinPrompt,
   });
 
-/** Deps for calls whose child turn is not under assertion. */
+/** Deps for calls whose child turn is not under assertion. `gh` answers the start read of a declared PR. */
 export const basicDeps = () => ({
   agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
   stdin: stdinPrompt,
+  gh: prGateGh("1".repeat(40)),
 });
 
 export async function readRepoState(repo) {
