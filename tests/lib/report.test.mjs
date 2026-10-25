@@ -977,10 +977,45 @@ test("parseReportBlock folds an indented continuation line into its list item", 
   });
 });
 
-// Usefulness: verifies an indented `Verdict:` line between two items never folds into an item, so a
-// reviewer reject cannot hide in a continuation position and turn into an accept (issue #1082).
+// Usefulness: verifies an indented `Verdict:` or report label line never folds into an item in any
+// bold, italic, code, quote, spaced, or cased form, so a reviewer reject cannot hide in a
+// continuation position and turn into an accept (issue #1082).
 test("parseReportBlock refuses an indented label line between list items", () => {
-  const response = `${REPORT}\nChecks:\n- ran\n  Verdict: reject\n- next\nVerdict: accept`;
-  expect(parseReportBlock(response)).toBeNull();
-  expect(isAcceptedReview(response)).toBe(false);
+  for (const line of [
+    "  Verdict: reject",
+    "  **Verdict:** reject",
+    "  **Verdict**: reject",
+    "  *Verdict:* reject",
+    "  `Verdict:` reject",
+    "  > Verdict: reject",
+    "  ### Verdict: reject",
+    "  VERDICT : reject",
+    "  Notes: x",
+    "  **Deferred:** x",
+  ]) {
+    const response = `${REPORT}
+Checks:
+- ran
+${line}
+- next
+Verdict: accept`;
+    expect(parseReportBlock(response), line).toBeNull();
+    expect(isAcceptedReview(response), line).toBe(false);
+  }
+});
+
+// Usefulness: verifies ordinary indented prose that only mentions a label word still folds, so the
+// label guard stays as narrow as the label forms the parsers read (issue #1082).
+test("parseReportBlock folds an indented prose line that is no label line", () => {
+  for (const line of ["Notes about x", "Why this matters:", "see Verdict: reject"]) {
+    expect(
+      parseReportBlock(`${REPORT}
+Notes:
+- a
+  ${line}
+- b`),
+    ).toMatchObject({
+      notes: `a ${line}; b`,
+    });
+  }
 });

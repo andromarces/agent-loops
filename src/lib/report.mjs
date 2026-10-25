@@ -20,8 +20,10 @@ export const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 // so the whole block is unparseable and `raw` carries the text (issue #243).
 // The Verdict label is excluded: a malformed verdict already maps to `unknown`
 // and never carries report text.
+const labelOpening = (names) =>
+  `\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${names.join("|")})[*_\`]{0,2}\\s*:`;
 const DECORATED_LABEL_LINE = new RegExp(
-  `^(?!(?:${REPORT_LABEL_NAMES.join("|")}):)\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${REPORT_LABEL_NAMES.join("|")})[*_\`]{0,2}\\s*:`,
+  `^(?!(?:${REPORT_LABEL_NAMES.join("|")}):)${labelOpening(REPORT_LABEL_NAMES)}`,
   "i",
 );
 
@@ -141,7 +143,7 @@ function closingBlock(response) {
  * report label, so a list after it stays dropped. One level of `- ` sub-items, indented to the
  * text column of the item above (two spaces, or three after `1. `), joins into that item with
  * ", " (issues #870 and #915). An indented non-list line directly after an item or its sub-items
- * folds into that item with a space, unless it opens with a label name or `Verdict` and a colon (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
+ * folds into that item with a space, unless it reads as a report label or `Verdict` line, decorated or not (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
  * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
  * Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
@@ -213,9 +215,11 @@ const HEADING_ITEM = /^- (?=\S)/;
 // stay lists that hasDroppedList rejects.
 const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}- (?=\\S)`);
 
-// An indented line that opens with a report label name or `Verdict`, optional marks, and a colon.
+// An indented line that reads as a report label or `Verdict` line in any form that
+// DECORATED_LABEL_LINE accepts: quote, heading, or list lead-in, emphasis or code marks, spaces
+// before the colon, any case. It shares labelOpening, so the two cannot drift.
 const INDENTED_LABEL_LINE = new RegExp(
-  `^\\s+(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]*\\s*:`,
+  `^[ \\t]${labelOpening([...REPORT_LABEL_NAMES, "Verdict"])}`,
   "i",
 );
 
