@@ -13,8 +13,8 @@ a sub-item line (spaces U+0020 up to the column where the parent item text start
 item) directly after a `- ` or `N. ` item joins into that item with `, `, and several
 consecutive sub-items under one parent all fold into it, so the lines `- a`,
 two spaces then `- b`, and two spaces then `- c` read `a, b, c` (issues #870 and #915). A sub-item under `1. a` takes three spaces, so `1. a` and `   - b` read `a, b`.
-An indented non-list line (ASCII spaces or tabs, then text) directly after an item or its sub-items folds into that item with a space, like a Markdown lazy continuation, so `- a`, `  - b`, and `  more` read `a, b more` (issue #1082). An indented list line there is no continuation and stays unparseable, and a blank line or an unindented line ends the run.
-The run ends at the first line that is not a `- ` or `N. ` item or a sub-item of the item above it, so a blank line or prose between
+An indented non-list line (ASCII spaces or tabs, then text) directly after an item or its sub-items folds into that item with a space, like a Markdown lazy continuation, so `- a`, `  - b`, and `  more` read `a, b more` (issue #1082). An indented line that opens with a report label name or `Verdict` and a colon never folds, so the items after it stay unparseable lists. An indented list line there is no continuation and stays unparseable.
+The run ends at the first line that is not a `- ` or `N. ` item, a sub-item of the item above it, or an indented continuation line of that item, so a blank line or unindented prose between
 the label and the list breaks it. One shape with prose folds too: a blank line after the label
 line (or after its folded list), then one prose line, then a `- ` list directly under that line (dash items only: an ordered list there stays unparseable).
 The prose and its list join the value of the label just above, as `; <prose>: <items>` (the prose

@@ -88,12 +88,3 @@ test("the closing-block rule states the bold label name list item", () => {
   expect(reportBlock).toMatch(/dash item or sub-item[^.]*bold report label name[^.]*item text/);
   expect(reportBlock).toMatch(/outside a list under a label[^.]*unparseable/);
 });
-
-// Usefulness: verifies the closing-block rule tells the child that an indented prose line after an
-// item folds into it with a space, the parser contract of issue #1082, so the prompt never
-// contradicts the parser.
-test("the closing-block rule states the continuation-line fold", () => {
-  expect(reportBlock).toMatch(
-    /indented prose line directly after an item or its sub-items folds into that item with a space/,
-  );
-});

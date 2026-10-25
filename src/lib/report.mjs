@@ -141,7 +141,7 @@ function closingBlock(response) {
  * report label, so a list after it stays dropped. One level of `- ` sub-items, indented to the
  * text column of the item above (two spaces, or three after `1. `), joins into that item with
  * ", " (issues #870 and #915). An indented non-list line directly after an item or its sub-items
- * folds into that item with a space (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
+ * folds into that item with a space, unless it opens with a label name or `Verdict` and a colon (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
  * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
  * Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
@@ -213,6 +213,12 @@ const HEADING_ITEM = /^- (?=\S)/;
 // stay lists that hasDroppedList rejects.
 const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}- (?=\\S)`);
 
+// An indented line that opens with a report label name or `Verdict`, optional marks, and a colon.
+const INDENTED_LABEL_LINE = new RegExp(
+  `^\\s+(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]*\\s*:`,
+  "i",
+);
+
 /** True when the line is a list item. A thematic break and an emphasis run are not lists. */
 function isListLine(line) {
   return LIST_LINE.test(line) && !THEMATIC_BREAK.test(line) && !EMPHASIS_LINE.test(line);
@@ -230,11 +236,17 @@ function isFoldableSubitem(line, marker) {
 
 /**
  * True when the line is an indented prose line that continues the item above (issue #1082): ASCII
- * spaces or tabs, then text that is neither a list nor a thematic break. An indented list line is
- * no continuation, so hasDroppedList still refuses it.
+ * spaces or tabs, then text that is neither a list, a thematic break, nor a report label or
+ * `Verdict` line. An indented list line or label line is no continuation and keeps its earlier
+ * outcome: hasDroppedList refuses the list, and the label line never folds into an item.
  */
 function isContinuationLine(line) {
-  return /^[ \t]+\S/.test(line) && !isListLine(line) && !THEMATIC_BREAK.test(line);
+  return (
+    /^[ \t]+\S/.test(line) &&
+    !isListLine(line) &&
+    !THEMATIC_BREAK.test(line) &&
+    !INDENTED_LABEL_LINE.test(line)
+  );
 }
 
 /**

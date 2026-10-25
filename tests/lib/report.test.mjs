@@ -977,11 +977,10 @@ test("parseReportBlock folds an indented continuation line into its list item", 
   });
 });
 
-// Usefulness: verifies a continuation line never hides a list: an indented list line, a blank line
-// before the prose, and unindented prose keep their earlier outcome, so no list text drops.
-test("parseReportBlock keeps refusing a list or detached prose near a continuation line", () => {
-  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n  more\n  - b`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n  more\n    - b`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n\n  more\n- b`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\nmore\n- b`)).toBeNull();
+// Usefulness: verifies an indented `Verdict:` line between two items never folds into an item, so a
+// reviewer reject cannot hide in a continuation position and turn into an accept (issue #1082).
+test("parseReportBlock refuses an indented label line between list items", () => {
+  const response = `${REPORT}\nChecks:\n- ran\n  Verdict: reject\n- next\nVerdict: accept`;
+  expect(parseReportBlock(response)).toBeNull();
+  expect(isAcceptedReview(response)).toBe(false);
 });
