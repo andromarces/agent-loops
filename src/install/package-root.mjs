@@ -87,15 +87,20 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
  * parent is neither at, above, nor below a temporary root. Every segment below a kept one is
  * missing too and is kept.
  *
- * `isEphemeralPackageRoot` accepts a path only when its canonical path and the spellings of a
- * second check match those of the first check and of the start of the call. A rename or delete
- * that lands while the check runs refuses the install (#1074).
+ * `isEphemeralPackageRoot` takes the canonical path of the package root first, before it reads the
+ * temporary roots, then accepts the path only when that canonical path is among the spellings of
+ * the first check and a second check gives the same spellings. A rename or delete that lands after
+ * that first canonicalization has read the affected segment refuses the install (#1074). Tests
+ * cover a link to a layout directory that vanishes while the first check runs, and a link spelling
+ * of a temporary root that is renamed while the temporary roots are read.
  *
- * known-limit: a path that is already missing before the call starts and has a long name below a
- * parent that is above a temporary root looks the same as a missing stable path, so a vanished
- * link spelling of a temporary root is accepted. A change after the second check, such as a
- * runner that deletes its folder while the installer writes files, is not detected either, and
- * that deletion is the one that the refusal exists for.
+ * known-limit: a change that lands before the first canonicalization reads the affected segment,
+ * or while it reads it, is accepted (#1074). The process then never sees the segment present, so a
+ * vanished link spelling of a temporary root looks the same as a missing stable path, which the
+ * missing-segment rule above keeps accepted on purpose. No check inside one process can tell the
+ * two apart without refusing every missing stable path and missing default root. A change after
+ * the second check, such as a runner that deletes its folder while the installer writes files, is
+ * not detected either, and that deletion is the one that the refusal exists for.
  */
 function expandShortSegments(path, related) {
   const { root } = win32.parse(path);
