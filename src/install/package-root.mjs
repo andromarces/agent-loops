@@ -87,10 +87,20 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
  * parent is neither at, above, nor below a temporary root. Every segment below a kept one is
  * missing too and is kept.
  *
- * known-limit: a concurrent rename or delete of a segment while the check runs (a race) is out of
- * scope (#1068). A layout directory that vanishes during the check can leave the unchecked tail
- * kept, and the check does not guard against it. The checks above only fail closed where a
- * failure is observed.
+ * `isEphemeralPackageRoot` takes the canonical path of the package root first, before it reads the
+ * temporary roots, then accepts the path only when that canonical path is among the spellings of
+ * the first check and a second check gives the same spellings. A rename or delete that lands after
+ * that first canonicalization has read the affected segment refuses the install (#1074). Tests
+ * cover a link to a layout directory that vanishes while the first check runs, and a link spelling
+ * of a temporary root that is renamed while the temporary roots are read.
+ *
+ * known-limit: a change that lands before the first canonicalization reads the affected segment,
+ * or while it reads it, is accepted (#1074). The process then never sees the segment present, so a
+ * vanished link spelling of a temporary root looks the same as a missing stable path, which the
+ * missing-segment rule above keeps accepted on purpose. No check inside one process can tell the
+ * two apart without refusing every missing stable path and missing default root. A change after
+ * the second check, such as a runner that deletes its folder while the installer writes files, is
+ * not detected either, and that deletion is the one that the refusal exists for.
  */
 function expandShortSegments(path, related) {
   const { root } = win32.parse(path);
@@ -126,12 +136,23 @@ function longName(parent, segment) {
   }
 }
 
+/** True when `path` exists as an entry that the realpath of a caller could not resolve. */
+function isDanglingLink(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * `path` with a leading part resolved through links: for each proper ancestor, the realpath of
  * that ancestor joined to the rest, so a link spelling of a parent folder, such as a junction to
  * a temporary root, meets the root's own spelling while a link below it keeps its own name
- * (#1068). A missing ancestor is skipped. Returns `null` when a realpath fails for another
- * reason, so the caller can fail closed.
+ * (#1068). A missing ancestor is skipped, except a link whose target is gone, since that link may
+ * have named a temporary root (#1074). Returns `null` when a realpath fails for another reason,
+ * so the caller can fail closed.
  */
 function resolvedParentSpellings(path, platform) {
   const pathApi = platform === "win32" ? win32 : posix;
@@ -149,6 +170,7 @@ function resolvedParentSpellings(path, platform) {
       );
     } catch (error) {
       if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return null;
+      if (isDanglingLink(pathApi.join(root, ...segments.slice(0, depth)))) return null;
     }
   }
   return found;
@@ -251,6 +273,7 @@ export function isEphemeralPackageRoot(
   tempRoots = temporaryRoots(),
 ) {
   if (tempRoots.invalid === true) return true;
+  const initial = canonicalPath(packageRoot, platform);
   const bunx = tempRoots.bunx.map((root) => spellings(root, platform));
   const yarn = tempRoots.yarn.map((root) => spellings(root, platform));
   if (bunx.includes(null) || yarn.includes(null)) return true;
@@ -262,13 +285,25 @@ export function isEphemeralPackageRoot(
     const startsWith = (list, prefix) => prefix.every((segment, i) => list[i] === segment);
     return rootSegments.some((root) => startsWith(root, segments) || startsWith(segments, root));
   };
+  const matches = (list) =>
+    list.some(
+      (spelling) =>
+        isCacheRoot(spelling, platform) ||
+        isTempRunnerRoot(spelling, platform, { bunx: bunx.flat(), yarn: yarn.flat() }),
+    );
   const packageSpellings = spellings(packageRoot, platform, related);
   // A path that cannot be canonicalized cannot be ruled out, so the check refuses it.
-  if (packageSpellings === null) return true;
-  return packageSpellings.some(
-    (spelling) =>
-      isCacheRoot(spelling, platform) ||
-      isTempRunnerRoot(spelling, platform, { bunx: bunx.flat(), yarn: yarn.flat() }),
+  if (packageSpellings === null || matches(packageSpellings)) return true;
+  // The path is accepted only when a second check sees the same spellings, and when the canonical
+  // path taken before the temporary roots were read is among them, so a path that changes while
+  // the check runs is refused (#1074).
+  const again = spellings(packageRoot, platform, related);
+  return (
+    initial === null ||
+    !packageSpellings.includes(initial) ||
+    again === null ||
+    again.length !== packageSpellings.length ||
+    again.some((spelling, i) => spelling !== packageSpellings[i])
   );
 }
 
