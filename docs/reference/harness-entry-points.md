@@ -36,6 +36,12 @@ tool. When the read tool caps a read, the skill tells the parent to read again
 with an offset until the end of the file. See
 [Parent guard details](../parent-guard.md) for every guard target.
 
+Live check (issue #710, PR #1059): on 2026-10-25, Claude Code 2.1.310 on Windows 11 ran
+`/agent-loop` from the installed user-scope skill. The parent read
+`docs/orchestrator-instructions.md` (719 lines) in one read of the read tool, with no cap, and
+reached the last line before the init call. A capped read with an offset did not occur, so that
+path was not exercised.
+
 Live check (issue #144): on 2026-10-10, two checks ran on macOS 27.2 with Node v26.11.1.
 The tools were codex-cli 0.163.0-alpha.5 and GitHub Copilot CLI 1.0.96-2.
 A `codex exec` session in full access ran each check, in a throwaway Git repository outside this work tree.
