@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rename, symlink } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
@@ -12,6 +12,7 @@ const realpathMock = vi.hoisted(() => ({
   readdirFail: null,
   readdirList: null,
   lstatFail: null,
+  beforeLstat: null,
 }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal();
@@ -39,7 +40,12 @@ vi.mock("node:fs", async (importOriginal) => {
     readdirSync: (path, ...rest) =>
       realpathMock.readdirList?.(String(path)) ??
       failingWith("readdirSync", "readdirFail")(path, ...rest),
-    lstatSync: failingWith("lstatSync", "lstatFail"),
+    // `beforeLstat` runs before each `lstatSync` until it returns true, to change the file
+    // system mid-check.
+    lstatSync: (path, ...rest) => {
+      if (realpathMock.beforeLstat?.(String(path)) === true) realpathMock.beforeLstat = null;
+      return failingWith("lstatSync", "lstatFail")(path, ...rest);
+    },
     realpathSync: Object.assign(failing(actual.realpathSync), {
       native: failing(actual.realpathSync.native),
     }),
@@ -56,6 +62,7 @@ afterEach(async () => {
   realpathMock.readdirFail = null;
   realpathMock.readdirList = null;
   realpathMock.lstatFail = null;
+  realpathMock.beforeLstat = null;
   for (const path of paths.splice(0)) await removePath(path);
 });
 
@@ -351,3 +358,54 @@ test("a junction spelling of the temporary parent refuses a junction package roo
     ),
   ).toBe(false);
 });
+
+// Usefulness: verifies #1074 — a layout directory that vanishes while the check runs refuses a package root spelled through a link to that layout, since the dangling link leaves no spelling that names a temporary root.
+test.skipIf(process.platform !== "win32")(
+  "a layout directory that vanishes during the check refuses a link spelling of it",
+  async () => {
+    const base = await scratch();
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+      const tempRoot = join(base, `temproot${layout.length}`);
+      const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+      const layoutDir = join(tempRoot, layout[0]);
+      await mkdir(join(tempRoot, ...layout), { recursive: true });
+      await symlink(stable, join(tempRoot, ...layout, "packagejunctionlink"), LINK_TYPE);
+      const layoutLink = join(base, `linkedlayout${layout.length}`);
+      await symlink(layoutDir, layoutLink, LINK_TYPE);
+      const viaLink = join(layoutLink, ...layout.slice(1), "packagejunctionlink");
+      expect(isEphemeralPackageRoot(viaLink, "win32", roots), `${viaLink} before`).toBe(true);
+      realpathMock.beforeLstat = (path) =>
+        path.startsWith(layoutLink) && (rmSync(layoutDir, { recursive: true, force: true }), true);
+      expect(isEphemeralPackageRoot(viaLink, "win32", roots), `${viaLink} during`).toBe(true);
+      expect(isEphemeralPackageRoot(viaLink, "win32", roots), `${viaLink} after`).toBe(true);
+    }
+    expect(isEphemeralPackageRoot(stable, "win32", { bunx: [base], yarn: [base] })).toBe(false);
+  },
+);
+
+// Usefulness: verifies #1074 — a link spelling of the temporary root that is renamed away, before or during the check, still refuses a runner layout under it, so a rename cannot turn an existing alias into a missing segment that passes.
+test.skipIf(process.platform !== "win32")(
+  "a link spelling of the temporary root renamed away is refused",
+  async () => {
+    const base = await scratch();
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+      const tempRoot = join(base, `temproot${layout.length}`);
+      const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+      await mkdir(join(tempRoot, ...layout), { recursive: true });
+      await symlink(stable, join(tempRoot, ...layout, "packagejunctionlink"), LINK_TYPE);
+      const rootLink = join(base, `linkedtemproot${layout.length}`);
+      await symlink(tempRoot, rootLink, LINK_TYPE);
+      const viaLink = join(rootLink, ...layout, "packagejunctionlink");
+      expect(isEphemeralPackageRoot(viaLink, "win32", roots), `${viaLink} before`).toBe(true);
+      realpathMock.beforeLstat = (path) =>
+        path.startsWith(rootLink) &&
+        (renameSync(rootLink, join(base, `renamedaway${layout.length}`)), true);
+      expect(isEphemeralPackageRoot(viaLink, "win32", roots), `${viaLink} during`).toBe(true);
+      expect(isEphemeralPackageRoot(viaLink, "win32", roots), `${viaLink} after`).toBe(true);
+    }
+  },
+);
