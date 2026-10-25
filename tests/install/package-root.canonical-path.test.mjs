@@ -323,3 +323,31 @@ test.skipIf(process.platform !== "win32")(
     }
   },
 );
+
+// Usefulness: verifies #1068 review — a package junction reached through a junction spelling of the temporary parent folder refuses inside a runner layout, as it does through the canonical spelling, even when the package target is stable.
+test("a junction spelling of the temporary parent refuses a junction package root", async () => {
+  const base = await scratch();
+  const tempRoot = join(base, "realtemproot");
+  const linkedTemp = join(base, "linkedtemproot");
+  const stable = join(base, "stablenamedparent", "pkg");
+  await mkdir(stable, { recursive: true });
+  await mkdir(tempRoot);
+  await symlink(tempRoot, linkedTemp, LINK_TYPE);
+  const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+  for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+    await mkdir(join(tempRoot, ...layout), { recursive: true });
+    await symlink(stable, join(tempRoot, ...layout, "pkg"), LINK_TYPE);
+    const viaLink = join(linkedTemp, ...layout, "pkg");
+    expect(isEphemeralPackageRoot(join(tempRoot, ...layout, "pkg"), process.platform, roots)).toBe(
+      true,
+    );
+    expect(isEphemeralPackageRoot(viaLink, process.platform, roots), viaLink).toBe(true);
+  }
+  expect(
+    isEphemeralPackageRoot(
+      join(linkedTemp, "..", "stablenamedparent", "pkg"),
+      process.platform,
+      roots,
+    ),
+  ).toBe(false);
+});

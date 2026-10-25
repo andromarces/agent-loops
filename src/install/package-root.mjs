@@ -86,6 +86,11 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
  * directory, which is when its name has no 8.3 shape, or when `related` says that its existing
  * parent is neither at, above, nor below a temporary root. Every segment below a kept one is
  * missing too and is kept.
+ *
+ * known-limit: a concurrent rename or delete of a segment while the check runs (a race) is out of
+ * scope (#1068). A layout directory that vanishes during the check can leave the unchecked tail
+ * kept, and the check does not guard against it. The checks above only fail closed where a
+ * failure is observed.
  */
 function expandShortSegments(path, related) {
   const { root } = win32.parse(path);
@@ -122,10 +127,39 @@ function longName(parent, segment) {
 }
 
 /**
+ * `path` with a leading part resolved through links: for each proper ancestor, the realpath of
+ * that ancestor joined to the rest, so a link spelling of a parent folder, such as a junction to
+ * a temporary root, meets the root's own spelling while a link below it keeps its own name
+ * (#1068). A missing ancestor is skipped. Returns `null` when a realpath fails for another
+ * reason, so the caller can fail closed.
+ */
+function resolvedParentSpellings(path, platform) {
+  const pathApi = platform === "win32" ? win32 : posix;
+  const realpath = platform === "win32" ? realpathSync.native : realpathSync;
+  const { root } = pathApi.parse(path);
+  const segments = splitPath(path.slice(root.length));
+  const found = [];
+  for (let depth = 1; depth < segments.length; depth++) {
+    try {
+      found.push(
+        pathApi.join(
+          realpath(pathApi.join(root, ...segments.slice(0, depth))),
+          ...segments.slice(depth),
+        ),
+      );
+    } catch (error) {
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return null;
+    }
+  }
+  return found;
+}
+
+/**
  * The spellings to match: the normalized path, which is what the installer renders into entry
  * points, and its canonical path. A package junction inside a runner layout matches by its own
  * spelling even when its target is stable, and on Windows each segment of that spelling expands
- * to its long name. `null` when the canonical path or an 8.3 expansion cannot be resolved.
+ * to its long name. A link spelling of a parent folder also matches by the resolved parent.
+ * `null` when the canonical path, a parent, or an 8.3 expansion cannot be resolved.
  * `related` is passed to `expandShortSegments`.
  */
 function spellings(path, platform, related = () => false) {
@@ -136,7 +170,9 @@ function spellings(path, platform, related = () => false) {
     platform === "win32" && platform === process.platform
       ? expandShortSegments(normalized, related)
       : normalized;
-  return own === null ? null : [...new Set([normalized, own, canonical])];
+  if (own === null) return null;
+  const parents = platform === process.platform ? resolvedParentSpellings(own, platform) : [];
+  return parents === null ? null : [...new Set([normalized, own, canonical, ...parents])];
 }
 
 /**
