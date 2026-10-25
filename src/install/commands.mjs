@@ -83,22 +83,35 @@ function resolveSelection(token) {
   return parseHarnessList(token)[0];
 }
 
-async function selectHarnesses(discovered) {
+async function askSelection(discovered) {
   const menu = HARNESS_ORDER.map((harness, index) => {
     const marker = discovered.includes(harness) ? " [detected]" : "";
     return `${index + 1}. ${HARNESS_META[harness].label} (${harness})${marker}`;
   });
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const answer = (
+    return (
       await rl.question(
         `\nSelect harnesses by number or name, comma-separated.\n${menu.join("\n")}\n` +
           `Selection [${discovered.join(",") || "none"}]: `,
       )
     ).trim();
-    if (answer === "") {
-      return discovered;
-    }
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * Runs the menu and returns the selection, or null after reporting a bad answer
+ * and setting exit code 1. Only answer validation is caught; a prompt failure
+ * propagates.
+ */
+async function selectHarnesses(discovered) {
+  const answer = await askSelection(discovered);
+  if (answer === "") {
+    return discovered;
+  }
+  try {
     return [
       ...new Set(
         answer
@@ -107,18 +120,6 @@ async function selectHarnesses(discovered) {
           .filter(Boolean),
       ),
     ];
-  } finally {
-    rl.close();
-  }
-}
-
-/**
- * Runs the menu and returns the selection, or null after reporting a bad answer
- * and setting exit code 1.
- */
-async function promptHarnesses(discovered) {
-  try {
-    return await selectHarnesses(discovered);
   } catch (err) {
     logError(readableErrorText(err));
     process.exitCode = 1;
@@ -188,7 +189,7 @@ export async function runInstallCommand(argv) {
       process.exitCode = 1;
       return;
     }
-    harnesses = await promptHarnesses(await detectHarnesses());
+    harnesses = await selectHarnesses(await detectHarnesses());
     if (!harnesses) {
       return;
     }
@@ -249,7 +250,7 @@ export async function runUninstallCommand(argv) {
       logInfo("No harness is installed; nothing to remove.");
       return;
     }
-    harnesses = await promptHarnesses(installed);
+    harnesses = await selectHarnesses(installed);
     if (!harnesses) {
       return;
     }

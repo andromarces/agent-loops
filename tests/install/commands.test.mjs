@@ -13,9 +13,18 @@ import { createBarrierTest } from "../barrier-test.mjs";
 const test = createBarrierTest();
 
 // The interactive prompt reads its answer from this stub instead of a terminal.
-const prompt = vi.hoisted(() => ({ answer: "" }));
+// A set `failure` makes the prompt reject, as a closed or canceled terminal does.
+const prompt = vi.hoisted(() => ({ answer: "", failure: null }));
 vi.mock("node:readline/promises", () => ({
-  createInterface: () => ({ question: async () => prompt.answer, close() {} }),
+  createInterface: () => ({
+    question: async () => {
+      if (prompt.failure) {
+        throw prompt.failure;
+      }
+      return prompt.answer;
+    },
+    close() {},
+  }),
 }));
 
 afterEach(cleanupHomes);
@@ -518,6 +527,8 @@ test.each([
     process.exitCode = 0;
     await cliMain([command]);
     expect(process.exitCode).toBe(1);
+    expect(existsSync(join(home, ".claude", "settings.json"))).toBe(command === "uninstall");
+    expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(false);
     const lines = errorSpy.mock.calls.map((call) => call.join(" "));
     expect(lines).toHaveLength(1);
     expect(lines[0].startsWith("[agent-loop] error: ")).toBe(true);
@@ -536,3 +547,45 @@ test.each([
     process.exitCode = 0;
   }
 });
+
+// Usefulness: acceptance (#1070) — only a bad menu answer becomes an error line; a prompt
+// failure (closed or canceled terminal) must reach the caller unchanged, not read as a
+// selection error.
+test.each(["install", "uninstall"])(
+  "CLI %s lets a prompt failure propagate unchanged",
+  async (command) => {
+    const home = await makeHome();
+    process.env.AGENT_LOOP_HOME = home;
+    const originalPath = process.env.PATH;
+    const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const originalLog = console.log;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    console.log = () => {};
+    const failure = new Error("readline closed");
+    try {
+      if (command === "uninstall") {
+        await cliMain(["install", "--harness", "claude"]);
+      }
+      process.env.PATH = home;
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+      prompt.failure = failure;
+      errorSpy.mockClear();
+      process.exitCode = 0;
+      await expect(cliMain([command])).rejects.toBe(failure);
+      expect(process.exitCode).toBe(0);
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      prompt.failure = null;
+      console.log = originalLog;
+      errorSpy.mockRestore();
+      process.env.PATH = originalPath;
+      if (ttyDescriptor) {
+        Object.defineProperty(process.stdin, "isTTY", ttyDescriptor);
+      } else {
+        delete process.stdin.isTTY;
+      }
+      restoreAgentLoopHome();
+      process.exitCode = 0;
+    }
+  },
+);
