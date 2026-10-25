@@ -60,6 +60,19 @@ test("reviewer prompt challenges a spec that weakens a guard and limits approval
   );
 });
 
+// Usefulness: verifies hardening beyond the task, the existing guards, and the base branch goes in
+// Notes, while a weakened guard stays a blocker, so a reviewer does not cost a worker turn for a
+// finding that is no defect and no regression (issue #1073).
+test("reviewer prompt puts hardening beyond the task and existing guards in Notes", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "A finding that is not a defect against the task, not a weakened existing guard or documented contract, and not a regression from the base branch goes in Notes, not in Blockers.",
+  );
+  expect(prompt).toContain(
+    "Report a change that weakens an existing guard or documented contract as a blocker",
+  );
+});
+
 // Usefulness: verifies a criterion that needs a check outside the turn is reported as unverified
 // and deferred, and blocks only when the task requires that check to pass in this run, so the
 // reviewer does not reject for a live, device, or manual check it cannot run (issue #838).

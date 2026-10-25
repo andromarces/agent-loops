@@ -17,6 +17,12 @@ reviewer then judges the change against the decision, not only against the init
 task. State the decision as an approved change of the spec, with the guard or
 contract that it changes, so the reviewer still tests the change.
 
+The fixed review scope also sets what a blocker is. A weakened existing guard or
+documented contract stays a blocker. A finding that is not a defect against the
+task, not a weakened existing guard or documented contract, and not a regression
+from the base branch is hardening: it goes in `Notes`, not in `Blockers`. A
+blocker needs a concrete failure scenario.
+
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
 then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed
