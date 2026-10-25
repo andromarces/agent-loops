@@ -101,6 +101,22 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
  * two apart without refusing every missing stable path and missing default root. A change after
  * the second check, such as a runner that deletes its folder while the installer writes files, is
  * not detected either, and that deletion is the one that the refusal exists for.
+ *
+ * Verified on 2026-10-25, Windows 11, Node 26.8.1, commit 0cea15e (#709):
+ * - Access failure: an icacls deny of the list permission on the `bunx-<uid>-<package>` folder of
+ *   a bunx package root under an 8.3 temporary root makes the listing fail with EPERM.
+ *   `install --harness claude --dry-run` then refuses. The same deny on the parent of a stable
+ *   package root also refuses, and that root is accepted without the deny.
+ * - Cost: median of 5 runs of `install --harness claude --dry-run`, with the in-process
+ *   `installRefusal` time in parentheses. Each layout is a bunx package root in a temporary root.
+ *   - 3 siblings in the temporary root and in its parent: 267 ms (7 ms), or 280 ms (11 ms) with
+ *     an 8.3 spelling of the temporary root.
+ *   - 10,000 siblings in the same two folders: 294 ms (25 ms), or 724 ms (405 ms) with an 8.3
+ *     spelling. A short segment stats each sibling until the file id matches.
+ *   - `\\127.0.0.1\C$` spelling of the package root and the temporary root: 1102 ms (50 ms) with
+ *     3 siblings, 1182 ms (103 ms) with 10,000. Most of the run is the module load over SMB.
+ *   - The same UNC package root with the local temporary root is accepted, as the known-limit in
+ *     the file header states: 1137 ms (43 ms) with 3 siblings, 1137 ms (112 ms) with 10,000.
  */
 function expandShortSegments(path, related) {
   const { root } = win32.parse(path);
