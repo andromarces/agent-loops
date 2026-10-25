@@ -25,18 +25,34 @@ afterEach(async () => {
   }
 });
 
-/** Copies the package into `store` and links its one runtime dependency beside it. */
+/**
+ * Runs the `cli.mjs` of an installed layout with no `NODE_PATH`, which `pnpm exec` points at
+ * the repository dependencies, so the layout resolves only the dependencies it links.
+ */
+function runInstalled(cli, args, env = {}) {
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "NODE_PATH"),
+  );
+  return execa(process.execPath, [cli, ...args], {
+    env: { ...inherited, ...env },
+    extendEnv: false,
+  });
+}
+
+/** Copies the package into `store` and links each runtime dependency that package.json lists beside it. */
 async function populateStore(store) {
   await mkdir(store, { recursive: true });
   await cp(join(REPO_ROOT, "src"), join(store, "src"), { recursive: true });
   await cp(join(REPO_ROOT, "docs"), join(store, "docs"), { recursive: true });
   await cp(join(REPO_ROOT, "package.json"), join(store, "package.json"));
-  // The one runtime dependency, beside the package the way pnpm places it.
-  await symlink(
-    join(REPO_ROOT, "node_modules", "execa"),
-    join(dirname(dirname(store)), "execa"),
-    LINK_TYPE,
-  );
+  const { dependencies } = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
+  // Beside the package the way pnpm places each dependency.
+  const modules = dirname(dirname(store));
+  for (const name of Object.keys(dependencies)) {
+    const link = join(modules, name);
+    await mkdir(dirname(link), { recursive: true });
+    await symlink(join(REPO_ROOT, "node_modules", name), link, LINK_TYPE);
+  }
 }
 
 /**
@@ -85,10 +101,12 @@ test("hooks installed under a pnpm 12 global layout survive an upgrade", async (
   // The path the pnpm bin shim calls.
   const installed = join(before.hashLink, "node_modules", "@andromarces", "agent-loops");
 
-  await execa(
-    process.execPath,
-    [join(installed, "src", "cli.mjs"), "install", "--harness", "claude", "--yes"],
-    { env: { ...process.env, AGENT_LOOP_HOME: home } },
+  await runInstalled(
+    join(installed, "src", "cli.mjs"),
+    ["install", "--harness", "claude", "--yes"],
+    {
+      AGENT_LOOP_HOME: home,
+    },
   );
 
   const settings = JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"));
@@ -203,10 +221,10 @@ test("hooks installed in a pnpm 10 project layout survive an upgrade", async () 
   paths.push(home, project);
   const before = await pnpmProject(project, "0.3.0");
 
-  await execa(
-    process.execPath,
-    [join(before.store, "src", "cli.mjs"), "install", "--harness", "claude", "--yes"],
-    { env: { ...process.env, AGENT_LOOP_HOME: home } },
+  await runInstalled(
+    join(before.store, "src", "cli.mjs"),
+    ["install", "--harness", "claude", "--yes"],
+    { AGENT_LOOP_HOME: home },
   );
 
   const settings = JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"));
@@ -526,10 +544,10 @@ test("hooks installed in a pnpm 12 project layout survive an upgrade", async () 
 
   // The path the bin shim passes to node: the project link, not the store entry
   // Node resolves it to.
-  await execa(
-    process.execPath,
-    [join(before.linked, "src", "cli.mjs"), "install", "--harness", "claude", "--yes"],
-    { env: { ...process.env, AGENT_LOOP_HOME: home } },
+  await runInstalled(
+    join(before.linked, "src", "cli.mjs"),
+    ["install", "--harness", "claude", "--yes"],
+    { AGENT_LOOP_HOME: home },
   );
 
   const settings = JSON.parse(await readFile(join(home, ".claude", "settings.json"), "utf8"));
@@ -612,8 +630,27 @@ test("--version prints the package version from an installed layout", async () =
     version: "0.3.0",
   });
   const { version } = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
-  const { stdout } = await execa(process.execPath, [join(linked, "src", "cli.mjs"), "--version"]);
+  const { stdout } = await runInstalled(join(linked, "src", "cli.mjs"), ["--version"]);
   expect(stdout).toBe(version);
+});
+
+// Usefulness: verifies the installed layout resolves every runtime dependency that
+// package.json lists, so a dependency the fixture omits fails here even when no
+// module on the `--version` path imports it.
+test("an installed layout resolves every runtime dependency package.json lists", async () => {
+  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-deps-global-"));
+  paths.push(globalHome);
+  const { store } = await pnpmGlobal(join(globalHome, "global", "v11"), {
+    id: "637c-18d963de1bc57d7c-0",
+    hash: null,
+    version: "0.3.0",
+  });
+  const { dependencies } = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
+  const probe = join(store, "src", "resolve-dependency.mjs");
+  await writeFile(probe, "await import(process.argv[2]);\n");
+  for (const name of Object.keys(dependencies)) {
+    await runInstalled(probe, [name]);
+  }
 });
 
 // Usefulness: verifies `install` fails closed on an inherited-list value that is present but not a
