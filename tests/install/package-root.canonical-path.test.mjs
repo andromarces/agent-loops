@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, symlink, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { realpathSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -172,6 +172,24 @@ test.skipIf(process.platform !== "win32")(
     expect(refusal).toMatch(/folder .*[\\/]denied cannot be read/);
     expect(refusal).not.toBe(EPHEMERAL_ROOT_MESSAGE);
     expect(isEphemeralPackageRoot(stable, process.platform, { bunx: [], yarn: [] })).toBe(true);
+  },
+);
+
+// Usefulness: verifies #1088 review — when the stat of a sibling entry fails during short-name expansion, the refusal names the folder that holds the sibling and never calls the sibling, which may be a regular file, a folder; the expansion runs on Windows only.
+test.skipIf(process.platform !== "win32")(
+  "the refusal does not call a sibling file whose stat fails a folder",
+  async () => {
+    const base = await scratch();
+    const stable = join(base, "stablepkg", "pkg");
+    await mkdir(stable, { recursive: true });
+    await writeFile(join(base, "aaa-file.txt"), "");
+    // The listing of `base` omits `stablepkg`, so the expansion compares file ids of the siblings.
+    realpathMock.readdirList = (path) => (path === base ? ["aaa-file.txt"] : null);
+    realpathMock.lstatFail = (path) => (basename(path) === "aaa-file.txt" ? "EPERM" : null);
+    const refusal = installRefusal(stable);
+    expect(refusal).toMatch(/^Refusing to install/);
+    expect(refusal).not.toContain("aaa-file.txt");
+    expect(refusal).toMatch(/folder .*[\\/]agent-loop-canonical-[^\\/]+ cannot be read/);
   },
 );
 

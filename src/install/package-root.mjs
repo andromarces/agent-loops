@@ -153,8 +153,8 @@ const MISSING = Symbol("missing");
 
 /**
  * The long name of an existing segment, `MISSING` for a missing one, or `null` when unresolved. An
- * unreadable result records the path whose read failed: the segment, the listing of `parent`, or a
- * sibling that the file id comparison stats. A listing with no matching entry records `parent`.
+ * unreadable result records the segment when its stat fails, and otherwise `parent`: a failed
+ * listing, a failed stat of a sibling entry that may be a file, or a listing with no match.
  */
 function longName(parent, segment) {
   let reading = join(parent, segment);
@@ -165,10 +165,7 @@ function longName(parent, segment) {
     const lower = segment.toLowerCase();
     return (
       names.find((name) => name.toLowerCase() === lower) ??
-      names.find((name) => {
-        reading = join(parent, name);
-        return lstatSync(reading, { bigint: true }).ino === id;
-      }) ??
+      names.find((name) => lstatSync(join(parent, name), { bigint: true }).ino === id) ??
       failAt(parent)
     );
   } catch (error) {
