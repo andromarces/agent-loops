@@ -17,9 +17,12 @@ import { INHERITED_TMPDIR_ENV, readInheritedTmpdirs } from "../lib/inherited-tmp
 // was observed, not the `<package>.zip\node_modules\<package>` suffix. On macOS,
 // yarn 1.22.22 has no `dlx` command, and its `create` command installed a probe
 // package under `<home>/.config/yarn/global`, a stable root.
-// Not verified: Linux (#707), and a `%TEMP%` that is an 8.3 short path or a
-// junction (#709). The match compares canonical paths, so a link or a `..` segment in
-// the package root or a temporary root does not change the result (#962).
+// Not verified: Linux (#707), and a `%TEMP%` that is a junction (#709). The match compares
+// canonical paths, so a link, a `..` segment, or on Windows an 8.3 short segment in the
+// package root or a temporary root does not change the result (#962, #1068).
+// known-limit: a UNC spelling of a local drive, such as \\127.0.0.1\C$\..., stays distinct
+// from C:\... because no realpath maps an administrative share to its drive. Such a package
+// root is rare. Add a share-to-drive mapping if one is ever observed (#1068).
 const EPHEMERAL_CACHE_DIRS = new Set(["_npx", "dlx"]);
 const BUNX_TEMP_DIR = /^bunx-\d+-[^@]+@[^@]+$/;
 const BUNX_SCOPE_TEMP_DIR = /^bunx-\d+-@[^@]+$/;
@@ -40,15 +43,17 @@ const splitPath = (path) => path.split(/[\\/]+/).filter(Boolean);
  * rest, normalized, so a link such as macOS `/var` resolves to `/private/var` and a `..`
  * segment is resolved even when the path does not exist (#962). A path for another platform
  * is only normalized. Returns `null` when a realpath fails for a reason other than a missing
- * path, such as EACCES or ELOOP, so the caller can fail closed.
+ * path, such as EACCES or ELOOP, so the caller can fail closed. On Windows the native realpath
+ * expands an 8.3 short segment, which the JS realpath keeps (#1068).
  */
 function canonicalPath(path, platform = process.platform) {
   const pathApi = platform === "win32" ? win32 : posix;
+  const realpath = platform === "win32" ? realpathSync.native : realpathSync;
   const normalized = pathApi.normalize(path);
   if (platform !== process.platform) return normalized;
   for (let dir = normalized, tail = ""; ;) {
     try {
-      return pathApi.join(realpathSync(dir), tail);
+      return pathApi.join(realpath(dir), tail);
     } catch (error) {
       if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return null;
     }

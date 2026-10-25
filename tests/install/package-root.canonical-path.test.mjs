@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, symlink } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,16 +10,21 @@ import { removePath } from "../runtime-helpers.mjs";
 const realpathMock = vi.hoisted(() => ({ fail: null }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal();
-  return {
-    ...actual,
-    realpathSync: Object.assign((path, ...rest) => {
+  const failing =
+    (realpath) =>
+    (path, ...rest) => {
       if (realpathMock.fail?.(String(path))) {
         throw Object.assign(new Error(`EACCES: permission denied, realpath '${path}'`), {
           code: "EACCES",
         });
       }
-      return actual.realpathSync(path, ...rest);
-    }, actual.realpathSync),
+      return realpath(path, ...rest);
+    };
+  return {
+    ...actual,
+    realpathSync: Object.assign(failing(actual.realpathSync), {
+      native: failing(actual.realpathSync.native),
+    }),
   };
 });
 
@@ -85,3 +91,38 @@ test("a temporary root that cannot be canonicalized refuses every package root",
   const roots = { bunx: [unreadableRoot], yarn: [unreadableRoot] };
   expect(isEphemeralPackageRoot(stable, process.platform, roots)).toBe(true);
 });
+
+/** The 8.3 spelling of an existing directory, or null when the volume has no short names. */
+function shortSpelling(dir) {
+  const out = execFileSync("cmd.exe", ["/d", "/s", "/c", `for %I in ("${dir}") do @echo %~sI`], {
+    windowsVerbatimArguments: true,
+  })
+    .toString()
+    .trim();
+  return out.toLowerCase() === dir.toLowerCase() ? null : out;
+}
+
+// Usefulness: verifies #1068 — an 8.3 spelling of the package root or the temporary root refuses like the canonical spelling, and the same layout under a stable parent stays accepted.
+test.skipIf(process.platform !== "win32")(
+  "an 8.3 spelling of the package root or the temporary root is refused",
+  async () => {
+    const base = await scratch();
+    const longRoot = join(base, "shortnamedtemproot");
+    await mkdir(join(longRoot, ...BUNX_LAYOUT, "pkg"), { recursive: true });
+    const shortRoot = shortSpelling(longRoot);
+    if (shortRoot === null) return;
+    const canonicalPackage = join(longRoot, ...BUNX_LAYOUT, "pkg");
+    const shortPackage = join(shortRoot, ...BUNX_LAYOUT, "pkg");
+    const canonicalRoots = { bunx: [longRoot], yarn: [longRoot] };
+    const shortRoots = { bunx: [shortRoot], yarn: [shortRoot] };
+    expect(isEphemeralPackageRoot(canonicalPackage, "win32", canonicalRoots)).toBe(true);
+    expect(isEphemeralPackageRoot(shortPackage, "win32", canonicalRoots), "short package").toBe(
+      true,
+    );
+    expect(isEphemeralPackageRoot(canonicalPackage, "win32", shortRoots), "short temp").toBe(true);
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    const shortStable = join(shortSpelling(join(base, "stablenamedparent")), "pkg");
+    expect(isEphemeralPackageRoot(shortStable, "win32", canonicalRoots)).toBe(false);
+  },
+);
