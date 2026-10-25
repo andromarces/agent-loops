@@ -508,7 +508,7 @@ async function readRequiredSource(
   cwd,
   { absentOnError, classify, malformed = () => false },
 ) {
-  const { status, stdout, stderr, unreadable } = await gh(["api", ...args], cwd);
+  const { status, stdout, stderr, unreadable, transient } = await gh(["api", ...args], cwd);
   if (status !== 0) {
     if (unreadable) {
       return { state: UNKNOWN, contexts: [], unparsed: true };
@@ -519,7 +519,11 @@ async function readRequiredSource(
     if (UNREADABLE.test(stderr) || isFreePlan403(stderr)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    throw new Error(`gh api ${args[0]} failed: ${ghFailureText({ status, stderr })}`);
+    const err = new Error(`gh api ${args[0]} failed: ${ghFailureText({ status, stderr })}`);
+    if (transient) {
+      err.transient = true;
+    }
+    throw err;
   }
   const text = stdout.trim();
   if (text === "") {
@@ -932,7 +936,11 @@ function addContext(contexts, name, appId = null) {
 // absence. It lists only the checks that already reported, so it can name a
 // required check and it cannot prove one is absent: on a base branch with no
 // required check it prints nothing, which is the same silence as a read failure.
-export async function requiredContexts(gh, slug, base, pr, cwd) {
+//
+// With `retryable`, the protection read is a status-classified `--include` read like the paged
+// rules read, so a failed read of either source with a retryable status carries `transient`
+// and a caller can retry it on its next poll (#1091). The default reads stay as the gate pins them.
+export async function requiredContexts(gh, slug, base, pr, cwd, { retryable = false } = {}) {
   const contexts = new Map();
   const unknown = [];
   const unparsed = [];
@@ -951,11 +959,16 @@ export async function requiredContexts(gh, slug, base, pr, cwd) {
         { absentOnError: () => false, classify: classifyRulesets },
       ),
     (read) =>
-      readRequiredSource(read, [`repos/${slug}/branches/${base}/protection`], cwd, {
-        absentOnError: isNotProtected404,
-        classify: classifyProtection,
-        malformed: isProtectionMalformed,
-      }),
+      readRequiredSource(
+        retryable ? (args, readCwd) => readOne(read, args[1], readCwd) : read,
+        [`repos/${slug}/branches/${base}/protection`],
+        cwd,
+        {
+          absentOnError: isNotProtected404,
+          classify: classifyProtection,
+          malformed: isProtectionMalformed,
+        },
+      ),
     (read) => ghRequiredNames(read, pr, cwd),
   ]);
   if (rules.state === UNKNOWN) {

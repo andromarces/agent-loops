@@ -223,6 +223,161 @@ test("waitChecks keeps waiting when a source names a required check that gh list
   ).toEqual({ timedOut: true, head: HEAD_A, checks: [] });
 });
 
+/** Runs one required wait whose `gh pr checks --required` answers that no check has reported. */
+function noChecksReportedWait(sources) {
+  const clock = fakeClock();
+  const calls = [];
+  const gh = scriptedGh(
+    [{ status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch\n" }],
+    sources,
+  );
+  return {
+    clock,
+    calls,
+    result: waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 300,
+      gh: async (args, cwd) => {
+        calls.push(args);
+        return gh(args, cwd);
+      },
+      now: clock.now,
+      sleep: clock.sleep,
+    }),
+  };
+}
+
+// Usefulness: verifies a required wait that reads `no checks reported` refuses on the first poll
+// while no required-check source can state the required checks, instead of waiting out its bound
+// on a repository where no check can report (issue #1091).
+test("waitChecks refuses no-checks-reported at once when every required source is unreadable", async () => {
+  const wait = noChecksReportedWait({
+    rules: { status: 1, stdout: "", stderr: FREE_PLAN },
+    protection: { status: 1, stdout: "", stderr: FREE_PLAN },
+  });
+  await expect(wait.result).rejects.toThrow(
+    /gh pr checks 42 --required reported no checks.*repository rulesets and classic branch protection did not state/,
+  );
+  expect(wait.clock.elapsed()).toBe(0);
+});
+
+// Usefulness: verifies #941 holds beside a readable source: a source that states the absence of a
+// required check, or names one that has not reported, keeps the wait running to the bound.
+test.each([
+  [
+    "sources that state an absence",
+    {
+      ...ABSENT_SOURCES,
+      protection: { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" },
+    },
+  ],
+  [
+    "a ruleset that names a required check",
+    {
+      rules: {
+        status: 0,
+        stdout: pageStdout([
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ci" }] },
+          },
+        ]),
+        stderr: "",
+      },
+    },
+  ],
+])("waitChecks keeps waiting on no-checks-reported over %s", async (_name, sources) => {
+  expect(await noChecksReportedWait(sources).result).toEqual({
+    timedOut: true,
+    head: HEAD_A,
+    checks: [],
+  });
+});
+
+// Usefulness: verifies a source that cannot be read never ends the no-checks-reported wait while
+// the other source names a check or states the absence, whatever the unreadable one returned, so
+// #941 holds beside a malformed reply (issue #1091).
+test.each([
+  ["a protection source that states the absence", () => ({})],
+  [
+    "a protection source that names a check",
+    () => ({
+      protection: {
+        status: 0,
+        stdout: blockOf(200, JSON.stringify({ required_status_checks: { contexts: ["ci"] } })),
+        stderr: "",
+      },
+    }),
+  ],
+])(
+  "waitChecks keeps waiting on no-checks-reported beside a malformed ruleset reply and %s",
+  async (_name, other) => {
+    expect(
+      await noChecksReportedWait({
+        rules: { status: 0, stdout: "not json", stderr: "" },
+        ...other(),
+      }).result,
+    ).toEqual({ timedOut: true, head: HEAD_A, checks: [] });
+  },
+);
+
+/**
+ * One required wait whose first poll reads `no checks reported` and whose second lists a pass, with
+ * `failing` ("rules" or "protection") answering its first read with HTTP `code`.
+ */
+function noChecksThenPassWait(failing, code) {
+  const inner = scriptedGh([
+    { status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch\n" },
+    { status: 0, checks: [PASSED_ITEM] },
+  ]);
+  const clock = fakeClock();
+  const fails = (args) =>
+    args[0] === "api" &&
+    args[1].includes(failing === "rules" ? "/rules/branches/" : "/branches/main/protection");
+  let failedOnce = false;
+  const gh = async (args, cwd, options) => {
+    if (fails(args) && (code === 0 || !failedOnce)) {
+      failedOnce = true;
+      return serverError(code === 0 ? 503 : code);
+    }
+    return inner(args, cwd, options);
+  };
+  return waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    gh,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+}
+
+// Usefulness: verifies a retryable server error on either configuration source of the
+// no-checks-reported read is retried on the next poll, as the wait retries a commit read, so the
+// wait settles inside its bound instead of exiting on the first poll (issue #1091).
+test.each([
+  ["rules", 503],
+  ["rules", 500],
+  ["protection", 503],
+  ["protection", 502],
+])("waitChecks retries a %s source read that fails with HTTP %i", async (failing, code) => {
+  expect(await noChecksThenPassWait(failing, code)).toEqual({
+    timedOut: false,
+    head: HEAD_A,
+    checks: [PASSED_ITEM],
+  });
+});
+
+// Usefulness: verifies a retryable server error on every poll to the bound is an error that names
+// the failure, never a timeout envelope and never a pass (issue #1091).
+test.each(["rules", "protection"])(
+  "waitChecks reports an error when the %s source read fails with HTTP 503 until the bound",
+  async (failing) => {
+    await expect(noChecksThenPassWait(failing, 0)).rejects.toThrow(/HTTP 503/);
+  },
+);
+
 // Usefulness: verifies only the exact `gh` answer is the new outcome: the same
 // words inside a longer error text, or on another exit code, stay unresolved
 // (issue #894).
