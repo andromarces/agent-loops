@@ -4,7 +4,11 @@ import { realpathSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { installRefusal, isEphemeralPackageRoot } from "../../src/install/package-root.mjs";
+import {
+  EPHEMERAL_ROOT_MESSAGE,
+  installRefusal,
+  isEphemeralPackageRoot,
+} from "../../src/install/package-root.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const realpathMock = vi.hoisted(() => ({
@@ -108,6 +112,24 @@ test("a package root that cannot be canonicalized is refused", async () => {
   expect(installRefusal(stable)).toMatch(/^Refusing to install/);
 });
 
+// Usefulness: verifies #1081 — an unreadable folder refuses with a message that names the unreadable package path and not a runner cache, so a user with a stable global install is not told to install globally; a proven runner cache keeps its own message.
+test("a package root that cannot be read is refused without the runner-cache message", async () => {
+  const base = await scratch();
+  const stable = join(base, "stable", "pkg");
+  await mkdir(stable, { recursive: true });
+  realpathMock.fail = (path) => path === stable;
+  const refusal = installRefusal(stable);
+  expect(refusal).toMatch(/^Refusing to install/);
+  expect(refusal).toContain(stable);
+  expect(refusal).not.toMatch(/npx|dlx|bunx|cache/);
+  expect(refusal).not.toBe(EPHEMERAL_ROOT_MESSAGE);
+  realpathMock.fail = null;
+
+  const npxRoot = join(base, "_npx", "0123456789abcdef", "node_modules", "pkg");
+  await mkdir(npxRoot, { recursive: true });
+  expect(installRefusal(npxRoot)).toBe(EPHEMERAL_ROOT_MESSAGE);
+});
+
 // Usefulness: verifies #962 review — a temporary root that cannot be canonicalized refuses every package root, since the match cannot rule the root out.
 test("a temporary root that cannot be canonicalized refuses every package root", async () => {
   const base = await scratch();
@@ -119,6 +141,43 @@ test("a temporary root that cannot be canonicalized refuses every package root",
   const roots = { bunx: [unreadableRoot], yarn: [unreadableRoot] };
   expect(isEphemeralPackageRoot(stable, process.platform, roots)).toBe(true);
 });
+
+// Usefulness: verifies #1081 review — a package junction inside a bunx or yarn dlx layout of an inherited temporary-root junction keeps the runner-cache message when a folder listing fails, in either spelling of the root, and a stable root under the same failure gets the unreadable message.
+test.skipIf(process.platform !== "win32")(
+  "a proven runner layout under a linked temporary root keeps the runner-cache message",
+  async () => {
+    const base = await scratch();
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    const saved = process.env.AGENT_LOOP_INHERITED_TMPDIR;
+    try {
+      for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+        const realRoot = join(base, `realtemproot${layout.length}`);
+        const linkRoot = join(base, `linkedtemproot${layout.length}`);
+        await mkdir(join(realRoot, ...layout), { recursive: true });
+        await symlink(stable, join(realRoot, ...layout, "packagejunctionlink"), LINK_TYPE);
+        await symlink(realRoot, linkRoot, LINK_TYPE);
+        realpathMock.readdirFail = () => "EPERM";
+        const cases = [
+          [realRoot, linkRoot],
+          [linkRoot, realRoot],
+        ];
+        for (const [inherited, spelled] of cases) {
+          process.env.AGENT_LOOP_INHERITED_TMPDIR = JSON.stringify([inherited]);
+          const packageRoot = join(spelled, ...layout, "packagejunctionlink");
+          expect(installRefusal(packageRoot), packageRoot).toBe(EPHEMERAL_ROOT_MESSAGE);
+        }
+        const stableRefusal = installRefusal(stable);
+        expect(stableRefusal).toMatch(/^Refusing to install/);
+        expect(stableRefusal).not.toBe(EPHEMERAL_ROOT_MESSAGE);
+        realpathMock.readdirFail = null;
+      }
+    } finally {
+      if (saved === undefined) delete process.env.AGENT_LOOP_INHERITED_TMPDIR;
+      else process.env.AGENT_LOOP_INHERITED_TMPDIR = saved;
+    }
+  },
+);
 
 /** The 8.3 spelling of an existing directory, or null when the volume has no short names. */
 function shortSpelling(dir) {
