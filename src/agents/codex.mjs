@@ -44,8 +44,10 @@ export async function runCodex(state, prompt, options = {}) {
   // `sandbox` is the reviewer-only mode input (ADR 0038): `none`, `read-only`, or `workspace-write`.
   // `exec` and `exec resume` both accept the `-c sandbox_mode` form, so one form serves every turn.
   // Network access is set off explicitly for `workspace-write`, because the user config can turn it on.
+  // With no sandbox, a GitHub app connector write runs without approval, so the app connectors are
+  // turned off (issue #496). The sandboxed modes refuse that write already.
   if (sandbox === "none") {
-    configArgs.push("-c", 'sandbox_mode="danger-full-access"');
+    configArgs.push("-c", 'sandbox_mode="danger-full-access"', "-c", "features.apps=false");
   } else if (sandbox === "workspace-write") {
     configArgs.push(
       "-c",
