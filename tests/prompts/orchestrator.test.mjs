@@ -388,6 +388,17 @@ test("the headless prompt adds the declaration rule and nothing else", () => {
   );
 });
 
+// Usefulness: verifies the start-read sentence of #1092 appears only for a run whose start made the
+// read. A continuation that restored its PR skips the read, so its prompt must not claim one; a
+// continuation that declares a new PR makes the read and says so.
+test("the start-read sentence is absent from a continued run that restored its PR", () => {
+  const sentence = "At start, the runtime read the required-check sources of PR #42";
+  const base = { task: "T", maxSteps: 10, pr: 42 };
+  expect(initialPrompt(base)).toContain(sentence);
+  expect(initialPrompt({ ...base, continued: true })).not.toContain(sentence);
+  expect(initialPrompt({ ...base, continued: true, startRead: true })).toContain(sentence);
+});
+
 // Usefulness: verifies a run that declares no PR keeps the prompt it sent
 // before the PR declaration existed, because the declaration block is the only addition and it is empty
 // without `--pr` (#302).

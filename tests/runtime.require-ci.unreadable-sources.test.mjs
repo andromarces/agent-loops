@@ -82,6 +82,34 @@ test("a headless --pr run with a readable required-check source starts and finis
   expect(settled.exitCode).toBe(0);
 });
 
+// Usefulness: verifies a continuation that restored its PR makes no start read and its orchestrator
+// prompt does not claim one, so the prompt states only what the runtime did.
+test("a continued run that restored its PR reads nothing at start and its prompt claims no read", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  const orch = scripted([JSON.stringify({ action: "abort", reason: "stop" })]);
+  const calls = [];
+  try {
+    await runLoop({
+      task: "PR work: address issue 1092 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      continued: true,
+      earlierPr: 42,
+      copyLocalFiles: false,
+      gh: prGateGh(CLEAN_REPO_HEAD, calls),
+      roles: gateRoles(),
+      agents: { orch, work: scripted([]), rev: scripted([]) },
+    });
+    expect(calls).toEqual([]);
+    expect(orch.recorded[0].prompt).toContain("This run declares PR #42");
+    expect(orch.recorded[0].prompt).not.toContain("At start, the runtime read");
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a read that fails for another reason than an unreadable source warns and
 // lets the run start, so a network outage at init does not block a run the gate may still judge.
 test("a headless --pr run does not refuse when the read fails for another reason", async () => {

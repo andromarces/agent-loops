@@ -166,7 +166,8 @@ export async function runLoop(options) {
   // A declared PR whose required-check sources the gate cannot read could only end through `abort`,
   // so the start refuses it before any child spawn (#1092). A continued run that restored its PR
   // passed this check when the earlier run started.
-  if (pr !== null && (continued ? earlierPr : null) === null) {
+  const readAtStart = pr !== null && (continued ? earlierPr : null) === null;
+  if (readAtStart) {
     const unreadable = await unreadableGateReason({
       pr,
       cwd,
@@ -258,6 +259,7 @@ export async function runLoop(options) {
     reviewerSandbox: sandboxMode,
     mode,
     continued,
+    startRead: readAtStart,
     gateRestored: restoredGate !== null,
     timeout,
     cwd,

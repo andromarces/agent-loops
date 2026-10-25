@@ -629,7 +629,9 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   Init with `--pr`, `role declare-pr`, and the headless start read the required-check
   sources of the PR base once. They refuse when the rulesets read settled nothing,
   before any state file is written or child spawns. A read that fails for another
-  reason, such as a transport failure, warns and does not refuse. After a refusal, omit
+  reason, such as a transport failure, warns and does not refuse. A `--continue-from`
+  run that restored its PR makes no start read, because the earlier run's start made
+  it, and its prompt states none. After a refusal, omit
   `--pr` and finish with the `"unresolvedCompare": true` marker after you compare
   the PR head with `reviewed.head` yourself. The headless `--require-ci` with no
   `--pr` declares nothing, so the start does not read it and its gate refuses at

@@ -51,6 +51,9 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
   a malformed `pr-declared` record, such as a `pr` that is not a positive integer.
 - A continued run applies the same gate to the restored PR. A `--pr` for that PR
   adds no refusal, because the PR was declared by the runtime.
+- A continued run that restored its PR reads no required-check source at start,
+  because the earlier run's start made that read (#1092), and its orchestrator
+  prompt states no start read. A continuation that declares a new PR makes the read.
 - To gate a PR that exists at start, pass `--require-ci <n>`. Or use
   `agent-loop role` with `role declare-pr`, which takes the gate at `finish`.
 

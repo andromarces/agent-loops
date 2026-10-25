@@ -423,7 +423,8 @@ Options:
                                 --mode review-only run refuses it outright. A run whose
                                 repository rulesets are unreadable to the gate, such as
                                 a private Free-plan repository, would refuse every finish,
-                                so the start refuses --pr there before any turn: omit it.
+                                so the start refuses --pr there before any turn: omit it. A
+                                continuation that restored its PR reads nothing at start.
   --require-ci <pr>             Refuse finish until the runtime resolves the PR head from
                                 this pull request: the PR head must match the reviewed commit,
                                 the reviewed tree must be clean, the PR must not be behind its
