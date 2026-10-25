@@ -13,6 +13,7 @@ import {
   REVIEW_ONLY_GATE_REFUSAL,
   REVIEW_ONLY_PR_REFUSAL,
   parseFlags,
+  readPositiveInt,
   readTaskFile,
   readStdinText,
   roleFlags,
@@ -20,6 +21,8 @@ import {
 } from "./lib/args.mjs";
 import {
   checkCi,
+  checkPrHead,
+  compareHeadConflict,
   missingGateRefusal,
   unreadableGateReason,
   unreadableGateRefusal,
@@ -110,6 +113,7 @@ export function parseRoleArgs(argv) {
     reason: null,
     requireAccept: false,
     requireCi: null,
+    compareHead: null,
     pr: null,
     all: false,
     expect: [],
@@ -165,6 +169,10 @@ export function parseRoleArgs(argv) {
           args.expect.push(name);
           return true;
         }
+
+        case "--compare-head":
+          args.compareHead = readPositiveInt(arg, readInline(arg));
+          return true;
 
         case "--head":
           args.head = readInline(arg);
@@ -289,11 +297,16 @@ function initialState(args) {
   };
 }
 
+// The recovery that the interactive path owns when it cannot declare the PR: the runtime compares
+// the head, where the headless path has only the parent's marker (#1098).
+const ROLE_UNREADABLE_FINISH =
+  "compare the PR head with the reviewed commit through `role finish --compare-head <pr>`, or finish with the unresolvedCompare marker after you compare it yourself";
+
 /** Refuses a PR declaration whose required-check sources the finish gate cannot read (#1092). */
 async function refuseUnreadableGate(label, { pr, cwd, gh }) {
   const reason = await unreadableGateReason({ pr, cwd, gh });
   if (reason) {
-    throw new RoleError(unreadableGateRefusal(label, reason));
+    throw new RoleError(unreadableGateRefusal(label, reason, ROLE_UNREADABLE_FINISH));
   }
 }
 
@@ -868,6 +881,10 @@ function describeJsonParseError(error) {
  * `finish`: accepts the five-key summary as JSON on stdin, from active only, and
  * sets the lifecycle to `finished`. A key other than the five and
  * `unresolvedCompare` is refused and named (#1021).
+ * `--compare-head <pr>` makes the PR-head half of the gate and nothing else: it refuses unless the
+ * PR head equals `reviewed.head` and the reviewed tree is clean, reads no required-check source, evaluates no
+ * merge state, and records `headCompare: "verified"` in the envelope and the state file. It is refused beside
+ * `--require-ci` and `unresolvedCompare`, and a declared-PR run still needs its gate (#1098).
  * `--require-accept` and `--require-ci` gate the finish. Every applicable refusal
  * is reported in one error. A run that declared `--pr <pr>` at init must end
  * through `--require-ci <pr>`: a finish with no gate or a gate for another PR is
@@ -876,9 +893,9 @@ function describeJsonParseError(error) {
  * An optional `unresolvedCompare` boolean beside the five keys, and a gate that
  * passes with no required check (`noRequiredChecks`), are recorded in the
  * envelope and the state file. Both keep the finish distinct from a verified
- * one. Without `--require-ci` this subcommand never resolves the PR head, so an
- * omitted marker is an accepted gap (ADR 0009, ADR 0012, issues #281, #286, #293,
- * #302, #336).
+ * one. Without `--require-ci` or `--compare-head` this subcommand never resolves
+ * the PR head, so an omitted marker is an accepted gap (ADR 0009, ADR 0012,
+ * issues #281, #286, #293, #302, #336).
  */
 async function finish(args, { stdin = readStdin, gh, signal } = {}) {
   rejectMisplacedFlags(args, "finish");
@@ -890,6 +907,11 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
 
     if ((args.requireAccept || args.requireCi !== null) && state.mode === "review-only") {
       throw new RoleError(REVIEW_ONLY_GATE_REFUSAL);
+    }
+    if (args.compareHead !== null && state.mode === "review-only") {
+      throw new RoleError(
+        "--compare-head compares a PR head, and review-only has no PR work; review-only accepts a flagless finish.",
+      );
     }
 
     const text = await stdin();
@@ -929,6 +951,15 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
     if (markerRefused) {
       refusals.push(markerReason);
     }
+    if (args.compareHead !== null) {
+      const conflict = compareHeadConflict({
+        requireCi: args.requireCi,
+        unresolvedCompare: validated.value.unresolvedCompare === true,
+      });
+      if (conflict) {
+        refusals.push(conflict);
+      }
+    }
     if (args.requireAccept) {
       const reason = await acceptGateReason(state, args.cwd, signal);
       if (reason) {
@@ -964,6 +995,17 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
       }
       noRequiredChecks = gate.noRequiredChecks === true;
     }
+    if (args.compareHead !== null) {
+      const compare = await checkPrHead({
+        pr: args.compareHead,
+        reviewed: state.lastResult?.reviewed ?? null,
+        cwd: args.cwd,
+        gh,
+      });
+      if (!compare.ok) {
+        throw new RoleError(`Finish refused: ${compare.reason}.`);
+      }
+    }
 
     state.lifecycle = "finished";
     state.summary = validated.value.summary;
@@ -977,6 +1019,15 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
       payload.noRequiredChecks = true;
       logInfo(
         "no required check exists for the base branch; the gate verified the PR head, the reviewed tree, and the merge state",
+      );
+    }
+    if (args.compareHead !== null) {
+      // The runtime resolved the PR head, which `unresolvedCompare` records as not done. No check
+      // result is claimed, so a reader never reads this as a gated pass (#1098).
+      state.headCompare = "verified";
+      payload.headCompare = "verified";
+      logInfo(
+        `the PR head of PR ${args.compareHead} equals the reviewed commit; no required check was read`,
       );
     }
     if (validated.value.unresolvedCompare) {
@@ -1021,6 +1072,9 @@ function rejectMisplacedFlags(args, operation) {
   }
   if (operation !== "wait-checks" && args.head !== null) {
     throw new RoleError("--head is only valid for wait-checks.");
+  }
+  if (operation !== "finish" && args.compareHead !== null) {
+    throw new RoleError(`--compare-head is only valid for finish, not ${operation}.`);
   }
   if (operation !== "finish" && (args.requireAccept || args.requireCi !== null)) {
     throw new RoleError(
