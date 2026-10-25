@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, symlink, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { realpathSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -129,6 +129,70 @@ test("a package root that cannot be read is refused without the runner-cache mes
   await mkdir(npxRoot, { recursive: true });
   expect(installRefusal(npxRoot)).toBe(EPHEMERAL_ROOT_MESSAGE);
 });
+
+// Usefulness: verifies #1088 — the unreadable-path refusal names the folder that failed, not only the package root, so a user can fix the permission on that folder without searching for it; it also covers a parent folder and a temporary root, which the package root alone does not point at.
+test("the unreadable-path refusal names the folder that failed", async () => {
+  const base = await scratch();
+  const denied = join(base, "denied");
+  const stable = join(denied, "pkg");
+  await mkdir(stable, { recursive: true });
+  // The check names a folder by its long spelling, which differs from `denied` under an 8.3
+  // temporary root, so the mock and the assertions match on the folder name.
+  const namesFolder = (name) => new RegExp(`folder .*[\\\\/]${name} cannot be read`);
+  realpathMock.fail = (path) => basename(path) === "denied";
+  const refusal = installRefusal(stable);
+  expect(refusal).toMatch(/^Refusing to install/);
+  expect(refusal).toMatch(namesFolder("denied"));
+  expect(refusal).not.toBe(EPHEMERAL_ROOT_MESSAGE);
+  expect(isEphemeralPackageRoot(stable, process.platform, { bunx: [], yarn: [] })).toBe(true);
+
+  const unreadableTemp = join(base, "unreadable-temp");
+  await mkdir(unreadableTemp);
+  realpathMock.fail = (path) => basename(path) === "unreadable-temp";
+  const saved = process.env.AGENT_LOOP_INHERITED_TMPDIR;
+  process.env.AGENT_LOOP_INHERITED_TMPDIR = JSON.stringify([unreadableTemp]);
+  try {
+    expect(installRefusal(stable)).toMatch(namesFolder("unreadable-temp"));
+  } finally {
+    if (saved === undefined) delete process.env.AGENT_LOOP_INHERITED_TMPDIR;
+    else process.env.AGENT_LOOP_INHERITED_TMPDIR = saved;
+  }
+});
+
+// Usefulness: verifies #1088 review — when the stat of a child folder fails, the refusal names that child and not its readable parent, so the user fixes the folder that is denied; the 8.3 expansion that reads each segment runs on Windows only.
+test.skipIf(process.platform !== "win32")(
+  "the refusal names a child folder whose stat fails, not its parent",
+  async () => {
+    const base = await scratch();
+    const denied = join(base, "denied");
+    const stable = join(denied, "pkg");
+    await mkdir(stable, { recursive: true });
+    realpathMock.lstatFail = (path) => (basename(path) === "denied" ? "EPERM" : null);
+    const refusal = installRefusal(stable);
+    expect(refusal).toMatch(/folder .*[\\/]denied cannot be read/);
+    expect(refusal).not.toBe(EPHEMERAL_ROOT_MESSAGE);
+    expect(isEphemeralPackageRoot(stable, process.platform, { bunx: [], yarn: [] })).toBe(true);
+  },
+);
+
+// Usefulness: verifies #1088 review — when the stat of a sibling entry fails during short-name expansion, the refusal names the folder that holds the sibling and never calls the sibling, which may be a regular file, a folder; the expansion runs on Windows only.
+test.skipIf(process.platform !== "win32")(
+  "the refusal does not call a sibling file whose stat fails a folder",
+  async () => {
+    const base = await scratch();
+    const stable = join(base, "stablepkg", "pkg");
+    await mkdir(stable, { recursive: true });
+    await writeFile(join(base, "aaa-file.txt"), "");
+    // The listing of `base` omits `stablepkg`, so the expansion compares file ids of the siblings.
+    realpathMock.readdirList = (path) =>
+      basename(path) === basename(base) ? ["aaa-file.txt"] : null;
+    realpathMock.lstatFail = (path) => (basename(path) === "aaa-file.txt" ? "EPERM" : null);
+    const refusal = installRefusal(stable);
+    expect(refusal).toMatch(/^Refusing to install/);
+    expect(refusal).not.toContain("aaa-file.txt");
+    expect(refusal).toMatch(/folder .*[\\/]agent-loop-canonical-[^\\/]+ cannot be read/);
+  },
+);
 
 // Usefulness: verifies #962 review — a temporary root that cannot be canonicalized refuses every package root, since the match cannot rule the root out.
 test("a temporary root that cannot be canonicalized refuses every package root", async () => {

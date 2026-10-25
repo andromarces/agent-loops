@@ -52,6 +52,16 @@ function absolutePath(path, platform) {
   return platform === process.platform ? pathApi.resolve(path) : pathApi.normalize(path);
 }
 
+// The first folder that a check of the current `packageRootRefusal` call could not read, so the
+// refusal can name it. The checks are synchronous, so one slot per call is enough.
+let unreadableFolder = null;
+
+/** Records `folder` as the first unreadable one and returns `null`, the fail-closed result. */
+function failAt(folder) {
+  unreadableFolder ??= folder;
+  return null;
+}
+
 function canonicalPath(path, platform = process.platform) {
   const pathApi = platform === "win32" ? win32 : posix;
   const realpath = platform === "win32" ? realpathSync.native : realpathSync;
@@ -61,7 +71,7 @@ function canonicalPath(path, platform = process.platform) {
     try {
       return pathApi.join(realpath(dir), tail);
     } catch (error) {
-      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return null;
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return failAt(dir);
     }
     const parent = pathApi.dirname(dir);
     if (parent === dir) return normalized;
@@ -141,19 +151,25 @@ function expandShortSegments(path, related) {
 
 const MISSING = Symbol("missing");
 
-/** The long name of an existing segment, `MISSING` for a missing one, or `null` when unresolved. */
+/**
+ * The long name of an existing segment, `MISSING` for a missing one, or `null` when unresolved. An
+ * unreadable result records the segment when its stat fails, and otherwise `parent`: a failed
+ * listing, a failed stat of a sibling entry that may be a file, or a listing with no match.
+ */
 function longName(parent, segment) {
+  let reading = join(parent, segment);
   try {
-    const id = lstatSync(join(parent, segment), { bigint: true }).ino;
+    const id = lstatSync(reading, { bigint: true }).ino;
+    reading = parent;
     const names = readdirSync(parent);
     const lower = segment.toLowerCase();
     return (
       names.find((name) => name.toLowerCase() === lower) ??
       names.find((name) => lstatSync(join(parent, name), { bigint: true }).ino === id) ??
-      null
+      failAt(parent)
     );
   } catch (error) {
-    return error?.code === "ENOENT" || error?.code === "ENOTDIR" ? MISSING : null;
+    return error?.code === "ENOENT" || error?.code === "ENOTDIR" ? MISSING : failAt(reading);
   }
 }
 
@@ -190,8 +206,9 @@ function resolvedParentSpellings(path, platform) {
         ),
       );
     } catch (error) {
-      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return null;
-      if (isDanglingLink(pathApi.join(root, ...segments.slice(0, depth)))) return null;
+      const ancestor = pathApi.join(root, ...segments.slice(0, depth));
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return failAt(ancestor);
+      if (isDanglingLink(ancestor)) return failAt(ancestor);
     }
   }
   return found;
@@ -320,6 +337,7 @@ const EPHEMERAL = "ephemeral";
 
 /** `UNREADABLE` when a check fails closed on a folder it cannot read, `EPHEMERAL` for any other refusal, else `null`. */
 function packageRootRefusal(packageRoot, platform, tempRoots) {
+  unreadableFolder = null;
   if (tempRoots.invalid === true) return EPHEMERAL;
   const seen = presentPrefixes(packageRoot, platform);
   const initial = canonicalPath(packageRoot, platform);
@@ -389,14 +407,14 @@ export function installRefusal(packageRoot) {
   const tempRoots = temporaryRoots();
   if (tempRoots.invalid) return INHERITED_TMPDIR_INVALID_MESSAGE;
   const refusal = packageRootRefusal(packageRoot, process.platform, tempRoots);
-  if (refusal === UNREADABLE) return unreadableRootMessage(packageRoot);
+  if (refusal === UNREADABLE) return unreadableRootMessage(packageRoot, unreadableFolder);
   return refusal === EPHEMERAL ? EPHEMERAL_ROOT_MESSAGE : null;
 }
 
-const unreadableRootMessage = (packageRoot) =>
-  `Refusing to install: a folder of the package path ${packageRoot} or of a temporary root ` +
-  "cannot be read or resolved, so the installer cannot tell whether this package root is a temporary " +
-  "one. Fix the folder permissions, then run install again.";
+const unreadableRootMessage = (packageRoot, folder) =>
+  `Refusing to install: the folder ${folder ?? packageRoot} cannot be read or resolved, so the ` +
+  `installer cannot tell whether the package path ${packageRoot} is a temporary root. ` +
+  "Fix the folder permissions, then run install again.";
 
 // pnpm resolves a global package into a version-named virtual store entry
 // (`.pnpm/<name>@<version>/node_modules/<name>`) and links it to a
