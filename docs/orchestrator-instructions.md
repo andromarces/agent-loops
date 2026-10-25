@@ -318,7 +318,9 @@ cmd.exe forms need a path with backslashes, because `cmd.exe` reads a forward sl
 as a switch and fails with `Invalid switch`. Git prints work tree paths with forward
 slashes on Windows, so the PowerShell form converts the path. A harness PowerShell
 tool has refused the PowerShell form with `Remove-Item on system path '/s' is blocked`.
-The cause is not confirmed. When it refuses, run the Git Bash form instead. Run
+The cause is not confirmed. Claude Code 2.1.310 in the bypass-permissions mode ran the
+form with no refusal on 2026-10-25, so the refusal can depend on the version or the
+permission mode. When it refuses, run the Git Bash form instead. Run
 the Windows delete as `cmd.exe /c rmdir`, because Git Bash resolves a bare `rmdir`
 to GNU rmdir, which rejects those switches. In Git Bash, keep `MSYS_NO_PATHCONV=1`,
 because MSYS path conversion rewrites the `/s` and `/q` switches, and `cmd.exe`
