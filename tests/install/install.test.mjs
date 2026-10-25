@@ -364,7 +364,7 @@ test("windows folds case for every runner layout", () => {
     expect(isEphemeralPackageRoot(upper, "win32", temp), upper).toBe(true);
     expect(isEphemeralPackageRoot(upper, "linux", temp), upper).toBe(false);
   }
-  const stable = ["C:\\Projects", ...BUNX_LAYOUT].join("\\");
+  const stable = ["C:\\Projects-stable-parent", ...BUNX_LAYOUT].join("\\");
   expect(isEphemeralPackageRoot(stable, "win32", temp), stable).toBe(false);
   const npxRoots = [
     ["C:", "cache", "_npx", "09f5e92d3f3f415f", "node_modules", "pkg"],

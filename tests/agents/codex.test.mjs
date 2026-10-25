@@ -733,6 +733,7 @@ test("a child of a codex turn classifies package-runner roots as the parent does
       join(root, "_npx", "0123456789abcdef", "node_modules", "pkg"),
       join(root, "stable", "node_modules", "pkg"),
     ];
+    await mkdir(layouts[3], { recursive: true });
     let childAnswer;
     fakeCodex(async (_home, env) => {
       const { stdout } = await execa(
@@ -863,7 +864,9 @@ test.each(INHERITED_SHAPES)("the installer refusal holds for %s", async (_name, 
     const { raw, ancestors, invalid = false, directlyInvalid = invalid } = await build(root);
     const unrelated = join(root, "unrelated");
     const layouts = [root, ...ancestors, unrelated].map(yarnLayout);
-    layouts.push(join(root, "stable", "node_modules", "pkg"));
+    const stable = join(root, "stable", "node_modules", "pkg");
+    await mkdir(stable, { recursive: true });
+    layouts.push(stable);
     const expected = layouts.map((_, i) => (invalid ? true : i <= ancestors.length));
     const classify = async (env) =>
       JSON.parse(

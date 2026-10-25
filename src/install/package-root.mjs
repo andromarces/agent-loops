@@ -39,54 +39,74 @@ export const EPHEMERAL_ROOT_MESSAGE =
 const splitPath = (path) => path.split(/[\\/]+/).filter(Boolean);
 
 /**
- * The canonical spelling of `path` and its count of missing segments: the realpath of its deepest existing ancestor joined to the
+ * The canonical spelling of `path`: the realpath of its deepest existing ancestor joined to the
  * rest, normalized, so a link such as macOS `/var` resolves to `/private/var` and a `..`
  * segment is resolved even when the path does not exist (#962). A path for another platform
  * is only normalized. Returns `null` when a realpath fails for a reason other than a missing
  * path, such as EACCES or ELOOP, so the caller can fail closed. On Windows the native realpath
- * expands an 8.3 short segment, which the JS realpath keeps (#1068). `missing` counts the trailing
- * segments that did not exist at resolution.
+ * expands an 8.3 short segment, which the JS realpath keeps (#1068). A path for this platform is
+ * first resolved against the working directory.
  */
+function absolutePath(path, platform) {
+  const pathApi = platform === "win32" ? win32 : posix;
+  return platform === process.platform ? pathApi.resolve(path) : pathApi.normalize(path);
+}
+
 function canonicalPath(path, platform = process.platform) {
   const pathApi = platform === "win32" ? win32 : posix;
   const realpath = platform === "win32" ? realpathSync.native : realpathSync;
-  const normalized = pathApi.normalize(path);
-  if (platform !== process.platform) return { path: normalized, missing: 0 };
-  for (let dir = normalized, tail = "", missing = 0; ; missing++) {
+  const normalized = absolutePath(path, platform);
+  if (platform !== process.platform) return normalized;
+  for (let dir = normalized, tail = ""; ;) {
     try {
-      return { path: pathApi.join(realpath(dir), tail), missing };
+      return pathApi.join(realpath(dir), tail);
     } catch (error) {
       if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return null;
     }
     const parent = pathApi.dirname(dir);
-    if (parent === dir) return { path: normalized, missing: splitPath(normalized).length };
+    if (parent === dir) return normalized;
     tail = pathApi.join(pathApi.basename(dir), tail);
     dir = parent;
   }
 }
 
+// An 8.3 short name is at most 8 characters, a dot, and 3 more, with no space.
+const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
+
 /**
- * `path` with each 8.3 short segment replaced by its long name, without resolving a link, so a
- * junction keeps its own spelling (#1068). Every segment is either positively resolved or the
- * whole expansion returns `null` so the caller fails closed. Positively resolved is a name that
- * the parent listing holds, or the listing entry with the same file id, so a hand-set alias with
- * no `~<digit>` resolves too. A failed stat, listing, or sibling stat, a vanished segment, and a
- * listing with no matching entry are unresolved. Only one of the last `missing` segments, which
- * did not exist when the path was canonicalized, may be missing now, and it is kept as it is.
+ * `path` with each segment replaced by its long name, without resolving a link, so a junction
+ * keeps its own spelling (#1068). Every segment is either positively resolved or the whole
+ * expansion returns `null` so the caller fails closed. Positively resolved is a name that the
+ * parent listing holds, or the listing entry with the same file id, so a hand-set alias with no
+ * `~<digit>` resolves too. A failed stat, listing, or sibling stat, and a listing with no matching
+ * entry, are unresolved.
+ *
+ * A missing segment is also unresolved, because a short name can vanish by a rename. The first
+ * missing segment is kept only when it cannot stand for a temporary root or a runner layout
+ * directory, which is when its name has no 8.3 shape, or when `related` says that its existing
+ * parent is neither at, above, nor below a temporary root. Every segment below a kept one is
+ * missing too and is kept.
  */
-function expandShortSegments(path, missing) {
+function expandShortSegments(path, related) {
   const { root } = win32.parse(path);
   const segments = splitPath(path.slice(root.length));
   let expanded = root;
   for (const [i, segment] of segments.entries()) {
-    const name = longName(expanded, segment, i >= segments.length - missing);
+    const name = longName(expanded, segment);
     if (name === null) return null;
+    if (name === MISSING) {
+      const canStandForRoot = SHORT_NAME_SHAPE.test(segment) && related(expanded);
+      return canStandForRoot ? null : win32.join(expanded, ...segments.slice(i));
+    }
     expanded = win32.join(expanded, name);
   }
   return expanded;
 }
 
-function longName(parent, segment, mayBeMissing) {
+const MISSING = Symbol("missing");
+
+/** The long name of an existing segment, `MISSING` for a missing one, or `null` when unresolved. */
+function longName(parent, segment) {
   try {
     const id = lstatSync(join(parent, segment), { bigint: true }).ino;
     const names = readdirSync(parent);
@@ -97,28 +117,26 @@ function longName(parent, segment, mayBeMissing) {
       null
     );
   } catch (error) {
-    // A segment that existed at canonicalization and cannot be verified now may have vanished,
-    // so keeping its name could hide a temporary junction.
-    const gone = error?.code === "ENOENT" || error?.code === "ENOTDIR";
-    return mayBeMissing && gone ? segment : null;
+    return error?.code === "ENOENT" || error?.code === "ENOTDIR" ? MISSING : null;
   }
 }
 
 /**
  * The spellings to match: the normalized path, which is what the installer renders into entry
  * points, and its canonical path. A package junction inside a runner layout matches by its own
- * spelling even when its target is stable, and on Windows an 8.3 segment of that spelling expands
+ * spelling even when its target is stable, and on Windows each segment of that spelling expands
  * to its long name. `null` when the canonical path or an 8.3 expansion cannot be resolved.
+ * `related` is passed to `expandShortSegments`.
  */
-function spellings(path, platform) {
+function spellings(path, platform, related = () => false) {
   const canonical = canonicalPath(path, platform);
   if (canonical === null) return null;
-  const normalized = (platform === "win32" ? win32 : posix).normalize(path);
+  const normalized = absolutePath(path, platform);
   const own =
     platform === "win32" && platform === process.platform
-      ? expandShortSegments(normalized, canonical.missing)
+      ? expandShortSegments(normalized, related)
       : normalized;
-  return own === null ? null : [...new Set([normalized, own, canonical.path])];
+  return own === null ? null : [...new Set([normalized, own, canonical])];
 }
 
 /**
@@ -197,11 +215,20 @@ export function isEphemeralPackageRoot(
   tempRoots = temporaryRoots(),
 ) {
   if (tempRoots.invalid === true) return true;
-  const packageSpellings = spellings(packageRoot, platform);
   const bunx = tempRoots.bunx.map((root) => spellings(root, platform));
   const yarn = tempRoots.yarn.map((root) => spellings(root, platform));
+  if (bunx.includes(null) || yarn.includes(null)) return true;
+  const rootSegments = [...bunx.flat(), ...yarn.flat()].map((root) =>
+    splitPath(root.toLowerCase()),
+  );
+  const related = (dir) => {
+    const segments = splitPath(dir.toLowerCase());
+    const startsWith = (list, prefix) => prefix.every((segment, i) => list[i] === segment);
+    return rootSegments.some((root) => startsWith(root, segments) || startsWith(segments, root));
+  };
+  const packageSpellings = spellings(packageRoot, platform, related);
   // A path that cannot be canonicalized cannot be ruled out, so the check refuses it.
-  if (packageSpellings === null || bunx.includes(null) || yarn.includes(null)) return true;
+  if (packageSpellings === null) return true;
   return packageSpellings.some(
     (spelling) =>
       isCacheRoot(spelling, platform) ||

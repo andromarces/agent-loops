@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, symlink } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { installRefusal, isEphemeralPackageRoot } from "../../src/install/package-root.mjs";
 import { removePath } from "../runtime-helpers.mjs";
@@ -286,5 +286,40 @@ test.skipIf(process.platform !== "win32")(
       expect(isEphemeralPackageRoot(junction, "win32", aliasRoots), "alias temp root").toBe(true);
     }
     expect(isEphemeralPackageRoot(stable, "win32", roots)).toBe(false);
+  },
+);
+
+// Usefulness: verifies #1068 review — an existing stable package root given as a relative path stays accepted, since the check must resolve it against the working directory like any other path.
+test("a relative stable package root is accepted", async () => {
+  const base = await scratch();
+  const tempRoot = join(base, "shortnamedtemproot");
+  const stable = join(base, "stablenamedparent", "pkg");
+  await mkdir(stable, { recursive: true });
+  const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+  const relativeStable = relative(process.cwd(), stable);
+  expect(isEphemeralPackageRoot(relativeStable, process.platform, roots), relativeStable).toBe(
+    false,
+  );
+});
+
+// Usefulness: verifies #1068 review — a short name of the temporary root that is already gone when the path is canonicalized still refuses a runner layout under it, so a rename before the check cannot turn a refusal into an accept.
+test.skipIf(process.platform !== "win32")(
+  "a short temporary root name renamed away before canonicalization is refused",
+  async () => {
+    const base = await scratch();
+    const stable = join(base, "stablenamedparent", "pkg");
+    await mkdir(stable, { recursive: true });
+    for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
+      const tempRoot = join(base, `shortnamedtemproot${layout.length}`);
+      await mkdir(join(tempRoot, ...layout), { recursive: true });
+      const junction = join(tempRoot, ...layout, "packagejunctionlink");
+      await symlink(stable, junction, LINK_TYPE);
+      const shortRoot = shortSpelling(tempRoot);
+      if (shortRoot === null) return;
+      await rename(tempRoot, join(base, `renamedtemprootaway${layout.length}`));
+      const viaAlias = join(shortRoot, ...layout, "packagejunctionlink");
+      const roots = { bunx: [tempRoot], yarn: [tempRoot] };
+      expect(isEphemeralPackageRoot(viaAlias, "win32", roots), viaAlias).toBe(true);
+    }
   },
 );
