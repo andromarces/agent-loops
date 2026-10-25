@@ -298,15 +298,23 @@ const EPHEMERAL = "ephemeral";
 function packageRootRefusal(packageRoot, platform, tempRoots) {
   if (tempRoots.invalid === true) return EPHEMERAL;
   const initial = canonicalPath(packageRoot, platform);
-  // A path that cannot be resolved is a runner cache only when its own spelling shows the layout.
-  const unresolved = () =>
-    [absolutePath(packageRoot, platform), initial].some(
+  // A path that cannot be resolved is a runner cache only when a spelling of it shows the layout,
+  // under a temporary root as given or as its realpath resolves it.
+  const unresolved = () => {
+    const absolute = absolutePath(packageRoot, platform);
+    const resolve = (roots) => [...roots, ...roots.map((root) => canonicalPath(root, platform))];
+    const roots = { bunx: resolve(tempRoots.bunx), yarn: resolve(tempRoots.yarn) };
+    roots.bunx = roots.bunx.filter(Boolean);
+    roots.yarn = roots.yarn.filter(Boolean);
+    const candidates = [absolute, initial, ...(resolvedParentSpellings(absolute, platform) ?? [])];
+    return candidates.some(
       (spelling) =>
         spelling !== null &&
-        (isCacheRoot(spelling, platform) || isTempRunnerRoot(spelling, platform, tempRoots)),
+        (isCacheRoot(spelling, platform) || isTempRunnerRoot(spelling, platform, roots)),
     )
       ? EPHEMERAL
       : UNREADABLE;
+  };
   const bunx = tempRoots.bunx.map((root) => spellings(root, platform));
   const yarn = tempRoots.yarn.map((root) => spellings(root, platform));
   if (bunx.includes(null) || yarn.includes(null)) return unresolved();
