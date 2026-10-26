@@ -1197,7 +1197,7 @@ describe("compare-head run prompt", () => {
       const prompt = initialPrompt({ ...base, compareHead: 42, continued });
       expect(prompt).toContain("--compare-head 42");
       expect(prompt).toContain(
-        "the transcript records the flag, but a continuation does not restore it",
+        "The transcript records the flag, but a continuation does not restore it",
       );
       expect(prompt).toContain("omitting it on a continuation runs no runtime compare");
     }
