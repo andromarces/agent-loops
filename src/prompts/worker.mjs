@@ -16,10 +16,14 @@ const ownNodeModulesRule =
 
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
-    // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the rule.
+    // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the PR
+    // body rule. It repeats the closing block too, because a worker drifts from the block as the
+    // conversation grows (issue #1118).
     return escapeLineSeparators(`${prompt}
 
-${prBodyRule}`);
+${prBodyRule}
+
+${reportBlock}`);
   }
 
   return escapeLineSeparators(
