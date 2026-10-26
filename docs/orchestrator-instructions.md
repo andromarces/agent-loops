@@ -628,8 +628,9 @@ repository on the GitHub Free plan (#301, #1098):
 printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...","open":"..."}'   | agent-loop role finish --cwd "<work tree>" --compare-head <pr>
 ```
 
-The runtime reads the PR head and refuses the finish unless it equals
-`reviewed.head` and the reviewed tree is clean. The one `gh pr view` also returns the
+The runtime reads the PR head and state and refuses the finish unless the PR is open,
+its head equals `reviewed.head`, and the reviewed tree is clean. A closed or merged PR
+refuses even when its head is unchanged. The one `gh pr view` also returns the
 merge state, which the runtime does not evaluate. It reads no required-check
 source or check result and claims none, so `verified` still states what
 the checks showed. The envelope then carries `"headCompare": "verified"` and the
@@ -699,7 +700,7 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   start of its own `--pr` run or before it declared a worker-opened PR, and its
   prompt states none. After a refusal, omit
   `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
-  `reviewed.head` in the runtime. Use the `"unresolvedCompare": true` marker only
+  `reviewed.head` in the runtime and requires the PR to be open. Use the `"unresolvedCompare": true` marker only
   when the PR head itself cannot be read. The headless `--require-ci` with no
   `--pr` declares nothing, so the start does not read it and its gate refuses at
   finish.
