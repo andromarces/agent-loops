@@ -422,8 +422,10 @@ test("reviewer prompt keeps its blockers and the read-only rule out of Deferred"
 
 // Usefulness: verifies the worker keeps the plain Deferred definition, so the reviewer-only rule
 // does not leak into the worker closing block (issue #1102).
-test("worker prompt does not carry the reviewer Deferred exclusion", () => {
-  expect(workerPrompt("do the task")).not.toContain("Deferred never holds your own blockers");
+test("worker closing block does not carry the reviewer Deferred exclusion", () => {
+  const prompt = workerPrompt("do the task", true);
+  expect(prompt).toContain('Deferred: items found but left out of scope, or "none".');
+  expect(prompt).not.toContain("Deferred never holds your own blockers");
 });
 
 // Usefulness: verifies the sandbox note states the actual mode, is absent for a turn with no mode,
