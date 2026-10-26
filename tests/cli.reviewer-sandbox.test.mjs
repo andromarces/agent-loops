@@ -107,14 +107,22 @@ test.each([
 });
 
 // Usefulness: verifies a continued run keeps the earlier mode when the flag is omitted or repeated,
-// so a resume never changes the sandbox of the run (ADR 0038).
-test.each([
-  ["none", []],
-  ["read-only", ["--reviewer-sandbox", "read-only"]],
-  ["workspace-write", ["--reviewer-sandbox", "workspace-write"]],
-])("--continue-from keeps the %s mode of the earlier run", async (mode, flags) => {
-  const { repo, transcript } = await firstRun(flags);
-  for (const again of [[], flags]) {
+// so a resume never changes the sandbox of the run (ADR 0038). One continued run per case: each
+// main() costs about 1.3 s on a Windows machine, and a case with two continued runs took 13 to 15 s
+// on windows-latest against the 15 s test bound (#1103).
+test.each(
+  [
+    ["none", []],
+    ["read-only", ["--reviewer-sandbox", "read-only"]],
+    ["workspace-write", ["--reviewer-sandbox", "workspace-write"]],
+  ].flatMap(([mode, flags]) => [
+    [mode, "the flag is omitted", flags, []],
+    [mode, "the flag is repeated", flags, flags],
+  ]),
+)(
+  "--continue-from keeps the %s mode of the earlier run when %s",
+  async (mode, _when, flags, again) => {
+    const { repo, transcript } = await firstRun(flags);
     const seen = [];
     await main(
       [...ARGS, ...again, "--cwd", repo, "--continue-from", transcript, "--max-steps", "3"],
@@ -122,8 +130,8 @@ test.each([
     );
     expect(process.exitCode).toBe(0);
     expect(seen[0].sandbox).toBe(mode);
-  }
-});
+  },
+);
 
 // Usefulness: verifies a continued run that names another mode is refused before any turn, in both
 // directions, and that the refusal leaves the earlier transcript unchanged (ADR 0038).
