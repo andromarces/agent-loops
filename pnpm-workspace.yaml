@@ -5,5 +5,5 @@ virtualStoreType: global
 # pins must match the `vite` and `vitest` dependencies of vite-plus; a test
 # fails when they differ.
 overrides:
-  vite: npm:@voidzero-dev/vite-plus-core@1.3.0
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vitest: 5.0.5
