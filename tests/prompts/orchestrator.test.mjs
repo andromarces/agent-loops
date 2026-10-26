@@ -1185,3 +1185,22 @@ test("the result prompt carries transient only when the error result has it", ()
   expect(flagged).toContain('"transient": "capacity"');
   expect(plain).not.toContain("transient");
 });
+
+// Usefulness: verifies the compare-head prompt states the continuation rule, so the orchestrator
+// of a continued run knows the transcript records the flag but a continuation must pass it again
+// and that omitting it disables the runtime compare (issue #1104). A run without the flag states none.
+describe("compare-head run prompt", () => {
+  const base = { task: "t", maxSteps: 3 };
+
+  test("states that a continuation selects the flag again", () => {
+    for (const continued of [false, true]) {
+      const prompt = initialPrompt({ ...base, compareHead: 42, continued });
+      expect(prompt).toContain("--compare-head 42");
+      expect(prompt).toContain(
+        "the transcript records the flag, but a continuation does not restore it",
+      );
+      expect(prompt).toContain("omitting it on a continuation runs no runtime compare");
+    }
+    expect(initialPrompt(base)).not.toContain("--compare-head");
+  });
+});

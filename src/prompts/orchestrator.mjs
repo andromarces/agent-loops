@@ -273,7 +273,7 @@ function prDeclarationBlock(pr, startRead) {
 function compareHeadBlock(compareHead) {
   if (compareHead === null) return "";
   return `
-- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until it equals the reviewed commit and the reviewed tree is clean. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. Dispatch the reviewer on the current state before you finish.`;
+- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until it equals the reviewed commit and the reviewed tree is clean. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.`;
 }
 
 /**

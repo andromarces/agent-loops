@@ -476,7 +476,9 @@ Options:
                                 unresolvedCompare is refused. The run names the PR, so use it to
                                 update an existing PR. Rejected with --pr, --require-ci, and
                                 --mode review-only. A worker-opened PR is not declared in such a
-                                run.
+                                run. The transcript records the flag, but --continue-from does
+                                not restore it: pass it again, or the continuation runs no
+                                runtime compare.
   -h, --help                    Show help. Also valid after role.
   -V, --version                 Print the package version and exit. Must be the first
                                 argument.

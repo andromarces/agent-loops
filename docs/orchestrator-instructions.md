@@ -479,8 +479,10 @@ transcript event and the run exits `0`, distinct from `unresolvedCompare` and it
 exit `4`. The command refuses the flag with `--pr`, `--require-ci`, and
 `--mode review-only`, and a finish that also sets `unresolvedCompare` is refused
 before any GitHub read. A continuation of a declared PR refuses the flag before any
-transcript write. The transcript does not record the flag, so a continuation passes
-it again, as it passes `--require-ci`, and an omitted flag leaves the marker path.
+transcript write. The transcript records the flag, but a continuation does not
+restore it: each invocation selects `--compare-head` again, as it selects
+`--require-ci`, and omitting it on a continuation disables the runtime compare and
+leaves the marker path.
 A worker-opened PR is never declared in such a run, and a PR that the worker
 opens keeps the marker path, because the flag names the PR at start.
 
