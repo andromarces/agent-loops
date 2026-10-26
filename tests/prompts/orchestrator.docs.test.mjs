@@ -30,6 +30,9 @@ const instructionsPath = join(
 /** The only work tree command of the instructions: the creation step that sets no upstream (#985). */
 const WORK_TREE_CREATE_COMMAND =
   "git worktree add --no-track -b <branch> <work tree> origin/<default>";
+/** The creation step for a repository with no remote, where the base is the local default branch (#1099). */
+const WORK_TREE_CREATE_NO_REMOTE_COMMAND =
+  "git worktree add --no-track -b <branch> <work tree> <default>";
 const WORK_TREE_REMOVE_COMMAND = 'git worktree remove --force "<work tree>"';
 
 const referenceSectionsDir = join(dirname(instructionsPath), "orchestrator");
@@ -547,13 +550,17 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
     expect(prompt).toContain(rule);
   }
   // Neither text keeps the repair procedure or the unrecoverable claim. The only `git worktree`
-  // commands the instructions may hold are the single creation command (#985) and the single
-  // removal command (#998) of "Work tree ownership": with both removed, no `git worktree` call is
+  // commands the instructions may hold are the single creation command (#985), its no-remote form
+  // (#1099), and the single removal command (#998) of "Work tree ownership": with both removed, no `git worktree` call is
   // left to add, repair, or recreate.
   expect(instructions.split(WORK_TREE_CREATE_COMMAND)).toHaveLength(2);
+  expect(instructions.split(WORK_TREE_CREATE_NO_REMOTE_COMMAND)).toHaveLength(2);
   expect(instructions.split(WORK_TREE_REMOVE_COMMAND)).toHaveLength(2);
   expect(
-    instructions.replace(WORK_TREE_CREATE_COMMAND, "").replace(WORK_TREE_REMOVE_COMMAND, ""),
+    instructions
+      .replace(WORK_TREE_CREATE_COMMAND, "")
+      .replace(WORK_TREE_CREATE_NO_REMOTE_COMMAND, "")
+      .replace(WORK_TREE_REMOVE_COMMAND, ""),
   ).not.toContain("git worktree");
   expect(prompt).not.toContain("git worktree");
   for (const gone of ["not recoverable", "unrecoverable"]) {
@@ -583,6 +590,10 @@ const REFUSED_CWD_BLOCKS = {
       "Create the work tree with no upstream, so a plain `git push` of a worker cannot reach the default branch:",
       "```bash git worktree add --no-track -b <branch> <work tree> origin/<default> ```",
       "Without `--no-track`, the new branch gets the upstream `origin/<default>` when `branch.autoSetupMerge` is at its default. The worker sets the upstream to its own remote branch on the first push, with `git push -u origin <branch>`.",
+      "A repository with no remote has no `origin/<default>`, so the command above fails. Use the local default branch as the base:",
+      "```bash git worktree add --no-track -b <branch> <work tree> <default> ```",
+      "In that repository, a worker commits in the work tree and never pushes, because there is no remote for `git push -u origin <branch>`. After `finish`, the parent merges the branch or hands it to the user.",
+      "That run is not PR work, because no pull request can exist. Finish it with a plain `role finish` and no PR gate, after a reviewer `verdict: accept` with a `Checks` line on the latest changed state. Add `--require-accept` where it applies. Compare `reviewed.head` with the `workTree.head` of the last worker envelope. Never pass `--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set `unresolvedCompare`: each one concerns a PR head, and this run has none, so the #286 gap does not apply to it.",
       "The parent installs the dependencies of the work tree, and no worker or reviewer does. After you create the work tree and before the first dispatch, run the repository's lockfile install inside the work tree, for example `pnpm install --frozen-lockfile`. The work tree then has its own `node_modules` for every turn. Never link or junction the `node_modules` of another checkout into the work tree, and never run an install in another checkout: a tool such as `vp` can rewrite links in the `node_modules` that the junction points to.",
       '`dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`.',
       "A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.",
@@ -722,6 +733,19 @@ test("instructions create the run work tree without an upstream and set it on th
     "git worktree add --no-track -b <branch> <work tree> origin/<default>",
   );
   expect(instructions).toContain("git push -u origin <branch>");
+});
+
+// Usefulness: verifies the instructions give the base ref and the worker push rule of a repository
+// with no remote (#1099). Without it, an interactive parent improvises both, and the origin form fails.
+test("instructions state the no-remote work tree base and worker commit-only rule", async () => {
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
+  expect(instructions).toContain(WORK_TREE_CREATE_NO_REMOTE_COMMAND);
+  expect(instructions).toContain("a worker commits in the work tree and never pushes");
+  expect(instructions).toContain("the parent merges the branch or hands it to the user");
+  expect(instructions).toContain("Finish it with a plain `role finish` and no PR gate");
+  expect(instructions).toContain(
+    "Never pass `--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set `unresolvedCompare`",
+  );
 });
 
 // Usefulness: verifies requirement "the parent owns the dependency install of a run work tree and
