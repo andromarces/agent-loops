@@ -818,6 +818,13 @@ export function unresolvedCompareReason({ pr = null, requireCi = null }) {
 }
 
 /**
+ * The refusal of the headless `--compare-head` beside `--pr` or `--require-ci`. Both declare or gate
+ * a PR, so the run must end through the gate that reads the required checks and resolves the head.
+ */
+export const COMPARE_HEAD_INPUT_REFUSAL =
+  "--compare-head cannot be combined with --pr or --require-ci: a run that declares or gates a PR ends through the --require-ci gate, which resolves the PR head and reads the required checks, so pass one of them";
+
+/**
  * The refusal of `--compare-head` beside a flag or marker that already settles the PR head, or null.
  * `--require-ci` resolves the head in its gate, and `unresolvedCompare` records that no one did, so
  * either one with this verified compare would record two outcomes for one head (#1098).

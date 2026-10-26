@@ -380,12 +380,18 @@ export function declaredPrFromTranscript(earlier) {
  * Refuses a `--continue-from` flag that changes or conflicts with the declared PR. The declared PR
  * is an init field of the continued run. A `--pr` or `--require-ci` for another PR is refused, as a
  * changed init field is. A flag for the same PR is accepted. The `review-only` mode refuses a
- * declared PR, as it refuses `--pr` at init.
+ * declared PR, as it refuses `--pr` at init. `--compare-head` is refused for any PR, because a
+ * declared PR ends through its `--require-ci` gate (#1104).
  * @param {number | null} declaredPr from `declaredPrFromTranscript`
- * @param {{ pr: number | null, requireCi: number | null, mode: string | null }} options
+ * @param {{ pr: number | null, requireCi: number | null, mode: string | null, compareHead?: number | null }} options
  */
-export function refuseDeclaredPrConflict(declaredPr, { pr, requireCi, mode }) {
+export function refuseDeclaredPrConflict(declaredPr, { pr, requireCi, mode, compareHead = null }) {
   if (declaredPr === null) return;
+  if (compareHead !== null) {
+    throw new Error(
+      `--compare-head cannot be combined with a continuation of PR ${declaredPr}, which the earlier run declared: that run ends through its --require-ci gate.`,
+    );
+  }
   for (const [flag, value] of [
     ["--pr", pr],
     ["--require-ci", requireCi],

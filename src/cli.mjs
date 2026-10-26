@@ -7,10 +7,12 @@ import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.m
 import {
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
+  REVIEW_ONLY_COMPARE_HEAD_REFUSAL,
   REVIEW_ONLY_GATE_REFUSAL,
   ROLE_KINDS as ROLES,
   initRefusal,
   parseFlags,
+  readPositiveInt,
   readStdinText,
   readTaskFile,
   roleFlags,
@@ -26,6 +28,7 @@ import {
   restoreSessions,
   verifyResolvedModels,
 } from "./lib/continuation.mjs";
+import { COMPARE_HEAD_INPUT_REFUSAL } from "./lib/ci-gate.mjs";
 import { refuseHeldSessions } from "./lib/command-line.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { sha256 } from "./lib/hash.mjs";
@@ -70,6 +73,7 @@ export function parseArgs(argv) {
     requireAccept: false,
     pr: null,
     requireCi: null,
+    compareHead: null,
     testCmd: null,
     testCmdTimeout: null,
     reviewerSandbox: null,
@@ -89,6 +93,10 @@ export function parseArgs(argv) {
       switch (arg) {
         case "--no-copy-local-files":
           options.copyLocalFiles = false;
+          return true;
+
+        case "--compare-head":
+          options.compareHead = readPositiveInt(arg, readInline(arg));
           return true;
 
         case "--continue-from":
@@ -130,6 +138,17 @@ export function parseArgs(argv) {
   // declaration is refused in `initRefusal`.
   if (options.mode === "review-only" && (options.requireAccept || options.requireCi !== null)) {
     throw new Error(REVIEW_ONLY_GATE_REFUSAL);
+  }
+
+  // The compare is the operator's choice for a repository whose required-check sources are
+  // unreadable, so a run that declares or gates a PR, or has no PR work, never takes it (#1104).
+  if (options.compareHead !== null) {
+    if (options.pr !== null || options.requireCi !== null) {
+      throw new Error(COMPARE_HEAD_INPUT_REFUSAL);
+    }
+    if (options.mode === "review-only") {
+      throw new Error(REVIEW_ONLY_COMPARE_HEAD_REFUSAL);
+    }
   }
 
   // The headless path takes both flags on one command line, so a gate for another
@@ -447,6 +466,19 @@ Options:
                                 unresolvedCompare marker is the only record of an
                                 unresolved compare. A --mode review-only run refuses
                                 it outright.
+  --compare-head <pr>           Refuse finish until the PR head of this pull request equals the
+                                reviewed commit and the reviewed tree is clean. Reads no
+                                required-check source and claims no check result, so it serves a
+                                repository whose required-check sources are unreadable, such as
+                                a private Free-plan repository. A passing finish records a
+                                head-compare event and exits 0, distinct from
+                                unresolvedCompare (exit 4); a finish that also sets
+                                unresolvedCompare is refused. The run names the PR, so use it to
+                                update an existing PR. Rejected with --pr, --require-ci, and
+                                --mode review-only. A worker-opened PR is not declared in such a
+                                run. The transcript records the flag, but --continue-from does
+                                not restore it: pass it again, or the continuation runs no
+                                runtime compare.
   -h, --help                    Show help. Also valid after role.
   -V, --version                 Print the package version and exit. Must be the first
                                 argument.
@@ -555,6 +587,7 @@ function createTranscriptWriter({ options, roles, events, reviewerSandbox, signa
       requireAccept: options.requireAccept,
       pr: options.pr,
       requireCi: options.requireCi,
+      ...(options.compareHead === null ? {} : { compareHead: options.compareHead }),
       ...(options.testCmd === null
         ? {}
         : {
@@ -881,6 +914,7 @@ export async function main(
         requireAccept: options.requireAccept,
         pr: options.pr,
         requireCi: options.requireCi,
+        compareHead: options.compareHead,
         testCmd: options.testCmd,
         testCmdTimeout: options.testCmdTimeout,
         reviewerSandbox,

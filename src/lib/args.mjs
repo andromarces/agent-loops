@@ -197,6 +197,8 @@ function modeError(value) {
 // states these rules and the headless path must not drift from it (#337).
 export const REVIEW_ONLY_PR_REFUSAL =
   "--pr declares PR work, which needs the --require-ci gate; review-only rejects that gate.";
+export const REVIEW_ONLY_COMPARE_HEAD_REFUSAL =
+  "--compare-head compares a PR head, and review-only has no PR work; review-only accepts a flagless finish.";
 export const REVIEW_ONLY_GATE_REFUSAL =
   "--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.";
 

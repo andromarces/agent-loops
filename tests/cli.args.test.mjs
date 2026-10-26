@@ -629,3 +629,33 @@ test("a missing role is reported before the task source conflict", () => {
     ]),
   ).toThrow("Missing required --worker.");
 });
+
+// Usefulness: verifies the headless --compare-head takes a positive integer PR number, as --pr and
+// --require-ci do, so a bad value fails before any run starts (issue #1104).
+test("--compare-head takes a positive integer PR number", () => {
+  expect(parseArgs([...BASE]).compareHead).toBeNull();
+  expect(parseArgs([...BASE, "--compare-head", "42"]).compareHead).toBe(42);
+  expect(parseArgs([...BASE, "--compare-head=7"]).compareHead).toBe(7);
+  for (const bad of ["0", "1.5", "abc"]) {
+    expect(() => parseArgs([...BASE, "--compare-head", bad])).toThrow(
+      "--compare-head must be a positive integer.",
+    );
+  }
+});
+
+// Usefulness: verifies --compare-head is refused with --pr, --require-ci, and --mode review-only
+// before the run starts, because each of them settles the PR head by a gate or has no PR work
+// (issue #1104).
+test("--compare-head conflicts with --pr, --require-ci, and review-only", () => {
+  for (const other of [
+    ["--pr", "42"],
+    ["--require-ci", "42"],
+  ]) {
+    expect(() => parseArgs([...BASE, "--compare-head", "42", ...other])).toThrow(
+      "--compare-head cannot be combined with --pr or --require-ci",
+    );
+  }
+  expect(() => parseArgs([...BASE, "--mode", "review-only", "--compare-head", "42"])).toThrow(
+    "--compare-head compares a PR head, and review-only has no PR work",
+  );
+});

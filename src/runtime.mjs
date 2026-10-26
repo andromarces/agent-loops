@@ -4,6 +4,9 @@ import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import {
   checkCi,
+  checkPrHead,
+  COMPARE_HEAD_INPUT_REFUSAL,
+  compareHeadConflict,
   DEFAULT_READ_TIMEOUT_MS,
   missingGateRefusal,
   unreadableGateReason,
@@ -91,6 +94,12 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * - `requireCi`: `checkCi` resolves the PR head against the last reviewer turn's
  *   reviewed state. A `gh` failure is a refusal, not a throw. A pass on a base
  *   branch with no required check emits a `no-required-checks` event (#293, #336).
+ * - `compareHead`: `checkPrHead` reads the PR head against the last reviewer turn's reviewed state,
+ *   for a repository whose required-check sources are unreadable. It reads no required-check
+ *   source and claims no check result. A pass emits a `head-compare` event and reports
+ *   `headCompare: "verified"`; the exit code stays 0, distinct from `unresolvedCompare`. A run
+ *   with the input declares no worker-opened PR, and a finish that sets `unresolvedCompare` is
+ *   refused (#1104).
  * - `pr`: the run declares its delivery PR, so a finish must pass `requireCi` for
  *   the same PR. No child turn satisfies a missing or mismatched gate, so that
  *   refusal ends the run on a re-finish (#302).
@@ -127,7 +136,7 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * the CLI rejected the id. It does not change the role state. The caller records
  * the id and its unconfirmed mark (ADR 0016).
  * @param {object} options
- * @returns {Promise<{ exitCode: 0, summary: object, unresolvedCompare: boolean } | { exitCode: 1 | 2, reason: string }>}
+ * @returns {Promise<{ exitCode: 0, summary: object, unresolvedCompare: boolean, headCompare?: "verified" } | { exitCode: 1 | 2, reason: string }>}
  */
 export async function runLoop(options) {
   const {
@@ -141,6 +150,7 @@ export async function runLoop(options) {
     requireAccept = false,
     pr = null,
     requireCi = null,
+    compareHead = null,
     testCmd: testCmdText = null,
     testCmdTimeout = null,
     reviewerSandbox = "none",
@@ -161,7 +171,12 @@ export async function runLoop(options) {
 
   // A continued run keeps the PR that the earlier run declared. The CLI refuses a conflict first,
   // and this check holds for any other caller, before the first child spawn.
-  refuseDeclaredPrConflict(continued ? earlierPr : null, { pr, requireCi, mode });
+  refuseDeclaredPrConflict(continued ? earlierPr : null, { pr, requireCi, mode, compareHead });
+  // The compare is for a run with no declared PR, because a declared PR ends through its gate. The
+  // CLI refuses the flags first, and this check holds for any other caller (#1104).
+  if (compareHead !== null && (pr !== null || requireCi !== null)) {
+    throw new Error(COMPARE_HEAD_INPUT_REFUSAL);
+  }
 
   // A declared PR whose required-check sources the gate cannot read could only end through `abort`,
   // so the start refuses it before any child spawn (#1092). A continued run that restored its PR
@@ -194,7 +209,11 @@ export async function runLoop(options) {
   function stopLoop(exitCode, detail) {
     // A recorded unresolved compare leaves the loop on 0 while the headless
     // process exits UNRESOLVED_COMPARE_EXIT, so the log names it (#279).
-    const marker = detail.unresolvedCompare ? ", unresolved compare recorded" : "";
+    const marker = detail.unresolvedCompare
+      ? ", unresolved compare recorded"
+      : detail.headCompare
+        ? ", head compare verified"
+        : "";
     logInfo(`agent loop stopped (exit ${exitCode}${marker})`);
     // The gate state travels with the result, so the CLI can record it in the
     // transcript for a later `--continue-from` to check against a replay (#393).
@@ -256,6 +275,7 @@ export async function runLoop(options) {
     requireAccept,
     pr: declaredPr,
     requireCi: gatedPr,
+    compareHead,
     testCmd: testCmdText !== null,
     reviewerSandbox: sandboxMode,
     mode,
@@ -376,6 +396,7 @@ export async function runLoop(options) {
         requireAccept,
         pr: declaredPr,
         requireCi: gatedPr,
+        compareHead,
         gate,
         finishRefused,
         stepsUsed,
@@ -477,7 +498,7 @@ export async function runLoop(options) {
     finishRefused = false;
 
     let newlyDeclared = null;
-    if (isWorkerDispatch && declaredPr === null && requireCi === null) {
+    if (isWorkerDispatch && declaredPr === null && requireCi === null && compareHead === null) {
       newlyDeclared = await declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs });
       if (newlyDeclared !== null) {
         declaredPr = newlyDeclared;
@@ -519,7 +540,7 @@ async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
         when: "before declaring it",
       });
       return unreadable
-        ? `PR ${pr} is not declared, because ${unreadable}, so the --require-ci gate would refuse every finish. The run keeps the unresolvedCompare marker path: finish with unresolvedCompare after you compare the PR head with the reviewed commit yourself.`
+        ? `PR ${pr} is not declared, because ${unreadable}, so the --require-ci gate would refuse every finish. The run keeps the unresolvedCompare marker path: finish with unresolvedCompare after you compare the PR head with the reviewed commit yourself. A later run can pass --compare-head ${pr} instead, so the runtime compares it.`
         : null;
     },
   });
@@ -539,7 +560,7 @@ async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
  * Evaluates a `finish` action against every applicable gate. Returns `{ stop }`
  * with the loop result when the run ends, or `{ prompt }` with the corrective
  * turn prompt when the first refusal grants one more turn. Emits the
- * `no-required-checks`, `unresolved-compare`, and `refusal` events.
+ * `no-required-checks`, `head-compare`, `unresolved-compare`, and `refusal` events.
  * @param {object} options
  * @returns {Promise<{ stop: object } | { prompt: string }>}
  */
@@ -549,6 +570,7 @@ async function evaluateFinish({
   requireAccept,
   pr,
   requireCi,
+  compareHead,
   gate,
   finishRefused,
   stepsUsed,
@@ -642,7 +664,41 @@ async function evaluateFinish({
       noRequiredChecks = ci.noRequiredChecks;
     }
   }
+  if (compareHead !== null) {
+    // The compare runs in the runtime, so the parent cannot misreport it. The input has no
+    // marker, because the compare either resolved the PR head or refused (#1104).
+    const conflict = compareHeadConflict({
+      requireCi: null,
+      unresolvedCompare: action.unresolvedCompare === true,
+    });
+    // A marker refusal reads nothing from GitHub, as ADR 0051 decision 4 requires, and a re-finish
+    // without the marker needs no child turn.
+    if (conflict) {
+      refusals.push({
+        reason: conflict,
+        recovery: "The compare resolves that PR head, so remove unresolvedCompare from the finish.",
+      });
+    }
+    const compare = conflict
+      ? null
+      : await headCompareGate({ pr: compareHead, reviewed: gate.lastReviewed, cwd, gh });
+    if (compare) {
+      // Like the gate, the compare reads the reviewed state that only a reviewer turn sets.
+      needsChildTurn = true;
+      refusals.push(compare);
+    }
+  }
   if (refusals.length === 0) {
+    if (compareHead !== null) {
+      onEvent({ type: "head-compare", pr: compareHead, stepsUsed });
+      return {
+        stop: stopLoop(0, {
+          summary: action.summary,
+          unresolvedCompare: false,
+          headCompare: "verified",
+        }),
+      };
+    }
     if (noRequiredChecks) {
       // A base branch with no required check leaves the gate verifying the PR
       // head, the clean reviewed tree, and the merge state only. The event is
@@ -692,6 +748,32 @@ async function evaluateFinish({
     prompt: refusalPrompt(
       `Finish refused: ${reason}. ${refusals.map((entry) => entry.recovery).join(" ")}${ending}`,
     ),
+  };
+}
+
+/**
+ * The refusal of the `--compare-head` check for one finish, or null when the PR head equals the
+ * reviewed commit and the reviewed tree is clean. Like `ciGate`, a `gh` failure is a refusal: the
+ * only retry is a reviewer turn, which re-reads the reviewed state. No required-check source is read.
+ * @param {object} options
+ * @returns {Promise<{ reason: string, recovery: string } | null>}
+ */
+async function headCompareGate({ pr, reviewed, cwd, gh }) {
+  let compare;
+  try {
+    compare = await checkPrHead({ pr, reviewed, cwd, gh });
+  } catch (err) {
+    const detail = firstErrorLine(readableErrorText(err));
+    logError(`head compare could not run: ${detail}`);
+    return {
+      reason: `the PR head compare could not be evaluated: ${detail}`,
+      recovery: `That is a failure to read GitHub, not a verdict on the work. The only retry you can make is a reviewer turn, which re-reads the reviewed state, then a finish that compares PR ${pr} again. The finish carries no unresolvedCompare marker, because the runtime resolves the PR head from PR ${pr}.`,
+    };
+  }
+  if (compare.ok) return null;
+  return {
+    reason: compare.reason,
+    recovery: `That condition is read from PR ${pr} by the compare, so the finish carries no unresolvedCompare marker. Dispatch the reviewer to re-read the state, then finish. If the condition is about the change, dispatch the worker first and then the reviewer on the new state: a worker turn resets the reviewed state to none.`,
   };
 }
 
