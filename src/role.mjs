@@ -10,6 +10,7 @@ import {
   CHILD_ROLE_KINDS,
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
+  REVIEW_ONLY_COMPARE_HEAD_REFUSAL,
   REVIEW_ONLY_GATE_REFUSAL,
   REVIEW_ONLY_PR_REFUSAL,
   parseFlags,
@@ -909,9 +910,7 @@ async function finish(args, { stdin = readStdin, gh, signal } = {}) {
       throw new RoleError(REVIEW_ONLY_GATE_REFUSAL);
     }
     if (args.compareHead !== null && state.mode === "review-only") {
-      throw new RoleError(
-        "--compare-head compares a PR head, and review-only has no PR work; review-only accepts a flagless finish.",
-      );
+      throw new RoleError(REVIEW_ONLY_COMPARE_HEAD_REFUSAL);
     }
 
     const text = await stdin();

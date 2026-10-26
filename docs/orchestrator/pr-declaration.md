@@ -56,12 +56,25 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
   settles nothing, such as the Free-plan 403 (#301), the run stays undeclared and the
   runtime logs a warning that names the reason. The run then keeps the
   `unresolvedCompare` marker path: compare the PR head with the reviewed commit, and
-  finish with the marker. A read that fails for another reason, such as a transport
+  finish with the marker. To have the runtime compare a PR that you know at start,
+  start a run with `agent-loop --compare-head <n>` instead: see the headless
+  compare below. A read that fails for another reason, such as a transport
   failure, warns and still declares the PR (#1097).
 - A continued run that restored its PR reads no required-check source at start,
   because the earlier run read at the start of its own `--pr` run or before it
   declared a worker-opened PR (#1092, #1097). Its orchestrator prompt states no
   start read. A continuation that declares a new PR makes the read.
+- A repository whose required-check sources are unreadable refuses `--pr <n>` and
+  `--require-ci <n>` at start or at finish, so a headless run for an existing PR there
+  passes `--compare-head <n>` (#1104). At finish, the runtime reads the PR head of
+  `<n>`, refuses unless it equals the reviewed head and the reviewed tree is clean,
+  reads no required-check source, and claims no check result. A pass emits a
+  `head-compare` transcript event and the run exits `0`, where
+  `unresolvedCompare` exits `4`. The flag is refused with `--pr`, `--require-ci`,
+  and `--mode review-only` before the run starts, with a continuation of a declared
+  PR, and a finish that also sets `unresolvedCompare` is refused. The runtime
+  declares no worker-opened PR in such a run. The flag needs the PR number at
+  start, so a PR that the worker opens on such a repository keeps the marker path.
 - To gate a PR that exists at start, pass `--require-ci <n>`. Or use
   `agent-loop role` with `role declare-pr`, which takes the gate at `finish`.
 

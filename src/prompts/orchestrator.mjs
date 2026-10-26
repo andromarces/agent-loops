@@ -261,9 +261,19 @@ function noRequiredCheckClause() {
 function prDeclarationBlock(pr, startRead) {
   if (pr === null) return "";
   const start = startRead
-    ? ` At start, the runtime read the required-check sources of PR #${pr} once and refused a run whose repository rulesets it could not read, for example a private Free-plan repository, because the gate would refuse every finish of such a run; the recovery is to omit --pr and finish with unresolvedCompare. A read that failed for another reason, such as a transport failure, warned and let the run start, so the gate can still refuse at finish.`
+    ? ` At start, the runtime read the required-check sources of PR #${pr} once and refused a run whose repository rulesets it could not read, for example a private Free-plan repository, because the gate would refuse every finish of such a run; the recovery is to omit --pr and pass --compare-head ${pr} to the headless command, which compares the PR head without reading a required-check source, or to finish with unresolvedCompare. A read that failed for another reason, such as a transport failure, warned and let the run start, so the gate can still refuse at finish.`
     : "";
   return `\n- This run declares PR #${pr}. Finish it through --require-ci ${pr} for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.${start}`;
+}
+
+/**
+ * The `--compare-head` line: the runtime compares the PR head at finish and reads no required-check
+ * source, for a repository whose sources are unreadable (#1104).
+ */
+function compareHeadBlock(compareHead) {
+  if (compareHead === null) return "";
+  return `
+- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until it equals the reviewed commit and the reviewed tree is clean. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. Dispatch the reviewer on the current state before you finish.`;
 }
 
 /**
@@ -380,6 +390,7 @@ export function initialPrompt({
   requireAccept = false,
   pr = null,
   requireCi = null,
+  compareHead = null,
   testCmd = false,
   reviewerSandbox = null,
   mode = null,
@@ -433,7 +444,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr, startRead)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerSandbox)}${continuedBlock(continued, gateRestored)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, reviewerSandbox, timeout, waitCommand })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr, startRead)}${compareHeadBlock(compareHead)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerSandbox)}${continuedBlock(continued, gateRestored)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, reviewerSandbox, timeout, waitCommand })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.

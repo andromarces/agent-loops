@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0052: Verify the PR head in a headless run without the required-check gate](0052-verify-the-pr-head-in-a-headless-run-without-the-required-check-gate.md). ADR 0052 gives the headless `agent-loop` command a `--compare-head <pr>` input, so decision 5 (interactive only) and alternative 3 (add a headless flag) no longer apply. Decisions 1 to 4 remain in force.
 
 ## Date
 
