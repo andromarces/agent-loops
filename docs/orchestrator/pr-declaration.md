@@ -67,7 +67,7 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
 - A repository whose required-check sources are unreadable refuses `--pr <n>` and
   `--require-ci <n>` at start or at finish, so a headless run for an existing PR there
   passes `--compare-head <n>` (#1104). At finish, the runtime reads the PR head of
-  `<n>`, refuses unless it equals the reviewed head and the reviewed tree is clean,
+  `<n>`, refuses unless the PR is open, it equals the reviewed head, and the reviewed tree is clean,
   reads no required-check source, and claims no check result. A pass emits a
   `head-compare` transcript event and the run exits `0`, where
   `unresolvedCompare` exits `4`. The flag is refused with `--pr`, `--require-ci`,
@@ -81,11 +81,13 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
 - A PR that the worker opens on such a repository needs no flag (#1111). The runtime
   refuses to declare it, records it in a `pr-undeclared` event with `pr` and
   `stepsUsed`, and applies the same compare at finish with no operator choice: a
-  verified compare when the PR head equals the reviewed head and the reviewed tree is
-  clean, a refused finish when the heads differ. A pass emits `head-compare` and
+  verified compare when the PR is open, its head equals the reviewed head, and the
+  reviewed tree is clean, a refused finish when the heads differ or the PR is closed
+  or merged. A pass emits `head-compare` and
   the run exits `0`. A run with `--pr`, `--require-ci`, or `--compare-head` never
   records one. A later worker turn that declares a PR clears the undeclared PR, and
-  one that refuses another PR replaces it. A continuation does not restore the
+  one that refuses another PR replaces it. A PR that leaves the open list keeps
+  its place, and the compare refuses it as closed or merged. A continuation does not restore the
   undeclared PR: it restores a PR from a `pr-declared` record only, so the
   continuation resolves the worker-opened PR again after its own worker turn, and a
   continuation with no worker turn keeps the marker path.
@@ -127,7 +129,7 @@ GitHub. Declare the PR after the worker opens it:
   required-check sources once and refuses there, leaving the run unchanged. A read
   that fails for another reason warns and does not refuse. Do not declare the PR
   there. Finish with `role finish --compare-head <pr>`, which reads the PR head,
-  refuses unless it equals `reviewed.head` and the reviewed tree is clean, reads no
+  refuses unless the PR is open, it equals `reviewed.head`, and the reviewed tree is clean, reads no
   required-check source, and records `headCompare: "verified"` in place of the
   `unresolvedCompare` marker. Use the marker only when the PR head itself cannot be
   read. Run

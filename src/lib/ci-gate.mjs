@@ -326,7 +326,8 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
 }
 
 /**
- * Refuses unless the PR head equals the reviewed commit and the reviewed tree is clean. This is the
+ * Refuses unless the PR is open, the PR head equals the reviewed commit, and the reviewed tree is
+ * clean. A closed or merged PR refuses even when its head is unchanged (#1111). This is the
  * head part of `checkCi` alone: it makes the one PR read, whose merge-state field it ignores, so no
  * required-check source is read and no merge state or check result is evaluated or claimed. It serves a repository whose required-check sources
  * settle nothing, where `checkCi` refuses every finish (#1098).
@@ -345,6 +346,13 @@ export async function checkPrHead({ pr, reviewed, cwd, gh = runGh }) {
     info = await prInfo(gh, pr, cwd);
   } catch (err) {
     throw failureOf(err);
+  }
+  if (info.state !== "OPEN") {
+    return fail(
+      typeof info.state === "string"
+        ? `PR ${pr} is ${info.state.toLowerCase()}, not open`
+        : `PR ${pr} has no readable state, so it is not known to be open`,
+    );
   }
   if (info.headRefOid !== reviewed.head) {
     return fail("the PR head differs from the reviewed commit");

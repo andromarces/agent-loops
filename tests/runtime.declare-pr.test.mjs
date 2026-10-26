@@ -24,6 +24,7 @@ import {
   gateRoles,
   PASSING_RUN,
   prGateGh,
+  prViewArgs,
   removePath,
   REVIEW_ACCEPT,
   scripted,
@@ -417,6 +418,43 @@ test("a worker-opened undeclared PR whose head differs from the reviewed head re
     warn.mockRestore();
   }
 });
+
+// Usefulness: verifies a worker-opened undeclared PR that is closed or merged refuses the finish
+// even when its head still equals the reviewed head, so a PR that left the open list after a later
+// worker turn never records a verified compare (#1111 review).
+test.each(["CLOSED", "MERGED"])(
+  "a worker-opened undeclared PR that is %s with an unchanged head refuses the finish",
+  async (state) => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const base = freePlanGh(CLEAN_REPO_HEAD);
+      const gate = async (args, cwd, options) => {
+        const reply = await base(args, cwd, options);
+        if (!equalsArgs(args, prViewArgs(42))) return reply;
+        return { ...reply, stdout: JSON.stringify({ ...JSON.parse(reply.stdout), state }) };
+      };
+      let lists = 0;
+      // The first list names the PR, and the PR is gone from the open list after the next turn.
+      const list = () => ({
+        status: 0,
+        stdout: JSON.stringify((lists += 1) === 1 ? [MATCH] : []),
+        stderr: "",
+      });
+      const { result, events } = await runWorkerPrRun({
+        gh: declareGh(list, [], [PASSING_RUN], gate),
+        orchReplies: [work, work, review, finish(), finish()],
+      });
+
+      expect(events.filter((e) => e.type === "pr-undeclared")).toHaveLength(1);
+      expect(result.exitCode).toBe(1);
+      expect(result.reason).toContain(`PR 42 is ${state.toLowerCase()}, not open`);
+      expect(result.headCompare).toBeUndefined();
+      expect(events.some((e) => e.type === "head-compare")).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  },
+);
 
 // Usefulness: verifies the runtime compare resolves the head of the undeclared PR, so a finish that
 // also records unresolvedCompare is refused and one head never records two outcomes.

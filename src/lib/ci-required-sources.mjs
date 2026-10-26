@@ -847,7 +847,7 @@ export async function prInfo(gh, pr, cwd) {
       "view",
       String(pr),
       "--json",
-      "headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit",
+      "headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit,state",
     ],
     cwd,
   );

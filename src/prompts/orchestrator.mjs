@@ -273,7 +273,7 @@ function prDeclarationBlock(pr, startRead) {
 function compareHeadBlock(compareHead) {
   if (compareHead === null) return "";
   return `
-- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until it equals the reviewed commit and the reviewed tree is clean. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.`;
+- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until the PR is open, its head equals the reviewed commit, and the reviewed tree is clean. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.`;
 }
 
 /**
@@ -496,7 +496,7 @@ function declaredPrNote(pr) {
  * the head of that PR at finish instead (ADR 0052, #1111).
  */
 function undeclaredPrNote(pr) {
-  return `The worker turn opened PR #${pr}, and the runtime did not declare it, because it could not read the required-check sources of the repository. The runtime compares the PR head of PR #${pr} at finish: it refuses the finish until the PR head is the reviewed commit and the reviewed tree is clean. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You did not choose the PR, and you do not compare the PR head yourself. A finish with "unresolvedCompare": true is refused, because the compare resolves that head. Dispatch the reviewer on the current state before you finish.`;
+  return `The worker turn opened PR #${pr}, and the runtime did not declare it, because it could not read the required-check sources of the repository. The runtime compares the PR head of PR #${pr} at finish: it refuses the finish until the PR is open, its head is the reviewed commit, and the reviewed tree is clean; a closed or merged PR refuses it. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You did not choose the PR, and you do not compare the PR head yourself. A finish with "unresolvedCompare": true is refused, because the compare resolves that head. Dispatch the reviewer on the current state before you finish.`;
 }
 
 export function resultPrompt({

@@ -515,8 +515,8 @@ export async function runLoop(options) {
         onEvent({ type: "pr-declared", pr: declaredPr, stepsUsed });
       } else if (resolved.undeclaredPr !== null) {
         // A later worker turn can refuse another PR, and the latest one is the PR to compare.
-        // known-limit: an earlier undeclared PR stays the compare target when a later turn names
-        // none, so a PR that a worker closed makes the compare refuse until the run ends.
+        // An earlier undeclared PR stays the compare target when a later turn names none. The
+        // compare reads the PR state, so a PR that is closed or merged refuses the finish.
         undeclaredPr = newlyUndeclared = resolved.undeclaredPr;
         onEvent({ type: "pr-undeclared", pr: undeclaredPr, stepsUsed });
       }
