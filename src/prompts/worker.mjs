@@ -2,7 +2,7 @@ import { escapeLineSeparators } from "./escape.mjs";
 import { initTaskBlock, processRule, reportBlock, testSlotRule } from "./report.mjs";
 
 const prBodyRule =
-  "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment.";
+  "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.";
 
 // A probe copy without a usable `node_modules` makes `vp` install into the shared package store
 // (issue #1026).
