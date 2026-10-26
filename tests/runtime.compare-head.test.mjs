@@ -135,15 +135,18 @@ test("a headless compare-head run refuses a finish before any reviewer turn", as
 });
 
 // Usefulness: verifies the marker is refused beside the compare, so one head never records two outcomes.
-test("a headless compare-head run refuses a finish that also sets unresolvedCompare", async () => {
-  const { result, events } = await runCompare(freePlanGh(CLEAN_REPO_HEAD), {
+test("a headless compare-head run refuses a finish that also sets unresolvedCompare before any GitHub read", async () => {
+  const calls = [];
+  const { result, events } = await runCompare(freePlanGh(CLEAN_REPO_HEAD, calls), {
     orchReplies: [
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
       JSON.stringify({ action: "finish", summary: SUMMARY, unresolvedCompare: true }),
       JSON.stringify({ action: "finish", summary: SUMMARY, unresolvedCompare: true }),
     ],
   });
   expect(result.exitCode).toBe(1);
   expect(result.reason).toContain("--compare-head cannot be combined with unresolvedCompare");
+  expect(calls).toEqual([]);
   expect(events.some((e) => e.type === "head-compare")).toBe(false);
 });
 

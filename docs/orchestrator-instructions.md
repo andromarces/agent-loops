@@ -477,7 +477,10 @@ reviewed tree is clean. It reads no required-check source and claims no check
 result, and it does not evaluate the merge state. A pass emits a `head-compare`
 transcript event and the run exits `0`, distinct from `unresolvedCompare` and its
 exit `4`. The command refuses the flag with `--pr`, `--require-ci`, and
-`--mode review-only`, and a finish that also sets `unresolvedCompare` is refused.
+`--mode review-only`, and a finish that also sets `unresolvedCompare` is refused
+before any GitHub read. A continuation of a declared PR refuses the flag before any
+transcript write. The transcript does not record the flag, so a continuation passes
+it again, as it passes `--require-ci`, and an omitted flag leaves the marker path.
 A worker-opened PR is never declared in such a run, and a PR that the worker
 opens keeps the marker path, because the flag names the PR at start.
 

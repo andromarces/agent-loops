@@ -240,3 +240,20 @@ test.each([
   },
   CHAIN_TIMEOUT_MS,
 );
+
+// Usefulness: verifies a continuation of a declared PR refuses --compare-head before any turn and
+// before any transcript write, so a refusal never overwrites the transcript that --continue-from
+// reads when --transcript names the same file (issue #1104).
+test("--continue-from refuses --compare-head for a declared PR and leaves the transcript unchanged", async () => {
+  await withContinueRepo(async (repo, transcriptPath, errorSpy) => {
+    const cont = await declareThenContinue(repo, transcriptPath, errorSpy);
+    const before = await readFile(transcriptPath, "utf8");
+    const { turns, error } = await cont(["--compare-head", "42"]);
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toContain("--compare-head");
+    expect(error).toContain("PR 42");
+    expect(turns).toEqual([]);
+    expect(await readFile(transcriptPath, "utf8")).toBe(before);
+  });
+});

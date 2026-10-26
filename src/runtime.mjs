@@ -171,18 +171,11 @@ export async function runLoop(options) {
 
   // A continued run keeps the PR that the earlier run declared. The CLI refuses a conflict first,
   // and this check holds for any other caller, before the first child spawn.
-  refuseDeclaredPrConflict(continued ? earlierPr : null, { pr, requireCi, mode });
+  refuseDeclaredPrConflict(continued ? earlierPr : null, { pr, requireCi, mode, compareHead });
   // The compare is for a run with no declared PR, because a declared PR ends through its gate. The
   // CLI refuses the flags first, and this check holds for any other caller (#1104).
-  if (compareHead !== null) {
-    if (pr !== null || requireCi !== null) {
-      throw new Error(COMPARE_HEAD_INPUT_REFUSAL);
-    }
-    if (continued && earlierPr !== null) {
-      throw new Error(
-        `--compare-head cannot be combined with a continuation of PR ${earlierPr}, which the earlier run declared: that run ends through its --require-ci gate.`,
-      );
-    }
+  if (compareHead !== null && (pr !== null || requireCi !== null)) {
+    throw new Error(COMPARE_HEAD_INPUT_REFUSAL);
   }
 
   // A declared PR whose required-check sources the gate cannot read could only end through `abort`,
@@ -678,18 +671,17 @@ async function evaluateFinish({
       requireCi: null,
       unresolvedCompare: action.unresolvedCompare === true,
     });
+    // A marker refusal reads nothing from GitHub, as ADR 0051 decision 4 requires, and a re-finish
+    // without the marker needs no child turn.
     if (conflict) {
       refusals.push({
         reason: conflict,
         recovery: "The compare resolves that PR head, so remove unresolvedCompare from the finish.",
       });
     }
-    const compare = await headCompareGate({
-      pr: compareHead,
-      reviewed: gate.lastReviewed,
-      cwd,
-      gh,
-    });
+    const compare = conflict
+      ? null
+      : await headCompareGate({ pr: compareHead, reviewed: gate.lastReviewed, cwd, gh });
     if (compare) {
       // Like the gate, the compare reads the reviewed state that only a reviewer turn sets.
       needsChildTurn = true;

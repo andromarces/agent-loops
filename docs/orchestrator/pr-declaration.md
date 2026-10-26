@@ -72,8 +72,11 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
   `head-compare` transcript event and the run exits `0`, where
   `unresolvedCompare` exits `4`. The flag is refused with `--pr`, `--require-ci`,
   and `--mode review-only` before the run starts, with a continuation of a declared
-  PR, and a finish that also sets `unresolvedCompare` is refused. The runtime
-  declares no worker-opened PR in such a run. The flag needs the PR number at
+  PR, which is refused before any transcript write or turn. A finish that also sets
+  `unresolvedCompare` is refused before any GitHub read. The transcript does not
+  record the flag, so a continuation passes it again, as it passes `--require-ci`,
+  and an omitted flag leaves the marker path. The runtime declares no worker-opened
+  PR in such a run. The flag needs the PR number at
   start, so a PR that the worker opens on such a repository keeps the marker path.
 - To gate a PR that exists at start, pass `--require-ci <n>`. Or use
   `agent-loop role` with `role declare-pr`, which takes the gate at `finish`.

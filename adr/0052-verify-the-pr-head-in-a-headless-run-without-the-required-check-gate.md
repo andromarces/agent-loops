@@ -18,9 +18,10 @@ ADR 0051 let an interactive run record a verified PR-head compare on a repositor
 
 1. **Input.** `agent-loop --compare-head <pr>` applies the ADR 0051 compare at each finish, through the same `checkPrHead`. It refuses unless the PR head equals the reviewed head and the reviewed tree is clean. It reads no required-check source, evaluates no merge state, and claims no check result.
 2. **Record.** A passing finish emits a `head-compare` transcript event, reports `headCompare: "verified"` from the loop, and exits 0. `unresolvedCompare` keeps its event and exit 4, so the two outcomes stay distinct.
-3. **Exclusion.** The command refuses the flag with `--pr`, `--require-ci`, and `--mode review-only` before the run starts. The runtime refuses it with `--pr`, `--require-ci`, and a continuation of a declared PR. A finish that also sets `unresolvedCompare` is refused.
+3. **Exclusion.** The command refuses the flag with `--pr`, `--require-ci`, and `--mode review-only` before the run starts. The runtime refuses it with `--pr`, `--require-ci`, and a continuation of a declared PR. A finish that also sets `unresolvedCompare` is refused before any GitHub read, as ADR 0051 decision 4 requires. A continuation of a declared PR is refused before any transcript write or child turn, in the check that refuses a changed `--pr` or `--require-ci`.
 4. **No declaration.** A run with the input declares no worker-opened PR. The operator chose the compare because the gate cannot run, so a declared PR would impose a gate that refuses every finish.
-5. **Scope.** The input names the PR at start. A PR that a worker opens in a run with no such input stays undeclared with the marker path, as ADR 0043 and #1097 state. The runtime does not apply the compare to it.
+5. **Continuation.** The input is a run input of each invocation, like `--require-ci`: the transcript does not record or restore it. A continuation of a run that had no declared PR passes it again, passes another PR number, or omits it, and an omitted input leaves the marker path.
+6. **Scope.** The input names the PR at start. A PR that a worker opens in a run with no such input stays undeclared with the marker path, as ADR 0043 and #1097 state. The runtime does not apply the compare to it.
 
 ## Consequences
 
