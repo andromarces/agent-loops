@@ -334,7 +334,7 @@ test("two consecutive worker turns", async () => {
     expect(workerAdapter.recorded.length).toBe(2);
     // On second turn, the prompt is the task text plus the PR body rule, with no preamble
     expect(workerAdapter.recorded[1].prompt).toBe(
-      "work 2\n\nAfter each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment.",
+      "work 2\n\nAfter each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.",
     );
   } finally {
     gitDouble.answer = null;
