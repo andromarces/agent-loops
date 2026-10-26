@@ -210,7 +210,9 @@ branch and pushes it, so the PR head equals the reviewed head. The run supplies
 the PR number, and the head commit comes from that PR. In a headless run, the
 task names the PR number. After each push, when the branch has an open PR, the worker
 updates the PR body in place so that it describes the pushed head. It adds no
-revision log to the body or to a comment.
+revision log to the body or to a comment. The body describes only the committed
+or published repository state and names no untracked file, local-only change,
+local probe, or machine-specific path.
 
 Apply these parent rules:
 

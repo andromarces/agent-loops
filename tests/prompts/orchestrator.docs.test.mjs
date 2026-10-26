@@ -136,6 +136,16 @@ const SHARED_PARENT_RULES = [
       /updates the PR body in place/i,
       /describes the pushed head/i,
     ),
+  // Issue #1115: the PR body holds only committed or published state and no local-only detail.
+  (text) =>
+    expectRule(
+      text,
+      /committed or published repository state/i,
+      /untracked file/i,
+      /local-only change/i,
+      /local probe/i,
+      /machine-specific path/i,
+    ),
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

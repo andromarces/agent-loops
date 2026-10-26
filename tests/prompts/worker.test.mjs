@@ -219,6 +219,18 @@ test("first worker turn tells the worker to update the PR body after a push", ()
   );
 });
 
+// Usefulness: verifies requirement "the PR body holds no local-only detail" (issue #1115): a body that
+// named an uncommitted local probe cost an extra worker and reviewer turn to remove, and the revision
+// log test above does not cover that half of the rule.
+test("worker turns bar local-only details from the PR body", () => {
+  for (const first of [true, false]) {
+    const prompt = workerPrompt("do the task", first).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.",
+    );
+  }
+});
+
 // Usefulness: verifies requirement "every worker turn that can push a fix carries the PR body rule"
 // (issue #1002): a resumed turn, including one in a replacement conversation that got no preamble
 // yet, is the turn that pushes a fix, so the rule must reach it.
