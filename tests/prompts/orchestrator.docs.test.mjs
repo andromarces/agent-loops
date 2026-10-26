@@ -593,6 +593,7 @@ const REFUSED_CWD_BLOCKS = {
       "A repository with no remote has no `origin/<default>`, so the command above fails. Use the local default branch as the base:",
       "```bash git worktree add --no-track -b <branch> <work tree> <default> ```",
       "In that repository, a worker commits in the work tree and never pushes, because there is no remote for `git push -u origin <branch>`. After `finish`, the parent merges the branch or hands it to the user.",
+      "That run is not PR work, because no pull request can exist. Finish it with a plain `role finish` and no PR gate, after a reviewer `verdict: accept` with a `Checks` line on the latest changed state. Add `--require-accept` where it applies. Compare `reviewed.head` with the `workTree.head` of the last worker envelope. Never pass `--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set `unresolvedCompare`: each one concerns a PR head, and this run has none, so the #286 gap does not apply to it.",
       "The parent installs the dependencies of the work tree, and no worker or reviewer does. After you create the work tree and before the first dispatch, run the repository's lockfile install inside the work tree, for example `pnpm install --frozen-lockfile`. The work tree then has its own `node_modules` for every turn. Never link or junction the `node_modules` of another checkout into the work tree, and never run an install in another checkout: a tool such as `vp` can rewrite links in the `node_modules` that the junction points to.",
       '`dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`.',
       "A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.",
@@ -741,6 +742,10 @@ test("instructions state the no-remote work tree base and worker commit-only rul
   expect(instructions).toContain(WORK_TREE_CREATE_NO_REMOTE_COMMAND);
   expect(instructions).toContain("a worker commits in the work tree and never pushes");
   expect(instructions).toContain("the parent merges the branch or hands it to the user");
+  expect(instructions).toContain("Finish it with a plain `role finish` and no PR gate");
+  expect(instructions).toContain(
+    "Never pass `--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set `unresolvedCompare`",
+  );
 });
 
 // Usefulness: verifies requirement "the parent owns the dependency install of a run work tree and
