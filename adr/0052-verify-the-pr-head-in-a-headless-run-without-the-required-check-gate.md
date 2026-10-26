@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0053: Compare the head of a worker-opened PR that the runtime refused to declare](0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md). ADR 0053 applies the compare to the worker-opened PR that the runtime left undeclared (#1111), so decision 6 (scope) and alternative 1 no longer apply. Decisions 1 to 5 remain in force.
 
 Partially supersedes [ADR 0051: Record a verified PR-head compare without the required-check gate](0051-record-a-verified-pr-head-compare-without-the-required-check-gate.md). This ADR replaces decision 5 (interactive only) and alternative 3 (add a headless flag, deferred). Decisions 1 to 4 of ADR 0051 hold.
 
@@ -32,7 +34,7 @@ ADR 0051 let an interactive run record a verified PR-head compare on a repositor
 
 ## Alternatives
 
-1. **Apply the compare to the undeclared worker-opened PR**: deferred. It needs the resolver to surface the PR number of a refused declaration, a new transcript state for a PR the run did not declare, and an automatic claim without an operator choice. No issue shows the need yet.
+1. **Apply the compare to the undeclared worker-opened PR**: deferred, then taken by [ADR 0053](0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md) (#1111). It needs the resolver to surface the PR number of a refused declaration, a new transcript state for a PR the run did not declare, and an automatic claim without an operator choice. No issue shows the need yet.
 2. **Relax `--require-ci` on an unreadable source**: rejected, as in ADR 0051. The gate fails closed on purpose (ADR 0012).
 
 ## Authors
@@ -44,6 +46,7 @@ Andro Marces
 - [Issue #1104](https://github.com/andromarces/agent-loops/issues/1104)
 - [Pull request #1110](https://github.com/andromarces/agent-loops/pull/1110)
 - Supersedes (partially): [ADR 0051](0051-record-a-verified-pr-head-compare-without-the-required-check-gate.md)
+- Superseded by (partially): [ADR 0053](0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md)
 - Related: #301, #1092, #1097, [ADR 0043](0043-let-the-headless-runtime-declare-the-pr-a-worker-opens.md), [ADR 0045](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md)
 - Implementation: `--compare-head` in `src/cli.mjs`, `headCompareGate` in `src/runtime.mjs`, `checkPrHead` in `src/lib/ci-gate.mjs`; documented in `docs/orchestrator-instructions.md`, `docs/orchestrator/pr-declaration.md`, and `docs/reference/usage.md`
 - [ADR Index](README.md)

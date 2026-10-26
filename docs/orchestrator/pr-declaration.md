@@ -54,12 +54,12 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
 - Before the runtime declares the PR, it reads the required-check sources of the
   PR base once, as the start of a `--pr` run does (#1092). When the rulesets read
   settles nothing, such as the Free-plan 403 (#301), the run stays undeclared and the
-  runtime logs a warning that names the reason. The run then keeps the
-  `unresolvedCompare` marker path: compare the PR head with the reviewed commit, and
-  finish with the marker. To have the runtime compare a PR that you know at start,
-  start a run with `agent-loop --compare-head <n>` instead: see the headless
-  compare below. A read that fails for another reason, such as a transport
-  failure, warns and still declares the PR (#1097).
+  runtime logs a warning that names the reason. The runtime then records the PR in
+  a `pr-undeclared` transcript event and compares its head at finish, as
+  `--compare-head` does (#1111, [ADR 0053](../../adr/0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md)): see the headless compare
+  below. A finish with `unresolvedCompare` is refused, because the compare resolves
+  that head. A read that fails for another reason, such as a transport failure, warns
+  and still declares the PR (#1097).
 - A continued run that restored its PR reads no required-check source at start,
   because the earlier run read at the start of its own `--pr` run or before it
   declared a worker-opened PR (#1092, #1097). Its orchestrator prompt states no
@@ -77,8 +77,18 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
   flag, but a continuation does not restore it: each invocation selects the flag
   again, as it selects `--require-ci`, and omitting it on a continuation disables
   the runtime compare and leaves the marker path. The runtime declares no worker-opened
-  PR in such a run. The flag needs the PR number at
-  start, so a PR that the worker opens on such a repository keeps the marker path.
+  PR in such a run. The flag names a PR that exists at start.
+- A PR that the worker opens on such a repository needs no flag (#1111). The runtime
+  refuses to declare it, records it in a `pr-undeclared` event with `pr` and
+  `stepsUsed`, and applies the same compare at finish with no operator choice: a
+  verified compare when the PR head equals the reviewed head and the reviewed tree is
+  clean, a refused finish when the heads differ. A pass emits `head-compare` and
+  the run exits `0`. A run with `--pr`, `--require-ci`, or `--compare-head` never
+  records one. A later worker turn that declares a PR clears the undeclared PR, and
+  one that refuses another PR replaces it. A continuation does not restore the
+  undeclared PR: it restores a PR from a `pr-declared` record only, so the
+  continuation resolves the worker-opened PR again after its own worker turn, and a
+  continuation with no worker turn keeps the marker path.
 - To gate a PR that exists at start, pass `--require-ci <n>`. Or use
   `agent-loop role` with `role declare-pr`, which takes the gate at `finish`.
 

@@ -284,6 +284,7 @@ test.each([
   });
 
   expect(events.some((e) => e.type === "pr-declared")).toBe(false);
+  expect(events.some((e) => e.type === "pr-undeclared")).toBe(false);
   expect(rev.recorded[0].prompt).not.toMatch(/runtime read/);
   expect(result.exitCode).toBe(0);
   expect(result.unresolvedCompare).toBe(true);
@@ -364,27 +365,110 @@ test("a head that differs before the read and returns after it leaves the run un
   expect(events.some((e) => e.type === "pr-declared")).toBe(false);
 });
 
-// Usefulness: verifies acceptance of #1097 — a worker-opened PR on a repository whose required-check
-// sources settle nothing stays undeclared with a warning that names the reason and the recovery, so
-// the run finishes through unresolvedCompare instead of a gate that would refuse every finish.
-test("a worker-opened PR whose required-check sources are unreadable leaves the run undeclared", async () => {
+// Usefulness: verifies acceptance of #1111 — a worker-opened PR on a repository whose required-check
+// sources settle nothing stays undeclared, is recorded as undeclared, and the finish records a
+// verified head compare of it, so the run no longer needs the unresolvedCompare marker. The warning
+// names the reason and the compare.
+test("a worker-opened PR whose required-check sources are unreadable is compared at finish", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { result, events, orch } = await runWorkerPrRun({
+      gh: declareGh([MATCH], [], [PASSING_RUN], freePlanGh(CLEAN_REPO_HEAD)),
+      orchReplies: [work, review, finish()],
+    });
+
+    expect(events.some((e) => e.type === "pr-declared")).toBe(false);
+    expect(events.filter((e) => e.type === "pr-undeclared")).toEqual([
+      { type: "pr-undeclared", pr: 42, stepsUsed: 1 },
+    ]);
+    expect(events.filter((e) => e.type === "head-compare")).toMatchObject([{ pr: 42 }]);
+    expect(events.some((e) => e.type === "unresolved-compare")).toBe(false);
+    expect(result.exitCode).toBe(0);
+    expect(result.headCompare).toBe("verified");
+    expect(result.unresolvedCompare).toBe(false);
+    expect(orch.recorded[1].prompt).toContain('"undeclaredPr": 42');
+    expect(orch.recorded[1].prompt).toContain("compares the PR head of PR #42 at finish");
+    const text = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(text).toContain("warn: no PR declared after the worker turn");
+    expect(text).toContain("repository rulesets could not be read");
+    expect(text).toContain("head compare");
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+// Usefulness: verifies a PR head that differs from the reviewed commit at finish refuses the
+// finish, so a moved worker-opened PR is never recorded as a verified compare.
+test("a worker-opened undeclared PR whose head differs from the reviewed head refuses the finish", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    // The list reply carries the work tree head, and the later PR read carries another head.
+    const { result, events } = await runWorkerPrRun({
+      gh: declareGh([MATCH], [], [PASSING_RUN], freePlanGh(OTHER_HEAD)),
+      orchReplies: [work, review, finish(), finish()],
+    });
+
+    expect(events.filter((e) => e.type === "pr-undeclared")).toHaveLength(1);
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("the PR head differs from the reviewed commit");
+    expect(result.headCompare).toBeUndefined();
+    expect(events.some((e) => e.type === "head-compare")).toBe(false);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+// Usefulness: verifies the runtime compare resolves the head of the undeclared PR, so a finish that
+// also records unresolvedCompare is refused and one head never records two outcomes.
+test("a finish with unresolvedCompare is refused beside the compare of an undeclared PR", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
     const { result, events } = await runWorkerPrRun({
       gh: declareGh([MATCH], [], [PASSING_RUN], freePlanGh(CLEAN_REPO_HEAD)),
-      orchReplies: [work, review, finish({ unresolvedCompare: true })],
+      orchReplies: [work, review, finish({ unresolvedCompare: true }), finish()],
     });
 
-    expect(events.some((e) => e.type === "pr-declared")).toBe(false);
+    expect(events.find((e) => e.type === "refusal").reason).toContain(
+      "head compare of the undeclared PR cannot be combined with unresolvedCompare",
+    );
     expect(result.exitCode).toBe(0);
-    expect(result.unresolvedCompare).toBe(true);
-    const text = warn.mock.calls.map((call) => call.join(" ")).join("\n");
-    expect(text).toContain("warn: no PR declared after the worker turn");
-    expect(text).toContain("repository rulesets could not be read");
-    expect(text).toContain("unresolvedCompare");
+    expect(result.headCompare).toBe("verified");
+    expect(result.unresolvedCompare).toBe(false);
   } finally {
     warn.mockRestore();
   }
+});
+
+// Usefulness: verifies the compare needs a reviewer turn on the current state, so a finish after a
+// worker turn with no later reviewer turn is refused and never verifies a stale head.
+test("a worker-opened undeclared PR is not compared before a reviewer turn", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { result } = await runWorkerPrRun({
+      gh: declareGh([MATCH], [], [PASSING_RUN], freePlanGh(CLEAN_REPO_HEAD)),
+      orchReplies: [work, finish(), finish()],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain("the latest reviewer turn has no reviewed state");
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+// Usefulness: verifies a continuation does not restore the undeclared PR: it restores the PR of a
+// `pr-declared` record only, so with no worker turn in the continuation the marker path stays.
+test("a continued run keeps the marker path for a PR that the earlier run left undeclared", async () => {
+  const { result, events } = await runWorkerPrRun({
+    gh: declareGh([MATCH], [], [PASSING_RUN], freePlanGh(CLEAN_REPO_HEAD)),
+    orchReplies: [finish({ unresolvedCompare: true })],
+    extra: { continued: true, earlierPr: null },
+  });
+
+  expect(events.some((e) => e.type === "pr-undeclared")).toBe(false);
+  expect(events.some((e) => e.type === "head-compare")).toBe(false);
+  expect(result.exitCode).toBe(0);
+  expect(result.unresolvedCompare).toBe(true);
 });
 
 // Usefulness: verifies a read that fails for another reason than an unreadable source still

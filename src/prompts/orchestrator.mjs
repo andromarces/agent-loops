@@ -458,7 +458,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - A reviewer envelope carries packageStoreEntries only when entries changed in the pnpm package store during the turn, such as an install that wrote to it. The field names the entries, relative to the store root, redacted like the test command output, and never their content, at most 20. It is advisory: the store is shared with other processes, so the runtime cannot attribute a change to the turn, and it does not revert one. Every reviewer turn that read the store before it started carries the field, a failed, halted, or canceled turn too. Report packageStoreEntries in the finish summary under open, and do not treat it as a reason to reject.
 - Treat an accept without a Checks line as not accepted.
 - When the PR head cannot be resolved, do not finish as verified. Abort, or record the unresolved compare under notDone and open in the finish summary.
-- When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event and the headless run exits 4 instead of 0, so the recorded finish stays machine-distinct from a verified one. That marker is the only machine-readable record of the compare, and nothing else in the run distinguishes an omitted marker from a verified finish, so always set it.
+- When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event and the headless run exits 4 instead of 0, so the recorded finish stays machine-distinct from a verified one. That marker is the only machine-readable record of the compare, and nothing else in the run distinguishes an omitted marker from a verified finish, so always set it, except when a worker result carries "undeclaredPr": the runtime then compares that PR head itself and refuses the marker.
 
 The work tree arrives with its dependencies installed: the operator that created it ran the repository's lockfile install in it before the first dispatch, and no worker or reviewer installs them. Never tell a worker to link or junction the \`node_modules\` of another checkout into the work tree, or to run an install in another checkout.
 
@@ -490,7 +490,22 @@ function declaredPrNote(pr) {
   return `The runtime declared PR #${pr} for this run, because the worker turn opened it from this branch at this head. Before it declared the PR, the runtime read the required-check sources of PR #${pr} once and declared it only because the read did not find the repository rulesets unreadable; a read that failed for another reason, such as a transport failure, warned and still declared, so the gate can still refuse at finish. You did not choose it, and no turn can change it. The runtime now supplies the required-check status for PR #${pr} to every reviewer prompt. The runtime also gates the finish on PR #${pr}, as --require-ci ${pr} does: it refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. A finish with "unresolvedCompare": true is refused, because the gate resolves that compare. Dispatch the reviewer on the current state before you finish, and wait for a pending required check through another reviewer turn.`;
 }
 
-export function resultPrompt({ result, stepsUsed, maxSteps, declaredPr = null }) {
+/**
+ * The line that follows a worker result in which the runtime refused to declare the PR that the
+ * worker opened, because the required-check sources are unreadable (#1097). The runtime compares
+ * the head of that PR at finish instead (ADR 0052, #1111).
+ */
+function undeclaredPrNote(pr) {
+  return `The worker turn opened PR #${pr}, and the runtime did not declare it, because it could not read the required-check sources of the repository. The runtime compares the PR head of PR #${pr} at finish: it refuses the finish until the PR head is the reviewed commit and the reviewed tree is clean. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You did not choose the PR, and you do not compare the PR head yourself. A finish with "unresolvedCompare": true is refused, because the compare resolves that head. Dispatch the reviewer on the current state before you finish.`;
+}
+
+export function resultPrompt({
+  result,
+  stepsUsed,
+  maxSteps,
+  declaredPr = null,
+  undeclaredPr = null,
+}) {
   const stepsRemaining = Math.max(0, maxSteps - stepsUsed);
   const payload = {
     role: result.role,
@@ -517,6 +532,7 @@ export function resultPrompt({ result, stepsUsed, maxSteps, declaredPr = null })
     // holds what a `role dispatch` envelope carries. A turn with no denial carries no field.
     ...(result.shellDenied ? { shellDenied: true } : {}),
     ...(declaredPr === null ? {} : { declaredPr }),
+    ...(undeclaredPr === null ? {} : { undeclaredPr }),
     stepsUsed,
     stepsRemaining,
   };
@@ -525,7 +541,7 @@ export function resultPrompt({ result, stepsUsed, maxSteps, declaredPr = null })
     `
 Role execution result:
 ${JSON.stringify(payload, null, 2)}
-${declaredPr === null ? "" : `\n${declaredPrNote(declaredPr)}\n`}
+${declaredPr === null ? "" : `\n${declaredPrNote(declaredPr)}\n`}${undeclaredPr === null ? "" : `\n${undeclaredPrNote(undeclaredPr)}\n`}
 ${NEXT_ACTION_TAIL}
 `.trim(),
   );

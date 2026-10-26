@@ -828,15 +828,17 @@ export const COMPARE_HEAD_INPUT_REFUSAL =
  * The refusal of `--compare-head` beside a flag or marker that already settles the PR head, or null.
  * `--require-ci` resolves the head in its gate, and `unresolvedCompare` records that no one did, so
  * either one with this verified compare would record two outcomes for one head (#1098).
- * @param {{ requireCi: number | null, unresolvedCompare: boolean }} options
+ * `flag` is false for the compare of a worker-opened PR that the runtime left undeclared (#1111),
+ * which no flag selected, so the refusal names the compare and not the flag.
+ * @param {{ requireCi: number | null, unresolvedCompare: boolean, flag?: boolean }} options
  * @returns {string | null}
  */
-export function compareHeadConflict({ requireCi, unresolvedCompare }) {
+export function compareHeadConflict({ requireCi, unresolvedCompare, flag = true }) {
   if (requireCi !== null) {
     return "--compare-head cannot be combined with --require-ci: the gate resolves the PR head and reads the required checks, so pass one of them";
   }
   if (unresolvedCompare) {
-    return "--compare-head cannot be combined with unresolvedCompare: the compare either resolved the PR head or did not";
+    return `${flag ? "--compare-head" : "the head compare of the undeclared PR"} cannot be combined with unresolvedCompare: the compare either resolved the PR head or did not`;
   }
   return null;
 }

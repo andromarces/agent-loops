@@ -252,6 +252,11 @@ export async function runLoop(options) {
   // the PR that the earlier run declared, so the declared-PR finish rule survives `--continue-from`.
   const restoredPr = continued && pr === null && requireCi === null ? earlierPr : null;
   let declaredPr = pr ?? restoredPr;
+  // The PR that a worker turn opened and the runtime refused to declare, because the required-check
+  // sources are unreadable (#1097). The finish compares its head with the reviewed commit, as
+  // `--compare-head` does (ADR 0052, #1111). A continuation does not restore it: it takes the PR of a
+  // `pr-declared` record only, so a continuation resolves it again after its own worker turn.
+  let undeclaredPr = null;
   // The PR that the finish gate checks: `--require-ci`, or the PR that the runtime declared. A PR
   // that only `--pr` names has no gate, because that flag is a child-free run input that carries
   // none. A PR that the runtime resolved is not an operator input and no child chose it, so the
@@ -396,7 +401,8 @@ export async function runLoop(options) {
         requireAccept,
         pr: declaredPr,
         requireCi: gatedPr,
-        compareHead,
+        compareHead: compareHead ?? undeclaredPr,
+        compareFlag: compareHead !== null,
         gate,
         finishRefused,
         stepsUsed,
@@ -498,29 +504,45 @@ export async function runLoop(options) {
     finishRefused = false;
 
     let newlyDeclared = null;
+    let newlyUndeclared = null;
     if (isWorkerDispatch && declaredPr === null && requireCi === null && compareHead === null) {
-      newlyDeclared = await declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs });
+      const resolved = await declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs });
+      newlyDeclared = resolved.pr;
       if (newlyDeclared !== null) {
         declaredPr = newlyDeclared;
         gatedPr = newlyDeclared;
+        undeclaredPr = null;
         onEvent({ type: "pr-declared", pr: declaredPr, stepsUsed });
+      } else if (resolved.undeclaredPr !== null) {
+        // A later worker turn can refuse another PR, and the latest one is the PR to compare.
+        // known-limit: an earlier undeclared PR stays the compare target when a later turn names
+        // none, so a PR that a worker closed makes the compare refuse until the run ends.
+        undeclaredPr = newlyUndeclared = resolved.undeclaredPr;
+        onEvent({ type: "pr-undeclared", pr: undeclaredPr, stepsUsed });
       }
     }
 
-    prompt = resultPrompt({ result, stepsUsed, maxSteps, declaredPr: newlyDeclared });
+    prompt = resultPrompt({
+      result,
+      stepsUsed,
+      maxSteps,
+      declaredPr: newlyDeclared,
+      undeclaredPr: newlyUndeclared,
+    });
   }
 }
 
 /**
  * Resolves the PR that a worker turn opened, for a run with no PR input (ADR 0043). The head
  * compared is the work tree head that the runtime read after the turn, never a child report.
- * Returns the PR number, or null when the run stays undeclared. A refusal to name one PR is
- * logged as a warning, except for no PR at all, which is the usual state of a task with no PR. A
- * PR whose required-check sources the gate cannot read stays undeclared too (#1097).
- * @returns {Promise<number | null>}
+ * Returns `pr`, the PR number or null when the run stays undeclared, and `undeclaredPr`, the PR that
+ * the runtime refused to declare because its required-check sources are unreadable (#1097), or null.
+ * That PR gets the head compare at finish (#1111). A refusal to name one PR is logged as a
+ * warning, except for no PR at all, which is the usual state of a task with no PR.
+ * @returns {Promise<{ pr: number | null, undeclaredPr: number | null }>}
  */
 async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
-  if (result.status !== "ok") return null;
+  if (result.status !== "ok") return { pr: null, undeclaredPr: null };
   const resolved = await resolveWorkerPr({
     cwd,
     head: result.workTree?.head ?? null,
@@ -540,20 +562,20 @@ async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
         when: "before declaring it",
       });
       return unreadable
-        ? `PR ${pr} is not declared, because ${unreadable}, so the --require-ci gate would refuse every finish. The run keeps the unresolvedCompare marker path: finish with unresolvedCompare after you compare the PR head with the reviewed commit yourself. A later run can pass --compare-head ${pr} instead, so the runtime compares it.`
+        ? `PR ${pr} is not declared, because ${unreadable}, so the --require-ci gate would refuse every finish. The runtime compares the PR head with the reviewed commit at finish instead (head compare), reads no required-check source, and claims no check result.`
         : null;
     },
   });
   if (resolved.pr === null) {
-    if (resolved.quiet) return null;
+    if (resolved.quiet) return { pr: null, undeclaredPr: null };
     // A trusted reason names no untrusted text, so the recovery stays whole.
     (resolved.trusted ? logWarnFull : logWarn)(
       `no PR declared after the worker turn: ${resolved.reason}`,
     );
-    return null;
+    return { pr: null, undeclaredPr: resolved.undeclaredPr ?? null };
   }
   logInfo(`runtime declared PR ${resolved.pr} after the worker turn`);
-  return resolved.pr;
+  return { pr: resolved.pr, undeclaredPr: null };
 }
 
 /**
@@ -571,6 +593,7 @@ async function evaluateFinish({
   pr,
   requireCi,
   compareHead,
+  compareFlag,
   gate,
   finishRefused,
   stepsUsed,
@@ -670,6 +693,7 @@ async function evaluateFinish({
     const conflict = compareHeadConflict({
       requireCi: null,
       unresolvedCompare: action.unresolvedCompare === true,
+      flag: compareFlag,
     });
     // A marker refusal reads nothing from GitHub, as ADR 0051 decision 4 requires, and a re-finish
     // without the marker needs no child turn.
