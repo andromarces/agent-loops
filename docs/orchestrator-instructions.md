@@ -325,13 +325,14 @@ The copy duplicates secrets such as `.env` into the run work tree, so remove tha
 work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
 the copy off. It is an init field, so a later call cannot change it.
 
-Remove the work tree only after the run is terminal. The run is terminal when a
-`finish` or `abort` envelope reports `status: "ok"` and a terminal `lifecycle`
-(`finished` or `aborted`), or when an envelope reports a `halted` lifecycle. A refused
-`finish` or `abort` leaves the run `active`, and a removal after it strands the run:
-`finish --require-accept` compares the current snapshot of the work tree, and a work
-tree with uncommitted state loses that state. Read the envelope first, then run the
-removal as a separate command. Never chain it after `finish` or `abort` in one command.
+Remove the work tree only after the run is terminal. A `finish` or `abort` envelope
+with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused
+`finish` or `abort` prints `status: "error"` and no `lifecycle`, and the run keeps its
+lifecycle, `active` or `interrupted`. A dispatch that halts the run (reviewer mutation
+or snapshot error) also prints no `lifecycle`, as does a child error that leaves the run
+`active`. Read the state file ([Recovery](#recovery-after-compaction-or-restart)):
+remove the work tree after it reads `halted`. Run the removal as a separate command
+after you read the result. Never chain it after `finish` or `abort` in one command.
 
 Remove the work tree with `git worktree remove --force "<work tree>"`,
 then check whether the folder still exists. On Windows, the remove can leave the

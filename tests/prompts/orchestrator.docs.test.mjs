@@ -587,8 +587,8 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
 // including a prose instruction that tells the parent to repair or recreate the work tree in any
 // wording or position, fails until this test is edited on purpose (#991). Prose outside the
 // sections is not scanned, so unrelated text is free to change.
-const REMOVAL_WAIT_PARAGRAPH =
-  'Remove the work tree only after the run is terminal. The run is terminal when a `finish` or `abort` envelope reports `status: "ok"` and a terminal `lifecycle` (`finished` or `aborted`), or when an envelope reports a `halted` lifecycle. A refused `finish` or `abort` leaves the run `active`, and a removal after it strands the run: `finish --require-accept` compares the current snapshot of the work tree, and a work tree with uncommitted state loses that state. Read the envelope first, then run the removal as a separate command. Never chain it after `finish` or `abort` in one command.';
+const REMOVAL_WAIT_PARAGRAPH_PATTERN =
+  /Remove the work tree only after the run is terminal\..*? (?=Remove the work tree with `git worktree remove)/;
 
 const REMOVAL_PARAGRAPH =
   'Remove the work tree with `git worktree remove --force "<work tree>"`, then check whether the folder still exists. On Windows, the remove can leave the folder when a turn ran `pnpm install`: it holds `node_modules` with junctions into the shared pnpm store and no file. When the folder remains, check that it holds only links and directories. On Windows, run `Get-ChildItem -LiteralPath "<work tree>" -Recurse -Force -Attributes "!Directory+!ReparsePoint"` in PowerShell. On POSIX, run `find "<work tree>" -not -type d -not -type l`. Each command includes hidden files and never descends into a link or a junction. Any path that it prints is a file: stop and leave the folder to a maintainer. When it prints nothing, delete the folder without following links: `cmd.exe /c rmdir /s /q "$($wt.Replace(\'/\', \'\\\'))"` in PowerShell, with the work tree path in `$wt`, `cmd.exe /c rmdir /s /q "<work tree>"` in cmd.exe, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"` in Git Bash, `rm -rf "<work tree>"` on POSIX, which does not follow symbolic links. The cmd.exe forms need a path with backslashes, because `cmd.exe` reads a forward slash as a switch and fails with `Invalid switch`. Git prints work tree paths with forward slashes on Windows, so the PowerShell form converts the path. A harness PowerShell tool has refused the PowerShell form with `Remove-Item on system path \'/s\' is blocked`. The cause is not confirmed. Claude Code 2.1.310 in the bypass-permissions mode ran the form with no refusal on 2026-10-25, so the refusal can depend on the version or the permission mode. When it refuses, run the Git Bash form instead. Run the Windows delete as `cmd.exe /c rmdir`, because Git Bash resolves a bare `rmdir` to GNU rmdir, which rejects those switches. In Git Bash, keep `MSYS_NO_PATHCONV=1`, because MSYS path conversion rewrites the `/s` and `/q` switches, and `cmd.exe` then exits 0 and leaves the folder. Never use a recursive delete that follows junctions: it can damage the shared pnpm store.';
@@ -611,7 +611,6 @@ const REFUSED_CWD_BLOCKS = {
       '`dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`.',
       "A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.",
       "When `--cwd` is a linked work tree, the init call copies the untracked local files of the main work tree that `--cwd` ignores (agent instructions, harness configuration, `.env`, and the other paths in [Local files in a linked work tree](reference/harness-entry-points.md#local-files-in-a-linked-work-tree)) into `--cwd`, before the first child turn. A file already in `--cwd` is never replaced, and no symlink is followed: a symlink in the main work tree is skipped and named. The init envelope reports the paths as `localFiles: {copied, skipped}`, by name only, and a path in `skipped` is untracked in the main work tree but not copied: the child does not have it. Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env` into the run work tree, so remove that work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn the copy off. It is an init field, so a later call cannot change it.",
-      REMOVAL_WAIT_PARAGRAPH,
       REMOVAL_PARAGRAPH,
       "When the task needs other ignored reference data of the main work tree, such as a downloaded specification directory, pass `--copy-local-path <relative path>` on the init call, once for each path. The path joins the copy and follows every rule above, and its files appear in `localFiles.copied`. The init refuses an absolute path, a path that leaves the main work tree or passes through a symlink or a junction, a path that holds a tracked file, a path that holds a file that is not ignored, and use with `--no-copy-local-files`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and `localFilesDiffer` covers the files.",
       "The copy runs once. A later dispatch never replaces or refreshes a copied file, but it compares each copied file with its source in the main work tree by hash and reports the names that differ as `localFilesDiffer: [...]` in the envelope. The key is absent when no copy differs. A copy differs when the main work tree changed the file after init, or when a turn changed the copy: the report does not tell which. When the key appears, check whether the main work tree holds a newer rule file, such as `AGENTS.md`, and tell the child to refresh that file by hand when it holds no turn edit. Never read, print, or quote the file to decide.",
@@ -657,7 +656,11 @@ function expectRefusedCwdBlock(text, { start, end, text: pinned }) {
 
 /** The interactive instructions and the headless prompt, whitespace collapsed. */
 async function readParentTexts() {
-  const instructions = (await readInstructions()).replace(/\s+/g, " ");
+  // The removal-wait paragraph states when removal is safe, not the refused-`--cwd` rule, and a
+  // dedicated test checks its conditions, so the whole-section pin skips it.
+  const instructions = (await readInstructions())
+    .replace(/\s+/g, " ")
+    .replace(REMOVAL_WAIT_PARAGRAPH_PATTERN, "");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   return { instructions, prompt };
 }
@@ -812,16 +815,28 @@ test("instructions remove the run work tree without following links", async () =
   expect(instructions).toContain('find "<work tree>" -not -type d -not -type l');
 });
 
-// Usefulness: verifies the instructions gate the work tree removal on a terminal finish or abort
-// envelope and bar chaining it (#1117). Without it, a refused `finish` is followed by a removal
-// that strands an `active` run.
-test("instructions remove the work tree only after a terminal envelope, in a separate command", async () => {
+// Usefulness: verifies the instructions gate the work tree removal on signals a parent can
+// observe, and bar chaining it (#1117). Without it, a refused `finish` is followed by a removal
+// that strands a non-terminal run, or the parent waits for a `halted` envelope that never prints.
+test("instructions remove the work tree only after an observable terminal state, in a separate command", async () => {
   const instructions = (await readInstructions()).replace(/\s+/g, " ");
-  expect(instructions).toContain(
-    'only after the run is terminal. The run is terminal when a `finish` or `abort` envelope reports `status: "ok"` and a terminal `lifecycle`',
-  );
-  expect(instructions).toContain("or when an envelope reports a `halted` lifecycle");
-  expect(instructions).toContain("Never chain it after `finish` or `abort` in one command.");
+  const rule = instructions.match(REMOVAL_WAIT_PARAGRAPH_PATTERN)?.[0] ?? "";
+  expect(rule).not.toBe("");
+  // A successful finish or abort envelope ends the run.
+  expect(rule).toContain('`status: "ok"`');
+  expect(rule).toContain('`lifecycle: "finished"`');
+  expect(rule).toContain('`lifecycle: "aborted"`');
+  // A refusal prints no lifecycle and keeps the earlier one, `interrupted` as well as `active`.
+  expect(rule).toContain("refused `finish` or `abort`");
+  expect(rule).toContain("`active` or `interrupted`");
+  // A halt prints no lifecycle, so the parent reads the state file.
+  expect(rule).toContain("(reviewer mutation or snapshot error) also prints no `lifecycle`");
+  expect(rule).toContain("state file");
+  expect(rule).toContain("reads `halted`");
+  expect(rule).toContain("(#recovery-after-compaction-or-restart)");
+  // The removal is a separate command.
+  expect(rule).toContain("separate command");
+  expect(rule).toContain("Never chain it after `finish` or `abort` in one command.");
 });
 
 // Usefulness: verifies requirement "the instructions state the allowed keys of run_worker,
