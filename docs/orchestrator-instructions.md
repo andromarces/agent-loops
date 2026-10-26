@@ -267,6 +267,17 @@ Without `--no-track`, the new branch gets the upstream `origin/<default>` when
 The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
 
+A repository with no remote has no `origin/<default>`, so the command above
+fails. Use the local default branch as the base:
+
+```bash
+git worktree add --no-track -b <branch> <work tree> <default>
+```
+
+In that repository, a worker commits in the work tree and never pushes, because
+there is no remote for `git push -u origin <branch>`. After `finish`, the parent
+merges the branch or hands it to the user.
+
 The parent installs the dependencies of the work tree, and no worker or reviewer
 does. After you create the work tree and before the first dispatch, run the
 repository's lockfile install inside the work tree, for example
