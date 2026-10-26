@@ -587,8 +587,10 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
 // including a prose instruction that tells the parent to repair or recreate the work tree in any
 // wording or position, fails until this test is edited on purpose (#991). Prose outside the
 // sections is not scanned, so unrelated text is free to change.
+// Matches that one paragraph of the raw text, from its first sentence to its last: the match never
+// crosses a blank line, so any other paragraph added around or after it stays in the pinned section.
 const REMOVAL_WAIT_PARAGRAPH_PATTERN =
-  /Remove the work tree only after the run is terminal\..*? (?=Remove the work tree with `git worktree remove)/;
+  /Remove the work tree only after the run is terminal\.(?:(?!\n[ \t]*\r?\n)[\s\S])*?Never chain it after `finish` or `abort` in one command\.\s*/;
 
 const REMOVAL_PARAGRAPH =
   'Remove the work tree with `git worktree remove --force "<work tree>"`, then check whether the folder still exists. On Windows, the remove can leave the folder when a turn ran `pnpm install`: it holds `node_modules` with junctions into the shared pnpm store and no file. When the folder remains, check that it holds only links and directories. On Windows, run `Get-ChildItem -LiteralPath "<work tree>" -Recurse -Force -Attributes "!Directory+!ReparsePoint"` in PowerShell. On POSIX, run `find "<work tree>" -not -type d -not -type l`. Each command includes hidden files and never descends into a link or a junction. Any path that it prints is a file: stop and leave the folder to a maintainer. When it prints nothing, delete the folder without following links: `cmd.exe /c rmdir /s /q "$($wt.Replace(\'/\', \'\\\'))"` in PowerShell, with the work tree path in `$wt`, `cmd.exe /c rmdir /s /q "<work tree>"` in cmd.exe, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"` in Git Bash, `rm -rf "<work tree>"` on POSIX, which does not follow symbolic links. The cmd.exe forms need a path with backslashes, because `cmd.exe` reads a forward slash as a switch and fails with `Invalid switch`. Git prints work tree paths with forward slashes on Windows, so the PowerShell form converts the path. A harness PowerShell tool has refused the PowerShell form with `Remove-Item on system path \'/s\' is blocked`. The cause is not confirmed. Claude Code 2.1.310 in the bypass-permissions mode ran the form with no refusal on 2026-10-25, so the refusal can depend on the version or the permission mode. When it refuses, run the Git Bash form instead. Run the Windows delete as `cmd.exe /c rmdir`, because Git Bash resolves a bare `rmdir` to GNU rmdir, which rejects those switches. In Git Bash, keep `MSYS_NO_PATHCONV=1`, because MSYS path conversion rewrites the `/s` and `/q` switches, and `cmd.exe` then exits 0 and leaves the folder. Never use a recursive delete that follows junctions: it can damage the shared pnpm store.';
@@ -659,8 +661,8 @@ async function readParentTexts() {
   // The removal-wait paragraph states when removal is safe, not the refused-`--cwd` rule, and a
   // dedicated test checks its conditions, so the whole-section pin skips it.
   const instructions = (await readInstructions())
-    .replace(/\s+/g, " ")
-    .replace(REMOVAL_WAIT_PARAGRAPH_PATTERN, "");
+    .replace(REMOVAL_WAIT_PARAGRAPH_PATTERN, "")
+    .replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   return { instructions, prompt };
 }
@@ -819,8 +821,9 @@ test("instructions remove the run work tree without following links", async () =
 // observe, and bar chaining it (#1117). Without it, a refused `finish` is followed by a removal
 // that strands a non-terminal run, or the parent waits for a `halted` envelope that never prints.
 test("instructions remove the work tree only after an observable terminal state, in a separate command", async () => {
-  const instructions = (await readInstructions()).replace(/\s+/g, " ");
-  const rule = instructions.match(REMOVAL_WAIT_PARAGRAPH_PATTERN)?.[0] ?? "";
+  const rule = ((await readInstructions()).match(REMOVAL_WAIT_PARAGRAPH_PATTERN)?.[0] ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
   expect(rule).not.toBe("");
   // A successful finish or abort envelope ends the run.
   expect(rule).toContain('`status: "ok"`');
