@@ -1,6 +1,7 @@
 import { access } from "node:fs/promises";
 import { expect, test } from "vite-plus/test";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
+import { workerPrompt } from "../../src/prompts/worker.mjs";
 
 // The file-change rule is scoped (issue #837): a tracked file, an unignored untracked file (a cache
 // included), and Git state stay off limits, and a command is allowed when every write goes to an
@@ -407,6 +408,22 @@ test("reviewer prompt requires each blocker stated inside the Blockers line", ()
   );
   expect(prompt.indexOf("State each blocker")).toBeGreaterThan(prompt.indexOf("Deferred:"));
   expect(prompt.split("Blockers:")).toHaveLength(2);
+});
+
+// Usefulness: verifies the reviewer prompt keeps its own blockers and the read-only rule out of
+// Deferred, so a rejecting reviewer does not restate unfixed blockers as deferred items that the
+// parent then carries into the finish summary (issue #1102).
+test("reviewer prompt keeps its blockers and the read-only rule out of Deferred", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "Deferred never holds your own blockers or the fact that you apply no fix. An unfixed blocker stays only in Blockers.",
+  );
+});
+
+// Usefulness: verifies the worker keeps the plain Deferred definition, so the reviewer-only rule
+// does not leak into the worker closing block (issue #1102).
+test("worker prompt does not carry the reviewer Deferred exclusion", () => {
+  expect(workerPrompt("do the task")).not.toContain("Deferred never holds your own blockers");
 });
 
 // Usefulness: verifies the sandbox note states the actual mode, is absent for a turn with no mode,
