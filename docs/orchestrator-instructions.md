@@ -139,7 +139,11 @@ A run that set `--reviewer-sandbox` at init needs no flag on a later
 dispatch: the state file holds the mode. A later dispatch that names another
 mode is refused.
 
-Read the JSON envelope on stdout. Example reviewer envelope:
+Read the JSON envelope on stdout. The envelope is one JSON line, with no indent. A
+background task can merge stdout, child stderr logs, and a harness trailer such as
+`[exited with code 0]` into one output file. In that file, select the last line that
+starts with `{`, and parse only that line. Never search for a multi-line block.
+The example below is indented for display only. Example reviewer envelope:
 
 ```json
 {
