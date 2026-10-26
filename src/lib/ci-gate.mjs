@@ -326,7 +326,8 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
 }
 
 /**
- * Refuses unless the PR head equals the reviewed commit and the reviewed tree is clean. This is the
+ * Refuses unless the PR is open, the PR head equals the reviewed commit, and the reviewed tree is
+ * clean. A closed or merged PR refuses even when its head is unchanged (#1111). This is the
  * head part of `checkCi` alone: it makes the one PR read, whose merge-state field it ignores, so no
  * required-check source is read and no merge state or check result is evaluated or claimed. It serves a repository whose required-check sources
  * settle nothing, where `checkCi` refuses every finish (#1098).
@@ -345,6 +346,13 @@ export async function checkPrHead({ pr, reviewed, cwd, gh = runGh }) {
     info = await prInfo(gh, pr, cwd);
   } catch (err) {
     throw failureOf(err);
+  }
+  if (info.state !== "OPEN") {
+    return fail(
+      typeof info.state === "string"
+        ? `PR ${pr} is ${info.state.toLowerCase()}, not open`
+        : `PR ${pr} has no readable state, so it is not known to be open`,
+    );
   }
   if (info.headRefOid !== reviewed.head) {
     return fail("the PR head differs from the reviewed commit");
@@ -828,15 +836,17 @@ export const COMPARE_HEAD_INPUT_REFUSAL =
  * The refusal of `--compare-head` beside a flag or marker that already settles the PR head, or null.
  * `--require-ci` resolves the head in its gate, and `unresolvedCompare` records that no one did, so
  * either one with this verified compare would record two outcomes for one head (#1098).
- * @param {{ requireCi: number | null, unresolvedCompare: boolean }} options
+ * `flag` is false for the compare of a worker-opened PR that the runtime left undeclared (#1111),
+ * which no flag selected, so the refusal names the compare and not the flag.
+ * @param {{ requireCi: number | null, unresolvedCompare: boolean, flag?: boolean }} options
  * @returns {string | null}
  */
-export function compareHeadConflict({ requireCi, unresolvedCompare }) {
+export function compareHeadConflict({ requireCi, unresolvedCompare, flag = true }) {
   if (requireCi !== null) {
     return "--compare-head cannot be combined with --require-ci: the gate resolves the PR head and reads the required checks, so pass one of them";
   }
   if (unresolvedCompare) {
-    return "--compare-head cannot be combined with unresolvedCompare: the compare either resolved the PR head or did not";
+    return `${flag ? "--compare-head" : "the head compare of the undeclared PR"} cannot be combined with unresolvedCompare: the compare either resolved the PR head or did not`;
   }
   return null;
 }

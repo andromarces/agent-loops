@@ -120,7 +120,7 @@ export function fakeGh(routes) {
 // The `gh` calls the gate makes, each as the exact argument elements it passes, so
 // a call that merges two elements into one gets no route (issue #538).
 export const PR_VIEW =
-  "pr view 42 --json headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit";
+  "pr view 42 --json headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit,state";
 
 export const PR_CHECKS = "pr checks 42 --required --json name";
 

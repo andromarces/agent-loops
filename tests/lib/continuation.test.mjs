@@ -692,3 +692,13 @@ test.each([
 ])("declaredPrFromTranscript refuses %s", (_label, earlier) => {
   expect(() => declaredPrFromTranscript(earlier)).toThrow(/pr-declared|declared/);
 });
+
+// Usefulness: verifies a `pr-undeclared` record never reads as a declaration (#1111), so a
+// continuation restores no PR gate for a PR that the earlier run left undeclared.
+test("declaredPrFromTranscript ignores the pr-undeclared events", () => {
+  const earlier = {
+    options: NO_FLAGS,
+    events: [{ type: "pr-undeclared", pr: 42, stepsUsed: 1 }, { type: "gate" }],
+  };
+  expect(declaredPrFromTranscript(earlier)).toBeNull();
+});

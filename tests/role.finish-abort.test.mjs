@@ -1022,22 +1022,25 @@ test("a refused finish makes no GitHub call from the moment the finish starts", 
 describe("finish --compare-head", () => {
   // A `gh` that answers only the PR read, and records every call, so a read of any
   // required-check source fails the test by name.
-  const headGh = (head, calls) => async (args) => {
-    calls.push(args.join(" "));
-    if (equalsArgs(args, prViewArgs(42))) {
-      return {
-        status: 0,
-        stdout: JSON.stringify({
-          headRefOid: head,
-          baseRefName: "main",
-          mergeStateStatus: "BLOCKED",
-          potentialMergeCommit: null,
-        }),
-        stderr: "",
-      };
-    }
-    return { status: 1, stdout: "", stderr: `unexpected read: ${JSON.stringify(args)}` };
-  };
+  const headGh =
+    (head, calls, state = "OPEN") =>
+    async (args) => {
+      calls.push(args.join(" "));
+      if (equalsArgs(args, prViewArgs(42))) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            headRefOid: head,
+            baseRefName: "main",
+            mergeStateStatus: "BLOCKED",
+            potentialMergeCommit: null,
+            state,
+          }),
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected read: ${JSON.stringify(args)}` };
+    };
 
   // Usefulness: verifies requirement "a matching clean head records a verified compare that differs
   // from unresolvedCompare" (#1098), and that the compare reads the PR head and no required-check
@@ -1081,6 +1084,22 @@ describe("finish --compare-head", () => {
     const state = await readRepoState(repo);
     expect(state.lifecycle).toBe("active");
     expect(state).not.toHaveProperty("headCompare");
+  });
+
+  // Usefulness: verifies a closed PR with an unchanged head refuses the compare (#1111), because the
+  // head alone cannot tell an open PR from one that left the open list.
+  test("a closed PR with a matching head refuses and keeps the run active", async () => {
+    await setup();
+    const repo = await useCleanRepo();
+    await initWorkerRun(repo);
+    await dispatchReviewer(repo, ACCEPT);
+
+    const result = await finishCall(repo, ["--compare-head", "42"], {
+      gh: headGh(CLEAN_REPO_HEAD, [], "CLOSED"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain("PR 42 is closed, not open");
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
   });
 
   // Usefulness: verifies requirement "a reviewed tree that is not clean refuses the finish" (#1098),

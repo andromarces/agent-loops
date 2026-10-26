@@ -495,8 +495,8 @@ A headless run on a repository whose required-check sources are unreadable, for
 example a private repository on the GitHub Free plan (#301), passes
 `--compare-head <pr>` for a PR that exists at start (#1104). It is the headless form of
 the interactive `--compare-head` below and keeps its contract. At finish, the
-runtime reads the PR head and refuses unless it equals the reviewed head and the
-reviewed tree is clean. It reads no required-check source and claims no check
+runtime reads the PR head and state and refuses unless the PR is open, it equals the
+reviewed head, and the reviewed tree is clean. It reads no required-check source and claims no check
 result, and it does not evaluate the merge state. A pass emits a `head-compare`
 transcript event and the run exits `0`, distinct from `unresolvedCompare` and its
 exit `4`. The command refuses the flag with `--pr`, `--require-ci`, and
@@ -506,8 +506,12 @@ transcript write. The transcript records the flag, but a continuation does not
 restore it: each invocation selects `--compare-head` again, as it selects
 `--require-ci`, and omitting it on a continuation disables the runtime compare and
 leaves the marker path.
-A worker-opened PR is never declared in such a run, and a PR that the worker
-opens keeps the marker path, because the flag names the PR at start.
+A worker-opened PR is never declared in such a run, because the flag names the PR at
+start. A run without the flag needs none for a PR that the worker opens (#1111, ADR
+0053): the runtime refuses to declare it, records a `pr-undeclared` event, and
+applies the same compare at finish. A finish with `unresolvedCompare` is refused for
+it, and a closed or merged PR refuses the finish even when its head is unchanged. A continuation does not restore the undeclared PR and resolves it again after its
+own worker turn, and a continuation with no worker turn keeps the marker path.
 
 A headless orchestrator action allows only these keys. The `run_worker` and
 `run_reviewer` actions allow only `action` and `prompt`. The `abort` action
@@ -624,8 +628,9 @@ repository on the GitHub Free plan (#301, #1098):
 printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...","open":"..."}'   | agent-loop role finish --cwd "<work tree>" --compare-head <pr>
 ```
 
-The runtime reads the PR head and refuses the finish unless it equals
-`reviewed.head` and the reviewed tree is clean. The one `gh pr view` also returns the
+The runtime reads the PR head and state and refuses the finish unless the PR is open,
+its head equals `reviewed.head`, and the reviewed tree is clean. A closed or merged PR
+refuses even when its head is unchanged. The one `gh pr view` also returns the
 merge state, which the runtime does not evaluate. It reads no required-check
 source or check result and claims none, so `verified` still states what
 the checks showed. The envelope then carries `"headCompare": "verified"` and the
@@ -695,7 +700,7 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   start of its own `--pr` run or before it declared a worker-opened PR, and its
   prompt states none. After a refusal, omit
   `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
-  `reviewed.head` in the runtime. Use the `"unresolvedCompare": true` marker only
+  `reviewed.head` in the runtime and requires the PR to be open. Use the `"unresolvedCompare": true` marker only
   when the PR head itself cannot be read. The headless `--require-ci` with no
   `--pr` declares nothing, so the start does not read it and its gate refuses at
   finish.

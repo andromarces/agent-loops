@@ -344,8 +344,9 @@ Role flags:
                                 reviewed tree, and the merge state, and the run
                                 records the absence. Refuses a
                                 finish that also sets unresolvedCompare.
-  --compare-head <pr>           finish only: refuse unless the PR head matches the
-                                reviewed commit and the reviewed tree is clean. Reads
+  --compare-head <pr>           finish only: refuse unless the PR is open, its head
+                                matches the reviewed commit, and the reviewed tree is
+                                clean (a closed or merged PR refuses). Reads
                                 no required-check source and claims no check result, so
                                 it serves a repository whose required-check sources are
                                 unreadable, such as a private Free-plan repository.
@@ -466,8 +467,9 @@ Options:
                                 unresolvedCompare marker is the only record of an
                                 unresolved compare. A --mode review-only run refuses
                                 it outright.
-  --compare-head <pr>           Refuse finish until the PR head of this pull request equals the
-                                reviewed commit and the reviewed tree is clean. Reads no
+  --compare-head <pr>           Refuse finish until this pull request is open, its head equals the
+                                reviewed commit, and the reviewed tree is clean (a closed or
+                                merged PR refuses). Reads no
                                 required-check source and claims no check result, so it serves a
                                 repository whose required-check sources are unreadable, such as
                                 a private Free-plan repository. A passing finish records a

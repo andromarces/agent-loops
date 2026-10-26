@@ -92,9 +92,11 @@ const isListEntry = (entry) =>
  * after the read. A branch or remote that changed during the read does the same. The function never throws.
  * `confirm(pr)` is an optional read that runs on the matched PR before the final identity check, so
  * that check covers it. It returns null to accept the PR, or the reason text that leaves the run
- * undeclared; that text is the runtime's own, so the result carries `trusted`.
+ * undeclared; that text is the runtime's own, so the result carries `trusted`, and `undeclaredPr`
+ * names the matched PR that the read refused, for the head compare of ADR 0052 (#1111). A head,
+ * branch, or remote that moved during the read names no PR.
  * @param {{ cwd: string, head: string | null, gh?: Function, signal?: AbortSignal, timeoutMs?: number, confirm?: (pr: number) => Promise<string | null> }} options
- * @returns {Promise<{ pr: number } | { pr: null, reason: string, quiet?: true, trusted?: true }>}
+ * @returns {Promise<{ pr: number } | { pr: null, reason: string, quiet?: true, trusted?: true, undeclaredPr?: number }>}
  */
 export async function resolveWorkerPr({
   cwd,
@@ -169,7 +171,7 @@ export async function resolveWorkerPr({
     if (after.branch !== branch || after.repo !== runRepo || after.head !== head) {
       return { pr: null, reason: "the branch, remote, or head changed during the PR read" };
     }
-    if (refusal) return { pr: null, reason: refusal, trusted: true };
+    if (refusal) return { pr: null, reason: refusal, trusted: true, undeclaredPr: entry.number };
     return { pr: entry.number };
   } catch (err) {
     return { pr: null, reason: `the PR read failed: ${readableErrorText(err)}` };

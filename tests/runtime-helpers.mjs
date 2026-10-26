@@ -38,7 +38,7 @@ export const prViewArgs = (pr) => [
   "view",
   String(pr),
   "--json",
-  "headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit",
+  "headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit,state",
 ];
 
 /** The exact argument elements of the gate's `gh pr checks` read. */
