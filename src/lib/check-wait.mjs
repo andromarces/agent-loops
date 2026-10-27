@@ -505,7 +505,7 @@ export async function waitChecks({
   };
   const bounded = signal ? withSignal(boundedRead, signal) : boundedRead;
   const ensureSlug = async () => {
-    slug ??= await repoSlug(bounded, cwd);
+    slug ??= await repoSlug(bounded, cwd, "could not be read");
   };
   // The commit reads are the gate's own reads, which page by page number with one `gh api --include`
   // request per page and never follow the `Link` header, which they reject when it names another host (see `pagedRead`). A failed read is marked

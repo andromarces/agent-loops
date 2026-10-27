@@ -817,13 +817,14 @@ export async function prInfo(gh, pr, cwd) {
   return JSON.parse(stdout);
 }
 
-export async function repoSlug(gh, cwd) {
+/** The repository slug. `failure` is the verb phrase of the error text that follows `gh repo view`. */
+export async function repoSlug(gh, cwd, failure = "failed") {
   const { status, stdout, stderr } = await gh(
     ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
     cwd,
   );
   if (status !== 0 || stdout.trim() === "") {
-    throw new Error(`gh repo view failed: ${ghFailureText({ status, stderr })}`);
+    throw new Error(`gh repo view ${failure}: ${ghFailureText({ status, stderr })}`);
   }
   return stdout.trim();
 }

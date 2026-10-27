@@ -118,10 +118,14 @@ function pagesOf(data, field, what) {
   });
 }
 
+// Validates with `Date.parse`, looser than `parseTime`: `latestBy` returns a lone entry without
+// parsing its timestamp, so a stricter check here would refuse a read that the judgment accepts.
 const isOrderable = (entry, fields) =>
   Number.isFinite(entry.id) &&
-  fields.some((field) => parseTime(entry[field]) !== null) &&
-  fields.every((field) => entry[field] == null || parseTime(entry[field]) !== null);
+  fields.some(
+    (field) => typeof entry[field] === "string" && !Number.isNaN(Date.parse(entry[field])),
+  ) &&
+  fields.every((field) => entry[field] == null || !Number.isNaN(Date.parse(entry[field])));
 
 /** The check runs of `sha`, every page. `strict` makes a malformed reply throw. */
 export async function checkRuns(gh, slug, sha, cwd, strict = false) {
