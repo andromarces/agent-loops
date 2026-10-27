@@ -285,7 +285,10 @@ test("the noCheckSource rule names the merged PR head read and its limit on ever
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
   const instructions = await readInstructions();
-  const roleDoc = await readFile(join(dirname(instructionsPath), "reference/role.md"), "utf8");
+  const roleDoc = await readFile(
+    join(dirname(instructionsPath), "reference/wait-checks.md"),
+    "utf8",
+  );
   for (const text of [prompt, instructions, roleDoc]) {
     expectRule(text, /merged PR/i, /latest/i);
     expectRule(text, /base head and one merged PR head are two commits/i, /stays unseen/i);

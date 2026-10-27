@@ -229,21 +229,15 @@ Apply these parent rules:
   `workTree` does not show it. Report it in the finish summary under `open`. A failed worker turn
   carries the field too. A turn that changed none carries no field.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
-  inherited temporary directory during the turn, such as a probe directory that the reviewer
-  created there. The field names the entries, redacted like the test command output (ADR 0017),
-  and never their content, at most 20. It is advisory: the directory is shared with other
-  processes, so the runtime cannot attribute an entry to the turn, and it does not delete one.
-  The field rules are in [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
-  Report it in the finish summary under `open`, and do not treat it as a reason to
-  reject (issue #1024).
+  inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
+  entry to the turn, and it does not delete one. Report it in the finish summary under `open`, and
+  do not treat it as a reason to reject (issue #1024). Field rules:
+  [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
-  the pnpm package store that `node_modules/.modules.yaml` of the work tree records as `storeDir`.
-  The field means that store changed, whoever changed it. It is advisory: the store is shared
-  with other processes, so the runtime cannot attribute a change to the turn, and it does not
-  revert one. The field rules are in
-  [Runtime advisory fields](orchestrator/runtime-advisory-fields.md). Report
-  `packageStoreEntries` in the finish summary under `open`, and do not treat it as a reason
-  to reject (issue #1045).
+  the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
+  cannot attribute a change to the turn, and it does not revert one. Report it in the finish
+  summary under `open`, and do not treat it as a reason to reject (issue #1045). Field rules:
+  [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.

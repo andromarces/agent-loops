@@ -28,6 +28,8 @@ version. Each section keeps the anchor that it had in the README.
   - [Test slot](reference/usage.md#test-slot)
 - [Child dispatch](reference/role.md)
   - [Interactive child dispatch: `agent-loop role`](reference/role.md#interactive-child-dispatch-agent-loop-role)
+  - [`wait-checks`](reference/wait-checks.md)
+  - [Finish gates: absence rule](reference/finish-gates.md)
 - [Interactive parent session](reference/harness-entry-points.md)
   - [Interactive orchestrator: harness entry points](reference/harness-entry-points.md#interactive-orchestrator-harness-entry-points)
   - [Parent guard: hard read-only for the parent session](reference/harness-entry-points.md#parent-guard-hard-read-only-for-the-parent-session)
