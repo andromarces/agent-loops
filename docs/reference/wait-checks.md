@@ -12,7 +12,7 @@ Usage: `agent-loop role wait-checks --pr <pr> [--all [--expect <check name>]...]
 
 The required wait refuses a context it cannot resolve, with the rule of the supplied status (`requiredResolutionRefusal`): a ruleset or protection source that cannot be read, a source reply that cannot be parsed, and a failed read of the required names each exit 1 with `status: "error"` before any state is judged, because such a source can hold a required check or an app qualifier that the wait never saw; a listed failure still settles the wait then, and the `--all` wait reads no source. A commit read that fails, or that returns a reply the wait fails to parse or order, is an error too, with one exception.
 
-The reads page and retry as [Waiting for required checks](../orchestrator/waiting-for-checks.md) states: no read follows a reply-supplied `Link` URL (#1033), a 500, 502, 503, or 504 is retried on the next poll inside the bound (#1025, #1121, #1125), and the `--require-ci` finish gate keeps failing closed on every read failure.
+The reads page and retry as [Waiting for required checks](../orchestrator/waiting-for-checks.md) states: no read follows a reply-supplied `Link` URL (#1033), a 500, 502, 503, or 504 is retried on the next poll inside the bound (#1025, #1121, #1125), and the `--require-ci` finish gate keeps failing closed on every read failure. A successful paged read joins the pages into the array that the earlier slurped read printed.
 
 ## Bound and head
 
