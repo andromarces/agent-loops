@@ -304,8 +304,8 @@ const ROLE_UNREADABLE_FINISH =
   "compare the PR head with the reviewed commit through `role finish --compare-head <pr>`, or finish with the unresolvedCompare marker after you compare it yourself";
 
 /** Refuses a PR declaration whose required-check sources the finish gate cannot read (#1092). */
-async function refuseUnreadableGate(label, { pr, cwd, gh }) {
-  const reason = await unreadableGateReason({ pr, cwd, gh });
+async function refuseUnreadableGate(label, { pr, cwd, gh, signal }) {
+  const reason = await unreadableGateReason({ pr, cwd, gh, signal });
   if (reason) {
     throw new RoleError(unreadableGateRefusal(label, reason, ROLE_UNREADABLE_FINISH));
   }
@@ -438,7 +438,7 @@ async function dispatchLocked(
       );
     }
     if (args.pr !== null) {
-      await refuseUnreadableGate(`--pr ${args.pr}`, { pr: args.pr, cwd: args.cwd, gh });
+      await refuseUnreadableGate(`--pr ${args.pr}`, { pr: args.pr, cwd: args.cwd, gh, signal });
     }
     state = initialState(args);
   } else {
@@ -1205,7 +1205,7 @@ async function extend(args) {
  * one that passed `--pr` at init: a reviewer turn supplies the required-check status, and a finish
  * must end through `--require-ci <pr>` (#916). `review-only` refuses it, as it refuses `--pr`.
  */
-async function declarePr(args, { gh } = {}) {
+async function declarePr(args, { gh, signal } = {}) {
   rejectMisplacedFlags(args, "declare-pr");
   if (args.pr === null) {
     throw new RoleError("declare-pr requires --pr <pr>.");
@@ -1224,7 +1224,7 @@ async function declarePr(args, { gh } = {}) {
           `declare-pr is refused: the run already declares PR ${state.pr}, and the declaration cannot change.`,
         );
       }
-      await refuseUnreadableGate("declare-pr", { pr: args.pr, cwd: args.cwd, gh });
+      await refuseUnreadableGate("declare-pr", { pr: args.pr, cwd: args.cwd, gh, signal });
       state.pr = args.pr;
       await writeState(paths.stateFile, state);
       logInfo(`run declared PR ${state.pr} (${state.stepsUsed} steps used)`);
