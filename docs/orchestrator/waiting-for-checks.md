@@ -78,7 +78,7 @@ because no state was read for a commit.
 The required wait refuses a required context it cannot resolve. A ruleset or protection
 source with no usable reply (a 403 or 404 for a caller without admin rights, for example), a
 source reply that is not valid JSON, and a failed read of the required names each exit 1
-with `status: "error"` before any state is judged, including when `gh pr checks --required`
+with `status: "error"` (a server error of the names read is retried, below) before any state is judged, including when `gh pr checks --required`
 answers that the branch has no required check, because such a
 source can hold a required check or an app qualifier that the wait never saw. A listed
 failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
@@ -87,6 +87,18 @@ is an error too, with one exception. The commit reads are the gate's own reads, 
 read that the first failure of the poll left running to the ceiling, and it rides on every
 envelope, settled, timed out, or error. A required check that no
 read of the PR lists yet is absent, as before.
+
+The `gh pr` reads of a poll are retried on the next poll, inside the bound, when `gh` names
+a server error (HTTP 500, 502, 503, or 504) as the opening of its error text, as in
+`HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)` (#1121). These reads are the
+head read (`gh pr view`), the check list read (`gh pr checks`, with or without `--required`),
+and the required names read (`gh pr checks --required --json name`). A server error that lasts to the bound
+exits 1 with `status: "error"` that names it, never `timedOut: true` and never a pass (#1025). A
+read that fails with any other status, such as a 4xx, a failure whose text names no HTTP
+status, a status that appears only after the opening of the text, and a failure that wrote
+output the wait cannot parse, still ends the wait at once. The error that ends the wait at the
+bound carries the `gh` error text, so it names the server status. This retry belongs to `wait-checks`: the `--require-ci`
+finish gate reads the same names once and still fails closed.
 
 The PR head is the one read at the start of the poll, so the PR can have moved on by
 the time the wait returns. Compare `head` with the commit you expect before you record the
@@ -133,7 +145,9 @@ both settle nothing and no source names a check, as on a private repository on t
 GitHub Free plan (#301), the required wait refuses at once on the first poll with the
 unresolved-source error below, because no check can be known to report. A readable
 source keeps the wait running, whether it names a required check or states the absence,
-whatever the other source returned. A server error (500, 502, 503, 504) on a source read is
+whatever the other source returned. The required names read of that poll answers the same
+`no checks reported`, which is no failure. Any other failed names read ends the wait at once with
+`status: "error"`, as on every poll. A server error (500, 502, 503, 504) on a source read, or on the required names read, is
 retried on the next poll, and one that lasts to the bound exits 1 with `status: "error"`.
 If the bound arrives with only that reply, the wait returns `timedOut: true` and an
 empty `checks`, which is never a pass. Any other exit 1, and any output that

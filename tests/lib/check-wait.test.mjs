@@ -378,6 +378,130 @@ test.each(["rules", "protection"])(
   },
 );
 
+const PR_READS = {
+  head: (args) => args[0] === "pr" && args[1] === "view",
+  checks: (args) => args[0] === "pr" && args[1] === "checks" && args.at(-1) === "name,state,bucket",
+  names: (args) => args[0] === "pr" && args[1] === "checks" && args.at(-1) === "name",
+};
+
+/**
+ * One required wait whose passing `gh pr` read named by `which` ("head", "checks", or "names")
+ * answers with `failure` on its first call, or on every call when `always` is set. `stdout` and
+ * `reads` replace the empty output and the scripted check list reads. `result` is the wait, and
+ * `attempts()` counts the failing reads it made.
+ */
+function prReadFailsWait(
+  which,
+  failure,
+  { always = false, stdout = "", reads = [{ status: 0, checks: [PASSED_ITEM] }] } = {},
+) {
+  const inner = scriptedGh(reads);
+  const clock = fakeClock();
+  let failures = 0;
+  const gh = async (args, cwd, options) => {
+    if (PR_READS[which](args) && (always || failures === 0)) {
+      failures += 1;
+      return { status: 1, stdout, stderr: failure, timedOut: false };
+    }
+    return inner(args, cwd, options);
+  };
+  return {
+    result: waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 60,
+      gh,
+      now: clock.now,
+      sleep: clock.sleep,
+    }),
+    attempts: () => failures,
+  };
+}
+
+const GRAPHQL_504 = "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)\n";
+const GRAPHQL_502 = "HTTP 502: 502 Bad Gateway (https://api.github.com/graphql)\n";
+const NO_CHECKS_THEN_PASS = [
+  { status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch\n" },
+  { status: 0, checks: [PASSED_ITEM] },
+];
+
+// Usefulness: verifies a server error of any `gh` pr read of a poll is retried on the next poll, so
+// the wait ends in the check result instead of an error that gives the parent no check evidence
+// (issue #1121).
+test.each([
+  ["the head read (HTTP 504)", "head", GRAPHQL_504],
+  ["the check list read (HTTP 502)", "checks", GRAPHQL_502],
+  ["the check list read (HTTP 504)", "checks", GRAPHQL_504],
+  ["the required names read (HTTP 504)", "names", GRAPHQL_504],
+  ["the required names read (HTTP 502)", "names", GRAPHQL_502],
+])("waitChecks retries %s that fails with a server error", async (_name, which, failure) => {
+  expect(await prReadFailsWait(which, failure).result).toEqual({
+    timedOut: false,
+    head: HEAD_A,
+    checks: [PASSED_ITEM],
+  });
+});
+
+// Usefulness: verifies a server error that lasts to the bound is an error that names the server
+// error, after the wait read again on each poll, never a timeout envelope and never a pass
+// (issues #1025, #1121). The names read is also covered on a no-checks-reported poll.
+test.each([
+  ["head", /gh pr view 42 could not be read: HTTP 504: 504 Gateway Timeout/, undefined],
+  ["checks", /gh pr checks 42 --required could not be read: HTTP 504: 504 Gateway/, undefined],
+  ["names", /required check names for PR 42 could not be read: HTTP 504: 504 Gateway/, undefined],
+  [
+    "names",
+    /required check names for PR 42 could not be read: HTTP 504: 504 Gateway/,
+    NO_CHECKS_THEN_PASS,
+  ],
+])(
+  "waitChecks reports an error when the %s read fails with a server error until the bound",
+  async (which, message, reads) => {
+    const wait = prReadFailsWait(which, GRAPHQL_504, { always: true, ...(reads ? { reads } : {}) });
+    await expect(wait.result).rejects.toThrow(message);
+    expect(wait.attempts()).toBeGreaterThan(1);
+  },
+);
+
+// Usefulness: verifies the acceptance item that a 4xx reply of each `gh pr` read still ends the wait
+// at once, after the one read (issue #1121).
+test.each(["head", "checks", "names"])(
+  "waitChecks ends at once on a 404 of the %s read",
+  async (which) => {
+    const wait = prReadFailsWait(which, "HTTP 404: Not Found (https://api.github.com/graphql)\n");
+    await expect(wait.result).rejects.toThrow(/could not be read/);
+    expect(wait.attempts()).toBe(1);
+  },
+);
+
+// Usefulness: verifies the acceptance item that an unparseable reply still ends the wait at once
+// even when the failed read also names HTTP 504, so only a clean server error is retried
+// (issue #1121).
+test.each(["head", "checks", "names"])(
+  "waitChecks ends at once when the %s read fails with HTTP 504 and an unparseable reply",
+  async (which) => {
+    const wait = prReadFailsWait(which, GRAPHQL_504, { stdout: "<html>Gateway Timeout</html>" });
+    await expect(wait.result).rejects.toThrow();
+    expect(wait.attempts()).toBe(1);
+  },
+);
+
+// Usefulness: verifies a failed required names read that is no clean server error ends a
+// no-checks-reported poll at once, as it ends any other poll, instead of being ignored until a
+// later poll passes (issue #1121 acceptance: a 4xx and an unparseable reply end the wait at once).
+test.each([
+  ["HTTP 501", "HTTP 501: Not Implemented (https://api.github.com/graphql)\n", ""],
+  ["HTTP 403", "HTTP 403: Forbidden (https://api.github.com/graphql)\n", ""],
+  ["HTTP 504 and an unparseable reply", GRAPHQL_504, "<html>Gateway Timeout</html>"],
+])(
+  "waitChecks ends at once when the names read of a no-checks-reported poll fails with %s",
+  async (_name, failure, stdout) => {
+    const wait = prReadFailsWait("names", failure, { stdout, reads: NO_CHECKS_THEN_PASS });
+    await expect(wait.result).rejects.toThrow(/required check names for PR 42 could not be read/);
+    expect(wait.attempts()).toBe(1);
+  },
+);
+
 // Usefulness: verifies only the exact `gh` answer is the new outcome: the same
 // words inside a longer error text, or on another exit code, stay unresolved
 // (issue #894).
