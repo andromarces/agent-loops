@@ -6,7 +6,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { killTreeOnExit } from "../src/lib/exec-tree.mjs";
 import { stateRoot } from "../src/lib/runstate.mjs";
 import { sessionRecordsRoot } from "../src/lib/session-record.mjs";
-import { slotsRoot } from "../src/lib/test-slot.mjs";
+import { slotsRoot } from "../src/lib/slots-root.mjs";
 import { removePath } from "./runtime-helpers.mjs";
 import { createTmpdirIsolation } from "./setup-tmpdir.mjs";
 
